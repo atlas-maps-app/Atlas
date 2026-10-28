@@ -20,7 +20,8 @@
 //     order where faces of one building touch: a near cell is nearer by 2^-16 of its depth per row and column it lies
 //     up and along its wall, counted modulo 16 (a later cell's edge covers an earlier one's, as the renders paint
 //     them), and a roof's face by 2^-12 (a roof covers the edge of the walls below it, as the renders paint the roof
-//     after its walls). With the
+//     after its walls); a kit's band and corner boards lie on their wall's plane (its face's) a few steps of 2^-16 over
+//     its cells, whose leads on such a wall count modulo 8, and under its windows'. With the
 //     painter switch (CAMERA_PAINTER) it draws at its painter slot instead: its item's first slot (the rank table's)
 //     plus its own place in the item.
 // A wall's cell (and a skillion's or a houseboat's wall) is filled and stroked in one colour, 0.3 px wide, with the
@@ -49,10 +50,18 @@ static const uint BUILDING_STROKES = BUILDING_STROKE_FINE | BUILDING_STROKE_WIDE
 static const uint BUILDING_OUTLINE = 1024u;
 // A kit roof's slope or hip that overhangs its walls (its eaves): its depth's lead BUILDING_EAVES_LEAD.
 static const uint BUILDING_EAVES = 8192u;
+// A wall with a kit's details on it (its band, its boards, its eaves' shadow): its near cells' leads count modulo
+// BUILDING_KIT_CELL_LEADS, under the details' leads.
+static const uint BUILDING_KIT = 16384u;
 
 // A face's flags.
 static const uint BUILDING_FACE_DAY = 1u;  // lit whenever the sun is up, not by a sample (a deck, a cabin's roof)
 static const uint BUILDING_FACE_BOTH = 2u; // drawn from either side (no facing test)
+// A kit's detail on its wall (trad_wall's: its stucco ground floor's band, a corner board): drawn on its face's plane,
+// the wall's (its normal through the wall's test point), at a lead of its own over the wall's cells; a corner board
+// only where its item's detail has BUILDING_DETAIL_CORNERS.
+static const uint BUILDING_FACE_BAND = 4u;
+static const uint BUILDING_FACE_CORNER = 8u;
 
 // No sample, and no sun bits for the tile yet.
 static const uint BUILDING_NO_SAMPLE = 0xFFFFFFFFu;
@@ -80,6 +89,15 @@ static const float BUILDING_ROOF_LEAD = 2.44140625e-4f;
 // roofs' 2^-12 leads a cell's at most by 2^-16, which the rasteriser's rounding of two faces met there does not keep.
 static const float BUILDING_EAVES_LEAD = 4.8828125e-4f;
 static const float BUILDING_PLANE_SPAN = 1.953125e-3f;
+// A kit's details on a wall (trad_wall's, in the port's order: the band, the boards' lines, the corner boards, the
+// eaves' shadow), each a step of 2^-16 over the one before from 8 steps on, over the wall's cells (whose leads count
+// modulo 8 on such a wall) and under its windows' and facades' (from 16 steps on); a step leads a cell's edge as the
+// cells lead each other's.
+static const uint BUILDING_KIT_CELL_LEADS = 8u;
+static const float BUILDING_KIT_BAND_LEAD = 1.220703125e-4f;
+static const float BUILDING_KIT_LINES_LEAD = 1.373291015625e-4f;
+static const float BUILDING_KIT_CORNER_LEAD = 1.52587890625e-4f;
+static const float BUILDING_KIT_SHADOW_LEAD = 1.678466796875e-4f;
 // A roof's thin stroke's lead over its own face (2^-16 more than the face's): it lies on its face's plane (the
 // reciprocal depth the rasteriser gives the face's own triangle, carried on past the edge) a little nearer, over its
 // own fill however the rasteriser rounds the two interpolations, and under every face nearer than that.
@@ -118,7 +136,8 @@ struct BuildingPush {
 /// nearer than the cells' 460 m (their near variant), than the view's win_d (windows), than 520 m (a church's own
 /// windows, a houseboat cabin's), than 160 m (deep windows: a reveal, the glass set back, a sill), than 140 m (sash
 /// bars), than 760 m (the facades' flat detail: plinths, cornices, shop glazing), than 300 m (the low plinth), than 520
-/// m (cornices), than 1.35 times win_d (material faces), than 260 m (an old gable's hoist beam).
+/// m (cornices), than 1.35 times win_d (material faces), than 260 m (an old gable's hoist beam), than the depth a kit's
+/// corner boards stay resolved to (focal / d · 0.16 > 0.5: passes::corner_boards_reach).
 static const uint BUILDING_DETAIL_NEAR = 1u;
 static const uint BUILDING_DETAIL_WINDOWS = 2u;
 static const uint BUILDING_DETAIL_CHURCH = 4u;
@@ -129,6 +148,7 @@ static const uint BUILDING_DETAIL_LOW_PLINTH = 64u;
 static const uint BUILDING_DETAIL_CORNICES = 128u;
 static const uint BUILDING_DETAIL_MATERIALS = 256u;
 static const uint BUILDING_DETAIL_BEAMS = 512u;
+static const uint BUILDING_DETAIL_CORNERS = 1024u;
 
 /// A primitive as the walls heap holds it.
 struct BuildingPrim {
@@ -173,7 +193,7 @@ inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
 /// order), its painter slot the k-th after the first cell's (which the wall's record keeps as its near slot: a wall
 /// with cells is drawn only far), its depth's lead its row plus its column, modulo 16 (each later cell the renders
 /// paint over an edge it shares with an earlier one lies a row up or a column along: it leads by one, but every 16th,
-/// which trails by 15).
+/// which trails by 15; on a wall with a kit's details every 8th, under the details' leads).
 inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
     uint k = code & 0xFFFFu;
     uint ncol = (code >> 16u) & 0xFFu;
@@ -205,7 +225,7 @@ inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
     p.sample = wall.sample + 1u + k;
     p.near_slot = wall.near_slot + k;
     p.far_slot = 0u;
-    p.lead = (r + c) % BUILDING_CELL_LEADS;
+    p.lead = (r + c) % ((wall.flags & BUILDING_KIT) != 0u ? BUILDING_KIT_CELL_LEADS : BUILDING_CELL_LEADS);
     return p;
 }
 
@@ -250,6 +270,8 @@ struct BuildingShape {
     uint strokes;  // the edges its thin stroke follows (bit k: corner k to k + 1, the last back to the first): every
                    // edge of a primitive with one, an n-gon's triangle's only along its polygon's ring, and the near
                    // plane's cut wherever it cut the shape (the port strokes the polygon Camera.poly gives it)
+    bool on_plane; // its depth its face plane's at each point (a kit's band or corner board, on its wall's plane), a
+                   // plain polygon's though it is: not its corners' over its fan
 };
 
 /// Corner i of a shape.
@@ -345,6 +367,7 @@ inline BuildingShape building_nothing() {
     s.depth = 0.0f;
     s.slot = 0u;
     s.strokes = 0u;
+    s.on_plane = false;
     return s;
 }
 
@@ -365,6 +388,10 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
         return s;
     }
     if ((p.flags & BUILDING_DRY) != 0u && weather) {
+        return s;
+    }
+    // a kit's corner board where the view resolves it (`ppm * 0.16 > 0.5`)
+    if ((f.flags & BUILDING_FACE_CORNER) != 0u && (rank_detail(rank) & BUILDING_DETAIL_CORNERS) == 0u) {
         return s;
     }
     // vdot(n, C - p) > 0: the face turns to the eye (the eye is the origin of the eye-relative frame)
@@ -480,6 +507,22 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     s.lead = (p.flags & BUILDING_EDGE) != 0u
                  ? float(p.lead) * BUILDING_CELL_LEAD
                  : ((p.flags & BUILDING_EAVES) != 0u ? BUILDING_EAVES_LEAD : BUILDING_ROOF_LEAD);
+    // a kit's band or corner board: on its wall's plane at its lead, its span widened to hold that plane's reciprocal
+    // depths at its corners (which lie out from it)
+    if ((f.flags & (BUILDING_FACE_BAND | BUILDING_FACE_CORNER)) != 0u) {
+        s.on_plane = true;
+        s.lead = (f.flags & BUILDING_FACE_BAND) != 0u ? BUILDING_KIT_BAND_LEAD : BUILDING_KIT_CORNER_LEAD;
+        for (uint i = 0u; i < m; ++i) {
+            float2 v = building_corner(s, i);
+            float3 ray = {(v.x - cam.right.w) / cam.forward.w, (cam.up.w - v.y) / cam.forward.w, 1.0f};
+            float along = ((plane.x * ray.x) + (plane.y * ray.y)) + (plane.z * ray.z);
+            float r = cam.frame.w * along / plane.w;
+            float r_lo = r - r * BUILDING_PLANE_SPAN;
+            float r_hi = r + r * BUILDING_PLANE_SPAN;
+            s.lo = r_lo < s.lo ? r_lo : s.lo;
+            s.hi = r_hi > s.hi ? r_hi : s.hi;
+        }
+    }
     s.slot = rank_slot(rank) + (near ? p.near_slot : p.far_slot);
     s.depth = painter_depth(cam, s.slot);
     return s;
@@ -503,6 +546,9 @@ inline bool building_may_draw(uint theme_flags, TilePlace place, BuildingPrim p,
         return false;
     }
     if ((p.flags & BUILDING_DRY) != 0u && weather) {
+        return false;
+    }
+    if ((f.flags & BUILDING_FACE_CORNER) != 0u && (rank_detail(rank) & BUILDING_DETAIL_CORNERS) == 0u) {
         return false;
     }
     if ((f.flags & BUILDING_FACE_BOTH) == 0u) {
@@ -785,6 +831,17 @@ inline float2 building_plain_point(BuildingShape s, uint v) {
     float3 p = building_plain_vertex(s, v);
     float2 q = {p.x, p.y};
     return q;
+}
+
+/// Point v (0 to 4) of a plain polygon's fan with the reciprocal depth it draws at: building_plain_vertex's, or where
+/// the shape lies on its wall's plane (a kit's band or corner board) that plane's there.
+inline float3 building_fan_vertex(FrameCamera cam, BuildingShape s, uint v) {
+    float3 p = building_plain_vertex(s, v);
+    if (s.on_plane) {
+        float2 q = {p.x, p.y};
+        p.z = building_plane_recip(cam, s, q);
+    }
+    return p;
 }
 
 /// The direction of angle a from x toward y (radians).

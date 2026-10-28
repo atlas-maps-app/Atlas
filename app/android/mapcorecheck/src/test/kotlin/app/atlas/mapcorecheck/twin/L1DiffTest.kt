@@ -10,7 +10,7 @@ import org.junit.Test
  * is neither compared nor missing, an element one side lacks shifts nothing, a fill drawn in pieces counts as one
  * element only when the pieces cover it, a path's subpaths compare as a set, a match out of its place is out of order
  * only when it passes an element of another key that it overlaps, and a sliver one side alone draws is counted apart
- * where asked.
+ * where asked, but as an extra where its key is a known difference's.
  */
 class L1DiffTest {
     private val view = floatArrayOf(0f, 0f, 412f, 916f)
@@ -150,5 +150,11 @@ class L1DiffTest {
         assertEquals(1, standing.slivers) // the twin's wall seen edge-on
         assertEquals(1, standing.extra.values.sum()) // a face of 4 px² is no sliver
         assertEquals(2, standing.missing.values.sum()) // the port's sliver and its line, as what the twin does not draw
+        // a known difference's key (a kit's windows to come, as reports name it): its edge-on element an extra the caller
+        // passes as known
+        val reported = edgeOn.key.substringBefore("; o ")
+        val known = L1Diff.diff("known", listOf(wall), listOf(wall, edgeOn), view, slivers = true, known = setOf(reported))
+        assertEquals(0, known.slivers)
+        assertEquals(mapOf(reported to 1), known.extra)
     }
 }

@@ -593,6 +593,11 @@ private:
         const auto sk_top = [&](const V2& p) { return h - ((rh * (((p.x * dirv.x) + (p.z * dirv.z)) - p0)) / span); };
         const std::size_t n = poly.size();
         const bool windowed = !part && !is(v.btype, "houseboat") && !v.no_win && v.has_levels;
+        // a kit's stucco ground floor (trad_wall's band, drawn with weather), on a building that stands on the street
+        // (not a part, nor a houseboat: a boat with weather)
+        const bool band = region_.kit_band && (v.flags & tl::building::flag_kit) != 0 &&
+                          (v.flags & tl::building::flag_kit_band) != 0 &&
+                          (v.flags & tl::building::flag_houseboat) == 0 && !part && y0 <= 0.5;
         for (std::size_t i = 0; i < n; ++i) {
             const V2 a = poly[i];
             const V2 bb = poly[(i + 1) % n];
@@ -621,6 +626,12 @@ private:
                 for (int r = 0; r < nrow; ++r) {
                     for (int c = 0; c < ncol; ++c) cell(Kind::cell, r, nrow, c, ncol);
                 }
+            }
+            // the band: bh = min(bd['h'], (wall_top - y0) * 0.45), lit at (a + ex * .5 + nrm * .2, y0 + bh / 2)
+            if (band) {
+                const double bh = pm::min(*region_.kit_band, (wall_top - y0) * 0.45);
+                add(Kind::band, e, 0,
+                    {(a.x + (ex * .5)) + (nrm.x * .2), y0 + (bh / 2), (a.z + (ez * .5)) + (nrm.z * .2)}, face);
             }
             if (skillion) {
                 const double ta = sk_top(a);
@@ -707,9 +718,12 @@ private:
             }
         } else if ((is(roof, "gabled") || is(roof, "hipped")) && rh != 0.0) {
             gable_roof(v, poly, is(roof, "hipped"), h, rh, wall_top);
-            // a tradition's kit draws its own roof with weather (geometry/Roofs.cpp's kit_roof), never a houseboat's
+            // a tradition's kit draws its own roof with weather (geometry/Roofs.cpp's kit_roof), never a houseboat's;
+            // its eaves the kit's where the loader's roof is gabled or hipped (trad['eaves'], before a
+            // quadruple_saltbox is drawn as hipped)
             if ((v.flags & tl::building::flag_kit) != 0 && (v.flags & tl::building::flag_houseboat) == 0) {
-                kit_roof(v, poly, is(roof, "hipped"), h, rh, wall_top, region_.kit_eaves.value_or(0.0));
+                const bool eaved = is(v.roof, "gabled") || is(v.roof, "hipped");
+                kit_roof(v, poly, is(roof, "hipped"), h, rh, wall_top, eaved ? region_.kit_eaves.value_or(0.0) : 0.0);
             }
         } else if (skillion) {
             const double s = rh / span;
@@ -1091,6 +1105,7 @@ const char* name_of(Kind kind) noexcept {
     case Kind::quay: return "quay";
     case Kind::quay_band: return "quay_band";
     case Kind::crown: return "crown";
+    case Kind::band: return "band";
     }
     return "?";
 }
@@ -1121,7 +1136,8 @@ Region region_of(const tiles::Style& style) noexcept {
             .paris = style.paris,
             .tone = style.tone,
             .no_shadows = style.no_shadows,
-            .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt};
+            .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt,
+            .kit_band = style.kit && style.kit->band ? std::optional<double>(style.kit->band->h) : std::nullopt};
 }
 
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out) {

@@ -41,6 +41,8 @@ std::string_view name_of(PrimKind kind) noexcept {
     case PrimKind::mansard_top: return "mansard_top";
     case PrimKind::deck: return "deck";
     case PrimKind::cabin_roof: return "cabin_roof";
+    case PrimKind::band: return "band";
+    case PrimKind::corner_board: return "corner_board";
     }
     return "?";
 }
@@ -205,9 +207,16 @@ std::uint16_t stroke_of(PrimKind kind) noexcept {
     case PrimKind::hull_wall:
     case PrimKind::cabin_wall:
     case PrimKind::pyramid:
-    case PrimKind::deck: break;
+    case PrimKind::deck:
+    case PrimKind::band:
+    case PrimKind::corner_board: break; // trad_wall's face() calls: a fill alone
     }
     return 0;
+}
+
+double kit_eaves_of(const Values& v, std::optional<double> eaves) noexcept {
+    // generic.py: eaves=P.get('eaves', 0) if b.get('roof') in ('gabled', 'hipped') else 0
+    return eaves && (is(v.roof, "gabled") || is(v.roof, "hipped")) ? *eaves : 0.0;
 }
 
 std::uint32_t Builder::face(const Face& f) {
@@ -318,8 +327,8 @@ int window_cols(double elen, WindowStyle style) noexcept {
 }
 
 void walls(Builder& b, const Building& bl, std::uint16_t variant) {
-    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, the skillion's wall, the
-    // wall's shop glazing and its windows; after them the building's plinth and cornice
+    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, a kit's details on it, the
+    // skillion's wall, the wall's shop glazing and its windows; after them the building's plinth and cornice
     const std::span<const V2> poly = bl.poly;
     const std::size_t n = poly.size();
     const double y0 = bl.y0;
@@ -337,13 +346,15 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                   ((flags & tl::building::flag_warehouse) != 0 ? window_flag::warehouse : 0U) |
                                   (church ? window_flag::church : 0U));
     // its flat detail with weather (`if wx and lens is None and not part and d < 760`; a houseboat is drawn as a boat
-    // with weather): a plinth where it stands on the street (y0 <= 0.5); a cornice on an old house's or under a mansard
-    // (`(yr and yr < 1800) or roof == 'mansard'`, a tradition's later) where its walls stand over 5 m; a shop floor's
-    // glazing on its walls over 2.4 m on the street
+    // with weather): a plinth where it stands on the street (y0 <= 0.5); a cornice on an old house's, under a mansard
+    // or where its kit gives it one (`(yr and yr < 1800) or roof == 'mansard' or (TD and TD.get('cornice'))`) where its
+    // walls stand over 5 m; a shop floor's glazing on its walls over 2.4 m on the street
     const bool facades = (!bl.v.part_tag || church) && (flags & tl::building::flag_houseboat) == 0;
     const bool plinth = facades && y0 <= 0.5;
-    const bool cornice =
-        facades && ((bl.v.year != 0 && bl.v.year < 1800) || is(bl.roof, "mansard")) && wall_top - y0 > 5;
+    const bool cornice = facades &&
+                         ((bl.v.year != 0 && bl.v.year < 1800) || is(bl.roof, "mansard") ||
+                          (flags & tl::building::flag_kit_cornice) != 0) &&
+                         wall_top - y0 > 5;
     const bool shop = facades && (flags & tl::building::flag_shop_floor) != 0 && y0 <= 0.5;
     const auto facade_flags =
         static_cast<std::uint8_t>((plinth ? window_flag::plinth : 0U) | (cornice ? window_flag::cornice : 0U));
@@ -354,6 +365,24 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
     const double fh = (wall_top - y0) / static_cast<double>(storeys);
     const std::uint32_t ribs = [&] {
         const Rgba c = darken(rgba(bl.v.wall_rgb), 0.62);
+        return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
+    }();
+    // a tradition's kit's details on each wall (trad_wall, drawn with weather, as TD needs `wx`), but a part's (a
+    // church's parts have them) and a houseboat's (a boat with weather): its stucco ground floor's band where it stands
+    // on the street (`y0 <= b.get('_gy', 0.0) + 0.5`: no render tile carries a terrain town's own ground), its timber
+    // boards' lines and corner boards, and the shadow of its eaves under a hipped roof or along a gabled one's ridge
+    // (trad_ridge, where the roof has a height); the lines in the wall's drawn colour darkened
+    const bool kit = (flags & tl::building::flag_kit) != 0 && facades;
+    const std::optional<tiles::KitBand> band =
+        kit && (flags & tl::building::flag_kit_band) != 0 && y0 <= 0.5 ? b.kit_band : std::nullopt;
+    const std::optional<tiles::KitBoards> boards =
+        kit && (flags & tl::building::flag_kit_boards) != 0 ? b.kit_boards : std::nullopt;
+    const double eaves = kit ? kit_eaves_of(bl.v, b.kit_eaves) : 0.0;
+    const bool hipped = is(bl.roof, "hipped");
+    const std::optional<V2> ridge =
+        eaves != 0.0 && bl.rh != 0.0 ? std::optional<V2>(kit_ridge(poly, is(bl.v.orient, "across"))) : std::nullopt;
+    const std::uint32_t lines_rgb = [&] {
+        const Rgba c = darken(rgba((flags & tl::building::flag_wall_drawn) != 0 ? bl.v.wall_rgb : 0x888888U), 0.62);
         return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
     }();
     for (std::size_t i = 0; i < n; ++i) {
@@ -371,6 +400,15 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                            .test = {(a.x + bb.x) / 2, (y0 + wall_top) / 2, (a.z + bb.z) / 2},
                                            .lit = Lit::sun,
                                            .facing = true});
+        // the kit's details this wall has: its boards' lines where it takes two boards or more (`range(1, nb)`), its
+        // corner boards where it is over 1 m long, the shadow of its eaves (|e · u| / max(elen, 1e-6) > 0.7 along
+        // the ridge); its cells' leads under theirs
+        const int nb = boards ? kt_int(elen / boards->spacing) : 0;
+        const bool corners = boards && elen > 1.0;
+        const bool shadow =
+            eaves != 0.0 &&
+            (hipped || (ridge && std::abs((ex * ridge->x) + (ez * ridge->z)) / pm::max(elen, 1e-6) > 0.7));
+        const std::uint16_t detailed = band || nb > 1 || corners || shadow ? prim_flag::kit : 0;
         // K8's samples of the edge: the wall as one cell, then its ncol × nrow cells when they are not one
         const std::uint32_t one = b.sample++;
         const auto wall = static_cast<std::uint32_t>(b.out.edged.size()); // its one-cell primitive, in either variant
@@ -384,15 +422,15 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
             return quad_at(a, bb, ya, yb, u0, u1);
         };
         if (ncol == 1 && nrow == 1) {
-            b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::any), face, one,
-                    Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
+            b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::any | detailed),
+                    face, one, Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
         } else {
-            b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::far), face, one,
-                    0, Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
+            b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::far | detailed),
+                    face, one, 0, Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
             for (int r = 0; r < nrow; ++r) {
                 for (int c = 0; c < ncol; ++c) {
                     b.edged(cell(r, nrow, c, ncol), PrimKind::cell,
-                            static_cast<std::uint16_t>(variant | prim_flag::near), face, b.sample++,
+                            static_cast<std::uint16_t>(variant | prim_flag::near | detailed), face, b.sample++,
                             Builder::slot(b.near_slot++), 0,
                             {.edge = edge,
                              .part = static_cast<std::uint32_t>((r * ncol) + c),
@@ -400,6 +438,57 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                              .nrow = static_cast<std::uint32_t>(nrow)});
                 }
             }
+        }
+        // trad_wall, after the cells, each detail at its slot in both variants: the band (lit by its own sample, K8's
+        // next), the boards' lines, the two corner boards (lit by day as they face the sun), the eaves' shadow; the
+        // band and the corner boards on the wall's plane (their faces' normal and test point the wall's)
+        if (detailed != 0) {
+            const V3 test{(a.x + bb.x) / 2, (y0 + wall_top) / 2, (a.z + bb.z) / 2};
+            const auto drawn = static_cast<std::uint16_t>(variant | prim_flag::weather | prim_flag::any);
+            KitWall kw{.item = b.item, .face = face, .a = a, .ex = ex, .ez = ez, .nrm = nrm, .y0 = y0, .top = wall_top};
+            if (band) {
+                // bh = min(bd['h'], (wall_top - y0) * 0.45); quad_at(a, bb, y0, y0 + bh, 0, 1, 0.02, nrm)
+                const double bh = pm::min(band->h, (wall_top - y0) * 0.45);
+                const std::uint32_t f = b.face({.base = band->colour,
+                                                .normal = nrm,
+                                                .test = test,
+                                                .lit = Lit::sun,
+                                                .facing = true,
+                                                .kit = KitPart::band});
+                b.plain(quad_at(a, bb, y0, y0 + bh, 0.0, 1.0, 0.02, nrm), 4, PrimKind::band, drawn, f, b.sample++,
+                        Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
+            }
+            if (nb > 1) {
+                kw.boards = static_cast<std::uint32_t>(nb);
+                kw.spacing = boards->spacing;
+                kw.rgb = lines_rgb;
+                kw.lines_near = Builder::slot(b.near_slot++);
+                kw.lines_far = Builder::slot(b.far_slot++);
+            }
+            if (corners) {
+                // cw = 0.16 / elen; quad_at(a, bb, y0, wall_top, u0, u1, 0.03, nrm) for (0, cw) and (1 - cw, 1)
+                const double cw = 0.16 / elen;
+                const std::uint32_t f = b.face({.base = boards->corner,
+                                                .normal = nrm,
+                                                .test = test,
+                                                .lit = Lit::day,
+                                                .facing = true,
+                                                .kit = KitPart::corner});
+                const std::array<std::array<double, 2>, 2> spans{{{0.0, cw}, {1.0 - cw, 1.0}}};
+                for (std::uint32_t k = 0; k < 2; ++k) {
+                    b.plain(quad_at(a, bb, y0, wall_top, spans.at(k)[0], spans.at(k)[1], 0.03, nrm), 4,
+                            PrimKind::corner_board, drawn, f, no_sample, Builder::slot(b.near_slot++),
+                            Builder::slot(b.far_slot++), {.edge = edge, .part = k});
+                }
+            }
+            if (shadow) {
+                // quad_at(a, bb, wall_top - min(1.1, E * 1.7), wall_top, 0, 1, 0.025, nrm)
+                kw.shadow = true;
+                kw.shade = quad_at(a, bb, wall_top - pm::min(1.1, eaves * 1.7), wall_top, 0.0, 1.0, 0.025, nrm);
+                kw.shadow_near = Builder::slot(b.near_slot++);
+                kw.shadow_far = Builder::slot(b.far_slot++);
+            }
+            if (kw.boards > 1 || kw.shadow) b.out.kit_walls.push_back(kw);
         }
         if (bl.skillion) {
             const double ta = bl.sk_top(a);
@@ -519,6 +608,8 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     Builder b(made);
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
+    b.kit_band = in.region.kit_band;
+    b.kit_boards = in.region.kit_boards;
     std::vector<std::uint32_t> kept;
     Building bl;
     std::size_t first = 0; // the walk's index of the layer's first record
@@ -575,6 +666,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             }
             const std::uint16_t variant = boat ? prim_flag::dry : 0;
             const std::size_t beams_first = made.beams.size();
+            const std::size_t kits_first = made.kit_walls.size();
             walls(b, bl, variant);
             roofs(b, bl, variant);
             // the reflection's samples (K16 draws it): one per wall of 0.3 m or more of a building near the water
@@ -649,6 +741,14 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
                 Prim beam{};
                 beam.p = {made.beams[k].from, made.beams[k].to, made.beams[k].to, made.beams[k].to};
                 reach(beam);
+            }
+            // a kit's walls' lines and shadows, out from their walls (the lines 0.02 m, within the shadow's 0.025 m
+            // out of the whole wall)
+            for (std::size_t k = kits_first; k < made.kit_walls.size(); ++k) {
+                const KitWall& kw = made.kit_walls[k];
+                Prim out_of{};
+                out_of.p = quad_at(kw.a, {kw.a.x + kw.ex, kw.a.z + kw.ez}, kw.y0, kw.top, 0.0, 1.0, 0.025, kw.nrm);
+                reach(out_of);
             }
             item.spec.radius = static_cast<float>(std::sqrt(r2) * 1.0001 + 0.01);
             made.items.push_back(item);
@@ -753,6 +853,27 @@ TileBuildings build_buildings(const BuildingInput& in) {
             if (w.style != WindowStyle::cabin) w.first += windows; // a cabin's panes are none of the tile's windows
             made.window_walls.push_back(w);
         }
+        // the hoist beams, a kit roof's courses and ridges and a kit's walls' lines and shadows, by their items and
+        // faces
+        for (RoofBeam r : k.made.beams) {
+            r.item += items;
+            r.face += faces;
+            made.beams.push_back(r);
+        }
+        for (RoofCourses r : k.made.courses) {
+            r.item += items;
+            r.face += faces;
+            made.courses.push_back(r);
+        }
+        for (RoofRidge r : k.made.ridges) {
+            r.item += items;
+            made.ridges.push_back(r);
+        }
+        for (KitWall w : k.made.kit_walls) {
+            w.item += items;
+            w.face += faces;
+            made.kit_walls.push_back(w);
+        }
         for (Made m : k.spans) {
             m.edged_first += edged;
             m.edged_end += edged;
@@ -773,6 +894,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     out.beams = std::move(made.beams);
     out.courses = std::move(made.courses);
     out.ridges = std::move(made.ridges);
+    out.kit_walls = std::move(made.kit_walls);
     // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so);
     // the windowed walls with them, each naming its wall's new place
     std::vector<std::size_t> order(spans.size());

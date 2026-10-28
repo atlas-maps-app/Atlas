@@ -194,10 +194,27 @@ struct ItemsStyle {
     std::array<StyleRgb, 5> woods_greens{};
 };
 
+/// A tradition's stucco ground floor (its `base_band`: trad['band'] where a building's material and kind allow it):
+/// its height (metres) and colour.
+struct KitBand {
+    double h = 0.0;
+    StyleRgb colour = 0;
+};
+
+/// A tradition's timber boards (its `boards`: trad['boards'] where a building's material allows them): their spacing
+/// (metres) and the corner boards' colour.
+struct KitBoards {
+    double spacing = 0.0;
+    StyleRgb corner = 0;
+};
+
 /// The building tradition a pack's style carries whole (`tradition`: generic.py's P), as a kit's details read it: the
-/// eaves' overhang on a gabled or hipped roof (trad['eaves']; 0 where the tradition names none).
+/// eaves' overhang on a gabled or hipped roof (trad['eaves']; 0 where the tradition names none), and its stucco ground
+/// floor and its timber boards where it has them.
 struct KitStyle {
     double eaves = 0.0;
+    std::optional<KitBand> band;
+    std::optional<KitBoards> boards;
 };
 
 struct Style {

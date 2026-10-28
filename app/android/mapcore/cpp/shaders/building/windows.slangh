@@ -2283,23 +2283,33 @@ inline bool building_beam_covers(BuildingBeam b, float2 p) {
 // day): each slope's tile courses, a record a line (butt-capped, `opacity=".3"`, in its roof's colour darkened, where
 // the slope turns to the eye) and the lit ridge (round-capped, `opacity=".55"`, #F4EEE2, whichever way its slopes turn),
 // drawn after the roofs' thin edges over what lies under them (premultiplied source over, as SVG's opacity). A record is
-// a beam's six vectors with v2.w its flags and opacity and v3.w its colour (0xRRGGBB).
+// a beam's six vectors with v2.w its flags and opacity and v3.w its colour (0xRRGGBB). A kit wall's boards' lines
+// (geometry::KitWall; trad_wall's) are records alike, butt-capped at `opacity=".32"` where their wall turns to the eye,
+// on their wall's plane (its face's: v2's normal through v3's test point) at the kit's lines' lead, drawn before the
+// material faces (passes/Walls.hpp's kit walls' phase).
 static const uint BUILDING_ROOF_LINE_VECTORS = 6u;
 static const uint BUILDING_ROOF_LINE_VERTICES = 6u;
 static const uint BUILDING_ROOF_LINE_UNTURNED = 1u;      ///< drawn whichever way its face turns (the ridge)
 static const uint BUILDING_ROOF_LINE_ROUND = 2u;         ///< round caps (the ridge); butt without (the courses)
+static const uint BUILDING_ROOF_LINE_ON_WALL = 4u;       ///< on its wall's plane (a kit wall's board line)
 static const uint BUILDING_ROOF_LINE_OPACITY_SHIFT = 8u; ///< bits 8-15: its opacity in hundredths
 static const uint BUILDING_ROOF_RIDGE_RGB = 0xF4EEE2u;
 /// Its lead (2^-11 + 2^-12): over its slope, a kit's eaves' or not, and the slope's own thin stroke, wherever its
 /// width lies on the slope (the slope's depth changes across it; a line's quad keeps its centre's).
 static const float BUILDING_ROOF_LINE_LEAD = 7.32421875e-4f;
 
-/// A kit roof's line as the frame draws it: its segment (a beam's), its caps, its colour and its opacity.
+/// A kit roof's line as the frame draws it: its segment (a beam's), its caps, its colour and its opacity; a kit wall's
+/// board line its wall's plane and the span its reciprocal depths keep within (its ends' and that plane's there,
+/// widened as a shape's).
 struct BuildingRoofLine {
     BuildingBeam line;
     bool round;
     uint rgb;
     float opacity;
+    bool on_wall;
+    float4 plane;
+    float lo;
+    float hi;
 };
 
 /// The roof line of record v0 to v5 at the frame's camera.
@@ -2310,9 +2320,35 @@ inline BuildingRoofLine building_roof_line(FrameCamera cam, uint4 v0, uint4 v1, 
     r.round = (flags & BUILDING_ROOF_LINE_ROUND) != 0u;
     r.rgb = v3.w;
     r.opacity = float((flags >> BUILDING_ROOF_LINE_OPACITY_SHIFT) & 0xFFu) / 100.0f;
+    r.on_wall = (flags & BUILDING_ROOF_LINE_ON_WALL) != 0u;
+    float4 none = {0.0f, 0.0f, 1.0f, 1.0f};
+    r.plane = none;
+    r.lo = 0.0f;
+    r.hi = 0.0f;
+    TilePlace place = building_record_place(v4, v5);
     r.line = building_segment(cam, v0, v1, v4, v5);
-    if ((flags & BUILDING_ROOF_LINE_UNTURNED) == 0u && !building_record_turned(v2, v3, building_record_place(v4, v5))) {
+    if ((flags & BUILDING_ROOF_LINE_UNTURNED) == 0u && !building_record_turned(v2, v3, place)) {
         r.line.drawn = false;
+    }
+    if (r.on_wall && r.line.drawn) {
+        BuildingFace f;
+        float3 n = {asfloat(v2.x), asfloat(v2.y), asfloat(v2.z)};
+        float3 t = {asfloat(v3.x), asfloat(v3.y), asfloat(v3.z)};
+        f.normal = n;
+        f.area = 0.0f;
+        f.test = t;
+        f.flags = 0u;
+        r.plane = building_window_plane(cam, place, f);
+        float lo = r.line.r0 < r.line.r1 ? r.line.r0 : r.line.r1;
+        float hi = r.line.r0 > r.line.r1 ? r.line.r0 : r.line.r1;
+        float a = building_window_plane_recip(cam, r.plane, r.line.p0);
+        float b = building_window_plane_recip(cam, r.plane, r.line.p1);
+        lo = a < lo ? a : lo;
+        lo = b < lo ? b : lo;
+        hi = a > hi ? a : hi;
+        hi = b > hi ? b : hi;
+        r.lo = lo - lo * BUILDING_PLANE_SPAN;
+        r.hi = hi + hi * BUILDING_PLANE_SPAN;
     }
     return r;
 }
@@ -2328,6 +2364,26 @@ inline float building_segment_recip(BuildingBeam b, float2 p) {
     return b.r0 + (b.r1 - b.r0) * s;
 }
 
+/// The reciprocal depth a roof line draws at CSS point `p`, and its lead: along it (building_segment_recip's) with the
+/// roof lines' lead, or a kit wall's board line its wall's plane's there, kept within its span, with the kit's lines'.
+inline float building_roof_line_recip(FrameCamera cam, BuildingRoofLine r, float2 p) {
+    if (!r.on_wall) {
+        return building_segment_recip(r.line, p);
+    }
+    float v = building_window_plane_recip(cam, r.plane, p);
+    if (!(v >= r.lo)) {
+        v = r.lo;
+    }
+    if (!(v <= r.hi)) {
+        v = r.hi;
+    }
+    return v;
+}
+
+inline float building_roof_line_lead(BuildingRoofLine r) {
+    return r.on_wall ? BUILDING_KIT_LINES_LEAD : BUILDING_ROOF_LINE_LEAD;
+}
+
 /// Whether CSS point `p` lies within half a line's width of its segment, its ends cut square there (butt caps).
 inline bool building_segment_covers_butt(BuildingBeam b, float2 p) {
     float3 u = building_beam_along(b);
@@ -2340,4 +2396,76 @@ inline bool building_segment_covers_butt(BuildingBeam b, float2 p) {
     }
     float d = (p.y - b.p0.y) * u.x - (p.x - b.p0.x) * u.y;
     return (d < 0.0f ? -d : d) <= b.half;
+}
+
+// ---------------------------------------------------------------------------------------------- a kit's walls' shadows
+
+// The shadow of a tradition's kit's eaves on a wall (geometry::KitWall; render/amsterdam.py's trad_wall, with weather by
+// day): quad_at(a, b, top - min(1.1, eaves · 1.7), top, 0, 1, 0.025, n) where its wall turns to the eye, as face()
+// keeps it (Camera.poly with a margin of 300 px, its area 0.12 px² or more), filled with #141822 at `opacity=".26"` on
+// its wall's plane at the kit's shadow's lead, over what lies under it (premultiplied source over), before the material
+// faces (passes/Walls.hpp's kit walls' phase). The CPU writes each record the frame draws (6 uint4): v0 its quad's foot,
+// x and z of its corners at a and at b (tile-local float bits); v1 its foot's and its top's heights, its painter slot
+// and its colour (0xRRGGBB); v2 and v3 its wall's face's normal and test point (its turn, and its plane), v2.w its
+// opacity in hundredths; v4 and v5 its tile's place.
+static const uint BUILDING_KIT_SHADOW_VECTORS = 6u;
+static const uint BUILDING_KIT_SHADOW_VERTICES = 9u;
+static const uint BUILDING_KIT_SHADOW_RGB = 0x141822u;
+static const uint BUILDING_KIT_SHADOW_OPACITY = 26u;
+
+/// A kit wall's eaves' shadow as the frame draws it: its shape on its wall's plane (none: not drawn), that plane, its
+/// painter slot, its colour and its opacity.
+struct BuildingKitShadow {
+    BuildingWindowShape shape;
+    float4 plane;
+    uint slot;
+    uint rgb;
+    float opacity;
+};
+
+/// The eaves' shadow of record v0 to v5 at the frame's camera.
+inline BuildingKitShadow building_kit_shadow(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2, uint4 v3, uint4 v4,
+                                             uint4 v5) {
+    BuildingKitShadow k;
+    k.shape = building_window_nothing();
+    float4 none = {0.0f, 0.0f, 1.0f, 1.0f};
+    k.plane = none;
+    k.slot = v1.z;
+    k.rgb = v1.w;
+    k.opacity = float(v2.w & 0xFFu) / 100.0f;
+    TilePlace place = building_record_place(v4, v5);
+    if (!building_record_turned(v2, v3, place)) {
+        return k;
+    }
+    BuildingPrim q;
+    float3 c0 = {asfloat(v0.x), asfloat(v1.x), asfloat(v0.y)};
+    float3 c1 = {asfloat(v0.z), asfloat(v1.x), asfloat(v0.w)};
+    float3 c2 = {asfloat(v0.z), asfloat(v1.y), asfloat(v0.w)};
+    float3 c3 = {asfloat(v0.x), asfloat(v1.y), asfloat(v0.y)};
+    q.c0 = c0;
+    q.c1 = c1;
+    q.c2 = c2;
+    q.c3 = c3;
+    q.face = 0u;
+    q.sample = BUILDING_NO_SAMPLE;
+    q.item = 0u;
+    q.flags = 0u;
+    q.near_slot = 0u;
+    q.far_slot = 0u;
+    q.lead = 0u;
+    BuildingWindowShape s = building_window_cut_in(cam, place, q, BUILDING_MARGIN);
+    // face(): `if not sp or area(sp) < 0.12: return ''`
+    if (s.count == 0u || s.area < BUILDING_MIN_AREA) {
+        return k;
+    }
+    BuildingFace f;
+    float3 n = {asfloat(v2.x), asfloat(v2.y), asfloat(v2.z)};
+    float3 t = {asfloat(v3.x), asfloat(v3.y), asfloat(v3.z)};
+    f.normal = n;
+    f.area = 0.0f;
+    f.test = t;
+    f.flags = 0u;
+    k.plane = building_window_plane(cam, place, f);
+    k.shape = building_window_on_plane(cam, k.plane, s);
+    return k;
 }

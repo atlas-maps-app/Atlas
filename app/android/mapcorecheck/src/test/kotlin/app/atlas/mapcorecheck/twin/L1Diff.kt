@@ -805,8 +805,15 @@ object L1Diff {
         return w
     }
 
-    /** Aligns [twin] onto [port] in the view [viewBox] (min x, min y, width, height) and compares each match. */
-    fun diff(layer: String, port: List<L1Element>, twin: List<L1Element>, viewBox: FloatArray, slivers: Boolean = false): Report {
+    /**
+     * Aligns [twin] onto [port] in the view [viewBox] (min x, min y, width, height) and compares each match. The twin's
+     * elements of a [known] difference's keys left over are extras whatever their size, never slivers (the caller passes
+     * them as known).
+     */
+    fun diff(
+        layer: String, port: List<L1Element>, twin: List<L1Element>, viewBox: FloatArray, slivers: Boolean = false,
+        known: Set<String> = emptySet(),
+    ): Report {
         val v = View(viewBox)
         val r = Report(layer)
         val ps = ArrayList<Seen>()
@@ -954,7 +961,7 @@ object L1Diff {
         for (j in ts.indices) {
             if (takenT[j]) continue
             if (!shows(ts[j])) { hiddenT++; r.twinOutside++; continue }
-            if (slivers && sliver(ts[j])) { r.slivers++; note(r, ts[j]); continue }
+            if (slivers && shortKey(ts[j].e.key) !in known && sliver(ts[j])) { r.slivers++; note(r, ts[j]); continue }
             r.extra.merge(shortKey(ts[j].e.key), 1, Int::plus)
             if (r.firstExtra.size < 5) r.firstExtra += "${ts[j].e.where} ${shortKey(ts[j].e.key)}: ${ts[j].vertices.joinToString(" ") { p1(it) }} [${ts[j].shape}]"
         }

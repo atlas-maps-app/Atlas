@@ -5,6 +5,7 @@
 // samples end where K8's trees' begin, every item's slots hold its primitives in each variant, and the primitives lie
 // in their cells' ranges. MT/buildings/StageTParityTest.kt holds the corners to the port's own face() calls.
 #include "base/arena.hpp"
+#include "geometry/Ground.hpp"
 #include "geometry/Houseboats.hpp"
 #include "geometry/Walls.hpp"
 #include "load/Window.hpp"
@@ -69,8 +70,10 @@ struct Fixture {
     case gm::PrimKind::skillion: return K::skillion;
     case gm::PrimKind::mansard: return K::mansard;
     case gm::PrimKind::mansard_top: return K::mansard_top;
+    case gm::PrimKind::band: return K::band;
     case gm::PrimKind::deck:
-    case gm::PrimKind::cabin_roof: break;
+    case gm::PrimKind::cabin_roof:
+    case gm::PrimKind::corner_board: break;
     }
     return K::crown; // no sample: never compared
 }
@@ -401,7 +404,7 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
         atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{.kit_eaves = fx::kit_eaves}, 0, {});
     const Checked c = check_tile(g, st);
     CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
-    REQUIRE(g.items.size() == 3);
+    REQUIRE(g.items.size() == 5);
     // each building's roof: its primitives drawn with weather (the kit's), without (the plain one) and either way
     struct Roof {
         std::map<gm::PrimKind, int> weather;
@@ -411,7 +414,7 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
         std::uint32_t first_kit = ~0U; // the first of its kit's, near
         std::uint32_t last_kit = 0;
     };
-    std::array<Roof, 3> roofs;
+    std::array<Roof, 5> roofs;
     const auto kind_of_roof = [](gm::PrimKind k) {
         return k == gm::PrimKind::slope || k == gm::PrimKind::gable || k == gm::PrimKind::hip;
     };
@@ -440,7 +443,9 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
     CHECK(roofs[2].weather.empty());
     CHECK(roofs[2].dry.empty());
     CHECK(roofs[2].either == std::map<K, int>{{K::slope, 2}, {K::gable, 2}});
-    for (std::size_t r = 0; r < 2; ++r) CHECK(roofs.at(r).first_kit > roofs.at(r).last_dry);
+    for (const std::size_t r : std::array<std::size_t, 4>{0, 1, 3, 4}) {
+        CHECK(roofs.at(r).first_kit > roofs.at(r).last_dry);
+    }
     // the kit's gables face out of the footprint, and its slopes start at the eaves: their eave corners under the
     // walls' top by the eaves times the roof's slope (5 m over the half width from the ridge to the long walls) and
     // outside it
@@ -476,7 +481,7 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
     CHECK(gables == 2);
     CHECK(slopes == 2);
     // the hoist beams: the kit's two (its gables' outward normals, after its roof's slopes) and the old house's two
-    std::array<int, 3> beams{};
+    std::array<int, 5> beams{};
     for (const gm::RoofBeam& b : g.beams) {
         const std::uint32_t r = g.items[b.item].record;
         ++beams.at(r);
@@ -488,13 +493,13 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
             CHECK(((b.to.x - b.from.x) * (b.from.x - ce.x)) + ((b.to.z - b.from.z) * (b.from.z - ce.z)) > 0);
         }
     }
-    CHECK(beams == std::array<int, 3>{2, 0, 2});
+    CHECK(beams == std::array<int, 5>{2, 0, 2, 0, 0});
     // the tile courses, a record a slope of the kit's (its tiles' or its slates' step), after its beams; the lit ridges
-    std::array<int, 3> courses{};
+    std::array<int, 5> courses{};
     for (const gm::RoofCourses& cs : g.courses) {
         const std::uint32_t r = g.items[cs.item].record;
         ++courses.at(r);
-        CHECK(cs.rstep == (r == 0 ? 0.33 : 0.26));
+        CHECK(cs.rstep == (r == 0 || r == 4 ? 0.33 : 0.26));
         CHECK(cs.k == static_cast<std::uint32_t>(gm::kt_int(gm::dist3(cs.pa, cs.qa) / cs.rstep)));
         CHECK(cs.k > 1);
         CHECK(cs.near_slot > roofs.at(r).last_kit);
@@ -502,8 +507,8 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
             if (b.item == cs.item) CHECK(cs.near_slot > b.near_slot);
         }
     }
-    CHECK(courses == std::array<int, 3>{2, 4, 0});
-    std::array<int, 3> ridges{};
+    CHECK(courses == std::array<int, 5>{2, 4, 0, 2, 4});
+    std::array<int, 5> ridges{};
     for (const gm::RoofRidge& rd : g.ridges) {
         const std::uint32_t r = g.items[rd.item].record;
         ++ridges.at(r);
@@ -514,23 +519,183 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
         }
         CHECK(rd.near_slot < g.items[rd.item].near_slots);
     }
-    CHECK(ridges == std::array<int, 3>{1, 1, 0});
+    CHECK(ridges == std::array<int, 5>{1, 1, 0, 1, 1});
     MESSAGE("a kit's roofs: ", g.beams.size(), " hoist beams, ", g.courses.size(), " slopes of courses, ",
             g.ridges.size(), " lit ridges; ", st.samples.crowns_first, " samples");
 }
 
-TEST_CASE("buildings: stage T of windows in a tradition's kit, Bergen's and San Gimignano's, held to K8's samples "
-          "(ATLAS_REGIONS_DIR)") {
+TEST_CASE("buildings: a tradition's kit's walls, its stucco ground floor, its timber boards and the shadow of its "
+          "eaves, held to K8's samples") {
+    namespace fx = atlas::test::building;
+    Fixture f;
+    f.t = fx::kit_tile();
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, a kit's walls");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = f.t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings(
+        {.tile = &*tile,
+         .head = &f.head,
+         .level = 0,
+         .region = {.kit_eaves = fx::kit_eaves,
+                    .kit_band = tl::KitBand{.h = fx::kit_band_h, .colour = fx::kit_band_rgb},
+                    .kit_boards = tl::KitBoards{.spacing = fx::kit_spacing, .corner = fx::kit_corner_rgb}},
+         .kind = 0});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(
+        *tile, f.head, atlas::sun::Region{.kit_eaves = fx::kit_eaves, .kit_band = fx::kit_band_h}, 0, {});
+    // every band's sample K8's (its kind, record, edge), and the buildings' samples as many as K8's
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    REQUIRE(g.items.size() == 5);
+    using K = gm::PrimKind;
+    // each wall's one-cell primitive, by its building's record and its edge
+    std::map<std::pair<std::uint32_t, std::uint32_t>, const gm::Prim*> walls;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> last_cell; // its cells' last slot, near
+    for (const gm::Prim& p : g.edged) {
+        if (p.kind != K::cell) continue;
+        const std::pair key{g.items[p.item].record, std::uint32_t{p.edge}};
+        if ((p.flags & gm::prim_flag::far) != 0) walls[key] = &p;
+        if ((p.flags & gm::prim_flag::near) != 0) last_cell[key] = std::max(last_cell[key], std::uint32_t{p.near_slot});
+        // the cells of a wall with a kit's details lead under them (prim_flag::kit): every wall of the banded house
+        // and the boarded one; the old house outside the kit none
+        const std::uint32_t r = g.items[p.item].record;
+        if (r == 3 || r == 4) CHECK((p.flags & gm::prim_flag::kit) != 0);
+        if (r == 2) CHECK((p.flags & gm::prim_flag::kit) == 0);
+    }
+    // the band on each wall of the banded house: its own face (the kit's colour, the wall's normal and test point), its
+    // sample, from the wall's foot to min(3.3, 0.45 · its height), 0.02 m out, after its wall's cells
+    std::size_t bands = 0;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<const gm::Prim*>> corners;
+    for (const gm::Prim& p : g.plain) {
+        const std::uint32_t r = g.items[p.item].record;
+        if (p.kind != K::band && p.kind != K::corner_board) continue;
+        CHECK((p.flags & (gm::prim_flag::weather | gm::prim_flag::near | gm::prim_flag::far)) ==
+              (gm::prim_flag::weather | gm::prim_flag::near | gm::prim_flag::far));
+        CHECK((p.flags & gm::prim_flag::dry) == 0);
+        CHECK(gm::stroke_of(p.kind) == 0);
+        const std::pair key{r, std::uint32_t{p.edge}};
+        REQUIRE(walls.contains(key));
+        const gm::Prim& wall = *walls.at(key);
+        const gm::Face& wf = g.faces[wall.face];
+        const gm::Face& pf = g.faces[p.face];
+        CHECK(pf.normal == wf.normal);
+        CHECK(pf.test == wf.test);
+        CHECK(p.far_slot > wall.far_slot);
+        if (last_cell.contains(key)) CHECK(p.near_slot > last_cell.at(key));
+        if (p.kind == K::band) {
+            ++bands;
+            CHECK(r == 3);
+            CHECK(pf.kit == gm::KitPart::band);
+            CHECK(pf.lit == gm::Lit::sun);
+            CHECK(pf.base == fx::kit_band_rgb);
+            CHECK(p.sample != gm::no_sample);
+            CHECK(p.p[0].y == 0.0);
+            CHECK(p.p[2].y == fx::kit_band_h); // min(3.3, 0.45 · 9)
+            CHECK(p.p[0].x == doctest::Approx(wall.p[0].x + (wf.normal.x * 0.02)).epsilon(1e-12));
+            CHECK(p.p[0].z == doctest::Approx(wall.p[0].z + (wf.normal.z * 0.02)).epsilon(1e-12));
+        } else {
+            corners[key].push_back(&p);
+            CHECK(r == 4);
+            CHECK(pf.kit == gm::KitPart::corner);
+            CHECK(pf.lit == gm::Lit::day);
+            CHECK(pf.base == fx::kit_corner_rgb);
+            CHECK(p.sample == gm::no_sample);
+            CHECK(p.p[0].y == 0.0);
+            CHECK(p.p[2].y == 6.0);
+            // 0.16 m wide, at either end of the wall, 0.03 m out
+            CHECK(gm::dist3(p.p[0], p.p[1]) == doctest::Approx(0.16).epsilon(1e-9));
+            const gm::V3 end = p.part == 0 ? wall.p[0] : wall.p[1];
+            const gm::V3 at = p.part == 0 ? p.p[0] : p.p[1];
+            CHECK(at.x == doctest::Approx(end.x + (wf.normal.x * 0.03)).epsilon(1e-12));
+            CHECK(at.z == doctest::Approx(end.z + (wf.normal.z * 0.03)).epsilon(1e-12));
+        }
+    }
+    CHECK(bands == 4);
+    CHECK(corners.size() == 4);
+    for (const auto& [key, cs] : corners) {
+        REQUIRE(cs.size() == 2);
+        CHECK(cs[0]->part == 0);
+        CHECK(cs[1]->part == 1);
+        CHECK(cs[1]->near_slot == cs[0]->near_slot + 1);
+    }
+    // the kit walls' records: the boarded house's four walls their boards' lines and (a hipped roof) the eaves' shadow
+    // between their corner boards' slots and after them; the banded house's and the first kit house's walls along
+    // their ridges a shadow (gabled), the hipped one's every wall; none outside the kit
+    std::array<int, 5> kit_walls{};
+    std::array<int, 5> shadows{};
+    const gm::Rgba dk = gm::darken(gm::rgba(0xB8432F), 0.62);
+    const std::uint32_t lines_rgb = (std::uint32_t{dk.r} << 16U) | (std::uint32_t{dk.g} << 8U) | dk.b;
+    for (const gm::KitWall& kw : g.kit_walls) {
+        const std::uint32_t r = g.items[kw.item].record;
+        ++kit_walls.at(r);
+        if (kw.shadow) ++shadows.at(r);
+        const double elen = gm::hypot(kw.ex, kw.ez);
+        CHECK(g.faces[kw.face].normal == kw.nrm);
+        if (kw.shadow) {
+            const double top = r == 4 ? 6.0 : (r == 3 ? 9.0 : 10.0);
+            CHECK(kw.top == top);
+            CHECK(kw.shade[0].y == top - (fx::kit_eaves * 1.7));
+            CHECK(kw.shade[2].y == top);
+            CHECK(kw.shade[0].x == doctest::Approx(kw.a.x + (kw.nrm.x * 0.025)).epsilon(1e-12));
+            CHECK(kw.shadow_near < g.items[kw.item].near_slots);
+            CHECK(kw.shadow_far < g.items[kw.item].far_slots);
+        }
+        if (r == 4) {
+            CHECK(kw.shadow);
+            CHECK(kw.boards == static_cast<std::uint32_t>(gm::kt_int(elen / fx::kit_spacing)));
+            CHECK(kw.boards > 1);
+            CHECK(kw.spacing == fx::kit_spacing);
+            CHECK(kw.rgb == lines_rgb);
+            // the port's order on the wall: its lines, its corner boards, its shadow
+            const gm::Prim* first = nullptr;
+            for (const auto& [key, list] : corners) {
+                const gm::Prim& w = *walls.at(key);
+                if (key.first == r && gm::dist3(w.p[0], gm::V3{kw.a.x, kw.y0, kw.a.z}) == 0.0) first = list[0];
+            }
+            REQUIRE(first != nullptr);
+            CHECK(kw.lines_near + 1 == first->near_slot);
+            CHECK(kw.shadow_near == first->near_slot + 2);
+            CHECK(kw.lines_far + 1 == first->far_slot);
+        } else {
+            CHECK(kw.boards == 0);
+        }
+        if (r == 3 || r == 0) {
+            // along the ridge: the long walls (14 m), not the gables
+            CHECK(elen > 12.0);
+        }
+    }
+    CHECK(kit_walls == std::array<int, 5>{2, 4, 0, 2, 4});
+    CHECK(shadows == kit_walls);
+    // the cornice: the kit's on the banded house (its walls over 5 m), none on the first kit house
+    bool cornice3 = false;
+    bool cornice0 = false;
+    for (const gm::WindowWall& w : g.window_walls) {
+        const std::uint32_t r = g.items[g.edged[w.wall].item].record;
+        if ((w.flags & gm::window_flag::cornice) == 0) continue;
+        cornice3 = cornice3 || r == 3;
+        cornice0 = cornice0 || r == 0;
+    }
+    CHECK(cornice3);
+    CHECK(!cornice0);
+    MESSAGE("a kit's walls: ", bands, " bands, ", corners.size() * 2, " corner boards, ", g.kit_walls.size(),
+            " walls with lines or shadows; ", st.samples.crowns_first, " samples");
+}
+
+TEST_CASE("buildings: stage T of windows in a tradition's kit, Bergen's, San Gimignano's and Notting Hill's, held to "
+          "K8's samples (ATLAS_REGIONS_DIR)") {
     const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
     if (regions.empty()) {
         MESSAGE("ATLAS_REGIONS_DIR is not set: no window of a kit is built here");
         return;
     }
-    // the window around Bryggen's wharf (no_timber: gabled roofs of tiles over 0.35 m eaves) and San Gimignano's
-    // towers (it_tuscan: hipped roofs over 0.55 m)
-    const std::array<std::pair<std::string_view, tl::TileKey>, 2> windows{{
+    // the window around Bryggen's wharf (no_timber: gabled roofs of tiles over 0.35 m eaves, timber boards), San
+    // Gimignano's towers (it_tuscan: hipped roofs over 0.55 m) and Notting Hill's terraces (gb_terrace: stucco ground
+    // floors under brick, cornices, 0.15 m eaves)
+    const std::array<std::pair<std::string_view, tl::TileKey>, 3> windows{{
         {"bergen", tl::tile_of(14, 603'975'000, 53'245'000)},
         {"sangimignano", tl::tile_of(14, 434'677'000, 110'432'000)},
+        {"nottinghill", tl::tile_of(14, 515'150'000, -2'040'000)},
     }};
     for (const auto& [name, key] : windows) {
         std::ifstream in(std::filesystem::path(regions) / name / "raw.json", std::ios::binary);
@@ -555,15 +720,18 @@ TEST_CASE("buildings: stage T of windows in a tradition's kit, Bergen's and San 
         std::vector<std::byte> scratch;
         auto tile = pack->decode(pack->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
         ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
-        const gm::TileBuildings g = gm::build_buildings({.tile = &*tile,
-                                                         .head = pack->head(),
-                                                         .level = 0,
-                                                         .region = {.water_y = style.water_y,
-                                                                    .hull = style.hull,
-                                                                    .deck = style.deck,
-                                                                    .paris = style.paris,
-                                                                    .kit_eaves = eaves},
-                                                         .kind = 0});
+        const gm::TileBuildings g =
+            gm::build_buildings({.tile = &*tile,
+                                 .head = pack->head(),
+                                 .level = 0,
+                                 .region = {.water_y = style.water_y,
+                                            .hull = style.hull,
+                                            .deck = style.deck,
+                                            .paris = style.paris,
+                                            .kit_eaves = eaves,
+                                            .kit_band = style.kit ? style.kit->band : std::nullopt,
+                                            .kit_boards = style.kit ? style.kit->boards : std::nullopt},
+                                 .kind = 0});
         const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, *pack->head(), atlas::sun::region_of(style), 0, {});
         const Checked c = check_tile(g, st);
         CHECK_MESSAGE(c.wrong == 0, name, ": ", c.first_wrong);
@@ -577,9 +745,31 @@ TEST_CASE("buildings: stage T of windows in a tradition's kit, Bergen's and San 
         CHECK(kit > 0);
         CHECK(!g.ridges.empty());
         CHECK(!g.courses.empty());
+        // its kit's walls: the shadows of its eaves, Bergen's timber boards' lines and corner boards, Notting Hill's
+        // stucco ground floors
+        std::size_t corners = 0;
+        std::size_t bands = 0;
+        std::size_t boarded = 0;
+        std::size_t shadows = 0;
+        for (const gm::Prim& p : g.plain) {
+            corners += p.kind == gm::PrimKind::corner_board ? 1 : 0;
+            bands += p.kind == gm::PrimKind::band ? 1 : 0;
+        }
+        for (const gm::KitWall& kw : g.kit_walls) {
+            boarded += kw.boards > 1 ? 1 : 0;
+            shadows += kw.shadow ? 1 : 0;
+        }
+        CHECK(shadows > 0);
+        if (name == "bergen") {
+            CHECK(boarded > 0);
+            CHECK(corners > 0);
+        }
+        if (name == "nottinghill") CHECK(bands > 0);
         MESSAGE(name, "'s window ", place.name, ": eaves ", eaves, " m; ", c.prims, " primitives, ", kit,
                 " faces of its kit's roofs, ", g.courses.size(), " slopes of courses, ", g.ridges.size(),
-                " lit ridges, ", g.beams.size(), " hoist beams; ", c.wrong, " not K8's");
+                " lit ridges, ", g.beams.size(), " hoist beams; ", shadows, " walls with their eaves' shadows, ",
+                boarded, " with their boards' lines, ", corners, " corner boards, ", bands, " bands; ", c.wrong,
+                " not K8's");
     }
 }
 
@@ -668,7 +858,9 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                                 .hull = style.hull,
                                 .deck = style.deck,
                                 .paris = style.paris,
-                                .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt},
+                                .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt,
+                                .kit_band = style.kit ? style.kit->band : std::nullopt,
+                                .kit_boards = style.kit ? style.kit->boards : std::nullopt},
                      .kind = 0});
                 ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                 const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, *head, region, level, {});
@@ -779,7 +971,7 @@ namespace {
     if (a.edged_first != b.edged_first || a.plain_first != b.plain_first) return "the cells' ranges";
     if (!std::ranges::equal(a.faces, b.faces, [](const gm::Face& f, const gm::Face& g) {
             return f.base == g.base && f.normal == g.normal && f.test == g.test && f.lit == g.lit &&
-                   f.facing == g.facing;
+                   f.facing == g.facing && f.kit == g.kit;
         }))
         return "the faces";
     if (!std::ranges::equal(a.polygons, b.polygons, [](const gm::Polygon& f, const gm::Polygon& g) {
@@ -806,6 +998,29 @@ namespace {
     if (a.window_walls_first != b.window_walls_first) return "the windowed walls' cells";
     if (a.windows != b.windows || a.samples != b.samples) return "the windows' or the samples' count";
     if (a.item_facades != b.item_facades) return "the items' facades";
+    if (!std::ranges::equal(a.beams, b.beams, [](const gm::RoofBeam& f, const gm::RoofBeam& g) {
+            return f.item == g.item && f.face == g.face && f.from == g.from && f.to == g.to &&
+                   f.near_slot == g.near_slot && f.far_slot == g.far_slot;
+        }))
+        return "the hoist beams";
+    if (!std::ranges::equal(a.courses, b.courses, [](const gm::RoofCourses& f, const gm::RoofCourses& g) {
+            return f.item == g.item && f.face == g.face && f.pa == g.pa && f.pb == g.pb && f.qa == g.qa &&
+                   f.qe == g.qe && f.k == g.k && f.rstep == g.rstep && f.rgb == g.rgb && f.near_slot == g.near_slot &&
+                   f.far_slot == g.far_slot;
+        }))
+        return "a kit roof's courses";
+    if (!std::ranges::equal(a.ridges, b.ridges, [](const gm::RoofRidge& f, const gm::RoofRidge& g) {
+            return f.item == g.item && f.from == g.from && f.to == g.to && f.near_slot == g.near_slot &&
+                   f.far_slot == g.far_slot;
+        }))
+        return "a kit roof's ridges";
+    if (!std::ranges::equal(a.kit_walls, b.kit_walls, [](const gm::KitWall& f, const gm::KitWall& g) {
+            return f.item == g.item && f.face == g.face && f.a == g.a && f.ex == g.ex && f.ez == g.ez &&
+                   f.nrm == g.nrm && f.y0 == g.y0 && f.top == g.top && f.boards == g.boards && f.spacing == g.spacing &&
+                   f.rgb == g.rgb && f.shadow == g.shadow && f.shade == g.shade && f.lines_near == g.lines_near &&
+                   f.lines_far == g.lines_far && f.shadow_near == g.shadow_near && f.shadow_far == g.shadow_far;
+        }))
+        return "a kit's walls";
     atlas::passes::BuildingTile x;
     atlas::passes::BuildingTile y;
     if (atlas::passes::heap_words(a, 0.0, 0.0, x) != atlas::passes::heap_words(b, 0.0, 0.0, y))

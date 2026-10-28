@@ -215,6 +215,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     windows(b, rows, words, place, cells, sun);
     beams(b, rows, place);
     roof_lines(b, rows, place);
+    kit_walls(b, rows, place);
 }
 
 std::int32_t BuildingTwin::item_of(const passes::BuildingTile& b, std::uint32_t item) {
@@ -987,6 +988,114 @@ void BuildingTwin::roof_lines(const passes::BuildingTile& b, std::span<const std
         if (!rl.line.drawn) continue;
         lines.assign(1, rl.line);
         emit(r.item, at->first, lines, true, shaders::BUILDING_ROOF_RIDGE_RGB, rl.opacity, width);
+    }
+}
+
+void BuildingTwin::kit_walls(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
+                             const shaders::TilePlace& place) {
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U) return;
+    const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+    const auto offset = std::bit_cast<hlsl::uint4>(place.offset);
+    const auto scale = std::bit_cast<hlsl::uint4>(place.scale);
+    // as the frame's records give them (Buildings::write_window_jobs's): its item drawn, its slot by its item's band
+    const auto placed = [&](std::uint32_t item, std::uint16_t near_slot,
+                            std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
+        if (item >= rows.size()) return std::nullopt;
+        const std::uint32_t row = rows[item];
+        const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
+        if (rank == shaders::RANK_NONE) return std::nullopt;
+        const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+        return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
+                         row < distances_.depth.size() ? distances_.depth[row] : 0.0};
+    };
+    std::vector<shaders::BuildingRoofLine> lines;
+    for (const passes::BuildingTile::KitWall& k : b.kit_walls) {
+        const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), k.rgb};
+        // its boards' lines: `<path d="..." stroke="..." stroke-width=".45" opacity=".32" fill="none"/>`, the lines
+        // whose both ends project
+        const auto lines_at = k.boards >= 2 ? placed(k.item, k.lines_near, k.lines_far) : std::nullopt;
+        if (lines_at && passes::kit_lines_shown(lines_at->second, distances_.focal, k.spacing)) {
+            const std::uint32_t flags =
+                shaders::BUILDING_ROOF_LINE_ON_WALL | (32U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT);
+            const hlsl::uint4 normal = {bits(k.normal[0]), bits(k.normal[1]), bits(k.normal[2]), flags};
+            lines.clear();
+            float opacity = 0.0F;
+            for (std::uint32_t j = 1; j < k.boards; ++j) {
+                const auto [a, e] = passes::kit_line_ends(k, j);
+                const hlsl::uint4 from = {bits(a[0]), bits(a[1]), bits(a[2]), lines_at->first};
+                const hlsl::uint4 to = {bits(e[0]), bits(e[1]), bits(e[2]), passes::kit_lines_width};
+                const shaders::BuildingRoofLine r =
+                    shaders::building_roof_line(cam, from, to, normal, test, offset, scale);
+                opacity = r.opacity;
+                if (r.line.drawn) lines.push_back(r);
+            }
+            if (!lines.empty()) {
+                points_.clear();
+                subpaths_.clear();
+                for (const shaders::BuildingRoofLine& l : lines) {
+                    points_.push_back({.x = l.line.p0.x, .y = l.line.p0.y});
+                    points_.push_back({.x = l.line.p1.x, .y = l.line.p1.y});
+                }
+                for (std::size_t q = 0; q < points_.size(); q += 2) {
+                    subpaths_.push_back({.points = std::span<const Point>(points_).subspan(q, 2), .closed = false});
+                }
+                Style style{};
+                style.join = Join::round;
+                style.stroke = Paint::colour(argb_of(shaders::building_rgb(k.rgb)));
+                style.stroke_width = static_cast<float>(passes::kit_lines_width) / 100.0F;
+                out_.at(lines_at->first, group_, item_of(b, k.item));
+                out_.path(style, subpaths_, {.opacity = opacity});
+                if (depths_ != nullptr) {
+                    ElementDepth d{.edged = true, .tile = tile_};
+                    d.kit_walls.push_back({.lines = lines,
+                                           .shadow = {},
+                                           .plane = lines.front().plane,
+                                           .slot = lines_at->first,
+                                           .rgb = k.rgb,
+                                           .opacity = opacity});
+                    depths_->push_back(std::move(d));
+                }
+                ++elements_;
+            }
+        }
+        // its eaves' shadow: `<path d="..." fill="#141822" opacity=".26"/>`, as face() keeps it
+        const auto shadow_at = k.shadow ? placed(k.item, k.shadow_near, k.shadow_far) : std::nullopt;
+        if (shadow_at) {
+            const std::array<std::array<float, 3>, 4>& q = k.shade;
+            const hlsl::uint4 foot = {bits(q[0][0]), bits(q[0][2]), bits(q[1][0]), bits(q[1][2])};
+            const hlsl::uint4 heights = {bits(q[0][1]), bits(q[2][1]), shadow_at->first,
+                                         shaders::BUILDING_KIT_SHADOW_RGB};
+            const hlsl::uint4 normal = {bits(k.normal[0]), bits(k.normal[1]), bits(k.normal[2]),
+                                        shaders::BUILDING_KIT_SHADOW_OPACITY};
+            const hlsl::uint4 on = {test.x, test.y, test.z, 0U};
+            const shaders::BuildingKitShadow sh =
+                shaders::building_kit_shadow(cam, foot, heights, normal, on, offset, scale);
+            if (sh.shape.count != 0) {
+                points_.clear();
+                for (std::uint32_t c = 0; c < sh.shape.count; ++c) {
+                    const hlsl::float2 v = shaders::building_window_corner(sh.shape, c);
+                    points_.push_back({.x = v.x, .y = v.y});
+                }
+                Style style{};
+                style.fill = Paint::colour(argb_of(shaders::building_rgb(sh.rgb)));
+                style.join = Join::round;
+                out_.at(shadow_at->first, group_, item_of(b, k.item));
+                out_.path(style, points_, true, {.opacity = sh.opacity});
+                if (depths_ != nullptr) {
+                    ElementDepth d{.edged = true, .tile = tile_};
+                    d.kit_walls.push_back({.lines = {},
+                                           .shadow = {sh.shape},
+                                           .plane = sh.plane,
+                                           .slot = shadow_at->first,
+                                           .rgb = sh.rgb,
+                                           .opacity = sh.opacity});
+                    depths_->push_back(std::move(d));
+                }
+                ++elements_;
+            }
+        }
     }
 }
 

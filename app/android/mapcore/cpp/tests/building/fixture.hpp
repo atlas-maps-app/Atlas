@@ -189,9 +189,12 @@ inline constexpr std::uint32_t melt_features = 2;
 /// The material faces' tile's features, with an old canal house's gables and their hoist beams.
 inline constexpr std::uint32_t materials_features = 5;
 
-/// A tile of a tradition's kit (render/amsterdam.py's trad_roof, in a pack whose tradition's eaves are `kit_eaves`): a
-/// gabled house in the kit with its hoist beams and a roof of tiles, a hipped one in it with slates, and a gabled house
-/// of 1700 outside it (the plain roof and its old gables' beams), each walked clockwise as the loader leaves rings.
+/// A tile of a tradition's kit (render/amsterdam.py's trad_roof and trad_wall, in a pack whose tradition is
+/// kit_pack()'s): a gabled house in the kit with its hoist beams and a roof of tiles, a hipped one in it with slates,
+/// and a gabled house of 1700 outside it (the plain roof and its old gables' beams); a brick terrace house in the kit
+/// with its stucco ground floor and its cornice, gabled, between the first two; and a wooden house in it with its
+/// timber boards, hipped, between the hipped one and the old house; each walked clockwise as the loader leaves rings.
+/// Every wall of a kit's gabled or hipped roof takes the eaves' shadow where it runs along the ridge or under a hip.
 [[nodiscard]] inline TileBytes kit_tile() {
     namespace tl = atlas::tiles;
     namespace col = atlas::test::columns;
@@ -200,42 +203,58 @@ inline constexpr std::uint32_t materials_features = 5;
         rect_cw(0, 0, 1176, 1260),     // 0: gabled in the kit, 8 × 14 m
         rect_cw(-3500, 0, 1470, 1080), // 1: hipped in the kit, 10 × 12 m, west of it
         rect_cw(-7000, 0, 1176, 1260), // 2: gabled, outside the kit, of 1700, farther west
+        rect_cw(-1900, 0, 1323, 1260), // 3: gabled in the kit, its band and cornice, 9 × 14 m, between 1 and 0
+        rect_cw(-5600, 0, 1764, 900),  // 4: hipped in the kit, of timber boards, 12 × 10 m, between 2 and 1
     };
     LayerBytes b;
     b.id = static_cast<std::uint8_t>(tl::LayerId::building);
-    b.cells = {0, 0, 0};
+    b.cells = {0, 0, 0, 0, 0};
     const std::uint64_t kit = tl::building::flag_kit;
     b.columns = {
-        {"index", tl::Codec::delta, col::delta({0, 1, 2})},
-        {"id", tl::Codec::delta, col::delta({300, 301, 302})},
+        {"index", tl::Codec::delta, col::delta({0, 1, 2, 3, 4})},
+        {"id", tl::Codec::delta, col::delta({300, 301, 302, 303, 304})},
         {"ring", tl::Codec::geom, col::geom(rings)},
-        {"h", tl::Codec::centi, col::centi({15.0, 14.0, 15.0})},
-        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0})},
-        {"roof_h", tl::Codec::centi, col::centi({5.0, 4.0, 5.0})},
-        {"year", tl::Codec::nvarz, col::nvarz({std::nullopt, std::nullopt, 1700})},
-        {"levels", tl::Codec::nvarz, col::nvarz({3, 3, 3})},
-        {"roof", tl::Codec::str, col::str(t, {"gabled", "hipped", "gabled"})},
-        {"wall_rgb", tl::Codec::varu, col::varu({0x9C5B43, 0xC9B79A, 0x8E5A46})},
-        {"roof_rgb", tl::Codec::varu, col::varu({0x7E4A3A, 0x5A5E66, 0x9E5038})},
-        {"mat_draw", tl::Codec::str, col::str(t, {"brick", "plaster", "brick"})},
-        {"rmat_draw", tl::Codec::str, col::str(t, {"roof_tiles", "slate", "roof_tiles"})},
-        {"kind", tl::Codec::str, col::str(t, {"home", "home", "home"})},
-        {"flags", tl::Codec::varu, col::varu({kit | tl::building::flag_kit_hoist, kit, 0})},
-        {"tag:building", tl::Codec::str, col::str(t, {"house", "house", "house"})},
+        {"h", tl::Codec::centi, col::centi({15.0, 14.0, 15.0, 13.0, 9.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0, 0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({5.0, 4.0, 5.0, 4.0, 3.0})},
+        {"year", tl::Codec::nvarz, col::nvarz({std::nullopt, std::nullopt, 1700, 1860, std::nullopt})},
+        {"levels", tl::Codec::nvarz, col::nvarz({3, 3, 3, 3, 2})},
+        {"roof", tl::Codec::str, col::str(t, {"gabled", "hipped", "gabled", "gabled", "hipped"})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x9C5B43, 0xC9B79A, 0x8E5A46, 0x8A4B36, 0xB8432F})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x7E4A3A, 0x5A5E66, 0x9E5038, 0x5C6068, 0x4A4E54})},
+        {"mat_draw", tl::Codec::str, col::str(t, {"brick", "plaster", "brick", "brick", "wood"})},
+        {"rmat_draw", tl::Codec::str, col::str(t, {"roof_tiles", "slate", "roof_tiles", "slate", "roof_tiles"})},
+        {"kind", tl::Codec::str, col::str(t, {"home", "home", "home", "home", "home"})},
+        {"flags", tl::Codec::varu,
+         col::varu({kit | tl::building::flag_kit_hoist, kit, 0,
+                    kit | tl::building::flag_kit_band | tl::building::flag_kit_cornice,
+                    kit | tl::building::flag_kit_boards | tl::building::flag_wall_drawn})},
+        {"tag:building", tl::Codec::str, col::str(t, {"house", "house", "house", "terrace", "house"})},
     };
     t.layers = {b};
     return t;
 }
 
-/// The kit tile's features, and its tradition's eaves.
-inline constexpr std::uint32_t kit_features = 3;
+/// The kit tile's features, and its tradition: its eaves, its stucco ground floor's height and colour, its timber
+/// boards' spacing and its corner boards' colour (gb_terrace's and no_timber's).
+inline constexpr std::uint32_t kit_features = 5;
 inline constexpr double kit_eaves = 0.45;
+inline constexpr double kit_band_h = 3.3;
+inline constexpr std::uint32_t kit_band_rgb = 0xECE6DA;
+inline constexpr double kit_spacing = 0.2;
+inline constexpr std::uint32_t kit_corner_rgb = 0xF1EEE6;
 
-/// A pack's options for the kit tile: its style's `tradition`, with the kit's eaves.
+/// A pack's options for the kit tile: its style's `tradition`, with the kit's eaves, band and boards.
 [[nodiscard]] inline PackOptions kit_pack() {
     namespace v = atlas::test::values;
     PackOptions o;
-    o.style_tables = {{"tradition", v::map({{"eaves", v::real(kit_eaves)}})}};
+    o.style_tables = {{"tradition", v::map({{"eaves", v::real(kit_eaves)},
+                                            {"base_band", v::map({{"materials", v::list({v::text("brick")})},
+                                                                  {"h", v::real(kit_band_h)},
+                                                                  {"colour", v::text("#ECE6DA")}})},
+                                            {"boards", v::map({{"materials", v::list({v::text("wood")})},
+                                                               {"spacing", v::real(kit_spacing)},
+                                                               {"corner", v::text("#F1EEE6")}})}})}};
     return o;
 }
 

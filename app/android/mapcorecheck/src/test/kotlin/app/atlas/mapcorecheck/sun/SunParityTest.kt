@@ -415,7 +415,7 @@ class SunParityTest {
         /** CP/sun/Samples.hpp's kinds, by number. */
         val KINDS = listOf(
             "wall", "cell", "skillion_wall", "window", "pyramid", "hip", "gable", "slope", "skillion", "top", "mansard", "dormer",
-            "mansard_top", "hull", "cabin", "reflection", "quay", "quay_band", "crown",
+            "mansard_top", "hull", "cabin", "reflection", "quay", "quay_band", "crown", "band",
         )
 
         /** The footprint of a scene's building dict (its `poly`, of V2s or of pairs). */

@@ -1,12 +1,13 @@
 // The buildings' scene pipelines (plan-vector D10, K10; CP/passes/Walls.cpp): walls_vs draws a wall (as one cell, or a
 // skillion's or a houseboat's wall), or a near cell cut from its wall's record, as its outline dilated by the
 // same-colour 0.3 px edge, 16 points through the static fan of its index buffer; roofs_vs draws a roof's face or an
-// n-gon's triangle as its polygon, 5 points through a fan of 3 triangles (the corners a near plane's cut may leave,
-// repeated where there are fewer). Both read their primitive, face and colours from the walls heap (set 1, binding 1;
-// the colours the CPU's light, per tile and moment) and their building's rank entry through the tile's rows (set 0,
-// binding 1), decide it as shaders/building/building.slangh does, and write its true depth (an outline's points its
-// face plane's, a fan's points their corners'), or its painter depth under the painter switch; building_fs fills it
-// with its face's light. Opaque: never discards, its pipelines write the depth and the objects bit.
+// n-gon's triangle as its polygon (or a kit's band or corner board on a wall), 5 points through a fan of 3 triangles
+// (the corners a near plane's cut may leave, repeated where there are fewer). Both read their primitive, face and
+// colours from the walls heap (set 1, binding 1; the colours the CPU's light, per tile and moment) and their building's
+// rank entry through the tile's rows (set 0, binding 1), decide it as shaders/building/building.slangh does, and write
+// its true depth (an outline's points its face plane's, a fan's points their corners', a kit's band's or corner
+// board's its wall's plane's), or its painter depth under the painter switch; building_fs fills it with its face's
+// light. Opaque: never discards, its pipelines write the depth and the objects bit.
 //
 // The roofs' thin edges (each face's .25, .45 or .4 px stroke, drawn as the objects' thin strokes: fx/strokes.slang,
 // through passes/ObjectStrokes.hpp's pipelines): before the main pass roof_strokes_cs decides each plain primitive the
@@ -65,6 +66,8 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(20, 2)]] StructuredBuffer<uint4> material_fills;
 [[vk::binding(21, 2)]] RWStructuredBuffer<uint4> material_lines_out;
 [[vk::binding(22, 2)]] StructuredBuffer<uint4> material_lines;
+// The hoist beams' records, and the lines' (a kit's walls' boards' lines and eaves' shadows, then its roofs' lines),
+// which the CPU writes each frame.
 [[vk::binding(23, 2)]] StructuredBuffer<uint4> beams;
 [[vk::binding(24, 2)]] StructuredBuffer<uint4> roof_lines;
 // The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
@@ -183,7 +186,7 @@ BuildingOut roof_vertex(BuildingPush p, uint index, uint corner) {
         o.asked = 0u;
         return o;
     }
-    float3 point = building_plain_vertex(d.shape, corner);
+    float3 point = building_fan_vertex(frame.camera, d.shape, corner);
     float2 css = {point.x, point.y};
     o.position = clip_of(frame.camera, css, 1.0f, building_depth(frame.camera, d.shape, point.z));
     o.colour = colour_at(p, d);
@@ -1328,9 +1331,9 @@ struct RoofLineOut {
     nointerpolation uint round : ROOF_LINE_ROUND;
 };
 
-/// Vertex `v` of roof line record `index` (a kit roof's tile course or lit ridge): its quad (a beam's), at its true
-/// depth along it with the roof lines' lead, or at its slot's painter depth under the painter switch; an instance a
-/// record.
+/// Vertex `v` of roof line record `index` (a kit roof's tile course or lit ridge, or a kit wall's board line): its quad
+/// (a beam's), at its true depth along it with the roof lines' lead (a board line's on its wall's plane with the kit's
+/// lines'), or at its slot's painter depth under the painter switch; an instance a record.
 [shader("vertex")]
 RoofLineOut roof_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
     uint at = index * BUILDING_ROOF_LINE_VECTORS;
@@ -1348,10 +1351,10 @@ RoofLineOut roof_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInsta
     BuildingBeam b = r.line;
     uint corner = v < 3u ? v : (v == 3u ? 0u : v - 2u);
     float2 css = building_beam_corner(b, corner);
-    float recip = building_segment_recip(b, css);
+    float recip = building_roof_line_recip(frame.camera, r, css);
     float depth = (frame.camera.flags.x & CAMERA_PAINTER) != 0u
                       ? painter_depth(frame.camera, b.slot)
-                      : true_depth(frame.camera, recip + recip * BUILDING_ROOF_LINE_LEAD);
+                      : true_depth(frame.camera, recip + recip * building_roof_line_lead(r));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.ends = float4(b.p0, b.p1);
     o.paint = float4(building_rgb(r.rgb), r.opacity);
@@ -1390,5 +1393,38 @@ FrameTarget roof_line_fs(RoofLineOut v) {
     float3 c = mat_colour(frame.camera, v.paint.xyz, v.position.xy, mat_grain_on(frame));
     o.colour = float4(c * v.paint.w, v.paint.w);
     o.coverage = mask;
+    return o;
+}
+
+/// Vertex `v` of a kit wall's eaves' shadow, record `index` of the lines' (building_kit_shadow's): its shape's fan of 3
+/// triangles from its first corner (its last corner repeated past its count), on its wall's plane at the kit's
+/// shadow's lead, at its slot under the painter switch, in #141822 at its opacity (material_fs's flat paint); an
+/// instance a record.
+[shader("vertex")]
+MaterialOut kit_shadow_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    uint at = index * BUILDING_KIT_SHADOW_VECTORS;
+    BuildingKitShadow k = building_kit_shadow(frame.camera, roof_lines[at], roof_lines[at + 1u], roof_lines[at + 2u],
+                                              roof_lines[at + 3u], roof_lines[at + 4u], roof_lines[at + 5u]);
+    MaterialOut o;
+    o.top = float4(0.0f);
+    o.bottom = float4(0.0f);
+    o.opacity = 0.0f;
+    BuildingWindowShape s = k.shape;
+    if (s.count == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingShape shape = building_window_as_shape(s, k.plane, BUILDING_KIT_SHADOW_LEAD);
+    shape.slot = k.slot;
+    shape.depth = painter_depth(frame.camera, k.slot);
+    uint t = v / 3u;
+    uint c = v - t * 3u;
+    uint corner = c == 0u ? 0u : t + c;
+    float2 css = building_window_corner(s, corner < s.count ? corner : s.count - 1u);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.top = float4(building_rgb(k.rgb), s.p0.y);
+    o.bottom = o.top;
+    o.opacity = k.opacity;
     return o;
 }

@@ -11,14 +11,15 @@
 //
 // A tile's samples, in order: for each building, then each part, of the tile (records in the tile's order) its
 // walls (per ring edge of 0.3 m or more: the one cell, the ncol × nrow cells when they are not one, the triangle up
-// to a skillion slope), its roof (by shape), a houseboat's hull and cabin walls, its reflection's walls; then every
-// tree's crown; then every quay wall's pieces. Windows come after all of those, in the same order of records and edges,
-// as their own group: a bucket tests them only for tiles near the camera (within win_d · 1.35).
+// to a skillion slope, a kit's band), its roof (by shape), a houseboat's hull and cabin walls, its reflection's walls;
+// then every tree's crown; then every quay wall's pieces. Windows come after all of those, in the same order of records
+// and edges, as their own group: a bucket tests them only for tiles near the camera (within win_d · 1.35).
 //
-// A tradition's kit roof (trad_roof, drawn with weather) adds its gables' and slopes' samples after the plain roof's,
-// which the same building draws without weather. Not covered yet: a kit's walls' details and chimneys, the eye-level
-// wall profile (shadow_height, drawn only below 10° of pitch and within 110 m), and terrain towns' own ground (`_gy`),
-// which no render tile carries.
+// A tradition's kit (drawn with weather) adds a wall's stucco ground floor's band after its cells (trad_wall's, where
+// the building stands on the street), and its roof's gables' and slopes' samples (trad_roof's) after the plain roof's,
+// which the same building draws without weather; its corner boards are lit as they face the sun, with no sample. Not
+// covered yet: a kit's chimneys, the eye-level wall profile (shadow_height, drawn only below 10° of pitch and within
+// 110 m), and terrain towns' own ground (`_gy`), which no render tile carries.
 #pragma once
 
 #include "sun/BitTiles.hpp"
@@ -44,6 +45,7 @@ struct Region {
     bool tone = false;               ///< TONE: tall quay walls in sun are drawn in pieces
     bool no_shadows = false;         ///< S['no_shadows']: no ground shadows
     std::optional<double> kit_eaves; ///< the tradition's eaves, where the pack has a kit (its style's `tradition`)
+    std::optional<double> kit_band;  ///< its stucco ground floor's height, where its kit has one
 };
 
 /// The region's values of a pack's style.
@@ -70,13 +72,14 @@ enum class Kind : std::uint8_t {
     quay = 16,         ///< a quay wall's piece, at half the water's depth, 0.3 m out
     quay_band = 17,    ///< a piece of a tall quay wall in sun (TONE, water deeper than 2 m)
     crown = 18,        ///< a tree's crown: 3/4 up the tree, moved toward the sun by the crown's radius
+    band = 19,         ///< a kit's stucco ground floor on a wall: its middle, 0.2 m out, half its height up
 };
 
 /// The kinds' names, for logs and tests.
 [[nodiscard]] const char* name_of(Kind kind) noexcept;
 
 /// The number of kinds.
-inline constexpr std::size_t kinds = 19;
+inline constexpr std::size_t kinds = 20;
 
 /// No face: a sample tested whatever the sun (flat tops, crowns).
 inline constexpr std::uint32_t no_face = 0xFFFF'FFFFU;

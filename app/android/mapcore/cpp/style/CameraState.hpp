@@ -69,7 +69,7 @@ inline constexpr std::uint32_t heading = 32U;
 /// that show on the phone what each part costs (ENGINE.md, "On the user's phone first"). The frame skips those draws;
 /// what it decides for them is unchanged. The trees (passes/Trees.hpp); the soft shadows (their mask and their fill);
 /// the clouds' shadows (the composite's step); the water's light (its reflections and ripple, glitter, rings and
-/// glints); the facades' detail (their windows, material faces and doors).
+/// glints); the facades' detail (their windows, material faces, doors and a kit's walls' lines and eaves' shadows).
 inline constexpr std::uint32_t no_trees = 64U;
 inline constexpr std::uint32_t no_shadows = 128U;
 inline constexpr std::uint32_t no_cloud_shadows = 256U;

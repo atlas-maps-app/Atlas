@@ -238,8 +238,8 @@ using Vertex = std::array<double, 3>;
 
 /// The triangles the vertex stage draws an element as, each corner with its reciprocal depth (Shape::triangles): an
 /// edged element's outline fan `half` its stroke's width out, 14 triangles from its first point, each point its face
-/// plane's within the shape's span; a plain one's fan of 3 over its corners; an n-gon's triangles, each over its own
-/// corners.
+/// plane's within the shape's span; a plain one's fan of 3 over its corners (a kit's band's or corner board's on its
+/// wall's plane: building_fan_vertex's); an n-gon's triangles, each over its own corners.
 [[nodiscard]] std::vector<std::array<Vertex, 3>> triangles_of(const shaders::FrameCamera& cam,
                                                               const twin::ElementDepth& e, float half) {
     namespace sh = atlas::shaders;
@@ -248,7 +248,7 @@ using Vertex = std::array<double, 3>;
     const auto plain_fan = [&](const sh::BuildingShape& s) {
         fan.clear();
         for (std::uint32_t v = 0; v < sh::BUILDING_PLAIN_VERTICES; ++v) {
-            const hlsl::float3 p = sh::building_plain_vertex(s, v);
+            const hlsl::float3 p = sh::building_fan_vertex(cam, s, v);
             fan.push_back({static_cast<double>(p.x), static_cast<double>(p.y), static_cast<double>(p.z)});
         }
         for (std::size_t t = 0; t + 2 < fan.size(); ++t) out.push_back({fan[0], fan[t + 1], fan[t + 2]});
@@ -269,12 +269,13 @@ using Vertex = std::array<double, 3>;
 }
 
 /// A shape's slack (Shape::slack): 2^-18 (the rasteriser's rounding of a long thin triangle's depth, against the
-/// twin's: lavapipe's strays some twenty units of the last place), and for an edged one 2^-18 times its face plane's
-/// condition at its outline's points (the sum of dot(n, ray)'s terms' magnitudes over its own).
+/// twin's: lavapipe's strays some twenty units of the last place), and for an edged one (or one on its wall's plane)
+/// 2^-18 times its face plane's condition at its outline's points (the sum of dot(n, ray)'s terms' magnitudes over its
+/// own).
 [[nodiscard]] double slack_of(const shaders::FrameCamera& cam, const twin::ElementDepth& e,
                               std::span<const std::array<Vertex, 3>> triangles) {
     constexpr double base = 3.814697265625e-6; // 2^-18
-    if (!e.edged) return base;
+    if (!e.edged && !e.shape.on_plane) return base;
     const auto f = static_cast<double>(cam.forward.w);
     const auto n = std::array<double, 3>{static_cast<double>(e.shape.plane.x), static_cast<double>(e.shape.plane.y),
                                          static_cast<double>(e.shape.plane.z)};
@@ -474,9 +475,11 @@ void add_arches(std::vector<Shape>& out, const twin::ArchesDepth& ad, double den
         }
         // a church wall's windows' parts; their glass's veil is folded into their glass
         if (e->sequence < depths.size() && depths[e->sequence].veil) continue;
-        // a wall's material face, blended over the raster (materials_of); a kit roof's lines (roof_lines_of)
+        // a wall's material face, blended over the raster (materials_of); a kit roof's lines (roof_lines_of); a kit
+        // wall's lines and eaves' shadow (kit_walls_of)
         if (e->sequence < depths.size() && !depths[e->sequence].materials.empty()) continue;
         if (e->sequence < depths.size() && !depths[e->sequence].roof_lines.empty()) continue;
+        if (e->sequence < depths.size() && !depths[e->sequence].kit_walls.empty()) continue;
         // a hoist beam: its segment grown by half its width (its round caps), its quad's depths along it as beam_vs
         // gives them
         if (e->sequence < depths.size() && !depths[e->sequence].beams.empty()) {
@@ -897,6 +900,80 @@ struct RoofLine {
     return out;
 }
 
+/// The document's kit walls' lines and eaves' shadows as the frame draws them (roof_line_vs's on their walls' planes,
+/// kit_shadow_vs's), each list in the stream's order: every line on its own, butt-capped; each shadow a path of one
+/// shape on its wall's plane at the kit's shadow's lead, in its colour at its opacity.
+struct KitWalls {
+    std::vector<RoofLine> lines;
+    std::vector<MaterialPath> shadows;
+};
+
+[[nodiscard]] KitWalls kit_walls_of(const twin::Document& doc, double density,
+                                    std::span<const twin::ElementDepth> depths, const shaders::FrameCamera& cam) {
+    namespace sh = atlas::shaders;
+    KitWalls out;
+    for (const twin::Element* e : doc.order(twin::Layer::objects)) {
+        if (e->kind != twin::Op::path || e->sequence >= depths.size()) continue;
+        for (const twin::KitWallDepth& kd : depths[e->sequence].kit_walls) {
+            for (const sh::BuildingRoofLine& r : kd.lines) {
+                const sh::BuildingBeam& bb = r.line;
+                RoofLine l;
+                l.shape.depth = twin::ElementDepth{.edged = false, .tile = depths[e->sequence].tile};
+                l.shape.depth.shape.lead = sh::building_roof_line_lead(r);
+                l.shape.depth.shape.slot = kd.slot;
+                l.shape.depth.shape.depth = sh::painter_depth(cam, kd.slot);
+                std::array<Vertex, 4> quad{};
+                for (std::uint32_t k = 0; k < 4; ++k) {
+                    const hlsl::float2 c = sh::building_beam_corner(bb, k);
+                    quad[k] = {static_cast<double>(c.x), static_cast<double>(c.y),
+                               static_cast<double>(sh::building_roof_line_recip(cam, r, c))};
+                }
+                l.shape.triangles = {{quad[0], quad[1], quad[2]}, {quad[0], quad[2], quad[3]}};
+                l.shape.slack = slack_of(cam, l.shape.depth, l.shape.triangles);
+                l.a = {.x = static_cast<double>(bb.p0.x) * density, .y = static_cast<double>(bb.p0.y) * density};
+                l.b = {.x = static_cast<double>(bb.p1.x) * density, .y = static_cast<double>(bb.p1.y) * density};
+                l.half = static_cast<double>(bb.half) * density;
+                l.round = false;
+                l.colour = levels_of(sh::building_rgb(kd.rgb));
+                l.opacity = kd.opacity;
+                l.slot = kd.slot;
+                out.lines.push_back(std::move(l));
+            }
+            if (kd.shadow.empty()) continue;
+            const sh::BuildingWindowShape& s = kd.shadow.front();
+            MaterialPath path{.shapes = {},
+                              .lines = false,
+                              .slot = kd.slot,
+                              .paint = {},
+                              .top = 0.0F,
+                              .bottom = 0.0F,
+                              .opacity = kd.opacity};
+            path.paint.top = sh::building_rgb(kd.rgb);
+            path.paint.bottom = path.paint.top;
+            path.paint.gradient = false;
+            Shape shape;
+            shape.depth = twin::ElementDepth{.edged = true, .tile = depths[e->sequence].tile};
+            shape.depth.shape = sh::building_window_as_shape(s, kd.plane, sh::BUILDING_KIT_SHADOW_LEAD);
+            shape.depth.shape.slot = kd.slot;
+            shape.depth.shape.depth = sh::painter_depth(cam, kd.slot);
+            // its fan from its first corner, each point at its wall's plane's reciprocal depth within its span
+            std::vector<Vertex> fan;
+            for (std::uint32_t k = 0; k < s.count; ++k) {
+                const hlsl::float2 c = sh::building_window_corner(s, k);
+                shape.poly.push_back({static_cast<double>(c.x) * density, static_cast<double>(c.y) * density});
+                const float r = sh::building_plane_recip(cam, shape.depth.shape, c);
+                fan.push_back({static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)});
+            }
+            for (std::size_t k = 0; k + 2 < fan.size(); ++k)
+                shape.triangles.push_back({fan[0], fan[k + 1], fan[k + 2]});
+            shape.slack = slack_of(cam, shape.depth, shape.triangles);
+            path.shapes.push_back(std::move(shape));
+            out.shadows.push_back(std::move(path));
+        }
+    }
+    return out;
+}
+
 /// What the strokes leave each sample of a raster: its colour (levels, rounded after each blend as the attachment
 /// keeps them), how many strokes blended over it (at most 255), and whether a stroke's depth there was tied with the
 /// sample's shape's.
@@ -906,18 +983,21 @@ struct Stroked {
     std::vector<std::uint8_t> tie;
 };
 
-/// The raster `r` of `shapes` (its samples at `samples` of each pixel of w × h) with the material faces' paths
-/// `materials` blended over it first, each at its samples where one of its shapes (grown by `grow` device px) covers
+/// The raster `r` of `shapes` (its samples at `samples` of each pixel of w × h) with a kit's walls' boards' lines
+/// `kit_lines` blended over it first, each on its own as the roof lines below; then the material faces' paths
+/// `materials` (a kit's walls' eaves' shadows the first), each at its samples where one of its shapes (grown by `grow`
+/// device px) covers
 /// it and its depth passes GREATER against the sample's shape's (by true depth, or under the painter switch by their
 /// slots), at its opacity in its paint at the pixel's centre, a path of lines each sample once (the frame's stencil
 /// bit); then the strokes `segs` blended over it in their order, as the frame's two pipelines of them blend
 /// (structural mode: alpha a, the stroke's colour, over the ground and over the objects alike): each pixel's coverage
 /// (the shader's, in float) at each of its samples where the stroke's depth passes GREATER_OR_EQUAL against the
 /// sample's shape's, premultiplied source over, then 8 bits.
-[[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const MaterialPath> materials,
-                             std::span<const StrokeSeg> segs, std::span<const RoofLine> roof_lines, std::uint32_t w,
-                             std::uint32_t h, std::span<const Pt> samples, const shaders::FrameCamera& cam,
-                             std::uint32_t clear, double density, double grow) {
+[[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const RoofLine> kit_lines,
+                             std::span<const MaterialPath> materials, std::span<const StrokeSeg> segs,
+                             std::span<const RoofLine> roof_lines, std::uint32_t w, std::uint32_t h,
+                             std::span<const Pt> samples, const shaders::FrameCamera& cam, std::uint32_t clear,
+                             double density, double grow) {
     const bool painter = (cam.flags.x & shaders::CAMERA_PAINTER) != 0U;
     const std::size_t n = std::size_t{w} * h * samples.size();
     Stroked out;
@@ -934,6 +1014,72 @@ struct Stroked {
                          static_cast<std::uint8_t>(c & 0xFFU)};
     }
     constexpr double rounding = 3.814697265625e-6; // 2^-18: the rasteriser's rounding of the stroke's quad
+    // lines each on its own (roof_line_fs): at each sample within half its width of its segment (round caps: the
+    // ridge's; butt: within its length, the courses' and a kit wall's boards'), grown by `grow`, where its depth passes
+    // GREATER against the sample's shape's, at its opacity
+    const auto blend_lines = [&](std::span<const RoofLine> lines) {
+        for (const RoofLine& l : lines) {
+            const double reach = l.half + std::abs(grow) + 1.0;
+            const auto x0 = static_cast<std::int64_t>(std::floor(std::min(l.a.x, l.b.x) - reach));
+            const auto x1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.x, l.b.x) + reach));
+            const auto y0 = static_cast<std::int64_t>(std::floor(std::min(l.a.y, l.b.y) - reach));
+            const auto y1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.y, l.b.y) + reach));
+            const double dx = l.b.x - l.a.x;
+            const double dy = l.b.y - l.a.y;
+            const double len = std::sqrt((dx * dx) + (dy * dy));
+            const double ux = len > 0 ? dx / len : 1.0;
+            const double uy = len > 0 ? dy / len : 0.0;
+            const std::array<double, 3> level{static_cast<double>((l.colour >> 16U) & 0xFFU),
+                                              static_cast<double>((l.colour >> 8U) & 0xFFU),
+                                              static_cast<double>(l.colour & 0xFFU)};
+            const auto a = static_cast<double>(l.opacity);
+            for (std::int64_t y = std::max<std::int64_t>(0, y0); y <= std::min<std::int64_t>(h - 1, y1); ++y) {
+                for (std::int64_t x = std::max<std::int64_t>(0, x0); x <= std::min<std::int64_t>(w - 1, x1); ++x) {
+                    for (std::size_t s = 0; s < samples.size(); ++s) {
+                        const Pt p{.x = static_cast<double>(x) + samples[s].x,
+                                   .y = static_cast<double>(y) + samples[s].y};
+                        const double along = ((p.x - l.a.x) * ux) + ((p.y - l.a.y) * uy);
+                        bool covered = false;
+                        if (l.round) {
+                            const double t = std::clamp(along, 0.0, len);
+                            const double ex = p.x - (l.a.x + (ux * t));
+                            const double ey = p.y - (l.a.y + (uy * t));
+                            covered = std::sqrt((ex * ex) + (ey * ey)) <= l.half + grow;
+                        } else if (len > 0) {
+                            const double across = ((p.y - l.a.y) * ux) - ((p.x - l.a.x) * uy);
+                            covered = along >= -grow && along <= len + grow && std::abs(across) <= l.half + grow;
+                        }
+                        if (!covered) continue;
+                        const std::size_t i =
+                            (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
+                        const std::int32_t k = r.shape[i];
+                        bool pass = k == uncovered;
+                        if (!pass && painter) {
+                            pass = l.slot > shapes[static_cast<std::size_t>(k)].depth.shape.slot;
+                        } else if (!pass) {
+                            const auto z = static_cast<float>(depth_at(cam, l.shape, p.x / density, p.y / density));
+                            const float under = r.depth[i];
+                            pass = z > under;
+                            const double slack = shapes[static_cast<std::size_t>(k)].slack + l.shape.slack + rounding;
+                            if (std::abs(static_cast<double>(z) - static_cast<double>(under)) <=
+                                static_cast<double>(under) * slack) {
+                                out.tie[i] = 1;
+                            }
+                        }
+                        if (!pass) continue;
+                        if (out.blends[i] < 255) ++out.blends[i];
+                        std::array<std::uint8_t, 3>& dst = out.colour[i];
+                        for (std::size_t q = 0; q < 3; ++q) {
+                            const double v = (level[q] * a) + (static_cast<double>(dst[q]) * (1.0 - a));
+                            dst[q] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
+                        }
+                    }
+                }
+            }
+        }
+    };
+    // a kit wall's boards' lines first (the kit walls' phase), its eaves' shadows among the material faces' paths
+    blend_lines(kit_lines);
     // the material faces: each path's samples once (a fill's shapes never meet; a sample takes one line of all)
     std::vector<std::uint8_t> lined(n, 0);
     std::vector<std::uint8_t> taken;
@@ -1042,67 +1188,8 @@ struct Stroked {
             }
         }
     }
-    // a kit roof's tile courses and lit ridges after them, each line on its own (roof_line_fs): at each sample within
-    // half its width of its segment (round caps: the ridge's; butt: within its length, the courses'), grown by `grow`,
-    // where its depth passes GREATER against the sample's shape's, at its opacity
-    for (const RoofLine& l : roof_lines) {
-        const double reach = l.half + std::abs(grow) + 1.0;
-        const auto x0 = static_cast<std::int64_t>(std::floor(std::min(l.a.x, l.b.x) - reach));
-        const auto x1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.x, l.b.x) + reach));
-        const auto y0 = static_cast<std::int64_t>(std::floor(std::min(l.a.y, l.b.y) - reach));
-        const auto y1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.y, l.b.y) + reach));
-        const double dx = l.b.x - l.a.x;
-        const double dy = l.b.y - l.a.y;
-        const double len = std::sqrt((dx * dx) + (dy * dy));
-        const double ux = len > 0 ? dx / len : 1.0;
-        const double uy = len > 0 ? dy / len : 0.0;
-        const std::array<double, 3> level{static_cast<double>((l.colour >> 16U) & 0xFFU),
-                                          static_cast<double>((l.colour >> 8U) & 0xFFU),
-                                          static_cast<double>(l.colour & 0xFFU)};
-        const auto a = static_cast<double>(l.opacity);
-        for (std::int64_t y = std::max<std::int64_t>(0, y0); y <= std::min<std::int64_t>(h - 1, y1); ++y) {
-            for (std::int64_t x = std::max<std::int64_t>(0, x0); x <= std::min<std::int64_t>(w - 1, x1); ++x) {
-                for (std::size_t s = 0; s < samples.size(); ++s) {
-                    const Pt p{.x = static_cast<double>(x) + samples[s].x, .y = static_cast<double>(y) + samples[s].y};
-                    const double along = ((p.x - l.a.x) * ux) + ((p.y - l.a.y) * uy);
-                    bool covered = false;
-                    if (l.round) {
-                        const double t = std::clamp(along, 0.0, len);
-                        const double ex = p.x - (l.a.x + (ux * t));
-                        const double ey = p.y - (l.a.y + (uy * t));
-                        covered = std::sqrt((ex * ex) + (ey * ey)) <= l.half + grow;
-                    } else if (len > 0) {
-                        const double across = ((p.y - l.a.y) * ux) - ((p.x - l.a.x) * uy);
-                        covered = along >= -grow && along <= len + grow && std::abs(across) <= l.half + grow;
-                    }
-                    if (!covered) continue;
-                    const std::size_t i =
-                        (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
-                    const std::int32_t k = r.shape[i];
-                    bool pass = k == uncovered;
-                    if (!pass && painter) {
-                        pass = l.slot > shapes[static_cast<std::size_t>(k)].depth.shape.slot;
-                    } else if (!pass) {
-                        const auto z = static_cast<float>(depth_at(cam, l.shape, p.x / density, p.y / density));
-                        const float under = r.depth[i];
-                        pass = z > under;
-                        const double slack = shapes[static_cast<std::size_t>(k)].slack + l.shape.slack + rounding;
-                        if (std::abs(static_cast<double>(z) - static_cast<double>(under)) <=
-                            static_cast<double>(under) * slack) {
-                            out.tie[i] = 1;
-                        }
-                    }
-                    if (!pass) continue;
-                    if (out.blends[i] < 255) ++out.blends[i];
-                    std::array<std::uint8_t, 3>& dst = out.colour[i];
-                    for (std::size_t q = 0; q < 3; ++q) {
-                        const double v = (level[q] * a) + (static_cast<double>(dst[q]) * (1.0 - a));
-                        dst[q] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
-                    }
-                }
-            }
-        }
-    }
+    // a kit roof's tile courses and lit ridges after them
+    blend_lines(roof_lines);
     return out;
 }
 
@@ -1280,17 +1367,19 @@ struct Compared {
     const std::vector<std::int32_t>& grown = grown_raster.shape;
     const std::vector<std::int32_t>& shrunk = shrunk_raster.shape;
     const std::vector<std::int32_t> near_sliver = raster(shapes, w, h, samples, 0.0, cam, density, false, true).shape;
-    // the material faces, then the roofs' thin strokes, over each of them
-    const std::vector<MaterialPath> materials = materials_of(doc, density, depths, cam);
+    // a kit's walls' lines and eaves' shadows, the material faces, then the roofs' thin strokes, over each of them
+    KitWalls kits = kit_walls_of(doc, density, depths, cam);
+    std::vector<MaterialPath> materials = std::move(kits.shadows);
+    for (MaterialPath& m : materials_of(doc, density, depths, cam)) materials.push_back(std::move(m));
     const std::vector<StrokeSeg> segs = strokes_of(doc, depths, distances, cam);
     // and a kit roof's lines after them
     const std::vector<RoofLine> roof_lines = roof_lines_of(doc, density, depths, cam);
     const Stroked exact_stroked =
-        stroke(exact_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, 0.0);
-    const Stroked grown_stroked =
-        stroke(grown_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, tolerance);
-    const Stroked shrunk_stroked =
-        stroke(shrunk_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, -tolerance);
+        stroke(exact_raster, shapes, kits.lines, materials, segs, roof_lines, w, h, samples, cam, clear, density, 0.0);
+    const Stroked grown_stroked = stroke(grown_raster, shapes, kits.lines, materials, segs, roof_lines, w, h, samples,
+                                         cam, clear, density, tolerance);
+    const Stroked shrunk_stroked = stroke(shrunk_raster, shapes, kits.lines, materials, segs, roof_lines, w, h, samples,
+                                          cam, clear, density, -tolerance);
     const std::size_t n = samples.size();
     const auto resolved = [&](const Stroked& r, std::size_t i) {
         // the composite's mean of the samples' levels, rounded half to even (passes/Composite.hpp's composite_pixel)
@@ -1475,10 +1564,11 @@ struct PackFile {
 /// Draws `cam` in X1 and C, at rest and moving, at moment `th` over `packs`, and holds every pixel to the exact raster
 /// of the pass's twin; the twin emits at least `least` elements. With `then`, the first frame's moment changes to it
 /// (the CPU's light lights every drawn tile again) and that frame is held to the twin too. With `painter`, under the
-/// painter switch: the renders' order, held to the twin's painter order.
+/// painter switch: the renders' order, held to the twin's painter order. The frame lays at least `least_kit` records of
+/// a kit's walls' lines and eaves' shadows.
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
                   const style::ThemeBlock& th, std::size_t least, const style::ThemeBlock* then = nullptr,
-                  bool painter = false) {
+                  bool painter = false, std::uint32_t least_kit = 0) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -1545,7 +1635,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
                          << " church windows, " << windows.material_fills << " material fills and "
                          << windows.material_lines << " material lines; " << windows.beams << " hoist beams, "
-                         << windows.roof_lines << " roof lines");
+                         << windows.roof_lines << " roof lines; a kit's walls' " << windows.kit_lines << " lines and "
+                         << windows.kit_shadows << " eaves' shadows");
+            CHECK(windows.kit_lines + windows.kit_shadows >= least_kit);
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);
@@ -1805,12 +1897,14 @@ TEST_CASE("buildings: the walls' material faces drawn on the host's Vulkan over 
 }
 
 TEST_CASE(
-    "buildings: a tradition's kit roof drawn on the host's Vulkan, its eaves over the walls, its gables facing out, "
-    "its hoist beams, tile courses and lit ridge, pixel for pixel their twin's") {
-    // fixture.hpp's kit tile in a pack whose style carries its tradition (the kit's eaves), in the view the cameras
-    // snap to (the pack's home, as the material faces' case): near with weather by day, where the view resolves the
-    // courses of the tiled roof and of the slated one; under the painter switch; at night (neither courses nor ridges);
-    // and without weather, every roof the plain one
+    "buildings: a tradition's kit drawn on the host's Vulkan, its roofs' eaves over the walls, its gables facing out, "
+    "its hoist beams, tile courses and lit ridges, its walls' stucco ground floor, timber boards and corner boards, "
+    "the shadows of its eaves, pixel for pixel their twin's") {
+    // fixture.hpp's kit tile in a pack whose style carries its tradition (the kit's eaves, band and boards), in the
+    // view the cameras snap to (the pack's home, as the material faces' case): near with weather by day, where the view
+    // resolves the courses of the tiled roof and of the slated one, every kit wall's eaves' shadow; under the painter
+    // switch; closer, where it resolves the boards' lines too; at night (neither courses nor ridges, nor boards' lines
+    // nor shadows); and without weather, every roof the plain one and no wall a kit's detail
     const std::string path = test::building::write_pack(test::building::kit_tile(), test::building::kit_features,
                                                         "buildings-test-kit", test::building::kit_pack());
     const std::array<PackFile, 1> packs{PackFile{.id = "kit", .path = path}};
@@ -1821,8 +1915,14 @@ TEST_CASE(
     night_th.flags |= style::theme_flag::night;
     style::ThemeBlock dry_th = sunny();
     dry_th.flags &= ~style::theme_flag::weather;
-    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3);
-    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3, nullptr, true);
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3, nullptr, false, 6);
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3, nullptr, true, 6);
+    // closer, where the view resolves the wooden house's boards (focal / d · 0.2 > 2.2): their lines between its corner
+    // boards, under its eaves' shadows; under the painter switch too
+    check_frames(camera(lat, lon, 20.0, 50.0, 160.0, 1080, 2400, d), "kit close", packs, sunny(), 3, nullptr, false,
+                 100);
+    check_frames(camera(lat, lon, 20.0, 50.0, 160.0, 1080, 2400, d), "kit close", packs, sunny(), 3, nullptr, true,
+                 100);
     check_frames(camera(lat, lon, 200.0, 50.0, 260.0, 1080, 2400, d), "kit at night", packs, night_th, 3);
     check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit dry", packs, dry_th, 3);
     std::error_code ignored;
