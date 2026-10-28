@@ -1,7 +1,11 @@
 # Builds Atlas's offline packs and publishes them as GitHub release assets (free hosting that serves HTTP ranges).
 # For each region of app/android/packs/regions.json, from Geofabrik's extract: the place store `:search` reads
-# (`packer places`, gzipped SQLite) and the region pack the map and the features read (`packer pbf`, an `.atlas` file
-# with the elements Overpass would give for the region: full tags, way geometry, multipolygons).
+# (`packer places`, gzipped SQLite), the region pack the map and the features read (`packer pbf`, an `.atlas` file
+# with the elements Overpass would give for the region: full tags, way geometry, multipolygons), and the windows' data
+# the phone builds its windows from (`packer windows`: per L14 window inside the extract's polygon, exactly what Overpass
+# answers to the phone's window query as of the extract's date, gzipped, in <id>.windows, and their index
+# <id>.windows.idx; the phone downloads the index and then a window's bytes by HTTP range). A region with
+# "windows": false in regions.json gets none.
 # The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
 # else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
 # The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
@@ -49,7 +53,9 @@ env:
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The place stores (*.places.db.gz) are derived databases and are
     themselves available under the ODbL; the region packs (*.atlas) hold OpenStreetMap elements with their tags and
-    geometry and are available under the ODbL as well. Extracts by Geofabrik (https://download.geofabrik.de).
+    geometry and are available under the ODbL as well, and so are the windows' data (*.windows: OpenStreetMap's
+    elements per map window, as Overpass's JSON, gzipped; *.windows.idx: where each window lies in it). Extracts by
+    Geofabrik (https://download.geofabrik.de).
 
 jobs:
   plan:
@@ -75,6 +81,7 @@ jobs:
           MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
             | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
                | {id, name, url, country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
+                  windows: (if .windows == false then false else true end),
                   atlas: ((.atlas // (if ((.bbox[2] - .bbox[0]) * (.bbox[3] - .bbox[1])) <= 0.6 then .bbox else null end)) // [] | map(tostring) | join(\",\"))}]" "$FILE")
           if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -110,6 +117,7 @@ jobs:
       CLIP: ${{ matrix.region.clip }}
       COUNTRY: ${{ matrix.region.country }}
       ATLAS_BOX: ${{ matrix.region.atlas }}
+      WINDOWS: ${{ matrix.region.windows }}
       TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -119,12 +127,35 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
-      - name: Android SDK 37
-        # Gradle configures every module of the build, the Android ones too
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Android SDK 37 and the SDK's CMake
+        # Gradle configures every module of the build, the Android ones too; the SDK's CMake and Ninja build the packer's
+        # tool for the windows' data, at the version app/android/mapcore/tools.properties pins
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "cmake;$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)" > /dev/null
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
+      - name: "The packer's tool: the core's stage P"
+        # The windows' boxes are the core's own (load::window_box, which the phone asks Overpass for): `packer windows`
+        # reads them from the core's stage P tool, built as the renders job builds it, before "Make room" takes the SDK.
+        if: env.WINDOWS == 'true'
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev
+          cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)/bin"
+          cd app/android/mapcore/cpp
+          CC=clang-$LLVM CXX=clang++-$LLVM CXXFLAGS=-stdlib=libc++ LDFLAGS=-stdlib=libc++ \
+            "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
+          "$cmake_bin/cmake" --build --preset host-stagep
+          echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       - name: Make room
         run: |
           set -euo pipefail
@@ -153,6 +184,11 @@ jobs:
             sleep 60
           done
           ls -l "$PBF"
+          if [ "$WINDOWS" = "true" ]; then
+            # the polygon Geofabrik cut the extract with, beside it: <region>.poly for <region>-latest.osm.pbf
+            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$WORK/$ID.poly" "${PBF_URL%-latest.osm.pbf}.poly"
+            head -2 "$WORK/$ID.poly"
+          fi
       - name: Places
         env:
           JAVA_OPTS: -Xmx10g
@@ -175,6 +211,20 @@ jobs:
           if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
           app/android/packer/build/install/packer/bin/packer pbf "$WORK/$ID.osm.pbf" "$ATLAS_BOX" "${ARGS[@]}"
           app/android/packer/build/install/packer/bin/packer packinfo "$WORK/out/$ID.atlas" | tail -2
+          if [ "$WINDOWS" != "true" ]; then rm -f "$WORK/$ID.osm.pbf"; fi
+          df -h "$WORK"
+      - name: Windows' data
+        if: env.WINDOWS == 'true'
+        env:
+          # the Netherlands' node positions alone take some 2 GB, its ways' nodes and tags the most of the rest
+          JAVA_OPTS: -Xmx12g
+        run: |
+          set -euo pipefail
+          ARGS=(--poly "$WORK/$ID.poly" --core "$ATLAS_STAGEP" --id "$ID")
+          # a region cut from a bigger extract: the windows that meet its box
+          if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
+          app/android/packer/build/install/packer/bin/packer windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
+          { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
           rm -f "$WORK/$ID.osm.pbf"
           df -h "$WORK"
       - name: Upload
