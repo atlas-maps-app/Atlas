@@ -21,6 +21,7 @@
 #include "tests/gpu/session_fixture.hpp"
 #include "tests/load/query.hpp"
 #include "tiles/Grid.hpp"
+#include "twin/building/BuildingShader.hpp"
 
 #include <doctest/doctest.h>
 
@@ -223,6 +224,25 @@ struct Listed {
     return out;
 }
 
+/// The windows' decide stages the last frame ran (their dispatches' kinds: passes/Windows.cpp), its facades' records
+/// and its window records (a shop's glazing among them), as the draws count them.
+[[nodiscard]] std::string decided(const frame::FrameBuilder& builder) {
+    std::string stages;
+    std::uint64_t facades = 0;
+    std::uint64_t records = 0;
+    for (const frame::PassCounters& p : builder.counters()) {
+        for (const frame::KindCount& k : p.kinds()) {
+            if (k.count.dispatches > 0 && (k.kind == "windows" || k.kind.starts_with("window "))) {
+                stages += stages.empty() ? std::string(k.kind) : std::format(", {}", k.kind);
+            }
+            if (k.kind == "facades") facades += k.count.instances;
+            if (k.kind == "window frames") records += k.count.triangles / (shaders::BUILDING_WINDOW_FRAME_VERTICES / 3);
+        }
+    }
+    return std::format("decided [{}], {} facades, {} window records", stages.empty() ? "none" : stages, facades,
+                       records);
+}
+
 } // namespace
 
 TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU and each pass's counts") {
@@ -379,11 +399,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             const frame::FrameBuilder* b = map.builder();
             if (log) {
                 MESSAGE(std::format("{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
-                                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments; {}",
+                                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments; {}; {}",
                                     tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
                                     b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k,
-                                    map.tiles_line()));
+                                    b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line()));
             }
             return s;
         };

@@ -59,10 +59,14 @@ public:
     gpu::Offscreen* kept = nullptr;
 };
 
-/// amsterdam.py's sunny moment of 1 October 2026, 16:00 (tests/frame/map_frame_vk_test.cpp's).
+/// amsterdam.py's sunny moment of 1 October 2026, 16:00, with the hour's weather as Kotlin writes it
+/// (tests/frame/map_frame_vk_test.cpp's): the phone's live moment, so the pinches run what it draws with it (the
+/// facades' flat detail from 760 m, the deep and church windows, the material faces, the cloud shadows, the wet set).
 [[nodiscard]] style::ThemeBlock sunny() {
+    namespace flag = style::theme_flag;
     style::ThemeBlock b{};
     b.version = 1;
+    b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
     b.year = 2026;
     b.month = 10;
     b.day = 1;
