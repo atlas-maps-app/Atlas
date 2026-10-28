@@ -22,7 +22,10 @@
 //     water (passes/Rings.cpp).
 //   - disc_vs with sunglow_fs and sundisc_fs, screen_vs with cityglow_fs: the sky layer's sun (its glow and its disc)
 //     and the city's glow at night, translucent at their slots over the sky (passes/Sky.cpp).
-//   - pool_vs and pool_fs: the street lamps' pools at night, after the quay walls (passes/Pools.cpp).
+//   - lit_vs and lit_fs: the lit streets' runs into the glow's and the wet cores' layers; screen_vs with
+//     lit_composite_fs: the glow (its filter's result) and the cores screened over the ground at night, after the quay
+//     walls (passes/LitGlow.cpp).
+//   - pool_vs and pool_fs: the street lamps' pools at night, after the lit streets (passes/Pools.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -67,6 +70,11 @@
 /// RGB, a r g b): the blur's last pass leaves the result in one of them (ripple_fs's push.mode.z).
 [[vk::binding(3, 3)]] StructuredBuffer<uint> ripple_a;
 [[vk::binding(4, 3)]] StructuredBuffer<uint> ripple_b;
+/// The lit streets (passes/LitGlow.cpp): the glow's filter's result (litglow.slang's first buffer, the layers' px a
+/// word each: premultiplied linear RGB, a r g b), the glow's layer itself and the wet cores' (premultiplied sRGB).
+[[vk::binding(5, 3)]] StructuredBuffer<uint> glow_result;
+[[vk::binding(6, 3)]] Texture2D<float4> glow_layer;
+[[vk::binding(7, 3)]] Texture2D<float4> core_layer;
 
 /// A draw's own values: where its tables lie in `words`, its mode and its colours.
 struct GroundPush {
@@ -1460,6 +1468,130 @@ StrokeOutput cityglow_fs(ScreenOut v, uint given : SV_Coverage) {
     StrokeOutput o;
     o.colour = float4(g.rgb * g.a, g.a);
     o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the lit streets (passes/LitGlow.cpp)
+//
+// A lit street's run's segment is an instance (its word run << 14 | segment, from push.mode.z), drawn into the glow's
+// or the cores' layer (the view's upright device px, push.rows.x of margin about them, push.rows.yz the layer's size):
+// its ends and its run's points before and after them, CSS px in `words` (its run's record from push.at.w, no point
+// repeating the last), in device px; its coverage as the ground's lines find it (ground/lines.slangh: a hairline, the
+// exact area or the standard samples inside its shape), round-capped and round-joined, at the run's width
+// (push.colour.y: 0 the glow's, 1 the core's), in the layer's colour (push.colour.x), opaque. A run of one point is a
+// dot, as RefRaster draws one: its radius's coverage at the pixel's centre, or the samples within it. The group's
+// opacity comes with its composite.
+
+/// A run's record in `words`: its points' first word (two f32 a point, CSS px), their count, its width and its core's
+/// (CSS px, f32).
+static const uint LIT_RUN_WORDS = 4u;
+
+/// Point k of the run whose points begin at word `first`, CSS px.
+float2 lit_point(uint first, uint k) {
+    return float2(asfloat(words[first + 2u * k]), asfloat(words[first + 2u * k + 1u]));
+}
+
+[shader("vertex")]
+StrokeOut lit_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint word = words[push.mode.z + instance];
+    uint run = push.at.w + (word >> 14u) * LIT_RUN_WORDS;
+    uint seg = word & 0x3FFFu;
+    uint first = words[run];
+    uint count = words[run + 1u];
+    float width = asfloat(words[run + 2u + push.colour.y]);
+    float density = frame.camera.frame.z;
+    float2 a = lit_point(first, seg) * density;
+    float2 b = lit_point(first, min(seg + 1u, count - 1u)) * density;
+    uint info = 0u;
+    float2 p = a;
+    float2 n = b;
+    if (seg > 0u) {
+        p = lit_point(first, seg - 1u) * density;
+        info |= LINE_HAS_PREV;
+    }
+    if (seg + 2u < count) {
+        n = lit_point(first, seg + 2u) * density;
+        info |= LINE_HAS_NEXT;
+    }
+    float hw = width * density * 0.5f;
+    float wide = 2.0f * hw;
+    info |= wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES);
+    // the quad: along the segment, its join's wedge and the coverage's reach beyond each end, across by the reach
+    float2 d = b - a;
+    float len = length(d);
+    float2 u = len > 1e-6f ? d / len : float2(1.0f, 0.0f);
+    float2 v = float2(-u.y, u.x);
+    float reach = hw * 4.0f + 2.0f;
+    float2 c = quad_corners[vertex];
+    float2 at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
+    StrokeOut o;
+    o.position = float4((at + push.rows.x) / push.rows.yz * 2.0f - 1.0f, 0.0f, 1.0f);
+    float4 paint = unpack(push.colour.x);
+    o.colour = float4(paint.rgb * paint.a, paint.a);
+    o.ab = float4(a, b);
+    o.pn = float4(p, n);
+    o.info = uint4(info, asuint(hw), LINE_CAP_ROUND | LINE_JOIN_ROUND, word);
+    o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return o;
+}
+
+/// A run's pixel in its layer (4x): a hairline's or a thin stroke's coverage at the pixel's centre scaling its colour
+/// over every sample, or a wide stroke's colour on the standard samples inside its shape; a dot's alike.
+[shader("fragment")]
+StrokeOutput lit_fs(StrokeOut s) {
+    Seg g = seg_of(s);
+    float2 corner = floor(s.position.xy) - push.rows.x; // the view's device px
+    uint mode = s.info.x & 3u;
+    bool lone = g.len < 1e-9f && !g.prev && !g.next; // a dot
+    StrokeOutput o;
+    if (mode == LINE_SAMPLES) {
+        uint mask = 0u;
+        for (uint i = 0u; i < 4u; ++i) {
+            float2 x = corner + samples4[i];
+            bool inside = lone ? length(x - g.a) <= g.hw : g.len >= 1e-9f && seg_inside(g, x);
+            if (inside) mask |= 1u << i;
+        }
+        if (mask == 0u) discard;
+        o.colour = s.colour;
+        o.coverage = mask;
+        return o;
+    }
+    float2 centre = corner + 0.5f;
+    float cov = lone ? radial(length(centre - g.a), g.hw)
+                    : (mode == LINE_HAIR ? hair_coverage(g, floor(centre), 2.0f * g.hw)
+                                         : (g.len < 1e-9f ? 0.0f : seg_coverage(g, centre)));
+    if (cov <= 0.0f) discard;
+    o.colour = s.colour * min(cov, 1.0f);
+    o.coverage = 0xFFFFFFFFu;
+    return o;
+}
+
+/// The lit streets' groups over the ground at their slots (screen_vs), screened (the pipeline's blend) at the group's
+/// opacity (push.rows.z), premultiplied, from the layers' px (the frame's upright pixel and push.colour.w of margin,
+/// push.colour.x texels a row): push.mode.z 0, the glow's filter's result written back as premultiplied sRGB, nothing
+/// beyond the result's region (push.colour.y its x0 | y0 << 16, z its x1 | y1 << 16, the frame's px), where it is
+/// transparent; 1, the glow's layer itself (the filters off); 2, the wet cores' layer.
+[shader("fragment")]
+ColourOut lit_composite_fs(ScreenOut v) {
+    int2 p = fx_pixel(frame.camera, v.position.xy);
+    int m = int(push.colour.w);
+    float4 c;
+    if (push.mode.z == 0u) {
+        int2 lo = {int(push.colour.y & 0xFFFFu), int(push.colour.y >> 16u)};
+        int2 hi = {int(push.colour.z & 0xFFFFu), int(push.colour.z >> 16u)};
+        if (p.x < lo.x || p.y < lo.y || p.x >= hi.x || p.y >= hi.y) {
+            discard;
+        }
+        uint s = fx_to_srgb_premultiplied(glow_result[uint(p.y + m) * push.colour.x + uint(p.x + m)]);
+        c = float4(float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)) *
+            (1.0f / 255.0f);
+    } else if (push.mode.z == 1u) {
+        c = glow_layer.Load(int3(p.x + m, p.y + m, 0));
+    } else {
+        c = core_layer.Load(int3(p.x + m, p.y + m, 0));
+    }
+    ColourOut o;
+    o.colour = c * push.rows.z;
     return o;
 }
 

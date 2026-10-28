@@ -264,7 +264,6 @@ struct Glint {
     double opacity = 0;
 };
 
-/// A band of the drizzle's rings (water_layer's `<rect fill="url(#rings)">`, one per glint band at eye level): its rows
 /// A street lamp's pool at night (amsterdam.py:847: `<ellipse fill="url(#pool)">` of 10 m about its foot): its centre
 /// and radii in CSS px, as the SVG prints them at rest.
 struct LampPool {
@@ -274,6 +273,18 @@ struct LampPool {
     double ry = 0;
 };
 
+/// A lit street's run at night (render's night light, amsterdam.py:821: a lit road's points ahead of the near plane
+/// within the radius cut, `<path d="M…" stroke-width="%.1f"/>` in the glow's group): its points in
+/// GroundFrame::lit_run_points, [first, first + count) (CSS px, as the SVG prints them at rest), its width (CSS px,
+/// '%.1f' at rest), and its wet core's ('%.1f' of that width times 0.3).
+struct LitRun {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    double width = 0;
+    double core = 0;
+};
+
+/// A band of the drizzle's rings (water_layer's `<rect fill="url(#rings)">`, one per glint band at eye level): its rows
 /// (CSS px, as the SVG prints the rect at rest) and the pattern's transform there, translate(tx 0) scale(kx ky).
 struct RingBand {
     double y0 = 0;
@@ -373,6 +384,12 @@ struct GroundFrame {
     std::vector<RingBand> ring_bands;
     /// The street lamps' pools at night (S['nodes']'s order across the drawn tiles): each ellipse (CSS px).
     std::vector<LampPool> lamp_pools;
+    /// The lit streets at night (S['roads']'s order across the drawn tiles): their runs and the runs' points; the
+    /// glow's opacity (.3 with weather, .4 without); and whether their wet cores are drawn (th['wet']).
+    std::vector<LitRun> lit_runs;
+    std::vector<view::Vec2> lit_run_points;
+    double lit_opacity = 0;
+    bool wet = false;
     /// The glints' rect this frame (with weather, where the water is drawn, at a map pitch, in full mode), and its
     /// opacity.
     bool wind_glints = false;
@@ -521,6 +538,7 @@ struct PixelBox {
     [[nodiscard]] bool contains(std::int32_t x, std::int32_t y) const noexcept {
         return x >= x0 && x < x1 && y >= y0 && y < y1;
     }
+    friend bool operator==(const PixelBox&, const PixelBox&) = default;
 };
 
 /// One of the ripple's blur passes this frame: vImage's square box of `side`, or one of WebKit's separable boxes along
@@ -546,8 +564,28 @@ struct RipplePlan {
     std::int32_t ry = 0; ///< and along y: the fused stages take them where neither passes ripple.slang's RIPPLE_REACH
 };
 
+/// What the lit streets' layers and the glow's filter cover this frame (LitGlow.cpp), in the layers' px (the view's
+/// upright device px and the margin about them): whether the glow is drawn (none where its group's box has no width or
+/// height, or its filter's output misses the frame); whether its filter runs (in full mode with the byte tables bound:
+/// else its layer is screened as it is, as the port draws the group with the filters off); its layer's drawn box (the
+/// render pass's area); the filter's input (whose edge texels repeat past it) and its three passes' regions, each what
+/// the next reads; the composite's region (the filter's output within the frame: beyond it the result is
+/// transparent); and the cores' layer's box (the frame, on a wet night; empty otherwise).
+struct GlowPlan {
+    bool glow = false;
+    bool filtered = false;
+    PixelBox layer;
+    PixelBox input;
+    std::array<PixelBox, 3> passes{};
+    PixelBox out;
+    PixelBox cores;
+    std::uint32_t side = 0; ///< vImage's square box
+    friend bool operator==(const GlowPlan&, const GlowPlan&) = default;
+};
+
 struct SoftShadows; // below
 struct RippleLayer; // below
+struct GlowLayer;   // below
 
 class Ground final : public frame::Pass {
 public:
@@ -601,6 +639,8 @@ public:
     void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
     void draw_rings(bool draw) noexcept { no_rings_ = !draw; }
     void draw_pools(bool draw) noexcept { no_pools_ = !draw; }
+    /// The tests' look at the lit streets: from the next frame on, neither their glow nor their wet cores.
+    void draw_lit(bool draw) noexcept { no_lit_ = !draw; }
     /// Whether the reflected trees take their leaf filter (where the ripple draws their layer).
     void draw_leaves(bool draw) noexcept { no_leaves_ = !draw; }
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
@@ -617,6 +657,12 @@ public:
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
     [[nodiscard]] bool drew_ripple() const noexcept { return drew_ripple_; }
+    /// The tests' look at the lit streets' glow: from the next prepare on, its buffers lie in memory the CPU reads, and
+    /// each frame copies its layers there too (GlowLayer::glow_copy, core_copy).
+    void keep_glow(bool keep) noexcept { keep_glow_ = keep; }
+    /// The glow's objects (null where prepare made none), and whether the last frame drew its layers.
+    [[nodiscard]] const GlowLayer* glow_layer() const noexcept;
+    [[nodiscard]] bool drew_glow() const noexcept { return drew_glow_; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -634,6 +680,7 @@ public:
         phase_ripple = 11,
         phase_water_glints = 12,
         phase_pools = 13,
+        phase_lit = 14,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -642,13 +689,15 @@ public:
     struct Words;
 
 private:
-    /// The shadows' mask and the ripple's layer go after every pass's decide phase (order 0): each hands a render
-    /// pass's colour to compute stages, and that barrier holds every later compute stage until all earlier colour
-    /// output is done, the last frame's main pass among it. A decide phase after them would carry that wait into the
-    /// main pass's vertex stage (its records' barrier), so the frame's binning would wait for the last frame's shading.
-    static constexpr std::array<frame::Phase, 14> phase_list{{
+    /// The shadows' mask, the ripple's layer and the lit streets' layers go after every pass's decide phase (order 0):
+    /// each hands a render pass's colour to compute stages, and that barrier holds every later compute stage until all
+    /// earlier colour output is done, the last frame's main pass among it. A decide phase after them would carry that
+    /// wait into the main pass's vertex stage (its records' barrier), so the frame's binning would wait for the last
+    /// frame's shading.
+    static constexpr std::array<frame::Phase, 15> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 1, .id = phase_shadow_mask},
         {.slot = frame::Slot::offscreen, .order = 2, .id = phase_ripple},
+        {.slot = frame::Slot::offscreen, .order = 3, .id = phase_lit},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
@@ -778,6 +827,21 @@ private:
     void decide_rings(const view::Camera& cam, const frame::FrameState& state);
     /// The rings' tile (its rings and their grid) and the bands into the frame's words.
     void write_rings(std::vector<std::uint32_t>& words);
+    // LitGlow.cpp
+    /// render's lit streets at night (not at eye level): each lit road's runs of points ahead of the near plane within
+    /// the radius cut, their widths from the road's own at the runs' mean depth (frame_.lit_runs).
+    void decide_lit(const view::Camera& cam);
+    [[nodiscard]] gpu::Result<void> make_glow(const frame::PassContext& context, Pipelines& p) const;
+    /// Whether this frame blurs the glow: the frame is in full mode with the byte tables bound (FRAME_FIELDS), and
+    /// prepare made the glow's objects.
+    [[nodiscard]] bool glow_filtered(const frame::FrameState& state) const noexcept;
+    /// The runs' points, records and segments into the frame's words, and what the layers and the filter cover.
+    void write_lit(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    /// Before the main pass: the runs into the glow's layer, the filter's passes over it, the cores into theirs.
+    void record_lit_layer(const frame::Recording& r);
+    /// The glow and the cores screened over the ground at their slots.
+    void record_lit(const frame::Recording& r);
+    void emit_lit(twin::Stream& out) const;
     // Pools.cpp
     void decide_pools(const view::Camera& cam);
     void write_pools(std::vector<std::uint32_t>& words);
@@ -813,12 +877,20 @@ private:
     bool no_glitter_ = false;
     bool no_rings_ = false;
     bool no_pools_ = false;
+    bool no_lit_ = false;
     bool no_leaves_ = false;
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
     bool drew_ripple_ = false;
+    bool keep_glow_ = false;
+    bool drew_glow_ = false;
+    /// What the last glow's layers and filter were made of (write_lit), and whether this frame's differ; what they
+    /// cover this frame.
+    std::vector<std::uint32_t> glow_key_;
+    bool glow_stale_ = true;
+    GlowPlan glow_plan_;
     /// What the last ripple's result was made of (write_ripple), and whether this frame's differs; what its stages
     /// cover this frame.
     std::vector<std::uint32_t> ripple_key_;
@@ -892,6 +964,9 @@ struct Ground::Pipelines {
     // draws none: the owner mode, or where the device could not make them)
     vk::raii::Pipeline ripple_composite{nullptr};
     std::unique_ptr<RippleLayer> ripple;
+    // LitGlow.cpp: the lit streets' layers, the glow's buffers and filter, their composite (null where the pass draws
+    // none: the owner mode, or where the device could not make them)
+    std::unique_ptr<GlowLayer> glow;
     // Glints.cpp
     vk::raii::Pipeline wind_glints{nullptr};
     // Shadows.cpp
@@ -978,6 +1053,42 @@ struct RippleLayer {
     PixelBox drawn;                    ///< and the layer's (its render area: the layer holds nothing beyond it)
 };
 
+/// The lit streets' images, buffers and stages, made for an output (LitGlow.cpp; shaders/ground/litglow.slang): the
+/// runs drawn into 4x samples, resolved into the glow's layer and, on a wet night, the cores' (the view's upright
+/// device px and `margin` about them); the glow's filter's two buffers, a word a texel, which its passes write back
+/// and forth (the third leaves its result in the first); the composite that screens them over the ground.
+struct GlowLayer {
+    vk::Extent2D view{};     ///< the view's upright device px
+    vk::Extent2D extent{};   ///< the layers': the view and the margin either side
+    std::int32_t margin = 0; ///< device px
+    bool kept = false;       ///< the tests' look: the buffers readable, the layers copied each frame
+    gpu::Image samples;      ///< the runs' 4x samples (RGBA8, transient)
+    gpu::Image glow;         ///< the glow's layer (RGBA8): premultiplied sRGB
+    gpu::Image cores;        ///< the cores' layer
+    vk::raii::ImageView samples_view{nullptr};
+    vk::raii::ImageView glow_view{nullptr};
+    vk::raii::ImageView cores_view{nullptr};
+    vk::raii::RenderPass pass{nullptr};
+    vk::raii::Framebuffer glow_framebuffer{nullptr};
+    vk::raii::Framebuffer cores_framebuffer{nullptr};
+    std::array<gpu::Buffer, 2> buffers; ///< a and b: premultiplied linear RGB, a r g b
+    gpu::Buffer glow_copy;              ///< the kept layers, a row of extent.width texels after another (RGBA8)
+    gpu::Buffer core_copy;
+    vk::raii::DescriptorSetLayout set_layout{nullptr};
+    vk::raii::DescriptorPool pool{nullptr};
+    /// [0] reads a and writes b, [1] reads b and writes a (both read the glow's layer)
+    std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
+    vk::raii::PipelineLayout compute_layout{nullptr};
+    vk::raii::ShaderModule module{nullptr};
+    vk::raii::Pipeline box{nullptr};       ///< one square box (glow_box_cs)
+    vk::raii::Pipeline draw{nullptr};      ///< the runs into the samples
+    vk::raii::Pipeline composite{nullptr}; ///< the groups screened over the ground (lit_composite_fs)
+    GlowPlan drew;                         ///< what the last frame's layers and passes covered
+    /// Each layer (the glow's, the cores') laid out to be read since it was made: the composite names both (its
+    /// descriptors), drawn or not.
+    std::array<bool, 2> laid_out{};
+};
+
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).
 [[nodiscard]] gpu::GraphicsDesc ground_desc(const frame::PassContext& context, const Ground::Pipelines& p,
                                             std::string_view name, const char* vertex, const char* fragment);
@@ -1008,6 +1119,9 @@ struct Ground::Words {
     std::uint32_t glint_lists = 0;
     std::uint32_t lamp_pools = 0; ///< the lamps' pools' ellipses (four floats each), and how many
     std::uint32_t lamp_pool_count = 0;
+    std::uint32_t lit_runs = 0;     ///< the lit streets' runs' records (ground.slang's LIT_RUN_WORDS each)
+    std::uint32_t lit_segments = 0; ///< their segments' instance words (run << 14 | segment), and how many
+    std::uint32_t lit_segment_count = 0;
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)

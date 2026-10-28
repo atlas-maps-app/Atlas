@@ -306,13 +306,17 @@ struct Lamp {
     P2 at;
 };
 
-/// A lit road the night's streaks start from (S['roads']'s lit=yes): its place in S['roads'] and its points' first and
-/// count in the tile's lit_points, along each of its segments as the streaks' loop walks it (from 4 m, then 13 m and
-/// (k · 7.3) mod 6 more each time).
+/// A lit road (S['roads']'s lit=yes, two points or more): its place in S['roads']; the night's streaks' points along
+/// it, their first and count in the tile's lit_points, along each of its segments as the streaks' loop walks it (from
+/// 4 m, then 13 m and (k · 7.3) mod 6 more each time); and the glow's: its centreline whole, its points' first and
+/// count in the tile's lit_lines, and its width (r['w']).
 struct LitRoad {
     std::uint32_t index = 0;
     std::uint32_t first = 0;
     std::uint32_t count = 0;
+    std::uint32_t line = 0;
+    std::uint32_t line_count = 0;
+    double w = 0;
 };
 
 /// A water edge that carries a quay wall (the tile's quay layer, a row each: water_edges(S), each edge in the tile of
@@ -525,10 +529,12 @@ struct GroundTile {
     double water_y = -1.5;
     tiles::ReflectionsStyle reflection_style;
     tiles::DrizzleStyle drizzle_style;
-    /// The night's streaks on the water: the tile's street lamps, its lit roads and their points.
+    /// The night's light: the tile's street lamps, its lit roads, their streaks' points on the water and their
+    /// centrelines (the lit streets' glow).
     std::vector<Lamp> lamps;
     std::vector<LitRoad> lit_roads;
     std::vector<P2> lit_points;
+    std::vector<P2> lit_lines;
     tiles::StyleRgb quay_colour = 0;
     tiles::StyleRgb quay_coping = 0;
     tiles::DayNight quay_waterline;

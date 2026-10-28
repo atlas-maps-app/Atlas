@@ -823,9 +823,9 @@ private:
         out_.tone = style_.tone;
     }
 
-    /// The night's streaks' sources (amsterdam.py's reflections): the street lamps, and each lit road's points as the
-    /// streaks' loop walks each of its segments: from k = 4 m while k is short of the segment's length, then 13 m and
-    /// (k · 7.3) mod 6 more.
+    /// The night's light (amsterdam.py's reflections and render's night light): the street lamps; each lit road's
+    /// points as the streaks' loop walks each of its segments (from k = 4 m while k is short of the segment's length,
+    /// then 13 m and (k · 7.3) mod 6 more), and its centreline whole with its width, which the glow strokes.
     void streaks() {
         const tl::Frame& f = head_.frame;
         if (const tl::Layer* l = tile_.layer(tl::LayerId::thing)) {
@@ -844,9 +844,14 @@ private:
             const std::optional<std::string_view> on = l->string(lit, i);
             if (!on || *on != "yes") continue;
             const tl::RingView r = l->ring(tl::road::line, i);
+            if (r.size() < 2) continue;
             LitRoad road{.index = static_cast<std::uint32_t>(l->integer(tl::road::index, i)),
                          .first = static_cast<std::uint32_t>(out_.lit_points.size()),
-                         .count = 0};
+                         .count = 0,
+                         .line = static_cast<std::uint32_t>(out_.lit_lines.size()),
+                         .line_count = static_cast<std::uint32_t>(r.size()),
+                         .w = l->decimal(tl::road::w, i).value_or(0.0)};
+            for (std::size_t k = 0; k < r.size(); ++k) out_.lit_lines.push_back({f.x(r.lon[k]), f.z(r.lat[k])});
             for (std::size_t k = 0; k + 1 < r.size(); ++k) {
                 const std::array<double, 2> a{f.x(r.lon[k]), f.z(r.lat[k])};
                 const std::array<double, 2> b{f.x(r.lon[k + 1]), f.z(r.lat[k + 1])};
@@ -859,7 +864,7 @@ private:
                 }
             }
             road.count = static_cast<std::uint32_t>(out_.lit_points.size()) - road.first;
-            if (road.count > 0) out_.lit_roads.push_back(road);
+            out_.lit_roads.push_back(road);
         }
     }
 
@@ -909,7 +914,8 @@ std::size_t GroundTile::bytes() const noexcept {
            (runways.capacity() * sizeof(RunwayRef)) + (quays.capacity() * sizeof(QuayEdge)) +
            (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
-           (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2));
+           (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
+           (lit_lines.capacity() * sizeof(P2));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {

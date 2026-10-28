@@ -576,7 +576,7 @@ namespace {
         put(v);
     }
     k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
-                  (f.park_sun ? 16U : 0U);
+                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U);
     return k;
 }
 
@@ -599,6 +599,7 @@ bool Ground::decide(const frame::FrameState& state) {
     // the moment's switches and the camera's settings
     f.weather = state.theme.has(style::theme_flag::weather);
     f.night = state.theme.has(style::theme_flag::night);
+    f.wet = state.theme.has(style::theme_flag::wet);
     f.engine = state.camera.has(style::camera_flag::engine_mode) && state.placed.has_value();
     f.radius = 0;
     f.ground_r = view::default_ground_r;
@@ -792,6 +793,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_rings(cam, state);
     decide_wind_glints(cam, state);
     decide_sky(cam, state);
+    decide_lit(cam);
     decide_pools(cam);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -963,8 +965,8 @@ void Ground::lay_out() {
         f.tail[geo::group::quay] = true;
         place(geo::group::quay);
     }
-    // then the night's light on the ground (render's pools, after the quay walls)
-    if (!f.lamp_pools.empty()) {
+    // then the night's light on the ground (render's pools, after the quay walls): the lit streets, the lamps' pools
+    if (!f.lamp_pools.empty() || !f.lit_runs.empty()) {
         use(geo::group::pools, 0);
         f.tail[geo::group::pools] = true;
         place(geo::group::pools);
@@ -987,6 +989,9 @@ void Ground::release() noexcept {
     drew_ripple_ = false;
     ripple_key_.clear();
     ripple_stale_ = true;
+    drew_glow_ = false;
+    glow_key_.clear();
+    glow_stale_ = true;
 }
 
 gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
@@ -1010,7 +1015,8 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         s = std::move(set);
     }
     // set 3, a set a frame slot: the soft shadows' grid, their blurred mask, and the grid as words for the compute
-    // stages, the slot's own (Shadows.cpp); the ripple's two buffers, which its composite reads (Ripple.cpp)
+    // stages, the slot's own (Shadows.cpp); the ripple's two buffers, which its composite reads (Ripple.cpp); the
+    // glow's result and the lit streets' two layers, which theirs reads (LitGlow.cpp)
     const std::array soft_bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
         gpu::Binding{
@@ -1020,7 +1026,13 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         gpu::Binding{
             .slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{
-            .slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment}};
+            .slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 5, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 6, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 7, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
     p->soft_set_layout = std::move(soft_layout);
     const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
@@ -1045,6 +1057,11 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         if (auto made = make_ripple(context, *p); !made) {
             log::warn("vk ground: the ripple: {}; the reflections are drawn without it", made.error().text());
             p->ripple.reset();
+        }
+        // the lit streets likewise (they draw no owner)
+        if (auto made = make_glow(context, *p); !made) {
+            log::warn("vk ground: the lit streets: {}; they are drawn without their glow", made.error().text());
+            p->glow.reset();
         }
     }
     pipelines_ = std::move(p);
@@ -1227,6 +1244,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_glitter(v);
     write_rings(v);
     write_pools(v);
+    write_lit(v, state);
     write_ripple(v, state);
     write_wind_glints(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
@@ -1310,6 +1328,10 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         record_ripple_layer(r);
         return;
     }
+    if (phase == phase_lit) {
+        record_lit_layer(r);
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 2, *pipelines_->sets[words_->slot],
                            {});
@@ -1337,7 +1359,10 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_over:
     case phase_marks: record_lines(r, phase); break;
     case phase_shadows: record_shadows(r); break;
-    case phase_pools: record_pools(r); break;
+    case phase_pools:
+        record_lit(r);
+        record_pools(r);
+        break;
     default: break;
     }
 }
@@ -1415,6 +1440,7 @@ void Ground::emit(const frame::FrameState& state, twin::Stream& out, std::uint32
     emit_park_shadows(state, out, above);
     emit_shadows(state, out);
     emit_quays(state, out);
+    emit_lit(out);
     emit_pools(out);
 }
 
