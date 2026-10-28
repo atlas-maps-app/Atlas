@@ -21,6 +21,13 @@
 // a u32 length and the bytes. One line on stdout says what was cut and how long it took. The exit code: 0 done; 2 a
 // usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a survey's
 // heights (a dem.json in the region's folder), a tradition's details); 1 any other failure.
+//
+//   atlas_stagep window-boxes <x0> <y0> <x1> <y1>
+//
+// prints the box whose data each L14 window of the tiles x0 to x1 by y0 to y1 needs (load::window_box, which the phone
+// asks Overpass for and `packer windows` cuts a window's answer for), a line a window in order of x, then y:
+// `x y south west north east`, each double as std::format writes it (the shortest digits that read back to it). The
+// exit code: 0 done; 2 a usage error.
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
@@ -239,6 +246,34 @@ private:
                               .palette = load::region_palette(name)};
 }
 
+/// The windows' boxes of the tiles args[2] to args[4] by args[3] to args[5], printed on stdout.
+[[nodiscard]] std::expected<void, Failure> window_boxes(std::span<char*> args) {
+    std::array<std::uint32_t, 4> range{};
+    for (std::size_t i = 0; i < range.size(); ++i) {
+        const std::string_view s(args[2 + i]);
+        const auto [at, error] = std::from_chars(s.data(), s.data() + s.size(), range.at(i));
+        if (s.empty() || error != std::errc{} || at != s.data() + s.size()) {
+            return std::unexpected(input(std::format("'{}' is not a tile's column or row", s)));
+        }
+    }
+    const std::uint32_t n = std::uint32_t{1} << load::window_level;
+    if (range[0] > range[2] || range[1] > range[3] || range[2] >= n || range[3] >= n) {
+        return std::unexpected(input(std::format("the tiles {} to {} by {} to {} are no range of L{}'s", range[0],
+                                                 range[2], range[1], range[3], load::window_level)));
+    }
+    for (std::uint32_t x = range[0]; x <= range[2]; ++x) {
+        for (std::uint32_t y = range[1]; y <= range[3]; ++y) {
+            const std::array<double, 4> b = load::window_box(tl::TileKey(load::window_level, x, y));
+            const std::string line = std::format("{} {} {} {} {} {}\n", x, y, b[0], b[1], b[2], b[3]);
+            if (std::fputs(line.c_str(), stdout) < 0) {
+                return std::unexpected(Failure{.why = "stdout could not be written"});
+            }
+        }
+    }
+    if (std::fflush(stdout) != 0) return std::unexpected(Failure{.why = "stdout could not be written"});
+    return {};
+}
+
 /// The tiles of the job, read, loaded and cut, and the pack's head and style. Returns the line it prints.
 [[nodiscard]] std::expected<std::string, Failure> tiles(const std::string& raw_path, const std::string& job_path,
                                                         const std::string& out_path) {
@@ -402,8 +437,18 @@ private:
 
 int main(int argc, char** argv) {
     const std::span<char*> args(argv, static_cast<std::size_t>(argc));
+    if (args.size() == 6 && std::string_view(args[1]) == "window-boxes") {
+        const auto printed = window_boxes(args);
+        if (!printed) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s\n", printed.error().why.c_str());
+            return printed.error().code;
+        }
+        return 0;
+    }
     if (args.size() != 5 || std::string_view(args[1]) != "tiles") {
-        (void)std::fputs("usage: atlas_stagep tiles <raw.json> <job.json> <out>\n", stderr);
+        (void)std::fputs("usage: atlas_stagep tiles <raw.json> <job.json> <out>\n"
+                         "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n",
+                         stderr);
         return usage_error;
     }
     const auto line = tiles(args[2], args[3], args[4]);
