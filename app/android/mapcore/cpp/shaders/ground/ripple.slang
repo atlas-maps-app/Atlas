@@ -27,7 +27,8 @@
 
 struct RipplePush {
     uint4 size;  // x, y: the frame's upright width and height (device px); z: the offsets' table's first word in `words`
-    uint4 box;   // ripple_square_cs: x the box's side (odd); ripple_line_cs: x the axis (0 x, 1 y), y its left, z right
+    uint4 box;   // ripple_square_cs: x the box's side (odd); ripple_line_cs: x the axis (0 x, 1 y), y its left, z right;
+                 // the displacement: w the water's map's first word in `words` (0: the field at the screen's pixels)
     float4 inv;  // ripple_line_cs: x 1 / (left + right), as the CPU's float
     int4 region; // the pixels the stage writes, [x0, x1) × [y0, y1): what the next stage reads of it
     int4 layer;  // ripple_displace_cs: the layer's drawn box, its content (transparent beyond it)
@@ -50,6 +51,29 @@ uint word_of(uint4 c) {
     return c.x | (c.y << 8u) | (c.z << 16u) | (c.w << 24u);
 }
 
+/// The field's red and green that move frame pixel `at`: the pixel's own, as the renders read them, or, in the module
+/// on the water (ripple_water.slang, the app's map), where the water under it lies in the fields (push.box.w names the
+/// water's map in `words`, passes::water_map, as the glints read theirs), so the ripple keeps its place on the water
+/// while the map moves and scales with the zoom. The map's division keeps that out of this exact module.
+uint2 ripple_rg(int2 at) {
+#if !defined(RIPPLE_ON_WATER)
+    return fx_rg(at);
+#else
+    uint m = push.box.w;
+    if (m == 0u) {
+        return fx_rg(at);
+    }
+    float3 r0 = {asfloat(words[m]), asfloat(words[m + 1u]), asfloat(words[m + 2u])};
+    float3 r1 = {asfloat(words[m + 3u]), asfloat(words[m + 4u]), asfloat(words[m + 5u])};
+    float3 r2 = {asfloat(words[m + 6u]), asfloat(words[m + 7u]), asfloat(words[m + 8u])};
+    float3 q = fx_water_point(r0, r1, r2, float2(at) + 0.5f);
+    if (q.z == 0.0f) {
+        return fx_rg(at); // at the horizon or above: no water there
+    }
+    return fx_rg_between(q.xy);
+#endif
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void ripple_displace_cs(uint3 id : SV_DispatchThreadID) {
@@ -57,7 +81,7 @@ void ripple_displace_cs(uint3 id : SV_DispatchThreadID) {
     if (at.x >= push.region.z || at.y >= push.region.w) {
         return;
     }
-    uint2 rg = fx_rg(at);
+    uint2 rg = ripple_rg(at);
     int sx = at.x + asint(words[push.size.z + rg.x]);
     int sy = at.y + asint(words[push.size.z + rg.y]);
     uint p = 0u;
@@ -140,7 +164,7 @@ bool in_box(int4 b, int2 p) {
 
 /// The displacement at frame pixel `at` (ripple_displace_cs's).
 uint displaced(int2 at) {
-    uint2 rg = fx_rg(at);
+    uint2 rg = ripple_rg(at);
     int sx = at.x + asint(words[push.size.z + rg.x]);
     int sy = at.y + asint(words[push.size.z + rg.y]);
     if (sx >= push.layer.x && sy >= push.layer.y && sx < push.layer.z && sy < push.layer.w) {

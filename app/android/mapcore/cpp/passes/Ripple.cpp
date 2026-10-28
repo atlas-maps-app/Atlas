@@ -26,6 +26,7 @@
 #include "fx/Blur.hpp"
 #include "gen/layouts.hpp"
 #include "gen/spirv/ground/ripple.hpp"
+#include "gen/spirv/ground/ripple_water.hpp"
 #include "gpu/Descriptors.hpp"
 #include "passes/Ground.hpp"
 
@@ -94,9 +95,14 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         ripple_key_.clear();
         return;
     }
-    // DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt(), for each of the map's 256 levels
+    // DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt(), for each of the map's 256 levels.
+    // Where the ripple lies on the water (the app's map), its scale goes with the zoom as its field does: the
+    // Westerkerk home's 430 m over the camera's distance, within .25 and 2.5, so nearer water wobbles more
+    const float zoom = state.grounded && state.camera.distance > 0
+                           ? static_cast<float>(std::clamp(430.0 / state.camera.distance, 0.25, 2.5))
+                           : 1.0F;
     const fx::RippleDisplacement d =
-        fx::ripple_displacement(fx::ripple_scale(state.theme.wind), static_cast<float>(state.camera.density));
+        fx::ripple_displacement(fx::ripple_scale(state.theme.wind) * zoom, static_cast<float>(state.camera.density));
     for (std::uint32_t c = 0; c < 256; ++c) {
         const auto moved = static_cast<std::int32_t>(std::fma(d.factor, static_cast<float>(c), d.offset));
         words.push_back(std::bit_cast<std::uint32_t>(moved));
@@ -110,6 +116,15 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         words.push_back(std::bit_cast<std::uint32_t>(moved));
     }
     words.push_back(static_cast<std::uint32_t>(leaf.reach));
+    // on the water (the app's map): the water's map the ripple reads its field by, as the glints read theirs
+    // (passes::water_map), so the ripple keeps its place on the water while the map moves
+    w.ripple_map = 0;
+    if (state.grounded && state.view) {
+        w.ripple_map = static_cast<std::uint32_t>(words.size());
+        const std::array<float, 9> map = water_map(state.view->camera(), water_level(frame_), state.camera.density,
+                                                   state.camera.width_px, state.camera.height_px);
+        for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
+    }
     // The result is a function of what the layer's draw and the stages read: the camera (the frame's size and density
     // with it), the tiles' places, the reflections' records and the offsets (the fields and the byte tables are the
     // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake).
@@ -122,6 +137,7 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
     add(w.ripple_offsets, 256);
     add(w.leaf_offsets, 257);
+    if (w.ripple_map != 0) add(w.ripple_map, 9);
     ripple_stale_ = key != ripple_key_;
     ripple_key_ = std::move(key);
     // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
@@ -437,6 +453,18 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     s->line = std::move(line);
     ATLAS_GPU_LET(fused, compute("ground ripple fused", "ripple_fused_cs"));
     s->fused = std::move(fused);
+    // the displacement on the water (the app's map), apart and fused
+    ATLAS_GPU_LET(water_module, frame::make_module(context, "ground_ripple_water", spirv::ground_ripple_water));
+    s->water_module = std::move(water_module);
+    auto water = [&](std::string_view name, const char* entry) {
+        return frame::make_compute(
+            context, {.name = name, .module = "ground_ripple_water", .configuration = context.configuration},
+            *s->water_module, entry, *s->compute_layout);
+    };
+    ATLAS_GPU_LET(water_displace, water("ground ripple water displace", "ripple_displace_cs"));
+    s->water_displace = std::move(water_displace);
+    ATLAS_GPU_LET(water_fused, water("ground ripple water fused", "ripple_fused_cs"));
+    s->water_fused = std::move(water_fused);
     // the reflections into the samples: each its own colour, source over, at its slot's depth
     gpu::GraphicsDesc layer_draw = ground_desc(context, p, "ground ripple layer", "reflection_vs", "reflection_fs");
     layer_draw.target = {
@@ -539,11 +567,12 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 3, *s.sets[1U - t], {});
         RipplePush rp{};
         rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, w.ripple_plan};
+        rp.box = {0U, 0U, 0U, w.ripple_map};
         const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
         rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
         const std::array<std::int32_t, 4> out_box = corners(plan.out);
         rp.region = {out_box[0], out_box[1], out_box[2], out_box[3]};
-        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *s.fused);
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, w.ripple_map != 0 ? *s.water_fused : *s.fused);
         cmd.pushConstants<RipplePush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, rp);
         const auto tiles = [](std::int32_t n) {
             return (static_cast<std::uint32_t>(n) + ripple_tile - 1) / ripple_tile;
@@ -568,6 +597,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *p.sets[w.slot], {});
         RipplePush rp{};
         rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, 0U};
+        rp.box = {0U, 0U, 0U, w.ripple_map};
         const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
         rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
         // a stage over `region` reading buffer `from`, writing the other (set [from] reads it)
@@ -589,7 +619,8 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                                     .dst_access = A::eShaderRead | A::eShaderWrite});
             return 1U - from; // the buffer it wrote
         };
-        std::uint32_t result = stage(s.displace, plan.displace, 1, "ripple displace");
+        std::uint32_t result =
+            stage(w.ripple_map != 0 ? s.water_displace : s.displace, plan.displace, 1, "ripple displace");
         // 3. the blur: vImage's square boxes where WebKit's two sizes are equal, else its separable passes, x then y
         for (const RipplePass& pass : plan.passes) {
             if (pass.square) {

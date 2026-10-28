@@ -95,6 +95,8 @@ struct FrameState {
     style::ThemeBlock theme{};
     /// The camera rests (the camera state's rest flag): the vertex stage snaps.
     bool rest = false;
+    /// The screen fields are read where the ground lies (FrameOptions::grounded, outside engine mode).
+    bool grounded = false;
     Mode mode = Mode::structural;
     /// The block set 0 holds this frame.
     shaders::FrameBlock block{};
@@ -157,10 +159,12 @@ struct FrameOptions {
     /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
     /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
     std::uint32_t threads = 0;
-    /// The clouds' shadows on the ground (the app's map: COMPOSITE_CLOUD_GROUND), where they keep their places while
-    /// the map moves, instead of at the screen's own pixels as the renders read them (the user, 28 October: "The clouds
-    /// cast their shadows in their places again?"). Never in engine mode: the renders' own frames.
-    bool ground_clouds = false;
+    /// The screen fields read where the ground lies (the app's map: FrameState::grounded): the clouds' shadows
+    /// (COMPOSITE_CLOUD_GROUND) and the water's ripple, each keeping its place while the map moves and scaling with the
+    /// zoom, instead of at the screen's own pixels as the renders read them (the user, 28 October: "The clouds cast
+    /// their shadows in their places again?", "The water ripples should scale in size when zooming in and out but still
+    /// fixed to their positions"). Never in engine mode: the renders' own frames.
+    bool grounded = false;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before

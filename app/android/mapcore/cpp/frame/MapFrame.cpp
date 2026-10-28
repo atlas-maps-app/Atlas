@@ -128,15 +128,22 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     if (made()) return {};
     auto builder = FrameBuilder::create(
         device, cache, make_passes(),
-        FrameOptions{.steps = steps_, .painter = painter_, .grain = grain_, .ground_clouds = true}, watch);
+        FrameOptions{.steps = steps_, .painter = painter_, .grain = grain_, .grounded = true}, watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());
     // The world's clock is the map's own: its workers stamp each tile's publication with it, the cover fades by it.
     auto clock = [epoch = epoch_] {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count();
     };
     // The passes' own providers of set 1's globals come with the world, made with the map's resources.
+    // The heaps as large as the device binds (scene::heap_budget), and the resident tiles' native bytes alike
+    scene::HeapBudget heaps = scene::heap_budget(device);
+    if (options_.heaps_total != 0) heaps.total = options_.heaps_total;
+    log::info("vk heaps: {} MB budget (the device binds {} MB of a storage buffer)", heaps.total >> 20U,
+              device.facts().limits.maxStorageBufferRange >> 20U);
     auto world = scene::World::create(device, (*builder)->passes(),
                                       {.workers = workers_,
+                                       .heaps = heaps,
+                                       .native_budget = static_cast<std::size_t>(heaps.total),
                                        .resources = options_.resources,
                                        .clock = std::move(clock),
                                        .hints = options_.worker_hints ? options_.worker_hints() : nullptr});

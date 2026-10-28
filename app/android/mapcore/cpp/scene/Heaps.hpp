@@ -64,6 +64,14 @@ struct HeapBudget {
     vk::DeviceSize total = std::uint64_t{64} << 20U;
 };
 
+/// The app's map's budget on `device`: as much as one storage buffer may bind (limits.maxStorageBufferRange: 128 MB on
+/// every PowerVR and most Adrenos of the device survey, up to 4 GB elsewhere), at least 64 MB and at most 256 MB, and
+/// no more than a sixteenth of the largest device-local memory heap; a power of two, as the buffer doubles up to it. 64
+/// MB filled with the canal ring zoomed out and the windows around it (61 of 64 MB at 1.6 km), where the tiles a pinch
+/// zooms in to then waited for room the drawn ones did not give up (the user, 28 October, on alpha 17: "At round z 17.0
+/// I cant zoom in any further").
+[[nodiscard]] HeapBudget heap_budget(const gpu::Device& device) noexcept;
+
 /// What the heap holds: its capacity, and its ranges' bytes and count by kind.
 struct HeapStats {
     vk::DeviceSize capacity = 0;

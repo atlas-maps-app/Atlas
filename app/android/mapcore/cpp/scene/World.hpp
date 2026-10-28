@@ -9,7 +9,8 @@
 // world's providers (frame::FrameScene::globals): its heaps', its sun's (scene/SunGlobals.hpp), those the passes
 // contribute (frame::Pass::providers, made with WorldOptions::resources) and those added to it.
 //
-// Tiles leave as the budgets ask (64 MB of heaps, scene/Heaps.hpp; §3: 64 MB of decoded tiles in native memory): a
+// Tiles leave as the budgets ask (the heaps', 64 MB unless the options say more: the app's map takes the device's,
+// scene::heap_budget; and as many bytes of decoded tiles in native memory): a
 // resident tile the cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native
 // bytes are over `keep_fraction` of their budget, and after `forget_seconds` whatever they hold; its ranges are freed
 // two frames later, after the fences, its native memory at once.

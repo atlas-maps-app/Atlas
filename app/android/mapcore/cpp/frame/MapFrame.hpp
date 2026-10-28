@@ -65,6 +65,9 @@ struct MapOptions {
     /// The hints of each world's tile workers (ENGINE.md gain 8: platform::WorkerSession on Android, made anew for
     /// each world, its workers' priority and their hint session); none by default.
     std::function<std::shared_ptr<scene::WorkerHints>()> worker_hints;
+    /// The heaps' budget in bytes instead of the device's (scene::heap_budget): a test's, to compare budgets; 0 for the
+    /// device's.
+    std::uint64_t heaps_total = 0;
 };
 
 /// The app's map.

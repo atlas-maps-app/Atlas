@@ -645,9 +645,10 @@ void World::update(const frame::FrameState& state) {
 std::string World::tiles_line() const {
     const ResidencyStats r = residency_->stats();
     const HeapStats h = heaps_->stats();
-    return std::format("vk tiles {} resident {:.1f} build {:.1f}", r.resident,
-                       static_cast<double>(h.total_used()) / 1.0e6,
-                       r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0);
+    // the heaps' bytes in use (MB) of their budget, and the tiles that found no room and wait for some to go
+    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {}", r.resident,
+                       static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
+                       r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting);
 }
 
 } // namespace atlas::scene

@@ -422,7 +422,10 @@ TEST_CASE("looks: a pinch in from the canal ring to the street, as the app names
                                        .spirv = 42});
     ATLAS_REQUIRE(started.has_value(), started.error().reason);
     {
-        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        // ATLAS_LOOK_HEAPS: the heaps' budget (MB) instead of the device's, to compare budgets along the pinch
+        const std::string heaps_mb = environment("ATLAS_LOOK_HEAPS");
+        frame::MapFrame map(2, [] {},
+                            {.cache_dir = guard, .heaps_total = heaps_mb.empty() ? 0U : std::stoull(heaps_mb) << 20U});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
         MESSAGE(map.set_packs(packs));
         CHECK(session.map(&map).empty());
@@ -459,8 +462,9 @@ TEST_CASE("looks: a pinch in from the canal ring to the street, as the app names
             const standin::Drawn s = session.draw(c, {});
             if (s.stale) session.remake();
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - at).count();
-            MESSAGE(std::format("zoom {:3d} {:6.0f} m: named {} drew {}, complete {}, {}k triangles, frame {:.0f} ms",
-                                i, d, c.pack_id, map.drawn_pack(), map.complete(), s.record.triangles_k, ms));
+            MESSAGE(std::format(
+                "zoom {:3d} {:6.0f} m: named {} drew {}, complete {}, {}k triangles, frame {:.0f} ms; {}", i, d,
+                c.pack_id, map.drawn_pack(), map.complete(), s.record.triangles_k, ms, map.tiles_line()));
             if (i % 6 == 0 || i == steps + 30) {
                 auto pixels = kept->kept->read(kept->kept->latest());
                 ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());

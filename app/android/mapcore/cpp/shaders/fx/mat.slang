@@ -203,6 +203,23 @@ uint fx_cloud_alpha(float2 q) {
     float r = top + ((bottom - top) * t.y);
     return uint(r + 0.5f);
 }
+/// The ripple's red and green at the fields' point `q` (device px, anywhere: fx_wrap), each between its four pixels'
+/// bytes as fx_glints_red reads the glints' red: where the water under a pixel lies in the fields (the ripple on the
+/// water).
+uint2 fx_rg_between(float2 q) {
+    float2 f = floor(q);
+    int2 i = int2(f);
+    float2 t = q - f;
+    float2 a = float2(fx_rg(fx_wrap(i)));
+    float2 b = float2(fx_rg(fx_wrap(i + int2(1, 0))));
+    float2 c = float2(fx_rg(fx_wrap(i + int2(0, 1))));
+    float2 d = float2(fx_rg(fx_wrap(i + int2(1, 1))));
+    float2 top = a + ((b - a) * t.x);
+    float2 bottom = c + ((d - c) * t.x);
+    float2 r = top + ((bottom - top) * t.y);
+    uint2 o = {uint(r.x + 0.5f), uint(r.y + 0.5f)};
+    return o;
+}
 uint3 fx_crown(int2 p) {
     int3 at = {p.x, p.y, 0};
     float4 d = noise_rg.Load(at);

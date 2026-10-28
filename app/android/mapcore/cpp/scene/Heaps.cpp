@@ -54,6 +54,20 @@ vk::DeviceSize HeapStats::total_used() const noexcept {
     return n;
 }
 
+HeapBudget heap_budget(const gpu::Device& device) noexcept {
+    const gpu::Facts& f = device.facts();
+    constexpr vk::DeviceSize least = std::uint64_t{64} << 20U;
+    constexpr vk::DeviceSize most = std::uint64_t{256} << 20U;
+    vk::DeviceSize memory = 0;
+    for (std::uint32_t i = 0; i < f.memory.memoryHeapCount; ++i) {
+        const vk::MemoryHeap& h = f.memory.memoryHeaps.at(i);
+        if (h.flags & vk::MemoryHeapFlagBits::eDeviceLocal) memory = std::max(memory, h.size);
+    }
+    vk::DeviceSize total = std::min(vk::DeviceSize{f.limits.maxStorageBufferRange}, most);
+    if (memory > 0) total = std::min(total, memory / 16);
+    return {.total = std::bit_floor(std::max(total, least))};
+}
+
 gpu::Result<std::unique_ptr<Heaps>> Heaps::create(const gpu::Device& device, const HeapBudget& budget) {
     std::unique_ptr<Heaps> self(new Heaps(device, budget)); // NOLINT(cppcoreguidelines-owning-memory)
     ATLAS_GPU_LET(buffer,

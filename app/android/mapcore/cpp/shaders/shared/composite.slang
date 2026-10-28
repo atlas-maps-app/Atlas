@@ -62,7 +62,7 @@ static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overl
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
 /// The steps the composite draws (every one).
 static const uint COMPOSITE_DRAWN = 127u;
-/// How the clouds' shadows are read, not a step: on the ground (the app's map, FrameOptions::ground_clouds), their field
+/// How the clouds' shadows are read, not a step: on the ground (the app's map, FrameOptions::grounded), their field
 /// where the ground under the pixel lies in it (the tables' COMPOSITE_CLOUD_MAP_AT), so a cloud's shadow keeps its place
 /// while the map moves under the finger; without it at the screen's own pixels, as the renders read them.
 static const uint COMPOSITE_CLOUD_GROUND = 128u;

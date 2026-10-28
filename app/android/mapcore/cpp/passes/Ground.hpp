@@ -1046,11 +1046,16 @@ struct RippleLayer {
     vk::raii::Pipeline square{nullptr};
     vk::raii::Pipeline line{nullptr};
     vk::raii::Pipeline fused{nullptr}; ///< the displacement and the boxes in one dispatch (ripple_fused_cs)
-    vk::raii::Pipeline draw{nullptr};  ///< the reflections into the samples
-    std::uint32_t result = 0;          ///< the buffer the last frame's blur left its result in (0 a, 1 b)
-    bool ran_fused = false;            ///< the last frame's stages ran fused (ripple_fused_cs)
-    PixelBox out;                      ///< and the result's region (the buffers hold nothing of the frame beyond it)
-    PixelBox drawn;                    ///< and the layer's (its render area: the layer holds nothing beyond it)
+    /// The module on the water (ripple_water.slang: the app's map, FrameState::grounded), its displacement apart and
+    /// fused; the boxes are the exact module's.
+    vk::raii::ShaderModule water_module{nullptr};
+    vk::raii::Pipeline water_displace{nullptr};
+    vk::raii::Pipeline water_fused{nullptr};
+    vk::raii::Pipeline draw{nullptr}; ///< the reflections into the samples
+    std::uint32_t result = 0;         ///< the buffer the last frame's blur left its result in (0 a, 1 b)
+    bool ran_fused = false;           ///< the last frame's stages ran fused (ripple_fused_cs)
+    PixelBox out;                     ///< and the result's region (the buffers hold nothing of the frame beyond it)
+    PixelBox drawn;                   ///< and the layer's (its render area: the layer holds nothing beyond it)
 };
 
 /// The lit streets' images, buffers and stages, made for an output (LitGlow.cpp; shaders/ground/litglow.slang): the
@@ -1127,6 +1132,7 @@ struct Ground::Words {
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)
     std::uint32_t leaf_offsets = 0; ///< the leaf filter's 256 offsets, then its reach (reflection_fs), with the ripple
     std::uint32_t ripple_plan = 0;  ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
+    std::uint32_t ripple_map = 0;   ///< the water's map the ripple reads its field by (the app's map), 0: the screen's
     std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results (glints_fs)
     std::uint32_t slot = 0;         ///< the frame slot whose buffer holds them
     bool ready = false;

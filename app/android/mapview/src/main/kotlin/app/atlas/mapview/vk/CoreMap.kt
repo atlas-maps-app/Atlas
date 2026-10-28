@@ -287,7 +287,11 @@ internal class CoreMap(
         }
         val stats = core.stats()
         val graphics = Regex("graphics ([0-9.]+) MB").find(stats)?.groupValues?.get(1) ?: "-"
-        val tiles = Regex("vk tiles ([0-9]+) resident ([0-9.]+)").find(stats)?.let { "${it.groupValues[1]} (${it.groupValues[2]} MB)" } ?: "-"
+        // the resident tiles, their heaps' MB of the budget, and those waiting for room (a full heap)
+        val tiles = Regex("vk tiles ([0-9]+) resident ([0-9.]+)(?: of ([0-9]+))?(?: build [0-9.]+ waiting ([0-9]+))?").find(stats)?.let {
+            val (n, mb, budget, waiting) = it.destructured
+            "$n ($mb${if (budget.isNotEmpty()) "/$budget" else ""} MB${if (waiting.isNotEmpty() && waiting != "0") ", $waiting waiting" else ""})"
+        } ?: "-"
         val native = Debug.getNativeHeapAllocatedSize() / 1e6
         return String.format(
             Locale.ROOT, "vk p50 %s p95 %s gpu %.1f tiles %s graphics %s native %.0f",

@@ -412,6 +412,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.view.emplace(spec, device);
     state_.layers = view::layers_of(state_.view->camera(), state_.theme, settings);
     const bool engine = cam.has(style::camera_flag::engine_mode);
+    state_.grounded = options_.grounded && !engine;
     shaders::FrameBlock& b = state_.block;
     b.camera = state_.view->block(state_.rest, engine, number);
     // the depth attachment's scale, and the painter switch (the owner mode reads painter slots back from the depth)
@@ -420,7 +421,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     b.theme = style::shader_theme(state_.theme);
     std::uint32_t steps = options_.overdraw || options_.owners ? 0U : steps_of(state_.mode) & options_.steps;
     if (cam.has(style::camera_flag::no_cloud_shadows)) steps &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
-    if (options_.ground_clouds && !engine && (steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U) {
+    if (state_.grounded && (steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U) {
         steps |= shaders::COMPOSITE_CLOUD_GROUND;
     }
     b.layers = view::block_of(*state_.layers, state_.theme, steps, levels_);
