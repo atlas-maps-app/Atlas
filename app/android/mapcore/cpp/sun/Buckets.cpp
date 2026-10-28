@@ -20,6 +20,10 @@
 #include <system_error>
 #include <utility>
 
+#if defined(__ANDROID__)
+#include <sys/resource.h>
+#endif
+
 namespace atlas::sun {
 
 namespace {
@@ -583,6 +587,11 @@ std::uint64_t Worker::cached() const {
 }
 
 void Worker::loop(const std::stop_token& stop) {
+#if defined(__ANDROID__)
+    // Background priority (ENGINE.md gain 8), its helpers' too: made on the render thread, this thread would keep its
+    // display priority, and the helpers would take it from this one.
+    (void)setpriority(PRIO_PROCESS, 0, 10);
+#endif
     std::unique_lock lock(mutex_);
     for (;;) {
         if (!wake_.wait(lock, stop, [&] { return next_.has_value(); })) return; // stop asked

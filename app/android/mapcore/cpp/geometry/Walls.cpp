@@ -480,30 +480,43 @@ double Building::sk_top(const V2& p) const noexcept {
     return h - ((rh * (((p.x * dirv.x) + (p.z * dirv.z)) - p0)) / span);
 }
 
-TileBuildings build_buildings(const BuildingInput& in) {
-    ATLAS_ASSERT(in.tile != nullptr && in.head != nullptr);
-    const tl::Tile& tile = *in.tile;
+namespace {
+
+/// The records stage T walks, in the sun samples' order: the building layer's, then the part layer's, with each
+/// record's cell.
+struct Records {
+    std::array<const tl::Layer*, 2> layers{};
+    std::array<std::vector<std::uint8_t>, 2> cells;
+    std::size_t count = 0; ///< both layers'
+};
+
+/// A dense tile's walk in blocks of about this many records, at most this many.
+constexpr std::size_t records_a_block = 192;
+constexpr std::size_t max_blocks = 8;
+
+constexpr std::array<std::pair<tl::LayerId, Source>, 2> walked{std::pair{tl::LayerId::building, Source::building},
+                                                               std::pair{tl::LayerId::part, Source::part}};
+
+/// What the walk makes of a run of the records (ENGINE.md gain 9: a dense tile's buildings in blocks, each on a
+/// worker): its primitives, faces, n-gons, items and windowed walls as the walk makes them, numbered from its first,
+/// and the sun samples and windows it counts.
+struct Block {
+    TileBuildings made;
+    std::vector<Made> spans;
+    std::uint32_t samples = 0;
+    std::uint32_t windows = 0;
+};
+
+/// Records [from, to) of the walk into `out`, as one walk over every record makes them.
+void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
+          const std::unordered_map<std::uint64_t, std::uint32_t>& variants, std::size_t from, std::size_t to,
+          Block& out) {
     const tl::Frame& frame = in.head->frame;
-    TileBuildings out;
-    out.level = in.level;
-    out.cells_per_side = tile.header.cells_per_side;
-    const std::size_t cells = std::size_t{tile.header.cells_per_side} * tile.header.cells_per_side;
-    // the variants at this level, by their base feature's layer and source order (as K8 finds them)
-    std::unordered_map<std::uint64_t, std::uint32_t> variants;
-    const tl::Layer* var = tile.layer(tl::LayerId::variant);
-    if (var != nullptr && in.level > 0) {
-        for (std::uint32_t i = 0; i < var->count; ++i) {
-            if (var->integer(tl::variant::tolerance, i) != in.level) continue;
-            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
-            const auto index = static_cast<std::uint64_t>(var->integer(tl::variant::index, i));
-            variants[(layer << 56U) | index] = i;
-        }
-    }
-    TileBuildings made; // the primitives in the samples' order, laid out by cells below
+    TileBuildings& made = out.made;
+    std::vector<Made>& spans = out.spans;
     Builder b(made);
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
-    std::vector<Made> spans;
     std::vector<std::uint32_t> kept;
     // the tile's outlines, whether each is a relation's: the building a part names (its parent) is keyed by it
     std::unordered_map<std::int64_t, bool> outlines;
@@ -514,12 +527,15 @@ TileBuildings build_buildings(const BuildingInput& in) {
         }
     }
     Building bl;
-    for (const auto [layer_id, source] :
-         {std::pair{tl::LayerId::building, Source::building}, std::pair{tl::LayerId::part, Source::part}}) {
-        const tl::Layer* l = tile.layer(layer_id);
+    std::size_t first = 0; // the walk's index of the layer's first record
+    for (std::size_t w = 0; w < walked.size(); ++w) {
+        const auto [layer_id, source] = walked[w];
+        const tl::Layer* l = records.layers[w];
         if (l == nullptr) continue;
-        const std::vector<std::uint8_t> cell_of = cells_of(*l, cells);
-        for (std::uint32_t i = 0; i < l->count; ++i) {
+        const std::vector<std::uint8_t>& cell_of = records.cells[w];
+        const std::size_t begin = std::max(from, first);
+        const std::size_t end = std::min<std::size_t>(to, first + l->count);
+        for (auto i = static_cast<std::uint32_t>(begin - std::min(begin, first)); first + i < end; ++i) {
             const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, i));
             const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
             bl.v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
@@ -645,9 +661,112 @@ TileBuildings build_buildings(const BuildingInput& in) {
             made.item_facades.push_back(b.facade);
             spans.push_back(m);
         }
+        first += l->count;
     }
     out.samples = b.sample;
     out.windows = b.windows;
+}
+
+} // namespace
+
+TileBuildings build_buildings(const BuildingInput& in) {
+    ATLAS_ASSERT(in.tile != nullptr && in.head != nullptr);
+    const tl::Tile& tile = *in.tile;
+    TileBuildings out;
+    out.level = in.level;
+    out.cells_per_side = tile.header.cells_per_side;
+    const std::size_t cells = std::size_t{tile.header.cells_per_side} * tile.header.cells_per_side;
+    // the variants at this level, by their base feature's layer and source order (as K8 finds them)
+    std::unordered_map<std::uint64_t, std::uint32_t> variants;
+    const tl::Layer* var = tile.layer(tl::LayerId::variant);
+    if (var != nullptr && in.level > 0) {
+        for (std::uint32_t i = 0; i < var->count; ++i) {
+            if (var->integer(tl::variant::tolerance, i) != in.level) continue;
+            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
+            const auto index = static_cast<std::uint64_t>(var->integer(tl::variant::index, i));
+            variants[(layer << 56U) | index] = i;
+        }
+    }
+    Records records;
+    for (std::size_t w = 0; w < walked.size(); ++w) {
+        records.layers[w] = tile.layer(walked[w].first);
+        if (records.layers[w] == nullptr) continue;
+        records.cells[w] = cells_of(*records.layers[w], cells);
+        records.count += records.layers[w]->count;
+    }
+    // The walk in blocks of records where the work is shared (a dense tile's), each on a worker, else in one; then the
+    // blocks in order, each one's numbers after those of the blocks before it: the primitives, faces, n-gons, items
+    // and windowed walls one walk over every record makes, in the samples' order.
+    const std::size_t most = in.share ? std::clamp<std::size_t>(in.blocks, 1, max_blocks) : std::size_t{1};
+    const std::size_t blocks = std::clamp<std::size_t>(records.count / records_a_block, 1, most);
+    std::vector<Block> walks(blocks);
+    const auto walk_block = [&](std::size_t k) {
+        walk(in, records, var, variants, records.count * k / blocks, records.count * (k + 1) / blocks, walks[k]);
+    };
+    if (blocks > 1) {
+        in.share(blocks, walk_block);
+    } else {
+        walk_block(0);
+    }
+    TileBuildings made = std::move(walks[0].made); // the primitives in the samples' order, laid out by cells below
+    std::vector<Made> spans = std::move(walks[0].spans);
+    std::uint32_t samples = walks[0].samples;
+    std::uint32_t windows = walks[0].windows;
+    if (blocks > 1) {
+        std::size_t edged_count = 0;
+        std::size_t plain_count = 0;
+        for (const Block& k : walks) {
+            edged_count += k.made.edged.size();
+            plain_count += k.made.plain.size();
+        }
+        made.edged.reserve(edged_count);
+        made.plain.reserve(plain_count);
+    }
+    for (std::size_t n = 1; n < blocks; ++n) {
+        Block& k = walks[n];
+        const auto edged = static_cast<std::uint32_t>(made.edged.size());
+        const auto plain = static_cast<std::uint32_t>(made.plain.size());
+        const auto faces = static_cast<std::uint32_t>(made.faces.size());
+        const auto polygons = static_cast<std::uint32_t>(made.polygons.size());
+        const auto items = static_cast<std::uint32_t>(made.items.size());
+        const std::size_t walls = made.window_walls.size();
+        const auto after = [&](Prim q) {
+            q.face += faces;
+            if (q.sample != no_sample) q.sample += samples;
+            q.item += items;
+            if (q.polygon != no_polygon) q.polygon += polygons;
+            return q;
+        };
+        for (const Prim& q : k.made.edged) made.edged.push_back(after(q));
+        for (const Prim& q : k.made.plain) made.plain.push_back(after(q));
+        made.faces.insert(made.faces.end(), k.made.faces.begin(), k.made.faces.end());
+        for (Polygon& g : k.made.polygons) {
+            g.face += faces;
+            g.first += plain;
+            g.item += items;
+            made.polygons.push_back(std::move(g));
+        }
+        made.items.insert(made.items.end(), k.made.items.begin(), k.made.items.end());
+        made.item_facades.insert(made.item_facades.end(), k.made.item_facades.begin(), k.made.item_facades.end());
+        for (WindowWall w : k.made.window_walls) {
+            w.wall += edged;
+            if (w.style != WindowStyle::cabin) w.first += windows; // a cabin's panes are none of the tile's windows
+            made.window_walls.push_back(w);
+        }
+        for (Made m : k.spans) {
+            m.edged_first += edged;
+            m.edged_end += edged;
+            m.plain_first += plain;
+            m.plain_end += plain;
+            m.windows_first += walls;
+            m.windows_end += walls;
+            spans.push_back(m);
+        }
+        samples += k.samples;
+        windows += k.windows;
+    }
+    out.samples = samples;
+    out.windows = windows;
     out.faces = std::move(made.faces);
     out.items = std::move(made.items);
     out.item_facades = std::move(made.item_facades);
