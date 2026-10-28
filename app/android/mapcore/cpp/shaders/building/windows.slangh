@@ -2164,8 +2164,20 @@ struct BuildingBeam {
     uint slot;
 };
 
-/// The beam of record v0 to v5 at the frame's camera.
-inline BuildingBeam building_beam(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2, uint4 v3, uint4 v4, uint4 v5) {
+/// The tile place of a record's v4 and v5.
+inline TilePlace building_record_place(uint4 v4, uint4 v5) {
+    TilePlace place;
+    float4 offset = {asfloat(v4.x), asfloat(v4.y), asfloat(v4.z), asfloat(v4.w)};
+    float4 scale = {asfloat(v5.x), asfloat(v5.y), asfloat(v5.z), asfloat(v5.w)};
+    place.offset = offset;
+    place.scale = scale;
+    return place;
+}
+
+/// The segment of record v0, v1 (its ends' tile-local float bits, its painter slot v0.w and its width's hundredths
+/// v1.w) of the tile placed by v4 and v5, at the frame's camera: its ends projected as Camera.proj projects them (none
+/// behind the near plane: then not drawn) and snapped at rest, their reciprocal depths, half its width.
+inline BuildingBeam building_segment(FrameCamera cam, uint4 v0, uint4 v1, uint4 v4, uint4 v5) {
     BuildingBeam b;
     float2 zero = {0.0f, 0.0f};
     b.drawn = false;
@@ -2175,19 +2187,7 @@ inline BuildingBeam building_beam(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2,
     b.r1 = 0.0f;
     b.half = 0.5f * building_hundredths(v1.w);
     b.slot = v0.w;
-    TilePlace place;
-    float4 offset = {asfloat(v4.x), asfloat(v4.y), asfloat(v4.z), asfloat(v4.w)};
-    float4 scale = {asfloat(v5.x), asfloat(v5.y), asfloat(v5.z), asfloat(v5.w)};
-    place.offset = offset;
-    place.scale = scale;
-    // its gable turned to the eye (building_wall_turned's `vdot(nrm, vsub(cam.C, centre)) > 0`)
-    float3 n = {asfloat(v2.x), asfloat(v2.y), asfloat(v2.z)};
-    float3 test = {asfloat(v3.x), asfloat(v3.y), asfloat(v3.z)};
-    float3 t = eye_relative(place, test);
-    float toward = -(((n.x * t.x) + (n.y * t.y)) + (n.z * t.z));
-    if (!(toward > 0.0f)) {
-        return b;
-    }
+    TilePlace place = building_record_place(v4, v5);
     float near_z = cam.frame.w;
     float3 from = {asfloat(v0.x), asfloat(v0.y), asfloat(v0.z)};
     float3 to = {asfloat(v1.x), asfloat(v1.y), asfloat(v1.z)};
@@ -2209,6 +2209,25 @@ inline BuildingBeam building_beam(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2,
     b.p1 = p1;
     b.r0 = near_z / k0.z;
     b.r1 = near_z / k1.z;
+    return b;
+}
+
+/// Whether the face of normal v2.xyz with test point v3.xyz (tile-local float bits) turns to the eye
+/// (building_wall_turned's `vdot(nrm, vsub(cam.C, centre)) > 0`).
+inline bool building_record_turned(uint4 v2, uint4 v3, TilePlace place) {
+    float3 n = {asfloat(v2.x), asfloat(v2.y), asfloat(v2.z)};
+    float3 test = {asfloat(v3.x), asfloat(v3.y), asfloat(v3.z)};
+    float3 t = eye_relative(place, test);
+    float toward = -(((n.x * t.x) + (n.y * t.y)) + (n.z * t.z));
+    return toward > 0.0f;
+}
+
+/// The beam of record v0 to v5 at the frame's camera: its segment, where its gable turns to the eye.
+inline BuildingBeam building_beam(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2, uint4 v3, uint4 v4, uint4 v5) {
+    BuildingBeam b = building_segment(cam, v0, v1, v4, v5);
+    if (!building_record_turned(v2, v3, building_record_place(v4, v5))) {
+        b.drawn = false;
+    }
     return b;
 }
 
@@ -2256,4 +2275,69 @@ inline bool building_beam_covers(BuildingBeam b, float2 p) {
     float dx = p.x - (b.p0.x + u.x * s);
     float dy = p.y - (b.p0.y + u.y * s);
     return dx * dx + dy * dy <= b.half * b.half;
+}
+
+// ---------------------------------------------------------------------------------------------- a kit roof's lines
+
+// A tradition's kit roof's lines (geometry::RoofCourses and RoofRidge; render/amsterdam.py's trad_roof, with weather by
+// day): each slope's tile courses, a record a line (butt-capped, `opacity=".3"`, in its roof's colour darkened, where
+// the slope turns to the eye) and the lit ridge (round-capped, `opacity=".55"`, #F4EEE2, whichever way its slopes turn),
+// drawn after the roofs' thin edges over what lies under them (premultiplied source over, as SVG's opacity). A record is
+// a beam's six vectors with v2.w its flags and opacity and v3.w its colour (0xRRGGBB).
+static const uint BUILDING_ROOF_LINE_VECTORS = 6u;
+static const uint BUILDING_ROOF_LINE_VERTICES = 6u;
+static const uint BUILDING_ROOF_LINE_UNTURNED = 1u;      ///< drawn whichever way its face turns (the ridge)
+static const uint BUILDING_ROOF_LINE_ROUND = 2u;         ///< round caps (the ridge); butt without (the courses)
+static const uint BUILDING_ROOF_LINE_OPACITY_SHIFT = 8u; ///< bits 8-15: its opacity in hundredths
+static const uint BUILDING_ROOF_RIDGE_RGB = 0xF4EEE2u;
+/// Its lead (2^-11 + 2^-12): over its slope, a kit's eaves' or not, and the slope's own thin stroke, wherever its
+/// width lies on the slope (the slope's depth changes across it; a line's quad keeps its centre's).
+static const float BUILDING_ROOF_LINE_LEAD = 7.32421875e-4f;
+
+/// A kit roof's line as the frame draws it: its segment (a beam's), its caps, its colour and its opacity.
+struct BuildingRoofLine {
+    BuildingBeam line;
+    bool round;
+    uint rgb;
+    float opacity;
+};
+
+/// The roof line of record v0 to v5 at the frame's camera.
+inline BuildingRoofLine building_roof_line(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2, uint4 v3, uint4 v4,
+                                           uint4 v5) {
+    BuildingRoofLine r;
+    uint flags = v2.w;
+    r.round = (flags & BUILDING_ROOF_LINE_ROUND) != 0u;
+    r.rgb = v3.w;
+    r.opacity = float((flags >> BUILDING_ROOF_LINE_OPACITY_SHIFT) & 0xFFu) / 100.0f;
+    r.line = building_segment(cam, v0, v1, v4, v5);
+    if ((flags & BUILDING_ROOF_LINE_UNTURNED) == 0u && !building_record_turned(v2, v3, building_record_place(v4, v5))) {
+        r.line.drawn = false;
+    }
+    return r;
+}
+
+/// A roof line's reciprocal depth at CSS point `p`: its ends' interpolated along it and carried on past them (affine on
+/// the screen along a line in space: a long line's quad keeps the depth along it exact to its ends).
+inline float building_segment_recip(BuildingBeam b, float2 p) {
+    float3 u = building_beam_along(b);
+    if (!(u.z > 0.0f)) {
+        return b.r0;
+    }
+    float s = ((p.x - b.p0.x) * u.x + (p.y - b.p0.y) * u.y) / u.z;
+    return b.r0 + (b.r1 - b.r0) * s;
+}
+
+/// Whether CSS point `p` lies within half a line's width of its segment, its ends cut square there (butt caps).
+inline bool building_segment_covers_butt(BuildingBeam b, float2 p) {
+    float3 u = building_beam_along(b);
+    if (!(u.z > 0.0f)) {
+        return false;
+    }
+    float s = (p.x - b.p0.x) * u.x + (p.y - b.p0.y) * u.y;
+    if (s < 0.0f || s > u.z) {
+        return false;
+    }
+    float d = (p.y - b.p0.y) * u.x - (p.x - b.p0.x) * u.y;
+    return (d < 0.0f ? -d : d) <= b.half;
 }

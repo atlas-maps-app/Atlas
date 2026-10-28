@@ -66,6 +66,7 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(21, 2)]] RWStructuredBuffer<uint4> material_lines_out;
 [[vk::binding(22, 2)]] StructuredBuffer<uint4> material_lines;
 [[vk::binding(23, 2)]] StructuredBuffer<uint4> beams;
+[[vk::binding(24, 2)]] StructuredBuffer<uint4> roof_lines;
 // The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
 // stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
 // list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
@@ -434,7 +435,7 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
         float3 oc = {(cc.x / cc.w + 1.0f) / scale.x, (cc.y / cc.w + 1.0f) / scale.y, c.z};
         float2 here = {(o.position.x + 1.0f) / scale.x, (o.position.y + 1.0f) / scale.y};
         o.position.z = building_stroke_depth(frame.camera, building_stroke_slot(header),
-                                             building_stroke_recip(oa, ob, oc, here));
+                                             building_stroke_recip(oa, ob, oc, here), building_stroke_face_lead(header));
     }
     return o;
 }
@@ -1314,6 +1315,80 @@ FrameTarget beam_fs(BeamOut v) {
     FrameTarget o;
     o.colour = float4(mat_colour(frame.camera, building_rgb(BUILDING_BEAM_RGB), v.position.xy, mat_grain_on(frame)),
                       1.0f);
+    o.coverage = mask;
+    return o;
+}
+
+/// A kit roof's line's fragments: its segment's ends (CSS px), half its width and its caps, its colour and opacity.
+struct RoofLineOut {
+    float4 position : SV_Position;
+    nointerpolation float4 ends : ROOF_LINE_ENDS;
+    nointerpolation float4 paint : ROOF_LINE_PAINT; ///< its colour (with mat's grain to come) and its opacity
+    nointerpolation float half : ROOF_LINE_HALF;
+    nointerpolation uint round : ROOF_LINE_ROUND;
+};
+
+/// Vertex `v` of roof line record `index` (a kit roof's tile course or lit ridge): its quad (a beam's), at its true
+/// depth along it with the roof lines' lead, or at its slot's painter depth under the painter switch; an instance a
+/// record.
+[shader("vertex")]
+RoofLineOut roof_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    uint at = index * BUILDING_ROOF_LINE_VECTORS;
+    BuildingRoofLine r = building_roof_line(frame.camera, roof_lines[at], roof_lines[at + 1u], roof_lines[at + 2u],
+                                            roof_lines[at + 3u], roof_lines[at + 4u], roof_lines[at + 5u]);
+    RoofLineOut o;
+    o.ends = float4(0.0f);
+    o.paint = float4(0.0f);
+    o.half = 0.0f;
+    o.round = 0u;
+    if (!r.line.drawn) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingBeam b = r.line;
+    uint corner = v < 3u ? v : (v == 3u ? 0u : v - 2u);
+    float2 css = building_beam_corner(b, corner);
+    float recip = building_segment_recip(b, css);
+    float depth = (frame.camera.flags.x & CAMERA_PAINTER) != 0u
+                      ? painter_depth(frame.camera, b.slot)
+                      : true_depth(frame.camera, recip + recip * BUILDING_ROOF_LINE_LEAD);
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.ends = float4(b.p0, b.p1);
+    o.paint = float4(building_rgb(r.rgb), r.opacity);
+    o.half = b.half;
+    o.round = r.round ? 1u : 0u;
+    return o;
+}
+
+/// A kit roof's line's fragments: the samples its stroke covers (round caps the ridge's, butt the courses'), in its
+/// colour with mat's grain as the objects take it, at its opacity over what lies under it (premultiplied, source over).
+[shader("fragment")]
+FrameTarget roof_line_fs(RoofLineOut v) {
+    BuildingBeam b;
+    b.drawn = true;
+    b.p0 = v.ends.xy;
+    b.p1 = v.ends.zw;
+    b.r0 = 0.0f;
+    b.r1 = 0.0f;
+    b.half = v.half;
+    b.slot = 0u;
+    float2 corner = floor(v.position.xy);
+    uint n = push.at.x;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? window_samples4[i] : (n == 2u ? window_samples2[i] : float2(0.5f, 0.5f));
+        float2 p = css_of_output(frame.camera, corner + at);
+        bool covered = v.round != 0u ? building_beam_covers(b, p) : building_segment_covers_butt(b, p);
+        if (covered) {
+            mask |= 1u << i;
+        }
+    }
+    if (mask == 0u) {
+        discard;
+    }
+    FrameTarget o;
+    float3 c = mat_colour(frame.camera, v.paint.xyz, v.position.xy, mat_grain_on(frame));
+    o.colour = float4(c * v.paint.w, v.paint.w);
     o.coverage = mask;
     return o;
 }

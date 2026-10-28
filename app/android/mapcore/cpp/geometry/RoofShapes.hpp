@@ -83,6 +83,10 @@ struct V3 {
 /// nothing where it would be too thin or notched (a mansard's top, m2).
 [[nodiscard]] std::optional<std::vector<V2>> inset_ring(std::span<const V2> poly, double dl);
 
+/// Amsterdam.offsetRing: the ring moved `dl` outward (a kit's eaves and verges: its sides along their normals,
+/// mitred, capped at 2.6 dl), or nothing where a side would turn over.
+[[nodiscard]] std::optional<std::vector<V2>> offset_ring(std::span<const V2> poly, double dl);
+
 /// A gable or hipped roof's ridge, as _draw_building lays it out without a tradition: along the longest side (the last
 /// of equals), across it where roof:orientation says so; the centroid, and the footprint's extent along the ridge.
 struct Ridge {

@@ -47,6 +47,8 @@ static const uint BUILDING_STROKES = BUILDING_STROKE_FINE | BUILDING_STROKE_WIDE
 // An n-gon's triangle's edges on its polygon's ring, which its stroke follows: BUILDING_OUTLINE << k for edge k (corner
 // k to k + 1, the third back to the first). The cuts between its triangles have none.
 static const uint BUILDING_OUTLINE = 1024u;
+// A kit roof's slope or hip that overhangs its walls (its eaves): its depth's lead BUILDING_EAVES_LEAD.
+static const uint BUILDING_EAVES = 8192u;
 
 // A face's flags.
 static const uint BUILDING_FACE_DAY = 1u;  // lit whenever the sun is up, not by a sample (a deck, a cabin's roof)
@@ -74,6 +76,9 @@ static const float BUILDING_MARGIN = 300.0f;
 static const float BUILDING_CELL_LEAD = 1.52587890625e-5f;
 static const uint BUILDING_CELL_LEADS = 16u; // a cell's lead is (row + column) modulo this, times BUILDING_CELL_LEAD
 static const float BUILDING_ROOF_LEAD = 2.44140625e-4f;
+// A kit roof's eaves' lead (2^-11): its face passes through the top of the walls it overhangs, inside it, where the
+// roofs' 2^-12 leads a cell's at most by 2^-16, which the rasteriser's rounding of two faces met there does not keep.
+static const float BUILDING_EAVES_LEAD = 4.8828125e-4f;
 static const float BUILDING_PLANE_SPAN = 1.953125e-3f;
 // A roof's thin stroke's lead over its own face (2^-16 more than the face's): it lies on its face's plane (the
 // reciprocal depth the rasteriser gives the face's own triangle, carried on past the edge) a little nearer, over its
@@ -472,7 +477,9 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     s.plane = plane;
     s.lo = lo - lo * BUILDING_PLANE_SPAN;
     s.hi = hi + hi * BUILDING_PLANE_SPAN;
-    s.lead = (p.flags & BUILDING_EDGE) != 0u ? float(p.lead) * BUILDING_CELL_LEAD : BUILDING_ROOF_LEAD;
+    s.lead = (p.flags & BUILDING_EDGE) != 0u
+                 ? float(p.lead) * BUILDING_CELL_LEAD
+                 : ((p.flags & BUILDING_EAVES) != 0u ? BUILDING_EAVES_LEAD : BUILDING_ROOF_LEAD);
     s.slot = rank_slot(rank) + (near ? p.near_slot : p.far_slot);
     s.depth = painter_depth(cam, s.slot);
     return s;
@@ -575,14 +582,14 @@ inline float building_stroke_recip(float3 a, float3 b, float3 c, float2 p) {
     return r;
 }
 
-/// The depth a roof's thin stroke draws at where its reciprocal depth is `recip`: over its own face by
-/// BUILDING_STROKE_LEAD (a plain shape's lead is the roofs'), or under the painter switch its face's painter depth,
-/// slot `slot`'s (over its own fill, the strokes' depth test being GREATER_OR_EQUAL).
-inline float building_stroke_depth(FrameCamera cam, uint slot, float recip) {
+/// The depth a roof's thin stroke draws at where its reciprocal depth is `recip`: over its own face, whose lead is
+/// `lead` (a plain shape's: the roofs', or a kit's eaves'), by BUILDING_STROKE_LEAD, or under the painter switch its
+/// face's painter depth, slot `slot`'s (over its own fill, the strokes' depth test being GREATER_OR_EQUAL).
+inline float building_stroke_depth(FrameCamera cam, uint slot, float recip, float lead) {
     if ((cam.flags.x & CAMERA_PAINTER) != 0u) {
         return painter_depth(cam, slot);
     }
-    return true_depth(cam, recip + recip * (BUILDING_ROOF_LEAD + BUILDING_STROKE_LEAD));
+    return true_depth(cam, recip + recip * (lead + BUILDING_STROKE_LEAD));
 }
 
 // A roof's thin stroke's record, which the strokes' compute stage writes for each plain primitive the frame draws and
@@ -604,8 +611,8 @@ struct BuildingStrokeRecord {
 };
 
 /// The header of the record of a plain primitive with flags `flags` that the frame draws as shape `s`: its corners
-/// (bits 0-2), the edges its stroke follows (bits 3-7), its stroke (bits 8-9) and its painter slot (bits 10-29); 0
-/// where it draws no stroke.
+/// (bits 0-2), the edges its stroke follows (bits 3-7), its stroke (bits 8-9), its painter slot (bits 10-29) and
+/// whether its face is a kit's eaves (bit 30, its lead); 0 where it draws no stroke.
 inline uint building_stroke_header(uint flags, BuildingShape s) {
     uint style = (flags & BUILDING_STROKE_FINE) != 0u
                      ? BUILDING_STROKE_STYLE_FINE
@@ -615,7 +622,8 @@ inline uint building_stroke_header(uint flags, BuildingShape s) {
     if (style == 0u || s.count == 0u || s.strokes == 0u) {
         return 0u;
     }
-    return (s.count | (s.strokes << 3u)) | ((style << 8u) | ((s.slot & 0xFFFFFu) << 10u));
+    uint eaves = (flags & BUILDING_EAVES) != 0u ? 1u : 0u;
+    return (s.count | (s.strokes << 3u)) | ((style << 8u) | (((s.slot & 0xFFFFFu) << 10u) | (eaves << 30u)));
 }
 
 /// A header's fields.
@@ -629,7 +637,11 @@ inline uint building_stroke_style(uint header) {
     return (header >> 8u) & 3u;
 }
 inline uint building_stroke_slot(uint header) {
-    return header >> 10u;
+    return (header >> 10u) & 0xFFFFFu;
+}
+/// The lead of the face whose stroke a header heads (a plain shape's: the roofs', or a kit's eaves').
+inline float building_stroke_face_lead(uint header) {
+    return ((header >> 30u) & 1u) != 0u ? BUILDING_EAVES_LEAD : BUILDING_ROOF_LEAD;
 }
 
 /// The record of header `header` and shape `s`.

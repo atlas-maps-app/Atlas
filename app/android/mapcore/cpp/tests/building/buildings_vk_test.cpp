@@ -469,8 +469,9 @@ void add_arches(std::vector<Shape>& out, const twin::ArchesDepth& ad, double den
         }
         // a church wall's windows' parts; their glass's veil is folded into their glass
         if (e->sequence < depths.size() && depths[e->sequence].veil) continue;
-        // a wall's material face, blended over the raster (materials_of)
+        // a wall's material face, blended over the raster (materials_of); a kit roof's lines (roof_lines_of)
         if (e->sequence < depths.size() && !depths[e->sequence].materials.empty()) continue;
+        if (e->sequence < depths.size() && !depths[e->sequence].roof_lines.empty()) continue;
         // a hoist beam: its segment grown by half its width (its round caps), its quad's depths along it as beam_vs
         // gives them
         if (e->sequence < depths.size() && !depths[e->sequence].beams.empty()) {
@@ -743,7 +744,8 @@ struct StrokeSeg {
                 // the vertex stage's corner in output px, back from its normalised coordinates
                 const hlsl::float2 ndc = {(px.x * scale.x) - 1.0F, (px.y * scale.y) - 1.0F};
                 const hlsl::float2 here = {(ndc.x + 1.0F) / scale.x, (ndc.y + 1.0F) / scale.y};
-                g.depth[q] = sh::building_stroke_depth(cam, s.slot, sh::building_stroke_recip(oa, ob, oc, here));
+                g.depth[q] =
+                    sh::building_stroke_depth(cam, s.slot, sh::building_stroke_recip(oa, ob, oc, here), s.lead);
             }
             out.push_back(g);
         }
@@ -840,6 +842,56 @@ struct MaterialPath {
     return fills;
 }
 
+/// A kit roof's line as the frame draws it (twin::RoofLinesDepth's): its quad's shape and its depth along it as
+/// roof_line_vs gives them (a beam's), its segment and half its width in device px, its caps, colour and opacity, at
+/// its slot; each line blended on its own.
+struct RoofLine {
+    Shape shape;
+    Pt a{};
+    Pt b{};
+    double half = 0.0;
+    bool round = false;
+    std::uint32_t colour = 0;
+    float opacity = 1.0F;
+    std::uint32_t slot = 0;
+};
+
+/// The document's kit roofs' lines as the frame draws them, in the stream's order.
+[[nodiscard]] std::vector<RoofLine> roof_lines_of(const twin::Document& doc, double density,
+                                                  std::span<const twin::ElementDepth> depths,
+                                                  const shaders::FrameCamera& cam) {
+    std::vector<RoofLine> out;
+    for (const twin::Element* e : doc.order(twin::Layer::objects)) {
+        if (e->kind != twin::Op::path || e->sequence >= depths.size()) continue;
+        for (const twin::RoofLinesDepth& rd : depths[e->sequence].roof_lines) {
+            for (const shaders::BuildingBeam& bb : rd.lines) {
+                RoofLine l;
+                l.shape.depth = twin::ElementDepth{.edged = false, .tile = depths[e->sequence].tile};
+                l.shape.depth.shape.lead = shaders::BUILDING_ROOF_LINE_LEAD;
+                l.shape.depth.shape.slot = bb.slot;
+                l.shape.depth.shape.depth = shaders::painter_depth(cam, bb.slot);
+                std::array<Vertex, 4> quad{};
+                for (std::uint32_t k = 0; k < 4; ++k) {
+                    const hlsl::float2 c = shaders::building_beam_corner(bb, k);
+                    quad[k] = {static_cast<double>(c.x), static_cast<double>(c.y),
+                               static_cast<double>(shaders::building_segment_recip(bb, c))};
+                }
+                l.shape.triangles = {{quad[0], quad[1], quad[2]}, {quad[0], quad[2], quad[3]}};
+                l.shape.slack = slack_of(cam, l.shape.depth, l.shape.triangles);
+                l.a = {.x = static_cast<double>(bb.p0.x) * density, .y = static_cast<double>(bb.p0.y) * density};
+                l.b = {.x = static_cast<double>(bb.p1.x) * density, .y = static_cast<double>(bb.p1.y) * density};
+                l.half = static_cast<double>(bb.half) * density;
+                l.round = rd.round;
+                l.colour = levels_of(shaders::building_rgb(rd.rgb));
+                l.opacity = rd.opacity;
+                l.slot = bb.slot;
+                out.push_back(std::move(l));
+            }
+        }
+    }
+    return out;
+}
+
 /// What the strokes leave each sample of a raster: its colour (levels, rounded after each blend as the attachment
 /// keeps them), how many strokes blended over it (at most 255), and whether a stroke's depth there was tied with the
 /// sample's shape's.
@@ -858,9 +910,9 @@ struct Stroked {
 /// (the shader's, in float) at each of its samples where the stroke's depth passes GREATER_OR_EQUAL against the
 /// sample's shape's, premultiplied source over, then 8 bits.
 [[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const MaterialPath> materials,
-                             std::span<const StrokeSeg> segs, std::uint32_t w, std::uint32_t h,
-                             std::span<const Pt> samples, const shaders::FrameCamera& cam, std::uint32_t clear,
-                             double density, double grow) {
+                             std::span<const StrokeSeg> segs, std::span<const RoofLine> roof_lines, std::uint32_t w,
+                             std::uint32_t h, std::span<const Pt> samples, const shaders::FrameCamera& cam,
+                             std::uint32_t clear, double density, double grow) {
     const bool painter = (cam.flags.x & shaders::CAMERA_PAINTER) != 0U;
     const std::size_t n = std::size_t{w} * h * samples.size();
     Stroked out;
@@ -980,6 +1032,67 @@ struct Stroked {
                         const double v = (level[c] * static_cast<double>(a)) +
                                          (static_cast<double>(dst[c]) * (1.0 - static_cast<double>(a)));
                         dst[c] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
+                    }
+                }
+            }
+        }
+    }
+    // a kit roof's tile courses and lit ridges after them, each line on its own (roof_line_fs): at each sample within
+    // half its width of its segment (round caps: the ridge's; butt: within its length, the courses'), grown by `grow`,
+    // where its depth passes GREATER against the sample's shape's, at its opacity
+    for (const RoofLine& l : roof_lines) {
+        const double reach = l.half + std::abs(grow) + 1.0;
+        const auto x0 = static_cast<std::int64_t>(std::floor(std::min(l.a.x, l.b.x) - reach));
+        const auto x1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.x, l.b.x) + reach));
+        const auto y0 = static_cast<std::int64_t>(std::floor(std::min(l.a.y, l.b.y) - reach));
+        const auto y1 = static_cast<std::int64_t>(std::ceil(std::max(l.a.y, l.b.y) + reach));
+        const double dx = l.b.x - l.a.x;
+        const double dy = l.b.y - l.a.y;
+        const double len = std::sqrt((dx * dx) + (dy * dy));
+        const double ux = len > 0 ? dx / len : 1.0;
+        const double uy = len > 0 ? dy / len : 0.0;
+        const std::array<double, 3> level{static_cast<double>((l.colour >> 16U) & 0xFFU),
+                                          static_cast<double>((l.colour >> 8U) & 0xFFU),
+                                          static_cast<double>(l.colour & 0xFFU)};
+        const auto a = static_cast<double>(l.opacity);
+        for (std::int64_t y = std::max<std::int64_t>(0, y0); y <= std::min<std::int64_t>(h - 1, y1); ++y) {
+            for (std::int64_t x = std::max<std::int64_t>(0, x0); x <= std::min<std::int64_t>(w - 1, x1); ++x) {
+                for (std::size_t s = 0; s < samples.size(); ++s) {
+                    const Pt p{.x = static_cast<double>(x) + samples[s].x, .y = static_cast<double>(y) + samples[s].y};
+                    const double along = ((p.x - l.a.x) * ux) + ((p.y - l.a.y) * uy);
+                    bool covered = false;
+                    if (l.round) {
+                        const double t = std::clamp(along, 0.0, len);
+                        const double ex = p.x - (l.a.x + (ux * t));
+                        const double ey = p.y - (l.a.y + (uy * t));
+                        covered = std::sqrt((ex * ex) + (ey * ey)) <= l.half + grow;
+                    } else if (len > 0) {
+                        const double across = ((p.y - l.a.y) * ux) - ((p.x - l.a.x) * uy);
+                        covered = along >= -grow && along <= len + grow && std::abs(across) <= l.half + grow;
+                    }
+                    if (!covered) continue;
+                    const std::size_t i =
+                        (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
+                    const std::int32_t k = r.shape[i];
+                    bool pass = k == uncovered;
+                    if (!pass && painter) {
+                        pass = l.slot > shapes[static_cast<std::size_t>(k)].depth.shape.slot;
+                    } else if (!pass) {
+                        const auto z = static_cast<float>(depth_at(cam, l.shape, p.x / density, p.y / density));
+                        const float under = r.depth[i];
+                        pass = z > under;
+                        const double slack = shapes[static_cast<std::size_t>(k)].slack + l.shape.slack + rounding;
+                        if (std::abs(static_cast<double>(z) - static_cast<double>(under)) <=
+                            static_cast<double>(under) * slack) {
+                            out.tie[i] = 1;
+                        }
+                    }
+                    if (!pass) continue;
+                    if (out.blends[i] < 255) ++out.blends[i];
+                    std::array<std::uint8_t, 3>& dst = out.colour[i];
+                    for (std::size_t q = 0; q < 3; ++q) {
+                        const double v = (level[q] * a) + (static_cast<double>(dst[q]) * (1.0 - a));
+                        dst[q] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
                     }
                 }
             }
@@ -1150,12 +1263,14 @@ struct Compared {
     // the material faces, then the roofs' thin strokes, over each of them
     const std::vector<MaterialPath> materials = materials_of(doc, density, depths, cam);
     const std::vector<StrokeSeg> segs = strokes_of(doc, depths, distances, cam);
+    // and a kit roof's lines after them
+    const std::vector<RoofLine> roof_lines = roof_lines_of(doc, density, depths, cam);
     const Stroked exact_stroked =
-        stroke(exact_raster, shapes, materials, segs, w, h, samples, cam, clear, density, 0.0);
+        stroke(exact_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, 0.0);
     const Stroked grown_stroked =
-        stroke(grown_raster, shapes, materials, segs, w, h, samples, cam, clear, density, tolerance);
+        stroke(grown_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, tolerance);
     const Stroked shrunk_stroked =
-        stroke(shrunk_raster, shapes, materials, segs, w, h, samples, cam, clear, density, -tolerance);
+        stroke(shrunk_raster, shapes, materials, segs, roof_lines, w, h, samples, cam, clear, density, -tolerance);
     const std::size_t n = samples.size();
     const auto resolved = [&](const Stroked& r, std::size_t i) {
         // the composite's mean of the samples' levels, rounded half to even (passes/Composite.hpp's composite_pixel)
@@ -1409,7 +1524,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
                          << " church windows, " << windows.material_fills << " material fills and "
-                         << windows.material_lines << " material lines; " << windows.beams << " hoist beams");
+                         << windows.material_lines << " material lines; " << windows.beams << " hoist beams, "
+                         << windows.roof_lines << " roof lines");
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);
@@ -1530,6 +1646,31 @@ TEST_CASE("buildings: the walls' material faces drawn on the host's Vulkan over 
     check_frames(camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d), "materials west", packs, sunny(), 8);
     check_frames(camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d), "materials west", packs, sunny(), 8,
                  nullptr, true);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE(
+    "buildings: a tradition's kit roof drawn on the host's Vulkan, its eaves over the walls, its gables facing out, "
+    "its hoist beams, tile courses and lit ridge, pixel for pixel their twin's") {
+    // fixture.hpp's kit tile in a pack whose style carries its tradition (the kit's eaves), in the view the cameras
+    // snap to (the pack's home, as the material faces' case): near with weather by day, where the view resolves the
+    // courses of the tiled roof and of the slated one; under the painter switch; at night (neither courses nor ridges);
+    // and without weather, every roof the plain one
+    const std::string path = test::building::write_pack(test::building::kit_tile(), test::building::kit_features,
+                                                        "buildings-test-kit", test::building::kit_pack());
+    const std::array<PackFile, 1> packs{PackFile{.id = "kit", .path = path}};
+    const double d = 1080.0 / 412.0;
+    const double lat = 52.37422;
+    const double lon = 4.88486;
+    style::ThemeBlock night_th = sunny();
+    night_th.flags |= style::theme_flag::night;
+    style::ThemeBlock dry_th = sunny();
+    dry_th.flags &= ~style::theme_flag::weather;
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3);
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit near", packs, sunny(), 3, nullptr, true);
+    check_frames(camera(lat, lon, 200.0, 50.0, 260.0, 1080, 2400, d), "kit at night", packs, night_th, 3);
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit dry", packs, dry_th, 3);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

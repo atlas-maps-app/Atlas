@@ -24,6 +24,7 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
                   geometry::prim_flag::far == shaders::BUILDING_FAR &&
                   geometry::prim_flag::weather == shaders::BUILDING_WEATHER &&
                   geometry::prim_flag::dry == shaders::BUILDING_DRY &&
+                  geometry::prim_flag::eaves == shaders::BUILDING_EAVES &&
                   geometry::prim_flag::edge == shaders::BUILDING_EDGE &&
                   geometry::prim_flag::triangle == shaders::BUILDING_TRIANGLE &&
                   geometry::prim_flag::polygon == shaders::BUILDING_POLYGON &&
@@ -240,6 +241,36 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                                 .near_slot = beam.near_slot,
                                 .far_slot = beam.far_slot});
     }
+    // a kit roof's tile courses (their corners in frame metres) and its lit ridges
+    layout.courses.clear();
+    layout.courses.reserve(g.courses.size());
+    for (const gm::RoofCourses& c : g.courses) {
+        if (c.face >= f) continue;
+        const gm::Face& face = g.faces[c.face];
+        layout.courses.push_back({.item = c.item,
+                                  .pa = {c.pa.x, c.pa.y, c.pa.z},
+                                  .pb = {c.pb.x, c.pb.y, c.pb.z},
+                                  .qa = {c.qa.x, c.qa.y, c.qa.z},
+                                  .qe = {c.qe.x, c.qe.y, c.qe.z},
+                                  .origin_x = origin_x,
+                                  .origin_z = origin_z,
+                                  .normal = {f32(face.normal.x), f32(face.normal.y), f32(face.normal.z)},
+                                  .test = floats(face.test),
+                                  .k = c.k,
+                                  .rstep = c.rstep,
+                                  .rgb = c.rgb,
+                                  .near_slot = c.near_slot,
+                                  .far_slot = c.far_slot});
+    }
+    layout.ridges.clear();
+    layout.ridges.reserve(g.ridges.size());
+    for (const gm::RoofRidge& r : g.ridges) {
+        layout.ridges.push_back({.item = r.item,
+                                 .from = floats(r.from),
+                                 .to = floats(r.to),
+                                 .near_slot = r.near_slot,
+                                 .far_slot = r.far_slot});
+    }
     // each face's item and whether it is a wall's, from the primitives that draw it
     layout.face_items.assign(f, 0);
     layout.face_walls.assign(f, 0);
@@ -353,6 +384,40 @@ std::uint32_t beam_width(double depth, double focal) {
     // amsterdam.py: stroke-width="%.2f" % max(0.5, 0.12 * cam.focal / d)
     const double width = pymath::max(0.5, 0.12 * focal / depth);
     return static_cast<std::uint32_t>(std::llround(pymath::round(width, 2) * 100.0));
+}
+
+bool courses_shown(double depth, double focal, double rstep) {
+    // trad_roof: ppm = cam.focal / max(d, 1); `if tiles and ppm * rstep > 2.0`
+    const double ppm = focal / pymath::max(depth, 1.0);
+    return ppm * rstep > 2.0;
+}
+
+std::uint32_t courses_width(double depth, double focal) {
+    // stroke-width="%.2f" % max(0.35, ppm * 0.03)
+    const double ppm = focal / pymath::max(depth, 1.0);
+    return static_cast<std::uint32_t>(std::llround(pymath::round(pymath::max(0.35, ppm * 0.03), 2) * 100.0));
+}
+
+std::uint32_t ridge_width(double depth, double focal) {
+    // stroke-width="%.2f" % max(0.45, ppm * 0.08)
+    const double ppm = focal / pymath::max(depth, 1.0);
+    return static_cast<std::uint32_t>(std::llround(pymath::round(pymath::max(0.45, ppm * 0.08), 2) * 100.0));
+}
+
+std::array<std::array<float, 3>, 2> course_ends(const BuildingTile::Courses& c, std::uint32_t j) {
+    // t = j / k; A = pa + (qa - pa) t, B = pb + (qe - pb) t, coordinate by coordinate as the port's V3s
+    const double t = static_cast<double>(j) / static_cast<double>(c.k);
+    std::array<double, 3> a{};
+    std::array<double, 3> b{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        a.at(i) = c.pa.at(i) + ((c.qa.at(i) - c.pa.at(i)) * t);
+        b.at(i) = c.pb.at(i) + ((c.qe.at(i) - c.pb.at(i)) * t);
+    }
+    const auto local = [&c](const std::array<double, 3>& p) {
+        return std::array<float, 3>{static_cast<float>(p[0] - c.origin_x), static_cast<float>(p[1]),
+                                    static_cast<float>(p[2] - c.origin_z)};
+    };
+    return {local(a), local(b)};
 }
 
 std::uint16_t church_leading(double depth, double focal) {

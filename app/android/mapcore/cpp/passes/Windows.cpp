@@ -71,7 +71,8 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         gpu::Binding{.slot = 20, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 21, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
         gpu::Binding{.slot = 22, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
-        gpu::Binding{.slot = 23, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
+        gpu::Binding{.slot = 23, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
+        gpu::Binding{.slot = 24, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     w->set_layout = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -173,6 +174,24 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
         (lines ? w->material_lines_pipeline : w->material_fills_pipeline) = std::move(pipeline);
     }
+    // a kit roof's tile courses and lit ridges: translucent, a lead over its slopes along each, the test on and writes
+    // off, over what lies under them; each line its own (a slope's courses never meet)
+    {
+        gpu::GraphicsDesc desc{
+            .label = {.name = "roof lines", .module = "building_draw", .configuration = context.configuration},
+            .module = *draw_module_,
+            .vertex = "roof_line_vs",
+            .fragment = "roof_line_fs",
+            .layout = *w->layout,
+            .target = context.pass.scene_target(),
+            .depth_test = true,
+            .depth_write = false,
+            .depth_op = vk::CompareOp::eGreater};
+        desc.blends[0] = gpu::Blend::over();
+        if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
+        ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
+        w->roof_lines_pipeline = std::move(pipeline);
+    }
     windows_ = std::move(w);
     return {};
 }
@@ -189,6 +208,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.material_fills_now = 0;
     s.material_lines_now = 0;
     s.beams_now = 0;
+    s.roof_lines_now = 0;
     std::vector<std::uint32_t>& w = s.words;
     w.clear();
     const std::span<const std::uint32_t> ranks = state.ranks->table();
@@ -390,8 +410,57 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
         }
     }
     const auto beam_count = static_cast<std::uint32_t>(beams.size() / shaders::BUILDING_BEAM_VECTORS);
+    // a kit roof's lines (each tile's, with weather by day): each slope's tile courses where the view resolves them, a
+    // record a course with its slope's turn, and the lit ridges whichever way they turn (windows.slangh's
+    // BuildingRoofLine)
+    std::vector<hlsl::uint4>& lines = s.roof_line_words;
+    lines.clear();
+    for (const TileDraw& d : draws_) {
+        if (!weather || night || d.tile == nullptr || (d.tile->courses.empty() && d.tile->ridges.empty())) continue;
+        shaders::BuildingPush push{};
+        std::memcpy(&push, d.push.data(), sizeof push);
+        const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
+        const auto scale = std::bit_cast<hlsl::uint4>(push.place.scale);
+        const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+        // an item's painter slot and its depth, or none where the frame does not draw it
+        const auto placed = [&](std::uint32_t item, std::uint16_t near_slot,
+                                std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
+            const std::uint32_t row = item < d.rows.size() ? d.rows[item] : shaders::RANK_NONE;
+            const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
+            if (rank == shaders::RANK_NONE) return std::nullopt;
+            const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+            return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
+                             row < depths.size() ? depths[row] : 0.0};
+        };
+        for (const BuildingTile::Courses& c : d.tile->courses) {
+            const auto at = placed(c.item, c.near_slot, c.far_slot);
+            if (!at || !courses_shown(at->second, focal, c.rstep)) continue;
+            const std::uint32_t width = courses_width(at->second, focal);
+            const std::uint32_t flags = 30U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT;
+            const hlsl::uint4 normal = {bits(c.normal[0]), bits(c.normal[1]), bits(c.normal[2]), flags};
+            const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), c.rgb};
+            for (std::uint32_t j = 1; j < c.k; ++j) {
+                const auto [a, b] = course_ends(c, j);
+                const hlsl::uint4 from = {bits(a[0]), bits(a[1]), bits(a[2]), at->first};
+                const hlsl::uint4 to = {bits(b[0]), bits(b[1]), bits(b[2]), width};
+                for (const hlsl::uint4& v : {from, to, normal, test, offset, scale}) lines.push_back(v);
+            }
+        }
+        for (const BuildingTile::Ridge& r : d.tile->ridges) {
+            const auto at = placed(r.item, r.near_slot, r.far_slot);
+            if (!at) continue;
+            const std::uint32_t flags = shaders::BUILDING_ROOF_LINE_UNTURNED | shaders::BUILDING_ROOF_LINE_ROUND |
+                                        (55U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT);
+            const hlsl::uint4 from = {bits(r.from[0]), bits(r.from[1]), bits(r.from[2]), at->first};
+            const hlsl::uint4 to = {bits(r.to[0]), bits(r.to[1]), bits(r.to[2]), ridge_width(at->second, focal)};
+            const hlsl::uint4 normal = {0U, 0U, 0U, flags};
+            const hlsl::uint4 test = {0U, 0U, 0U, shaders::BUILDING_ROOF_RIDGE_RGB};
+            for (const hlsl::uint4& v : {from, to, normal, test, offset, scale}) lines.push_back(v);
+        }
+    }
+    const auto line_count = static_cast<std::uint32_t>(lines.size() / shaders::BUILDING_ROOF_LINE_VECTORS);
     const auto jobs = static_cast<std::uint32_t>(w.size() / job_words);
-    if (jobs == 0 && beam_count == 0) return;
+    if (jobs == 0 && beam_count == 0 && line_count == 0) return;
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const gpu::Device& device = *s.device;
     using B = vk::BufferUsageFlagBits;
@@ -418,8 +487,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto beams_made = fit(device, s.beams[slot], vectors(beam_count, shaders::BUILDING_BEAM_VECTORS), B::eStorageBuffer,
                           gpu::MemoryUse::upload);
+    auto roof_made = fit(device, s.roof_lines[slot], vectors(line_count, shaders::BUILDING_ROOF_LINE_VECTORS),
+                         B::eStorageBuffer, gpu::MemoryUse::upload);
     if (!jobs_made || !records_made || !walls_made || !nears_made || !facades_made || !churches_made || !fills_made ||
-        !lines_made || !beams_made) {
+        !lines_made || !beams_made || !roof_made) {
         const gpu::Error& e = !jobs_made       ? jobs_made.error()
                               : !records_made  ? records_made.error()
                               : !walls_made    ? walls_made.error()
@@ -428,7 +499,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                               : !churches_made ? churches_made.error()
                               : !fills_made    ? fills_made.error()
                               : !lines_made    ? lines_made.error()
-                                               : beams_made.error();
+                              : !beams_made    ? beams_made.error()
+                                               : roof_made.error();
         log::error("vk buildings: the windows' {} jobs, {} walls, {} records, {} near ones, {} facades, {} church "
                    "windows, {} material fills and {} material lines: {}",
                    jobs, walls, records, nears, facades, churches, material_fills, material_lines, e.text());
@@ -441,10 +513,11 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
         s.material_fills[slot] = {};
         s.material_lines[slot] = {};
         s.beams[slot] = {};
+        s.roof_lines[slot] = {};
         return;
     }
     if (*jobs_made || *records_made || *walls_made || *nears_made || *facades_made || *churches_made || *fills_made ||
-        *lines_made || *beams_made) {
+        *lines_made || *beams_made || *roof_made) {
         gpu::SetWriter(*s.sets[slot])
             .buffer(3, vk::DescriptorType::eStorageBuffer, s.jobs[slot].handle())
             .buffer(4, vk::DescriptorType::eStorageBuffer, s.records[slot].handle())
@@ -462,6 +535,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             .buffer(21, vk::DescriptorType::eStorageBuffer, s.material_lines[slot].handle())
             .buffer(22, vk::DescriptorType::eStorageBuffer, s.material_lines[slot].handle())
             .buffer(23, vk::DescriptorType::eStorageBuffer, s.beams[slot].handle())
+            .buffer(24, vk::DescriptorType::eStorageBuffer, s.roof_lines[slot].handle())
             .apply(device.handle());
     }
     // never from an empty vector's data(), not even no bytes (UBSan's nonnull check on Linux)
@@ -472,6 +546,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     if (beam_count > 0) {
         std::memcpy(s.beams[slot].bytes().data(), beams.data(), beams.size() * sizeof(hlsl::uint4));
         s.beams[slot].flush();
+    }
+    if (line_count > 0) {
+        std::memcpy(s.roof_lines[slot].bytes().data(), lines.data(), lines.size() * sizeof(hlsl::uint4));
+        s.roof_lines[slot].flush();
     }
     s.slot = slot;
     s.jobs_now = jobs;
@@ -484,6 +562,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.material_fills_now = material_fills;
     s.material_lines_now = material_lines;
     s.beams_now = beam_count;
+    s.roof_lines_now = line_count;
     window_counts_ = {.jobs = jobs,
                       .walls = walls,
                       .windows = records,
@@ -492,7 +571,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                       .churches = churches,
                       .material_fills = material_fills,
                       .material_lines = material_lines,
-                      .beams = beam_count};
+                      .beams = beam_count,
+                      .roof_lines = line_count};
 }
 
 void Buildings::record_window_decide(const frame::Recording& recording) {
@@ -606,6 +686,20 @@ void Buildings::record_materials(const frame::Recording& recording) {
                                 std::uint64_t{s.material_lines_now} * (shaders::BUILDING_MATERIAL_LINE_VERTICES / 3),
                                 s.material_lines_now);
     }
+}
+
+void Buildings::record_roof_lines(const frame::Recording& recording) {
+    if (windows_ == nullptr || windows_->roof_lines_now == 0) return;
+    const Windows& s = *windows_;
+    const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *s.layout, 2, *s.sets[s.slot], {});
+    shaders::BuildingPush push{};
+    push.at = {static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
+    cmd.pushConstants<shaders::BuildingPush>(*s.layout, frame::push_stages, 0, push);
+    // a kit roof's tile courses and lit ridges: an instance a record, its quad
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.roof_lines_pipeline);
+    cmd.draw(shaders::BUILDING_ROOF_LINE_VERTICES, s.roof_lines_now, 0, 0);
+    recording.counters.draw("roof lines", std::uint64_t{s.roof_lines_now} * 2, s.roof_lines_now);
 }
 
 } // namespace atlas::passes

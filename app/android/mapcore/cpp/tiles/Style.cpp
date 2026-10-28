@@ -390,6 +390,18 @@ Result<Style> Style::of(const StyleTables& tables) {
             s.no_shadows = ns->boolean().value_or(false) || ns->number().value_or(0.0) != 0.0;
         }
     }
+    // the building tradition, whole, where the pack has one: what its kit's details read of it (P.get('eaves', 0))
+    if (const std::optional<Value> trad = tables.table("tradition")) {
+        if (trad->type() != ValueType::map) {
+            r.fail(Fault::bad_value, "tradition");
+        } else {
+            KitStyle kit;
+            if (const auto eaves = trad->find("eaves"); eaves && !eaves->is_null()) {
+                kit.eaves = r.number_of(eaves, "tradition", "eaves");
+            }
+            s.kit = kit;
+        }
+    }
     if (r.error()) return std::unexpected(*r.error());
     return s;
 }

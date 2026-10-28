@@ -139,9 +139,9 @@ std::array<V3, 4> quad_at(const V2& a, const V2& b, double y0, double y1, double
 
 namespace {
 
-/// The mitred corners of a ring whose sides moved `dl` inward along their normals, capped at 2.6 dl (Amsterdam.mitre,
-/// its inward case: insetRing's).
-[[nodiscard]] std::vector<V2> mitre_inward(std::span<const V2> poly, double dl) {
+/// The mitred corners of a ring whose sides moved `dl` along their normals, inward (insetRing's) or outward
+/// (offsetRing's), capped at 2.6 dl (Amsterdam.mitre).
+[[nodiscard]] std::vector<V2> mitre(std::span<const V2> poly, double dl, bool inward) {
     const std::size_t n = poly.size();
     const std::size_t i0 = longest_first(poly);
     const V2 a0 = poly[i0];
@@ -166,9 +166,14 @@ namespace {
         const double ez = c.z - a.z;
         double le = pm::hypot(ex, ez);
         if (le == 0.0) le = 1.0;
-        const double nx = (-ez / le) * s;
-        const double nz = (ex / le) * s;
-        lines.push_back({.px = a.x + (nx * dl), .pz = a.z + (nz * dl), .dx = ex / le, .dz = ez / le});
+        if (inward) {
+            const double nx = (-ez / le) * s;
+            const double nz = (ex / le) * s;
+            lines.push_back({.px = a.x + (nx * dl), .pz = a.z + (nz * dl), .dx = ex / le, .dz = ez / le});
+        } else {
+            lines.push_back(
+                {.px = a.x + (((ez / le) * s) * dl), .pz = a.z - (((ex / le) * s) * dl), .dx = ex / le, .dz = ez / le});
+        }
     }
     std::vector<V2> out;
     out.reserve(n);
@@ -279,7 +284,7 @@ namespace {
 } // namespace
 
 std::optional<std::vector<V2>> inset_ring(std::span<const V2> poly, double dl) {
-    std::vector<V2> out = mitre_inward(poly, dl);
+    std::vector<V2> out = mitre(poly, dl, true);
     const double so = signed_area(out);
     const double sp = signed_area(poly);
     if (so * sp <= 0 || std::abs(so) < 0.2 * std::abs(sp)) return std::nullopt;
@@ -287,6 +292,12 @@ std::optional<std::vector<V2>> inset_ring(std::span<const V2> poly, double dl) {
     for (const V2& p : out) {
         if (!pip(p.x, p.z, poly)) return std::nullopt;
     }
+    return out;
+}
+
+std::optional<std::vector<V2>> offset_ring(std::span<const V2> poly, double dl) {
+    std::vector<V2> out = mitre(poly, dl, false);
+    if (turned(poly, out)) return std::nullopt;
     return out;
 }
 

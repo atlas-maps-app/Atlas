@@ -164,9 +164,9 @@ struct V3 {
     return best;
 }
 
-/// The mitred corners of a ring whose sides moved `dl` along their normals, capped at 2.6 dl (Amsterdam.mitre, the
-/// inward case: inset_ring's).
-[[nodiscard]] std::vector<V2> mitre_inward(std::span<const V2> poly, double dl) {
+/// The mitred corners of a ring whose sides moved `dl` along their normals, inward (inset_ring's) or outward
+/// (offset_ring's), capped at 2.6 dl (Amsterdam.mitre).
+[[nodiscard]] std::vector<V2> mitre(std::span<const V2> poly, double dl, bool inward) {
     const std::size_t n = poly.size();
     const std::size_t i0 = longest_first(poly);
     const V2 a0 = poly[i0];
@@ -191,9 +191,14 @@ struct V3 {
         const double ez = c.z - a.z;
         double le = pm::hypot(ex, ez);
         if (le == 0.0) le = 1.0;
-        const double nx = (-ez / le) * s;
-        const double nz = (ex / le) * s;
-        lines.push_back({.px = a.x + (nx * dl), .pz = a.z + (nz * dl), .dx = ex / le, .dz = ez / le});
+        if (inward) {
+            const double nx = (-ez / le) * s;
+            const double nz = (ex / le) * s;
+            lines.push_back({.px = a.x + (nx * dl), .pz = a.z + (nz * dl), .dx = ex / le, .dz = ez / le});
+        } else {
+            lines.push_back(
+                {.px = a.x + (((ez / le) * s) * dl), .pz = a.z - (((ex / le) * s) * dl), .dx = ex / le, .dz = ez / le});
+        }
     }
     std::vector<V2> out;
     out.reserve(n);
@@ -238,7 +243,7 @@ struct V3 {
 
 /// Amsterdam.insetRing: the ring moved `dl` inward, or nothing where it is too thin or too notched.
 [[nodiscard]] std::optional<std::vector<V2>> inset_ring(std::span<const V2> poly, double dl) {
-    std::vector<V2> out = mitre_inward(poly, dl);
+    std::vector<V2> out = mitre(poly, dl, true);
     const double so = signed_area(out);
     const double sp = signed_area(poly);
     if (so * sp <= 0 || std::abs(so) < 0.2 * std::abs(sp)) return std::nullopt;
@@ -246,6 +251,13 @@ struct V3 {
     for (const V2& p : out) {
         if (!pip(p.x, p.z, poly)) return std::nullopt;
     }
+    return out;
+}
+
+/// Amsterdam.offsetRing: the ring moved `dl` outward (a kit's eaves), or nothing where a side would turn over.
+[[nodiscard]] std::optional<std::vector<V2>> offset_ring(std::span<const V2> poly, double dl) {
+    std::vector<V2> out = mitre(poly, dl, false);
+    if (turned(poly, out)) return std::nullopt;
     return out;
 }
 
@@ -695,6 +707,10 @@ private:
             }
         } else if ((is(roof, "gabled") || is(roof, "hipped")) && rh != 0.0) {
             gable_roof(v, poly, is(roof, "hipped"), h, rh, wall_top);
+            // a tradition's kit draws its own roof with weather (geometry/Roofs.cpp's kit_roof), never a houseboat's
+            if ((v.flags & tl::building::flag_kit) != 0 && (v.flags & tl::building::flag_houseboat) == 0) {
+                kit_roof(v, poly, is(roof, "hipped"), h, rh, wall_top, region_.kit_eaves.value_or(0.0));
+            }
         } else if (skillion) {
             const double s = rh / span;
             const V3 nr = vnorm({dirv.x * s, 1.0, dirv.z * s});
@@ -766,6 +782,84 @@ private:
             V3 nr = vnorm(vcross(vsub(q[1], q[0]), vsub(q[3], q[0])));
             if (nr.y < 0) nr = neg(nr);
             add(Kind::slope, e, 0, cen(q), out_.add_face(nr.x, nr.y, nr.z));
+        }
+    }
+
+    /// Amsterdam.tradRoof's samples: each gable end facing out (its centroid 0.2 m out along its outward normal), then
+    /// each slope or hip from the eaves' ring (its centroid), as geometry/Roofs.cpp's kit_roof lays them out.
+    void kit_roof(const Values& v, std::span<const V2> poly, bool hipped, double h, double rh, double wall_top,
+                  double eaves) {
+        const std::size_t n = poly.size();
+        const std::size_t i0 = longest_first(poly);
+        double ux = poly[(i0 + 1) % n].x - poly[i0].x;
+        double uz = poly[(i0 + 1) % n].z - poly[i0].z;
+        double lg = pm::hypot(ux, uz);
+        if (lg == 0.0) lg = 1.0;
+        ux /= lg;
+        uz /= lg;
+        if (is(v.orient, "across")) {
+            const double t = ux;
+            ux = -uz;
+            uz = t;
+        }
+        const V2 ce = centroid(poly);
+        double far = std::abs((-(poly[0].x - ce.x) * uz) + ((poly[0].z - ce.z) * ux));
+        for (std::size_t i = 1; i < n; ++i) {
+            far = pm::max(far, std::abs((-(poly[i].x - ce.x) * uz) + ((poly[i].z - ce.z) * ux)));
+        }
+        const double slope = rh / pm::max(1.0, far);
+        double e = eaves;
+        std::optional<std::vector<V2>> offset = e != 0.0 ? offset_ring(poly, e) : std::nullopt;
+        if (!offset) e = 0.0;
+        const std::vector<V2> ring = offset ? std::move(*offset) : std::vector<V2>(poly.begin(), poly.end());
+        const auto extent = [&](std::span<const V2> pp) {
+            double s0 = ((pp[0].x - ce.x) * ux) + ((pp[0].z - ce.z) * uz);
+            double s1 = s0;
+            for (std::size_t i = 1; i < pp.size(); ++i) {
+                const double pr = ((pp[i].x - ce.x) * ux) + ((pp[i].z - ce.z) * uz);
+                s0 = pm::min(s0, pr);
+                s1 = pm::max(s1, pr);
+            }
+            return std::array<double, 2>{s0, s1};
+        };
+        if (!hipped) {
+            const auto [s0, s1] = extent(poly);
+            for (std::size_t i = 0; i < n; ++i) {
+                const V2 a = poly[i];
+                const V2 bb = poly[(i + 1) % n];
+                const double qa = pm::min(s1, pm::max(s0, ((a.x - ce.x) * ux) + ((a.z - ce.z) * uz)));
+                const double qb = pm::min(s1, pm::max(s0, ((bb.x - ce.x) * ux) + ((bb.z - ce.z) * uz)));
+                if (std::abs(qa - qb) > 0.3) continue;
+                const V3 apex{ce.x + ((ux * (qa + qb)) / 2), h, ce.z + ((uz * (qa + qb)) / 2)};
+                V3 nr = vnorm({bb.z - a.z, 0.0, -(bb.x - a.x)});
+                if (pip(((a.x + bb.x) / 2) + (nr.x * 0.05), ((a.z + bb.z) / 2) + (nr.z * 0.05), poly)) nr = neg(nr);
+                const std::array<V3, 3> tri{V3{a.x, wall_top, a.z}, V3{bb.x, wall_top, bb.z}, apex};
+                const V3 c = cen(tri);
+                add(Kind::gable, static_cast<std::uint32_t>(i), 0, {c.x + (nr.x * .2), c.y, c.z + (nr.z * .2)},
+                    out_.add_face(nr.x, nr.y, nr.z));
+            }
+        }
+        const auto [s0, s1] = extent(ring);
+        const double ye = wall_top - (e * slope);
+        const double inset = hipped ? pm::min(rh + e, (s1 - s0) / 2) : 0.0;
+        const auto on_ridge = [&](const V3& p) {
+            const double sv = pm::min(s1 - inset, pm::max(s0 + inset, ((p.x - ce.x) * ux) + ((p.z - ce.z) * uz)));
+            return V3{ce.x + (ux * sv), h, ce.z + (uz * sv)};
+        };
+        const std::size_t m = ring.size();
+        for (std::size_t i = 0; i < m; ++i) {
+            const V3 pa{ring[i].x, ye, ring[i].z};
+            const V3 pb{ring[(i + 1) % m].x, ye, ring[(i + 1) % m].z};
+            const V3 qa = on_ridge(pa);
+            const V3 qb = on_ridge(pb);
+            const bool end = dist3(qa, qb) < 0.3;
+            if (end && !hipped) continue;
+            const std::array<V3, 4> q = end ? std::array<V3, 4>{pa, pb, qa, qa} : std::array<V3, 4>{pa, pb, qb, qa};
+            const std::size_t corners = end ? 3 : 4;
+            V3 nr = vnorm(vcross(vsub(q[1], q[0]), vsub(q[corners - 1], q[0])));
+            if (nr.y < 0) nr = neg(nr);
+            add(end ? Kind::hip : Kind::slope, static_cast<std::uint32_t>(i), 0,
+                cen(std::span<const V3>(q.data(), corners)), out_.add_face(nr.x, nr.y, nr.z));
         }
     }
 
@@ -1023,7 +1117,11 @@ void TileSamples::add(Kind k, Source src, std::uint32_t own, std::uint32_t e, st
 }
 
 Region region_of(const tiles::Style& style) noexcept {
-    return {.water_y = style.water_y, .paris = style.paris, .tone = style.tone, .no_shadows = style.no_shadows};
+    return {.water_y = style.water_y,
+            .paris = style.paris,
+            .tone = style.tone,
+            .no_shadows = style.no_shadows,
+            .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt};
 }
 
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out) {

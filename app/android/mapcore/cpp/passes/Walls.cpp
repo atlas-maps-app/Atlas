@@ -89,7 +89,11 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
         {.tile = &b.tile(),
          .head = &b.head(),
          .level = b.level(),
-         .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
+         .region = {.water_y = style.water_y,
+                    .hull = style.hull,
+                    .deck = style.deck,
+                    .paris = style.paris,
+                    .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt},
          .kind = kind_});
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
@@ -397,6 +401,7 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
         break;
     case strokes_phase: record_strokes(recording); break;
     case materials_phase: record_materials(recording); break;
+    case roof_lines_phase: record_roof_lines(recording); break;
     default: break;
     }
 }

@@ -189,14 +189,65 @@ inline constexpr std::uint32_t melt_features = 2;
 /// The material faces' tile's features, with an old canal house's gables and their hoist beams.
 inline constexpr std::uint32_t materials_features = 5;
 
+/// A tile of a tradition's kit (render/amsterdam.py's trad_roof, in a pack whose tradition's eaves are `kit_eaves`): a
+/// gabled house in the kit with its hoist beams and a roof of tiles, a hipped one in it with slates, and a gabled house
+/// of 1700 outside it (the plain roof and its old gables' beams), each walked clockwise as the loader leaves rings.
+[[nodiscard]] inline TileBytes kit_tile() {
+    namespace tl = atlas::tiles;
+    namespace col = atlas::test::columns;
+    TileBytes t;
+    const std::vector<Ring> rings{
+        rect_cw(0, 0, 1176, 1260),     // 0: gabled in the kit, 8 × 14 m
+        rect_cw(-3500, 0, 1470, 1080), // 1: hipped in the kit, 10 × 12 m, west of it
+        rect_cw(-7000, 0, 1176, 1260), // 2: gabled, outside the kit, of 1700, farther west
+    };
+    LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0, 0, 0};
+    const std::uint64_t kit = tl::building::flag_kit;
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0, 1, 2})},
+        {"id", tl::Codec::delta, col::delta({300, 301, 302})},
+        {"ring", tl::Codec::geom, col::geom(rings)},
+        {"h", tl::Codec::centi, col::centi({15.0, 14.0, 15.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({5.0, 4.0, 5.0})},
+        {"year", tl::Codec::nvarz, col::nvarz({std::nullopt, std::nullopt, 1700})},
+        {"levels", tl::Codec::nvarz, col::nvarz({3, 3, 3})},
+        {"roof", tl::Codec::str, col::str(t, {"gabled", "hipped", "gabled"})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x9C5B43, 0xC9B79A, 0x8E5A46})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x7E4A3A, 0x5A5E66, 0x9E5038})},
+        {"mat_draw", tl::Codec::str, col::str(t, {"brick", "plaster", "brick"})},
+        {"rmat_draw", tl::Codec::str, col::str(t, {"roof_tiles", "slate", "roof_tiles"})},
+        {"kind", tl::Codec::str, col::str(t, {"home", "home", "home"})},
+        {"flags", tl::Codec::varu, col::varu({kit | tl::building::flag_kit_hoist, kit, 0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"house", "house", "house"})},
+    };
+    t.layers = {b};
+    return t;
+}
+
+/// The kit tile's features, and its tradition's eaves.
+inline constexpr std::uint32_t kit_features = 3;
+inline constexpr double kit_eaves = 0.45;
+
+/// A pack's options for the kit tile: its style's `tradition`, with the kit's eaves.
+[[nodiscard]] inline PackOptions kit_pack() {
+    namespace v = atlas::test::values;
+    PackOptions o;
+    o.style_tables = {{"tradition", v::map({{"eaves", v::real(kit_eaves)}})}};
+    return o;
+}
+
 /// Writes tile `t` (its `features`) as a render pack of 14/8414/5384 (the tile reader's tests' head: the Westerkerk's
 /// frame) to a file of its own in the tests' scratch folder, named for `name`; its path.
-[[nodiscard]] inline std::string write_pack(TileBytes t, std::uint32_t features, std::string_view name) {
+[[nodiscard]] inline std::string write_pack(TileBytes t, std::uint32_t features, std::string_view name,
+                                            const PackOptions& options = {}) {
     const std::vector<std::byte> raw = t.encode();
     constexpr std::array<std::uint8_t, 1> levels = {14};
     const std::array<ChunkBytes, 1> chunks{
         ChunkBytes{.tile = {14, 8414, 5384}, .raw = raw, .count = features, .reach = t.reach()}};
-    const std::vector<std::byte> bytes = pack_bytes(chunks, levels);
+    const std::vector<std::byte> bytes = pack_bytes(chunks, levels, atlas::tiles::format_render, options);
     std::error_code ignored;
     std::filesystem::create_directories(ATLAS_TEST_SCRATCH, ignored);
     const std::filesystem::path path =

@@ -115,6 +115,35 @@ struct BuildingTile {
         std::uint16_t far_slot = 0;
     };
     std::vector<Beam> beams;
+    /// Each slope's tile courses on a kit's roof (geometry::RoofCourses): its corners in frame metres (the port's
+    /// doubles, from which each frame lays its courses as the port does) and the tile's corner, its slope's face's
+    /// normal and test point in the heap's floats (its turn), its course count, step and colour, its item and slots.
+    struct Courses {
+        std::uint32_t item = 0;
+        std::array<double, 3> pa{};
+        std::array<double, 3> pb{};
+        std::array<double, 3> qa{};
+        std::array<double, 3> qe{};
+        double origin_x = 0.0;
+        double origin_z = 0.0;
+        std::array<float, 3> normal{};
+        std::array<float, 3> test{};
+        std::uint32_t k = 0;
+        double rstep = 0.0;
+        std::uint32_t rgb = 0;
+        std::uint16_t near_slot = 0;
+        std::uint16_t far_slot = 0;
+    };
+    std::vector<Courses> courses;
+    /// Each kit roof's lit ridge (geometry::RoofRidge): its ends in the heap's floats, its item and slots.
+    struct Ridge {
+        std::uint32_t item = 0;
+        std::array<float, 3> from{};
+        std::array<float, 3> to{};
+        std::uint16_t near_slot = 0;
+        std::uint16_t far_slot = 0;
+    };
+    std::vector<Ridge> ridges;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
@@ -166,6 +195,19 @@ struct MaterialChoice {
 /// The width of a hoist beam drawn at depth `depth` (the port's d) by a camera of focal length `focal` (CSS px, in
 /// double): max(0.5, 0.12 · focal / d), in hundredths of a CSS px as the port prints it ('%.2f').
 [[nodiscard]] std::uint32_t beam_width(double depth, double focal);
+
+/// Whether a kit roof's slope at depth `depth` shows its tile courses of step `rstep` (trad_roof's
+/// `ppm * rstep > 2.0`, ppm = focal / max(d, 1)).
+[[nodiscard]] bool courses_shown(double depth, double focal, double rstep);
+
+/// The width of a kit roof's tile courses, max(0.35, ppm · 0.03), and of its lit ridge, max(0.45, ppm · 0.08), in
+/// hundredths of a CSS px as the port prints them.
+[[nodiscard]] std::uint32_t courses_width(double depth, double focal);
+[[nodiscard]] std::uint32_t ridge_width(double depth, double focal);
+
+/// The ends of course `j` (1 to k - 1) of a slope's courses, in the heap's floats: at t = j / k from pa to qa and from
+/// pb to qe, as trad_roof lays them (in frame metres, then relative to the tile's corner).
+[[nodiscard]] std::array<std::array<float, 3>, 2> course_ends(const BuildingTile::Courses& c, std::uint32_t j);
 
 /// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
 struct WindowWidths {

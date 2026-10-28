@@ -871,6 +871,8 @@ struct PackOptions {
     std::optional<std::vector<std::byte>> head;
     bool omit_reach = false;
     std::vector<SectionBytes> extra;
+    /// Style tables after style_tables()'s (a region's `tradition`).
+    std::vector<values::Field> style_tables;
 };
 
 /// A format-3 pack of `chunks`, with `rhead` for `levels`, as Format3Writer lays it out (D1's container).
@@ -906,7 +908,9 @@ struct PackOptions {
     if (format == tiles::format_render) {
         const auto head = options.head.value_or(head_bytes(levels));
         sections.push_back({"rhead", head, head.size(), tiles::Method::stored});
-        const auto style = style_bytes();
+        std::vector<values::Field> tables = style_tables();
+        tables.insert(tables.end(), options.style_tables.begin(), options.style_tables.end());
+        const auto style = style_bytes(tables);
         sections.push_back({"style", zstd_frame(style), style.size(), tiles::Method::zstd});
     }
     sections.insert(sections.end(), options.extra.begin(), options.extra.end());

@@ -35,9 +35,9 @@ import kotlin.concurrent.withLock
  *
  * Cases: the Westerkerk home and the Main board at S1 (sunny and wet), and the smoke tier's eight sweep cameras; on the
  * Mac, where their element packs are (CI has the canal ring's alone), the port's and Schiphol's close views by day and
- * at night and their overviews by day, both sides without the regions' height survey, which the tiles cannot carry yet
- * (SceneToTiles.withoutSurvey: the port draws them with the generic water levels, no tides and no relief), from render
- * packs the core's stage P cuts here.
+ * at night and their overviews by day, the Efteling's, ARTIS's and San Gimignano's (a tradition's kit), the surveyed
+ * regions' without their height survey, which the tiles cannot carry yet (SceneToTiles.withoutSurvey: the port draws
+ * them with the generic water levels, no tides and no relief), from render packs the core's stage P cuts here.
  */
 class L1Test {
     private val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no folder of bundled packs"))
@@ -70,10 +70,13 @@ class L1Test {
         "schiphol" to listOf("schiphol_close" to "sunny", "schiphol_close" to "night", "schiphol" to "sunny"),
         "efteling" to listOf("efteling" to "sunny", "efteling" to "night", "efteling_joris" to "sunny"),
         "artis" to listOf("artis" to "sunny", "artis_gorilla" to "sunny", "artis_gorilla" to "night"),
+        // a tradition's kit (it_tuscan): its roofs over their eaves, tile courses and lit ridges; Notting Hill's terraces
+        // (gb_terrace) join once the kits' windows are drawn, which their windows' places and sizes differ by
+        "sangimignano" to listOf("sangimignano_close" to "sunny"),
     )
 
     /** The regions whose survey the tiles cannot carry yet: drawn without it, by both sides. */
-    private val surveyed = setOf("port", "schiphol")
+    private val surveyed = setOf("port", "schiphol", "sangimignano")
     private val work: File by lazy { Files.createTempDirectory("atlas-l1-regions").toFile().also { d -> Runtime.getRuntime().addShutdownHook(Thread { d.deleteRecursively() }) } }
     private val made = HashMap<String, Pair<File, LiveRegion>>()
     private val wholeWoods = HashMap<String, List<Dict>>()

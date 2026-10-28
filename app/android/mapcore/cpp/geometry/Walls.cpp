@@ -67,6 +67,7 @@ struct Slots {
     std::uint8_t kind;
     std::uint8_t no_win;
     std::uint8_t year;
+    std::uint8_t rmat_draw;
 };
 
 template <class Columns>
@@ -88,7 +89,8 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "mat_draw"),
             tl::slot_of(c, "kind"),
             tl::slot_of(c, "no_win"),
-            tl::slot_of(c, "year")};
+            tl::slot_of(c, "year"),
+            tl::slot_of(c, "rmat_draw")};
 }
 
 constexpr Slots record_slots = slots_in(tl::building::columns);
@@ -118,6 +120,7 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.kind = l.string(s.kind, i);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
     v.year = l.nullable_integer(s.year, i).value_or(0); // amsterdam.py: yr = b['year'] or 0
+    v.rmat_draw = l.string(s.rmat_draw, i);
     return v;
 }
 
@@ -499,6 +502,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     TileBuildings made; // the primitives in the samples' order, laid out by cells below
     Builder b(made);
     b.paris = in.region.paris;
+    b.kit_eaves = in.region.kit_eaves;
     std::vector<Made> spans;
     std::vector<std::uint32_t> kept;
     // the tile's outlines, whether each is a relation's: the building a part names (its parent) is keyed by it
@@ -648,6 +652,8 @@ TileBuildings build_buildings(const BuildingInput& in) {
     out.items = std::move(made.items);
     out.item_facades = std::move(made.item_facades);
     out.beams = std::move(made.beams);
+    out.courses = std::move(made.courses);
+    out.ridges = std::move(made.ridges);
     // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so);
     // the windowed walls with them, each naming its wall's new place
     std::vector<std::size_t> order(spans.size());

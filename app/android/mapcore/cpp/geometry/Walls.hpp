@@ -112,6 +112,8 @@ inline constexpr std::uint16_t stroke_cabin = 512;
 /// An n-gon's triangle's edges that lie on its polygon's ring, which its stroke follows: its first edge (corner 0 to
 /// 1), its second (1 to 2), its third (2 back to 0); outline << k for edge k. The cuts between its triangles have none.
 inline constexpr std::uint16_t outline = 1024;
+/// A kit roof's slope or hip that overhangs its walls (its eaves): its depth leads them where it passes their top.
+inline constexpr std::uint16_t eaves = 8192;
 /// Every variant: drawn at any distance.
 inline constexpr std::uint16_t any = near | far;
 } // namespace prim_flag
@@ -203,13 +205,43 @@ struct WindowWall {
 /// A hoist beam under an old gable (render/amsterdam.py's _draw_building: a gabled roof's gable end on a building
 /// before 1850, without a tradition's roof): a stroke 0.7 m out from the gable along its normal, a quarter of the
 /// roof's height under its top, drawn with weather within 260 m where the gable turns to the eye, at its slot among its
-/// roof's slopes (the port appends it to `slopes` as it meets the gable, after the slopes of the edges before).
+/// roof's slopes (the port appends it to `slopes` as it meets the gable, after the slopes of the edges before). A
+/// tradition's kit gives its hoist beams the same stroke (trad_roof's, where the kit gives the building one), after
+/// every slope of its roof, from its gable's outward normal.
 struct RoofBeam {
     std::uint32_t item = 0;      ///< its building's item
     std::uint32_t face = 0;      ///< its gable's face, whose turn it takes
     V3 from;                     ///< (apex.x, h - rh · 0.25, apex.z)
     V3 to;                       ///< from + nr · 0.7, nr the gable's normal
     std::uint16_t near_slot = 0; ///< its painter slot within the item, near and far
+    std::uint16_t far_slot = 0;
+};
+
+/// A slope's tile courses in a tradition's kit (render/amsterdam.py's trad_roof, its `rows`): the lines parallel to
+/// its eaves at t = j / k (j = 1 .. k - 1) from the eave corners pa and pb up to qa and qe (qb on a quad, qa on a hip's
+/// triangle), drawn with weather by day on a roof of tiles (rstep 0.33) or slates (0.26) where the view resolves them
+/// (focal / d · rstep > 2), its slope turned to the eye; at its slot after its roof's slopes and hoist beams.
+struct RoofCourses {
+    std::uint32_t item = 0; ///< its building's item
+    std::uint32_t face = 0; ///< its slope's face, whose turn it takes
+    V3 pa;
+    V3 pb;
+    V3 qa;
+    V3 qe;
+    std::uint32_t k = 0; ///< int(dist(pa, qa) / rstep): k - 1 courses
+    double rstep = 0.0;
+    std::uint32_t rgb = 0; ///< tohex(mulc(rbase, 0.55)), 0xRRGGBB: its roof's colour darkened
+    std::uint16_t near_slot = 0;
+    std::uint16_t far_slot = 0;
+};
+
+/// A kit roof's lit ridge (trad_roof's last element: "the ridge catches the light, as on a model"): from one end of
+/// the ridge to the other at the roof's top, drawn with weather by day, at its roof's last slot.
+struct RoofRidge {
+    std::uint32_t item = 0;
+    V3 from;
+    V3 to;
+    std::uint16_t near_slot = 0;
     std::uint16_t far_slot = 0;
 };
 
@@ -274,8 +306,11 @@ struct TileBuildings {
     /// Each item's plinth's and cornice's painter slots (the plinth's near | far << 16, the cornice's the next), after
     /// all its walls; no_facade where it has neither.
     std::vector<std::uint32_t> item_facades;
-    /// The hoist beams under old gables, in the items' order.
+    /// The hoist beams under old gables and on a kit's gables, in the items' order.
     std::vector<RoofBeam> beams;
+    /// A kit roof's tile courses, a record a slope, and its lit ridges, in the items' order.
+    std::vector<RoofCourses> courses;
+    std::vector<RoofRidge> ridges;
     /// The tile's sun samples the buildings take (K8's count before the tile's trees, quays and windows).
     std::uint32_t samples = 0;
 };
@@ -286,6 +321,8 @@ struct BuildingRegion {
     std::uint32_t hull = 0; ///< the style's houseboats' hull (0xRRGGBB)
     std::uint32_t deck = 0; ///< and deck
     bool paris = false;     ///< WIN_STYLE == "paris": tall French windows in stone fronts
+    /// The building tradition's kit, where the pack has one (its style's `tradition`): its eaves' overhang.
+    std::optional<double> kit_eaves;
 };
 
 /// What stage T is given.
@@ -324,10 +361,11 @@ struct Values {
     std::uint64_t flags = 0;
     bool has_levels = false; ///< building:levels, mapped or guessed (a building without has no window rows)
     std::int64_t levels = 0;
-    std::optional<std::string_view> mat_draw; ///< the wall material drawn (a Paris stone front's French windows)
-    std::optional<std::string_view> kind;     ///< the generic look's kind (home, office, parking, ...)
-    bool no_win = false;                      ///< no window rows (halls, tanks, glass walls)
-    std::int64_t year = 0;                    ///< the year start_date begins with (0: none)
+    std::optional<std::string_view> mat_draw;  ///< the wall material drawn (a Paris stone front's French windows)
+    std::optional<std::string_view> kind;      ///< the generic look's kind (home, office, parking, ...)
+    bool no_win = false;                       ///< no window rows (halls, tanks, glass walls)
+    std::int64_t year = 0;                     ///< the year start_date begins with (0: none)
+    std::optional<std::string_view> rmat_draw; ///< the roof material drawn (a kit roof's tile courses)
 };
 
 /// The material face a building's walls show (material_face's chain without its view's conditions, which never pass
@@ -389,9 +427,10 @@ public:
     std::uint32_t near_slot = 0;
     std::uint32_t far_slot = 0;
     std::uint32_t boat_slot = 0;
-    std::uint32_t windows = 0; ///< the next window, in the order of the tile's window group of sun samples
-    bool paris = false;        ///< the region's WIN_STYLE is Paris's
-    std::uint32_t facade = 0;  ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
+    std::uint32_t windows = 0;       ///< the next window, in the order of the tile's window group of sun samples
+    bool paris = false;              ///< the region's WIN_STYLE is Paris's
+    std::optional<double> kit_eaves; ///< the region's tradition's eaves, where it has a kit (BuildingRegion's)
+    std::uint32_t facade = 0; ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
 
 private:
     std::vector<std::uint32_t> triangles_;

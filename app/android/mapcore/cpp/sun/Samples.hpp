@@ -15,9 +15,10 @@
 // tree's crown; then every quay wall's pieces. Windows come after all of those, in the same order of records and edges,
 // as their own group: a bucket tests them only for tiles near the camera (within win_d · 1.35).
 //
-// Not covered: the traditions' details (trad roofs, walls and chimneys: render tiles carry no tradition entry yet),
-// the eye-level wall profile (shadow_height, drawn only below 10° of pitch and within 110 m), and terrain towns' own
-// ground (`_gy`), which no render tile carries.
+// A tradition's kit roof (trad_roof, drawn with weather) adds its gables' and slopes' samples after the plain roof's,
+// which the same building draws without weather. Not covered yet: a kit's walls' details and chimneys, the eye-level
+// wall profile (shadow_height, drawn only below 10° of pitch and within 110 m), and terrain towns' own ground (`_gy`),
+// which no render tile carries.
 #pragma once
 
 #include "sun/BitTiles.hpp"
@@ -38,10 +39,11 @@ namespace atlas::sun {
 /// The region's values the samples read: the port's module state after the region's load (the pack's style: its
 /// `state` and `scene` tables).
 struct Region {
-    double water_y = -1.5;   ///< WATER_Y: the water's level below the street, metres
-    bool paris = false;      ///< WIN_STYLE == "paris": tall French windows in stone fronts
-    bool tone = false;       ///< TONE: tall quay walls in sun are drawn in pieces
-    bool no_shadows = false; ///< S['no_shadows']: no ground shadows
+    double water_y = -1.5;           ///< WATER_Y: the water's level below the street, metres
+    bool paris = false;              ///< WIN_STYLE == "paris": tall French windows in stone fronts
+    bool tone = false;               ///< TONE: tall quay walls in sun are drawn in pieces
+    bool no_shadows = false;         ///< S['no_shadows']: no ground shadows
+    std::optional<double> kit_eaves; ///< the tradition's eaves, where the pack has a kit (its style's `tradition`)
 };
 
 /// The region's values of a pack's style.

@@ -183,6 +183,12 @@ struct ItemsStyle {
     std::array<StyleRgb, 5> woods_greens{};
 };
 
+/// The building tradition a pack's style carries whole (`tradition`: generic.py's P), as a kit's details read it: the
+/// eaves' overhang on a gabled or hipped roof (trad['eaves']; 0 where the tradition names none).
+struct KitStyle {
+    double eaves = 0.0;
+};
+
 struct Style {
     /// Reads `tables`: every value below, each of its kind; a missing or mistyped one is Fault::missing or
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
@@ -261,6 +267,8 @@ struct Style {
     bool paris = false;
     /// `scene`'s `no_shadows` (Python's truth; false where the scene does not set it).
     bool no_shadows = false;
+    /// `tradition`, where the pack has one (a region's, or a window's in a kit's country).
+    std::optional<KitStyle> kit;
 
     /// A land kind's place in `land`, or nothing.
     [[nodiscard]] std::optional<std::uint16_t> land_kind(std::string_view kind) const noexcept;

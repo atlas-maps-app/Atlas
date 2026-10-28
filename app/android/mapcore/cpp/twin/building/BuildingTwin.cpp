@@ -214,6 +214,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     emit_list(List::plain, b.prims_at + (b.edged * shaders::BUILDING_PRIM_VECTORS), b.plain_first);
     windows(b, rows, words, place, cells, sun);
     beams(b, rows, place);
+    roof_lines(b, rows, place);
 }
 
 std::int32_t BuildingTwin::item_of(const passes::BuildingTile& b, std::uint32_t item) {
@@ -898,6 +899,94 @@ void BuildingTwin::beams(const passes::BuildingTile& b, std::span<const std::uin
             depths_->push_back(std::move(d));
         }
         ++elements_;
+    }
+}
+
+void BuildingTwin::roof_lines(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
+                              const shaders::TilePlace& place) {
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U) return;
+    const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+    const auto offset = std::bit_cast<hlsl::uint4>(place.offset);
+    const auto scale = std::bit_cast<hlsl::uint4>(place.scale);
+    // as the frame's records give them (Buildings::write_window_jobs's): its item drawn, its slot by its item's band
+    const auto placed = [&](std::uint32_t item, std::uint16_t near_slot,
+                            std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
+        if (item >= rows.size()) return std::nullopt;
+        const std::uint32_t row = rows[item];
+        const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
+        if (rank == shaders::RANK_NONE) return std::nullopt;
+        const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+        return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
+                         row < distances_.depth.size() ? distances_.depth[row] : 0.0};
+    };
+    const auto emit = [&](std::uint32_t item, std::uint32_t slot, const std::vector<shaders::BuildingBeam>& lines,
+                          bool round, std::uint32_t rgb, float opacity, std::uint32_t width) {
+        points_.clear();
+        subpaths_.clear();
+        for (const shaders::BuildingBeam& l : lines) {
+            points_.push_back({.x = l.p0.x, .y = l.p0.y});
+            points_.push_back({.x = l.p1.x, .y = l.p1.y});
+        }
+        for (std::size_t k = 0; k < points_.size(); k += 2) {
+            subpaths_.push_back({.points = std::span<const Point>(points_).subspan(k, 2), .closed = false});
+        }
+        Style style{};
+        style.join = Join::round;
+        style.stroke = Paint::colour(argb_of(shaders::building_rgb(rgb)));
+        style.stroke_width = static_cast<float>(width) / 100.0F;
+        if (round) {
+            // the ridge: SVG's black fill, which a line leaves unpainted; round caps
+            style.fill = Paint::colour(0xFF00'0000U);
+            style.cap = Cap::round;
+        }
+        out_.at(slot, group_, item_of(b, item));
+        out_.path(style, subpaths_, {.opacity = opacity});
+        if (depths_ != nullptr) {
+            ElementDepth d{.edged = true, .tile = tile_};
+            d.roof_lines.push_back({.lines = lines, .round = round, .rgb = rgb, .opacity = opacity});
+            depths_->push_back(std::move(d));
+        }
+        ++elements_;
+    };
+    std::vector<shaders::BuildingBeam> lines;
+    // each slope's tile courses: `<path d="..." stroke="..." stroke-width="%.2f" opacity=".3" fill="none"/>`, the
+    // lines whose both ends project
+    for (const passes::BuildingTile::Courses& c : b.courses) {
+        const auto at = placed(c.item, c.near_slot, c.far_slot);
+        if (!at || !passes::courses_shown(at->second, distances_.focal, c.rstep)) continue;
+        const std::uint32_t width = passes::courses_width(at->second, distances_.focal);
+        const std::uint32_t flags = 30U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT;
+        const hlsl::uint4 normal = {bits(c.normal[0]), bits(c.normal[1]), bits(c.normal[2]), flags};
+        const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), c.rgb};
+        lines.clear();
+        float opacity = 0.0F;
+        for (std::uint32_t j = 1; j < c.k; ++j) {
+            const auto [a, e] = passes::course_ends(c, j);
+            const hlsl::uint4 from = {bits(a[0]), bits(a[1]), bits(a[2]), at->first};
+            const hlsl::uint4 to = {bits(e[0]), bits(e[1]), bits(e[2]), width};
+            const shaders::BuildingRoofLine r = shaders::building_roof_line(cam, from, to, normal, test, offset, scale);
+            opacity = r.opacity;
+            if (r.line.drawn) lines.push_back(r.line);
+        }
+        if (!lines.empty()) emit(c.item, at->first, lines, false, c.rgb, opacity, width);
+    }
+    // the lit ridge: `<path d="M..L.." stroke="#F4EEE2" stroke-width="%.2f" opacity=".55" stroke-linecap="round"/>`
+    for (const passes::BuildingTile::Ridge& r : b.ridges) {
+        const auto at = placed(r.item, r.near_slot, r.far_slot);
+        if (!at) continue;
+        const std::uint32_t width = passes::ridge_width(at->second, distances_.focal);
+        const std::uint32_t flags = shaders::BUILDING_ROOF_LINE_UNTURNED | shaders::BUILDING_ROOF_LINE_ROUND |
+                                    (55U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT);
+        const hlsl::uint4 from = {bits(r.from[0]), bits(r.from[1]), bits(r.from[2]), at->first};
+        const hlsl::uint4 to = {bits(r.to[0]), bits(r.to[1]), bits(r.to[2]), width};
+        const hlsl::uint4 normal = {0U, 0U, 0U, flags};
+        const hlsl::uint4 test = {0U, 0U, 0U, shaders::BUILDING_ROOF_RIDGE_RGB};
+        const shaders::BuildingRoofLine rl = shaders::building_roof_line(cam, from, to, normal, test, offset, scale);
+        if (!rl.line.drawn) continue;
+        lines.assign(1, rl.line);
+        emit(r.item, at->first, lines, true, shaders::BUILDING_ROOF_RIDGE_RGB, rl.opacity, width);
     }
 }
 

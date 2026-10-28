@@ -72,6 +72,16 @@ struct MaterialDepth {
     float opacity = 1.0F;
 };
 
+/// A kit roof's path of lines as the frame draws them (roof_line_vs, roof_line_fs), for the tests' raster: each line's
+/// segment and its depth along it, its caps (round: the ridge's; butt: the courses'), its colour and opacity, each
+/// line blended over what lies under it on its own.
+struct RoofLinesDepth {
+    std::vector<shaders::BuildingBeam> lines;
+    bool round = false;
+    std::uint32_t rgb = 0;
+    float opacity = 1.0F;
+};
+
 /// A wall's windows' part of one path (its deep windows' reveals or sills, or its sash bars as their quads) as the
 /// frame draws it, for the tests' raster: each shape, filled in one colour on its wall's plane at a lead, at the path's
 /// slot.
@@ -114,6 +124,7 @@ struct ElementDepth {
     std::vector<ArchesDepth> arches;          ///< one: the element is a church wall's windows' path
     std::vector<MaterialDepth> materials;     ///< one: the element is a wall's material face's path
     std::vector<shaders::BuildingBeam> beams; ///< one: the element is a hoist beam (its segment, its depth along it)
+    std::vector<RoofLinesDepth> roof_lines;   ///< one: the element is a kit roof's courses or its lit ridge
     bool veil = false; ///< the element is the church windows' veil, which the frame folds into their glass
 };
 
@@ -172,6 +183,11 @@ private:
     /// The hoist beams under old gables the frame draws of a tile (its items' rows `rows`, its place), each at its slot
     /// among its roof's slopes (beam_vs's).
     void beams(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, const shaders::TilePlace& place);
+
+    /// A kit roof's tile courses (a path a slope, where the view resolves them) and lit ridges the frame draws of a
+    /// tile, with weather by day, each at its slot after its roof's slopes (roof_line_vs's).
+    void roof_lines(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
+                    const shaders::TilePlace& place);
 
     /// The paths of a wall's material face the frame draws (its one-cell primitive `wall`, its face `f`, its plane
     /// `plane`, its record `w`, `m` its BuildingTile::window_materials entry): at its material slot `slot` on, in item
