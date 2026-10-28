@@ -317,7 +317,7 @@ inline uint building_window_count(BuildingWindowWall w, uint detail) {
 
 /// How many window records the frame gives wall `w` (its item's rank entry `rank`): its windows
 /// (building_window_count's), and its shop glazing's where it has one and its item is nearer than 760 m (the CPU's jobs
-/// give as many; windows_cs writes each, drawn or not).
+/// give as many; windows_cs writes each window's, window_facades_cs the glazing's, drawn or not).
 inline uint building_window_records(BuildingWindowWall w, uint rank) {
     if (rank == RANK_NONE) {
         return 0u;
@@ -1142,9 +1142,9 @@ inline BuildingWindowShape building_near_shape_of(BuildingNearRecord r, uint v, 
 }
 
 // A facade's record (a facade wall of the frame's jobs with a plinth or a cornice whose item is nearer than 760 m),
-// which windows_cs writes and window_facade_vs reads (7 uint4): v0 its header (its plinth's corners, bits 0-2; its
-// cornice's, 3-5), its wall's record among the frame's walls, its building's plinth's painter slot (its cornice's the
-// next); then its plinth (its span's ends, its five corners) and its cornice alike. A header 0: neither is drawn.
+// which window_facades_cs writes and window_facade_vs reads (7 uint4): v0 its header (its plinth's corners, bits 0-2;
+// its cornice's, 3-5), its wall's record among the frame's walls, its building's plinth's painter slot (its cornice's
+// the next); then its plinth (its span's ends, its five corners) and its cornice alike. A header 0: neither is drawn.
 static const uint BUILDING_FACADE_RECORD_VECTORS = 7u;
 
 struct BuildingFacadeRecord {
@@ -1199,9 +1199,10 @@ inline float2 building_facade_point(BuildingFacadeRecord r, uint v) {
     return building_window_corner(s, corner < s.count ? corner : s.count - 1u);
 }
 
-// A windowed wall's record for the frame, which windows_cs writes once a windowed wall of the frame's jobs (3 uint4):
-// its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its lit
-// ones' (CSS px; top below bottom where it has none; a church's windows' glass's as its dark ones' where it draws
+// A windowed wall's record for the frame, which one decide stage writes once a windowed wall of the frame's jobs (the
+// first it has of the church windows', the windows', the facades' and the material faces': draw.slang's lanes; 3
+// uint4): its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its
+// lit ones' (CSS px; top below bottom where it has none; a church's windows' glass's as its dark ones' where it draws
 // them); its frames' half width and its sash bars' (CSS px), its reveals' colour (0xBBGGRR, the wall's colour times
 // 0.55 unlit at the moment), and its church windows' leading's width (CSS px).
 static const uint BUILDING_WALL_RECORD_VECTORS = 3u;
@@ -1259,12 +1260,12 @@ inline float3 building_glass_at(BuildingGlass g, float top, float bottom, float 
 // Each window is three arches of one form, its foot's two corners, then its half circle from the right through the top
 // to the left (nine points at angles π j / 8): its stone, grown 0.22 m (its foot that much lower), and its reveal on
 // the wall's plane, its glass 0.38 m into the wall; and its leading, 0.37 m into the wall: a mullion from its sill to
-// its arch's top, then a transom across it at each of its heights. Per frame each window is decided once (windows_cs;
-// the twin alike), as the port decides it: each arch as Camera.poly gives it with a margin of 200 px (building_arch_cut,
-// Camera.poly's for its eleven corners), the window left out where its stone is not there or covers under 4 px², its
-// reveal where it is there, its glass where it is there, its leading where its glass covers over 60 px², each segment
-// projected as Camera.proj does (none behind the near plane); a wall without any window's glass draws none of them (`if
-// not glass: return []`).
+// its arch's top, then a transom across it at each of its heights. Per frame each window is decided once
+// (church_windows_cs; the twin alike), as the port decides it: each arch as Camera.poly gives it with a margin of 200
+// px (building_arch_cut, Camera.poly's for its eleven corners), the window left out where its stone is not there or
+// covers under 4 px², its reveal where it is there, its glass where it is there, its leading where its glass covers
+// over 60 px², each segment projected as Camera.proj does (none behind the near plane); a wall without any window's
+// glass draws none of them (`if not glass: return []`).
 //
 // The port paints a wall's church windows as five paths at its windows' slots: their stones (#DCD6CA, by night
 // #2A2E3A), their reveals (the wall's colour times 0.55, unlit: the plain windows' reveals'), their glass (the gradient
@@ -1417,24 +1418,30 @@ inline BuildingArch building_arch_cut(FrameCamera cam, TilePlace place, Building
     float3 origin = {0.0f, 0.0f, 0.0f};
     float3 c[12] = {origin, origin, origin, origin, origin, origin, origin, origin, origin, origin, origin, origin};
     uint m = 0u;
-    float3 first = camera_of(cam, eye_relative(place, building_arch_point(wall, n, b, k, 0u, off, grow)));
-    float3 a = first;
-    for (uint i = 0u; i < BUILDING_ARCH_POINTS; ++i) {
+    // each edge from corner i - 1 to corner i (the last back to the first), each corner projected once and in one
+    // place (the arch's angles are a local array wherever its points are taken)
+    float3 first = origin;
+    float3 a = origin;
+    for (uint i = 0u; i <= BUILDING_ARCH_POINTS; ++i) {
         float3 e = first;
-        if (i + 1u < BUILDING_ARCH_POINTS) {
-            e = camera_of(cam, eye_relative(place, building_arch_point(wall, n, b, k, i + 1u, off, grow)));
+        if (i < BUILDING_ARCH_POINTS) {
+            e = camera_of(cam, eye_relative(place, building_arch_point(wall, n, b, k, i, off, grow)));
         }
-        bool ai = a.z >= near_z;
-        bool ei = e.z >= near_z;
-        if (ai && m < BUILDING_ARCH_MOST) {
-            c[m] = a;
-            m = m + 1u;
-        }
-        if (ai != ei && m < BUILDING_ARCH_MOST) {
-            float t = (near_z - a.z) / (e.z - a.z);
-            float3 q = {a.x + (e.x - a.x) * t, a.y + (e.y - a.y) * t, near_z};
-            c[m] = q;
-            m = m + 1u;
+        if (i == 0u) {
+            first = e;
+        } else {
+            bool ai = a.z >= near_z;
+            bool ei = e.z >= near_z;
+            if (ai && m < BUILDING_ARCH_MOST) {
+                c[m] = a;
+                m = m + 1u;
+            }
+            if (ai != ei && m < BUILDING_ARCH_MOST) {
+                float t = (near_z - a.z) / (e.z - a.z);
+                float3 q = {a.x + (e.x - a.x) * t, a.y + (e.y - a.y) * t, near_z};
+                c[m] = q;
+                m = m + 1u;
+            }
         }
         a = e;
     }
@@ -1523,13 +1530,13 @@ inline BuildingShape building_arch_as_shape(BuildingArch a, float4 plane, float 
     return s;
 }
 
-// A church window's record, which windows_cs writes for each church window of the frame's jobs and church_window_vs
-// reads (26 uint4): v[0] its header (its stone's corners, bits 0-3; its reveal's, 4-7; its glass's, 8-11; its leading
-// drawn, bit 12), its wall's record among the frame's walls, its wall's first window slot, its transoms; v[1 + 7 p]
-// to v[7 + 7 p] its arch p (0 its stone, 1 its reveal, 2 its glass): its span's ends, then its twelve corners (x, y);
-// v[22] to v[25] its leading's ends in camera coordinates: the left and right ends of the transoms' lines at its sill
-// and at its arch's spring, the mullion's top, and the step of a transom from the sill to the spring (a fraction). A
-// header 0: nothing of it is drawn.
+// A church window's record, which church_windows_cs writes for each church window of the frame's jobs and
+// church_window_vs reads (26 uint4): v[0] its header (its stone's corners, bits 0-3; its reveal's, 4-7; its glass's,
+// 8-11; its leading drawn, bit 12), its wall's record among the frame's walls, its wall's first window slot, its
+// transoms; v[1 + 7 p] to v[7 + 7 p] its arch p (0 its stone, 1 its reveal, 2 its glass): its span's ends, then its
+// twelve corners (x, y); v[22] to v[25] its leading's ends in camera coordinates: the left and right ends of the
+// transoms' lines at its sill and at its arch's spring, the mullion's top, and the step of a transom from the sill to
+// the spring (a fraction). A header 0: nothing of it is drawn.
 static const uint BUILDING_CHURCH_RECORD_VECTORS = 26u;
 static const uint BUILDING_CHURCH_ARCH_VECTORS = 7u;
 static const uint BUILDING_CHURCH_LEADING_AT = 22u;
@@ -1554,38 +1561,62 @@ inline uint building_church_part_at(uint part) {
     return part < 3u ? 1u + part * BUILDING_CHURCH_ARCH_VECTORS : BUILDING_CHURCH_LEADING_AT;
 }
 
-/// The record of church window k (of `transoms` transoms) on wall `wall` (its face's normal `n`, its plane `plane` in
-/// camera coordinates) laid out as `b`, the frame's wall record `wall_record`, its wall's first window slot `slot`.
-inline BuildingChurchRecord building_church_record(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
-                                                   float4 plane, BuildingChurchBay b, uint k, uint transoms,
-                                                   uint wall_record, uint slot) {
-    BuildingChurchRecord r = building_church_empty();
-    BuildingArch stone = building_arch_cut(cam, place, wall, n, plane, b, k, 0.0f, BUILDING_CHURCH_STONE);
-    if (stone.count == 0u || stone.area < BUILDING_CHURCH_STONE_AREA) {
-        return r;
-    }
-    BuildingArch reveal = building_arch_cut(cam, place, wall, n, plane, b, k, 0.0f, 0.0f);
-    BuildingArch glass = building_arch_cut(cam, place, wall, n, plane, b, k, BUILDING_CHURCH_GLASS, 0.0f);
-    bool leading = glass.count != 0u && glass.area > BUILDING_CHURCH_LEADING_AREA;
-    uint header = stone.count | (reveal.count << 4u) | (glass.count << 8u) | (leading ? BUILDING_CHURCH_LEADING_DRAWN : 0u);
-    uint4 head = {header, wall_record, slot, transoms};
-    r.v[0] = head;
-    for (uint part = 0u; part < 3u; ++part) {
-        BuildingArch a = part == 0u ? stone : (part == 1u ? reveal : glass);
-        uint at = building_church_part_at(part);
+/// Arch `part` (0 its stone, grown 0.22 m; 1 its reveal; 2 its glass, 0.38 m into the wall) of church window k on wall
+/// `wall` (its face's normal `n`, its plane `plane` in camera coordinates) laid out as `b`, as the frame draws it
+/// (building_arch_cut's).
+inline BuildingArch building_church_part_arch(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
+                                              float4 plane, BuildingChurchBay b, uint k, uint part) {
+    float off = part == 2u ? BUILDING_CHURCH_GLASS : 0.0f;
+    float grow = part == 0u ? BUILDING_CHURCH_STONE : 0.0f;
+    return building_arch_cut(cam, place, wall, n, plane, b, k, off, grow);
+}
+
+/// Whether a church window whose stone is `stone` is drawn at all: its stone there, covering 4 px² or more.
+inline bool building_church_stone_drawn(BuildingArch stone) {
+    return stone.count != 0u && !(stone.area < BUILDING_CHURCH_STONE_AREA);
+}
+
+/// Vector i (0 to 6) of arch `a` in a record: its span's ends and its first corner, then its other corners two a
+/// vector (the twelfth's place its first's).
+inline uint4 building_church_arch_vector(BuildingArch a, uint i) {
+    if (i == 0u) {
         uint4 span = {asuint(a.lo), asuint(a.hi), asuint(a.p[0].x), asuint(a.p[0].y)};
-        r.v[at] = span;
-        for (uint i = 0u; i < 6u; ++i) {
-            float2 u = a.p[1u + 2u * i];
-            float2 v = a.p[0];
-            if (2u + 2u * i < BUILDING_ARCH_MOST) {
-                v = a.p[2u + 2u * i];
-            }
-            uint4 corners = {asuint(u.x), asuint(u.y), asuint(v.x), asuint(v.y)};
-            r.v[at + 1u + i] = corners;
-        }
+        return span;
     }
-    // the leading's lines in camera coordinates, its points along them affine there (closeup.py projects each)
+    uint j = i - 1u;
+    float2 u = a.p[1u + 2u * j];
+    float2 v = a.p[0];
+    if (2u + 2u * j < BUILDING_ARCH_MOST) {
+        v = a.p[2u + 2u * j];
+    }
+    uint4 corners = {asuint(u.x), asuint(u.y), asuint(v.x), asuint(v.y)};
+    return corners;
+}
+
+/// A record's header (v[0]): its arches' corners (`counts`: the stone's, bits 0-3; the reveal's, 4-7; the glass's,
+/// 8-11), its leading drawn, its wall's record `wall_record`, its wall's first window slot `slot`, its transoms.
+inline uint4 building_church_head(uint counts, bool leading, uint wall_record, uint slot, uint transoms) {
+    uint4 head = {counts | (leading ? BUILDING_CHURCH_LEADING_DRAWN : 0u), wall_record, slot, transoms};
+    return head;
+}
+
+/// Whether a church window whose glass is `glass` draws its leading: its glass covering over 60 px².
+inline bool building_church_leading_shown(BuildingArch glass) {
+    return glass.count != 0u && glass.area > BUILDING_CHURCH_LEADING_AREA;
+}
+
+/// A record's leading (v[22] to v[25]).
+struct BuildingChurchLeading {
+    uint4 l0;
+    uint4 l1;
+    uint4 l2;
+    uint4 l3;
+};
+
+/// Church window k's leading (its wall `wall`, its face's normal `n`, laid out as `b`): its lines in camera
+/// coordinates, its points along them affine there (closeup.py projects each).
+inline BuildingChurchLeading building_church_leading_of(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
+                                                       BuildingChurchBay b, uint k) {
     float uc = (float(k) + 0.5f) * b.bw;
     float3 lb = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc - b.wh, b.ys, BUILDING_CHURCH_LEADING)));
     float3 lt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc - b.wh, b.ye, BUILDING_CHURCH_LEADING)));
@@ -1593,14 +1624,45 @@ inline BuildingChurchRecord building_church_record(FrameCamera cam, TilePlace pl
     float3 rt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc + b.wh, b.ye, BUILDING_CHURCH_LEADING)));
     float3 mt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc, b.ye + b.wh, BUILDING_CHURCH_LEADING)));
     float step = b.ye > b.ys ? BUILDING_CHURCH_TRANSOM / (b.ye - b.ys) : 0.0f;
+    BuildingChurchLeading l;
     uint4 l0 = {asuint(lb.x), asuint(lb.y), asuint(lb.z), asuint(lt.x)};
     uint4 l1 = {asuint(lt.y), asuint(lt.z), asuint(rb.x), asuint(rb.y)};
     uint4 l2 = {asuint(rb.z), asuint(rt.x), asuint(rt.y), asuint(rt.z)};
     uint4 l3 = {asuint(mt.x), asuint(mt.y), asuint(mt.z), asuint(step)};
-    r.v[BUILDING_CHURCH_LEADING_AT] = l0;
-    r.v[BUILDING_CHURCH_LEADING_AT + 1u] = l1;
-    r.v[BUILDING_CHURCH_LEADING_AT + 2u] = l2;
-    r.v[BUILDING_CHURCH_LEADING_AT + 3u] = l3;
+    l.l0 = l0;
+    l.l1 = l1;
+    l.l2 = l2;
+    l.l3 = l3;
+    return l;
+}
+
+/// The record of church window k (of `transoms` transoms) on wall `wall` (its face's normal `n`, its plane `plane` in
+/// camera coordinates) laid out as `b`, the frame's wall record `wall_record`, its wall's first window slot `slot`: the
+/// twin's (church_windows_cs writes the same vectors one part at a time, without holding the record).
+inline BuildingChurchRecord building_church_record(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
+                                                   float4 plane, BuildingChurchBay b, uint k, uint transoms,
+                                                   uint wall_record, uint slot) {
+    BuildingChurchRecord r = building_church_empty();
+    BuildingArch stone = building_church_part_arch(cam, place, wall, n, plane, b, k, 0u);
+    if (!building_church_stone_drawn(stone)) {
+        return r;
+    }
+    BuildingArch reveal = building_church_part_arch(cam, place, wall, n, plane, b, k, 1u);
+    BuildingArch glass = building_church_part_arch(cam, place, wall, n, plane, b, k, 2u);
+    uint counts = stone.count | (reveal.count << 4u) | (glass.count << 8u);
+    r.v[0] = building_church_head(counts, building_church_leading_shown(glass), wall_record, slot, transoms);
+    for (uint part = 0u; part < 3u; ++part) {
+        BuildingArch a = part == 0u ? stone : (part == 1u ? reveal : glass);
+        uint at = building_church_part_at(part);
+        for (uint i = 0u; i < BUILDING_CHURCH_ARCH_VECTORS; ++i) {
+            r.v[at + i] = building_church_arch_vector(a, i);
+        }
+    }
+    BuildingChurchLeading l = building_church_leading_of(cam, place, wall, n, b, k);
+    r.v[BUILDING_CHURCH_LEADING_AT] = l.l0;
+    r.v[BUILDING_CHURCH_LEADING_AT + 1u] = l.l1;
+    r.v[BUILDING_CHURCH_LEADING_AT + 2u] = l.l2;
+    r.v[BUILDING_CHURCH_LEADING_AT + 3u] = l.l3;
     return r;
 }
 
@@ -1761,8 +1823,8 @@ inline BuildingGlass building_church_veiled(FrameWindows w, uint theme_flags) {
 //     at .62.
 // A line's ends are projected as Camera.proj projects them: one behind the near plane leaves the line out of its path.
 // What the view decides the CPU decides in double (passes::material_choice), and the jobs carry it: each wall's fills
-// and lines, how many, its mullions' or ribs' n or its balconies' width, its ribs' colour; windows_cs writes each fill
-// and line record, drawn or not.
+// and lines, how many, its mullions' or ribs' n or its balconies' width, its ribs' colour; window_materials_cs writes
+// each fill and line record, drawn or not.
 //
 // The frame draws them after every opaque fragment (the translucent phase), at their path's slot under the painter
 // switch, over what lies under them as SVG's opacity paints it (source over): the fills each once (one path's never
@@ -2059,11 +2121,11 @@ inline float building_material_width(uint material, uint width) {
     return building_hundredths(width);
 }
 
-// A material fill's record (4 uint4), which windows_cs writes and material_fill_vs reads: v0 its corners' count (bits
-// 0-2: none drawn where 0) and its wall's material face (4-6), its wall's record among the frame's walls, its path's
-// painter slot; then its span and its five corners. A line's (3 uint4), which material_line_vs reads: v0 its wall's
-// material face (bits 4-6; bit 0 set where it is drawn), its wall's record, its path's slot, its ribs' colour or its
-// width in hundredths (a balcony's); v1 its ends; v2 its span.
+// A material fill's record (4 uint4), which window_materials_cs writes and material_fill_vs reads: v0 its corners'
+// count (bits 0-2: none drawn where 0) and its wall's material face (4-6), its wall's record among the frame's walls,
+// its path's painter slot; then its span and its five corners. A line's (3 uint4), which material_line_vs reads: v0 its
+// wall's material face (bits 4-6; bit 0 set where it is drawn), its wall's record, its path's slot, its ribs' colour or
+// its width in hundredths (a balcony's); v1 its ends; v2 its span.
 static const uint BUILDING_MATERIAL_FILL_VECTORS = 4u;
 static const uint BUILDING_MATERIAL_LINE_VECTORS = 3u;
 

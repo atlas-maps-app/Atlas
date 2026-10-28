@@ -470,8 +470,9 @@ TEST_CASE("the map leaves out the parts its camera's flags name, and draws them 
           "ground glints"}},
         {"the facades' detail",
          style::camera_flag::no_facades,
-         {"windows", "window parts", "window glass", "window frames", "facades", "material fills", "material lines",
-          "church windows", "door faces", "door fills", "door outlines", "door numbers"}},
+         {"windows", "window facades", "window churches", "window materials", "window parts", "window glass",
+          "window frames", "facades", "material fills", "material lines", "church windows", "door faces", "door fills",
+          "door outlines", "door numbers"}},
     };
     const auto counted = [&](const Part& part) {
         std::uint64_t n = 0;

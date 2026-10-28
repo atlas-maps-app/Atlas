@@ -23,6 +23,12 @@
 # its lock is kept in <build>/spirv-lock-mismatch/ (as embedded, as slangc wrote it, and as spirv-dis's text where
 # SPIRV-Tools is installed), and CI keeps that folder, so another host's bytes can be diffed.
 #
+# Beside it the test spirv_budget holds each compute entry point to shaders/spirv.budget: where the tests are built,
+# every compute entry point (by its module's reflection) is compiled alone as its module is, and nocontract budget
+# measures its bytes and its threads' local arrays (tools/nocontract/budget.hpp). On the user's PowerVR phone the map
+# froze from alpha 16 at about z 17, the first frame that ran the windows' decide stage, once that one stage had grown
+# to 333,400 bytes with 5,088 bytes of local arrays a thread; alpha 15's (211,280 bytes, 780) is the ceiling.
+#
 # Specialization constants are refused: every module is checked before it is embedded (nocontract constants, a scan of
 # the module for every instruction of the pinned Slang's SPIR-V grammar whose name begins OpSpecConstant, and for any
 # SpecId decoration by any instruction that decorates: tools/nocontract/grammar.hpp, derived from the table Slang's
@@ -40,7 +46,8 @@
 # CI's x86_64 runners only), and it needs DrawParameters, which a Vulkan 1.1 phone may lack. SV_VulkanVertexID and
 # SV_VulkanInstanceID read Vulkan's own builtins.
 #
-# Script modes (cmake -DMODE=... -P Shaders.cmake): semantics, layouts, lock-check, lock-update.
+# Script modes (cmake -DMODE=... -P Shaders.cmake): semantics, layouts, lock-check, lock-update, budget-measure,
+# budget-check.
 
 if(CMAKE_SCRIPT_MODE_FILE)
     cmake_minimum_required(VERSION 3.28...4.1)
@@ -334,6 +341,104 @@ if(CMAKE_SCRIPT_MODE_FILE)
         return()
     endif()
 
+    # Each compute entry point of a module (its reflection's) compiled alone with the module's own flags, measured by
+    # nocontract budget, into OUTPUT: a line "<symbol>:<entry point> <bytes> <local arrays> <their bytes> <locals>
+    # <their bytes>" each. A module through the GLSL route is its one entry point already: its own SPIR-V is measured.
+    if(MODE STREQUAL "budget-measure")
+        file(READ "${REFLECTION}" json)
+        string(JSON count LENGTH "${json}" entryPoints)
+        separate_arguments(flags UNIX_COMMAND "${FLAGS}")
+        set(text "")
+        if(count GREATER 0)
+            math(EXPR last "${count} - 1")
+            foreach(i RANGE ${last})
+                string(JSON entry GET "${json}" entryPoints ${i} name)
+                string(JSON stage GET "${json}" entryPoints ${i} stage)
+                if(NOT stage STREQUAL "compute")
+                    continue()
+                endif()
+                set(alone "${RAW}")
+                if(NOT ROUTE)
+                    set(alone "${BASE}.${entry}.spv")
+                    execute_process(
+                        COMMAND "${SLANGC}" "${SOURCE}" -target spirv -profile spirv_1_3 -fvk-use-entrypoint-name
+                                -std 2026 -warnings-as-errors all ${flags} -I "${ROOT}" -I "${SHADERS}" -entry ${entry}
+                                -stage compute -o "${alone}"
+                        RESULT_VARIABLE rc ERROR_VARIABLE err OUTPUT_QUIET)
+                    if(NOT rc EQUAL 0)
+                        message(FATAL_ERROR "${SOURCE}: slangc of ${entry} alone failed:\n${err}")
+                    endif()
+                endif()
+                execute_process(COMMAND "${NOCONTRACT}" budget "${alone}"
+                    RESULT_VARIABLE rc OUTPUT_VARIABLE measured ERROR_VARIABLE err OUTPUT_STRIP_TRAILING_WHITESPACE)
+                if(NOT rc EQUAL 0)
+                    message(FATAL_ERROR "${alone}: nocontract budget failed:\n${err}")
+                endif()
+                string(APPEND text "${SYMBOL}:${entry} ${measured}\n")
+            endforeach()
+        endif()
+        file(WRITE "${OUTPUT}" "${text}")
+        return()
+    endif()
+
+    # The test spirv_budget: each compute entry point's measure (the budget-measure files MANIFEST lists) against
+    # CEILINGS (shaders/spirv.budget): its own line where it has one, else the line "*"; each printed, and any that
+    # passes its line named.
+    if(MODE STREQUAL "budget-check")
+        file(STRINGS "${CEILINGS}" lines REGEX "^[^#]")
+        foreach(line IN LISTS lines)
+            string(REGEX MATCHALL "[^ \t]+" fields "${line}")
+            list(LENGTH fields n)
+            if(NOT n EQUAL 4)
+                message(FATAL_ERROR "${CEILINGS}: cannot read the line '${line}'")
+            endif()
+            list(GET fields 0 key)
+            string(MAKE_C_IDENTIFIER "${key}" id) # "*" is "_"
+            list(SUBLIST fields 1 3 ceiling_${id})
+        endforeach()
+        if(NOT DEFINED ceiling__)
+            message(FATAL_ERROR "${CEILINGS} has no line \"*\"")
+        endif()
+        file(STRINGS "${MANIFEST}" files)
+        set(failures "")
+        set(checked 0)
+        foreach(f IN LISTS files)
+            file(STRINGS "${f}" measures)
+            foreach(line IN LISTS measures)
+                string(REGEX MATCHALL "[^ \t]+" fields "${line}")
+                list(GET fields 0 key)
+                list(GET fields 1 bytes)
+                list(GET fields 2 arrays)
+                list(GET fields 3 array_bytes)
+                string(MAKE_C_IDENTIFIER "${key}" id)
+                set(ceiling "${ceiling__}")
+                if(DEFINED ceiling_${id})
+                    set(ceiling "${ceiling_${id}}")
+                endif()
+                list(GET ceiling 0 most_bytes)
+                list(GET ceiling 1 most_arrays)
+                list(GET ceiling 2 most_array_bytes)
+                message(STATUS "${key}: ${bytes} bytes (at most ${most_bytes}), ${arrays} local arrays of ${array_bytes} "
+                    "bytes (at most ${most_arrays} of ${most_array_bytes})")
+                if(bytes GREATER most_bytes OR arrays GREATER most_arrays OR array_bytes GREATER most_array_bytes)
+                    string(APPEND failures "  ${key}: ${bytes} bytes, ${arrays} local arrays of ${array_bytes} bytes; "
+                        "its line: ${most_bytes}, ${most_arrays}, ${most_array_bytes}\n")
+                endif()
+                math(EXPR checked "${checked} + 1")
+            endforeach()
+        endforeach()
+        if(checked EQUAL 0)
+            message(FATAL_ERROR "spirv_budget: no compute entry point was measured (${MANIFEST})")
+        endif()
+        if(failures)
+            message(FATAL_ERROR "Compute entry points past their line in ${CEILINGS}:\n${failures}"
+                "Split such a stage into entry points of their own, each dispatched over what needs it "
+                "(shaders/building/draw.slang's windows' decide stages), rather than raising its line.")
+        endif()
+        message(STATUS "spirv_budget: ${checked} compute entry points within their lines")
+        return()
+    endif()
+
     message(FATAL_ERROR "Shaders.cmake: unknown MODE '${MODE}'")
 endif()
 
@@ -348,6 +453,7 @@ function(atlas_add_shaders target shaders_dir)
     list(SORT sources)
     set(headers "")
     set(reflections "")
+    set(budgets "")
     set(manifest "")
     set(module_includes "")
     set(module_entries "")
@@ -444,6 +550,25 @@ function(atlas_add_shaders target shaders_dir)
                 DEPENDS "${spv}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Embed.cmake"
                 COMMENT "embed ${symbol}"
                 VERBATIM)
+            # where the tests are built, each compute entry point measured alone (the test spirv_budget)
+            if(ATLAS_TESTS)
+                set(budget "${base}.budget")
+                string(JOIN " " flags_text ${fp_mode} ${define_flags})
+                set(route_entry "")
+                if(route)
+                    set(route_entry "${entry}")
+                endif()
+                add_custom_command(
+                    OUTPUT "${budget}"
+                    COMMAND "${CMAKE_COMMAND}" -DMODE=budget-measure -DSOURCE=${src} -DREFLECTION=${json} -DRAW=${raw}
+                            -DBASE=${base} -DSYMBOL=${symbol} -DROUTE=${route_entry} "-DFLAGS=${flags_text}"
+                            -DSLANGC=${ATLAS_SLANGC} -DNOCONTRACT=${ATLAS_NOCONTRACT} -DROOT=${CMAKE_SOURCE_DIR}
+                            -DSHADERS=${shaders_dir} -DOUTPUT=${budget} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
+                    DEPENDS "${raw}" "${json}" ${ATLAS_NOCONTRACT_DEPENDS} "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
+                    COMMENT "budget ${rel}${suffix}"
+                    VERBATIM)
+                list(APPEND budgets "${budget}")
+            endif()
             list(APPEND headers "${header}")
             list(APPEND reflections "${json}")
             string(APPEND module_includes "#include \"gen/spirv/${rel_dir}/${name}${suffix}.hpp\"\n")
@@ -495,7 +620,10 @@ ${module_hashes}};
         DEPENDS ${reflections} "${manifest_file}" "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
         COMMENT "layouts from Slang's reflection"
         VERBATIM)
-    add_custom_target(${target}_shaders DEPENDS ${headers} "${gen_dir}/layouts.hpp")
+    # the compute entry points' measures, which the test spirv_budget reads
+    list(JOIN budgets "\n" budget_list)
+    file(CONFIGURE OUTPUT "${work_dir}/budgets.txt" CONTENT "${budget_list}\n" @ONLY)
+    add_custom_target(${target}_shaders DEPENDS ${headers} "${gen_dir}/layouts.hpp" ${budgets})
     add_dependencies(${target} ${target}_shaders)
     target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}")
     set_property(GLOBAL APPEND PROPERTY ATLAS_SHADER_MANIFESTS "${manifest_file}")
@@ -510,5 +638,8 @@ ${module_hashes}};
             COMMAND "${CMAKE_COMMAND}" -DMODE=lock-check -DMANIFEST=${manifest_file}
                     -DKEEP=${CMAKE_BINARY_DIR}/spirv-lock-mismatch -DHOST=${ATLAS_HOST_PLATFORM}
                     -DSLANG=${ATLAS_SLANG_VERSION} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}")
+        add_test(NAME spirv_budget
+            COMMAND "${CMAKE_COMMAND}" -DMODE=budget-check -DMANIFEST=${work_dir}/budgets.txt
+                    -DCEILINGS=${shaders_dir}/spirv.budget -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}")
     endif()
 endfunction()

@@ -30,12 +30,14 @@
 //     every nearer face, as the renders paint it after its fill. None in the owner mode (its map takes a face's pixels
 //     where its fill drew); where the device cannot make them, the roofs are drawn without them.
 //   - The windows (ENGINE.md step 4, the facades: shaders/building/windows.slangh): stage F writes this frame slot's
-//     jobs (each drawn tile's runs of windowed walls, at most 64 a job); before the main pass (the decide phase)
-//     windows_cs decides each window of each wall once into a record, and each wall into its own (its plane, its dark
-//     and lit windows' boxes for the glass's gradients); in the objects phase, after the walls and roofs, one draw
-//     draws every window's frame (its outline dilated by the frames' half width, round joins) and another its glass,
-//     opaque, on its wall's plane a lead over the wall's cells. None in the owner mode (a window is its wall's
-//     owner's).
+//     jobs (each drawn tile's runs of windowed walls, at most 64 a job); before the main pass (the decide phase) each
+//     wall's parts are decided once into records, each part by a stage of its own over the walls that have it
+//     (windows_cs each window, window_facades_cs the flat detail, church_windows_cs a church's windows,
+//     window_materials_cs the material faces), and each wall into its own (its plane, its dark and lit windows'
+//     boxes for the glass's gradients) by the first of them it has; in the objects phase, after the walls and
+//     roofs, one draw draws every window's frame (its outline dilated by the frames' half width, round joins) and
+//     another its glass, opaque, on its wall's plane a lead over the wall's cells. None in the owner mode (a window
+//     is its wall's owner's).
 //   - A tradition's kit's walls (trad_wall's, with weather): its stucco ground floor's band and its corner boards are
 //     the walls' and roofs' primitives (the plain list's, drawn on their wall's plane at leads of their own over its
 //     cells); stage F lays each frame's boards' lines (a record a line, where the view resolves them) and eaves'
@@ -142,6 +144,12 @@ public:
     [[nodiscard]] StrokeCounts stroke_counts() const noexcept { return stroke_counts_; }
     /// Whether the roofs' thin edges are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
+    /// The windows' decide stages (shaders/building/draw.slang), each run over the facade walls that have its part
+    /// this frame: the windows and their near records (windows_cs), the flat detail: shop glazing, plinths and
+    /// cornices (window_facades_cs), the churches' own windows (church_windows_cs), the material faces
+    /// (window_materials_cs).
+    enum class WindowStage : std::uint8_t { windows, facades, churches, materials };
+    static constexpr std::size_t window_stages = 4;
     /// What the last frame's windows were: their jobs, the facade walls and the windows they decided (a shop's
     /// glazing among them), the windows of the walls nearer than 160 m (their reveals, sills and sash bars), the
     /// facades with a plinth or a cornice, the churches' own windows, and the material faces' fills and lines.
@@ -158,6 +166,8 @@ public:
         std::uint32_t roof_lines = 0;  ///< a kit roof's tile courses (a record a course) and lit ridges
         std::uint32_t kit_lines = 0;   ///< a kit wall's boards' lines (a record a line)
         std::uint32_t kit_shadows = 0; ///< and its eaves' shadows (a record a wall)
+        /// Each decide stage's walls, in WindowStage's order (none: the stage did not run).
+        std::array<std::uint32_t, window_stages> stage_walls{};
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
@@ -398,12 +408,13 @@ struct Buildings::Windows {
     /// The lines' records, which the CPU writes each frame: a kit's walls' boards' lines and eaves' shadows, then its
     /// roofs' lines (each record six uint4).
     std::array<gpu::Buffer, 2> roof_lines;
-    /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
-    /// parts', the facades', the glass's, the frames' and the church windows' pipelines; the material faces' fills' and
-    /// lines' (translucent).
+    /// The draws' layout (the frame's sets, then set 2), the compute stages', their pipelines (WindowStage's order),
+    /// and the near windows' parts', the facades', the glass's, the frames' and the church windows' pipelines; the
+    /// material faces' fills' and lines' (translucent).
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
-    vk::raii::Pipeline decide{nullptr};
+    std::array<vk::raii::Pipeline, window_stages> decide{vk::raii::Pipeline{nullptr}, vk::raii::Pipeline{nullptr},
+                                                         vk::raii::Pipeline{nullptr}, vk::raii::Pipeline{nullptr}};
     vk::raii::Pipeline near{nullptr};
     vk::raii::Pipeline facades_pipeline{nullptr};
     vk::raii::Pipeline glass{nullptr};
@@ -414,11 +425,15 @@ struct Buildings::Windows {
     vk::raii::Pipeline beams_pipeline{nullptr};
     vk::raii::Pipeline roof_lines_pipeline{nullptr};
     vk::raii::Pipeline kit_shadows_pipeline{nullptr};
-    // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold (the church
-    // windows' records, and the most segments of leading one of them has; the material faces' records)
+    // the render thread's, per frame: the jobs' words (each decide stage's lanes after the jobs), the frame slot they
+    // went to, and what they hold (each stage's lanes and its first word; the church windows' records, and the most
+    // segments of leading one of them has; the material faces' records)
     std::vector<std::uint32_t> words;
+    std::array<std::vector<std::uint32_t>, window_stages> lanes;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
+    std::array<std::uint32_t, window_stages> lanes_now{};
+    std::array<std::uint32_t, window_stages> lanes_at{};
     std::uint32_t walls_now = 0;
     std::uint32_t records_now = 0;
     std::uint32_t nears_now = 0;

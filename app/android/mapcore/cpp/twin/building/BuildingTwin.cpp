@@ -620,7 +620,7 @@ void BuildingTwin::church_windows(const shaders::BuildingPrim& wall, const shade
     const std::uint32_t bays = church & 0xFFFFU;
     const std::uint32_t transoms = church >> 16U;
     const shaders::BuildingChurchBay bay = shaders::building_church_bay(wall, bays);
-    // each window as windows_cs decides it: its record's arches, and its leading's segments
+    // each window as church_windows_cs decides it: its record's arches, and its leading's segments
     for (std::vector<shaders::BuildingArch>& a : arches_) a.clear();
     segments_.clear();
     for (std::uint32_t k = 0; k < bays; ++k) {
@@ -758,7 +758,8 @@ void BuildingTwin::material_face(const shaders::BuildingPrim& wall, const shader
     const shaders::FrameCamera& cam = block_.camera;
     const std::uint32_t theme_flags = block_.theme.flags.x;
     const bool night = (theme_flags & shaders::THEME_NIGHT) != 0U;
-    // as the jobs carry it (windows_cs's): its fills and lines, how many floors, decks or balconies, n or the width
+    // as the jobs carry it (window_materials_cs's): its fills and lines, how many floors, decks or balconies, n or
+    // the width
     const passes::MaterialChoice c = passes::material_choice(m, night, depth, distances_.focal);
     const std::uint32_t count = c.counts & 0xFFFU;
     const std::uint32_t n = c.counts >> 12U;

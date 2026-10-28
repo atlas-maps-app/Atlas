@@ -466,6 +466,12 @@ static const uint WINDOW_JOB_MATERIAL_LINES = 101u;
 static const uint WINDOW_JOB_MATERIALS = 117u;
 static const uint WINDOW_JOB_RIBS = 133u;
 static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
+/// A lane of a decide stage (Buildings::write_window_jobs, after the jobs: a word each, four a uint4): its wall's turn
+/// in its job (bits 0-5), whether the stage writes the wall's record (bit 6: the wall's first stage of the church
+/// windows, the windows, the facades and the material faces, in that order), its job (bits 7-31).
+static const uint WINDOW_LANE_WALL = 63u;
+static const uint WINDOW_LANE_OWNER = 64u;
+static const uint WINDOW_LANE_JOB_SHIFT = 7u;
 
 /// Word `i` (a wall's) of a job's list starting at vector `list`.
 uint window_job_word(uint at, uint list, uint i) {
@@ -473,65 +479,140 @@ uint window_job_word(uint at, uint list, uint i) {
     return v[i % 4u];
 }
 
-/// Each facade wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
-/// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars); its
-/// shop glazing into the record after them; its plinth and cornice into its facade record; a church's windows each
-/// into its church record; and the wall into its own (its plane, its dark and lit windows' boxes, its widths, its
-/// reveals' colour; a church's windows' glass's box as its dark windows', which it has none of then, and their
-/// leading's width). A houseboat cabin's wall's panes are its windows, never lit, at its one slot.
+/// The lane thread `thread` of workgroup `group` takes among a decide stage's (a workgroup 64 of them, a row of
+/// workgroups STROKE_JOB_ROW): the stage runs over push.at.x lanes.
+uint window_lane_index(uint3 group, uint3 thread) {
+    return (group.y * STROKE_JOB_ROW + group.x) * 64u + thread.x;
+}
+
+/// A facade wall as a decide stage takes it from its lane: its job's first vector, its turn in the job, whether the
+/// stage writes its wall's record, its tile's push constants, its job's run, its facade wall's record, its wall's
+/// one-cell primitive, its face, its item's rank entry, and its wall's record among the frame's.
+struct WindowLane {
+    uint at;
+    uint k;
+    bool owner;
+    BuildingPush p;
+    uint4 span;
+    BuildingWindowWall w;
+    BuildingPrim wall;
+    BuildingFace f;
+    uint rank;
+    uint record;
+};
+
+/// Lane `index` of the stage's, whose words start at word push.at.y of the jobs' buffer.
+WindowLane window_lane(uint index) {
+    uint word = push.at.y + index;
+    uint4 v = window_jobs[word / 4u];
+    uint bits = v[word % 4u];
+    WindowLane l;
+    l.at = (bits >> WINDOW_LANE_JOB_SHIFT) * WINDOW_JOB_VECTORS;
+    l.k = bits & WINDOW_LANE_WALL;
+    l.owner = (bits & WINDOW_LANE_OWNER) != 0u;
+    l.p.place.offset = asfloat(window_jobs[l.at]);
+    l.p.place.scale = asfloat(window_jobs[l.at + 1u]);
+    l.p.at = window_jobs[l.at + 2u];
+    l.p.sun = window_jobs[l.at + 3u];
+    l.span = window_jobs[l.at + 4u];
+    l.w = building_window_wall(walls_heap[l.p.at.x + l.span.x + l.k]);
+    l.wall = prim_at(l.p.at.z + l.w.wall * BUILDING_PRIM_VECTORS);
+    uint fa = l.p.at.y + l.wall.face * BUILDING_FACE_VECTORS;
+    l.f = building_face(walls_heap[fa], walls_heap[fa + 1u]);
+    uint4 rows = walls_heap[l.p.at.w + l.wall.item / 4u];
+    l.rank = rank_table[rows[l.wall.item % 4u]];
+    l.record = l.span.z + l.k;
+    return l;
+}
+
+/// A lane's painter slots: its item's first, whether its item is near, its wall's first (its shop glazing's where it
+/// has one), its material face's, then its windows'.
+struct WindowSlots {
+    uint item;
+    bool near;
+    uint first;
+    uint material;
+    uint windows;
+};
+
+WindowSlots window_slots(WindowLane l) {
+    WindowSlots s;
+    uint detail = l.rank != RANK_NONE ? rank_detail(l.rank) : 0u;
+    s.near = (detail & BUILDING_DETAIL_NEAR) != 0u;
+    s.item = l.rank != RANK_NONE ? rank_slot(l.rank) : 0u;
+    s.first = s.item + (s.near ? l.w.near_slot : l.w.far_slot);
+    s.material = s.first + ((l.w.flags & BUILDING_WINDOW_GLAZING) != 0u ? 1u : 0u);
+    s.windows = s.material + building_material_slots(l.w.material);
+    return s;
+}
+
+/// A lane's windows' frames' half width (CSS px): a houseboat cabin's its own, else its job's.
+float window_frame_half(WindowLane l) {
+    uint widths = window_job_word(l.at, WINDOW_JOB_WIDTHS, l.k);
+    bool cabin = l.w.style == BUILDING_WINDOW_CABIN;
+    return 0.5f * (cabin ? building_cabin_frame_width(frame.windows) : building_tenths(widths & 0xFFFFu));
+}
+
+/// A box of no windows (its top below its bottom).
+float2 window_no_box() {
+    float infinity = asfloat(0x7F800000u);
+    float2 none = {infinity, -infinity};
+    return none;
+}
+
+/// The lane's wall's record, which the stage that owns it writes: its plane, its dark and lit windows' boxes, its
+/// frames' and sash bars' half widths, its reveals' colour and its church windows' leading's width.
+void window_wall_out(WindowLane l, float4 plane, float2 dark, float2 lit, float leading) {
+    uint widths = window_job_word(l.at, WINDOW_JOB_WIDTHS, l.k);
+    float frame_half = window_frame_half(l);
+    float sash_half = 0.5f * building_tenths(widths >> 16u);
+    uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
+    uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
+    uint reveal_word = l.p.sun.w + l.span.x + l.k;
+    uint4 reveals = walls_heap[reveal_word / 4u];
+    uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
+    window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
+    window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
+    window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
+}
+
+// The windows' decide stages (Buildings::record_window_decide): each facade wall of the frame's jobs is decided once,
+// each of its parts by a stage of its own, which runs over the walls that have that part this frame (its lanes), so a
+// frame runs only the stages its walls need and each stage stays small (the user's PowerVR froze from alpha 16 once
+// the one stage that held every part ran: cmake/Shaders.cmake's budget). Each writes its part's records and, where it
+// owns the wall, the wall's record (its plane, its dark and lit windows' boxes, its widths, its reveals' colour; a
+// church's windows' glass's box as its dark windows', which it has none of then, and their leading's width).
+
+/// A wall's windows, each into its record (at the job's records, in the wall's order) and, nearer than 160 m, into its
+/// near record (its reveal, sill and sash bars). A houseboat cabin's wall's panes are its windows, never lit, at its
+/// one slot.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
-    uint job = group.y * STROKE_JOB_ROW + group.x;
-    if (job >= push.at.x) {
+    uint index = window_lane_index(group, thread);
+    if (index >= push.at.x) {
         return;
     }
-    uint at = job * WINDOW_JOB_VECTORS;
-    uint4 span = window_jobs[at + 4u];
-    if (thread.x >= span.y) {
-        return;
-    }
-    BuildingPush p;
-    p.place.offset = asfloat(window_jobs[at]);
-    p.place.scale = asfloat(window_jobs[at + 1u]);
-    p.at = window_jobs[at + 2u];
-    p.sun = window_jobs[at + 3u];
-    BuildingWindowWall w = building_window_wall(walls_heap[p.at.x + span.x + thread.x]);
-    BuildingPrim wall = prim_at(p.at.z + w.wall * BUILDING_PRIM_VECTORS);
-    uint fa = p.at.y + wall.face * BUILDING_FACE_VECTORS;
-    BuildingFace f = building_face(walls_heap[fa], walls_heap[fa + 1u]);
-    uint4 rows = walls_heap[p.at.w + wall.item / 4u];
-    uint rank = rank_table[rows[wall.item % 4u]];
+    WindowLane l = window_lane(index);
     uint theme_flags = frame.theme.flags.x;
-    bool drawn = building_windows_drawn(theme_flags, p.place, w, f, rank);
-    bool deep = building_windows_deep(theme_flags, rank);
-    bool sashed = building_windows_sashed(rank);
-    bool facades = building_facades_drawn(theme_flags, p.place, f, rank);
-    uint detail = rank != RANK_NONE ? rank_detail(rank) : 0u;
-    uint first_row = building_windows_first_row(theme_flags, w);
-    bool cabin = w.style == BUILDING_WINDOW_CABIN;
-    bool near = (detail & BUILDING_DETAIL_NEAR) != 0u;
-    uint item_slot = rank != RANK_NONE ? rank_slot(rank) : 0u;
-    // the wall's first slot (its shop glazing's where it has one), then its material face's, then its windows'
-    uint first_slot = item_slot + (near ? w.near_slot : w.far_slot);
-    uint material_slot = first_slot + ((w.flags & BUILDING_WINDOW_GLAZING) != 0u ? 1u : 0u);
-    uint slot = material_slot + building_material_slots(w.material);
-    bool sun = p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
-    float4 plane = building_window_plane(frame.camera, p.place, f);
-    float infinity = asfloat(0x7F800000u);
-    float2 dark = {infinity, -infinity};
-    float2 lit = {infinity, -infinity};
-    uint wall_record = span.z + thread.x;
-    uint count = building_window_count(w, detail);
-    uint first = window_job_word(at, WINDOW_JOB_RECORDS, thread.x);
-    uint near_first = window_job_word(at, WINDOW_JOB_NEARS, thread.x);
-    uint widths = window_job_word(at, WINDOW_JOB_WIDTHS, thread.x);
-    // a houseboat cabin's frames' width is its own
-    float frame_half = 0.5f * (cabin ? building_cabin_frame_width(frame.windows) : building_tenths(widths & 0xFFFFu));
-    float sash_half = 0.5f * building_tenths(widths >> 16u);
+    bool drawn = building_windows_drawn(theme_flags, l.p.place, l.w, l.f, l.rank);
+    bool deep = building_windows_deep(theme_flags, l.rank);
+    bool sashed = building_windows_sashed(l.rank);
+    uint detail = l.rank != RANK_NONE ? rank_detail(l.rank) : 0u;
+    uint first_row = building_windows_first_row(theme_flags, l.w);
+    bool cabin = l.w.style == BUILDING_WINDOW_CABIN;
+    uint slot = window_slots(l).windows;
+    bool sun = l.p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
+    float4 plane = building_window_plane(frame.camera, l.p.place, l.f);
+    float2 dark = window_no_box();
+    float2 lit = window_no_box();
+    uint count = building_window_count(l.w, detail);
+    uint first = window_job_word(l.at, WINDOW_JOB_RECORDS, l.k);
+    uint near_first = window_job_word(l.at, WINDOW_JOB_NEARS, l.k);
+    float frame_half = window_frame_half(l);
     for (uint k = 0u; k < count; ++k) {
-        uint r = k / w.cols;
-        uint c = k - r * w.cols;
+        uint r = k / l.w.cols;
+        uint c = k - r * l.w.cols;
         BuildingWindowShape s = building_window_nothing();
         BuildingWindowShape reveal = building_window_nothing();
         BuildingWindowShape sill = building_window_nothing();
@@ -539,35 +620,35 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         bool on = false;
         if (drawn && cabin) {
             // draw_houseboat: sp = cam.poly(quad_at(a, c, y0 + 0.35, y0 + 1.0, u0, u1, 0.03, nrm), margin=200)
-            s = building_cabin_window(frame.camera, p.place, wall, f.normal, w, c);
+            s = building_cabin_window(frame.camera, l.p.place, l.wall, l.f.normal, l.w, c);
         } else if (drawn && r >= first_row) {
             // amsterdam.py: sp = cam.poly(quad_at(..., 0.04, nrm)); deep and area(sp) > 70: the reveal sp, then sp
             // set back (rec -0.16) and the sill; the glass where area(sp) > 0.25; the sash bars at rec + 0.01 where
             // dd < 140 and area(sp) > 30
-            BuildingWindowBox box = building_window_box(wall, w, r, c);
+            BuildingWindowBox box = building_window_box(l.wall, l.w, r, c);
             BuildingWindowShape sp = building_window_cut(
-                frame.camera, p.place, building_window_quad(wall, f.normal, box, BUILDING_WINDOW_OUT));
+                frame.camera, l.p.place, building_window_quad(l.wall, l.f.normal, box, BUILDING_WINDOW_OUT));
             float rec = BUILDING_WINDOW_OUT;
             if (deep && sp.count != 0u && sp.area > BUILDING_DEEP_AREA) {
                 reveal = building_window_on_plane(frame.camera, plane, sp);
                 rec = BUILDING_GLASS_BACK;
                 sp = building_window_on_plane(
                     frame.camera, plane,
-                    building_window_cut(frame.camera, p.place, building_window_quad(wall, f.normal, box, rec)));
+                    building_window_cut(frame.camera, l.p.place, building_window_quad(l.wall, l.f.normal, box, rec)));
                 sill = building_window_on_plane(
                     frame.camera, plane,
-                    building_window_cut(frame.camera, p.place, building_window_sill(wall, f.normal, box)));
+                    building_window_cut(frame.camera, l.p.place, building_window_sill(l.wall, l.f.normal, box)));
             }
             s = building_window_over(sp, BUILDING_WINDOW_MIN_AREA);
             if (sashed && sp.count != 0u && sp.area > BUILDING_SASH_AREA) {
                 bars = building_sash_on_plane(
                     frame.camera, plane,
-                    building_sash(frame.camera, p.place,
-                                  building_window_quad(wall, f.normal, box, rec + BUILDING_SASH_OUT)));
+                    building_sash(frame.camera, l.p.place,
+                                  building_window_quad(l.wall, l.f.normal, box, rec + BUILDING_SASH_OUT)));
             }
             if (sun) {
-                uint sample = p.sun.z + w.first + k;
-                uint2 texel = sun_bits[p.sun.x + sample / 32u];
+                uint sample = l.p.sun.z + l.w.first + k;
+                uint2 texel = sun_bits[l.p.sun.x + sample / 32u];
                 on = ((texel.x >> (sample & 31u)) & 1u) != 0u;
             }
         }
@@ -583,15 +664,15 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         }
         // a cabin's panes are one path, at its slot
         uint glass_slot = cabin ? slot : slot + (on ? BUILDING_WINDOW_LIT_SLOT : BUILDING_WINDOW_DARK);
-        BuildingWindowRecord record = building_window_record(s, on, building_glass_drawn(s, frame_half), false, w,
-                                                             wall_record, glass_slot);
+        BuildingWindowRecord record = building_window_record(s, on, building_glass_drawn(s, frame_half), false, l.w,
+                                                             l.record, glass_slot);
         uint out_at = (first + k) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
         window_records_out[out_at + 1u] = record.v1;
         window_records_out[out_at + 2u] = record.v2;
         window_records_out[out_at + 3u] = record.v3;
         if (near_first != WINDOW_NO_NEAR) {
-            BuildingNearRecord n = building_near_record(reveal, sill, bars, wall_record, slot);
+            BuildingNearRecord n = building_near_record(reveal, sill, bars, l.record, slot);
             uint near_at = (near_first + k) * BUILDING_NEAR_RECORD_VECTORS;
             window_nears_out[near_at] = n.v0;
             window_nears_out[near_at + 1u] = n.v1;
@@ -605,46 +686,70 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
             window_nears_out[near_at + 9u] = n.v9;
         }
     }
-    // its shop glazing (by day: the open shops at night come with the night), a window record after its windows'
-    if (building_window_records(w, rank) > count) {
+    if (l.owner) {
+        window_wall_out(l, plane, dark, lit, 0.0f);
+    }
+}
+
+/// A wall's flat detail: its shop glazing (by day: the open shops at night come with the night) into the window record
+/// after its windows', and its plinth (low nearer than 300 m) and cornice (nearer than 520 m) into its facade record,
+/// at its building's slots after its walls. The only stage of the frames whose walls come no nearer than the facades'
+/// 760 m (with weather: about z 17 on the phone).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = window_lane_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    WindowLane l = window_lane(index);
+    uint theme_flags = frame.theme.flags.x;
+    bool facades = building_facades_drawn(theme_flags, l.p.place, l.f, l.rank);
+    uint detail = l.rank != RANK_NONE ? rank_detail(l.rank) : 0u;
+    WindowSlots slots = window_slots(l);
+    float4 plane = building_window_plane(frame.camera, l.p.place, l.f);
+    uint count = building_window_count(l.w, detail);
+    if (building_window_records(l.w, l.rank) > count) {
         BuildingWindowShape g = building_window_nothing();
         if (facades && (theme_flags & THEME_NIGHT) == 0u) {
             g = building_window_over(
-                building_window_cut(frame.camera, p.place, building_glazing(wall, f.normal)), BUILDING_GLAZING_AREA);
+                building_window_cut(frame.camera, l.p.place, building_glazing(l.wall, l.f.normal)),
+                BUILDING_GLAZING_AREA);
         }
         float shop_half = 0.5f * building_shop_frame_width(frame.windows);
         BuildingWindowRecord record =
-            building_window_record(g, false, building_glass_drawn(g, shop_half), true, w, wall_record, first_slot);
-        uint out_at = (first + count) * BUILDING_WINDOW_RECORD_VECTORS;
+            building_window_record(g, false, building_glass_drawn(g, shop_half), true, l.w, l.record, slots.first);
+        uint out_at = (window_job_word(l.at, WINDOW_JOB_RECORDS, l.k) + count) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
         window_records_out[out_at + 1u] = record.v1;
         window_records_out[out_at + 2u] = record.v2;
         window_records_out[out_at + 3u] = record.v3;
     }
-    // its plinth (low nearer than 300 m) and cornice (nearer than 520 m), at its building's slots after its walls
-    uint facade_first = window_job_word(at, WINDOW_JOB_FACADES, thread.x);
+    uint facade_first = window_job_word(l.at, WINDOW_JOB_FACADES, l.k);
     if (facade_first != WINDOW_NO_NEAR) {
         BuildingWindowShape plinth = building_window_nothing();
         BuildingWindowShape cornice = building_window_nothing();
-        if (facades && (w.flags & BUILDING_WINDOW_PLINTH) != 0u) {
+        if (facades && (l.w.flags & BUILDING_WINDOW_PLINTH) != 0u) {
             bool low = (detail & BUILDING_DETAIL_LOW_PLINTH) != 0u;
             plinth = building_window_on_plane(
                 frame.camera, plane,
-                building_window_over(building_window_cut_in(frame.camera, p.place, building_plinth(wall, f.normal, low),
+                building_window_over(building_window_cut_in(frame.camera, l.p.place,
+                                                            building_plinth(l.wall, l.f.normal, low),
                                                             BUILDING_FACADE_MARGIN),
                                      BUILDING_FACADE_AREA));
         }
-        if (facades && (w.flags & BUILDING_WINDOW_CORNICE) != 0u && (detail & BUILDING_DETAIL_CORNICES) != 0u) {
+        if (facades && (l.w.flags & BUILDING_WINDOW_CORNICE) != 0u && (detail & BUILDING_DETAIL_CORNICES) != 0u) {
             cornice = building_window_on_plane(
                 frame.camera, plane,
-                building_window_over(building_window_cut_in(frame.camera, p.place, building_cornice(wall, f.normal),
+                building_window_over(building_window_cut_in(frame.camera, l.p.place,
+                                                            building_cornice(l.wall, l.f.normal),
                                                             BUILDING_FACADE_MARGIN),
                                      BUILDING_FACADE_AREA));
         }
-        uint4 slots4 = walls_heap[span.w + wall.item / 4u];
-        uint slots = slots4[wall.item % 4u];
-        uint facade_slot = item_slot + (near ? (slots & 0xFFFFu) : (slots >> 16u));
-        BuildingFacadeRecord fr = building_facade_record(plinth, cornice, wall_record, facade_slot);
+        uint4 slots4 = walls_heap[l.span.w + l.wall.item / 4u];
+        uint item_slots = slots4[l.wall.item % 4u];
+        uint facade_slot = slots.item + (slots.near ? (item_slots & 0xFFFFu) : (item_slots >> 16u));
+        BuildingFacadeRecord fr = building_facade_record(plinth, cornice, l.record, facade_slot);
         uint fat = facade_first * BUILDING_FACADE_RECORD_VECTORS;
         window_facades_out[fat] = fr.v0;
         window_facades_out[fat + 1u] = fr.v1;
@@ -654,106 +759,154 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         window_facades_out[fat + 5u] = fr.v5;
         window_facades_out[fat + 6u] = fr.v6;
     }
-    // a church's own windows (with weather nearer than 520 m, its plain ones not drawn), each into its record at the
-    // job's church records in the wall's order; none where none of them has its glass
-    uint church = window_job_word(at, WINDOW_JOB_CHURCHES, thread.x);
-    float leading = 0.0f;
-    if (church != WINDOW_NO_NEAR) {
-        uint church_first = church & 0xFFFFu;
-        uint bays = (church >> 16u) & 0xFFu;
-        uint transoms = church >> 24u;
-        bool shown = building_church_drawn(theme_flags, p.place, w, f, rank);
-        BuildingChurchBay bay = building_church_bay(wall, bays);
-        bool glass = false;
-        for (uint k = 0u; k < bays; ++k) {
-            BuildingChurchRecord r = building_church_empty();
-            if (shown) {
-                r = building_church_record(frame.camera, p.place, wall, f.normal, plane, bay, k, transoms, wall_record,
-                                           slot);
+    if (l.owner) {
+        window_wall_out(l, plane, window_no_box(), window_no_box(), 0.0f);
+    }
+}
+
+/// A church's own windows (with weather nearer than 520 m, its plain ones not drawn), each into its record at the
+/// job's church records in the wall's order, one arch at a time (a record is 416 bytes: a thread never holds one); none
+/// where none of them has its glass.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void church_windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = window_lane_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    WindowLane l = window_lane(index);
+    uint theme_flags = frame.theme.flags.x;
+    uint slot = window_slots(l).windows;
+    float4 plane = building_window_plane(frame.camera, l.p.place, l.f);
+    float2 dark = window_no_box();
+    uint church = window_job_word(l.at, WINDOW_JOB_CHURCHES, l.k);
+    uint church_first = church & 0xFFFFu;
+    uint bays = (church >> 16u) & 0xFFu;
+    uint transoms = church >> 24u;
+    bool shown = building_church_drawn(theme_flags, l.p.place, l.w, l.f, l.rank);
+    BuildingChurchBay bay = building_church_bay(l.wall, bays);
+    uint4 none = {0u, 0u, 0u, 0u};
+    bool glass = false;
+    for (uint k = 0u; k < bays; ++k) {
+        uint church_at = (church_first + k) * BUILDING_CHURCH_RECORD_VECTORS;
+        // its stone first (the window left out where it is not there or too small), then its reveal and its glass,
+        // whose corners widen its wall's dark box
+        bool drawn = shown;
+        uint counts = 0u;
+        bool leading = false;
+        for (uint part = 0u; part < 3u && drawn; ++part) {
+            BuildingArch a =
+                building_church_part_arch(frame.camera, l.p.place, l.wall, l.f.normal, plane, bay, k, part);
+            if (part == 0u && !building_church_stone_drawn(a)) {
+                drawn = false;
+            } else {
+                counts = counts | (a.count << (4u * part));
+                if (part == 2u) {
+                    leading = building_church_leading_shown(a);
+                    for (uint i = 0u; i < a.count; ++i) {
+                        dark.x = min(dark.x, a.p[i].y);
+                        dark.y = max(dark.y, a.p[i].y);
+                    }
+                    glass = glass || a.count != 0u;
+                }
+                uint at = church_at + building_church_part_at(part);
+                for (uint i = 0u; i < BUILDING_CHURCH_ARCH_VECTORS; ++i) {
+                    church_records_out[at + i] = building_church_arch_vector(a, i);
+                }
             }
-            BuildingArch g = building_church_arch(r, 2u);
-            for (uint i = 0u; i < g.count; ++i) {
-                dark.x = min(dark.x, g.p[i].y);
-                dark.y = max(dark.y, g.p[i].y);
-            }
-            glass = glass || g.count != 0u;
-            uint church_at = (church_first + k) * BUILDING_CHURCH_RECORD_VECTORS;
+        }
+        if (!drawn) {
             for (uint i = 0u; i < BUILDING_CHURCH_RECORD_VECTORS; ++i) {
-                church_records_out[church_at + i] = r.v[i];
+                church_records_out[church_at + i] = none;
             }
+            continue;
         }
-        if (!glass) {
-            uint4 none = {0u, 0u, 0u, 0u};
-            for (uint k = 0u; k < bays; ++k) {
-                church_records_out[(church_first + k) * BUILDING_CHURCH_RECORD_VECTORS] = none;
-            }
-        }
-        leading = building_hundredths(widths);
+        church_records_out[church_at] = building_church_head(counts, leading, l.record, slot, transoms);
+        BuildingChurchLeading g = building_church_leading_of(frame.camera, l.p.place, l.wall, l.f.normal, bay, k);
+        church_records_out[church_at + BUILDING_CHURCH_LEADING_AT] = g.l0;
+        church_records_out[church_at + BUILDING_CHURCH_LEADING_AT + 1u] = g.l1;
+        church_records_out[church_at + BUILDING_CHURCH_LEADING_AT + 2u] = g.l2;
+        church_records_out[church_at + BUILDING_CHURCH_LEADING_AT + 3u] = g.l3;
     }
-    // its material face (with weather nearer than 1.35 times win_d), its fills and lines each into its record at the
-    // job's, in the wall's order: a glass wall's glass, then its floors and mullions; a metal one's ribs; a stone front's
-    // balconies; a parking garage's decks
-    uint fills_first = window_job_word(at, WINDOW_JOB_MATERIAL_FILLS, thread.x);
-    uint lines_first = window_job_word(at, WINDOW_JOB_MATERIAL_LINES, thread.x);
-    if (fills_first != WINDOW_NO_NEAR || lines_first != WINDOW_NO_NEAR) {
-        uint counts = window_job_word(at, WINDOW_JOB_MATERIALS, thread.x);
-        uint ribs = window_job_word(at, WINDOW_JOB_RIBS, thread.x);
-        uint count = counts & 0xFFFu;
-        uint n = counts >> 12u;
-        bool shown = building_materials_drawn(theme_flags, p.place, f, rank);
-        uint m = w.material;
-        if (fills_first != WINDOW_NO_NEAR) {
-            uint fills = m == BUILDING_MATERIAL_GLASS ? 1u : count;
-            for (uint k = 0u; k < fills; ++k) {
-                BuildingWindowShape s = building_window_nothing();
-                if (shown) {
-                    bool glass = m == BUILDING_MATERIAL_GLASS;
-                    BuildingPrim q = glass ? building_material_glass(wall, f.normal)
-                                           : building_material_deck(wall, f.normal, w.levels, k);
-                    s = building_window_on_plane(
-                        frame.camera, plane,
-                        building_window_over(building_window_cut(frame.camera, p.place, q),
-                                             glass ? BUILDING_MATERIAL_GLASS_AREA : BUILDING_MATERIAL_DECK_AREA));
-                }
-                BuildingMaterialFillRecord r = building_material_fill_record(s, m, wall_record, material_slot);
-                uint fat = (fills_first + k) * BUILDING_MATERIAL_FILL_VECTORS;
-                material_fills_out[fat] = r.v0;
-                material_fills_out[fat + 1u] = r.v1;
-                material_fills_out[fat + 2u] = r.v2;
-                material_fills_out[fat + 3u] = r.v3;
-            }
-        }
-        if (lines_first != WINDOW_NO_NEAR) {
-            // a glass wall's floors (count of them) and its mullions (n - 1 where n > 1), a metal wall's ribs (n - 1), a
-            // stone front's balconies (count of them); the lines' slot after a glass wall's fill's
-            uint floors = m == BUILDING_MATERIAL_GLASS ? count : 0u;
-            uint across = m == BUILDING_MATERIAL_BALCONIES ? 0u : (n > 1u ? n - 1u : 0u);
-            uint lines = m == BUILDING_MATERIAL_BALCONIES ? count : floors + across;
-            uint line_slot = material_slot + (m == BUILDING_MATERIAL_GLASS ? 1u : 0u);
-            uint style = m == BUILDING_MATERIAL_BALCONIES ? n : ribs;
-            for (uint k = 0u; k < lines; ++k) {
-                BuildingMaterialLine l = building_material_line(frame.camera, p.place, wall, f.normal,
-                                                                building_material_ends(wall, m, w.levels, floors, n, k));
-                if (!shown) {
-                    l.drawn = false;
-                }
-                BuildingMaterialLineRecord r = building_material_line_record(
-                    building_material_line_on_plane(frame.camera, plane, l), m, wall_record, line_slot, style);
-                uint lat = (lines_first + k) * BUILDING_MATERIAL_LINE_VECTORS;
-                material_lines_out[lat] = r.v0;
-                material_lines_out[lat + 1u] = r.v1;
-                material_lines_out[lat + 2u] = r.v2;
-            }
+    if (!glass) {
+        for (uint k = 0u; k < bays; ++k) {
+            church_records_out[(church_first + k) * BUILDING_CHURCH_RECORD_VECTORS] = none;
         }
     }
-    uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
-    uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
-    uint reveal_word = p.sun.w + span.x + thread.x;
-    uint4 reveals = walls_heap[reveal_word / 4u];
-    uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
-    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
-    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
-    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
+    if (l.owner) {
+        float leading = building_hundredths(window_job_word(l.at, WINDOW_JOB_WIDTHS, l.k));
+        window_wall_out(l, plane, dark, window_no_box(), leading);
+    }
+}
+
+/// A wall's material face (with weather nearer than 1.35 times win_d), its fills and lines each into its record at the
+/// job's, in the wall's order: a glass wall's glass, then its floors and mullions; a metal one's ribs; a stone front's
+/// balconies; a parking garage's decks.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void window_materials_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = window_lane_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    WindowLane l = window_lane(index);
+    uint theme_flags = frame.theme.flags.x;
+    uint material_slot = window_slots(l).material;
+    float4 plane = building_window_plane(frame.camera, l.p.place, l.f);
+    uint fills_first = window_job_word(l.at, WINDOW_JOB_MATERIAL_FILLS, l.k);
+    uint lines_first = window_job_word(l.at, WINDOW_JOB_MATERIAL_LINES, l.k);
+    uint counts = window_job_word(l.at, WINDOW_JOB_MATERIALS, l.k);
+    uint ribs = window_job_word(l.at, WINDOW_JOB_RIBS, l.k);
+    uint count = counts & 0xFFFu;
+    uint n = counts >> 12u;
+    bool shown = building_materials_drawn(theme_flags, l.p.place, l.f, l.rank);
+    uint m = l.w.material;
+    if (fills_first != WINDOW_NO_NEAR) {
+        uint fills = m == BUILDING_MATERIAL_GLASS ? 1u : count;
+        for (uint k = 0u; k < fills; ++k) {
+            BuildingWindowShape s = building_window_nothing();
+            if (shown) {
+                bool glass = m == BUILDING_MATERIAL_GLASS;
+                BuildingPrim q = glass ? building_material_glass(l.wall, l.f.normal)
+                                       : building_material_deck(l.wall, l.f.normal, l.w.levels, k);
+                s = building_window_on_plane(
+                    frame.camera, plane,
+                    building_window_over(building_window_cut(frame.camera, l.p.place, q),
+                                         glass ? BUILDING_MATERIAL_GLASS_AREA : BUILDING_MATERIAL_DECK_AREA));
+            }
+            BuildingMaterialFillRecord r = building_material_fill_record(s, m, l.record, material_slot);
+            uint fat = (fills_first + k) * BUILDING_MATERIAL_FILL_VECTORS;
+            material_fills_out[fat] = r.v0;
+            material_fills_out[fat + 1u] = r.v1;
+            material_fills_out[fat + 2u] = r.v2;
+            material_fills_out[fat + 3u] = r.v3;
+        }
+    }
+    if (lines_first != WINDOW_NO_NEAR) {
+        // a glass wall's floors (count of them) and its mullions (n - 1 where n > 1), a metal wall's ribs (n - 1), a
+        // stone front's balconies (count of them); the lines' slot after a glass wall's fill's
+        uint floors = m == BUILDING_MATERIAL_GLASS ? count : 0u;
+        uint across = m == BUILDING_MATERIAL_BALCONIES ? 0u : (n > 1u ? n - 1u : 0u);
+        uint lines = m == BUILDING_MATERIAL_BALCONIES ? count : floors + across;
+        uint line_slot = material_slot + (m == BUILDING_MATERIAL_GLASS ? 1u : 0u);
+        uint style = m == BUILDING_MATERIAL_BALCONIES ? n : ribs;
+        for (uint k = 0u; k < lines; ++k) {
+            BuildingMaterialEnds ends = building_material_ends(l.wall, m, l.w.levels, floors, n, k);
+            BuildingMaterialLine line = building_material_line(frame.camera, l.p.place, l.wall, l.f.normal, ends);
+            if (!shown) {
+                line.drawn = false;
+            }
+            BuildingMaterialLineRecord r = building_material_line_record(
+                building_material_line_on_plane(frame.camera, plane, line), m, l.record, line_slot, style);
+            uint lat = (lines_first + k) * BUILDING_MATERIAL_LINE_VECTORS;
+            material_lines_out[lat] = r.v0;
+            material_lines_out[lat + 1u] = r.v1;
+            material_lines_out[lat + 2u] = r.v2;
+        }
+    }
+    if (l.owner) {
+        window_wall_out(l, plane, window_no_box(), window_no_box(), 0.0f);
+    }
 }
 
 /// The window record `index` of the frame's.
