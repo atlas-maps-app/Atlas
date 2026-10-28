@@ -27,9 +27,10 @@
 //   r:    the glints' red, the crown tone's red, the leaf's red and green (four bytes: the image is RGBA8)
 // 31.1 MB at S1, 53.9 MB at S3 (N16).
 //
-// The fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes) and kept
-// in cacheDir/fields, one file a size, so a warm start maps them. Mapped or made, a size's fields are immutable and
-// shared; FieldWorker publishes the latest size asked for, and fx/FieldCache.hpp puts it on the GPU.
+// The fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes), or on the
+// GPU where the device passes its byte check (fx/GpuFields.hpp: the same bytes), and kept in cacheDir/fields, one file
+// a size, so a warm start maps them. Mapped or made, a size's fields are immutable and shared; FieldWorker publishes
+// the latest size asked for (or made on the GPU), and fx/FieldCache.hpp puts it on the GPU.
 #pragma once
 
 #include "fx/Noise.hpp"
@@ -49,10 +50,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-namespace atlas::tiles {
-class MappedSource; // tiles/Source.hpp
-} // namespace atlas::tiles
 
 namespace atlas::fx {
 
@@ -142,14 +139,15 @@ struct Placement {
     return {};
 }
 
-/// A size's five fields, as the GPU's images take them: rows from the top, the images' bytes one after the other.
-/// Made in memory, or mapped from the disk cache; immutable.
+/// A size's eight fields, as the GPU's images take them: rows from the top, the images' bytes one after the other.
+/// Made in memory, mapped from the disk cache, or read back from the GPU; immutable.
 class ScreenFields {
 public:
     /// Fields of `size` in memory, zeroed (made by make_fields).
     explicit ScreenFields(FieldSize size);
-    /// Fields of `size` viewed in a mapping that holds them (the disk cache's), kept alive with them.
-    ScreenFields(FieldSize size, std::shared_ptr<const tiles::MappedSource> mapping, std::span<const std::uint8_t> rgba,
+    /// Fields of `size` viewed in the bytes `owner` holds and keeps alive with them: a mapping of the disk cache's
+    /// file (`mapped`), or the GPU's buffer they were made in.
+    ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped, std::span<const std::uint8_t> rgba,
                  std::span<const std::uint8_t> rg, std::span<const std::uint8_t> r);
 
     [[nodiscard]] FieldSize size() const noexcept { return size_; }
@@ -157,7 +155,7 @@ public:
     [[nodiscard]] std::span<const std::uint8_t> rg() const noexcept { return rg_; }
     [[nodiscard]] std::span<const std::uint8_t> r() const noexcept { return r_; }
     /// Whether they came from the disk cache.
-    [[nodiscard]] bool mapped() const noexcept { return mapping_ != nullptr; }
+    [[nodiscard]] bool mapped() const noexcept { return mapped_; }
 
     /// Field `f`'s bytes at pixel (x, y): the first, and the second for the two-byte fields.
     [[nodiscard]] std::array<std::uint8_t, 2> at(Field f, std::uint32_t x, std::uint32_t y) const noexcept;
@@ -175,7 +173,8 @@ private:
     std::vector<std::uint8_t> owned_rgba_;
     std::vector<std::uint8_t> owned_rg_;
     std::vector<std::uint8_t> owned_r_;
-    std::shared_ptr<const tiles::MappedSource> mapping_;
+    std::shared_ptr<const void> owner_;
+    bool mapped_ = false;
     std::span<const std::uint8_t> rgba_;
     std::span<const std::uint8_t> rg_;
     std::span<const std::uint8_t> r_;
@@ -191,8 +190,17 @@ struct MakeOptions {
     std::uint32_t band_rows = 32;
 };
 
-/// Makes the five fields of `size`.
+/// Makes the eight fields of `size`.
 [[nodiscard]] std::shared_ptr<const ScreenFields> make_fields(FieldSize size, const MakeOptions& options = {});
+
+/// make_fields' bytes of the pixels of `block` of a frame at filter scale `scale`, as fields of the block's size, by
+/// the scalar reference (what the GPU's byte check holds its fields to, fx/GpuFields.hpp).
+[[nodiscard]] std::shared_ptr<const ScreenFields> make_block(Block block, float scale);
+
+/// make_fields' keep tables as the GPU reads them (shaders/fx/fields.slang): a channel premultiplied and
+/// unpremultiplied again at each alpha (entry a · 256 + c), then the grain's grey from its matrix written as
+/// premultiplied sRGB at each alpha (65536 + a · 256 + grey).
+[[nodiscard]] std::vector<std::uint8_t> keep_tables_bytes();
 
 /// The fields kept on disk (cacheDir/fields): one file a size, written whole by a rename, its head and checksum checked
 /// when it is mapped; the least recently written dropped past a budget.
@@ -202,6 +210,8 @@ public:
 
     /// The fields of `size` kept here, mapped, or null.
     [[nodiscard]] std::shared_ptr<const ScreenFields> read(FieldSize size) const;
+    /// Whether a file of `size` is here (read may still refuse it).
+    [[nodiscard]] bool holds(FieldSize size) const;
     /// Keeps `fields`; returns whether they were written.
     bool write(const ScreenFields& fields) const;
     /// The file of `size`.
@@ -233,6 +243,9 @@ public:
 
     /// Asks for the fields of `size` (a no-op when they are published or under way); replaces a request not begun.
     void request(FieldSize size);
+    /// Fields made elsewhere in `ms` (the GPU's, fx/GpuFields.hpp): published at once as the latest, as though made
+    /// here (without the wake: their maker takes them), then kept on disk on the worker's thread.
+    void keep(std::shared_ptr<const ScreenFields> fields, double ms);
     /// The fields published last (null before the first).
     [[nodiscard]] std::shared_ptr<const ScreenFields> latest() const;
     /// How many times fields were published; the frame takes them again when it grows.
@@ -257,6 +270,7 @@ private:
     std::optional<FieldSize> current_; ///< under way or published
     bool busy_ = false;
     std::shared_ptr<const ScreenFields> latest_;
+    std::shared_ptr<const ScreenFields> keeping_; ///< made elsewhere, to keep on disk
     std::function<void()> wake_on_publish_;
     std::atomic<std::uint64_t> version_{0};
     double last_ms_ = 0;
@@ -282,9 +296,18 @@ struct FieldReference {
 /// The reference of `size`, when fields.inc has it.
 [[nodiscard]] const FieldReference* reference_of(FieldSize size) noexcept;
 
-/// `fields <w>x<h> cpu <ms> gpu off hash <h> ok` (plan-vector Appendix C), or `... FAIL <field> expected <h>` where
-/// a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the eight fields
-/// of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone.
-[[nodiscard]] std::string fields_line(FieldSize size, unsigned threads);
+/// What fields_line says of the GPU: the fields it made and its milliseconds, or why it made none.
+struct GpuPart {
+    std::shared_ptr<const ScreenFields> fields; ///< null: none made
+    double ms = 0;
+    std::string off; ///< why none ("" for none said)
+};
+
+/// `fields <w>x<h> cpu <ms> gpu <gpu> hash <h> ok` (plan-vector Appendix C), or `... FAIL <field> <h> expected <h>`
+/// where a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the eight
+/// fields of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone. `<gpu>` is the GPU's
+/// milliseconds where it made them too (fx/GpuFields.hpp's fields_line), and then the line ends `FAIL gpu <field> <h>
+/// expected <h>` where its bytes are not the CPU's; else `off`, or `off (<why>)`.
+[[nodiscard]] std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu = {});
 
 } // namespace atlas::fx

@@ -22,6 +22,9 @@
 //   colour     VK bench's colour stage (below);
 //   checks     VK facts' checks that draw (frame/CompositeCheck.hpp: the composite's two forms offscreen), run only
 //              when VK facts asks, never on the start's path or inside the colour stage: they decide nothing;
+//   noise      the GPU's noise (fx/GpuFields.hpp): its pipelines, its byte check and the screen fields it makes, when a
+//              map's frame wants a size the disk does not hold (before that frame) or VK facts' fields line asks,
+//              never inside the colour stage;
 //   close      the core's close: the stand-in's shared objects, the pipeline cache, the device and its allocator, the
 //              instance;
 //   refused    a start the guard or a failed step refused: what it had made goes (the device, the instance).
@@ -73,7 +76,8 @@
 //     retry stays the retry;
 //   colour: 10 bits off at once, for that driver and version and this build (the rung below Vulkan off);
 //   profiles: the profiles check off at once, for them; nothing else changes;
-//   checks: VK facts' drawing checks off at once, for them; nothing else changes.
+//   checks: VK facts' drawing checks off at once, for them; nothing else changes;
+//   noise: the GPU's noise off at once, for them: the CPU makes the screen fields; nothing else changes.
 // The `vk guard` line names the stage, the cell, the module, pipeline or thing that went, the attempt and the build,
 // and VK facts carries it. A verdict keyed to the driver ends with a driver update (another version), one keyed to the
 // system build (instance, facts, refused) with a system update (another fingerprint; a GPU driver updated apart from
@@ -101,13 +105,13 @@
 // Files in the guard's folder (noBackupFilesDir/vk on the phone): `guard` (the marker, replaced whole on each write),
 // `off` (what is turned off, a line each: driver|version|build|stage|what|attempt, or system|<fingerprint>|build|stage|
 // what|attempt when the driver was not known yet or the start was refused; the stage `colour` turns off 10 bits,
-// `profiles` the profiles check, `checks` VK facts' drawing checks, `cell` the VK bench cell its what names
-// (driver|version|build|cell|<configuration>|attempt), any other Vulkan; what is "pipeline <…>", "module <…>" or
-// "release <…>" when the driver was making a pipeline or a module or destroying something (several separated by "; "
-// where threads made them at once), "drawing <…>" in a frame's first draws), `facts` (the last facts read, shown when
-// Vulkan is off). An off line from before build IDs (driver|version|stage, alpha 6) names no build, so it turns off
-// none; one from before attempts (driver|version|build|stage|what, alpha 7's first) reads as attempt 2, or 1 for the
-// colour stage.
+// `profiles` the profiles check, `checks` VK facts' drawing checks, `noise` the GPU's noise, `cell` the VK bench cell
+// its what names (driver|version|build|cell|<configuration>|attempt), any other Vulkan; what is "pipeline <…>", "module
+// <…>" or "release <…>" when the driver was making a pipeline or a module or destroying something (several separated by
+// "; " where threads made them at once), "drawing <…>" in a frame's first draws), `facts` (the last facts read, shown
+// when Vulkan is off). An off line from before build IDs (driver|version|stage, alpha 6) names no build, so it turns
+// off none; one from before attempts (driver|version|build|stage|what, alpha 7's first) reads as attempt 2, or 1 for
+// the colour stage.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -140,6 +144,7 @@ enum class Stage : std::uint8_t {
     profiles,
     colour,
     checks,
+    noise,
     close,
     refused
 };
@@ -176,8 +181,8 @@ struct ProcessExits {
 struct GuardVerdict {
     /// Vulkan is off for this driver and this build (or, for a stage keyed to the system build, for it). A crash in
     /// VK bench's colour stage turns off 10 bits only (Guard::ten_bit_off), one in the profiles stage the profiles
-    /// check (Guard::profiles_off), one in the checks stage VK facts' drawing checks (Guard::checks_off), and the start
-    /// goes on.
+    /// check (Guard::profiles_off), one in the checks stage VK facts' drawing checks (Guard::checks_off), one in the
+    /// noise stage the GPU's noise (Guard::noise_off), and the start goes on.
     bool off = false;
     /// Delete the pipeline cache before this one (the retry, a new build's first start).
     bool retry_without_cache = false;
@@ -296,6 +301,9 @@ public:
     /// The `vk guard checks …` line when VK facts' drawing checks are off for this driver and version and this build:
     /// one crashed under them. "" when they are not off.
     [[nodiscard]] std::string checks_off() const;
+    /// The `vk guard noise …` line when the GPU's noise is off for this driver and version and this build: it crashed
+    /// under them, and the CPU makes the screen fields. "" when it is not off.
+    [[nodiscard]] std::string noise_off() const;
     /// The `vk guard cell … <configuration> …` line when VK bench's cell `configuration` is off for this driver and
     /// version and this build: the driver crashed in its work. "" when it is not off, and always for the facts' pick,
     /// which follows Vulkan's ladder.
@@ -308,7 +316,7 @@ public:
     [[nodiscard]] std::vector<GuardOff> turned_off() const;
     /// The guard's state as VK facts prints it: `guard.build`, `guard.driver` and a `guard.off` line per driver turned
     /// off or turned something off for (or `guard.off: none`): `(this driver and build: Vulkan is off)`, `… 10 bits are
-    /// off`, `… the profiles check is off`, `… VK bench's cell <configuration> is off`.
+    /// off`, `… the profiles check is off`, `… the GPU's noise is off`, `… VK bench's cell <configuration> is off`.
     [[nodiscard]] std::vector<std::string> state() const;
     /// Forgets every crash, every driver turned off and everything turned off for one (VK bench's cells among them),
     /// and deletes the pipeline cache at `cache_file` (if named), as a fresh install does; says what it forgot. Only

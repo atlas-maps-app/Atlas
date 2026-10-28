@@ -16,6 +16,7 @@
 // runs the core's session (standin/Session.hpp) in VK bench's order.
 #include "base/log.hpp"
 #include "frame/CompositeCheck.hpp"
+#include "fx/GpuFields.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -111,8 +112,9 @@ struct Child {
 /// How the child's session begins: VK bench's 8-bit runs first (the pick's frame first), its first frame a 10-bit one,
 /// or a VK bench cell first (a configuration the facts would not pick: the pick's own in the other form), then the
 /// pick, as VK bench's matrix draws its cells before the pick's runs; or VK facts' drawing checks after the facts,
-/// then the pick.
-enum class First : std::uint8_t { pick, ten, cell, checks };
+/// then the pick; or VK facts' fields line after the facts (the GPU's noise, on the host's lavapipe too), then the
+/// pick.
+enum class First : std::uint8_t { pick, ten, cell, checks, noise };
 
 /// Runs this binary's child test case with the guard's folder, the plant, the core's build ID and the app's process
 /// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `first`: how its session begins.
@@ -129,6 +131,7 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     env.push_back(std::format("ATLAS_GUARD_TEN_FIRST={}", first == First::ten ? 1 : 0));
     env.push_back(std::format("ATLAS_GUARD_CELL_FIRST={}", first == First::cell ? 1 : 0));
     env.push_back(std::format("ATLAS_GUARD_CHECKS_FIRST={}", first == First::checks ? 1 : 0));
+    env.push_back(std::format("ATLAS_GUARD_NOISE_FIRST={}", first == First::noise ? 1 : 0));
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
     for (std::string& a : args) argv.push_back(a.data());
@@ -216,13 +219,24 @@ TEST_CASE("guard child start") {
     standin::Session session(*started,
                              {.cache_file = fs::path(dir) / "pipelines.bin",
                               .spirv = 42,
-                              .city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0))});
+                              .city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0)),
+                              .noise_on_cpu = true});
     (void)session.facts();
     if (const char* checks_first = std::getenv("ATLAS_GUARD_CHECKS_FIRST"); // NOLINT(concurrency-mt-unsafe)
         checks_first != nullptr && std::string_view(checks_first) == "1") {
         // VK facts' drawing checks after the facts, behind their own stage, as VK facts runs them.
         log::info("guard child: {}", session.check("composite.check", [](const gpu::Started& s) {
             return frame::composite_line(*s.device, *s.cache);
+        }));
+    }
+    if (const char* noise_first = std::getenv("ATLAS_GUARD_NOISE_FIRST"); // NOLINT(concurrency-mt-unsafe)
+        noise_first != nullptr && std::string_view(noise_first) == "1") {
+        // VK facts' fields line after the facts, the GPU's noise behind its own stage, as VK facts runs it (at a small
+        // size: the GPU's byte check and its fields against the CPU's).
+        log::info("guard child: {}", session.noise([](const gpu::Started& s, std::string_view off) {
+            const fx::FieldSize small = fx::size_of(96, 64, 2.0);
+            if (!off.empty()) return fx::fields_line(small, 2, fx::GpuPart{.off = std::string(off)});
+            return fx::fields_line(small, 2, *s.device, *s.cache, s.guard.get(), off);
         }));
     }
     std::string why;
@@ -838,6 +852,66 @@ TEST_CASE("VK facts' drawing checks are a stage of their own, never the start's:
     child = spawn_child(dir, "", "build-k", {}, First::checks);
     CHECK(WIFEXITED(child.status));
     CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    CHECK_FALSE(fs::exists(dir / "off"));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("the GPU's noise is a stage of its own, never the start's: a crash there turns it off alone, and the CPU "
+          "makes the fields") {
+    // The GPU's noise (its pipelines, its byte check and the screen fields it makes) runs behind its own stage, before
+    // a map's frame that wants a size the disk does not hold or when VK facts' fields line asks (the child's session
+    // does), and a crash in it turns the GPU's noise off alone, at once: the CPU makes the fields, the same bytes.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("noise");
+    Child child = spawn_child(dir, "noise", "build-n", {}, First::noise);
+    CHECK(aborted(child));
+    const std::string marker = read(dir / "guard");
+    MESSAGE("marker after the noise stage's crash:\n" << marker);
+    CHECK(marker.starts_with("stage noise\n"));
+    CHECK_FALSE(has(marker, "driver unknown")); // the driver is known by then
+    {
+        auto next = gpu::start_guarded(options_in(dir, "", "build-n"));
+        ATLAS_REQUIRE(next.has_value(),
+                      "the start after a crash in the noise stage turned Vulkan off: " << next.error().line);
+        MESSAGE("found: " << next->guard_line);
+        CHECK(next->guard_line.starts_with("vk guard noise "));
+        CHECK(next->guard_line.ends_with(" attempt 1 build build-n"));
+        CHECK_FALSE(next->retried); // the cache is not the noise's to lose
+        CHECK(next->guard->noise_off() == next->guard_line);
+        CHECK(next->guard->checks_off().empty());         // nor VK facts' drawing checks
+        CHECK(next->guard->profiles_off().empty());       // nor the profiles
+        CHECK(next->device->facts().ten_bit_off.empty()); // nor 10 bits
+        CHECK(has(off_line(next->guard->state(), "noise"), "(this driver and build: the GPU's noise is off)"));
+        CHECK(has(read(dir / "off"), "|build-n|noise||1\n"));
+        // The session says so: its work runs outside the stage, told why, and makes nothing on the GPU.
+        standin::Session session(*next, {.cache_file = dir / "pipelines.bin", .spirv = 42, .noise_on_cpu = true});
+        std::string told;
+        CHECK(session.noise([&told](const gpu::Started&, std::string_view off) {
+            told = off;
+            return std::string("done");
+        }) == "done");
+        CHECK(told == next->guard_line);
+        session.close();
+    }
+    // Every later start leaves it off: the planted abort is never reached, the line says why, and the start ends well.
+    child = spawn_child(dir, "noise", "build-n", {}, First::noise);
+    CHECK(WIFEXITED(child.status));
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, "fields 96x64 cpu "));
+    CHECK(has(child.log, " gpu off (vk guard noise "));
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    CHECK(gpu::Guard(dir, "host-test-system", "build-n", "").clear() ==
+          "vk guard reset: forgot the GPU's noise turned off for 1 driver");
+    // Without a plant the GPU makes the fields behind its stage, every byte the CPU's, and its marker goes with it.
+    child = spawn_child(dir, "", "build-n", {}, First::noise);
+    CHECK(WIFEXITED(child.status));
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, "fields 96x64 cpu "));
+    CHECK_FALSE(has(child.log, " gpu off"));
+    CHECK(has(child.log, " unchecked")); // no reference of that size, and the GPU's bytes the CPU's
+    CHECK_FALSE(has(child.log, "FAIL"));
     CHECK_FALSE(fs::exists(dir / "guard"));
     CHECK_FALSE(fs::exists(dir / "off"));
     std::error_code ec;

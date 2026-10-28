@@ -122,9 +122,11 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             // The core's sun bits on the bundled Westerkerk (K8): `sun <hash> ok`, held by smoke.sh to the host build's.
             val sun = runCatching { MapCore.sunLine(context.assets) }.getOrElse { "sun unavailable: $it" }
             Log.i(EngineFrames.TAG, sun)
-            // The core's noise fields at S1 (K17a): `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, each of the five
-            // equal to the port's (the hashes the host build's tests hold); smoke.sh fails on any other ending.
-            val fields = runCatching { MapCore.fieldsLine() }.getOrElse { "fields unavailable: $it" }
+            // The core's noise fields at S1 (K17a): `fields 1080x2400 cpu <ms> gpu <ms> hash <h> ok`, each of the eight
+            // equal to the port's (the hashes the host build's tests hold) and the GPU's to the CPU's, or `gpu off
+            // (<why>)` where the core's device takes the CPU's (and `gpu off (no Vulkan)` without a core); smoke.sh
+            // fails on any other ending.
+            val fields = runCatching { core?.fieldsLine() ?: MapCore.fieldsLine() }.getOrElse { "fields unavailable: $it" }
             Log.i(EngineFrames.TAG, fields)
             // The ground's stage T on the bundled Westerkerk (K9): `ground <hash> ok`, held by smoke.sh to the host build's.
             val ground = runCatching { MapCore.groundLine(context.assets) }.getOrElse { "ground unavailable: $it" }

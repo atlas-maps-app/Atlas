@@ -49,7 +49,7 @@
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
-# `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, a ground line
+# `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu <ms>|off (<why>) hash <h> ok`, a ground line
 # other than `ground $ATLAS_GROUND_HASH ok`, a twin line other than `twin $ATLAS_TWIN_HASH ok`, VK facts without
 # `text.rounding: floor|round (probe …)` or with a `text.glyphs:` line that is not every glyph equal, a composite check
 # apart off the diagonal or not run, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it
@@ -413,12 +413,15 @@ vk_phase() {
   elif ! grep -qx "sun $ATLAS_SUN_HASH ok" "$OUT/sun.txt"; then
     echo "SUN FAILED: the emulator's sun bits read '$(cat "$OUT/sun.txt")', not 'sun $ATLAS_SUN_HASH ok'"; FAIL=1
   fi
-  # The core's noise fields on Bionic (K17a's acceptance): VK facts logs `fields 1080x2400 cpu <ms> gpu off hash <h> ok`,
-  # the five screen-wide fields at S1 each equal to the port's (fields.inc's hashes, which the host build's tests hold).
+  # The core's noise fields on Bionic (K17a's acceptance): VK facts logs `fields 1080x2400 cpu <ms> gpu <gpu> hash <h>
+  # ok`, the eight screen-wide fields at S1 each equal to the port's (fields.inc's hashes, which the host build's tests
+  # hold), on the core's device: <gpu> is the GPU's milliseconds where it made them too, every byte the CPU's (a
+  # difference ends the line `FAIL gpu <field> …`), or `off (<why>)` where the device takes the CPU's (the emulator's
+  # lavapipe: `off (a CPU implementation)`).
   since_marker vkfacts | grep -o 'AtlasMap: fields .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/fields.txt"
   echo "fields: $(cat "$OUT/fields.txt")"
-  if ! grep -qE '^fields 1080x2400 cpu [0-9]+ gpu off hash [0-9a-f]{16} ok$' "$OUT/fields.txt"; then
-    echo "FIELDS FAILED: the emulator's noise fields read '$(cat "$OUT/fields.txt")', not 'fields 1080x2400 cpu <ms> gpu off hash <h> ok'"; FAIL=1
+  if ! grep -qE '^fields 1080x2400 cpu [0-9]+ gpu ([0-9]+|off \(.+\)) hash [0-9a-f]{16} ok$' "$OUT/fields.txt"; then
+    echo "FIELDS FAILED: the emulator's noise fields read '$(cat "$OUT/fields.txt")', not 'fields 1080x2400 cpu <ms> gpu <ms>|off (<why>) hash <h> ok'"; FAIL=1
   fi
   # The ground's stage T on Bionic (K9's, D16's L0 c): VK facts logs `ground <hash> ok` over the bundled Westerkerk's
   # every tile built and packed for the GPU, and the hash must be the host build's (ATLAS_GROUND_HASH, from ci/hashes.env).

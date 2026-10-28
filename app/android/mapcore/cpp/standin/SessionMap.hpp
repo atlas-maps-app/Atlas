@@ -51,6 +51,22 @@ public:
     virtual void next(const style::CameraState& camera, double seconds) = 0;
     /// The last frame's counts.
     [[nodiscard]] virtual MapCounts counts() const noexcept = 0;
+
+    /// Whether the worlds made from now on make their noise fields on the GPU (fx/GpuFields.hpp): the session's
+    /// verdict, given before each make. Off by default.
+    virtual void set_gpu_noise(bool on) noexcept { (void)on; }
+    /// Whether the frame at `camera` waits for the map's noise fields made on the GPU first (make_noise): a size the
+    /// disk does not hold, the GPU's noise on. Never by default.
+    [[nodiscard]] virtual bool noise_due(const style::CameraState& camera) const {
+        (void)camera;
+        return false;
+    }
+    /// Makes them, waiting for them (the byte check first, once a world); the session runs it behind the crash guard's
+    /// noise stage, before the frame. False where the device was lost in it.
+    virtual bool make_noise(const style::CameraState& camera) {
+        (void)camera;
+        return true;
+    }
 };
 
 } // namespace atlas::standin

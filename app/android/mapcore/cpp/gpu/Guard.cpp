@@ -21,19 +21,20 @@ namespace atlas::gpu {
 
 namespace {
 
-constexpr std::array stage_names{"instance", "facts",    "device", "cache",  "surface", "pipelines",
-                                 "frames",   "profiles", "colour", "checks", "close",   "refused"};
+constexpr std::array stage_names{"instance", "facts",  "device", "cache", "surface", "pipelines", "frames",
+                                 "profiles", "colour", "checks", "noise", "close",   "refused"};
 static_assert(stage_names.size() == static_cast<std::size_t>(Stage::refused) + 1);
 
-/// The colour, profiles and checks stages' names, as markers and off lines spell them, and a VK bench cell's in an
-/// off line: the rungs below Vulkan off, whose crash turns off only what they guard, at once.
+/// The colour, profiles, checks and noise stages' names, as markers and off lines spell them, and a VK bench cell's in
+/// an off line: the rungs below Vulkan off, whose crash turns off only what they guard, at once.
 constexpr std::string_view colour = "colour";
 constexpr std::string_view profiles = "profiles";
 constexpr std::string_view checks_rung = "checks";
+constexpr std::string_view noise_rung = "noise";
 constexpr std::string_view cell_rung = "cell";
 
 [[nodiscard]] bool rung_below(std::string_view stage) noexcept {
-    return stage == colour || stage == profiles || stage == checks_rung || stage == cell_rung;
+    return stage == colour || stage == profiles || stage == checks_rung || stage == noise_rung || stage == cell_rung;
 }
 
 /// A plant that fires in a VK bench cell's work alone (`cell:<plant>`, Guard's constructor).
@@ -361,6 +362,14 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
         log::error("{}{}: VK facts' drawing checks are off for this driver and this build", v.line, ended);
         return true;
     }
+    if (stage == noise_rung) {
+        // The GPU's noise crashed (its pipelines, its byte check or the screen fields it made): the CPU makes the
+        // fields, the same bytes, so it alone is off, at once, and this start goes on as it was, its cache kept.
+        turn_off(stage, what);
+        log::error("{}{}: the GPU's noise is off for this driver and this build; the CPU makes the screen fields",
+                   v.line, ended);
+        return true;
+    }
     if (attempt >= 2) {
         // The retry crashed too: Vulkan off, for the driver, or for the system build where the stage is keyed to it
         // (write_marker).
@@ -406,6 +415,8 @@ std::string Guard::ten_bit_off() const { return rung_off(colour); }
 std::string Guard::profiles_off() const { return rung_off(profiles); }
 
 std::string Guard::checks_off() const { return rung_off(checks_rung); }
+
+std::string Guard::noise_off() const { return rung_off(noise_rung); }
 
 std::string Guard::cell_off(const Configuration& configuration) const {
     if (pick_ && configuration == *pick_) return {}; // the pick follows Vulkan's ladder
@@ -639,6 +650,7 @@ std::vector<std::string> Guard::state() const {
         const std::string gone = o.stage == colour        ? std::string("10 bits are off")
                                  : o.stage == profiles    ? std::string("the profiles check is off")
                                  : o.stage == checks_rung ? std::string("VK facts' drawing checks are off")
+                                 : o.stage == noise_rung  ? std::string("the GPU's noise is off")
                                  : o.stage == cell_rung   ? std::format("VK bench's cell {} is off", o.what)
                                                           : std::string("Vulkan is off");
         std::string whose = "another driver or version: not off here";
@@ -667,8 +679,9 @@ std::string Guard::clear(const std::filesystem::path& cache_file) const {
         const auto ten = static_cast<std::size_t>(std::ranges::count(off, colour, &GuardOff::stage));
         const auto checks = static_cast<std::size_t>(std::ranges::count(off, profiles, &GuardOff::stage));
         const auto drawing = static_cast<std::size_t>(std::ranges::count(off, checks_rung, &GuardOff::stage));
+        const auto noise = static_cast<std::size_t>(std::ranges::count(off, noise_rung, &GuardOff::stage));
         const auto cells = static_cast<std::size_t>(std::ranges::count(off, cell_rung, &GuardOff::stage));
-        if (const std::size_t vulkan = off.size() - ten - checks - drawing - cells; vulkan > 0)
+        if (const std::size_t vulkan = off.size() - ten - checks - drawing - noise - cells; vulkan > 0)
             forgot.push_back(std::format("{} {} turned off", vulkan, vulkan == 1 ? "driver" : "drivers"));
         if (ten > 0)
             forgot.push_back(std::format("10 bits turned off for {} {}", ten, ten == 1 ? "driver" : "drivers"));
@@ -679,6 +692,10 @@ std::string Guard::clear(const std::filesystem::path& cache_file) const {
         if (drawing > 0) {
             forgot.push_back(std::format("VK facts' drawing checks turned off for {} {}", drawing,
                                          drawing == 1 ? "driver" : "drivers"));
+        }
+        if (noise > 0) {
+            forgot.push_back(
+                std::format("the GPU's noise turned off for {} {}", noise, noise == 1 ? "driver" : "drivers"));
         }
         if (cells > 0) forgot.push_back(std::format("{} VK bench {} turned off", cells, cells == 1 ? "cell" : "cells"));
         std::filesystem::remove(dir_ / "off", ec);

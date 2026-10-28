@@ -151,15 +151,24 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     // Westerkerk), D3.
     world_->set_coarser_enclosing(true);
     // The noise fields and the byte tables (K17a), kept under the app's cache: without them the effects that read them
-    // (the grain) stay stubbed and the rest of the frame draws as before, so their failure only says so.
+    // (the grain) stay stubbed and the rest of the frame draws as before, so their failure only says so. Where the
+    // session has the GPU's noise on, a size the disk does not hold is made on the GPU before its first frame
+    // (noise_due, make_noise).
     auto fields = fx::FieldCache::create(
-        device, {.dir = options_.cache_dir.empty() ? std::filesystem::path() : options_.cache_dir / "fields"});
+        device, {.dir = options_.cache_dir.empty() ? std::filesystem::path() : options_.cache_dir / "fields",
+                 .gpu = gpu_noise_,
+                 .pipelines = &cache,
+                 .watch = watch});
+    fields_ = nullptr;
     if (!fields) {
         log::warn("vk map: the noise fields: {}", fields.error().text());
     } else {
         if (wake_) (*fields)->set_wake(wake_);
+        fx::FieldCache* held = fields->get();
         if (auto added = world_->add_globals(std::shared_ptr<GlobalProvider>(std::move(*fields))); !added) {
             log::warn("vk map: the noise fields: {}", added.error().text());
+        } else {
+            fields_ = held;
         }
     }
     // The packs listed so far open in the new world; one that no longer opens is dropped, saying why.
@@ -191,6 +200,7 @@ void MapFrame::release(gpu::PipelineWatch* watch) noexcept {
     {
         // Its workers stop, its tiles' heaps go.
         const gpu::Announced named = gpu::announce_release({.kind = "frame", .detail = "(the map's world)"}, watch);
+        fields_ = nullptr;
         world_.reset();
     }
     const gpu::Announced named = gpu::announce_release({.kind = "frame", .detail = "(the map's frame builder)"}, watch);
@@ -237,6 +247,16 @@ std::optional<scene::Picked> MapFrame::pick(double x, double y) {
     }
     return scene::pick_building(world_->store(), packs, *state.ground_frame, state.view->camera().eye(),
                                 scene::ray_of(*state.view, x, y));
+}
+
+bool MapFrame::noise_due(const style::CameraState& camera) const {
+    if (fields_ == nullptr || camera.width_px == 0 || camera.height_px == 0 || !(camera.density > 0.0)) return false;
+    return fields_->gpu_due(fx::size_of(camera.width_px, camera.height_px, camera.density));
+}
+
+bool MapFrame::make_noise(const style::CameraState& camera) {
+    if (!noise_due(camera)) return true;
+    return fields_->make_on_gpu(fx::size_of(camera.width_px, camera.height_px, camera.density));
 }
 
 standin::MapCounts MapFrame::counts() const noexcept {
