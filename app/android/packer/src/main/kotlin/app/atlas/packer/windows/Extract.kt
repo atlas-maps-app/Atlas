@@ -12,8 +12,8 @@ import java.util.BitSet
 
 /**
  * What a window's answer can hold of a PBF extract, read once into memory: every node's position (12 bytes a node:
- * about 2 GB for the Netherlands), every tagged node with its tags' JSON, every way as its nodes (indices into the
- * nodes) with its tags' JSON, and the relations the window query asks for (`type=multipolygon`, and
+ * about 2 GB for the Netherlands), every tagged node with its tags (escaped as the answer prints them), every way as
+ * its nodes (indices into the nodes) with its tags, and the relations the window query asks for (`type=multipolygon`, and
  * `boundary=national_park` or `protected_area`) with their members found among the nodes and ways. The extract must be
  * sorted by type, then id, as Geofabrik's are; an element of one that refers to an element it does not hold is kept
  * and marked, so a window holding it is left out.
@@ -21,7 +21,7 @@ import java.util.BitSet
 class Extract private constructor() {
     internal val nodes = NodeTable()
 
-    /** The tagged nodes, the answer's node elements, in id order: each its node and its tags' JSON. */
+    /** The tagged nodes, the answer's node elements, in id order: each its node and its tags. */
     internal val taggedNode = IntPages()
     internal val taggedJson = LongPages()
     internal val taggedLength = IntPages()
@@ -56,11 +56,11 @@ class Extract private constructor() {
     internal val relationBroken = BitSet()
     internal val relationTwice = BitSet()
 
-    /** The roles' JSON strings, quoted. */
+    /** The roles as escape_cstr writes them. */
     internal val roles = ArrayList<ByteArray>()
     private val roleIndex = HashMap<String, Int>()
 
-    /** The JSON of the elements' tags (the inside of `"tags":{…}`). */
+    /** The elements' tags, as [AnswerJson.tags] keeps them. */
     internal val json = ByteStore()
 
     /** Which ways are members of a kept relation, and theirs as (way shl 32 or relation), sorted. */
@@ -80,7 +80,7 @@ class Extract private constructor() {
     val brokenRelations: Int get() = relationBroken.cardinality()
     val twice: Int get() = taggedTwice.cardinality() + wayTwice.cardinality() + relationTwice.cardinality()
 
-    /** Bytes held, roughly: the node table, the JSON of tagged nodes and tags, and the rest (the ways' arrays among it). */
+    /** Bytes held, roughly: the node table, the elements' tags, and the rest (the ways' arrays among it). */
     val bytes: Long get() = nodes.bytes + json.bytes + otherBytes
     val nodeBytes: Long get() = nodes.bytes
     val jsonBytes: Long get() = json.bytes
@@ -107,8 +107,8 @@ class Extract private constructor() {
     private fun describe(r: Int): String {
         val at = relationTags[r]
         val n = relationTagLength[r]
-        val text = if (n == 0) "" else String(json.page(at), json.offset(at), n, Charsets.UTF_8)
-        fun tag(k: String) = Regex("\"" + Regex.escape(k) + "\":\"([^\"]*)\"").find(text)?.groupValues?.get(1)
+        val kept = if (n == 0) emptyList() else String(json.page(at), json.offset(at), n - 1, Charsets.UTF_8).split(AnswerJson.END.toInt().toChar())
+        fun tag(k: String) = (0 until kept.size / 2).firstOrNull { kept[2 * it] == k }?.let { kept[2 * it + 1] }
         val missing = (relationStart[r] until relationStart[r + 1]).count { memberType[it].toInt() != PbfRelation.RELATION && memberIndex[it] < 0 }
         return "relation ${relationIds[r]} (${listOfNotNull(tag("type"), tag("boundary"), tag("name")).joinToString(" ")}; $missing of ${relationStart[r + 1] - relationStart[r]} members missing)"
     }
@@ -147,7 +147,7 @@ class Extract private constructor() {
     }
 
     private fun role(s: String): Int = roleIndex.getOrPut(s) {
-        roles += JsonOut(s.length + 8).string(s).toByteArray()
+        roles += JsonOut(s.length * 3 + 8).escaped(s).toByteArray()
         roles.size - 1
     }
 
@@ -164,7 +164,7 @@ class Extract private constructor() {
             last = id
         }
 
-        /** The tags' JSON, kept; its position and length into [at] and [length]. False when a key comes twice. */
+        /** The tags, kept; their position and length into [at] and [length]. False when a key comes twice. */
         private fun keep(tags: TagView, at: LongPages, length: IntPages): Boolean {
             out.clear()
             val once = AnswerJson.tags(tags, out)

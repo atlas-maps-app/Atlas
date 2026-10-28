@@ -154,28 +154,204 @@ class WindowPacksTest {
                 TRelation(21, listOf(TMember(1, 11, "inner")), mapOf("type" to "multipolygon")),
             ),
         )
-        val want = "{\"version\":0.6,\"generator\":\"Atlas packer from an OpenStreetMap PBF extract\",\"osm3s\":{\"timestamp_osm_base\":\"$DATE\"," +
-            "\"copyright\":\"The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.\"},\"elements\":[" +
-            "{\"type\":\"node\",\"id\":1,\"lat\":52.3750000,\"lon\":4.8850000,\"tags\":{\"amenity\":\"cafe\",\"name\":\"A \\\"b\\\" \\\\ c\\nd\\te\\rf?g é 😀\"}}," +
-            "{\"type\":\"node\",\"id\":4,\"lat\":52.3770000,\"lon\":4.8880000,\"tags\":{\"B\":\"6\",\"a\":\"5\",\"~\":\"4\",\"é\":\"3\",\"！\":\"2\",\"😀\":\"1\"}}," +
-            "{\"type\":\"way\",\"id\":10,\"bounds\":{\"minlat\":52.3750000,\"minlon\":4.8860000,\"maxlat\":52.3760000,\"maxlon\":4.8870000}," +
-            "\"nodes\":[2,3],\"geometry\":[{\"lat\":52.3750000,\"lon\":4.8860000},{\"lat\":52.3760000,\"lon\":4.8870000}],\"tags\":{\"highway\":\"footway\"}}," +
-            "{\"type\":\"way\",\"id\":11,\"bounds\":{\"minlat\":52.3750000,\"minlon\":4.8860000,\"maxlat\":52.3750000,\"maxlon\":4.8860000}," +
-            "\"nodes\":[2],\"geometry\":[{\"lat\":52.3750000,\"lon\":4.8860000}]}," +
-            // the relation's bounds cover its member way and node; its relation member has none
-            "{\"type\":\"relation\",\"id\":20,\"bounds\":{\"minlat\":52.3750000,\"minlon\":4.8850000,\"maxlat\":52.3760000,\"maxlon\":4.8870000}," +
-            "\"members\":[{\"type\":\"way\",\"ref\":10,\"role\":\"outer\",\"geometry\":[{\"lat\":52.3750000,\"lon\":4.8860000},{\"lat\":52.3760000,\"lon\":4.8870000}]}," +
-            "{\"type\":\"node\",\"ref\":1,\"role\":\"label\",\"lat\":52.3750000,\"lon\":4.8850000},{\"type\":\"relation\",\"ref\":21,\"role\":\"\"}]," +
-            "\"tags\":{\"natural\":\"water\",\"type\":\"multipolygon\"}}," +
-            // a member way of one node is a point to Overpass: it has bounds, and no points are printed
-            "{\"type\":\"relation\",\"id\":21,\"bounds\":{\"minlat\":52.3750000,\"minlon\":4.8860000,\"maxlat\":52.3750000,\"maxlon\":4.8860000}," +
-            "\"members\":[{\"type\":\"way\",\"ref\":11,\"role\":\"inner\",\"geometry\":[]}],\"tags\":{\"type\":\"multipolygon\"}}" +
-            "]}"
+        // output_json.cc's layout, as osm/Diff.cpp writes an element anew: so a window's answer is Overpass's byte for byte
+        val want = """
+            |{
+            |  "version": 0.6,
+            |  "generator": "Atlas packer from an OpenStreetMap PBF extract",
+            |  "osm3s": {
+            |    "timestamp_osm_base": "$DATE",
+            |    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+            |  },
+            |  "elements": [
+            |
+            |{
+            |  "type": "node",
+            |  "id": 1,
+            |  "lat": 52.3750000,
+            |  "lon": 4.8850000,
+            |  "tags": {
+            |    "amenity": "cafe",
+            |    "name": "A \"b\" \\ c\nd\te\rf?g é ${"\uD83D\uDE00"}"
+            |  }
+            |},
+            |{
+            |  "type": "node",
+            |  "id": 4,
+            |  "lat": 52.3770000,
+            |  "lon": 4.8880000,
+            |  "tags": {
+            |    "B": "6",
+            |    "a": "5",
+            |    "~": "4",
+            |    "é": "3",
+            |    "${"\uFF01"}": "2",
+            |    "${"\uD83D\uDE00"}": "1"
+            |  }
+            |},
+            |{
+            |  "type": "way",
+            |  "id": 10,
+            |  "bounds": {
+            |    "minlat": 52.3750000,
+            |    "minlon": 4.8860000,
+            |    "maxlat": 52.3760000,
+            |    "maxlon": 4.8870000
+            |  },
+            |  "nodes": [
+            |    2,
+            |    3
+            |  ],
+            |  "geometry": [
+            |    { "lat": 52.3750000, "lon": 4.8860000 },
+            |    { "lat": 52.3760000, "lon": 4.8870000 }
+            |  ],
+            |  "tags": {
+            |    "highway": "footway"
+            |  }
+            |},
+            |{
+            |  "type": "way",
+            |  "id": 11,
+            |  "bounds": {
+            |    "minlat": 52.3750000,
+            |    "minlon": 4.8860000,
+            |    "maxlat": 52.3750000,
+            |    "maxlon": 4.8860000
+            |  },
+            |  "nodes": [
+            |    2
+            |  ],
+            |  "geometry": [
+            |    { "lat": 52.3750000, "lon": 4.8860000 }
+            |  ]
+            |},
+            |{
+            |  "type": "relation",
+            |  "id": 20,
+            |  "bounds": {
+            |    "minlat": 52.3750000,
+            |    "minlon": 4.8850000,
+            |    "maxlat": 52.3760000,
+            |    "maxlon": 4.8870000
+            |  },
+            |  "members": [
+            |    {
+            |      "type": "way",
+            |      "ref": 10,
+            |      "role": "outer",
+            |      "geometry": [
+            |         { "lat": 52.3750000, "lon": 4.8860000 },
+            |         { "lat": 52.3760000, "lon": 4.8870000 }
+            |      ]
+            |    },
+            |    {
+            |      "type": "node",
+            |      "ref": 1,
+            |      "role": "label",
+            |      "lat": 52.3750000,
+            |      "lon": 4.8850000
+            |    },
+            |    {
+            |      "type": "relation",
+            |      "ref": 21,
+            |      "role": ""
+            |    }
+            |  ],
+            |  "tags": {
+            |    "natural": "water",
+            |    "type": "multipolygon"
+            |  }
+            |},
+            |{
+            |  "type": "relation",
+            |  "id": 21,
+            |  "bounds": {
+            |    "minlat": 52.3750000,
+            |    "minlon": 4.8860000,
+            |    "maxlat": 52.3750000,
+            |    "maxlon": 4.8860000
+            |  },
+            |  "members": [
+            |    {
+            |      "type": "way",
+            |      "ref": 11,
+            |      "role": "inner",
+            |      "geometry": [
+            |      ]
+            |    }
+            |  ],
+            |  "tags": {
+            |    "type": "multipolygon"
+            |  }
+            |}
+            |
+            |  ]
+            |}
+            |""".trimMargin()
+        // the relation's bounds cover its member way and node, its relation member has none; a member way of one node is a
+        // point to Overpass: it has bounds, and no points are printed
         val a = answer(e, w)
         assertEquals(want, json(a))
         assertEquals(6, a.elements)
         assertEquals(want.toByteArray().size, a.jsonBytes)
         assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(a.gzip), a.sha256)
+    }
+
+    /**
+     * A window's answer is a real Overpass server's byte for byte, but for the generator and the date: overpass.osm.ch's
+     * answer of 28 October 2026 to the phone's window query for 14/8628/5754 (east of Vaduz: 198 tagged nodes, 90 ways,
+     * two multipolygons, names in German), its elements written as an extract (each way's nodes; a member way that is no
+     * element of the answer with nodes of its own at its points) and cut again for the same box.
+     */
+    @Test
+    fun aWindowIsARealOverpassAnswerByteForByte() {
+        val fixture = String(GZIPInputStream(javaClass.getResourceAsStream("/overpass-liechtenstein-14-8628-5754.json.gz")!!).readBytes(), Charsets.UTF_8)
+        val elements = Json.parseToJsonElement(fixture).jsonObject["elements"]!!.jsonArray.map { it.jsonObject }
+        fun JsonObject.str(k: String) = this[k]!!.jsonPrimitive.content
+        fun JsonObject.tags() = (this["tags"] as? JsonObject)?.mapValues { it.value.jsonPrimitive.content }.orEmpty()
+        val nodes = sortedMapOf<Long, TNode>()
+        val ways = sortedMapOf<Long, TWay>()
+        val relations = ArrayList<TRelation>()
+        for (o in elements) if (o.str("type") == "node") nodes[o.str("id").toLong()] = TNode(o.str("id").toLong(), o.str("lat").toDouble(), o.str("lon").toDouble(), o.tags())
+        for (o in elements) if (o.str("type") == "way") {
+            val refs = o["nodes"]!!.jsonArray.map { it.jsonPrimitive.content.toLong() }
+            val points = o["geometry"]!!.jsonArray.map { it.jsonObject }
+            for (i in refs.indices) nodes.putIfAbsent(refs[i], TNode(refs[i], points[i].str("lat").toDouble(), points[i].str("lon").toDouble()))
+            ways[o.str("id").toLong()] = TWay(o.str("id").toLong(), refs, o.tags())
+        }
+        var synthetic = 1L shl 50
+        for (o in elements) if (o.str("type") == "relation") {
+            val members = o["members"]!!.jsonArray.map { it.jsonObject }.map { m ->
+                val ref = m.str("ref").toLong()
+                when (m.str("type")) {
+                    "node" -> {
+                        nodes.putIfAbsent(ref, TNode(ref, m.str("lat").toDouble(), m.str("lon").toDouble()))
+                        TMember(0, ref, m.str("role"))
+                    }
+                    "way" -> {
+                        if (ref !in ways) {
+                            val refs = m["geometry"]!!.jsonArray.map { it.jsonObject }.map { p ->
+                                val id = synthetic++
+                                nodes[id] = TNode(id, p.str("lat").toDouble(), p.str("lon").toDouble())
+                                id
+                            }
+                            ways[ref] = TWay(ref, refs)
+                        }
+                        TMember(1, ref, m.str("role"))
+                    }
+                    else -> TMember(2, ref, m.str("role"))
+                }
+            }
+            relations += TRelation(o.str("id").toLong(), members, o.tags())
+        }
+        assertEquals(listOf(198, 90, 2), listOf("node", "way", "relation").map { t -> elements.count { it.str("type") == t } })
+        val e = extract(nodes.values.toList(), ways.values.toList(), relations)
+        // the box the phone asks for: the core's load::window_box of 14/8628/5754, as the stage P tool prints it
+        val w = Window(8628, 5754, 47.113190500199025, 9.577437320335338, 47.13176009980098, 9.604691579664662)
+        val theirs = fixture.replace("\"generator\": \"Overpass API 0.7.62.4 2390de5a\"", "\"generator\": \"${AnswerJson.GENERATOR}\"")
+            .replace("\"timestamp_osm_base\": \"118046\"", "\"timestamp_osm_base\": \"$DATE\"")
+        assertEquals(theirs, json(answer(e, w)))
     }
 
     @Test
@@ -186,9 +362,9 @@ class WindowPacksTest {
             listOf(TWay(10, listOf(1, 3))),
         )
         val text = json(answer(e, w))
-        assertTrue(text, text.contains("{\"type\":\"node\",\"id\":1,\"lat\":-0.0000001,\"lon\":-0.0000005,\"tags\":{\"amenity\":\"bench\"}}"))
-        assertTrue(text, text.contains("{\"type\":\"node\",\"id\":2,\"lat\":0.0000000,\"lon\":0.0000000,"))
-        assertTrue(text, text.contains("\"bounds\":{\"minlat\":-0.0000001,\"minlon\":-0.0000005,\"maxlat\":0.0000009,\"maxlon\":0.0000012}"))
+        assertTrue(text, text.contains("{\n  \"type\": \"node\",\n  \"id\": 1,\n  \"lat\": -0.0000001,\n  \"lon\": -0.0000005,\n  \"tags\": {\n    \"amenity\": \"bench\"\n  }\n}"))
+        assertTrue(text, text.contains("{\n  \"type\": \"node\",\n  \"id\": 2,\n  \"lat\": 0.0000000,\n  \"lon\": 0.0000000,\n"))
+        assertTrue(text, text.contains("\"bounds\": {\n    \"minlat\": -0.0000001,\n    \"minlon\": -0.0000005,\n    \"maxlat\": 0.0000009,\n    \"maxlon\": 0.0000012\n  }"))
     }
 
     @Test
@@ -221,7 +397,7 @@ class WindowPacksTest {
         // nothing there: listed all the same, an answer without elements
         val empty = cut.answer(d)
         assertEquals(0, empty.elements)
-        assertTrue(json(empty).endsWith("\"elements\":[]}"))
+        assertTrue(json(empty).endsWith("\"elements\": [\n\n\n\n  ]\n}\n"))
     }
 
     @Test

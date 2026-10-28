@@ -3,11 +3,11 @@ package app.atlas.packer.windows
 import app.atlas.packer.pbf.TagView
 
 /**
- * Bytes of a window's answer: compact JSON with Overpass's values (output_formats/output_json.cc of `out geom`): ids
- * and references as integers, coordinates with exactly seven decimals (what `std::fixed << setprecision(7)` prints of
- * a stored coordinate: its 1e-7 degree integer as a decimal), strings as escape_cstr writes them (a quote, a backslash,
- * a line feed, a tab and a carriage return escaped, another control character printed `?`, every other character as
- * its UTF-8). Grows as it is written; reused window after window.
+ * Bytes of a window's answer, Overpass's JSON (output_formats/output_json.cc of `out geom`): ids and references as
+ * integers, coordinates with exactly seven decimals (what `std::fixed << setprecision(7)` prints of a stored
+ * coordinate: its 1e-7 degree integer as a decimal), strings as escape_cstr writes them (a quote, a backslash, a line
+ * feed, a tab and a carriage return escaped, another control character printed `?`, every other character as its
+ * UTF-8, so no byte of an escaped string is under 0x20). Grows as it is written; reused window after window.
  */
 class JsonOut(capacity: Int = 1 shl 16) {
     var bytes = ByteArray(capacity)
@@ -88,9 +88,11 @@ class JsonOut(capacity: Int = 1 shl 16) {
     fun fixed7(v: Double): JsonOut = e7(Math.round(v * 1e7))
 
     /** [s] quoted, as escape_cstr writes it, in UTF-8. */
-    fun string(s: String): JsonOut {
-        room(s.length * 3 + 2)
-        bytes[size++] = '"'.code.toByte()
+    fun string(s: String): JsonOut = byte('"'.code).escaped(s).byte('"'.code)
+
+    /** [s] as escape_cstr writes it, in UTF-8, without quotes. */
+    fun escaped(s: String): JsonOut {
+        room(s.length * 3)
         var i = 0
         while (i < s.length) {
             val c = s[i].code
@@ -129,8 +131,6 @@ class JsonOut(capacity: Int = 1 shl 16) {
             }
             i++
         }
-        room(1)
-        bytes[size++] = '"'.code.toByte()
         return this
     }
 
@@ -154,7 +154,11 @@ class JsonOut(capacity: Int = 1 shl 16) {
     }
 }
 
-/** The pieces of Overpass's JSON that do not depend on a window: an element's tags, the head and the foot. */
+/**
+ * The pieces of Overpass's JSON that do not depend on a window: an element's tags, the head and the foot, in
+ * output_json.cc's layout (and osm/Diff.cpp's, which writes an element anew as Overpass prints it), so a window's answer
+ * is Overpass's byte for byte but for its generator, and stays so through the phone's merges of Overpass's diffs.
+ */
 object AnswerJson {
     /** The answer's generator: not Overpass's own, so what made it is plain. */
     const val GENERATOR = "Atlas packer from an OpenStreetMap PBF extract"
@@ -162,29 +166,32 @@ object AnswerJson {
     /** output_json.cc's copyright line. */
     const val COPYRIGHT = "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
 
-    /** The answer up to its first element, its data as of [date] (`YYYY-MM-DDTHH:MM:SSZ`). */
-    fun head(date: String): ByteArray = JsonOut(512).ascii("{\"version\":0.6,\"generator\":").string(GENERATOR)
-        .ascii(",\"osm3s\":{\"timestamp_osm_base\":").string(date).ascii(",\"copyright\":").string(COPYRIGHT)
-        .ascii("},\"elements\":[").toByteArray()
+    /** The answer up to its first element (write_payload_header), its data as of [date] (`YYYY-MM-DDTHH:MM:SSZ`). */
+    fun head(date: String): ByteArray = JsonOut(512).ascii("{\n  \"version\": 0.6,\n  \"generator\": ").string(GENERATOR)
+        .ascii(",\n  \"osm3s\": {\n    \"timestamp_osm_base\": ").string(date).ascii(",\n    \"copyright\": ").string(COPYRIGHT)
+        .ascii("\n  },\n  \"elements\": [\n\n").toByteArray()
 
-    /** The answer after its last element. */
-    val FOOT: ByteArray = "]}".toByteArray(Charsets.US_ASCII)
+    /** Between two elements (handle_first_elem). */
+    val BETWEEN: ByteArray = ",\n".toByteArray(Charsets.US_ASCII)
+
+    /** The answer after its last element (write_footer, no remark). */
+    val FOOT: ByteArray = "\n\n  ]\n}\n".toByteArray(Charsets.US_ASCII)
+
+    /** What ends a tag's key or value as [tags] keeps them: no byte of an escaped string is 0. */
+    const val END: Byte = 0
 
     /**
-     * The inside of an element's `"tags":{…}`: its [tags] as `"key":"value"` pairs in key order by the bytes of their
-     * UTF-8 (the order Overpass keeps them in), into [out]; nothing for an element without tags (Overpass prints no key
-     * then). Returns false, writing nothing, when a key comes twice, which no element of OpenStreetMap's database holds
-     * and the core refuses.
+     * An element's [tags] as kept, into [out]: each key and value as escape_cstr writes it, each followed by [END], in
+     * key order by the bytes of their UTF-8 (the order Overpass keeps them in); nothing for an element without tags
+     * (Overpass prints no key then). Returns false, writing nothing, when a key comes twice, which no element of
+     * OpenStreetMap's database holds and the core refuses.
      */
     fun tags(tags: TagView, out: JsonOut): Boolean {
         val n = tags.size
         if (n == 0) return true
         val order = sortedKeys(tags)
         for (i in 1 until n) if (tags.key(order[i]) == tags.key(order[i - 1])) return false
-        for (i in 0 until n) {
-            if (i > 0) out.byte(','.code)
-            out.string(tags.key(order[i])).byte(':'.code).string(tags.value(order[i]))
-        }
+        for (i in 0 until n) out.escaped(tags.key(order[i])).byte(END.toInt()).escaped(tags.value(order[i])).byte(END.toInt())
         return true
     }
 

@@ -12,6 +12,9 @@ Data:
 - `src/test/resources/monaco-2026-10-13.osm.pbf` is Geofabrik's Monaco extract of 13 October 2026
   (https://download.geofabrik.de/europe/monaco.html): © OpenStreetMap contributors, under the Open Database Licence
   (ODbL 1.0).
+- `src/test/resources/overpass-liechtenstein-14-8628-5754.json.gz` is overpass.osm.ch's answer (Overpass API 0.7.62.4)
+  of 28 October 2026 to the phone's window query for the L14 window 14/8628/5754 in Liechtenstein, gzipped:
+  © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0).
 - The packs it makes hold **OpenStreetMap** data from Geofabrik's extracts: © OpenStreetMap contributors, ODbL 1.0.
   A place store (`*.places.db.gz`) is a derived database and a region pack (`*.atlas`) holds OpenStreetMap elements;
   both are published under the ODbL. Each release's notes carry this attribution.

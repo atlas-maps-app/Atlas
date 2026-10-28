@@ -123,8 +123,9 @@ internal class Buckets(val start: IntArray, val items: IntArray) {
  * The windows' answers from an [Extract]: for each window, the elements Overpass's window query gives for its box (each
  * tagged node in it, each way that meets it, each multipolygon, national park and protected area with a member node in
  * it or a member way that meets it), in Overpass's order (nodes, ways, relations, each by id), each as `out geom` prints
- * it with no box (a way's bounds, nodes and points; a relation's bounds and its members whole), the answer's head saying
- * the extract's date. A window is left out where the answer would hold an element the extract does not hold whole.
+ * it with no box (a way's bounds, nodes and points; a relation's bounds and its members whole), in output_json.cc's
+ * layout byte for byte, the answer's head saying the extract's date. A window is left out where the answer would hold
+ * an element the extract does not hold whole.
  */
 class WindowCut(private val e: Extract, windows: List<Window>, date: String, private val level: Int = Deflater.BEST_COMPRESSION) {
     private val head = AnswerJson.head(date)
@@ -246,17 +247,17 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
             out.bytes(head)
             var first = true
             for (k in 0 until nodes.size) {
-                if (!first) out.byte(','.code)
+                if (!first) out.bytes(AnswerJson.BETWEEN)
                 first = false
                 node(nodes[k], out)
             }
             for (k in 0 until ways.size) {
-                if (!first) out.byte(','.code)
+                if (!first) out.bytes(AnswerJson.BETWEEN)
                 first = false
                 way(ways[k], out)
             }
             for (k in 0 until relations.size) {
-                if (!first) out.byte(','.code)
+                if (!first) out.bytes(AnswerJson.BETWEEN)
                 first = false
                 relation(relations[k], out)
             }
@@ -294,51 +295,50 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
         return OverpassBounds.ofPoints(n, { e.nodeLat(e.wayRefs[from + it]) }, { e.nodeLon(e.wayRefs[from + it]) })
     }
 
+    /** print_bounds: `"bounds"` with its four lines, where the box is valid. */
     private fun bounds(b: OverpassBounds, out: JsonOut) {
         if (!b.valid) return
-        out.ascii(",\"bounds\":{\"minlat\":").fixed7(b.south).ascii(",\"minlon\":").fixed7(b.west)
-            .ascii(",\"maxlat\":").fixed7(b.north).ascii(",\"maxlon\":").fixed7(b.east).byte('}'.code)
+        out.ascii(",\n  \"bounds\": {\n    \"minlat\": ").fixed7(b.south).ascii(",\n    \"minlon\": ").fixed7(b.west)
+            .ascii(",\n    \"maxlat\": ").fixed7(b.north).ascii(",\n    \"maxlon\": ").fixed7(b.east).ascii("\n  }")
     }
 
-    /** A way's points as `out geom` prints them: `{"lat":…,"lon":…}` each. */
-    private fun points(way: Int, out: JsonOut) {
+    /** A way's points as `out geom` prints them: `{ "lat": …, "lon": … }` each on a line of its own after [indent]. */
+    private fun points(way: Int, indent: String, out: JsonOut) {
         val from = e.wayStart[way]
         val to = e.wayStart[way + 1]
         for (i in from until to) {
             if (i > from) out.byte(','.code)
             val node = e.wayRefs[i]
-            out.ascii("{\"lat\":").e7(e.nodes.latE7(node).toLong()).ascii(",\"lon\":").e7(e.nodes.lonE7(node).toLong()).byte('}'.code)
+            out.ascii(indent).ascii("{ \"lat\": ").e7(e.nodes.latE7(node).toLong())
+                .ascii(", \"lon\": ").e7(e.nodes.lonE7(node).toLong()).ascii(" }")
         }
     }
 
     /** output_json.cc's node: type, id, lat, lon, tags. */
     private fun node(t: Int, out: JsonOut) {
         val node = e.taggedNode[t]
-        out.ascii("{\"type\":\"node\",\"id\":").long(e.nodes.id(node))
-            .ascii(",\"lat\":").e7(e.nodes.latE7(node).toLong()).ascii(",\"lon\":").e7(e.nodes.lonE7(node).toLong())
+        out.ascii("{\n  \"type\": \"node\",\n  \"id\": ").long(e.nodes.id(node))
+            .ascii(",\n  \"lat\": ").e7(e.nodes.latE7(node).toLong()).ascii(",\n  \"lon\": ").e7(e.nodes.lonE7(node).toLong())
         tags(e.taggedJson[t], e.taggedLength[t], out)
-        out.byte('}'.code)
+        out.ascii("\n}")
     }
 
-    /** output_json.cc's way: type, id, bounds, nodes, geometry, tags. */
+    /** output_json.cc's way: type, id, bounds, nodes (an id a line), geometry, tags. */
     private fun way(way: Int, out: JsonOut) {
-        out.ascii("{\"type\":\"way\",\"id\":").long(e.wayIds[way])
+        out.ascii("{\n  \"type\": \"way\",\n  \"id\": ").long(e.wayIds[way])
         bounds(wayBounds(way), out)
         val from = e.wayStart[way]
         val to = e.wayStart[way + 1]
         if (to > from) {
-            out.ascii(",\"nodes\":[")
-            for (i in from until to) {
-                if (i > from) out.byte(','.code)
-                out.long(e.nodes.id(e.wayRefs[i]))
-            }
-            out.byte(']'.code)
+            out.ascii(",\n  \"nodes\": [")
+            for (i in from until to) out.ascii(if (i > from) ",\n    " else "\n    ").long(e.nodes.id(e.wayRefs[i]))
+            out.ascii("\n  ]")
         }
-        out.ascii(",\"geometry\":[")
-        points(way, out)
-        out.byte(']'.code)
+        out.ascii(",\n  \"geometry\": [")
+        points(way, "\n    ", out)
+        out.ascii("\n  ]")
         tags(e.wayTags[way], e.wayTagLength[way], out)
-        out.byte('}'.code)
+        out.ascii("\n}")
     }
 
     /**
@@ -347,7 +347,7 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
      * of one node, which Overpass holds as a point; a relation by its reference alone), tags.
      */
     private fun relation(r: Int, out: JsonOut) {
-        out.ascii("{\"type\":\"relation\",\"id\":").long(e.relationIds[r])
+        out.ascii("{\n  \"type\": \"relation\",\n  \"id\": ").long(e.relationIds[r])
         val from = e.relationStart[r]
         val to = e.relationStart[r + 1]
         val parts = ArrayList<OverpassBounds>(to - from)
@@ -367,32 +367,48 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
         }
         bounds(OverpassBounds.ofParts(parts.size) { parts[it] }, out)
         if (to > from) {
-            out.ascii(",\"members\":[")
+            out.ascii(",\n  \"members\": [")
             for (m in from until to) {
-                if (m > from) out.byte(','.code)
                 val type = e.memberType[m].toInt()
-                out.ascii("{\"type\":\"").ascii(TYPES[type]).ascii("\",\"ref\":").long(e.memberRef[m]).ascii(",\"role\":").bytes(e.roles[e.memberRole[m]])
+                out.ascii(if (m > from) ",\n    {\n      \"type\": \"" else "\n    {\n      \"type\": \"").ascii(TYPES[type])
+                    .ascii("\",\n      \"ref\": ").long(e.memberRef[m]).ascii(",\n      \"role\": \"").bytes(e.roles[e.memberRole[m]]).byte('"'.code)
                 val i = e.memberIndex[m]
                 when (type) {
-                    PbfRelation.NODE -> out.ascii(",\"lat\":").e7(e.nodes.latE7(i).toLong()).ascii(",\"lon\":").e7(e.nodes.lonE7(i).toLong())
+                    PbfRelation.NODE -> out.ascii(",\n      \"lat\": ").e7(e.nodes.latE7(i).toLong())
+                        .ascii(",\n      \"lon\": ").e7(e.nodes.lonE7(i).toLong())
                     PbfRelation.WAY -> {
-                        out.ascii(",\"geometry\":[")
-                        if (e.wayStart[i + 1] - e.wayStart[i] >= 2) points(i, out)
-                        out.byte(']'.code)
+                        out.ascii(",\n      \"geometry\": [")
+                        if (e.wayStart[i + 1] - e.wayStart[i] >= 2) points(i, "\n         ", out)
+                        out.ascii("\n      ]")
                     }
                 }
-                out.byte('}'.code)
+                out.ascii("\n    }")
             }
-            out.byte(']'.code)
+            out.ascii("\n  ]")
         }
         tags(e.relationTags[r], e.relationTagLength[r], out)
-        out.byte('}'.code)
+        out.ascii("\n}")
     }
 
-    /** `,"tags":{…}` from the tags' JSON kept, or nothing for an element without tags. */
+    /** print_tags: `"tags"` with a line a tag, from the tags kept ([AnswerJson.tags]); nothing for an element without. */
     private fun tags(at: Long, length: Int, out: JsonOut) {
         if (length == 0) return
-        out.ascii(",\"tags\":{").bytes(e.json.page(at), e.json.offset(at), length).byte('}'.code)
+        val page = e.json.page(at)
+        var i = e.json.offset(at)
+        val end = i + length
+        out.ascii(",\n  \"tags\": {")
+        while (i < end) {
+            out.ascii(if (i > e.json.offset(at)) ",\n    \"" else "\n    \"")
+            var j = i
+            while (page[j] != AnswerJson.END) j++
+            out.bytes(page, i, j - i).ascii("\": \"")
+            i = j + 1
+            j = i
+            while (page[j] != AnswerJson.END) j++
+            out.bytes(page, i, j - i).byte('"'.code)
+            i = j + 1
+        }
+        out.ascii("\n  }")
     }
 
     /**

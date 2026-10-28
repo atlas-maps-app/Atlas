@@ -27,9 +27,10 @@ import java.util.zip.Deflater
  * `packer windows`: a region's windows' data, Atlas's own packs of the data the phone builds its windows from (ENGINE.md
  * step 3, the sources for many users): for every L14 window of a Geofabrik extract, exactly the JSON a public Overpass
  * server answers to the phone's window query (`OverpassClient.windowQuery`) for the window's box (`load::window_box`,
- * which the core's stage P tool prints), as of the extract's date, gzipped as the phone keeps it, back to back in
- * `<id>.windows` with their index `<id>.windows.idx` ([WindowsIndex]). The phone takes a window's data from them before it
- * asks Overpass, and asks Overpass only for the changes since the pack's date.
+ * which the core's stage P tool prints), as of the extract's date, in Overpass's own layout (byte for byte its answer
+ * but for the generator, so the phone's merges of Overpass's diffs keep it so), gzipped as the phone keeps it, back to
+ * back in `<id>.windows` with their index `<id>.windows.idx` ([WindowsIndex]). The phone takes a window's data from them
+ * before it asks Overpass, and asks Overpass only for the changes since the pack's date.
  *
  * The windows listed are those whose box, with a kilometre around it, lies inside the extract's polygon (Geofabrik's
  * `.poly`, which Osmium cut the extract with: every node inside, every way with a node inside whole), and whose answer
@@ -43,8 +44,9 @@ object WindowPacks {
       The windows' data of a Geofabrik extract: for every L14 window whose box (the core's load::window_box, which the
       core's stage P tool --core prints) lies, with a kilometre around it, inside the extract's polygon (--poly, its
       .poly beside it), exactly the JSON a public Overpass server answers to the phone's window query for that box as
-      of the extract's date, gzipped (level 9 unless --level), back to back in <out-dir>/<id>.windows, with their index
-      <id>.windows.idx (WindowsIndex). A window whose answer the extract does not hold whole is left out, counted by why.
+      of the extract's date, byte for byte but for the generator, gzipped (level 9 unless --level), back to back in
+      <out-dir>/<id>.windows, with their index <id>.windows.idx (WindowsIndex). A window whose answer the extract does
+      not hold whole is left out, counted by why.
       --bbox keeps the windows whose box meets it (a region cut from a bigger extract). --id defaults to the file's name
       less -latest.osm.pbf or .osm.pbf; --threads to the machine's cores."""
 
@@ -167,7 +169,7 @@ object WindowPacks {
         val read = ms()
         val held = "${extract.nodeCount} nodes (${extract.taggedCount} tagged), ${extract.wayCount} ways (${extract.brokenWays} lacking nodes), " +
             "${extract.relationCount} relations asked for (${extract.brokenRelations} lacking members), ${extract.twice} with a key twice; " +
-            "${extract.bytes shr 20} MiB held (${extract.nodeBytes shr 20} the nodes' positions, ${extract.jsonBytes shr 20} the JSON of tagged nodes and tags)"
+            "${extract.bytes shr 20} MiB held (${extract.nodeBytes shr 20} the nodes' positions, ${extract.jsonBytes shr 20} the elements' tags)"
         log("read in ${read / 1000} s: $held")
 
         val cut = WindowCut(extract, windows, dateText, level)
