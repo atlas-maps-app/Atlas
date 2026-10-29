@@ -166,8 +166,10 @@ jobs:
     # file (nightly, or a header changed: ~400 of them) with both builds' databases reached 80 minutes on 28 October, so
     # the host's and Android's are two jobs (tidy, tidy-android). A host build and its two test runs took 51 to 62
     # minutes on 28 October (host-debug x86_64: 58), and over 80 on x86_64 runners at a slow hour (the same commit's
-    # push run timed out where its nightly did not: the runners' own pace).
-    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 100 }}
+    # push run timed out where its nightly did not: the runners' own pace). TSan's x86_64 job took 59 to 100 minutes on
+    # 29 October (its tests alone 53 to 88, arm64's job 75 each time), and on 4e1751d it timed out a moment after its
+    # tests had passed: it has 150, as the nightly fuzz.
+    timeout-minutes: ${{ (matrix.task == 'host-tsan' || (matrix.task == 'fuzz' && github.event_name == 'schedule')) && 150 || 100 }}
     # A newer push cancels this ref's older core jobs; the image job (below) is never cancelled by one.
     concurrency:
       group: core-${{ github.ref }}-${{ github.event_name }}-${{ matrix.task }}-${{ matrix.arch }}
