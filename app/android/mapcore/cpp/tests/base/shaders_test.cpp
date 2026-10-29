@@ -10,6 +10,7 @@
 #include "tools/nocontract/capabilities.hpp"
 #include "tools/nocontract/constants.hpp"
 #include "tools/nocontract/exactness.hpp"
+#include "tools/nocontract/outputs.hpp"
 #include "tools/nocontract/spirv.hpp"
 
 #include <doctest/doctest.h>
@@ -17,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <string_view>
@@ -351,4 +353,82 @@ TEST_CASE("every instruction of the pinned Slang's SPIR-V grammar that makes a s
         CHECK(found[0].spec_id == 9U);
         CHECK(spec_constant_opname(found[0].opcode) == "a SpecId decoration (" + std::string(d.name) + ")");
     }
+}
+
+TEST_CASE("outputs written from a value nothing set are found, and those something set are not") {
+    using namespace atlas::spirv;
+    // A hand-made vertex stage: %10 "out" a uint output and %11 a uint2 one; in "main", %20 "unset" a local nothing
+    // writes (as Slang keeps a member of the returned struct that no path sets, window_near_vs' asked before 29 October
+    // 2026), %22 a uint2 local written through an access chain, %30 the constant 0; `body` follows its load %21.
+    const auto module = [](std::initializer_list<std::uint32_t> body) {
+        std::vector<std::uint32_t> words{magic, 0x00010300U, 0, 64, 0};
+        words.insert(words.end(), {(2U << 16U) | op_capability, 1});
+        words.insert(words.end(), {(3U << 16U) | op_name, 10, 0x0074756FU});              // "out"
+        words.insert(words.end(), {(4U << 16U) | op_name, 20, 0x65736E75U, 0x00000074U}); // "unset"
+        words.insert(words.end(), {(4U << 16U) | op_name, 6, 0x6E69616DU, 0});            // "main"
+        words.insert(words.end(), {(4U << 16U) | op_type_int, 1, 32, 0});
+        words.insert(words.end(), {(4U << 16U) | op_type_vector, 8, 1, 2});
+        words.insert(words.end(), {(4U << 16U) | op_type_pointer, 2, storage_output, 1});
+        words.insert(words.end(), {(4U << 16U) | op_type_pointer, 9, storage_output, 8});
+        words.insert(words.end(), {(4U << 16U) | op_type_pointer, 3, storage_function, 1});
+        words.insert(words.end(), {(4U << 16U) | op_type_pointer, 12, storage_function, 8});
+        words.insert(words.end(), {(2U << 16U) | 19U, 4});    // OpTypeVoid %4
+        words.insert(words.end(), {(3U << 16U) | 33U, 5, 4}); // OpTypeFunction %5 %4
+        words.insert(words.end(), {(4U << 16U) | op_constant, 1, 30, 0});
+        words.insert(words.end(), {(4U << 16U) | op_variable, 2, 10, storage_output});
+        words.insert(words.end(), {(4U << 16U) | op_variable, 9, 11, storage_output});
+        words.insert(words.end(), {(5U << 16U) | op_function, 4, 6, 0, 5});
+        words.insert(words.end(), {(2U << 16U) | 248U, 7}); // OpLabel %7
+        words.insert(words.end(), {(4U << 16U) | op_variable, 3, 20, storage_function});
+        words.insert(words.end(), {(4U << 16U) | op_variable, 12, 22, storage_function});
+        words.insert(words.end(), {(5U << 16U) | op_access_chain, 3, 23, 22, 30});
+        words.insert(words.end(), {(3U << 16U) | op_store, 23, 30});
+        words.insert(words.end(), {(4U << 16U) | op_load, 1, 21, 20});
+        words.insert(words.end(), body);
+        words.insert(words.end(), {(1U << 16U) | 253U}); // OpReturn
+        words.insert(words.end(), {(1U << 16U) | op_function_end});
+        return words;
+    };
+    const auto found_in = [](const std::vector<std::uint32_t>& words) {
+        const auto code = instructions(words);
+        REQUIRE(code.has_value());
+        return unset_outputs(*code);
+    };
+    // The unset local's load, stored to the output: found, with the output, its writer and the local named.
+    auto found = found_in(module({(3U << 16U) | op_store, 10, 21}));
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].output == 10);
+    CHECK(found[0].name == "out");
+    CHECK(found[0].function == "main");
+    CHECK(found[0].local == 20);
+    CHECK(found[0].local_name == "unset");
+    // The same once something writes the local, before or after: none.
+    CHECK(found_in(module({(3U << 16U) | op_store, 20, 30, (3U << 16U) | op_store, 10, 21})).empty());
+    CHECK(found_in(module({(3U << 16U) | op_store, 10, 21, (3U << 16U) | op_store, 20, 30})).empty());
+    // An OpUndef stored whole: found, no local named.
+    found = found_in(module({(3U << 16U) | op_undef, 1, 40, (3U << 16U) | op_store, 10, 40}));
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].local == 0);
+    // A member of an output through an access chain, from the unset load: found, as the output.
+    found = found_in(module({(5U << 16U) | op_access_chain, 2, 25, 11, 30, (3U << 16U) | op_store, 25, 21}));
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].output == 11);
+    // A composite of the unset load and a constant, and a copy of it: found.
+    CHECK(found_in(module({(5U << 16U) | op_composite_construct, 8, 44, 21, 30, (3U << 16U) | op_store, 11, 44}))
+              .size() == 1);
+    CHECK(found_in(module({(5U << 16U) | op_composite_construct, 8, 44, 21, 30, (4U << 16U) | op_copy_object, 8, 45, 44,
+                           (3U << 16U) | op_store, 11, 45}))
+              .size() == 1);
+    // A vector made with an OpUndef whose component is inserted next (the stand-in's positions), and the local written
+    // through its access chain, loaded whole: none.
+    CHECK(found_in(module({(3U << 16U) | op_undef, 1, 41, (5U << 16U) | op_composite_construct, 8, 42, 30, 41,
+                           (6U << 16U) | 82U, 8, 43, 30, 42, 1, (3U << 16U) | op_store, 11, 43}))
+              .empty());
+    CHECK(found_in(module({(4U << 16U) | op_load, 8, 24, 22, (3U << 16U) | op_store, 11, 24})).empty());
+    // A local handed to a call may be written there: none.
+    CHECK(found_in(module({(5U << 16U) | 57U, 4, 46, 6, 20, (3U << 16U) | op_store, 10, 21})).empty());
+    // The probe, as embedded, writes none so.
+    const auto probe = instructions(probe_probe);
+    REQUIRE(probe.has_value());
+    CHECK(unset_outputs(*probe).empty());
 }

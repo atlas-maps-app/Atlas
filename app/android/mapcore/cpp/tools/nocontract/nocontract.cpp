@@ -11,6 +11,9 @@
 //   nocontract budget <module.spv>               print the module's bytes, its local arrays and their bytes, its local
 //                                                variables and theirs (budget.hpp); run on each compute entry point
 //                                                compiled alone, for the test spirv_budget
+//   nocontract outputs <module.spv> <source>     exit 0 when every output the module writes is written from a value
+//                                                something set, else name each, say why the core refuses them
+//                                                (outputs.hpp) and exit 1; run on every module, before it is embedded
 //
 // Slang 2026.19 emits NoContraction on every float operation under -fp-mode precise, so fix adds nothing today; it
 // stays in the build so a compiler that stops emitting it still yields exact modules, and check still proves them.
@@ -18,6 +21,7 @@
 #include "capabilities.hpp"
 #include "constants.hpp"
 #include "exactness.hpp"
+#include "outputs.hpp"
 #include "spirv.hpp"
 
 #include <array>
@@ -65,7 +69,7 @@ int usage() {
     (void)std::fputs(
         "usage: nocontract check <module.spv>\n       nocontract fix <in.spv> <out.spv>\n"
         "       nocontract capabilities <in.spv> <out.spv>\n       nocontract constants <module.spv> <source>\n"
-        "       nocontract budget <module.spv>\n",
+        "       nocontract budget <module.spv>\n       nocontract outputs <module.spv> <source>\n",
         stderr);
     return 2;
 }
@@ -142,6 +146,29 @@ int main(int argc, char** argv) {
             "(SpvConstCalculated::~SpvConstCalculated in libufwriter.so, VK bench, 17 October 2026). A "
             "variant is a module of its own: a \"// atlas: variant <suffix> <MACRO>=<value>\" line, or a "
             "file that defines the macro and includes this one (cmake/Shaders.cmake).\n",
+            args[3], found.size());
+        return 1;
+    }
+    if (mode == "outputs" && args.size() == 4) {
+        const std::vector<atlas::spirv::UnsetOutput> found = atlas::spirv::unset_outputs(*code);
+        if (found.empty()) return 0;
+        for (const atlas::spirv::UnsetOutput& o : found) {
+            (void)std::fprintf(stderr, "nocontract: %s: output %%%u%s%s, written in %s from ", input, o.output,
+                               o.name.empty() ? "" : " ", o.name.c_str(),
+                               o.function.empty() ? "a function" : o.function.c_str());
+            if (o.local != 0) {
+                (void)std::fprintf(stderr, "a load of %%%u%s%s, a local nothing writes\n", o.local,
+                                   o.local_name.empty() ? "" : " ", o.local_name.c_str());
+            } else {
+                (void)std::fputs("an OpUndef\n", stderr);
+            }
+        }
+        (void)std::fprintf(
+            stderr,
+            "%s: the module writes an output from a value nothing set %zu times, which SPIR-V leaves undefined, and "
+            "no module of the core may: from alpha 16 the near windows' parts and the facades left the walls' hatch "
+            "flag unset, and the user's PowerVR stopped zooming the map where they came near (29 October 2026). "
+            "Set every member of an output on every path (tools/nocontract/outputs.hpp).\n",
             args[3], found.size());
         return 1;
     }

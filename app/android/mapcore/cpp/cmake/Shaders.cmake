@@ -5,11 +5,11 @@
 # files are included by modules and, through base/hlsl.hpp, by the twin's C++. For each module:
 #   1. slangc writes SPIR-V 1.3 and its reflection; SLANG_RUN_SPIRV_VALIDATION=1 makes it run SPIRV-Tools' validator
 #      (spirv-val) on the result, and Slang warnings are errors;
-#   2. tools/nocontract refuses a module that holds a specialization constant (below), then removes the capabilities
-#      the module declares without needing them (capabilities.hpp: Slang declares StorageImageReadWithoutFormat for
-#      subpass inputs, which Vulkan 1.1 phones may not support); an exact module (file name exact_*.slang, or a line
-#      "// atlas: exact") compiles with -fp-mode precise, then nocontract adds NoContraction wherever it is missing and
-#      checks every exact-module rule (tools/nocontract/exactness.hpp);
+#   2. tools/nocontract refuses a module that holds a specialization constant or writes an output from a value nothing
+#      set (below), then removes the capabilities the module declares without needing them (capabilities.hpp: Slang
+#      declares StorageImageReadWithoutFormat for subpass inputs, which Vulkan 1.1 phones may not support); an exact
+#      module (file name exact_*.slang, or a line "// atlas: exact") compiles with -fp-mode precise, then nocontract
+#      adds NoContraction wherever it is missing and checks every exact-module rule (tools/nocontract/exactness.hpp);
 #   3. Embed.cmake writes gen/spirv/<dir>/<name>.hpp: atlas::spirv::<dir>_<name>, its words and SHA-256.
 # A line "// atlas: variant <suffix> <MACRO>[=<value>]" compiles the module once more with the macro defined, as
 # <name>_<suffix> (for instance the OpFmaKHR variant of an exact module). A line "// atlas: glsl-route <entry>:<stage>"
@@ -37,6 +37,11 @@
 # the stand-in's composite took its sample count as a specialization constant and held a constant computed from it
 # (OpSpecConstantOp IAdd). A variant is a module of its own: a "// atlas: variant" line, or a file that defines the
 # macro and includes another (shaders/standin/composite_x2.slang), and the pipeline picks the module.
+#
+# So is an output written from a value nothing set (nocontract outputs: an OpUndef, or the load of a local nothing
+# writes, which is how Slang keeps a member of the returned struct that no path sets). From alpha 16 the near windows'
+# parts and the facades left the walls' hatch flag unset, and the user's PowerVR stopped zooming the map where they
+# came near; no driver need guess at an undefined output again.
 #
 # The semantics SV_VertexID and SV_InstanceID are refused. Slang 2026.19 lowers each to a difference of two builtins
 # (gl_VertexIndex - gl_BaseVertex, gl_InstanceIndex - gl_BaseInstance) whose two loads are arguments of one call in its
@@ -521,13 +526,15 @@ function(atlas_add_shaders target shaders_dir)
                 VERBATIM)
             # Every module loses the capabilities it declares without needing them (tools/nocontract/capabilities.hpp:
             # Slang declares StorageImageReadWithoutFormat for subpass inputs); an exact module is then made exact.
-            # Every module is first refused if it holds a specialization constant (above), on slangc's output, so a
-            # refused module never reaches ${spv} and the next build checks it again.
+            # Every module is first refused if it holds a specialization constant or writes an output from a value
+            # nothing set (above), on slangc's output, so a refused module never reaches ${spv} and the next build
+            # checks it again.
             set(module_name "shaders/${rel} (${symbol})")
             if(exact)
                 add_custom_command(
                     OUTPUT "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} constants "${raw}" "${module_name}"
+                    COMMAND ${ATLAS_NOCONTRACT} outputs "${raw}" "${module_name}"
                     COMMAND ${ATLAS_NOCONTRACT} capabilities "${raw}" "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} fix "${spv}" "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} check "${spv}"
@@ -538,6 +545,7 @@ function(atlas_add_shaders target shaders_dir)
                 add_custom_command(
                     OUTPUT "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} constants "${raw}" "${module_name}"
+                    COMMAND ${ATLAS_NOCONTRACT} outputs "${raw}" "${module_name}"
                     COMMAND ${ATLAS_NOCONTRACT} capabilities "${raw}" "${spv}"
                     DEPENDS "${raw}" ${ATLAS_NOCONTRACT_DEPENDS}
                     COMMENT "nocontract capabilities ${rel}${suffix}"

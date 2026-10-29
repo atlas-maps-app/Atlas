@@ -1059,6 +1059,7 @@ BuildingOut window_near_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanIns
     BuildingNearRecord r = window_near_at(index);
     BuildingOut o;
     o.colour = float3(0.0f);
+    o.asked = 0u; // the board hatches the walls alone (left unset, the user's PowerVR stopped zooming past z 19)
     uint part = building_near_part(v);
     uint header = r.v0.x;
     bool drawn = (header & BUILDING_NEAR_SASH) != 0u;
@@ -1119,6 +1120,7 @@ BuildingOut window_facade_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     BuildingFacadeRecord r = window_facade_at(index);
     BuildingOut o;
     o.colour = float3(0.0f);
+    o.asked = 0u; // the board hatches the walls alone (left unset, the user's PowerVR stopped zooming past z 17)
     uint part = v < 9u ? 0u : 1u;
     BuildingWindowShape s = building_facade_part(r, part);
     if (s.count == 0u) {
