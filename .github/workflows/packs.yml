@@ -4,8 +4,10 @@
 # with the elements Overpass would give for the region: full tags, way geometry, multipolygons), and the windows' data
 # the phone builds its windows from (`packer windows`: per L14 window inside the extract's polygon, exactly what Overpass
 # answers to the phone's window query as of the extract's date, gzipped, in <id>.windows, and their index
-# <id>.windows.idx; the phone downloads the index and then a window's bytes by HTTP range). A region with
-# "windows": false in regions.json gets none.
+# <id>.windows.idx; the phone downloads the index and then a window's bytes by HTTP range), and from that data the
+# country's tiles (`packer country`: each window's pack as the core's stage P builds it on the phone, in <id>.tiles,
+# and their index <id>.tiles.idx; the phone takes a window's pack by HTTP range and builds only what the pack lacks).
+# A region with "windows": false in regions.json gets neither.
 # The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
 # else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
 # The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
@@ -54,8 +56,9 @@ env:
     https://www.openstreetmap.org/copyright. The place stores (*.places.db.gz) are derived databases and are
     themselves available under the ODbL; the region packs (*.atlas) hold OpenStreetMap elements with their tags and
     geometry and are available under the ODbL as well, and so are the windows' data (*.windows: OpenStreetMap's
-    elements per map window, as Overpass's JSON, gzipped; *.windows.idx: where each window lies in it). Extracts by
-    Geofabrik (https://download.geofabrik.de).
+    elements per map window, as Overpass's JSON, gzipped; *.windows.idx: where each window lies in it) and the tiles
+    made from them (*.tiles: each map window's render tiles as Atlas's map engine builds them; *.tiles.idx: where each
+    window lies in it). Extracts by Geofabrik (https://download.geofabrik.de).
 
 jobs:
   plan:
@@ -226,6 +229,28 @@ jobs:
           app/android/packer/build/install/packer/bin/packer windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
           { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
           rm -f "$WORK/$ID.osm.pbf"
+          df -h "$WORK"
+      - name: Country tiles
+        # The country's map (ENGINE.md step 3, one pack per country): every window of the windows' data built by the
+        # core's stage P tool as the phone builds it (load::build_window), each window's pack with its chunks and style
+        # at zstd 19 and every other byte the core's, in <id>.tiles with their index <id>.tiles.idx. The answers are
+        # unzipped 400 windows at a time into a folder beside the output and deleted once built. Noord-Holland (29
+        # October, the Mac's 4 threads): 2,334 windows from 602 MB of windows' data, 4.6 GB of JSON, at most 1.8 GB of
+        # it at a time (Amsterdam's batch), made 79 MB of tiles in 84 s. So the Netherlands' 4.2 GB of data make about
+        # 0.6 GB of tiles, and the disk needs a fifth of the data's size and room for a city's batch, checked first.
+        if: env.WINDOWS == 'true'
+        env:
+          # the windows' index and the packs being compressed (the packer's process took 380 MB at most for
+          # Noord-Holland); the core's tool builds in its own memory, some 50 MB a thread
+          JAVA_OPTS: -Xmx2g
+        run: |
+          set -euo pipefail
+          NEED=$(( $(stat -c %s "$WORK/out/$ID.windows") / 5 + (3 << 30) ))
+          FREE=$(df --output=avail -B1 "$WORK" | tail -1)
+          if [ "$FREE" -lt "$NEED" ]; then echo "::error::$WORK has $((FREE >> 20)) MiB free; the country's tiles need about $((NEED >> 20)) MiB"; exit 1; fi
+          app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
+            --core "$ATLAS_STAGEP" --id "$ID" | tee "$RUNNER_TEMP/country.txt"
+          { echo "- $ID: the country's tiles"; tail -4 "$RUNNER_TEMP/country.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
           df -h "$WORK"
       - name: Upload
         run: |
