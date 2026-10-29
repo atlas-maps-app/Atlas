@@ -379,6 +379,8 @@
     <string name="mine_part_rain">Regen</string>
     <string name="mine_part_golden_wash">Goldenes Licht</string>
     <string name="mine_part_walls">Wände</string>
+    <string name="mine_part_near_cells">Nahe Wände</string>
+    <string name="mine_part_kept_cull">GPU-Auslese</string>
     <string name="mine_part_roofs">Dächer</string>
     <string name="mine_part_roof_edges">Dachkanten</string>
     <string name="mine_part_windows">Fenster</string>

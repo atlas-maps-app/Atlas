@@ -340,6 +340,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.RAIN -> R.string.mine_part_rain
     MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
     MapPart.WALLS -> R.string.mine_part_walls
+    MapPart.NEAR_CELLS -> R.string.mine_part_near_cells
+    MapPart.KEPT_CULL -> R.string.mine_part_kept_cull
     MapPart.ROOFS -> R.string.mine_part_roofs
     MapPart.ROOF_EDGES -> R.string.mine_part_roof_edges
     MapPart.WINDOWS -> R.string.mine_part_windows

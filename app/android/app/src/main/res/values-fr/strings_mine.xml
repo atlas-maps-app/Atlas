@@ -379,6 +379,8 @@
     <string name="mine_part_rain">Pluie</string>
     <string name="mine_part_golden_wash">Lumière dorée</string>
     <string name="mine_part_walls">Murs</string>
+    <string name="mine_part_near_cells">Murs de près</string>
+    <string name="mine_part_kept_cull">Tri sur le GPU</string>
     <string name="mine_part_roofs">Toits</string>
     <string name="mine_part_roof_edges">Arêtes des toits</string>
     <string name="mine_part_windows">Fenêtres</string>

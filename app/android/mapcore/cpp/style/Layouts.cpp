@@ -239,6 +239,8 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.PART_LOCATION", .value = part(camera_part::location)},
     Constant{.name = "CameraWriter.PART_FROSTED", .value = part(camera_part::frosted)},
     Constant{.name = "CameraWriter.PART_SHADOW_BLUR", .value = part(camera_part::shadow_blur)},
+    Constant{.name = "CameraWriter.PART_NEAR_CELLS", .value = part(camera_part::near_cells)},
+    Constant{.name = "CameraWriter.PART_KEPT_CULL", .value = part(camera_part::kept_cull)},
     Constant{.name = "CameraWriter.PARTS", .value = part(camera_part::known + 1U)},
     Constant{.name = "CameraWriter.PROFILE_NONE", .value = profile(Profile::none)},
     Constant{.name = "CameraWriter.PROFILE_LIVING", .value = profile(Profile::living)},
@@ -315,7 +317,9 @@ constexpr std::array part_bits{camera_part::ground,
                                camera_part::markers,
                                camera_part::location,
                                camera_part::frosted,
-                               camera_part::shadow_blur};
+                               camera_part::shadow_blur,
+                               camera_part::near_cells,
+                               camera_part::kept_cull};
 constexpr bool parts_in_order() noexcept {
     std::uint64_t all = 0;
     for (std::size_t i = 0; i < part_bits.size(); ++i) {

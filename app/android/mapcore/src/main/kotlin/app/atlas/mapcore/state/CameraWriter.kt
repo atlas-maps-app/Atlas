@@ -98,9 +98,11 @@ object CameraWriter {
     const val PART_LOCATION = 43
     const val PART_FROSTED = 44
     const val PART_SHADOW_BLUR = 45
+    const val PART_NEAR_CELLS = 46
+    const val PART_KEPT_CULL = 47
 
     /** How many parts there are: the bits of [parts] past them are 0. */
-    const val PARTS = 46
+    const val PARTS = 48
 
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0

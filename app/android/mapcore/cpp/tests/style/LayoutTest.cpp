@@ -80,7 +80,8 @@ TEST_CASE("the tables hold the documented offsets and numbers") {
     CHECK(value("CameraWriter.PART_RAIN") == 22U);
     CHECK(value("CameraWriter.PART_FROSTED") == 44U);
     CHECK(value("CameraWriter.PART_SHADOW_BLUR") == 45U);
-    CHECK(value("CameraWriter.PARTS") == 46U);
+    CHECK(value("CameraWriter.PART_KEPT_CULL") == 47U);
+    CHECK(value("CameraWriter.PARTS") == 48U);
     std::set<std::string_view> names;
     for (const auto& c : atlas::style::layout_constants()) {
         CHECK(names.insert(c.name).second);

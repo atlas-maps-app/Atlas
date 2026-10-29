@@ -41,8 +41,14 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     RAIN(CameraWriter.PART_RAIN, MapPartGroup.WEATHER),
     GOLDEN_WASH(CameraWriter.PART_GOLDEN_WASH, MapPartGroup.WEATHER),
     WALLS(CameraWriter.PART_WALLS, MapPartGroup.BUILDINGS),
+
+    /** The walls' near cells, nearer than 460 m: without them the walls are drawn plain, as farther away. */
+    NEAR_CELLS(CameraWriter.PART_NEAR_CELLS, MapPartGroup.BUILDINGS),
     ROOFS(CameraWriter.PART_ROOFS, MapPartGroup.BUILDINGS),
     ROOF_EDGES(CameraWriter.PART_ROOF_EDGES, MapPartGroup.BUILDINGS),
+
+    /** The walls' and roofs' cull on the GPU: without it they are drawn as their runs, every primitive submitted. */
+    KEPT_CULL(CameraWriter.PART_KEPT_CULL, MapPartGroup.BUILDINGS),
     WINDOWS(CameraWriter.PART_WINDOWS, MapPartGroup.FACADES),
     WINDOW_DEPTH(CameraWriter.PART_WINDOW_DEPTH, MapPartGroup.FACADES),
     FLAT_DETAIL(CameraWriter.PART_FLAT_DETAIL, MapPartGroup.FACADES),
