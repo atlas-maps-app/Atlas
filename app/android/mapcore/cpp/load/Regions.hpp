@@ -7,7 +7,8 @@
 //   - land cover by regions.py's LAND, runways and taxiways, big roads, railways, power lines and their towers, marine
 //     works, cranes, masts, gantries, conveyors, wind turbines, towers with a height, and national parks' edges;
 //   - water mapped as multipolygons and its islands, the sea closed from the coastline along the extract's edge (or a
-//     bay's ring where no coastline is), and which shores are natural (no quay wall);
+//     bay's ring where no coastline is), and which shores are natural (no quay wall, but in the engine's close-up cut,
+//     RegionConfig::close_up, where buildings line an edge);
 //   - the land cover in its drawing order, and each part's outline.
 //   - each building's look (load/Generic.hpp): its tradition's where the region has one, else the generic look.
 //   - a theme park's coaster tracks (load/Coasters.hpp), where its rides' profiles are given, and a park's or a zoo's
@@ -46,6 +47,12 @@ struct RegionConfig {
     std::shared_ptr<const Tradition> tradition;
     /// Amsterdam's homes keep their guessed brick and plaster (generic.py's `keep_homes`, the renders' New looks).
     bool keep_homes = false;
+    /// The engine's own cut, which the map draws close up (the phone's windows, the app's canal ring), where the
+    /// renders cut a region for a view from afar: an edge of a natural shore carries a quay wall where buildings line
+    /// it (load/Cut's water_edges), where regions.py gives every region's water natural shores but Paris's, the port's,
+    /// a bay's and an island's. (The doors and house numbers come to it once a frame ranks only the doors it may draw:
+    /// ENGINE.md step 3, the doors in the country's cut.)
+    bool close_up = false;
     Palette palette;
     /// A theme park's rides' profiles (region.json's `park`: data/park/<park>/pf), whose coaster tracks it loads; null
     /// for a region that is no theme park.

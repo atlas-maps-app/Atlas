@@ -226,6 +226,8 @@ TEST_CASE("load: where a dense window's memory goes, step by step (ATLAS_REGIONS
                                         .bbox = load::window_box(tile),
                                         .tradition =
                                             place.tradition ? load::tradition_named(*place.tradition) : nullptr,
+                                        .keep_homes = place.new_looks,
+                                        .close_up = place.close_up,
                                         .palette = load::region_palette(place.region)};
         load::WindowCut cut(place.frame, tile);
         {

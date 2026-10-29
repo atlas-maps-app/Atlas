@@ -120,6 +120,10 @@ WindowPlace place_of(const tiles::TileKey& tile) {
     // Amsterdam's brick.
     p.new_looks = draws_new_looks(p.country);
     if (!p.new_looks) p.tradition = tradition_of(p.country);
+    // drawn close up, so with the quay walls the buildings line, where the renders' regions are cut for a view from
+    // afar (the user, 29 October, of the canal ring the Westerkerk is drawn from since alpha 20: "I cannot see any
+    // reflections on the water")
+    p.close_up = true;
     p.zone = timezone_of(p.country, lat, lon);
     p.tz_h = tz_hours(p.zone);
     return p;
@@ -153,6 +157,7 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                               .bbox = box,
                               .tradition = tradition,
                               .keep_homes = place.new_looks,
+                              .close_up = place.close_up,
                               .palette = region_palette(place.region),
                               .park = place.park,
                               .woods = place.woods};

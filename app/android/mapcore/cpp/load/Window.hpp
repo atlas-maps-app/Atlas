@@ -4,15 +4,15 @@
 //   - its data: what the renders' query of Overpass returns for window_box (every tagged node, every way, the
 //     multipolygons and parks, `out geom`), with each relation's members whole, so what stands on the window's edge and
 //     what its derivations look across are there: a building's mapped neighbours (80 m), the parts in an outline
-//     (120 m), a quay within 16 m, the land use under it;
+//     (120 m), a quay within 16 m and the buildings lining it within 40 m, the land use under it;
 //   - its frame: its frame cell's, the L10 tile holding it (frame_of), so neighbouring windows agree on their metres
 //     (an area's size, a neighbour's distance) and the world draws them in one frame;
 //   - its place: its country's (load/Countries.hpp, at the window's centre), as the port's RegionConfig picks it for a
 //     region it builds: the building tradition, the time zone; Amsterdam's palette;
 //   - its tile: the features whose reference point lies in it (a building on its edge is built once, by the window of
 //     its reference point) and the water clipped at its edges, with keep codes and the variants of the live map's
-//     bands; what the tiles have no columns for yet is left out (cut_window): a tradition's details until its
-//     facades;
+//     bands, in the engine's close-up cut (quay walls where buildings line the water); what the tiles have no columns
+//     for yet is left out (cut_window): a tradition's details until its facades;
 //   - its pack: that tile, a head (profile region, level 14, the frame, the window's name, the core's stage P version,
 //     the style version, its data's SHA-256, no views, the live map's bands) and its style (load/PackStyle.hpp).
 // A window builds within about 50 MB on a mid-range phone in a few seconds (ENGINE.md's budget), on a worker.
@@ -49,8 +49,9 @@ inline constexpr double window_margin = 200.0;
 /// core-p3 a crane's form; core-p4 the New looks in the Netherlands; core-p5 a tradition's kit and its details (the
 /// building flags, the shutters' colour and the party walls), which core-p4 left out; core-p6 the street wall each door
 /// and shopfront opens onto (the doors and their house numbers), which core-p5 left out; core-p7 the New looks' red
-/// tiles on about one canal house in four (the canal ring pack's tiles_red), which core-p6 drew all dark.
-inline constexpr std::string_view stage_p_version = "core-p7";
+/// tiles on about one canal house in four (the canal ring pack's tiles_red), which core-p6 drew all dark; core-p8 the
+/// quay walls the buildings line close up (RegionConfig::close_up), where core-p7 gave the water natural shores.
+inline constexpr std::string_view stage_p_version = "core-p8";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and the living map's
 /// light (no TONE: frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.
@@ -84,6 +85,9 @@ struct WindowPlace {
     /// looks, ATLAS_LOOKS), in place of a tradition's kit: a window in the Netherlands, as the bundled Westerkerk is
     /// drawn.
     bool new_looks = false;
+    /// The engine's close-up cut (RegionConfig::close_up): the phone's windows anywhere; a test's window of a region
+    /// cut by the renders' rules, as its render pack is, has it not.
+    bool close_up = false;
     std::string_view zone = "UTC";
     std::int32_t tz_h = 0;
     /// A theme park's rides (its coaster tracks load) and whether it plants its woods, as a region with a park or a zoo
