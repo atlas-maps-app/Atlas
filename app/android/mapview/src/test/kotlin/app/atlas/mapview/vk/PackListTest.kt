@@ -20,8 +20,9 @@ import java.time.ZoneId
 /**
  * The packs the core draws from (plan-vector D3, K11; ENGINE.md step 3, one pack per country): the windows on the phone,
  * each listed with its box, profile, frame and number, and handed to the core by its file; the pack a camera draws, the
- * window whose box holds the target, whatever the distance; and what is not listed: a window that holds nothing to
- * draw, one of another version, and any other file in the windows' folder.
+ * window whose box holds the target, whatever the distance; what is not listed: a window that holds nothing to draw,
+ * one of another version, and any other file in the windows' folder; and the canal ring CI puts on its emulator, listed
+ * beside the windows with its views.
  */
 class PackListTest {
     private val dir: File = Files.createTempDirectory("packlist").toFile()
@@ -208,6 +209,34 @@ class PackListTest {
         // no folder: nothing
         assertTrue(PackList(windows = { null }).load().isEmpty())
         assertTrue(PackList().load().isEmpty())
+    }
+
+    @Test
+    fun theRenderPacksCIPutsOnTheDeviceAreListedBesideTheWindows() {
+        val pushed = File(dir, "atlas").apply { mkdirs() }
+        val canal = File(pushed, "grachten.atlas")
+        canal.writeBytes(renderPack("grachten", "region", 4.86, 52.35, 4.93, 52.39, mapOf("home" to 2300, "close" to 900), chunks = 23))
+        // a file that is no pack is left out
+        val broken = File(pushed, "notes.atlas").apply { writeText("not a pack") }
+        val list = PackList(windows = { windows }, bench = { listOf(canal, broken) })
+        val packs = list.load()
+        assertEquals(listOf("grachten"), packs.map { it.id })
+        val ring = packs.single()
+        assertEquals(MapCore.PackRef.RENDER, ring.kind)
+        assertEquals(CameraWriter.PROFILE_REGION, ring.profile)
+        assertEquals(RegionFrame.region(LatLon((52.35 + 52.39) / 2, (4.86 + 4.93) / 2)), ring.frame)
+        // its views as its manifest frames them: VK bench's board is the canal ring's `home`
+        assertEquals(listOf("home", "close"), ring.views.keys.toList())
+        val home = ring.views.getValue("home")
+        assertEquals(listOf(-177.0, -521.0, 52.0, 44.0, 2300.0, 440.0), listOf(home.x, home.z, home.yaw, home.pitch, home.distance, home.cy))
+        assertEquals(canal.path, list.refs().single().path)
+        // the canal ring draws where it alone holds the target, at every distance; a window where one does
+        assertEquals("grachten", list.choose(52.37, 4.88)?.id)
+        assertTrue(list.covers(52.37, 4.88, 8_000.0))
+        window(8414)
+        list.load()
+        assertEquals("window/14/8414/5383", list.choose(52.37, 4.88)?.id)
+        assertEquals("grachten", list.choose(52.37, 4.92)?.id)
     }
 
     @Test

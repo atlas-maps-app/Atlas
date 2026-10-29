@@ -112,11 +112,11 @@ object VkBench {
     const val BOARD_VIEW = "home"
 
     /**
-     * The app's map's views over the APK's bundled packs, in the order measured: the Westerkerk home in the living map's
-     * frame [living] (the engine's references' home: 10 m west and 30 m north of the Westerkerk, bearing 52°, map pitch
-     * 52°, 430 m), still, turning, panning and pinched out to [MAP_FAR] and back; then the Main board, the canal ring's
-     * [board] view in its region's frame [region] (2.3 km at map pitch 46°), turning, and its target at map pitch 70°,
-     * turning. A pack missing leaves its views out.
+     * The app's map's views over the canal ring CI puts on the device, in the order measured: the Westerkerk home in the
+     * living map's frame [living] (the engine's references' home: 10 m west and 30 m north of the Westerkerk, bearing 52°,
+     * map pitch 52°, 430 m), still, turning, panning and pinched out to [MAP_FAR] and back; then the Main board, the canal
+     * ring's [board] view in its region's frame [region] (2.3 km at map pitch 46°), turning, and its target at map pitch
+     * 70°, turning. A pack missing leaves its views out.
      */
     fun mapViews(living: RegionFrame?, region: RegionFrame?, board: PackList.ViewCamera?): List<MapView> = buildList {
         if (living != null) {

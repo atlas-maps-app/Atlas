@@ -107,7 +107,10 @@ class MapData(private val services: Services) {
         WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
     }
 
-    /** The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own thread. */
+    /**
+     * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
+     * thread.
+     */
     private val windowTiles: WindowTiles by lazy {
         WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
     }
@@ -162,7 +165,7 @@ class MapData(private val services: Services) {
         MapEngine.windowTiles = { w ->
             windowTiles.window(w.z, w.x, w.y, MapCore.Window.version())?.let { app.atlas.mapview.vk.Windows.Tiled(it.bytes, it.date, it.pack) }
         }
-        MapEngine.windowsAllowed = { !services.ciDemo }
+        MapEngine.windowsAllowed = { !services.ciRun }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent
         MapEngine.windowEdits = {
             services.edits.all.value.filter { it.state != EditQueue.State.CONFLICT }

@@ -242,7 +242,10 @@ class Windows(
      */
     private fun builtLately(w: MapCore.Window, now: Long): Boolean = (fileOf(w).exists() || tiledOf(w).exists()) && !aged(w, now)
 
-    /** The date of what window [w] holds: of the data it keeps, else of its pack from the tiles; null where neither reads. */
+    /**
+     * The date of what window [w] holds: of the data it keeps, else of its pack from the tiles; null where neither
+     * reads.
+     */
     private fun keptBase(w: MapCore.Window): Instant? =
         dataOf(w).takeIf { it.exists() }?.let { runCatching { headOf(it, true) }.getOrNull()?.base } ?: tiledBase(w)
 
@@ -435,10 +438,10 @@ class Windows(
     }
 
     /**
-     * Window [w]'s data from a pack ([data], what the packs gave since [t0]) into [answer]: how it came; null where they gave none
-     * to build from (Overpass is asked then). A window that keeps data takes only data newer than its own ([kept]); one
-     * taken from the tiles keeps none, and takes data no older than its tiles', its release's among them (its pack is
-     * what that data builds, and the window is built from data from then on).
+     * Window [w]'s data from a pack ([data], what the packs gave since [t0]) into [answer]: how it came; null where they
+     * gave none to build from (Overpass is asked then). A window that keeps data takes only data newer than its own
+     * ([kept]); one taken from the tiles keeps none, and takes data no older than its tiles', its release's among them
+     * (its pack is what that data builds, and the window is built from data from then on).
      */
     private fun packed(w: MapCore.Window, kept: Instant?, answer: File, data: Packed?, t0: Long): String? {
         if (data == null) return null

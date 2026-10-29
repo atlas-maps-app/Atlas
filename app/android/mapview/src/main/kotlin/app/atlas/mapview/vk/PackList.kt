@@ -17,7 +17,9 @@ import java.time.ZoneId
  * The packs the core draws from (plan-vector D3 "Packs on the phone", K11; ENGINE.md step 3, one pack per country): the
  * windows on the phone ([Windows]: an L14 place each, taken from its country's tiles or built on the phone from its
  * data), which the core takes into their frame cells' packs. Nothing else draws the map: the APK carries none, and no
- * region's render pack is fetched or listed, so zooming and panning never switch the data, the cut or the look.
+ * region's render pack is fetched or listed, so zooming and panning never switch the data, the cut or the look. Only
+ * CI's runs list a render pack of their own beside them ([bench]: the canal ring its emulator draws, as it builds no
+ * windows).
  *
  * Per camera it names the pack the frame draws ([choose]): the window whose box holds the target, which the core draws
  * with its frame cell's pack (D3: one profile a frame). The transitional rule asks it whether the core has tiles at a
@@ -31,13 +33,19 @@ class PackList(
      * window of another version (an earlier APK built it) is not listed.
      */
     private val windowVersion: () -> String? = { null },
+    /**
+     * Render packs listed beside the windows, by their files (each pack's id its file's name): in debug and bench builds,
+     * those CI puts on its emulator (the canal ring, which its runs draw at the Westerkerk home; MapEngine.benchPacks).
+     * None on a phone.
+     */
+    private val bench: () -> List<File> = { emptyList() },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
         val id: String,
         /** Its number for this process: the camera state names the pack drawn by it (MapCore.PackRef.number). */
         val number: Long,
-        /** MapCore.PackRef's kind: WINDOW. */
+        /** MapCore.PackRef's kind: WINDOW, or RENDER for a [bench] pack. */
         val kind: Int,
         val box: BBox,
         /** Whose rules draw it, as the camera state numbers them (CameraWriter.PROFILE_*). */
@@ -101,6 +109,10 @@ class PackList(
     @Synchronized
     fun load(): List<Pack> {
         val out = ArrayList<Pack>()
+        for (file in runCatching { bench() }.getOrDefault(emptyList())) {
+            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: continue
+            out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file)
+        }
         // the windows on the phone: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
         // the place is today's map's (Windows does not fetch such a window again for a week); nor one of another
@@ -140,8 +152,8 @@ class PackList(
 
     /**
      * The pack the frame draws at a camera whose target is [lat], [lon]: the smallest whose box holds the target, the
-     * first listed on a tie (a window's: the core draws it with its frame cell's pack); null where none holds it. No
-     * pack is chosen by the camera's distance: zooming hands nothing over.
+     * first listed on a tie (a window's: the core draws it with its frame cell's pack; a [bench] pack where no window
+     * holds it); null where none holds it. No pack is chosen by the camera's distance: zooming hands nothing over.
      */
     fun choose(lat: Double, lon: Double): Pack? {
         var best: Pack? = null

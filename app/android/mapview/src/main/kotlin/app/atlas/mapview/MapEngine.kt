@@ -242,11 +242,24 @@ object MapEngine {
         core = s
     }
 
-    /** The packs the core draws from: the windows on the phone (made once). */
+    /**
+     * The packs the core draws from: the windows on the phone, and in CI's runs the canal ring it puts there (made
+     * once).
+     */
     fun packs(): PackList = packList ?: synchronized(this) {
-        packList ?: PackList(windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() })
+        packList ?: PackList(
+            windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
+        )
             .also { packList = it }
     }
+
+    /**
+     * Debug and bench builds: render packs the map lists beside the windows, which CI puts on its emulator (the canal ring
+     * its runs draw at the Westerkerk home: no APK carries a map, and CI's run builds no windows); the app sets it. None
+     * on a phone.
+     */
+    @Volatile
+    var benchPacks: () -> List<File> = { emptyList() }
 
     /**
      * Overpass's JSON for a window's box (south, west, north, east), with the window's query (ENGINE.md step 3),

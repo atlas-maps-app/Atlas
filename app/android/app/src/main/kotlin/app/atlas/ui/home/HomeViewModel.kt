@@ -89,8 +89,8 @@ class HomeViewModel(
     val map = MapState(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
-            // CI's demo (and the bench shortcut) opens on the Westerkerk, which the bundled canal ring draws at once without
-            // the network, whatever view was saved: the same frame on the emulator and on a phone
+            // CI's demo (and the bench shortcut) opens on the Westerkerk, whatever view was saved: the same frame on the
+            // emulator (the canal ring CI puts there) and on a phone (the windows of the Netherlands' tiles)
             services.ciDemo -> HomeView.westerkerk
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
             else -> FirstLook.around(services.location.last.value?.location, ::coveredByMap)

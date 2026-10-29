@@ -341,9 +341,16 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val localData: app.atlas.services.LocalData by localDataLazy
 
-    /** CI's demo (`atlas.ci`): the home opens on the Westerkerk, which the bundled canal ring draws at once without the network. */
+    /** CI's demo (`atlas.ci`) and the bench shortcut (`atlas.bench`): the home opens on the Westerkerk. */
     @Volatile
     var ciDemo: Boolean = false
+
+    /**
+     * CI's run (`atlas.ci`): the phone builds no windows, so the emulator asks no server for them; its map is the canal
+     * ring CI puts on the device (MainActivity.BENCH_PACKS), as no APK carries a map.
+     */
+    @Volatile
+    var ciRun: Boolean = false
 
     /**
      * CI's light (`atlas.ci.theme`): the home's map in this theme whatever the settings say, so two launches compared
