@@ -146,11 +146,13 @@ jobs:
             sudo apt-get install -y -q libvulkan1 > /dev/null
             echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
           fi
-      # The packer's tool (ENGINE.md step 3: the core's stage P, mapcore/cpp/stagep), which cuts the APK's bundled tiles
-      # (:app's generateBundledTiles reads ATLAS_STAGEP), so the APK's packs come from the code the phone builds its
-      # windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++
-      # (above) and the SDK's CMake and Ninja. The tiles are the port's cut's byte for byte: :mapcorecheck's bundled
-      # tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold the core to, as do core.yml's.
+      # The packer's tool (ENGINE.md step 3: the core's stage P, mapcore/cpp/stagep), which cuts the APK's tiles (the
+      # Westerkerk's living pack, for VK facts' hash lines alone: :app's generateFactsTiles) and the canal ring the
+      # emulator's runs draw (:app's benchTiles, in the New looks), both reading ATLAS_STAGEP, so they come from the code
+      # the phone builds its windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's
+      # clang and libc++ (above) and the SDK's CMake and Ninja. The Westerkerk's tiles are the port's cut's byte for byte:
+      # :mapcorecheck's bundled tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold the core
+      # to, as do core.yml's.
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -160,13 +162,14 @@ jobs:
           "$cmake_bin/cmake" --build --preset host-stagep
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       # pymath's parity sweep (:mapcorecheck's MT/numerics) runs 10^5 arguments a function here, and the tile reader's
-      # differential check 1,500 damaged tiles; the sweeps job runs the plan's 10^7 and 60,000 nightly.
+      # differential check 1,500 damaged tiles; the sweeps job runs the plan's 10^7 and 60,000 nightly. benchTiles makes
+      # the canal ring the emulator's runs draw: no APK carries a map (ENGINE.md step 3, one pack per country).
       - name: Test and build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.tests }}" = "false" ]; then
-            ./gradlew assembleDebug assembleBench --stacktrace
+            ./gradlew assembleDebug assembleBench :app:benchTiles --stacktrace
           else
-            ./gradlew test testDebugUnitTest assembleDebug assembleBench -x :likeness:testDebugUnitTest -Datlas.numerics.n=100000 --continue --stacktrace
+            ./gradlew test testDebugUnitTest assembleDebug assembleBench :app:benchTiles -x :likeness:testDebugUnitTest -Datlas.numerics.n=100000 --continue --stacktrace
           fi
       # The likeness harness (plan-vector D16, K4), whatever `tests` says and even when the step above failed, so a
       # likeness failure never costs the APKs, the unit tests' reports or the emulator's run: the port's references
@@ -239,6 +242,13 @@ jobs:
           name: atlas-bench-apk
           path: app/android/app/build/outputs/apk/bench/*.apk
           if-no-files-found: ignore
+      - name: Keep the emulator's map
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atlas-bench-packs
+          path: app/android/app/build/generated/bench-tiles/*.atlas
+          if-no-files-found: ignore
       - name: Keep the reports and pictures
         if: always()
         uses: actions/upload-artifact@v7
@@ -270,6 +280,13 @@ jobs:
         with:
           name: atlas-bench-apk
           path: apk-bench
+      # The map the runs draw at the Westerkerk home (VK bench's map, the home's frames): the canal ring, which smoke.sh
+      # puts on the device for the debug and bench builds to list (MainActivity.BENCH_PACKS), as no APK carries a map.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: atlas-bench-packs
+          path: bench-packs
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -298,7 +315,7 @@ jobs:
           # lavapipe: Mesa's Vulkan for the guest (the driver the host tests use) and the emulator's own software GLES. The
           # deprecated swiftshader_indirect hung HWUI's first program compile on its host GL pipe on every debug-first run.
           emulator-options: -no-window -gpu lavapipe -noaudio -no-boot-anim -camera-back none
-          script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" ATLAS_BENCH="${{ github.event_name == 'workflow_dispatch' && inputs.bench == false && '0' || '1' }}" bash app/android/ci/smoke.sh apk shots apk-bench
+          script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" ATLAS_BENCH="${{ github.event_name == 'workflow_dispatch' && inputs.bench == false && '0' || '1' }}" ATLAS_PACKS=bench-packs bash app/android/ci/smoke.sh apk shots apk-bench
       - name: Keep the screenshots
         if: always()
         uses: actions/upload-artifact@v7

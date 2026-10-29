@@ -141,12 +141,7 @@ internal class CoreMap(
         packs.load()
         if (packs.revision == packsRevision) return ""
         packsRevision = packs.revision
-        val (refs, open) = packs.refs()
-        try {
-            return core.packs(refs)
-        } finally {
-            for (r in open) runCatching { r.close() }
-        }
+        return core.packs(packs.refs())
     }
 
     /**

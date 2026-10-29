@@ -47,6 +47,17 @@ import java.util.zip.GZIPOutputStream
  * drawn: [PackList] does not list it, so a frame cell's windows are of one version (the core refuses a window of another
  * version than its cell's). A new version of Atlas is installed fresh, without such windows.
  *
+ * A window the core wants that has none on the phone comes from its country's tiles first ([tiles]: every window of a
+ * country as the phone's own core builds it from the windows' data of a date, published on GitHub; ENGINE.md step 3,
+ * one pack per country): its pack, read by an HTTP range, is written in its place, with what it was built from beside
+ * it (`14-<x>-<y>.tiles`: the data's date, the file's time when it came); a window the tiles hold with nothing to draw
+ * is marked by that file alone, and like a built window that holds nothing it is not listed and not asked for again
+ * until it is due. A window taken from the tiles keeps no data. Once it is due, or the user's edits reach it, the
+ * windows' data of its release (the data its pack was built from, [packs]) becomes its data, without a build, and it
+ * goes on as a window built from data: Overpass's changes since that date, then the edits. Where no pack gives that
+ * release's data, its data comes as any window's, never older than its tiles'. Only where no country's tiles hold a
+ * window (another core built them, or none reaches its place) or its bytes did not come is it built from data at once.
+ *
  * A window's data comes from Atlas's own packs first ([packs]: built on GitHub from Geofabrik's extracts, the answer
  * Overpass gives the window's query as of the extract's date, gzipped), where one holds the window, and from Overpass
  * only where none does or its data did not come (ENGINE.md: the sources for many users; on 27 October 2026 every public
@@ -80,9 +91,20 @@ class Windows(
      * holds it (or none newer); throws where a pack holds it but its data did not come whole. Null: Overpass alone.
      */
     private val packs: ((MapCore.Window, Instant?) -> Packed?)? = null,
+    /**
+     * A window's pack from its country's tiles, as the phone's own core builds it ([Tiled]); null where no country's
+     * tiles hold it (or another core built them); throws where they hold it but its bytes did not come whole. Null: none.
+     */
+    private val tiles: ((MapCore.Window) -> Tiled?)? = null,
 ) {
     /** A window's data from one of Atlas's packs: Overpass's answer for its box as of [date], gzipped, from pack [from]. */
     class Packed(val gz: ByteArray, val date: Instant, val from: String)
+
+    /**
+     * A window's pack from its country's tiles: the [pack]'s bytes, none where the window holds nothing to draw, built
+     * from the windows' data of [date], from the tiles of pack [from].
+     */
+    class Tiled(val pack: ByteArray, val date: Instant, val from: String)
 
     /** What [step] asks of the core: [MapCore]'s, or a test's. */
     interface Core {
@@ -117,9 +139,9 @@ class Windows(
     private class Failure(val at: Long, val refused: Boolean, val times: Int)
 
     /**
-     * What the windows do now, for the map's status where the core has nothing to draw yet: fetching a window's data
-     * from OpenStreetMap's servers, building it, or waiting after its data did not come ([Waiting.until], on [clock]'s
-     * time) or the core refused it.
+     * What the windows do now, for the map's status where the core has nothing to draw yet: fetching a window's pack
+     * from its country's tiles or its data from OpenStreetMap's servers, building it, or waiting after its data did not
+     * come ([Waiting.until], on [clock]'s time) or the core refused it.
      */
     sealed interface Status {
         data object Idle : Status
@@ -169,7 +191,10 @@ class Windows(
         status = Status.Waiting(now + waitAfter(refused, times), refused)
     }
 
-    /** Builds the nearest window [core] wants, else refreshes the nearest aged one in view; true when one was built (the packs are to be handed again). */
+    /**
+     * Takes or builds the nearest window [core] wants, else refreshes the nearest aged one in view; true when one was
+     * written (the packs are to be handed again).
+     */
     fun step(core: MapCore): Boolean = step(Of(core))
 
     fun step(core: Core): Boolean {
@@ -180,9 +205,13 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
-            nextEdited(core)?.let { return rebuild(core, it) }
+            nextEdited(core)?.let { return rebuild(core, it, now) }
             val wanted = core.wanted()
-            wanted.firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
+            wanted.firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { w ->
+                // none on the phone: its country's pack, before any data
+                if (!fileOf(w).exists() && !tiledOf(w).exists()) tiled(w, now)?.let { return it }
+                return whole(core, w, now, keptBase(w))
+            }
             // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
             if (wanted.none { !builtLately(it, now) }) status = Status.Idle
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
@@ -200,19 +229,43 @@ class Windows(
     fun dataOf(w: MapCore.Window): File = File(dir, "${w.z}-${w.x}-${w.y}.json.gz")
 
     /**
-     * Whether window [w] was built, or its data checked, within [REFRESH_MS]: its pack is there though the core may still
-     * want its place (it holds nothing to draw, the core did not take it, or the map has not handed it over yet).
+     * What window [w] keeps while its pack is its country's tiles' and it keeps no data: the date of the data the pack
+     * was built from and the pack it came from; the file's time is when it came. Without a pack beside it, the window
+     * holds nothing to draw.
      */
-    private fun builtLately(w: MapCore.Window, now: Long): Boolean = fileOf(w).exists() && !aged(w, now)
+    fun tiledOf(w: MapCore.Window): File = File(dir, "${w.z}-${w.x}-${w.y}.tiles")
 
-    /** The date of the data window [w] keeps; null where it keeps none, or none that reads. */
+    /**
+     * Whether window [w] was built or taken from the tiles, or its data checked, within [REFRESH_MS]: its pack (or the
+     * mark that it holds nothing) is there though the core may still want its place (it holds nothing to draw, the core
+     * did not take it, or the map has not handed it over yet).
+     */
+    private fun builtLately(w: MapCore.Window, now: Long): Boolean = (fileOf(w).exists() || tiledOf(w).exists()) && !aged(w, now)
+
+    /**
+     * The date of what window [w] holds: of the data it keeps, else of its pack from the tiles; null where neither
+     * reads.
+     */
     private fun keptBase(w: MapCore.Window): Instant? =
-        dataOf(w).takeIf { it.exists() }?.let { runCatching { headOf(it, true) }.getOrNull()?.base }
+        dataOf(w).takeIf { it.exists() }?.let { runCatching { headOf(it, true) }.getOrNull()?.base } ?: tiledBase(w)
 
-    /** Whether window [w]'s data was fetched or checked more than [REFRESH_MS] ago (its pack's age where it keeps none). */
+    /** The date of the data window [w]'s pack from the tiles was built from; null where it keeps none from the tiles. */
+    private fun tiledBase(w: MapCore.Window): Instant? = tiledOf(w).takeIf { it.exists() }?.let { f ->
+        runCatching { Instant.parse(f.readText().trim().substringBefore(' ')) }.getOrNull()
+    }
+
+    /**
+     * Whether window [w]'s data was fetched or checked more than [REFRESH_MS] ago (where it keeps none, when its pack came
+     * from the tiles, else its pack's age).
+     */
     private fun aged(w: MapCore.Window, now: Long): Boolean {
         val data = dataOf(w)
-        val at = if (data.exists()) data.lastModified() else fileOf(w).lastModified()
+        val tiled = tiledOf(w)
+        val at = when {
+            data.exists() -> data.lastModified()
+            tiled.exists() -> tiled.lastModified()
+            else -> fileOf(w).lastModified()
+        }
         return at > 0 && now - at > REFRESH_MS
     }
 
@@ -220,15 +273,15 @@ class Windows(
     private fun workOf(w: MapCore.Window, what: String): File = File(dir, "${w.z}-${w.x}-${w.y}.$what.json")
 
     /**
-     * The next window built here whose data reaches a place the user edited ([edited]), by its name; null when none is
-     * left. Each place's windows are looked up once, by the boxes [core] gives them.
+     * The next window built here, or taken from the tiles, whose data reaches a place the user edited ([edited]), by its
+     * name; null when none is left. Each place's windows are looked up once, by the boxes [core] gives them.
      */
     private fun nextEdited(core: Core): MapCore.Window? {
         while (true) {
             val at = touched.poll() ?: break
             for (f in dir.listFiles().orEmpty().sortedBy { it.name }) {
                 val w = windowOf(f) ?: continue
-                if (w in toEdit || !dataOf(w).exists()) continue
+                if (w in toEdit || (!dataOf(w).exists() && !tiledOf(w).exists())) continue
                 val b = runCatching { core.box(w) }.getOrNull() ?: continue
                 if (at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3]) toEdit.addLast(w)
             }
@@ -238,10 +291,16 @@ class Windows(
 
     /**
      * Builds window [w] again from the data it keeps, on the phone, with the user's edits: no server is asked, and its
-     * data keeps its date; one that does not build keeps the pack it has. True when it was built (the packs are to be
-     * handed again).
+     * data keeps its date; one that does not build keeps the pack it has. A window taken from the tiles keeps no data:
+     * the windows' data of its release becomes its data first, else data no older comes as for any window, and it is
+     * built from that with the edits. True when it was built (the packs are to be handed again).
      */
-    private fun rebuild(core: Core, w: MapCore.Window): Boolean {
+    private fun rebuild(core: Core, w: MapCore.Window, now: Long): Boolean {
+        if (!dataOf(w).exists()) {
+            val date = tiledBase(w) ?: return false
+            val got = ask(w, null)
+            if (got == null || !adopt(w, got, date)) return whole(core, w, now, date, asked = true, got = got)
+        }
         val kept = workOf(w, "kept")
         val edited = workOf(w, "edited")
         try {
@@ -277,16 +336,88 @@ class Windows(
     }
 
     /**
-     * Fetches window [w]'s data whole, from a pack where one holds it, else from Overpass, and builds it; with [kept] (the
-     * date of the data it holds), never from older data.
+     * Window [w]'s pack from its country's tiles, written in its place with what it was built from beside it: true;
+     * false where the window holds nothing to draw (marked so: it is not asked for again until it is due); null where
+     * no country's tiles give it, or its bytes did not come whole, so its data is fetched as where none holds it.
      */
-    private fun whole(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean {
+    private fun tiled(w: MapCore.Window, now: Long): Boolean? {
+        val source = tiles ?: return null
+        val t0 = clock()
+        status = Status.Fetching(t0)
+        val got = try {
+            source(w) ?: return null
+        } catch (e: Exception) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: no pack from the tiles: ${e.message}; fetching its data")
+            return null
+        }
+        try {
+            dir.mkdirs()
+            // the pack first: a mark without a pack beside it says the window holds nothing to draw
+            if (got.pack.isNotEmpty()) write(fileOf(w), got.pack)
+            write(tiledOf(w), "${got.date} ${got.from}\n".toByteArray())
+            tiledOf(w).setLastModified(now)
+        } catch (e: java.io.IOException) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: the pack from the tiles of ${got.from} was not written: ${e.message}")
+            return null
+        }
+        failed.remove(w)
+        status = Status.Idle
+        val what = if (got.pack.isNotEmpty()) "${got.pack.size} bytes" else "nothing to draw"
+        Log.i(EngineFrames.TAG, "vk window ${w.id}: $what from the tiles of ${got.from} (their data of ${got.date}) in ${clock() - t0} ms")
+        return got.pack.isNotEmpty()
+    }
+
+    /**
+     * Window [w]'s data from the packs, newer than [after] where one is given; null where no pack gives it, or its data
+     * did not come whole.
+     */
+    private fun ask(w: MapCore.Window, after: Instant?): Packed? {
+        val source = packs ?: return null
+        status = Status.Fetching(clock())
+        return try {
+            source(w, after)
+        } catch (e: Exception) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: no data from the packs: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Keeps [got], the windows' data of window [w]'s release where its [date] is that of its pack from the tiles, as its
+     * data, without building it: its pack is what that data builds. True when kept. The data counts as fetched when
+     * the pack came, so a window due stays due until its changes since are asked for.
+     */
+    private fun adopt(w: MapCore.Window, got: Packed, date: Instant): Boolean {
+        if (got.date != date) return false
+        val data = dataOf(w)
+        val came = tiledOf(w).lastModified()
+        try {
+            write(data, got.gz)
+            if (headOf(data)?.base != date) throw java.io.IOException("it says another date than its pack's")
+        } catch (e: java.io.IOException) {
+            data.delete()
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: the data of pack ${got.from} does not read: ${e.message}")
+            return false
+        }
+        data.setLastModified(came)
+        tiledOf(w).delete()
+        Log.i(EngineFrames.TAG, "vk window ${w.id}: the data its pack from the tiles was built from kept (${got.gz.size} bytes of the pack ${got.from})")
+        return true
+    }
+
+    /**
+     * Fetches window [w]'s data whole, from a pack where one holds it, else from Overpass, and builds it; with [kept] (the
+     * date of what it holds), never from older data. [asked]: the packs were asked already, and gave [got].
+     */
+    private fun whole(core: Core, w: MapCore.Window, now: Long, kept: Instant?, asked: Boolean = false, got: Packed? = null): Boolean {
         dir.mkdirs()
         val answer = workOf(w, "answer")
         try {
             val t0 = clock()
             status = Status.Fetching(t0)
-            packed(w, kept, answer)?.let { how -> return build(core, w, answer, now, how) }
+            packed(w, kept, answer, if (asked) got else ask(w, if (dataOf(w).exists()) kept else null), t0)?.let { how ->
+                return build(core, w, answer, now, how)
+            }
             try {
                 fetch(core.box(w), answer)
             } catch (e: Exception) {
@@ -307,18 +438,14 @@ class Windows(
     }
 
     /**
-     * Window [w]'s data from a pack into [answer], newer than [kept] where it keeps data: how it came; null where no pack
-     * gives it, or its data did not come whole (Overpass is asked then).
+     * Window [w]'s data from a pack ([data], what the packs gave since [t0]) into [answer]: how it came; null where they
+     * gave none to build from (Overpass is asked then). A window that keeps data takes only data newer than its own
+     * ([kept]); one taken from the tiles keeps none, and takes data no older than its tiles', its release's among them
+     * (its pack is what that data builds, and the window is built from data from then on).
      */
-    private fun packed(w: MapCore.Window, kept: Instant?, answer: File): String? {
-        val source = packs ?: return null
-        val t0 = clock()
-        val data = try {
-            source(w, kept) ?: return null
-        } catch (e: Exception) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: no data from the packs: ${e.message}; asking Overpass")
-            return null
-        }
+    private fun packed(w: MapCore.Window, kept: Instant?, answer: File, data: Packed?, t0: Long): String? {
+        if (data == null) return null
+        if (kept != null && (if (dataOf(w).exists()) !data.date.isAfter(kept) else data.date.isBefore(kept))) return null
         try {
             GZIPInputStream(data.gz.inputStream(), 1 shl 16).use { input ->
                 answer.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
@@ -350,6 +477,8 @@ class Windows(
             keep(json, dataOf(w))
             dataOf(w).setLastModified(now)
         }
+        // built from data: no longer the tiles' pack
+        tiledOf(w).delete()
         failed.remove(w)
         status = Status.Idle
         Log.i(
@@ -360,10 +489,22 @@ class Windows(
         return true
     }
 
-    /** Builds window [w] again from its kept data and Overpass's changes since, else whole. */
+    /**
+     * Builds window [w] again from its kept data and Overpass's changes since, else whole. A window taken from the tiles
+     * keeps no data: the windows' data of its release becomes its data first, and the changes since its date are asked
+     * for; where no pack gives that data, it is fetched whole, never from data older than its tiles'.
+     */
     private fun refresh(core: Core, w: MapCore.Window, now: Long): Boolean {
         val diffs = fetchDiff
         val data = dataOf(w)
+        if (!data.exists()) {
+            tiledBase(w)?.let { date ->
+                // without the changes to ask for, it is fetched whole, as any window then
+                if (diffs == null) return whole(core, w, now, date)
+                val got = ask(w, null)
+                if (got == null || !adopt(w, got, date)) return whole(core, w, now, date, asked = true, got = got)
+            }
+        }
         val head = if (data.exists()) runCatching { headOf(data, true) }.getOrNull() else null
         if (diffs == null || head == null) return whole(core, w, now, head?.base)
         if (now - head.whole.toEpochMilli() > WHOLE_MS) {
@@ -463,6 +604,16 @@ class Windows(
         }
 
         private fun direct(bytes: ByteArray): ByteBuffer = ByteBuffer.allocateDirect(bytes.size).put(bytes).flip() as ByteBuffer
+
+        /** Writes [bytes] into [file], by a file beside it renamed once whole. */
+        internal fun write(file: File, bytes: ByteArray) {
+            val part = File(file.path + ".part")
+            part.writeBytes(bytes)
+            if (!part.renameTo(file)) {
+                part.delete()
+                throw java.io.IOException("$part could not be renamed")
+            }
+        }
 
         /** Gzips the data in [json] into [file], by a file beside it renamed once whole. */
         internal fun keep(json: File, file: File) {

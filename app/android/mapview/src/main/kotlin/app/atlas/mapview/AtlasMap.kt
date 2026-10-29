@@ -118,7 +118,7 @@ fun AtlasMap(
     val host = MapEngine.host
     val ready = coreState as? CoreState.Ready
     LaunchedEffect(controller, ready, host) {
-        controller.useCore(ready?.core, ready?.let { MapEngine.packs(assets) }, host == VkHost.TEXTURE)
+        controller.useCore(ready?.core, ready?.let { MapEngine.packs() }, host == VkHost.TEXTURE)
     }
     val off = (coreState as? CoreState.Off)?.reason
     SideEffect {
