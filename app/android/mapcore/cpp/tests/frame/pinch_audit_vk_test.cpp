@@ -7,30 +7,49 @@
 //
 // The map: the windows of an N x N block of L14 places around the target (ATLAS_PINCH_BLOCK, 5), built anywhere's way
 // from a region's raw.json (ATLAS_REGIONS_DIR, ATLAS_PINCH_REGION: grachten) into <out>/windows (kept there and used
-// again), and, with ATLAS_TILES_DIR, the bundled Westerkerk and canal ring before them, as the APK lists them.
+// again), and, with ATLAS_TILES_DIR, the bundled Westerkerk and canal ring before them, as the APK lists them (a window
+// only where no bundled pack listed holds its place whole, as the phone builds them).
 // ATLAS_PINCH_PLACE: "lat,lon,bearing,pitch" (52.3735,4.8755,22,48: west of the Westerkerk); ATLAS_PINCH_HEAPS: the
 // heaps' budget in MB instead of the device's; ATLAS_PINCH_OUTWARD: the pinch back out to the start after.
+//
+// To compare the packs' cuts (each alone at the same cameras): ATLAS_PINCH_PACKS names the bundled packs listed
+// ("amsterdam,grachten" by default, "none" for none), ATLAS_PINCH_BLOCK=0 lists no windows, ATLAS_PINCH_KIT builds the
+// windows in a tradition's kit (nl_amsterdam: the Dutch windows' look until 27 October) instead of the New looks, and
+// ATLAS_PINCH_WINDOWS names the folder they are kept in (<out>/windows, or <out>/windows-<kit>). ATLAS_PINCH_COST: at
+// each rest, what the frame drew kind by kind (the ranks' rows: buildings and parts, trees, things, region items,
+// doors), and what each pass costs the GPU, measured as the phone's switches do, by leaving it out (FrameOptions::
+// passes): the median of three frames' GPU time and fragments with every pass, then with each pass that drew alone
+// (beside the composite: what it shades with nothing hiding it) and without it (what the frame saves, the fragments it
+// hid from the others counted against it), and without the facades' detail (style::camera_flag::no_facades).
+// ATLAS_PINCH_OFF: the parts every frame leaves out, as the app's switches do ("cloud_shadows,water": alpha 19's
+// defaults; also trees, shadows, facades). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather:
+// its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's
+// streaks, the streets' wet cores, the drizzle's rings on the water) instead of the sunny moment.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
+#include "scene/ItemTable.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tests/ground/ground_support.hpp"
 #include "tests/load/query.hpp"
 #include "tiles/Grid.hpp"
 #include "twin/building/BuildingShader.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -243,6 +262,37 @@ struct Listed {
                        records);
 }
 
+/// The rows the last frame drew, kind by kind (the ranks' order: buildings and parts, trees, things, region items,
+/// doors): `drew building 812, tree 140, thing 2311`.
+[[nodiscard]] std::string drawn_kinds(const frame::FrameBuilder& builder, const scene::ItemTable& items) {
+    std::map<std::string, std::uint32_t> by;
+    const std::span<const std::uint16_t> kind = items.kind();
+    for (const std::uint32_t row : builder.ranks().order()) {
+        if (row < kind.size()) ++by[std::string(builder.selectors().name(kind[row]))];
+    }
+    std::string out = "drew";
+    for (const auto& [name, n] : by) out += std::format("{} {} {}", out.size() > 4 ? "," : "", name, n);
+    return by.empty() ? "drew nothing" : out;
+}
+
+/// The last frame's stage F part by part, the parts of 0.1 ms or more: `stage F: scene 1.2, ranks 3.4, doors 2.1`.
+[[nodiscard]] std::string stage_f_parts(const frame::FrameBuilder& builder) {
+    const frame::FrameBuilder::StageFParts& p = builder.stage_f_parts();
+    std::string out =
+        std::format("stage F: scene {:.1f}, globals {:.1f}, ranks {:.1f}", p.scene_ms, p.globals_ms, p.ranks_ms);
+    for (std::size_t i = 0; i < p.pass_ms.size() && i < builder.passes().size(); ++i) {
+        if (p.pass_ms[i] >= 0.1) out += std::format(", {} {:.1f}", builder.passes()[i]->name(), p.pass_ms[i]);
+    }
+    return out;
+}
+
+/// The middle of `v` (its upper middle for an even count).
+[[nodiscard]] double median(std::vector<double> v) {
+    if (v.empty()) return 0.0;
+    std::ranges::sort(v);
+    return v[v.size() / 2];
+}
+
 } // namespace
 
 TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU and each pass's counts") {
@@ -272,8 +322,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
     // The packs as the APK and the phone list them: the bundled ones first, then the windows by name.
     std::vector<Listed> listed;
     std::uint64_t number = 0;
+    const std::string bundled =
+        environment("ATLAS_PINCH_PACKS").empty() ? "amsterdam,grachten" : environment("ATLAS_PINCH_PACKS");
     if (const std::string tiles_dir = environment("ATLAS_TILES_DIR"); !tiles_dir.empty()) {
         const auto add = [&](const char* id, std::array<double, 4> box, std::vector<double> distances) {
+            if (std::format(",{},", bundled).find(std::format(",{},", id)) == std::string::npos) return;
             Listed l;
             l.pack.number = ++number;
             l.pack.ref.id = id;
@@ -291,16 +344,31 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         const std::string regions = environment("ATLAS_REGIONS_DIR");
         const std::string region =
             environment("ATLAS_PINCH_REGION").empty() ? "grachten" : environment("ATLAS_PINCH_REGION");
-        const fs::path folder = fs::path(out) / "windows";
+        // the windows in a tradition's kit (ATLAS_PINCH_KIT) instead of the New looks, kept apart
+        const std::string kit = environment("ATLAS_PINCH_KIT");
+        const fs::path folder = !environment("ATLAS_PINCH_WINDOWS").empty()
+                                    ? fs::path(environment("ATLAS_PINCH_WINDOWS"))
+                                : kit.empty() ? fs::path(out) / "windows"
+                                              : fs::path(out) / ("windows-" + kit);
         fs::create_directories(folder);
         const tiles::TileKey centre = tiles::tile_of(14, static_cast<std::int32_t>(std::lround(lat * 1e7)),
                                                      static_cast<std::int32_t>(std::lround(lon * 1e7)));
         std::optional<osm::Document> doc;
         std::string text;
         const std::uint32_t half = block / 2;
+        const std::size_t bundled_count = listed.size();
         for (std::uint32_t dy = 0; dy < block; ++dy) {
             for (std::uint32_t dx = 0; dx < block; ++dx) {
                 const tiles::TileKey k(14, centre.x - half + dx, centre.y - half + dy);
+                // as the phone builds them (World::wanted_windows): none where a bundled pack's box holds the place
+                // whole
+                const std::array<std::int32_t, 4> place_box = tiles::tile_box(k);
+                const bool held_whole = std::any_of(
+                    listed.begin(), listed.begin() + static_cast<std::ptrdiff_t>(bundled_count), [&](const Listed& p) {
+                        return p.box[0] <= place_box[0] / 1e7 && p.box[1] <= place_box[1] / 1e7 &&
+                               place_box[2] / 1e7 <= p.box[2] && place_box[3] / 1e7 <= p.box[3];
+                    });
+                if (held_whole) continue;
                 const fs::path file = folder / std::format("14-{}-{}.atlas", k.x, k.y);
                 if (!fs::exists(file)) {
                     if (!doc) {
@@ -313,8 +381,13 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                         doc.emplace(std::move(*read));
                     }
                     const auto started = std::chrono::steady_clock::now();
-                    const auto built = load::build_window(test::query(*doc, load::window_box(k)), tiles::Sha256Digest{},
-                                                          k, load::place_of(k));
+                    load::WindowPlace where = load::place_of(k);
+                    if (!kit.empty()) {
+                        where.new_looks = false;
+                        where.tradition = kit;
+                    }
+                    const auto built =
+                        load::build_window(test::query(*doc, load::window_box(k)), tiles::Sha256Digest{}, k, where);
                     const double ms =
                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
                     REQUIRE_MESSAGE(built.has_value(), built.error().what);
@@ -368,7 +441,24 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         KeptWindow* kept = window.get();
         std::string why;
         REQUIRE_MESSAGE(session.attach(std::move(window), screen.size, why), why);
-        map.set_theme(sunny());
+        // the moment (ATLAS_PINCH_MOMENT): the sunny one, the live night, or the live night in rain
+        {
+            const std::string moment = environment("ATLAS_PINCH_MOMENT");
+            style::ThemeBlock theme = sunny();
+            if (moment == "night" || moment == "wet-night") theme = test::night_weather();
+            if (moment == "wet-night") {
+                theme.flags |= style::theme_flag::wet | style::theme_flag::wet_set;
+                theme.weather_code = 61; // rain
+                theme.rain = 1.2;
+                theme.wind = 22.0;
+                theme.gust = 38.0;
+                theme.wind_direction = 225.0;
+                theme.cloud = 1.0;
+                theme.humidity = 94.0;
+            }
+            REQUIRE((moment.empty() || moment == "sunny" || moment == "night" || moment == "wet-night"));
+            map.set_theme(theme);
+        }
         // the validation layer's messages since the last call (ATLAS_PINCH_VALIDATE), each kind once with its count
         const auto said = [&](const std::string& when) {
             if (!started->instance) return;
@@ -384,12 +474,24 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             for (const auto& [m, n] : kinds) MESSAGE(std::format("validation {} ({}x): {}", when, n, m));
         };
+        // the parts every frame leaves out (ATLAS_PINCH_OFF), as the app's switches name them
+        std::uint32_t always_off = 0U;
+        {
+            namespace flag = style::camera_flag;
+            const std::string named = std::format(",{},", environment("ATLAS_PINCH_OFF"));
+            for (const auto& [name, bit] :
+                 {std::pair{"trees", flag::no_trees}, std::pair{"shadows", flag::no_shadows},
+                  std::pair{"cloud_shadows", flag::no_cloud_shadows}, std::pair{"water", flag::no_water},
+                  std::pair{"facades", flag::no_facades}}) {
+                if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bit;
+            }
+        }
         const Listed* held = nullptr;
         // a frame at `d` with the parts `off` leaves out (style::camera_flag::no_*), the pack named as MapController
         // names it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint32_t off = 0U) {
             style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
-            c.flags |= off;
+            c.flags |= off | always_off;
             held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
             const auto at = std::chrono::steady_clock::now();
@@ -399,11 +501,12 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             const frame::FrameBuilder* b = map.builder();
             if (log) {
                 MESSAGE(std::format("{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
-                                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments; {}; {}",
+                                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments; {}; {}; {}",
                                     tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
                                     b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k,
-                                    b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line()));
+                                    b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
+                                    b != nullptr ? stage_f_parts(*b) : std::string()));
             }
             return s;
         };
@@ -440,6 +543,58 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             said(std::format("at rest at {:.0f} m", d));
             if (const frame::FrameBuilder* b = map.builder(); b != nullptr) {
                 MESSAGE(std::format("passes at {:.0f} m (rest, complete {}):\n{}", d, map.complete(), pass_counts(*b)));
+            }
+            if (!environment("ATLAS_PINCH_COST").empty()) {
+                const frame::FrameBuilder* b = map.builder();
+                REQUIRE(b != nullptr);
+                REQUIRE(map.world() != nullptr);
+                const std::string kinds = drawn_kinds(*b, *map.world()->items());
+                // the passes that drew this frame (the composite stays: it makes the picture)
+                std::vector<std::pair<std::string, std::size_t>> drew;
+                for (std::size_t i = 0; i < b->counters().size(); ++i) {
+                    const frame::Count& c = b->counters()[i].total();
+                    const std::string_view name = b->counters()[i].pass();
+                    if (name != "composite" && c.draws + c.dispatches > 0) drew.emplace_back(name, i);
+                }
+                // the median of three frames' GPU time and fragments, after three (the GPU's are an earlier frame's)
+                const auto cost = [&](std::uint64_t passes, std::uint32_t off) {
+                    map.set_passes(passes);
+                    std::vector<double> ms;
+                    std::vector<double> fragments;
+                    for (int k = 0; k < 6; ++k) {
+                        const standin::Drawn f = draw("cost", d, true, false, off);
+                        if (k < 3) continue;
+                        ms.push_back(static_cast<double>(f.record.gpu_ms));
+                        fragments.push_back(f.record.fragments_k);
+                    }
+                    map.set_passes(~std::uint64_t{0});
+                    return std::pair{median(ms), median(fragments)};
+                };
+                const auto [all_ms, all_fragments] = cost(~std::uint64_t{0}, 0U);
+                std::string lines =
+                    std::format("  every pass: gpu {:.0f} ms, {:.0f}k fragments\n", all_ms, all_fragments);
+                std::uint64_t composite = 0;
+                for (std::size_t i = 0; i < b->counters().size(); ++i) {
+                    if (b->counters()[i].pass() == "composite") composite |= std::uint64_t{1} << i;
+                }
+                for (const auto& [name, i] : drew) {
+                    const auto [alone_ms, alone_fragments] = cost(composite | (std::uint64_t{1} << i), 0U);
+                    const auto [ms, fragments] = cost(~(std::uint64_t{1} << i), 0U);
+                    lines += std::format("  {:<12} alone gpu {:6.0f} ms {:7.0f}k fragments; saves {:6.0f} ms {:7.0f}k "
+                                         "(without it: {:.0f} ms, {:.0f}k)\n",
+                                         name, alone_ms, alone_fragments, all_ms - ms, all_fragments - fragments, ms,
+                                         fragments);
+                }
+                const auto [nothing_ms, nothing_fragments] = cost(composite, 0U);
+                lines += std::format("  {:<12} alone gpu {:6.0f} ms {:7.0f}k fragments\n", "composite", nothing_ms,
+                                     nothing_fragments);
+                const auto [no_facades_ms, no_facades_fragments] =
+                    cost(~std::uint64_t{0}, style::camera_flag::no_facades);
+                lines += std::format("  {:<12} saves {:6.0f} ms {:7.0f}k (without it: {:.0f} ms, {:.0f}k)\n", "facades",
+                                     all_ms - no_facades_ms, all_fragments - no_facades_fragments, no_facades_ms,
+                                     no_facades_fragments);
+                for (int k = 0; k < 4; ++k) (void)draw("rest", d, true, k == 3);
+                MESSAGE(std::format("cost at {:.0f} m: {}\n{}", d, kinds, lines));
             }
             auto pixels = kept->kept->read(kept->kept->latest());
             REQUIRE_MESSAGE(pixels.has_value(), pixels.error().text());

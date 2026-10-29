@@ -165,6 +165,10 @@ struct FrameOptions {
     /// their shadows in their places again?", "The water ripples should scale in size when zooming in and out but still
     /// fixed to their positions"). Never in engine mode: the renders' own frames.
     bool grounded = false;
+    /// The passes the frame records, a bit each in the registry's order (bit i is passes()[i]'s): every one by
+    /// default. A tool measuring what each pass costs the GPU leaves one out at a time (tests/frame/
+    /// pinch_audit_vk_test.cpp's ATLAS_PINCH_COST); a pass left out still selects and updates, and records nothing.
+    std::uint64_t passes = ~std::uint64_t{0};
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
@@ -244,6 +248,8 @@ public:
     void set_steps(std::uint32_t steps) noexcept { options_.steps = steps; }
     /// The materials' grain (FrameOptions::grain), from the next frame on.
     void set_grain(bool grain) noexcept { options_.grain = grain; }
+    /// The passes the frame records from the next frame on (FrameOptions::passes).
+    void set_passes(std::uint64_t passes) noexcept { options_.passes = passes; }
 
     /// Every pass's prepare (Pass::prepare) for `pass` and `output`, on several threads at once (FrameOptions::threads,
     /// ENGINE.md gain 20): the first picture waits for the longest pass, not for their sum. On a failure the first
@@ -260,8 +266,20 @@ public:
     /// CPU milliseconds of the last frame: stage F (camera, layers, cover, ranks, the passes' updates) and recording.
     [[nodiscard]] double stage_f_ms() const noexcept { return stage_f_ms_; }
     [[nodiscard]] double record_ms() const noexcept { return record_ms_; }
+    /// The last frame's stage F part by part, in milliseconds (tests: where a frame's CPU goes): the scene's update,
+    /// the globals, the ranks, and each pass's select and update together, in the registry's order.
+    struct StageFParts {
+        double scene_ms = 0;
+        double globals_ms = 0;
+        double ranks_ms = 0;
+        std::vector<double> pass_ms;
+    };
+    [[nodiscard]] const StageFParts& stage_f_parts() const noexcept { return stage_f_parts_; }
     /// The passes, in the registry's order.
     [[nodiscard]] std::span<const std::unique_ptr<Pass>> passes() const noexcept { return passes_; }
+    /// The last frame's ranks (the rows it drew) and the kinds' names (tests: what a frame drew, kind by kind).
+    [[nodiscard]] const Ranks& ranks() const noexcept { return ranks_; }
+    [[nodiscard]] const Selectors& selectors() const noexcept { return selectors_; }
     [[nodiscard]] FrameLayout& layout() noexcept { return *layout_; }
     [[nodiscard]] const FrameOptions& options() const noexcept { return options_; }
     /// Milliseconds the driver spent making the pipelines the last prepare made (over every thread), and how many it
@@ -354,6 +372,7 @@ private:
     bool other_passes_said_ = false; ///< built_by said once that a scene's passes are not the frame's
     double stage_f_ms_ = 0;
     double record_ms_ = 0;
+    StageFParts stage_f_parts_;
     double pipelines_ms_ = 0;
     std::uint32_t pipeline_count_ = 0;
     double prepare_ms_ = 0;

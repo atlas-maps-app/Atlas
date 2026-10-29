@@ -576,7 +576,7 @@ namespace {
         put(v);
     }
     k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
-                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U);
+                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U) | (f.water_light ? 64U : 0U);
     return k;
 }
 
@@ -601,6 +601,7 @@ bool Ground::decide(const frame::FrameState& state) {
     f.night = state.theme.has(style::theme_flag::night);
     f.wet = state.theme.has(style::theme_flag::wet);
     f.engine = state.camera.has(style::camera_flag::engine_mode) && state.placed.has_value();
+    f.water_light = !state.camera.has(style::camera_flag::no_water);
     f.radius = 0;
     f.ground_r = view::default_ground_r;
     f.target_x = 0;

@@ -328,6 +328,10 @@ struct GroundFrame {
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
+    /// The water's light is drawn (the map does not leave it out: style::camera_flag::no_water); without it neither its
+    /// draws nor its decisions are made (the reflections, glitter, rings and glints), which cost the render thread most
+    /// of the ground's decisions over the canals.
+    bool water_light = true;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;

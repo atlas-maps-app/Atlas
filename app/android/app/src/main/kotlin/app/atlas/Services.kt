@@ -341,7 +341,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val localData: app.atlas.services.LocalData by localDataLazy
 
-    /** CI's demo (`atlas.ci`): the home opens on the bundled Westerkerk, drawn at once without the network. */
+    /** CI's demo (`atlas.ci`): the home opens on the Westerkerk, which the bundled canal ring draws at once without the network. */
     @Volatile
     var ciDemo: Boolean = false
 

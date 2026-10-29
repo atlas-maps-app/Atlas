@@ -108,6 +108,12 @@ public:
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
     void set_screen(bool haze, bool vignette, bool grain) noexcept;
+    /// The passes the frames record from now on (FrameOptions::passes: a tool's measure of each pass's GPU work), kept
+    /// for every frame builder made.
+    void set_passes(std::uint64_t passes) noexcept {
+        passes_ = passes;
+        if (builder_) builder_->set_passes(passes);
+    }
     /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
     /// later.
     void set_landing(std::optional<scene::World::Landing> landing) noexcept {
@@ -172,6 +178,7 @@ private:
     bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;
+    std::uint64_t passes_ = ~std::uint64_t{0};
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
