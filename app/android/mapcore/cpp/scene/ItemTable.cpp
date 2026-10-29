@@ -20,6 +20,7 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
         kind_.push_back(0);
         flags_.push_back(0);
         min_depth_.push_back(0);
+        max_depth_.push_back(0);
         radius_.push_back(0);
         tile_.push_back(0);
         owner_.push_back(0);
@@ -37,6 +38,7 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
     kind_[row] = item.kind;
     flags_[row] = item.flags;
     min_depth_[row] = item.min_depth;
+    max_depth_[row] = item.max_depth;
     radius_[row] = item.radius;
     tile_[row] = item.tile;
     owner_[row] = item.owner;
@@ -60,6 +62,7 @@ void ItemTable::update(std::uint32_t row, const ItemSpec& item) noexcept {
     kind_[row] = item.kind;
     flags_[row] = item.flags;
     min_depth_[row] = item.min_depth;
+    max_depth_[row] = item.max_depth;
     radius_[row] = item.radius;
     tile_[row] = item.tile;
     owner_[row] = item.owner;
@@ -102,6 +105,7 @@ void ItemTable::clear() noexcept {
     kind_.clear();
     flags_.clear();
     min_depth_.clear();
+    max_depth_.clear();
     radius_.clear();
     tile_.clear();
     owner_.clear();

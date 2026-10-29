@@ -48,10 +48,10 @@ struct RegionConfig {
     /// Amsterdam's homes keep their guessed brick and plaster (generic.py's `keep_homes`, the renders' New looks).
     bool keep_homes = false;
     /// The engine's own cut, which the map draws close up (the phone's windows, the app's canal ring), where the
-    /// renders cut a region for a view from afar: an edge of a natural shore carries a quay wall where buildings line
-    /// it (load/Cut's water_edges), where regions.py gives every region's water natural shores but Paris's, the port's,
-    /// a bay's and an island's. (The doors and house numbers come to it once a frame ranks only the doors it may draw:
-    /// ENGINE.md step 3, the doors in the country's cut.)
+    /// renders cut a region for a view from afar: an edge of a natural shore but the sea's carries a quay wall where
+    /// buildings line it (load/Cut's water_edges), where regions.py gives every region's water natural shores but
+    /// Paris's, the port's, a bay's and an island's; and the facades carry their doors and house numbers as the living
+    /// map's do, where regions set no_facades (a frame ranks only the doors it may draw: scene::ItemSpec::max_depth).
     bool close_up = false;
     Palette palette;
     /// A theme park's rides' profiles (region.json's `park`: data/park/<park>/pf), whose coaster tracks it loads; null

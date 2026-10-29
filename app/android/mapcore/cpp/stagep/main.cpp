@@ -340,7 +340,7 @@ private:
         config = std::move(*made);
         // the renders' New looks where the job asks for them (`new_looks`: the app's own canal ring, drawn as the
         // windows the phone builds around it in the Netherlands are, its homes keeping their brick and plaster and no
-        // tradition's kit, and cut close up as they are: the quay walls the buildings line);
+        // tradition's kit, and cut close up as they are: the quay walls the buildings line, the doors on the facades);
         // the packs the likeness compares keep the region's own looks and the renders' cut
         if (const std::optional<tl::Value> new_looks = j.find("new_looks"); new_looks && truthy(*new_looks)) {
             config->keep_homes = true;

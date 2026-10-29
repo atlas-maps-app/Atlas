@@ -120,9 +120,9 @@ WindowPlace place_of(const tiles::TileKey& tile) {
     // Amsterdam's brick.
     p.new_looks = draws_new_looks(p.country);
     if (!p.new_looks) p.tradition = tradition_of(p.country);
-    // drawn close up, so with the quay walls the buildings line, where the renders' regions are cut for a view from
-    // afar (the user, 29 October, of the canal ring the Westerkerk is drawn from since alpha 20: "I cannot see any
-    // reflections on the water")
+    // drawn close up, so with the quay walls the buildings line and the doors on their facades, where the renders'
+    // regions are cut for a view from afar (the user, 29 October, of the canal ring the Westerkerk is drawn from since
+    // alpha 20: "I cannot see any reflections on the water", "Make sure no quality is lost")
     p.close_up = true;
     p.zone = timezone_of(p.country, lat, lon);
     p.tz_h = tz_hours(p.zone);

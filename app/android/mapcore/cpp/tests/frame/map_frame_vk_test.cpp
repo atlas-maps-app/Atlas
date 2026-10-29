@@ -865,9 +865,17 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     MESSAGE(std::format("not drawn in these scenes:{}", none));
 
     // A group's switch: the facades' detail and the water's light together, and all of the buildings; the trees, the
-    // ground and the water drawn throughout.
+    // ground and the water the scene draws drawn throughout.
     map.set_theme(sunny());
     const Scene& doors = scenes[1];
+    // what the scene draws of them with nothing left out (no tree stands in the row of doors' view: the ranks keep only
+    // what the frame can see, so none behind the camera draws)
+    CHECK(draw(doors, 0));
+    std::vector<std::uint64_t> drawn_there;
+    for (const std::uint64_t kept : {part::trees, part::ground, part::water}) {
+        if (work_of(*map.builder(), *std::ranges::find(parts, kept, &Part::bit)).any()) drawn_there.push_back(kept);
+    }
+    CHECK(drawn_there.size() >= 2);
     for (const std::uint64_t group : {part::facade_detail | part::water_light, part::buildings | part::doors}) {
         CHECK(draw(doors, group));
         for (const Part& p : parts) {
@@ -876,7 +884,7 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             CAPTURE(part_name);
             CHECK(work_of(*map.builder(), p).own == 0U);
         }
-        for (const std::uint64_t kept : {part::trees, part::ground, part::water}) {
+        for (const std::uint64_t kept : drawn_there) {
             const auto it = std::ranges::find(parts, kept, &Part::bit);
             const std::string_view kept_name = it->name;
             CAPTURE(kept_name);

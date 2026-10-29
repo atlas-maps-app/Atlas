@@ -1,10 +1,12 @@
 // Painter ranks (frame/Ranks.hpp).
 #include "frame/Ranks.hpp"
 
+#include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "view/Ladder.hpp"
 
 #include <algorithm>
+#include <limits>
 
 namespace atlas::frame {
 
@@ -47,12 +49,23 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const double w = camera.width();
     const double h = camera.height();
     const double near = camera.near();
+    // the frame's four sides widened by the margin, each a plane through the eye: px >= -margin is
+    // focal * kx + (cx + margin) * kz >= 0, and so on; their normals' lengths in pymath's exact sqrt
+    const double left = cx + options.margin;
+    const double right = w + options.margin - cx;
+    const double top = cy + options.margin;
+    const double bottom = h + options.margin - cy;
+    const double left_n = pymath::sqrt((focal * focal) + (left * left));
+    const double right_n = pymath::sqrt((focal * focal) + (right * right));
+    const double top_n = pymath::sqrt((focal * focal) + (top * top));
+    const double bottom_n = pymath::sqrt((focal * focal) + (bottom * bottom));
     const auto x = items.x();
     const auto y = items.y();
     const auto z = items.z();
     const auto offset = items.offset();
     const auto alive = items.alive_rows();
     const auto min_depth = items.min_depth();
+    const auto max_depth = items.max_depth();
     const auto radius = items.radius();
     const auto flags = items.flags();
     const auto cut_x = items.cut_x();
@@ -60,6 +73,13 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto kind = items.kind();
     for (std::size_t i = 0; i < rows; ++i) {
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
+        // its cut point beyond the most at which it may be drawn (a door's node), so a frame ranks only what it may
+        // draw; first, as most of a city's doors are, and with no depth (no pass reads the depth of a row it does not
+        // rank)
+        if (max_depth[i] < std::numeric_limits<float>::infinity() &&
+            ((cut_x[i] - c.x) * f.x) - (c.y * f.y) + ((cut_z[i] - c.z) * f.z) > static_cast<double>(max_depth[i])) {
+            continue;
+        }
         // gatherItems: cc = cam.cam(p); dropped nearer than its minimum depth; sorted by cc[2] + offset
         const double dx = x[i] - c.x;
         const double dy = y[i] - c.y;
@@ -76,14 +96,20 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
         // The frame sees it: its sphere against the frame and the margin (it may reach in from beyond the edges).
         const auto rad = static_cast<double>(radius[i]);
         if (kz + rad < near) continue;
+        const double kx = dx * r.x + dy * r.y + dz * r.z;
+        const double ky = dx * u.x + dy * u.y + dz * u.z;
         if (kz > rad) {
-            const double kx = dx * r.x + dy * r.y + dz * r.z;
-            const double ky = dx * u.x + dy * u.y + dz * u.z;
             const double s = focal / kz;
             const double px = cx + kx * s;
             const double py = cy - ky * s;
             const double reach = rad * s + options.margin;
             if (px + reach < 0 || px - reach > w || py + reach < 0 || py - reach > h) continue;
+        } else if ((focal * kx) + (left * kz) < -rad * left_n || (right * kz) - (focal * kx) < -rad * right_n ||
+                   (top * kz) - (focal * ky) < -rad * top_n || (focal * ky) + (bottom * kz) < -rad * bottom_n) {
+            // a sphere across the eye's plane, which projects to no circle: against the frame's four sides instead,
+            // planes through the eye widened by the margin, so one wholly beside, above or below the frame (behind the
+            // camera, across the city) takes no rank
+            continue;
         }
         drawn_[i] = 1;
         if (kz - rad < near) {
