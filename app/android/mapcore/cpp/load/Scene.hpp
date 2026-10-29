@@ -392,6 +392,9 @@ struct Scene {
     /// The building tradition the looks came from (`S['tradition']`, read), or null. The buildings' tradition values
     /// and strings view it.
     std::shared_ptr<const Tradition> tradition;
+    /// The engine's close-up cut (load/Regions.hpp's RegionConfig::close_up): an edge of a natural shore carries a quay
+    /// wall where buildings line it.
+    bool close_up = false;
 };
 
 /// Why a document cannot be loaded, and the element that showed it.

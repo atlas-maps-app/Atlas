@@ -633,8 +633,11 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
         }
         if (one_of(t.get("natural"), {"bay", "strait"}) && (relation || e.kind == osm::Kind::way)) bays.push_back(&e);
     }
+    // Paris's and the port's water quays all round, every other region's natural shores, where the engine's close-up
+    // cut gives an edge its quay wall when a building lines it (load/Cut's water_edges)
     const bool quays = region.name == "paris" || region.name == "port";
     s.natural_shore.assign(s.water.size(), !quays);
+    s.close_up = region.close_up;
     std::vector<std::vector<V2>> seas = sea_from_coast(coast, region.bbox, frame);
     if (!seas.empty() && !s.buildings.empty()) {
         // a coastline closed round the wrong side covers the town: no sea holds more than a few buildings

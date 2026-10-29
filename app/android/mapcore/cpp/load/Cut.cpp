@@ -58,6 +58,12 @@ constexpr double crown_reach = 0.8;
 /// The flags' near_water: a quay edge within 16 m.
 constexpr double near_water_reach = 16.0;
 
+/// In the engine's close-up cut (Scene::close_up), a water edge carries a quay wall where a building's wall stands
+/// within 40 m of it on its land side: Amsterdam's canal houses stand 8 to 15 m back, across their quay's street, and a
+/// church on its square 25 to 40 m (the Westerkerk on the Westermarkt), while a park's, a field's or a beach's shore
+/// has none so near.
+constexpr double quay_reach = 40.0;
+
 /// The most tiles a water ring's box may reach at a level, in a region's or the living map's cut: a region's sea,
 /// closed along a box well beyond the region, reaches a few hundred of L14. A ring beyond it (a vertex flung across the
 /// world, as the fuzzer makes) refuses the cut, which would otherwise make a piece of it for every tile; a window looks
@@ -251,16 +257,123 @@ struct ZRange {
     return geometry::pip(x, z, r);
 }
 
+/// The distance from p to segment cd.
+[[nodiscard]] double to_segment(const V2& p, const V2& c, const V2& d) noexcept {
+    const double ux = d.x - c.x;
+    const double uz = d.z - c.z;
+    const double l2 = (ux * ux) + (uz * uz);
+    const double t = l2 == 0.0 ? 0.0 : std::clamp((((p.x - c.x) * ux) + ((p.z - c.z) * uz)) / l2, 0.0, 1.0);
+    return pymath::hypot(c.x + (ux * t) - p.x, c.z + (uz * t) - p.z);
+}
+
+/// The point a fraction t of the way from p to q.
+[[nodiscard]] V2 towards(const V2& p, const V2& q, double t) noexcept {
+    return {p.x + ((q.x - p.x) * t), p.z + ((q.z - p.z) * t)};
+}
+
+/// The distance between segments ab and cd: none where they cross, else the least from an end of one to the other.
+[[nodiscard]] double between(const V2& a, const V2& b, const V2& c, const V2& d) noexcept {
+    const auto turn = [](const V2& o, const V2& p, const V2& q) {
+        return ((p.x - o.x) * (q.z - o.z)) - ((p.z - o.z) * (q.x - o.x));
+    };
+    if ((turn(a, b, c) * turn(a, b, d) < 0.0) && (turn(c, d, a) * turn(c, d, b) < 0.0)) return 0.0;
+    return std::min({to_segment(a, c, d), to_segment(b, c, d), to_segment(c, a, b), to_segment(d, a, b)});
+}
+
+/// The walls of the scene's buildings (a houseboat's aside: it floats on the water it would line), filed by the cells
+/// of a grid their boxes reach, so an edge reads only the walls within quay_reach of its own box.
+class Walls {
+public:
+    explicit Walls(const Scene& s) {
+        for (const Building& b : s.buildings) {
+            if (b.tags.is("building", "houseboat")) continue;
+            const std::size_t n = b.poly.size();
+            for (std::size_t i = 0; i < n; ++i) {
+                const V2& c = b.poly[i];
+                const V2& d = b.poly[(i + 1) % n];
+                const auto k = static_cast<std::uint32_t>(walls_.size());
+                walls_.emplace_back(c, d);
+                const std::int64_t i0 = cell(std::min(c.x, d.x));
+                const std::int64_t i1 = cell(std::max(c.x, d.x));
+                const std::int64_t j0 = cell(std::min(c.z, d.z));
+                const std::int64_t j1 = cell(std::max(c.z, d.z));
+                if ((i1 - i0 + 1) * (j1 - j0 + 1) > max_cells) {
+                    big_.push_back(k);
+                    continue;
+                }
+                for (std::int64_t x = i0; x <= i1; ++x) {
+                    for (std::int64_t z = j0; z <= j1; ++z) cells_[key(x, z)].push_back(k);
+                }
+            }
+        }
+    }
+
+    /// Whether a wall lines edge ab: its part on the edge's land side, or up to a metre beyond it into the water (n,
+    /// the edge's normal into it: a building on the edge), within quay_reach of the edge.
+    [[nodiscard]] bool line(const V2& a, const V2& b, double nx, double nz) const {
+        const auto side = [&](const V2& p) { return ((p.x - a.x) * nx) + ((p.z - a.z) * nz); };
+        const auto lines = [&](std::uint32_t k) {
+            V2 c = walls_[k].first;
+            V2 d = walls_[k].second;
+            const double sc = side(c);
+            const double sd = side(d);
+            if (sc >= 1.0 && sd >= 1.0) return false;
+            // cut where it passes a metre beyond the edge's line
+            if (sc >= 1.0) c = towards(d, c, (1.0 - sd) / (sc - sd));
+            if (sd >= 1.0) d = towards(c, d, (1.0 - sc) / (sd - sc));
+            return between(a, b, c, d) <= quay_reach;
+        };
+        if (std::ranges::any_of(big_, lines)) return true;
+        // a wall within reach has a point within reach of the edge, in a cell of the edge's box widened by it
+        const std::int64_t i0 = cell(std::min(a.x, b.x) - quay_reach);
+        const std::int64_t i1 = cell(std::max(a.x, b.x) + quay_reach);
+        const std::int64_t j0 = cell(std::min(a.z, b.z) - quay_reach);
+        const std::int64_t j1 = cell(std::max(a.z, b.z) + quay_reach);
+        if ((i1 - i0 + 1) * (j1 - j0 + 1) > max_cells) {
+            for (std::uint32_t k = 0; k < walls_.size(); ++k) {
+                if (lines(k)) return true;
+            }
+            return false;
+        }
+        for (std::int64_t x = i0; x <= i1; ++x) {
+            for (std::int64_t z = j0; z <= j1; ++z) {
+                const auto it = cells_.find(key(x, z));
+                if (it != cells_.end() && std::ranges::any_of(it->second, lines)) return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    static constexpr double size = 32.0;
+    static constexpr std::int64_t max_cells = 4096;
+
+    [[nodiscard]] static std::int64_t cell(double v) noexcept {
+        return static_cast<std::int64_t>(std::floor(std::clamp(v / size, -1e15, 1e15)));
+    }
+    [[nodiscard]] static std::uint64_t key(std::int64_t i, std::int64_t j) noexcept {
+        return (static_cast<std::uint64_t>(i) << 32U) ^ (static_cast<std::uint64_t>(j) & 0xFFFF'FFFFULL);
+    }
+
+    std::vector<std::pair<V2, V2>> walls_;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
+    std::vector<std::uint32_t> big_;
+};
+
 /// water_edges(S): every edge at least 0.4 m long of each water ring and island, its normal turned into the water (out
 /// of an island). A region knows its shores (the living map does not): a natural shore's ring has no quay, nor does an
-/// edge with water on both sides; an island's edge whose land side lies in other water has none.
+/// edge with water on both sides; an island's edge whose land side lies in other water has none. In the engine's
+/// close-up cut a natural shore's edge has one where a building's wall lines it (Walls::line); a bay's, Paris's, the
+/// port's and an island's keep theirs.
 [[nodiscard]] std::vector<Edge> water_edges(const Scene& s) {
     std::vector<Edge> out;
     const bool region = !s.natural_shore.empty();
+    std::optional<Walls> walls;
+    if (s.close_up) walls.emplace(s);
     std::vector<ZRange> zr;
     zr.reserve(s.water.size());
     for (const std::vector<V2>& r : s.water) zr.push_back(z_range(r));
-    const auto edges_of = [&](const std::vector<V2>& r, std::uint32_t k, bool hole) {
+    const auto edges_of = [&](const std::vector<V2>& r, std::uint32_t k, bool hole, bool lined) {
         const std::size_t n = r.size();
         if (n == 0) return;
         const std::size_t last = r[0] == r[n - 1] ? n - 1 : n;
@@ -281,6 +394,7 @@ struct ZRange {
                 nx = -nx;
                 nz = -nz;
             }
+            if (lined && !(walls && walls->line(a, b, nx, nz))) continue; // no building lines it: a natural shore
             const double px = mx - nx * 1.5;
             const double pz = mz - nz * 1.5;
             if (hole) {
@@ -306,10 +420,12 @@ struct ZRange {
         }
     };
     for (std::uint32_t k = 0; k < s.water.size(); ++k) {
-        if (region && s.natural_shore[k]) continue; // beaches and lake shores: no quay wall
-        edges_of(s.water[k], k, false);
+        // beaches and lake shores: no quay wall; close up, where a building lines it
+        const bool natural = region && s.natural_shore[k];
+        if (natural && !walls) continue;
+        edges_of(s.water[k], k, false, natural);
     }
-    for (std::uint32_t k = 0; k < s.water_holes.size(); ++k) edges_of(s.water_holes[k], k, true);
+    for (std::uint32_t k = 0; k < s.water_holes.size(); ++k) edges_of(s.water_holes[k], k, true, false);
     return out;
 }
 
@@ -2103,11 +2219,15 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_living(const Scene& sc
 namespace {
 
 /// What a variant is compared with: the ids of the base scene's buildings and parts (each tolerance's scene lists the
-/// same, in the same order), the attributes of those the cut keeps (a window's, in its tile), and the water.
+/// same, in the same order), the attributes of those the cut keeps (a window's, in its tile), the water and its quay
+/// edges.
 struct BaseAttributes {
     std::array<std::vector<std::int64_t>, 2> ids;                     ///< buildings, parts
     std::array<std::vector<std::optional<Attributes>>, 2> attributes; ///< buildings, parts: where kept
     std::vector<std::vector<V2>> water;
+    /// water_edges of the base: every tolerance's buildings are near them or not, as the close-up cut's quays are the
+    /// ones its whole buildings line, not the simplified ones of a tolerance
+    std::vector<Edge> edges;
 };
 
 /// Whether the cut by `plan` keeps building `b`: every one, or a window's whose reference point lies in its tile.
@@ -2121,8 +2241,8 @@ struct BaseAttributes {
 /// The base scene's attributes, as each variant compares them.
 [[nodiscard]] BaseAttributes base_attributes(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame) {
     BaseAttributes base;
-    const std::vector<Edge> edges = water_edges(scene);
-    const EdgeGrid grid(edges);
+    base.edges = water_edges(scene);
+    const EdgeGrid grid(base.edges);
     for (const bool part : {false, true}) {
         const std::vector<Building>& mine = part ? scene.parts : scene.buildings;
         std::vector<std::int64_t>& ids = base.ids.at(part ? 1 : 0);
@@ -2152,8 +2272,7 @@ struct BaseAttributes {
         return std::unexpected(
             CutError{.what = std::format("at {} m the water differs from tolerance 0's", tolerance)});
     }
-    const std::vector<Edge> edges = water_edges(other);
-    const EdgeGrid grid(edges);
+    const EdgeGrid grid(base.edges);
     for (const bool part : {false, true}) {
         const std::vector<std::int64_t>& ids = base.ids.at(part ? 1 : 0);
         const std::vector<std::optional<Attributes>>& attributes = base.attributes.at(part ? 1 : 0);

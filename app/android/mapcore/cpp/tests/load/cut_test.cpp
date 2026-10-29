@@ -6,6 +6,7 @@
 // ring's raw.json is loaded as a region (whole, and at each tolerance its pack's views and bands load it at, for the
 // variants) and cut, and every tile of its render pack must be the core's too.
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/PackStyle.hpp"
@@ -23,10 +24,15 @@
 #include "tiles/SectionWriter.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
+#include "tiles/layers/Points.hpp"
+#include "tiles/layers/Water.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -347,6 +353,83 @@ TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (
             ms(t1, t2), " ms");
     CHECK(cut->size() == c.tiles);
     CHECK(c.wrong == 0);
+}
+
+namespace {
+
+/// The quay edges of a cut (each edge's ends on the grid), and their length within 250 m of the Westerkerk, where the
+/// raw.json maps every building about the water.
+struct Quays {
+    std::set<std::array<std::int64_t, 4>> edges;
+    double near = 0.0;
+};
+
+Quays quays_of(const std::vector<tl::TileFill>& tiles) {
+    Quays out;
+    const tl::Frame frame = load::westerkerk_frame();
+    const load::V2 church = load::xz(frame, 52.3746, 4.8840);
+    for (const tl::TileFill& t : tiles) {
+        auto raw = tl::encode_tile(t);
+        ATLAS_REQUIRE_OR_RETURN(out, raw.has_value(), tl::describe(raw.error()));
+        tl::TileDecoder decoder;
+        atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test, the quays");
+        const auto tile = decoder.decode(*raw, arena);
+        ATLAS_REQUIRE_OR_RETURN(out, tile.has_value(), tl::describe(tile.error()));
+        const tl::Layer* quays = tile->layer(tl::LayerId::quay);
+        for (std::uint32_t i = 0; quays != nullptr && i < quays->count; ++i) {
+            const tl::RingView e = quays->ring(tl::quay::edge, i);
+            if (e.size() < 2) continue;
+            out.edges.insert({e.lat[0], e.lon[0], e.lat[1], e.lon[1]});
+            const double ax = frame.x(e.lon[0]);
+            const double az = frame.z(e.lat[0]);
+            const double bx = frame.x(e.lon[1]);
+            const double bz = frame.z(e.lat[1]);
+            if (atlas::pymath::hypot(((ax + bx) / 2) - church.x, ((az + bz) / 2) - church.z) < 250.0) {
+                out.near += atlas::pymath::hypot(bx - ax, bz - az);
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// The engine's close-up cut (RegionConfig::close_up: the phone's windows and the app's canal ring, which draws the
+// Westerkerk since alpha 20) against the renders' two cuts of the same place, the Westerkerk's raw.json. The living map
+// takes every water edge for a quay; the renders' region rules, which the canal ring was cut by for a view from afar,
+// give the canals natural shores, so its water had no quay walls and mirrored nothing (the user, 29 October: "I cannot
+// see any reflections on the water"). Close up, the quays are the edges a building lines: nine tenths of the living
+// map's about the Westerkerk, the rest where two water rings meet (water on both sides) or the raw.json maps no
+// building.
+TEST_CASE("load: the close-up cut gives the canals the quays their buildings line, as the living map's cut does where "
+          "the renders' region rules give none") {
+    const auto w = westerkerk();
+    ATLAS_REQUIRE(w != nullptr);
+    const Quays living = quays_of(w->tiles);
+    load::RegionConfig config{.name = "window",
+                              .frame = load::westerkerk_frame(),
+                              .bbox = {52.36, 4.87, 52.39, 4.92},
+                              .tradition = nullptr,
+                              .palette = load::amsterdam_palette()};
+    const auto cut_as = [&](bool close_up) -> std::optional<Quays> {
+        config.close_up = close_up;
+        const auto scene = load::load_region(*w->doc, config);
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, scene.has_value());
+        CHECK(scene->close_up == close_up);
+        const auto cut = load::cut_region(*scene, load::westerkerk_frame(), {});
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, cut.has_value(), cut.error().what);
+        return quays_of(*cut);
+    };
+    const std::optional<Quays> afar = cut_as(false);
+    const std::optional<Quays> close = cut_as(true);
+    ATLAS_REQUIRE(afar.has_value() && close.has_value());
+    MESSAGE("quay edges: the living map's ", living.edges.size(), " (", living.near,
+            " m within 250 m of the Westerkerk), the region rules' ", afar->edges.size(), ", close up ",
+            close->edges.size(), " (", close->near, " m)");
+    CHECK(!living.edges.empty());
+    CHECK(afar->edges.empty());
+    CHECK(std::ranges::includes(living.edges, close->edges));
+    CHECK(close->near >= 0.9 * living.near);
 }
 
 TEST_CASE("load: the input whose road grid ran CI's fuzz_load out of memory cuts the living map, its long roads kept "

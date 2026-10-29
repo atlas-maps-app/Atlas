@@ -469,15 +469,16 @@ TEST_CASE("load: a window's box, frame and place") {
     CHECK(p.zone == "Europe/Amsterdam");
     CHECK(p.tz_h == 2);
     CHECK(p.region == "window");
+    CHECK(p.close_up);
     CHECK(p.frame.lat0 == f.lat0);
 }
 
 namespace {
 
 /// Every L14 tile of the canal ring's pack in `dir` built again as a window from the region's raw.json in `regions`, in
-/// the region's frame and by its rules, in the renders' New looks with `new_looks` (as the app's canal ring and the
-/// windows around it in the Netherlands are cut), and each compared with the pack's tile, line by line of their
-/// canonical dumps.
+/// the region's frame and by its rules, in the renders' New looks and close up with `new_looks` (as the app's canal
+/// ring and the windows around it in the Netherlands are cut), and each compared with the pack's tile, line by line of
+/// their canonical dumps.
 void canal_ring_window_by_window(const std::string& regions, const std::string& dir, bool new_looks) {
     const std::string text = read_text(std::filesystem::path(regions) / "grachten" / "raw.json");
     ATLAS_REQUIRE(!text.empty());
@@ -490,6 +491,7 @@ void canal_ring_window_by_window(const std::string& regions, const std::string& 
                                   .frame = frame,
                                   .region = "grachten",
                                   .new_looks = new_looks,
+                                  .close_up = new_looks,
                                   .zone = "Europe/Amsterdam",
                                   .tz_h = 2};
     tl::Zstd zstd;
