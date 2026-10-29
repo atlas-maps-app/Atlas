@@ -197,19 +197,40 @@ constexpr vk::Extent2D size{.width = 180, .height = 400};
     return out;
 }
 
-/// Draws `camera` until the map's picture is complete (tiles built by the workers, their fades done), at most
-/// `seconds`; how many frames went out, or -1 when it never completed.
+/// The tiles the map's last frame drew: each one's handle, its cells and whether its fade is done.
+[[nodiscard]] std::vector<std::uint64_t> drawn_tiles(frame::MapFrame& map) {
+    std::vector<std::uint64_t> out;
+    for (const scene::CoverTile& t : map.world()->cover()->tiles()) {
+        out.push_back(t.drawn != nullptr ? t.drawn->handle : 0U);
+        out.push_back(t.cells);
+        out.push_back(t.fade >= 1.0F ? 1U : 0U);
+    }
+    return out;
+}
+
+/// Draws `camera` until the map's picture is complete (tiles built by the workers, their fades done) and stays so, at
+/// most `seconds`; how many frames went out, or -1 when it never completed. A complete picture waits on the named
+/// pack's tiles alone, and the packs drawn under it or beside it may take theirs in after (on a slow build, as
+/// TSan's, a frame or more after): the workers finish, and the next frame draws the same tiles.
 int draw_until_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
                         double seconds = 30.0) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
     int drawn = 0;
+    std::optional<std::vector<std::uint64_t>> complete; // the tiles of the last frame, when it was complete
     while (std::chrono::steady_clock::now() < until) {
         const standin::Drawn d = session.draw(camera, {});
         if (d.stale) session.remake();
         drawn += d.drawn ? 1 : 0;
-        if (map.complete()) return drawn;
-        // Nothing fading: the cover waits on the workers' tiles.
-        if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+        if (!map.complete()) {
+            complete.reset();
+            // Nothing fading: the cover waits on the workers' tiles.
+            if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+            continue;
+        }
+        std::vector<std::uint64_t> tiles = drawn_tiles(map);
+        if (complete == tiles) return drawn;
+        complete = std::move(tiles);
+        map.world()->residency().wait_idle();
     }
     return -1;
 }
@@ -778,15 +799,6 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         // again (a stage that keeps its result while its inputs stand changes the counts from one frame to another,
         // but not between these two), and the tiles each of the two drew (the cover may take one in or let one go at
         // rest, a frame's fills and lines more or fewer)
-        const auto cover = [&] {
-            std::vector<std::uint64_t> out;
-            for (const scene::CoverTile& t : map.world()->cover()->tiles()) {
-                out.push_back(t.drawn != nullptr ? t.drawn->handle : 0U);
-                out.push_back(t.cells);
-                out.push_back(t.fade >= 1.0F ? 1U : 0U);
-            }
-            return out;
-        };
         std::vector<std::vector<Work>> with_off(parts.size());
         std::vector<std::vector<Work>> again(parts.size());
         std::vector<bool> same_tiles(parts.size(), false);
@@ -795,11 +807,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             CHECK(draw(scene, parts[i].bit));
             with_off[i].reserve(parts.size());
             for (const Part& q : parts) with_off[i].push_back(work_of(*map.builder(), q));
-            const std::vector<std::uint64_t> tiles = cover();
+            const std::vector<std::uint64_t> tiles = drawn_tiles(map);
             CHECK(draw(scene, 0));
             again[i].reserve(parts.size());
             for (const Part& q : parts) again[i].push_back(work_of(*map.builder(), q));
-            same_tiles[i] = tiles == cover();
+            same_tiles[i] = tiles == drawn_tiles(map);
         }
         // drawn here: work of its own, its step, or less of what it shares once it is left out
         const auto present = [&](std::size_t i) {
