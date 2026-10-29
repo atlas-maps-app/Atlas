@@ -4,6 +4,7 @@ import app.atlas.geo.BBox
 import app.atlas.render.data.PackManifest
 import app.atlas.render.data.PackReader
 import app.atlas.tiles.PackFile
+import app.atlas.tiles.TilesIndex
 import app.atlas.tiles.WindowsIndex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -29,9 +30,11 @@ import java.time.Instant
 
 /**
  * `packs.json`, the list of packs the app offers: per region its id, name, country, box, the OSM time its data is
- * current to, and its files (kind, URL, bytes, SHA-256): the region pack, the place store, and the windows' data with
- * its index (`packer windows`: the data is cut into parts over the split size, the index stays whole). A build job writes one
- * `<id>.pack.json` per region it built; the publishing job merges those with the previous list.
+ * current to, and its files (kind, URL, bytes, SHA-256): the region pack, the place store, the windows' data with its
+ * index (`packer windows`), and the country's tiles with their index (`packer country`: each window's pack as the core
+ * builds it, the index naming the core's version). The data and the tiles are cut into parts over the split size, the
+ * indexes stay whole. A build job writes one `<id>.pack.json` per region it built; the publishing job merges those
+ * with the previous list.
  */
 object Manifest {
     /** Bumped when a reader would misread the file. */
@@ -70,8 +73,8 @@ object Manifest {
 
     /**
      * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, places `<id>.places.db.gz`
-     * with its `<id>.places.json` sidecar, windows' data `<id>.windows` with its index `<id>.windows.idx`), their URLs
-     * under [urlBase], and returns the merged list: the [previous]
+     * with its `<id>.places.json` sidecar, windows' data `<id>.windows` with its index `<id>.windows.idx`, tiles
+     * `<id>.tiles` with their index `<id>.tiles.idx`), their URLs under [urlBase], and returns the merged list: the [previous]
      * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before. With
      * [regions], only listed regions stay, in their order.
      */
@@ -100,6 +103,8 @@ object Manifest {
                 n.endsWith(PLACES_SUFFIX) -> n.removeSuffix(PLACES_SUFFIX)
                 n.endsWith(WINDOWS_SUFFIX) -> n.removeSuffix(WINDOWS_SUFFIX)
                 n.endsWith(WINDOWS_INDEX_SUFFIX) -> n.removeSuffix(WINDOWS_INDEX_SUFFIX)
+                n.endsWith(TILES_SUFFIX) -> n.removeSuffix(TILES_SUFFIX)
+                n.endsWith(TILES_INDEX_SUFFIX) -> n.removeSuffix(TILES_INDEX_SUFFIX)
                 else -> null
             }
         }.distinct()
@@ -128,12 +133,18 @@ object Manifest {
         val windows = File(dir, id + WINDOWS_SUFFIX).takeIf { it.isFile }
         val windowsIndex = File(dir, id + WINDOWS_INDEX_SUFFIX).takeIf { it.isFile }
         val indexHead = windowsIndex?.let { WindowsIndex.read(it.readBytes()) }
+        val tiles = File(dir, id + TILES_SUFFIX).takeIf { it.isFile }
+        val tilesIndex = File(dir, id + TILES_INDEX_SUFFIX).takeIf { it.isFile }
+        val tilesHead = tilesIndex?.let { TilesIndex.read(it.readBytes()) }
         val earlier = before?.get("files")?.let { it as? JsonArray }?.mapNotNull { it as? JsonObject }.orEmpty()
         fun earlier(kind: String) = earlier.firstOrNull { it.str("kind") == kind }
-        require(places != null || atlas != null || windows != null || windowsIndex != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
+        require(places != null || atlas != null || windows != null || windowsIndex != null || tiles != null || tilesIndex != null || earlier.isNotEmpty()) {
+            "no files for region $id in $dir"
+        }
         val sidecar = File(dir, "$id.places.json").takeIf { it.isFile }?.let { Json.parseToJsonElement(it.readText()).jsonObject }
         val bbox = region?.bbox ?: sidecar?.box("bbox") ?: atlasHead?.bbox ?: before?.box("bbox")
-        val osmTime = sidecar?.str("osm_timestamp") ?: atlasHead?.dataTime ?: indexHead?.date?.toString() ?: before?.str("osm_timestamp")
+        val osmTime = sidecar?.str("osm_timestamp") ?: atlasHead?.dataTime ?: indexHead?.date?.toString() ?: tilesHead?.date?.toString()
+            ?: before?.str("osm_timestamp")
         val atlasEntry = if (atlas != null) buildJsonObject {
             put("kind", "atlas")
             file(atlas, base, splitBytes)
@@ -165,6 +176,19 @@ object Manifest {
             put("query", indexHead.query)
             put("windows", indexHead.size)
         } else earlier(PackFile.WINDOWS_INDEX)
+        val tilesEntry = if (tiles != null) buildJsonObject {
+            put("kind", PackFile.TILES)
+            file(tiles, base, splitBytes)
+        } else earlier(PackFile.TILES)
+        // whole, as the windows' index; the core's version, so the phone takes the tiles only where its core builds them
+        val tilesIndexEntry = if (tilesIndex != null && tilesHead != null) buildJsonObject {
+            put("kind", PackFile.TILES_INDEX)
+            file(tilesIndex, base, Long.MAX_VALUE)
+            put("format", TilesIndex.VERSION)
+            put("level", tilesHead.level)
+            put("windows", tilesHead.size)
+            put("core_version", tilesHead.version)
+        } else earlier(PackFile.TILES_INDEX)
         return buildJsonObject {
             put("id", id)
             put("name", region?.name ?: before?.str("name") ?: id)
@@ -172,7 +196,7 @@ object Manifest {
             bbox?.let { b -> putJsonArray("bbox") { for (v in corners(b)) add(v) } }
             osmTime?.let { put("osm_timestamp", it) }
             (releaseOf(base) ?: before?.str("release"))?.let { put("release", it) }
-            put("files", JsonArray(listOfNotNull(placesEntry, atlasEntry, windowsEntry, indexEntry)))
+            put("files", JsonArray(listOfNotNull(placesEntry, atlasEntry, windowsEntry, indexEntry, tilesEntry, tilesIndexEntry)))
         }
     }
 
@@ -221,5 +245,9 @@ object Manifest {
     /** The windows' data (`packer windows`) and its index. */
     const val WINDOWS_SUFFIX = ".windows"
     const val WINDOWS_INDEX_SUFFIX = ".windows.idx"
+
+    /** The country's tiles (`packer country`) and their index. */
+    const val TILES_SUFFIX = ".tiles"
+    const val TILES_INDEX_SUFFIX = ".tiles.idx"
     private val ID = Regex("[a-z0-9][a-z0-9-]*")
 }
