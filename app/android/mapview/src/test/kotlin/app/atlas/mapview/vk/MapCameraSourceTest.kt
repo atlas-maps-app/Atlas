@@ -31,12 +31,27 @@ class MapCameraSourceTest {
         rest: Boolean = true,
         draw: Boolean = true,
         location: MapCameraSource.Location? = null,
+        off: Long = 0L,
     ) = MapCameraSource.Samples(
         revision = revision, t0 = t0, lat0 = lat0, lon0 = 4.88, distance0 = distance0, bearing0 = bearing0, pitch0 = 52.0, principalY0 = 440.0,
         t1 = t1, lat1 = lat1, lon1 = 4.88, distance1 = distance1, bearing1 = bearing1, pitch1 = 52.0, principalY1 = 440.0,
         principalXDp = 206.0, widthPx = 1080, heightPx = 2400, widthDp = 412, heightDp = 916, density = 1080.0 / 412.0,
-        rest = rest, follow = false, pack = 2L, profile = CameraWriter.PROFILE_REGION, draw = draw, location = location,
+        rest = rest, follow = false, pack = 2L, profile = CameraWriter.PROFILE_REGION, draw = draw, location = location, off = off,
     )
+
+    @Test
+    fun thePartsTheMapLeavesOutGoWithEveryFrameAndAreClearedWithNone() {
+        val s = MapCameraSource()
+        val off = (1L shl CameraWriter.PART_RAIN) or (1L shl CameraWriter.PART_FROSTED)
+        s.publish(samples(1, t0 = 1_000L, off = off))
+        assertTrue(s.camera(2_000L, out))
+        assertEquals(off, out.getLong(CameraWriter.PARTS_AT))
+        // the flags carry none of them
+        assertEquals(CameraWriter.REST, out.getInt(CameraWriter.FLAGS_AT))
+        s.publish(samples(2, t0 = 3_000L))
+        assertTrue(s.camera(4_000L, out))
+        assertEquals(0L, out.getLong(CameraWriter.PARTS_AT))
+    }
 
     @Test
     fun theLocationTheCoreDrawsGoesWithTheCameraAndIsClearedWhereItDrawsNone() {

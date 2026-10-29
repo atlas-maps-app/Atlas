@@ -96,6 +96,9 @@ std::expected<CameraState, CameraError> read_camera_state(std::span<const std::b
     if (s.reserved != 0U) {
         return std::unexpected(CameraError::reserved);
     }
+    if ((s.parts & ~camera_part::known) != 0U) {
+        return std::unexpected(CameraError::parts);
+    }
     if (static_cast<std::uint32_t>(s.profile) > static_cast<std::uint32_t>(Profile::world_base)) {
         return std::unexpected(CameraError::profile);
     }
@@ -160,6 +163,7 @@ const char* name_of(CameraError error) noexcept {
     case CameraError::view: return "view";
     case CameraError::principal: return "principal";
     case CameraError::location: return "location";
+    case CameraError::parts: return "parts";
     }
     return "unknown";
 }

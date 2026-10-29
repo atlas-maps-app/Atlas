@@ -57,6 +57,7 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto flags = items.flags();
     const auto cut_x = items.cut_x();
     const auto cut_z = items.cut_z();
+    const auto kind = items.kind();
     for (std::size_t i = 0; i < rows; ++i) {
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
         // gatherItems: cc = cam.cam(p); dropped nearer than its minimum depth; sorted by cc[2] + offset
@@ -66,6 +67,8 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
         const double kz = dx * f.x + dy * f.y + dz * f.z;
         depth_[i] = kz + offset[i];
         if (kz < static_cast<double>(min_depth[i])) continue;
+        // a kind the frame leaves out (its parts left out of the map) takes no slot
+        if (selectors.left_out(kind[i])) continue;
         if (options.radius_cut && (flags[i] & scene::item_flag::radius) != 0 &&
             view::java_hypot(cut_x[i] - options.cut_x, cut_z[i] - options.cut_z) > options.radius) {
             continue;
@@ -127,7 +130,6 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
 
     // The slots: the ground's, then each item's in painter's order, as many as its detail band at its depth needs.
     std::uint64_t at = options.ground_slots;
-    const auto kind = items.kind();
     const auto building = items.building();
     for (const std::uint32_t row : order_) {
         const std::size_t band = selectors.band(kind[row], depth_[row]);

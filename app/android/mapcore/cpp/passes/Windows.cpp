@@ -261,6 +261,11 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     const auto frame_width = static_cast<double>(shaders::building_window_frame_width(state.block.windows));
     constexpr std::uint8_t detailed =
         geometry::window_flag::plinth | geometry::window_flag::cornice | geometry::window_flag::glazing;
+    // the parts the map leaves out that their reach does not (Buildings::select): a church's own windows, whose
+    // records are the jobs' alone, a cabin's panes, and a kit's lines and eaves' shadows (records the CPU lays)
+    const bool no_windows = out(style::camera_part::windows);
+    const bool no_churches = out(style::camera_part::church_windows);
+    const bool kit = !out(style::camera_part::kit_details);
     std::uint32_t walls = 0;
     std::uint32_t records = 0;
     std::uint32_t nears = 0;
@@ -288,17 +293,21 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             return rank != shaders::RANK_NONE ? shaders::rank_detail(rank) : 0U;
         };
         // building_window_count: a wall's windows where its item is nearer than win_d, a houseboat cabin's (drawn with
-        // weather, as the boat) nearer than 520 m
+        // weather, as the boat) nearer than 520 m. The map leaves the windows out by their reach (Buildings::select),
+        // a cabin's here: its reach is a church's own windows'. A cabin's wall has no shop glazing, the one record a
+        // stage places after the wall's windows as the GPU counts them, so no stage writes past what is laid here.
         const auto count_of = [&](std::uint32_t wall, std::uint32_t detail) {
             const bool cabin = b.window_styles[wall] == geometry::WindowStyle::cabin;
-            if (cabin && !weather) return 0U;
+            if (cabin && (!weather || (no_windows && (b.window_flags[wall] & geometry::window_flag::glazing) == 0U))) {
+                return 0U;
+            }
             const std::uint32_t reach = cabin ? shaders::BUILDING_DETAIL_CHURCH : shaders::BUILDING_DETAIL_WINDOWS;
             return (detail & reach) != 0U ? b.window_at[wall + 1] - b.window_at[wall] : 0U;
         };
         // a church's own windows, where it has any (building_church_drawn but its wall's turn): with weather, its item
         // nearer than 520 m
         const auto church_of = [&](std::uint32_t wall, std::uint32_t detail) {
-            return weather && (b.window_flags[wall] & geometry::window_flag::church) != 0U &&
+            return weather && !no_churches && (b.window_flags[wall] & geometry::window_flag::church) != 0U &&
                    (detail & shaders::BUILDING_DETAIL_CHURCH) != 0U && wall < b.window_churches.size() &&
                    b.window_churches[wall] != 0U;
         };
@@ -491,7 +500,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     };
     for (const bool shadows : {false, true}) {
         for (const TileDraw& d : draws_) {
-            if (!weather || night || d.tile == nullptr || d.tile->kit_walls.empty()) continue;
+            if (!weather || night || !kit || d.tile == nullptr || d.tile->kit_walls.empty()) continue;
             shaders::BuildingPush push{};
             std::memcpy(&push, d.push.data(), sizeof push);
             const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
@@ -533,7 +542,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     // record a course with its slope's turn, and the lit ridges whichever way they turn (windows.slangh's
     // BuildingRoofLine)
     for (const TileDraw& d : draws_) {
-        if (!weather || night || d.tile == nullptr || (d.tile->courses.empty() && d.tile->ridges.empty())) continue;
+        if (!weather || night || !kit || d.tile == nullptr || (d.tile->courses.empty() && d.tile->ridges.empty())) {
+            continue;
+        }
         shaders::BuildingPush push{};
         std::memcpy(&push, d.push.data(), sizeof push);
         const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);

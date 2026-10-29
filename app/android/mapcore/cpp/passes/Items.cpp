@@ -541,6 +541,11 @@ void Items::release() noexcept {
 
 void Items::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("region item"); }
 
+void Items::select(const frame::FrameState& state, frame::Selectors& selectors) {
+    // the map leaves a region's items out: their items take no rank
+    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::region_items));
+}
+
 gpu::Result<void> Items::build(scene::TileBuild& b) const {
     const geometry::TileRegionItems g =
         geometry::build_region_items({.tile = &b.tile(), .head = &b.head(), .kind = kind_});
@@ -668,7 +673,10 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
 
 void Items::update(const frame::FrameState& state) {
     counts_ = {};
-    if (decide_ == nullptr || state.heaps == nullptr || !state.view) return;
+    if (decide_ == nullptr || state.heaps == nullptr || !state.view ||
+        state.camera.leaves_out(style::camera_part::region_items)) {
+        return;
+    }
     const tiles::Style* style =
         state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
     if (style == nullptr) return;

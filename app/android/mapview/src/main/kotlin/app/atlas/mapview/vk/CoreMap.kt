@@ -128,6 +128,7 @@ internal class CoreMap(
             owner = this
             core.painterOrder(MapEngine.painter)
             core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
+            core.setPacing(MapEngine.paced)
             core.map(true, texture)
         }
         val packs = said.lines().filter { it.isNotBlank() }.joinToString(", ")

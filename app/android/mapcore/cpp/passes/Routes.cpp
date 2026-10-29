@@ -109,7 +109,10 @@ void Routes::update(const frame::FrameState& state) {
     draws_.clear();
     chips_.clear();
     const routes::RouteSet* set = state.routes;
-    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value()) return;
+    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value() ||
+        state.camera.leaves_out(style::camera_part::routes)) {
+        return;
+    }
     const view::View& view = *state.view;
     const view::Camera& camera = view.camera();
     const view::GroundFrame& ground = *state.ground_frame;

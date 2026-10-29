@@ -20,7 +20,7 @@
 // doors), and what each pass costs the GPU, measured as the phone's switches do, by leaving it out (FrameOptions::
 // passes): the median of three frames' GPU time and fragments with every pass, then with each pass that drew alone
 // (beside the composite: what it shades with nothing hiding it) and without it (what the frame saves, the fragments it
-// hid from the others counted against it), and without the facades' detail (style::camera_flag::no_facades).
+// hid from the others counted against it), and without the facades' detail (style::camera_part::facade_detail).
 // ATLAS_PINCH_OFF: the parts every frame leaves out, as the app's switches do ("cloud_shadows,water": alpha 19's
 // defaults; also trees, shadows, facades). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather:
 // its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's
@@ -475,23 +475,23 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             for (const auto& [m, n] : kinds) MESSAGE(std::format("validation {} ({}x): {}", when, n, m));
         };
         // the parts every frame leaves out (ATLAS_PINCH_OFF), as the app's switches name them
-        std::uint32_t always_off = 0U;
+        std::uint64_t always_off = 0U;
         {
-            namespace flag = style::camera_flag;
+            namespace part = style::camera_part;
             const std::string named = std::format(",{},", environment("ATLAS_PINCH_OFF"));
-            for (const auto& [name, bit] :
-                 {std::pair{"trees", flag::no_trees}, std::pair{"shadows", flag::no_shadows},
-                  std::pair{"cloud_shadows", flag::no_cloud_shadows}, std::pair{"water", flag::no_water},
-                  std::pair{"facades", flag::no_facades}}) {
-                if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bit;
+            for (const auto& [name, bits] :
+                 {std::pair{"trees", part::trees}, std::pair{"shadows", part::building_shadows | part::park_shadows},
+                  std::pair{"cloud_shadows", part::cloud_shadows}, std::pair{"water", part::water_light},
+                  std::pair{"facades", part::facade_detail}}) {
+                if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bits;
             }
         }
         const Listed* held = nullptr;
-        // a frame at `d` with the parts `off` leaves out (style::camera_flag::no_*), the pack named as MapController
-        // names it; its line in the log
-        const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint32_t off = 0U) {
+        // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
+        // it; its line in the log
+        const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
             style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
-            c.flags |= off | always_off;
+            c.parts |= off | always_off;
             held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
             const auto at = std::chrono::steady_clock::now();
@@ -557,7 +557,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     if (name != "composite" && c.draws + c.dispatches > 0) drew.emplace_back(name, i);
                 }
                 // the median of three frames' GPU time and fragments, after three (the GPU's are an earlier frame's)
-                const auto cost = [&](std::uint64_t passes, std::uint32_t off) {
+                const auto cost = [&](std::uint64_t passes, std::uint64_t off) {
                     map.set_passes(passes);
                     std::vector<double> ms;
                     std::vector<double> fragments;
@@ -589,7 +589,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 lines += std::format("  {:<12} alone gpu {:6.0f} ms {:7.0f}k fragments\n", "composite", nothing_ms,
                                      nothing_fragments);
                 const auto [no_facades_ms, no_facades_fragments] =
-                    cost(~std::uint64_t{0}, style::camera_flag::no_facades);
+                    cost(~std::uint64_t{0}, style::camera_part::facade_detail);
                 lines += std::format("  {:<12} saves {:6.0f} ms {:7.0f}k (without it: {:.0f} ms, {:.0f}k)\n", "facades",
                                      all_ms - no_facades_ms, all_fragments - no_facades_fragments, no_facades_ms,
                                      no_facades_fragments);
@@ -602,11 +602,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             // ATLAS_PINCH_PARTS: each part the phone's switches leave out, alone, its frame's draws, triangles and
             // fragments (the GPU's counts are an earlier frame's: the fourth frame's line is the part's)
             if (!environment("ATLAS_PINCH_PARTS").empty()) {
-                namespace flag = style::camera_flag;
+                namespace part = style::camera_part;
                 for (const auto& [name, off] :
-                     {std::pair{"trees", flag::no_trees}, std::pair{"shadows", flag::no_shadows},
-                      std::pair{"cloud shadows", flag::no_cloud_shadows}, std::pair{"water light", flag::no_water},
-                      std::pair{"facade detail", flag::no_facades}}) {
+                     {std::pair{"trees", part::trees}, std::pair{"shadows", part::building_shadows},
+                      std::pair{"cloud shadows", part::cloud_shadows}, std::pair{"water light", part::water_light},
+                      std::pair{"facade detail", part::facade_detail}}) {
                     for (int k = 0; k < 4; ++k) (void)draw(std::format("without {}", name), d, true, k == 3, off);
                 }
                 for (int k = 0; k < 4; ++k) (void)draw("with every part", d, true, k == 3);

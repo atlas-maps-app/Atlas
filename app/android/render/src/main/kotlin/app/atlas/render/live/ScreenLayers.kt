@@ -238,11 +238,13 @@ object ScreenLayers {
      * The screen layers of a render with camera [cam], theme snapshot [th] (a `THEMES` entry with its sun vector `_L`),
      * the camera's settings [cfg] (`W`, `H`, `target`, `pitch`, `haze0`, `haze1`, `no_fin`), the `THEMES` key [themeKey]
      * and the render's [layer]. Projects the sun's point with [cam] only where the sky layer needs it, as the render does.
-     * [drawCloudShadows] false leaves wfx's cloud shadows out, where the render draws them.
+     * [drawCloudShadows] false leaves wfx's cloud shadows out, where the render draws them; [drawRain] its rain and
+     * [drawWash] the golden wash alike.
      */
     fun of(
         cam: Camera, th: Map<String, Any?>, cfg: Map<String, Any?>, themeKey: String, layer: String? = null,
         drawHaze: Boolean = true, drawVignette: Boolean = true, drawGrain: Boolean = true, drawCloudShadows: Boolean = true,
+        drawRain: Boolean = true, drawWash: Boolean = true,
     ): Frame {
         val W = pyNum(cfg["W"]); val H = pyNum(cfg["H"])
         val weather = truthy(th["wx"])
@@ -268,14 +270,14 @@ object ScreenLayers {
         var cut = Double.NaN
         if (weather && truthy(th["cloud_shadows"]) && !eye && drawCloudShadows) cut = -7 * (0.62 - pyNum(th["cloud_shadows"]) * 0.3)
         var rain: Long? = null
-        if (weather && truthy(th["wet"])) {
+        if (weather && truthy(th["wet"]) && drawRain) {
             @Suppress("UNCHECKED_CAST")
             rain = PyMath.int(pyNum((th["wx"] as Map<String, Any?>)["wind"]) * 0.8)
         }
         val fin = weather && layer != "front" && !eye && !truthy(cfg["no_fin"])
         return Frame(
             W, H, hy, weather, night, overcast, eye, layer, th["sky_top"] as String, th["sky_hor"] as String, clouds, PyMath.min(H, hy + 2), sun,
-            th["haze"] as String, haze, themeKey == "golden", cut, rain, fin,
+            th["haze"] as String, haze, themeKey == "golden" && drawWash, cut, rain, fin,
             drawsHaze = drawHaze, drawsVignette = drawVignette, drawsGrain = drawGrain,
         )
     }

@@ -64,7 +64,8 @@ void Markers::update(const frame::FrameState& state) {
     s.count = 0;
     draws_.clear();
     const markers::MarkerSet* set = state.markers;
-    if (set == nullptr || set->markers().empty() || !state.view.has_value() || !state.ground_frame.has_value()) {
+    if (set == nullptr || set->markers().empty() || !state.view.has_value() || !state.ground_frame.has_value() ||
+        state.camera.leaves_out(style::camera_part::markers)) {
         xs_.clear();
         ys_.clear();
         visible_.clear();

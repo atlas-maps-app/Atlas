@@ -130,7 +130,8 @@ namespace {
 void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.quays.clear();
-    if (!f.weather || no_quays_) return; // `if th.get('wx')`: without weather the water is flat and has no walls
+    // `if th.get('wx')`: without weather the water is flat and has no walls
+    if (!f.weather || no_quays_ || f.out(style::camera_part::quays)) return;
     const shaders::Theme& theme = state.block.theme;
     const std::array<double, 3>& light = f.light;
     // every piece of the drawn tiles, in water_edges' order: the sun's pieces where its bits have come, else each

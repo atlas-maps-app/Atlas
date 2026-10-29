@@ -76,7 +76,7 @@ void Ground::decide_sky(const view::Camera& cam, const frame::FrameState& state)
     f.glow = false;
     f.city_glow = false;
     const std::optional<view::Layers>& l = state.layers;
-    if (!l || !l->clouds || l->eye) return;
+    if (!l || !l->clouds || l->eye || f.out(style::camera_part::sky)) return;
     f.sky_bottom = printed(l->sky_bottom, 1);
     if (l->sun) {
         // '<circle cx="%.1f" cy="%.1f" r="%d" fill="url(#sunglow)"/>'

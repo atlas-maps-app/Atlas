@@ -65,6 +65,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace atlas;
@@ -1967,6 +1968,105 @@ TEST_CASE(
     check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "kit dry", packs, dry_th, 3);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+namespace {
+
+/// One more frame of `cam` at `th` in the settled scene `s`, with the parts `off` left out (style::camera_part): the
+/// buildings' window counts.
+[[nodiscard]] passes::Buildings::WindowCounts parts_frame(Scene& s, style::CameraState cam, const style::ThemeBlock& th,
+                                                          std::uint64_t off) {
+    cam.parts = off;
+    s.now += 0.25;
+    s.builder->set_inputs(
+        {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+    auto report = s.renderer->draw(0);
+    if (!report) FAIL("a frame failed: " << report.error().text());
+    s.renderer->drain();
+    return s.buildings->window_counts();
+}
+
+} // namespace
+
+TEST_CASE(
+    "buildings: a facade's parts the map leaves out, which the bundled packs do not show: the material faces, the "
+    "hoist beams and a kit's details, each one's records gone with its switch and the others' as they were") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration x1{.config = gpu::FrameConfig::x1,
+                                .route = gpu::Route::renderpass,
+                                .form = gpu::FrameForm::composite,
+                                .target = gpu::CompositeTarget::direct};
+    namespace part = style::camera_part;
+    using Counts = passes::Buildings::WindowCounts;
+    const double d = 1080.0 / 412.0;
+    // the materials tile near (its glass office, metal shed, stone home and garage, the canal house's hoist beam) and
+    // the kit tile close (its courses, ridges, boards' lines and eaves' shadows), as their own cases draw them
+    const std::string materials =
+        synthetic_pack(test::building::materials_tile(), test::building::materials_features, "materials-parts");
+    const std::string kit = test::building::write_pack(test::building::kit_tile(), test::building::kit_features,
+                                                       "buildings-test-kit-parts", test::building::kit_pack());
+    struct View {
+        const char* name;
+        std::string path;
+        style::CameraState camera;
+    };
+    for (const View& v :
+         {View{.name = "materials",
+               .path = materials,
+               .camera = camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d)},
+          View{.name = "kit", .path = kit, .camera = camera(52.37422, 4.88486, 20.0, 50.0, 160.0, 1080, 2400, d)}}) {
+        const std::string_view view = v.name;
+        CAPTURE(view);
+        const std::array<PackFile, 1> packs{PackFile{.id = v.name, .path = v.path}};
+        auto made = make_scene(*session, *cache, x1, v.camera.width_px, v.camera.height_px, packs, 0x808080);
+        ATLAS_REQUIRE(made.has_value());
+        Scene& s = *made;
+        style::CameraState cam = v.camera;
+        cam.flags |= style::camera_flag::rest;
+        ATLAS_REQUIRE(draw(s, cam, sunny()).has_value());
+        const Counts all = parts_frame(s, cam, sunny(), 0);
+        const auto materials_of = [](const Counts& c) { return c.material_fills + c.material_lines; };
+        const auto kit_of = [](const Counts& c) { return c.kit_lines + c.kit_shadows + c.roof_lines; };
+        // each part: its records gone with its switch, the windows' and the others' as they were
+        const Counts no_materials = parts_frame(s, cam, sunny(), part::material_faces);
+        CHECK(materials_of(no_materials) == 0U);
+        CHECK(no_materials.stage_walls.at(std::to_underlying(passes::Buildings::WindowStage::materials)) == 0U);
+        CHECK(no_materials.beams == all.beams);
+        CHECK(kit_of(no_materials) == kit_of(all));
+        CHECK(no_materials.windows == all.windows);
+        const Counts no_beams = parts_frame(s, cam, sunny(), part::hoist_beams);
+        CHECK(no_beams.beams == 0U);
+        CHECK(materials_of(no_beams) == materials_of(all));
+        CHECK(kit_of(no_beams) == kit_of(all));
+        const Counts no_kit = parts_frame(s, cam, sunny(), part::kit_details);
+        CHECK(kit_of(no_kit) == 0U);
+        CHECK(materials_of(no_kit) == materials_of(all));
+        CHECK(no_kit.windows == all.windows);
+        // the facades' detail as a group: no facade wall decided, no record of any part
+        const Counts none = parts_frame(s, cam, sunny(), part::facade_detail);
+        CHECK(none.walls == 0U);
+        CHECK(materials_of(none) + kit_of(none) + none.beams + none.windows + none.churches + none.facades == 0U);
+        // and every one of them again
+        const Counts again = parts_frame(s, cam, sunny(), 0);
+        CHECK(materials_of(again) == materials_of(all));
+        CHECK(kit_of(again) == kit_of(all));
+        CHECK(again.beams == all.beams);
+        MESSAGE(
+            std::format("{}: {} material records, {} hoist beams, {} kit lines and shadows; none with their switches",
+                        v.name, materials_of(all), all.beams, kit_of(all)));
+        if (view == "materials") {
+            CHECK(materials_of(all) > 0U);
+            CHECK(all.beams > 0U);
+        } else {
+            CHECK(kit_of(all) > 0U);
+        }
+    }
+    std::error_code ignored;
+    std::filesystem::remove(materials, ignored);
+    std::filesystem::remove(kit, ignored);
 }
 
 TEST_CASE("buildings: the building the app asks about drawn plain in its flat colour, hatched before its answer") {

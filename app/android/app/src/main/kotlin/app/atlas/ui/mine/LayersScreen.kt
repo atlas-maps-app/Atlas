@@ -58,6 +58,9 @@ import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapOverlays
+import app.atlas.mapview.MapPart
+import app.atlas.mapview.MapPartGroup
+import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapState
 import app.atlas.mapview.MapStyle
 import app.atlas.mapview.Theme
@@ -98,9 +101,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val trueDepth by settings.flow(SettingsKeys.MAP_TRUE_DEPTH, true).collectAsStateWithLifecycle(true)
-    val cloudShadows by settings.flow(SettingsKeys.MAP_CLOUD_SHADOWS, false).collectAsStateWithLifecycle(false)
-    val waterLight by settings.flow(SettingsKeys.MAP_WATER_LIGHT, false).collectAsStateWithLifecycle(false)
-    val facades by settings.flow(SettingsKeys.MAP_FACADES, true).collectAsStateWithLifecycle(true)
+    val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
+    val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
@@ -167,22 +169,9 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onTrueDepth = { on -> scope.launch { settings.set(SettingsKeys.MAP_TRUE_DEPTH, on) } },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
-                    PartChips(
-                        listOf(
-                            Triple(stringResource(R.string.mine_layers_cloud_shadows), cloudShadows) { on: Boolean ->
-                                scope.launch { settings.set(SettingsKeys.MAP_CLOUD_SHADOWS, on) }
-                                Unit
-                            },
-                            Triple(stringResource(R.string.mine_layers_water_light), waterLight) { on: Boolean ->
-                                scope.launch { settings.set(SettingsKeys.MAP_WATER_LIGHT, on) }
-                                Unit
-                            },
-                            Triple(stringResource(R.string.mine_layers_facades), facades) { on: Boolean ->
-                                scope.launch { settings.set(SettingsKeys.MAP_FACADES, on) }
-                                Unit
-                            },
-                        ),
-                    )
+                    PartChips(partsOff, pacing, onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } }) { off ->
+                        scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
+                    }
                 }
                 LightScrubber(minutes, sun, twelve, onChange = { minutes = it }, onNow = { minutes = LayersModel.minuteOf(clock.instant(), zone) })
                 NamesRow(language) { code -> scope.launch { settings.set(SettingsKeys.NAME_LANGUAGE, code) } }
@@ -270,25 +259,107 @@ private fun ScreenChips(
 }
 
 /**
- * A debug build's switches of the core's parts, each a chip as the screen's effects are (dark when drawn): off, the map
- * leaves that part out, so the map's panel (its frame intervals and GPU time) shows on the phone what the part costs.
- * The trees and the soft shadows are the map's own layers, above.
+ * A debug build's switches of the core's parts, every layer and effect a chip as the screen's effects are (dark when
+ * drawn): off, the map leaves that part out whole, so the map's panel (its frame intervals and GPU time) shows on the
+ * phone what the part costs. A row a group: its own chip first, which turns all of its parts off while any is drawn and
+ * on again when none is (dark when all are drawn, grey when some), then the parts listed under it. The map's own layers
+ * (the trees, the soft shadows) leave theirs out too. Last, the frame pacing (dark when on, off by default): each frame
+ * presented at a timeline its work can make, as alpha 15 drew.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PartChips(parts: List<Triple<String, Boolean, (Boolean) -> Unit>>) {
+private fun PartChips(off: Set<MapPart>, pacing: Boolean, onPacing: (Boolean) -> Unit, onChange: (Set<MapPart>) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardLabel(stringResource(R.string.mine_layers_parts))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((name, on, toggle) in parts) {
+        for (group in MapPartGroup.entries) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val drawn = group.parts.count { it !in off }
+                val name = stringResource(groupName(group))
+                // all drawn: dark; some: grey; none: the pale tiles' grey
+                val fill = when (drawn) { group.parts.size -> INK; 0 -> 0xFFF4F5F7; else -> 0xFF9AA0AB }
                 TextPill(
-                    name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
-                    Modifier.semantics { contentDescription = name },
-                    h = 36f, padH = 12f, onClick = { toggle(!on) },
+                    name, bt(12f, 800, 15.5f), fill, if (drawn == 0) INK else WHITE, Modifier.semantics { contentDescription = name },
+                    h = 36f, padH = 12f, symbol = "ui.layers", symbolSize = 15f, gap = 5f, onClick = { onChange(MapParts.toggled(off, group)) },
                 )
+                for (part in group.listed) {
+                    val on = part !in off
+                    val label = stringResource(partName(part))
+                    TextPill(
+                        label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
+                        Modifier.semantics { contentDescription = label },
+                        h = 36f, padH = 12f, onClick = { onChange(MapParts.toggled(off, part)) },
+                    )
+                }
             }
         }
+        val label = stringResource(R.string.mine_part_pacing)
+        TextPill(
+            label, bt(12f, 700, 15.5f), if (pacing) INK else 0xFFF4F5F7, if (pacing) WHITE else INK,
+            Modifier.semantics { contentDescription = label },
+            h = 36f, padH = 12f, onClick = { onPacing(!pacing) },
+        )
     }
+}
+
+private fun groupName(group: MapPartGroup): Int = when (group) {
+    MapPartGroup.GROUND -> R.string.mine_parts_ground
+    MapPartGroup.WATER_LIGHT -> R.string.mine_layers_water_light
+    MapPartGroup.WEATHER -> R.string.mine_parts_weather
+    MapPartGroup.NIGHT -> R.string.mine_parts_night
+    MapPartGroup.SHADOWS -> R.string.mine_parts_shadows
+    MapPartGroup.BUILDINGS -> R.string.mine_parts_buildings
+    MapPartGroup.FACADES -> R.string.mine_layers_facades
+    MapPartGroup.TREES -> R.string.mine_parts_trees_things
+    MapPartGroup.OVER -> R.string.mine_parts_over
+}
+
+private fun partName(part: MapPart): Int = when (part) {
+    MapPart.GROUND -> R.string.mine_part_ground
+    MapPart.WATER -> R.string.mine_part_water
+    MapPart.CANOPY -> R.string.mine_part_canopy
+    MapPart.GROUND_LINES -> R.string.mine_part_ground_lines
+    MapPart.SETTS -> R.string.mine_part_setts
+    MapPart.GROUND_TEXT -> R.string.mine_part_ground_text
+    MapPart.QUAYS -> R.string.mine_part_quays
+    MapPart.SKY -> R.string.mine_part_sky
+    MapPart.BUILDING_SHADOWS -> R.string.mine_part_building_shadows
+    MapPart.SHADOW_BLUR -> R.string.mine_part_shadow_blur
+    MapPart.PARK_SHADOWS -> R.string.mine_part_park_shadows
+    MapPart.CLOUD_SHADOWS -> R.string.mine_layers_cloud_shadows
+    MapPart.REFLECTIONS -> R.string.mine_part_reflections
+    MapPart.RIPPLE -> R.string.mine_part_ripple
+    MapPart.GLITTER -> R.string.mine_part_glitter
+    MapPart.RINGS -> R.string.mine_part_rings
+    MapPart.GLINTS -> R.string.mine_part_glints
+    MapPart.WATER_STREAKS -> R.string.mine_part_water_streaks
+    MapPart.LIT_STREETS -> R.string.mine_part_lit_streets
+    MapPart.WET_CORES -> R.string.mine_part_wet_cores
+    MapPart.LAMP_POOLS -> R.string.mine_part_lamp_pools
+    MapPart.LAMP_HALOS -> R.string.mine_part_lamp_halos
+    MapPart.LAMP_STREAKS -> R.string.mine_part_lamp_streaks
+    MapPart.RAIN -> R.string.mine_part_rain
+    MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
+    MapPart.WALLS -> R.string.mine_part_walls
+    MapPart.ROOFS -> R.string.mine_part_roofs
+    MapPart.ROOF_EDGES -> R.string.mine_part_roof_edges
+    MapPart.WINDOWS -> R.string.mine_part_windows
+    MapPart.WINDOW_DEPTH -> R.string.mine_part_window_depth
+    MapPart.FLAT_DETAIL -> R.string.mine_part_flat_detail
+    MapPart.CHURCH_WINDOWS -> R.string.mine_part_church_windows
+    MapPart.MATERIAL_FACES -> R.string.mine_part_material_faces
+    MapPart.HOIST_BEAMS -> R.string.mine_part_hoist_beams
+    MapPart.KIT_DETAILS -> R.string.mine_part_kit_details
+    MapPart.DOORS -> R.string.mine_part_doors
+    MapPart.HOUSE_NUMBERS -> R.string.mine_part_house_numbers
+    MapPart.TREES -> R.string.mine_part_trees
+    MapPart.LEAF_FILTERS -> R.string.mine_part_leaf_filters
+    MapPart.FURNITURE -> R.string.mine_part_furniture
+    MapPart.REGION_ITEMS -> R.string.mine_part_region_items
+    MapPart.LABELS -> R.string.mine_part_labels
+    MapPart.ROUTES -> R.string.mine_part_routes
+    MapPart.MARKERS -> R.string.mine_part_markers
+    MapPart.LOCATION -> R.string.mine_part_location
+    MapPart.FROSTED -> R.string.mine_part_frosted
 }
 
 private fun layerName(key: String): Int = when (key) {

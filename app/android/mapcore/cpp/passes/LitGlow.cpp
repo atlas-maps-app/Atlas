@@ -112,6 +112,8 @@ void Ground::decide_lit(const view::Camera& cam) {
     f.lit_run_points.clear();
     f.lit_opacity = f.weather ? 0.3 : 0.4;
     if (!f.night || no_lit_ || only_setts_ || f.tiles.empty()) return;
+    // neither the glow nor (on a wet night) the cores, where the map leaves them out
+    if (f.out(style::camera_part::lit_streets) && (!f.wet || f.out(style::camera_part::wet_cores))) return;
     // `eye = th.get('wx') and cfg.get('pitch', 90) < 10`
     if (f.weather && cam.spec().pitch < 10) return;
     // the lit roads in S['roads']'s order across the drawn tiles
@@ -232,11 +234,14 @@ void Ground::write_lit(std::vector<std::uint32_t>& words, const frame::FrameStat
                              .y0 = 0,
                              .x1 = static_cast<std::int32_t>(s->extent.width),
                              .y1 = static_cast<std::int32_t>(s->extent.height)};
-    plan.cores = f.wet ? frame_box : PixelBox{};
+    plan.cores = f.wet && !f.out(style::camera_part::wet_cores) ? frame_box : PixelBox{};
     const auto density = static_cast<float>(state.camera.density);
     const fx::GlowBlur blur = fx::litglow_blur(density);
     plan.filtered = glow_filtered(state) && blur.side > 0 && blur.half() <= glow_half_most;
-    if (!plan.filtered) {
+    if (f.out(style::camera_part::lit_streets)) {
+        // the map leaves the glow out: neither its layer nor its filter (the cores alone)
+        plan.filtered = false;
+    } else if (!plan.filtered) {
         // the filters off: the group screened as it is drawn, over the frame
         plan.glow = true;
         plan.layer = frame_box;

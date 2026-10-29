@@ -135,7 +135,9 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
         // record_walls' and record_roofs' order: the walls of every tile, the nearest first, then the near cells, then
         // the roofs; each run of a tile's list in jobs of at most 64
         for (const TileDraw& d : draws_) {
-            const std::array<std::uint32_t, lists> runs{d.edged_runs, d.cell_runs, d.plain_runs};
+            // (the plain list's runs are the roofs' thin edges' too: no kept roofs where the map leaves them out)
+            const std::array<std::uint32_t, lists> runs{d.edged_runs, d.cell_runs,
+                                                        out(style::camera_part::roofs) ? 0U : d.plain_runs};
             const std::array<std::uint32_t, lists> firsts{d.runs_first, d.runs_first + d.edged_runs,
                                                           d.runs_first + d.edged_runs + d.cell_runs};
             const std::array<std::uint32_t, lists> ats{d.edged_at, d.cells_at, d.plain_at};

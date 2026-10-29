@@ -317,21 +317,21 @@ struct TrackShadow {
 /// principal point, size and near plane), the radius cut (its radius and target), the plate's half side, and the
 /// moment's switches; bit for bit.
 struct DecisionKey {
-    std::array<std::uint64_t, 23> bits{};
+    std::array<std::uint64_t, 24> bits{};
     [[nodiscard]] bool operator==(const DecisionKey&) const noexcept = default;
 };
 
 /// What the ground decided for a frame (select), shared by its parts and by the twin.
 struct GroundFrame {
+    /// The parts the map leaves out this frame (the camera state's, style::camera_part): the ground decides none of
+    /// its own of them, so none is laid or drawn.
+    std::uint64_t left_out = 0;
+    [[nodiscard]] bool out(std::uint64_t part) const noexcept { return (left_out & part) != 0U; }
     bool valid = false;
     bool exact = false; ///< the decisions are the port's (the camera rests)
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
-    /// The water's light is drawn (the map does not leave it out: style::camera_flag::no_water); without it neither its
-    /// draws nor its decisions are made (the reflections, glitter, rings and glints), which cost the render thread most
-    /// of the ground's decisions over the canals.
-    bool water_light = true;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;

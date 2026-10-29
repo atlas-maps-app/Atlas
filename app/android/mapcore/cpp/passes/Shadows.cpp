@@ -114,9 +114,9 @@ const SoftShadows* Ground::soft_shadows() const noexcept {
 
 bool Ground::soft(const frame::FrameState& state) const noexcept {
     // a filter of the renders: in full mode alone (structural mode turns the filters off on both sides, and the
-    // likeness's structural references draw the group unfiltered)
+    // likeness's structural references draw the group unfiltered); sharp where the map leaves the blur out
     return frame_.shadows && state.mode == frame::Mode::full && state.theme.shadow_blur > 0 && pipelines_ != nullptr &&
-           pipelines_->soft != nullptr;
+           pipelines_->soft != nullptr && !frame_.out(style::camera_part::shadow_blur);
 }
 
 void Ground::decide_shadows(const DrawnTile& t, TileDecisions& d) const {

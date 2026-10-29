@@ -317,6 +317,9 @@ private:
     void forget_ahead();
 
     std::uint16_t kind_ = 0;
+    /// The parts the map leaves out this frame (the camera state's, style::camera_part), from select on.
+    std::uint64_t left_out_ = 0;
+    [[nodiscard]] bool out(std::uint64_t part) const noexcept { return (left_out_ & part) != 0U; }
     mutable Emitted emitted_;
     mutable std::vector<twin::ElementDepth> depths_;
     Lighting lighting_;

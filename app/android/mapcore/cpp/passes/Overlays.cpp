@@ -118,7 +118,8 @@ void Overlays::release() noexcept {
 void Overlays::update(const frame::FrameState& state) {
     Placed& placed = slots_.at(state.slot & 1U);
     placed = {};
-    if (!state.camera.has(style::camera_flag::location) || !state.view.has_value() || !state.ground_frame.has_value()) {
+    if (!state.camera.has(style::camera_flag::location) || !state.view.has_value() || !state.ground_frame.has_value() ||
+        state.camera.leaves_out(style::camera_part::location)) {
         return;
     }
     const view::View& view = *state.view;

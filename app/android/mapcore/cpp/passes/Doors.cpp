@@ -634,9 +634,10 @@ void Doors::release() noexcept {
 void Doors::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("door"); }
 
 void Doors::select(const frame::FrameState& state, frame::Selectors& selectors) {
-    (void)state;
     const std::array<double, 2> details{frame::Selectors::never, frame::Selectors::never};
     selectors.set_details(kind_, details);
+    // the doors left out of the map: their items take no rank
+    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::doors));
 }
 
 gpu::Result<void> Doors::build(scene::TileBuild& b) const {
@@ -683,7 +684,8 @@ void Doors::update(const frame::FrameState& state) {
     faces_.clear();
     parts_.clear();
     glyphs_.clear();
-    if (fills_ == nullptr || !state.view) return;
+    if (fills_ == nullptr || !state.view || state.camera.leaves_out(style::camera_part::doors)) return;
+    const bool numbers = !state.camera.leaves_out(style::camera_part::house_numbers);
     const tiles::Style* style =
         state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
     if (style == nullptr) return;
@@ -695,7 +697,7 @@ void Doors::update(const frame::FrameState& state) {
     const sh::FrameCamera& camera = state.block.camera;
     for (const DoorShape& d : doors) {
         door_records(d, camera, style->doors, night, faces_, parts_);
-        if (!d.plate) continue;
+        if (!d.plate || !numbers) continue;
         const text::TextRun run = door_number_run(d, style->doors, night, state.rest);
         const Shaped& s = shaped(run);
         if (!s.ok) continue;
@@ -764,7 +766,6 @@ void Doors::update(const frame::FrameState& state) {
 }
 
 void Doors::record(const frame::Recording& recording, std::uint32_t phase) {
-    if (recording.state.camera.has(style::camera_flag::no_facades)) return; // the map leaves the facades' detail out
     switch (phase) {
     case draw_phase: record_draw(recording); break;
     case numbers_phase: record_numbers(recording); break;

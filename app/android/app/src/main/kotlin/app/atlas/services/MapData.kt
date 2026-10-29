@@ -6,6 +6,7 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapcore.UserEdit
 import app.atlas.mapview.MapEngine
+import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
 import app.atlas.providers.Forecast
 import app.atlas.render.data.HttpPost
@@ -168,16 +169,17 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { trueDepth -> MapEngine.painterOrder(!trueDepth) }
         }
-        // the core's parts a debug build's Look settings switch, so the map's panel shows their cost: the clouds' shadows
-        // and the water's light off when unset until they are worked on (the user, 28 October: "turn off cloud shadows and
-        // water light by default without them it runs pretty well"), the facades' detail on; set before the settings are
-        // read, so no first frame draws them
-        MapEngine.leaveOut(cloudShadows = false, waterLight = false, facades = true)
+        // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {
-            services.settings.data
-                .map { Triple(it[SettingsKeys.MAP_CLOUD_SHADOWS] ?: false, it[SettingsKeys.MAP_WATER_LIGHT] ?: false, it[SettingsKeys.MAP_FACADES] ?: true) }
-                .distinctUntilChanged()
-                .collect { (cloudShadows, waterLight, facades) -> MapEngine.leaveOut(cloudShadows, waterLight, facades) }
+            services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
+        }
+        // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
+        // cost: the clouds' shadows and the water's light off when unset until they are worked on (the user, 28 October:
+        // "turn off cloud shadows and water light by default without them it runs pretty well"); set before the settings
+        // are read, so no first frame draws them
+        MapEngine.leaveOut(MapParts.byDefault)
+        services.scope.launch {
+            services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }
         }
     }
 
