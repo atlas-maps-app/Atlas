@@ -41,14 +41,16 @@ import java.util.zip.GZIPInputStream
  * cell's in order of x, then y, so a cell's packs are one range.
  */
 object CountryTiles {
-    const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N]
+    const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N]
       A country's tiles from its windows' data (packer windows): every window built by the core's stage P tool (--core)
       as the phone builds it (atlas_stagep windows), each window's pack with its chunks and its style compressed at
       zstd 19 and every other byte the core's, checked to decode to the core's own tiles and style, back to back in
       <out-dir>/<id>.tiles, with their index <id>.tiles.idx (TilesIndex); a window whose pack holds no tile is listed
       with no bytes. The answers are unzipped --batch windows at a time (400 unless given) into a folder in <out-dir>,
       deleted once built. --id defaults to the data's name less .windows; --threads, the tool's and the compression's,
-      to the machine's cores. Any window the tool cannot build fails the run, named."""
+      to the machine's cores. Any window the tool cannot build fails the run, named, unless --allow-failed lets that
+      many through: they are left out of the index (the phone builds them from their data, with the same core) and
+      named, each on a line of its own beginning "not built"."""
 
     /** The windows' level: load::window_level, the windows' data's. */
     const val LEVEL = WindowPacks.LEVEL
@@ -90,8 +92,10 @@ object CountryTiles {
         val unzipMillis: Long,
         val buildMillis: Long,
         val packMillis: Long,
+        /** The windows the core's tool could not build, with why ("14/x/y: why"), left out of the index; --allow-failed's. */
+        val failed: List<String> = emptyList(),
     ) {
-        val empty: Int get() = windows - drawn
+        val empty: Int get() = windows - drawn - failed.size
     }
 
     /** `packer country …` ([args] start with the command word); [out] gets the report lines. Returns the exit code. */
@@ -122,7 +126,10 @@ object CountryTiles {
             ?: Runtime.getRuntime().availableProcessors()
         val batch = options["--batch"]?.let { it.toIntOrNull()?.takeIf { n -> n in 1..100_000 } ?: throw UsageException("bad --batch '$it': want 1 to 100000") }
             ?: BATCH
-        val r = build(data, index, File(positional[2]), id, core, threads, batch, log = out)
+        val allowFailed = options["--allow-failed"]?.let {
+            it.toIntOrNull()?.takeIf { n -> n in 0..100_000 } ?: throw UsageException("bad --allow-failed '$it': want 0 to 100000")
+        } ?: 0
+        val r = build(data, index, File(positional[2]), id, core, threads, batch, allowFailed, log = out)
         report(r, out)
         return 0
     }
@@ -130,7 +137,8 @@ object CountryTiles {
     /** The report's four lines for [r]. */
     fun report(r: Result, out: (String) -> Unit) {
         out(
-            "${r.tiles.name}: ${r.windows} windows (${r.drawn} with a tile, ${r.empty} empty, listed with no bytes), ${r.tilesBytes} bytes " +
+            "${r.tiles.name}: ${r.windows} windows (${r.drawn} with a tile, ${r.empty} empty, listed with no bytes" +
+                (if (r.failed.isEmpty()) "" else ", ${r.failed.size} not built, left out") + "), ${r.tilesBytes} bytes " +
                 "from the ${r.coreBytes} the core wrote (${percent(r.tilesBytes, r.coreBytes)}); ${r.features} features; data of ${r.date}",
         )
         out(
@@ -147,8 +155,10 @@ object CountryTiles {
     /**
      * The tiles of the windows' [data] (its index [index]) in [outDir]: `<id>.tiles` and `<id>.tiles.idx`, each through
      * a file beside it renamed once whole. The core's tool [core] builds [batch] windows at a time on [threads] threads,
-     * and as many compress its packs. Throws, naming them, where any window does not build; the tool's other failures,
-     * a pack that is not one the core writes or does not read back the same, and packs of two versions throw at once.
+     * and as many compress its packs. Throws, naming them, where more windows than [allowFailed] do not build; those it
+     * lets through are left out of the index and [log]ged, each on a line beginning "not built". The tool's other
+     * failures, a pack that is not one the core writes or does not read back the same, and packs of two versions throw
+     * at once.
      */
     fun build(
         data: File,
@@ -158,6 +168,7 @@ object CountryTiles {
         core: File,
         threads: Int = Runtime.getRuntime().availableProcessors(),
         batch: Int = BATCH,
+        allowFailed: Int = 0,
         log: (String) -> Unit = {},
     ): Result {
         val started = System.nanoTime()
@@ -254,12 +265,16 @@ object CountryTiles {
                     }
                 }
             }
-            if (failed.isNotEmpty()) {
+            if (failed.size > allowFailed) {
                 throw IOException(
                     "the core's tool could not build ${failed.size} of the ${windows.size} windows: " + failed.take(20).joinToString("; ") +
-                        if (failed.size > 20) "; and ${failed.size - 20} more" else "",
+                        (if (failed.size > 20) "; and ${failed.size - 20} more" else "") +
+                        if (allowFailed > 0) " (--allow-failed lets $allowFailed through)" else "",
                 )
             }
+            // left out of the index: the phone builds them from their data, and its core (the same) refuses them as this one did
+            for (f in failed) log("not built, left out: $f")
+            if (version == null) throw IOException("the core's tool built none of the ${windows.size} windows")
         } catch (x: Throwable) {
             part.delete()
             throw x
@@ -275,7 +290,7 @@ object CountryTiles {
         move(indexPart, tilesIndex)
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
-            jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis,
+            jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis, failed.toList(),
         )
     }
 
@@ -390,6 +405,6 @@ object CountryTiles {
         }
     }
 
-    private val VALUED = setOf("--core", "--id", "--threads", "--batch")
+    private val VALUED = setOf("--core", "--id", "--threads", "--batch", "--allow-failed")
     private val ID = Regex("[a-z0-9][a-z0-9-]*")
 }

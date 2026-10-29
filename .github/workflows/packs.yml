@@ -236,8 +236,9 @@ jobs:
         # at zstd 19 and every other byte the core's, in <id>.tiles with their index <id>.tiles.idx. The answers are
         # unzipped 400 windows at a time into a folder beside the output and deleted once built. Noord-Holland (29
         # October, the Mac's 4 threads): 2,334 windows from 602 MB of windows' data, 4.6 GB of JSON, at most 1.8 GB of
-        # it at a time (Amsterdam's batch), made 79 MB of tiles in 84 s. So the Netherlands' 4.2 GB of data make about
-        # 0.6 GB of tiles, and the disk needs a fifth of the data's size and room for a city's batch, checked first.
+        # it at a time (Amsterdam's batch), made 79 MB of tiles in 84 s; the Netherlands (29 October, the runner's 4
+        # threads, core-p8) 23,268 windows from 5.5 GB of windows' data made 709 MiB of tiles in 13 minutes. The disk
+        # needs a fifth of the data's size and room for a city's batch, checked first.
         if: env.WINDOWS == 'true'
         env:
           # the windows' index and the packs being compressed (the packer's process took 380 MB at most for
@@ -248,9 +249,17 @@ jobs:
           NEED=$(( $(stat -c %s "$WORK/out/$ID.windows") / 5 + (3 << 30) ))
           FREE=$(df --output=avail -B1 "$WORK" | tail -1)
           if [ "$FREE" -lt "$NEED" ]; then echo "::error::$WORK has $((FREE >> 20)) MiB free; the country's tiles need about $((NEED >> 20)) MiB"; exit 1; fi
+          # A window the core cannot build is left out of the index, up to 50 of them, and named in a warning: the phone
+          # builds it from its data, with the same core, which refuses it as this one did. On 29 October core-p8's quays
+          # could not cut 4 of the Netherlands' 23,268 windows, and the run stopped there with nothing published.
           app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
-            --core "$ATLAS_STAGEP" --id "$ID" | tee "$RUNNER_TEMP/country.txt"
-          { echo "- $ID: the country's tiles"; tail -4 "$RUNNER_TEMP/country.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+            --core "$ATLAS_STAGEP" --id "$ID" --allow-failed 50 | tee "$RUNNER_TEMP/country.txt"
+          { grep '^not built' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^/::warning::/'
+          {
+            echo "- $ID: the country's tiles"
+            { grep '^not built' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^/  - /'
+            tail -4 "$RUNNER_TEMP/country.txt" | sed 's/^/  - /'
+          } >> "$GITHUB_STEP_SUMMARY"
           df -h "$WORK"
       - name: Upload
         run: |

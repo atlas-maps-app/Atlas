@@ -18,6 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
@@ -156,6 +157,41 @@ class CountryTilesTest {
             assertTrue(x.message, x.message!!.contains("could not build 1 of the 4 windows: 14/${C.first}/${C.second}: "))
         }
         assertEquals(emptyList<String>(), out.list()!!.toList())
+    }
+
+    @Test
+    fun aWindowTheCoreCannotBuildIsLeftOutAndNamedWhereTheRunLetsIt() {
+        needTool()
+        val d = windowsData(tool!!)
+        val broken = withAnswer(d, C, "{\n  \"version\": 0.6,\n  \"elements\": [\n".toByteArray())
+        val out = tmp.newFolder("out")
+        val said = ArrayList<String>()
+        assertEquals(
+            0,
+            run(listOf("country", broken.data.path, broken.index.path, out.path, "--core", tool.path, "--id", "test", "--threads", "2", "--allow-failed", "1"), said::add),
+        )
+        assertEquals(1, said.count { it.startsWith("not built, left out: 14/${C.first}/${C.second}: ") })
+        assertTrue(said.joinToString("\n"), said.any { it.contains("1 not built, left out") })
+        // the other three as without it, the broken one not listed: the phone builds it from its data
+        val index = TilesIndex.read(File(out, "test.tiles.idx").readBytes())
+        assertEquals(3, index.size)
+        assertNull(index.find(C.first, C.second))
+        val whole = tmp.newFolder("whole")
+        assertEquals(0, run(listOf("country", d.data.path, d.index.path, whole.path, "--core", tool.path, "--id", "test", "--threads", "2"), {}))
+        val all = TilesIndex.read(File(whole, "test.tiles.idx").readBytes())
+        for (i in 0 until index.size) {
+            val e = index[i]
+            val f = all.find(e.x, e.y)!!
+            assertEquals(f.length, e.length)
+            assertArrayEquals(f.sha256, e.sha256)
+        }
+        // more than it lets through fails as before
+        try {
+            run(listOf("country", broken.data.path, broken.index.path, tmp.newFolder("strict").path, "--core", tool.path, "--allow-failed", "0"), {})
+            fail("one window more than --allow-failed lets through")
+        } catch (x: IOException) {
+            assertTrue(x.message, x.message!!.contains("could not build 1 of the 4 windows"))
+        }
     }
 
     @Test
