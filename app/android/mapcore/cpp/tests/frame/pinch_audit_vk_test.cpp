@@ -43,6 +43,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -485,6 +486,22 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                   std::pair{"facades", part::facade_detail}}) {
                 if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bits;
             }
+            // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, flat_detail ...
+            constexpr std::array<const char*, 48> each{
+                "ground",         "water",          "canopy",       "ground_lines",     "setts",
+                "ground_text",    "quays",          "sky",          "building_shadows", "park_shadows",
+                "cloud_shadows",  "reflections",    "ripple",       "glitter",          "rings",
+                "glints",         "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
+                "lamp_halos",     "lamp_streaks",   "rain",         "golden_wash",      "walls",
+                "roofs",          "roof_edges",     "windows",      "window_depth",     "flat_detail",
+                "church_windows", "material_faces", "hoist_beams",  "kit_details",      "doors",
+                "house_numbers",  "trees",          "leaf_filters", "furniture",        "region_items",
+                "labels",         "routes",         "markers",      "location",         "frosted",
+                "shadow_blur",    "near_cells",     "kept_cull"};
+            for (std::size_t i = 0; i < each.size(); ++i) {
+                if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
+            }
+            MESSAGE(std::format("parts left out: {:#x}", always_off));
         }
         const Listed* held = nullptr;
         // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
