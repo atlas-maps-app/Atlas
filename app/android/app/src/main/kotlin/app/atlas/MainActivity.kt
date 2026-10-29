@@ -269,7 +269,7 @@ class MainActivity : ComponentActivity() {
             }
             val off = if (BuildConfig.TIMINGS && intent.getBooleanExtra(EXTRA_VK_OFF, false)) "the debug switch atlas.vk.off is on" else null
             engine.startCore(config, off, context.applicationContext.assets)
-            if (off == null) engine.warmPacks(context.applicationContext.assets)
+            if (off == null) engine.warmPacks()
         }
 
         /** The bench shortcut: true opens the home on CI's demo camera (the Westerkerk) but keeps the phone's location. */

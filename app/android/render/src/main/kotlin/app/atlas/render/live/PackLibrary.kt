@@ -51,12 +51,13 @@ class UrlGet(private val userAgent: String = "Atlas (https://github.com/atlas-ma
  * `packs-latest`), the `.atlas` files kept in [dir] (downloaded, verified by SHA-256, or installed from the app's own
  * assets), and packs built on the phone from Overpass for places no published pack covers.
  *
- * Beside a region's element pack the manifest may list its **render pack** (format 3, plan-vector D2 and Appendix A: the
- * tiles the core draws, made by `packer render-tiles`). The library keeps render packs in [renderDir], apart from the
+ * Beside a region's element pack the manifest may list its **render pack** (format 3, plan-vector D2 and Appendix A:
+ * tiles of the core's, made by `packer render-tiles`). The library keeps render packs in [renderDir], apart from the
  * element packs, and with `renders` on fetches a region's render pack with its element pack on the first visit
- * ([download]); [rendersAt] and [downloadRender] serve the core's own choice of packs. A region without a render pack
- * (none published, one this build's core does not read, or one made from another element pack) is normal: the map
- * draws there as it does today, from the element pack.
+ * ([download]); [rendersAt] and [downloadRender] read and fetch them as a release publishes them (the packer's checks
+ * of packs-renders). The app's map draws none: the core draws the windows alone (ENGINE.md step 3, one pack per
+ * country), so the app's library has `renders` off. A region without a render pack (none published, one this build's
+ * core does not read, or one made from another element pack) is normal.
  *
  * Thread-safe; the network and the disk are only touched by [refresh], [download], [downloadRender], [install] and
  * [build].
@@ -69,11 +70,6 @@ class PackLibrary(
     private val renders: Boolean = true,
     /** The render payload versions this build's core reads: [RENDER_PAYLOAD], the one `CP/tiles` decodes. */
     private val readsPayload: (Int) -> Boolean = { it == RENDER_PAYLOAD },
-    /**
-     * The render packs the app carries in its assets (`tiles/bundled.json`), id to SHA-256: a published render pack equal
-     * to a bundled one is never fetched.
-     */
-    private val bundledRenders: Map<String, String> = emptyMap(),
     /**
      * Packs kept elsewhere on the phone and read where they are (the offline regions' own packs): never placed, replaced
      * or removed here, and read again on [rescan].
@@ -180,12 +176,11 @@ class PackLibrary(
 
     /**
      * [e]'s published render pack when the phone should fetch it: null when the region has none, when its payload is not
-     * one this build's core reads, when the app carries the same pack, or when the phone has it already.
+     * one this build's core reads, or when the phone has it already.
      */
     fun renderToFetch(e: Entry): Render? {
         val r = e.render ?: return null
         if (!readsPayload(r.payload)) return null
-        if (r.sha256 != null && bundledRenders[e.id]?.equals(r.sha256, ignoreCase = true) == true) return null
         val here = localRender(e.id)
         if (here != null && (r.sha256 == null || here.sha256.equals(r.sha256, ignoreCase = true))) return null
         return r

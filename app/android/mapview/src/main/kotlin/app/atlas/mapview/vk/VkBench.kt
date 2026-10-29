@@ -163,7 +163,7 @@ object VkBench {
      * settings' [haze] and [vignette]; the [painter]'s order or true depth).
      */
     fun mapHead(packs: String, moment: String, haze: Boolean, vignette: Boolean, painter: Boolean): String =
-        "vkbench map: the bundled packs (${packs.ifEmpty { "none" }}), the $moment moment, haze ${if (haze) "on" else "off"}, " +
+        "vkbench map: the packs (${packs.ifEmpty { "none" }}), the $moment moment, haze ${if (haze) "on" else "off"}, " +
             "vignette ${if (vignette) "on" else "off"}, ${if (painter) "the painter's order" else "true depth"}"
 
     /**

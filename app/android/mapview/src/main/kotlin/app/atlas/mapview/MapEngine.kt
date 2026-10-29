@@ -189,7 +189,7 @@ object MapEngine {
     var coreConfig: CoreConfig? = null
         private set
 
-    /** Whether the maps may use the network now (a first visit's render pack, K20a). */
+    /** Whether the maps may use the network now (the windows' tiles and data). */
     @Volatile
     var online: () -> Boolean = { false }
 
@@ -242,12 +242,9 @@ object MapEngine {
         core = s
     }
 
-    /** The packs the core draws from: the APK's bundled render packs and the regions' library's (made once). */
-    fun packs(assets: AssetManager): PackList = packList ?: synchronized(this) {
-        packList ?: PackList(
-            AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker, windows = { windowsDir() },
-            windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() },
-        )
+    /** The packs the core draws from: the windows on the phone (made once). */
+    fun packs(): PackList = packList ?: synchronized(this) {
+        packList ?: PackList(windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() })
             .also { packList = it }
     }
 
@@ -324,28 +321,12 @@ object MapEngine {
      * Reads the packs' list ahead of the first map, off the main thread, so that the home's first look knows where the
      * core has tiles without reading them itself (the app calls it as it starts the core).
      */
-    fun warmPacks(assets: AssetManager) {
-        val list = packs(assets)
+    fun warmPacks() {
+        val list = packs()
         if (!list.loaded) packWorker.execute { runCatching { list.load() } }
     }
 
     private val packWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "atlas-core-packs").apply { isDaemon = true } }
-
-    /** The APK's `tiles/` assets, stored uncompressed: read, and mapped by the core where they lie. */
-    private class AssetPacks(private val assets: AssetManager) : PackList.BundledSource {
-        override fun open(name: String): java.io.InputStream? = try {
-            assets.open("tiles/$name")
-        } catch (_: java.io.IOException) {
-            null
-        }
-
-        override fun range(name: String): PackList.Range? = try {
-            val fd = assets.openFd("tiles/$name")
-            PackList.Range(fd.parcelFileDescriptor.fd, fd.startOffset, fd.length, fd)
-        } catch (_: java.io.IOException) {
-            null
-        }
-    }
 
     @Volatile
     private var fonts: SvgFonts? = null

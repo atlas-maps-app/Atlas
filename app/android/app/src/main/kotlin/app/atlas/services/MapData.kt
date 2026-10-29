@@ -68,17 +68,16 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * The packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the regions
-     * keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]). The bundled pack
-     * is installed on first use (a copy of 627 KB, once), on whichever background thread asks first, before anything is
-     * chosen. The render packs the APK carries ([BundledRenders]) are never downloaded again: the canal ring's first
-     * visit fetches its element pack only.
+     * The element packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the
+     * regions keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]): today's
+     * map's and the features' data. The bundled pack is installed on first use (a copy of 627 KB, once), on whichever
+     * background thread asks first, before anything is chosen. No region's render pack is fetched beside its element
+     * pack (`renders` off): the core draws the windows alone (ENGINE.md step 3, one pack per country).
      */
     val packs: PackLibrary by lazy {
-        val bundledRenders = BundledRenders.read { open(BundledRenders.ASSET) }
         val regionPacks = File(services.dirs.regions, "atlas")
         PackLibrary(
-            File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, bundledRenders = bundledRenders,
+            File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, renders = false,
             elsewhere = { regionPacks.listFiles { f -> f.isFile && f.name.endsWith(PackLibrary.EXT) }.orEmpty().toList() },
         ).also { lib ->
             try {

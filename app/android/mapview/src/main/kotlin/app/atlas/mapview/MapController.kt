@@ -200,9 +200,6 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var publishedLocation: UserLocation? = null
     private var publishedOff = 0L
 
-    /** The pack the core was last told to draw (its id), which [choosePack] holds on to. */
-    private var publishedPack: String? = null
-
     /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
     private var coreLocation = false
     private var coreWanted: Transition.Path? = null
@@ -299,9 +296,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private val settle = Runnable { if (!closed) publishCamera(force = true) }
 
     /**
-     * The packs on the phone may have changed (a region downloaded with its render pack, a first visit's render pack
-     * fetched): the core is handed them again off the main thread, and where they changed the map draws what it can
-     * draw now, the transitional rule asked again. Nothing when the list is the same.
+     * The packs on the phone may have changed (a window taken from its country's tiles or built): the core is handed
+     * them again off the main thread, and where they changed the map draws what it can draw now, the transitional rule
+     * asked again. Nothing when the list is the same.
      */
     private val repack = Runnable {
         val c = core ?: return@Runnable
@@ -314,9 +311,6 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             update()
         }
     }
-
-    /** When the map last asked for a published render pack of the place it stands on (SystemClock.uptimeMillis). */
-    private var fetchCheckedAt = 0L
 
     /** When the map last asked the core which windows it wants (SystemClock.uptimeMillis). */
     private var windowCheckedAt = 0L
@@ -337,16 +331,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val v = viewport()
         if (v.isEmpty) return null
         val lv = liveView(state.camera, v)
-        return choosePack(c, lv, publishedRest)
+        return c.packs.choose(lv.lat, lv.lon)
     }
-
-    /**
-     * The pack for [lv]: PackList's choice, holding on to the pack drawn now ([PackList.HOLD_FIT]); while the camera
-     * moves (a pinch, a fling, an animation) on to it whatever the distance, as long as it holds the target, so the
-     * switch (the new pack's tiles built, its looks shown) comes once the camera rests, not under the fingers.
-     */
-    private fun choosePack(c: CoreMap, lv: LiveView, rest: Boolean): PackList.Pack? =
-        c.packs.choose(lv.lat, lv.lon, lv.distance, held = publishedPack, holdFit = if (rest) PackList.HOLD_FIT else Double.POSITIVE_INFINITY)
 
     /** What the map says of its picture: the core's (complete and shown) where it draws, else today's map's. */
     private fun noteStatus() {
@@ -468,7 +454,6 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         askedSent = false
         coreLocation = false
         publishedCamera = null
-        publishedPack = null
         noteChrome()
         scope.launch {
             val refused = withContext(Dispatchers.Default) { c.bind() }
@@ -549,7 +534,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
         val lv = liveView(cam, v)
         val n = if (next != null && nextNs > nowNs) liveView(next, v) else null
-        val pack = choosePack(c, lv, rest)
+        // the window whose box holds the target, whatever the distance: zooming hands nothing over
+        val pack = c.packs.choose(lv.lat, lv.lon)
         c.source.publish(
             MapCameraSource.Samples(
                 revision = ++cameraRevision,
@@ -569,7 +555,6 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         publishedRest = rest
         publishedDraw = draw
         publishedLocation = location
-        publishedPack = pack?.id
         if (coreLocation != (location != null)) {
             coreLocation = location != null
             canvasTick.intValue++
@@ -868,16 +853,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                     canvasFrameAtWant = shown?.number ?: 0L
                 }
             }
-            // Where the core has no tiles, online, a published render pack holding the place comes once in the
-            // background (PackList.fetchAt), and the core is handed it when it is on the phone; asked twice a second.
+            // The windows the core wants (ENGINE.md step 3): the nearest taken from its country's tiles or built in the
+            // background, one at a time, and the core handed it when it is; asked twice a second.
             val now = SystemClock.uptimeMillis()
-            if (wanted == Transition.Path.CANVAS && now - fetchCheckedAt >= FETCH_CHECK_MS) {
-                fetchCheckedAt = now
-                c.packs.fetchAt(LatLon(view.lat, view.lon)) { main.post(repack) }
-            }
-            // The windows the core wants (ENGINE.md step 3): the nearest built in the background, one at a time, and
-            // the core handed it when it is.
-            if (now - windowCheckedAt >= FETCH_CHECK_MS) {
+            if (now - windowCheckedAt >= WINDOWS_CHECK_MS) {
                 windowCheckedAt = now
                 MapEngine.windows()?.let { w ->
                     scope.launch(Dispatchers.IO) {
@@ -1510,8 +1489,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         const val PANEL_MS = 1_000L
         const val PANEL_LINGER_MS = 5_000L
 
-        /** How often the map asks for a published render pack where the core has no tiles, ms. */
-        const val FETCH_CHECK_MS = 500L
+        /** How often the map asks the core which windows it wants, ms. */
+        const val WINDOWS_CHECK_MS = 500L
 
         /** How often the canvas draws again while the windows work (the status, and their next step), and while they wait. */
         const val WINDOWS_WORK_TICK_MS = 1_000L
