@@ -49,6 +49,10 @@ struct ItemSpec {
     std::array<std::uint32_t, bands> slots{};
     /// The least depth at which it is drawn (gatherItems: 2 m; 3 m for furniture at eye level).
     float min_depth = 2.0F;
+    /// The most depth of its cut point on the ground (cut_x, 0, cut_z) at which it may be drawn: beyond it the ranks
+    /// leave it out, as a door whose node lies beyond the 75 m the doors pass draws it within (geometry/Doors.cpp);
+    /// none for every other kind.
+    float max_depth = std::numeric_limits<float>::infinity();
     /// The radius of a sphere about its sort point that holds everything it draws (the frustum test, metres).
     float radius = 0.0F;
     /// The tile it belongs to (Residency's handle).
@@ -110,6 +114,7 @@ public:
     [[nodiscard]] std::span<const std::uint16_t> kind() const noexcept { return kind_; }
     [[nodiscard]] std::span<const std::uint16_t> flags() const noexcept { return flags_; }
     [[nodiscard]] std::span<const float> min_depth() const noexcept { return min_depth_; }
+    [[nodiscard]] std::span<const float> max_depth() const noexcept { return max_depth_; }
     [[nodiscard]] std::span<const float> radius() const noexcept { return radius_; }
     [[nodiscard]] std::span<const std::uint32_t> tile() const noexcept { return tile_; }
     [[nodiscard]] std::span<const std::uint64_t> owner() const noexcept { return owner_; }
@@ -124,7 +129,7 @@ private:
     std::vector<double> x_, y_, z_, offset_, cut_x_, cut_z_;
     std::vector<std::uint64_t> order_;
     std::vector<std::uint16_t> kind_, flags_;
-    std::vector<float> min_depth_, radius_;
+    std::vector<float> min_depth_, max_depth_, radius_;
     std::vector<std::uint32_t> tile_;
     std::vector<std::uint64_t> owner_;
     std::vector<std::uint64_t> building_;

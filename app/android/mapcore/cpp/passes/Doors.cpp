@@ -289,6 +289,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         view::Vec3 nrm;
     };
     std::vector<At> kept;
+    const std::span<const std::uint32_t> table = state.ranks->table();
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     const std::span<const std::uint16_t> flags = state.items->flags();
     const view::Vec3 eye = cam.eye();
@@ -319,8 +320,12 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         const std::uint32_t first = first_door(*t.drawn, kind);
         for (std::size_t i = 0; i < doors->doors.size() && first + i < t.drawn->rows.size(); ++i) {
             const std::uint32_t row = t.drawn->rows[first + i];
-            // a coarser pack's door within the active pack's box is the active pack's to draw (none)
+            // a coarser pack's door within the active pack's box is the active pack's to draw (none); and a door the
+            // ranks left out (its node beyond the reach below, or the frame not seeing it) draws nothing, nor does a
+            // door of its spot, whose item is its own (its building's, by the same wall), so the doors cost what is
+            // drawn
             if (row >= flags.size() || (flags[row] & scene::item_flag::masked) != 0) continue;
+            if (row >= table.size() || table[row] == sh::RANK_NONE) continue;
             const geometry::Door d =
                 convert ? placed(doors->doors[i], t.drawn->frame, *state.ground_frame) : doors->doors[i];
             if (cut && view::java_hypot(d.x - (*cut)[1], d.z - (*cut)[2]) > (*cut)[0]) continue;
@@ -346,7 +351,6 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
     };
     std::vector<Spot> spots;
     std::map<std::tuple<std::int64_t, std::int64_t, std::int64_t>, std::size_t> keys;
-    const std::span<const std::uint32_t> table = state.ranks->table();
     const std::span<const double> depth = state.ranks->depth();
     for (const At& a : kept) {
         const geometry::Door& d = a.door;

@@ -357,22 +357,24 @@ TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (
 
 namespace {
 
-/// The quay edges of a cut (each edge's ends on the grid), and their length within 250 m of the Westerkerk, where the
-/// raw.json maps every building about the water.
-struct Quays {
+/// What a cut gives the water and the facades: its quay edges (each edge's ends on the grid), their length within 250 m
+/// of the Westerkerk, where the raw.json maps every building about the water, and the doors and shopfronts filed on a
+/// building.
+struct Waterside {
     std::set<std::array<std::int64_t, 4>> edges;
     double near = 0.0;
+    std::size_t doors = 0;
 };
 
-Quays quays_of(const std::vector<tl::TileFill>& tiles) {
-    Quays out;
+Waterside waterside_of(const std::vector<tl::TileFill>& tiles) {
+    Waterside out;
     const tl::Frame frame = load::westerkerk_frame();
     const load::V2 church = load::xz(frame, 52.3746, 4.8840);
     for (const tl::TileFill& t : tiles) {
         auto raw = tl::encode_tile(t);
         ATLAS_REQUIRE_OR_RETURN(out, raw.has_value(), tl::describe(raw.error()));
         tl::TileDecoder decoder;
-        atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test, the quays");
+        atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test, the waterside");
         const auto tile = decoder.decode(*raw, arena);
         ATLAS_REQUIRE_OR_RETURN(out, tile.has_value(), tl::describe(tile.error()));
         const tl::Layer* quays = tile->layer(tl::LayerId::quay);
@@ -388,6 +390,10 @@ Quays quays_of(const std::vector<tl::TileFill>& tiles) {
                 out.near += atlas::pymath::hypot(bx - ax, bz - az);
             }
         }
+        const tl::Layer* things = tile->layer(tl::LayerId::thing);
+        for (std::uint32_t i = 0; things != nullptr && i < things->count; ++i) {
+            if (things->nullable_integer(tl::thing::building, i)) ++out.doors;
+        }
     }
     return out;
 }
@@ -396,40 +402,47 @@ Quays quays_of(const std::vector<tl::TileFill>& tiles) {
 
 // The engine's close-up cut (RegionConfig::close_up: the phone's windows and the app's canal ring, which draws the
 // Westerkerk since alpha 20) against the renders' two cuts of the same place, the Westerkerk's raw.json. The living map
-// takes every water edge for a quay; the renders' region rules, which the canal ring was cut by for a view from afar,
-// give the canals natural shores, so its water had no quay walls and mirrored nothing (the user, 29 October: "I cannot
-// see any reflections on the water"). Close up, the quays are the edges a building lines: nine tenths of the living
-// map's about the Westerkerk, the rest where two water rings meet (water on both sides) or the raw.json maps no
-// building.
-TEST_CASE("load: the close-up cut gives the canals the quays their buildings line, as the living map's cut does where "
-          "the renders' region rules give none") {
+// takes every water edge for a quay and puts the doors on the facades; the renders' region rules, which the canal ring
+// was cut by for a view from afar, give the canals natural shores and the facades no doors, so its water had no quay
+// walls and mirrored nothing (the user, 29 October: "I cannot see any reflections on the water", "Make sure no quality
+// is lost"). Close up, the quays are the edges a building lines: nine tenths of the living map's about the Westerkerk,
+// the rest where two water rings meet (water on both sides) or the raw.json maps no building; and the doors are the
+// living map's.
+TEST_CASE("load: the close-up cut gives the canals the quays their buildings line and the facades their doors, as the "
+          "living map's cut does where the renders' region rules give neither") {
     const auto w = westerkerk();
     ATLAS_REQUIRE(w != nullptr);
-    const Quays living = quays_of(w->tiles);
+    const Waterside living = waterside_of(w->tiles);
     load::RegionConfig config{.name = "window",
                               .frame = load::westerkerk_frame(),
                               .bbox = {52.36, 4.87, 52.39, 4.92},
                               .tradition = nullptr,
                               .palette = load::amsterdam_palette()};
-    const auto cut_as = [&](bool close_up) -> std::optional<Quays> {
+    const auto cut_as = [&](bool close_up) -> std::optional<Waterside> {
         config.close_up = close_up;
         const auto scene = load::load_region(*w->doc, config);
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, scene.has_value());
         CHECK(scene->close_up == close_up);
         const auto cut = load::cut_region(*scene, load::westerkerk_frame(), {});
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, cut.has_value(), cut.error().what);
-        return quays_of(*cut);
+        return waterside_of(*cut);
     };
-    const std::optional<Quays> afar = cut_as(false);
-    const std::optional<Quays> close = cut_as(true);
+    const std::optional<Waterside> afar = cut_as(false);
+    const std::optional<Waterside> close = cut_as(true);
     ATLAS_REQUIRE(afar.has_value() && close.has_value());
     MESSAGE("quay edges: the living map's ", living.edges.size(), " (", living.near,
             " m within 250 m of the Westerkerk), the region rules' ", afar->edges.size(), ", close up ",
-            close->edges.size(), " (", close->near, " m)");
+            close->edges.size(), " (", close->near, " m); doors and shopfronts: ", living.doors, ", ", afar->doors,
+            ", ", close->doors);
     CHECK(!living.edges.empty());
+    CHECK(living.doors > 0);
     CHECK(afar->edges.empty());
+    CHECK(afar->doors == 0);
+    // close up, the living map's edges that buildings line: the rest are where two water rings meet (water on both
+    // sides) or the raw.json maps no building
     CHECK(std::ranges::includes(living.edges, close->edges));
     CHECK(close->near >= 0.9 * living.near);
+    CHECK(close->doors == living.doors);
 }
 
 TEST_CASE("load: the input whose road grid ran CI's fuzz_load out of memory cuts the living map, its long roads kept "

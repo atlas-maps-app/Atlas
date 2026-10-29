@@ -1,9 +1,11 @@
 // Painter ranks (plan-vector D6, N3): the renders draw the objects far to near, sorted by the depth of each item's
 // reference point (render/amsterdam.py's drawObjects: items.pySortBy { -it.d }, a stable sort over the gather order).
 // Each frame the render thread computes every live item's depth at the camera in double (cam.cam(p)[2] + offset, the
-// port's own arithmetic), keeps the items the renders draw (at least their minimum depth, within the renders' radius in
-// engine mode) that the frame can see (the item's sphere against the frame plus the renders' least cull margin), fixes
-// last frame's order with a stable insertion pass (a full sort when the camera turned too far for that to pay: the key,
+// port's own arithmetic), keeps the items the renders draw (at least their minimum depth, their cut point within their
+// most depth where they have one: a door's node within the doors pass's reach; within the renders' radius in engine
+// mode) that the frame can see (the item's sphere against the frame plus the renders' least cull margin; a sphere
+// across the eye's plane against the frame's four sides, so what lies behind the camera takes no rank), fixes last
+// frame's order with a stable insertion pass (a full sort when the camera turned too far for that to pay: the key,
 // depth then gather order, is total, so both give the stable sort's order), and gives each item its first painter slot:
 // the ground's slots first, then the items' slots in painter's order, each item's count that of its detail band
 // (Selectors.hpp) at its depth. Pans and zooms keep the order; turns and tilts move few items in a frame.

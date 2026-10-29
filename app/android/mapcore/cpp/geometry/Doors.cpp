@@ -20,6 +20,10 @@ namespace tl = atlas::tiles;
 /// plate's 2.4 m at most (a number of eleven characters) about its anchor 2.75 m up, with room to spare.
 constexpr double door_reach = 6.0;
 
+/// The most depth of a door's node on the ground at which the doors pass may draw it (passes/Doors.cpp: 75 m a metre
+/// up), with the metre that height may add looking down and the metre its tiles' box test spares.
+constexpr float door_depth = 77.0F;
+
 } // namespace
 
 TileDoors build_doors(const DoorInput& in) {
@@ -80,6 +84,7 @@ TileDoors build_doors(const DoorInput& in) {
              .flags = scene::item_flag::radius,
              .slots = {door_slots, door_slots, door_slots, door_slots},
              .min_depth = -std::numeric_limits<float>::infinity(),
+             .max_depth = door_depth, // its node (the cut point) beyond the pass's reach: no rank
              .radius = static_cast<float>(reach),
              .tile = 0,
              .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(d.id)),

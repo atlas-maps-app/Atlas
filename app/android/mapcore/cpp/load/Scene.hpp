@@ -389,11 +389,14 @@ struct Scene {
     std::vector<WoodTree> woods;              ///< the trees a park or a zoo plants in its woods
     std::vector<std::vector<V2>> water_holes; ///< islands: the inner rings of the water's relations
     std::vector<bool> natural_shore;          ///< per ring of `water`: a natural shore (no quay wall)
+    /// Per ring of `water`: the sea regions.py closes from a coastline (sea_from_coast), whose shore stays natural even
+    /// close up (a beach's pavilion is no quay) and whose closing points lie on no grid point.
+    std::vector<bool> sea;
     /// The building tradition the looks came from (`S['tradition']`, read), or null. The buildings' tradition values
     /// and strings view it.
     std::shared_ptr<const Tradition> tradition;
     /// The engine's close-up cut (load/Regions.hpp's RegionConfig::close_up): an edge of a natural shore carries a quay
-    /// wall where buildings line it.
+    /// wall where buildings line it, and the facades carry their doors and house numbers.
     bool close_up = false;
 };
 

@@ -637,6 +637,7 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
     // cut gives an edge its quay wall when a building lines it (load/Cut's water_edges)
     const bool quays = region.name == "paris" || region.name == "port";
     s.natural_shore.assign(s.water.size(), !quays);
+    s.sea.assign(s.water.size(), false);
     s.close_up = region.close_up;
     std::vector<std::vector<V2>> seas = sea_from_coast(coast, region.bbox, frame);
     if (!seas.empty() && !s.buildings.empty()) {
@@ -653,6 +654,7 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
     for (std::vector<V2>& poly : seas) {
         s.water.push_back(std::move(poly));
         s.natural_shore.push_back(region.name != "bergen"); // Bergen's harbour is quays all round
+        s.sea.push_back(true);
     }
     if (seas.empty()) {
         for (const osm::Element* e : bays) {
@@ -660,6 +662,7 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
                 if (std::fabs(signed_area(r)) > 2000) {
                     s.water.push_back(std::move(r)); // a harbour's edges are quays, drawn as such
                     s.natural_shore.push_back(false);
+                    s.sea.push_back(false);
                 }
             }
         }

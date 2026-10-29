@@ -11,8 +11,9 @@
 //     region it builds: the building tradition, the time zone; Amsterdam's palette;
 //   - its tile: the features whose reference point lies in it (a building on its edge is built once, by the window of
 //     its reference point) and the water clipped at its edges, with keep codes and the variants of the live map's
-//     bands, in the engine's close-up cut (quay walls where buildings line the water); what the tiles have no columns
-//     for yet is left out (cut_window): a tradition's details until its facades;
+//     bands, in the engine's close-up cut (quay walls where buildings line the water, the doors and house numbers on
+//     the facades); what the tiles have no columns for yet is left out (cut_window): a tradition's details until its
+//     facades;
 //   - its pack: that tile, a head (profile region, level 14, the frame, the window's name, the core's stage P version,
 //     the style version, its data's SHA-256, no views, the live map's bands) and its style (load/PackStyle.hpp).
 // A window builds within about 50 MB on a mid-range phone in a few seconds (ENGINE.md's budget), on a worker.
@@ -50,8 +51,9 @@ inline constexpr double window_margin = 200.0;
 /// building flags, the shutters' colour and the party walls), which core-p4 left out; core-p6 the street wall each door
 /// and shopfront opens onto (the doors and their house numbers), which core-p5 left out; core-p7 the New looks' red
 /// tiles on about one canal house in four (the canal ring pack's tiles_red), which core-p6 drew all dark; core-p8 the
-/// quay walls the buildings line close up (RegionConfig::close_up), where core-p7 gave the water natural shores.
-inline constexpr std::string_view stage_p_version = "core-p8";
+/// quay walls the buildings line close up (RegionConfig::close_up), where core-p7 gave the water natural shores;
+/// core-p9 the doors and house numbers on the facades close up, which core-p8 left out.
+inline constexpr std::string_view stage_p_version = "core-p9";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and the living map's
 /// light (no TONE: frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.

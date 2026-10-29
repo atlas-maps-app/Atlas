@@ -338,6 +338,69 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
     MESSAGE("a 1.4 m pan: " << ranks.moves() << " moves over " << common << " items drawn in both frames");
 }
 
+// The ranks leave out an item whose cut point lies deeper than the most depth it may be drawn at
+// (scene::ItemSpec::max_depth), so a frame ranks only the doors the doors pass may draw (their nodes within 75 m:
+// geometry/Doors.cpp), and the rest keep their order.
+TEST_CASE("ranks leave out an item whose cut point lies deeper than its most depth, and keep the others' order") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    scene::ItemTable all;
+    scene::ItemTable bounded;
+    std::mt19937_64 rng = seeded(7);
+    std::uniform_real_distribution<double> u(-800.0, 800.0);
+    for (std::uint32_t i = 0; i < 2000; ++i) {
+        const double x = std::round(u(rng));
+        const double z = std::round(u(rng));
+        scene::ItemSpec item{.x = x,
+                             .y = 4,
+                             .z = z,
+                             .cut_x = x,
+                             .cut_z = z,
+                             .order = scene::order_of(0, i),
+                             .kind = kind,
+                             .slots = {10, 5, 2, 1},
+                             .min_depth = 2.0F,
+                             .radius = 20.0F,
+                             .tile = 1};
+        all.add(item);
+        if (i % 2 == 1) item.max_depth = 700.0F;
+        bounded.add(item);
+    }
+    const view::Camera camera({.target = {0, 0, 0},
+                               .yaw = 30.0,
+                               .pitch = 45.0,
+                               .dist = 900,
+                               .fov = 36,
+                               .width = 412,
+                               .height = 916,
+                               .cx = std::nullopt,
+                               .cy = 440});
+    frame::Ranks a;
+    frame::Ranks b;
+    a.update(all, camera, selectors, {.ground_slots = 100});
+    b.update(bounded, camera, selectors, {.ground_slots = 100});
+    std::vector<std::uint32_t> kept;
+    std::size_t beyond = 0;
+    const view::Vec3& eye = camera.eye();
+    const view::Vec3& f = camera.forward();
+    for (const std::uint32_t row : a.order()) {
+        // its cut point's depth on the ground
+        const double cut = ((all.cut_x()[row] - eye.x) * f.x) - (eye.y * f.y) + ((all.cut_z()[row] - eye.z) * f.z);
+        if (row % 2 == 1 && cut > 700.0) {
+            ++beyond;
+            CHECK(b.first_slot()[row] == frame::Ranks::none);
+            CHECK(b.table()[row] == shaders::RANK_NONE);
+            continue;
+        }
+        kept.push_back(row);
+    }
+    CHECK(beyond > 100);
+    CHECK(std::ranges::equal(kept, b.order()));
+    MESSAGE(a.order().size() << " items ranked without a most depth, " << b.order().size() << " with one, " << beyond
+                             << " left out beyond it");
+}
+
 TEST_CASE("an item's band and detail are the ranks' choice in double, which a float depth or threshold can miss") {
     // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
     // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one

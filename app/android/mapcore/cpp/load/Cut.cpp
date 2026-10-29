@@ -363,8 +363,8 @@ private:
 /// water_edges(S): every edge at least 0.4 m long of each water ring and island, its normal turned into the water (out
 /// of an island). A region knows its shores (the living map does not): a natural shore's ring has no quay, nor does an
 /// edge with water on both sides; an island's edge whose land side lies in other water has none. In the engine's
-/// close-up cut a natural shore's edge has one where a building's wall lines it (Walls::line); a bay's, Paris's, the
-/// port's and an island's keep theirs.
+/// close-up cut a natural shore's edge has one where a building's wall lines it (Walls::line), but the sea's; a bay's,
+/// Paris's, the port's and an island's keep theirs.
 [[nodiscard]] std::vector<Edge> water_edges(const Scene& s) {
     std::vector<Edge> out;
     const bool region = !s.natural_shore.empty();
@@ -420,9 +420,11 @@ private:
         }
     };
     for (std::uint32_t k = 0; k < s.water.size(); ++k) {
-        // beaches and lake shores: no quay wall; close up, where a building lines it
+        // beaches and lake shores: no quay wall; close up, where a building lines it, but never the sea's, closed from
+        // the coastline (a beach's pavilion is no quay, and its closing points lie on no grid point)
         const bool natural = region && s.natural_shore[k];
-        if (natural && !walls) continue;
+        const bool sea = k < s.sea.size() && s.sea[k];
+        if (natural && (!walls || sea)) continue;
         edges_of(s.water[k], k, false, natural);
     }
     for (std::uint32_t k = 0; k < s.water_holes.size(); ++k) edges_of(s.water_holes[k], k, true, false);
@@ -2323,16 +2325,17 @@ cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std
 
 constexpr std::array<std::uint8_t, 1> window_levels{14};
 
-/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, the ground's elements carried.
-[[nodiscard]] CutPlan window_plan(const tiles::TileKey& tile) {
-    return {.levels = window_levels, .keep = true, .facades = false, .only = tile, .identity = true};
+/// A window's cut of `scene`: L14 alone, the features in its tile, keep codes, the facades in the engine's close-up cut
+/// (regions set no_facades), the ground's elements carried.
+[[nodiscard]] CutPlan window_plan(const tiles::TileKey& tile, const Scene& scene) {
+    return {.levels = window_levels, .keep = true, .facades = scene.close_up, .only = tile, .identity = true};
 }
 
 } // namespace
 
 std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& scene, const tiles::Frame& frame,
                                                                  std::span<const CutVariant> variants) {
-    return cut_with({.levels = region_levels, .keep = true, .facades = false}, scene, frame, variants);
+    return cut_with({.levels = region_levels, .keep = true, .facades = scene.close_up}, scene, frame, variants);
 }
 
 std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene, const tiles::Frame& frame,
@@ -2342,7 +2345,7 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& sc
         return std::unexpected(
             CutError{.what = std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
     }
-    return cut_with(window_plan(tile), scene, frame, variants);
+    return cut_with(window_plan(tile, scene), scene, frame, variants);
 }
 
 struct WindowCut::State {
@@ -2364,7 +2367,7 @@ std::expected<void, CutError> WindowCut::base(const Scene& scene) {
         return std::unexpected(
             CutError{.what = std::format("a window is a tile of L{}, not of L{}", window_levels[0], state_->tile.z)});
     }
-    state_->base = base_attributes(window_plan(state_->tile), scene, state_->frame);
+    state_->base = base_attributes(window_plan(state_->tile, scene), scene, state_->frame);
     state_->variants.clear();
     return {};
 }
@@ -2387,7 +2390,7 @@ std::expected<std::vector<tiles::TileFill>, CutError> WindowCut::cut(const Scene
             return std::unexpected(CutError{.what = "the window's scene is not the one its base was taken from"});
         }
     }
-    Cutter cutter(scene, state_->frame, window_plan(state_->tile));
+    Cutter cutter(scene, state_->frame, window_plan(state_->tile, scene));
     for (VariantFeature& v : state_->variants) cutter.add_variant(std::move(v));
     state_->variants.clear();
     return cutter.run();

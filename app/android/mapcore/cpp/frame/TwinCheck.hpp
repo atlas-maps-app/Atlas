@@ -58,7 +58,7 @@ struct TwinCheck {
                                                 tiles::PackRef westerkerk);
 
 /// The host build's hash of the twin's check.
-inline constexpr std::uint64_t twin_check_expected = 0x90DE'D7CB'F18F'5846ULL;
+inline constexpr std::uint64_t twin_check_expected = 0x4805'5E33'8363'0FF2ULL;
 
 /// `twin <hash> ok`, or `twin <hash> FAIL expected <hash>`, or `twin unavailable: <why>`.
 [[nodiscard]] std::string twin_line(const gpu::Device& device, const gpu::PipelineCache& cache,

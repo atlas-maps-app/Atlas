@@ -84,10 +84,12 @@ std::string written(const std::vector<std::byte>& pack, const std::string& name)
 }
 
 /// A canonical dump without the places in the scene's lists (a feature's index, the ground's ranks, a tree's node, a
-/// quay's ring and owner, a hole's water), without the variants at ladder index `skip` and the cells' variant counts.
+/// quay's ring and owner, a hole's water, a door's building), without the variants at ladder index `skip` and the
+/// cells' variant counts.
 std::vector<std::string> masked(const std::string& dump, int skip) {
-    static constexpr std::array<std::string_view, 8> fields = {
-        " index=", " ground_key=", " marks_key=", " node=", " ring=", " owner=", " hole_of=", " variant="};
+    static constexpr std::array<std::string_view, 9> fields = {
+        " index=", " ground_key=", " marks_key=", " node=",    " ring=",
+        " owner=", " hole_of=",    " variant=",   " building="};
     std::vector<std::string> out;
     std::istringstream in(dump);
     std::string line;
@@ -265,7 +267,13 @@ TEST_CASE("load: a window by the sea builds, the sea's computed points at their 
     {"lat": 52.3700, "lon": 4.8700}, {"lat": 52.3750, "lon": 4.8850}, {"lat": 52.3800, "lon": 4.9000}]},
 {"type": "way", "id": 10, "tags": {"building": "house"}, "geometry": [
     {"lat": 52.3735, "lon": 4.8840}, {"lat": 52.3735, "lon": 4.8842}, {"lat": 52.3737, "lon": 4.8842},
-    {"lat": 52.3737, "lon": 4.8840}, {"lat": 52.3735, "lon": 4.8840}]}]})";
+    {"lat": 52.3737, "lon": 4.8840}, {"lat": 52.3735, "lon": 4.8840}]},
+{"type": "way", "id": 11, "tags": {"building": "house"}, "geometry": [{"lat": 52.3702, "lon": 4.8698}, {"lat": 52.3702, "lon": 4.8699}, {"lat": 52.3703, "lon": 4.8699}, {"lat": 52.3703, "lon": 4.8698}, {"lat": 52.3702, "lon": 4.8698}]},
+{"type": "way", "id": 12, "tags": {"building": "house"}, "geometry": [{"lat": 52.3701, "lon": 4.8697}, {"lat": 52.3701, "lon": 4.8698}, {"lat": 52.3702, "lon": 4.8698}, {"lat": 52.3702, "lon": 4.8697}, {"lat": 52.3701, "lon": 4.8697}]},
+{"type": "way", "id": 13, "tags": {"building": "house"}, "geometry": [{"lat": 52.3703, "lon": 4.8699}, {"lat": 52.3703, "lon": 4.8700}, {"lat": 52.3704, "lon": 4.8700}, {"lat": 52.3704, "lon": 4.8699}, {"lat": 52.3703, "lon": 4.8699}]},
+{"type": "way", "id": 14, "tags": {"building": "house"}, "geometry": [{"lat": 52.3802, "lon": 4.8998}, {"lat": 52.3802, "lon": 4.8999}, {"lat": 52.3803, "lon": 4.8999}, {"lat": 52.3803, "lon": 4.8998}, {"lat": 52.3802, "lon": 4.8998}]},
+{"type": "way", "id": 15, "tags": {"building": "house"}, "geometry": [{"lat": 52.3801, "lon": 4.8997}, {"lat": 52.3801, "lon": 4.8998}, {"lat": 52.3802, "lon": 4.8998}, {"lat": 52.3802, "lon": 4.8997}, {"lat": 52.3801, "lon": 4.8997}]},
+{"type": "way", "id": 16, "tags": {"building": "house"}, "geometry": [{"lat": 52.3803, "lon": 4.8999}, {"lat": 52.3803, "lon": 4.9000}, {"lat": 52.3804, "lon": 4.9000}, {"lat": 52.3804, "lon": 4.8999}, {"lat": 52.3803, "lon": 4.8999}]}]})";
     const auto bytes = std::as_bytes(std::span(data.data(), data.size()));
     const load::WindowPlace place = load::place_of(k);
     const auto doc = osm::read_overpass(bytes);
@@ -302,6 +310,14 @@ TEST_CASE("load: a window by the sea builds, the sea's computed points at their 
     const tl::Layer* water = tile->layer(tl::LayerId::water);
     REQUIRE(water != nullptr);
     CHECK(water->count > 0);
+    // the phone's window is cut close up (place_of), and the sea keeps its natural shore there whatever stands by it,
+    // as the renders give it (a beach's pavilion is no quay): houses by the coastline's ends, where the sea's closing
+    // edges to its computed points start, give it no quay, which on those points would not lie on the grid (core-p8
+    // refused four windows of the Westerschelde and the Haringvliet so: "quay edge ... is not on the grid of the
+    // frame")
+    CHECK(place.close_up);
+    const tl::Layer* quays = tile->layer(tl::LayerId::quay);
+    CHECK((quays == nullptr || quays->count == 0));
 }
 
 TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, which says so and joins no cell") {

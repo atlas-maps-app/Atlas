@@ -53,13 +53,14 @@ struct CutVariant {
 /// with keep codes, the variants at `variants`' tolerances, and what regions.py adds to the living map's lists. L12
 /// holds the ground (the areas and the land cover) and the water at the ladder's 4 m, and the labels. The engine's
 /// close-up cut (Scene::close_up: the app's canal ring) differs from SceneToTiles' where the renders cut a region for a
-/// view from afar: a water edge carries a quay wall where a building's wall stands within 40 m of it on its land side.
+/// view from afar: an edge of a natural shore carries a quay wall where a building's wall stands within 40 m of it on
+/// its land side, and the facades carry their doors and house numbers as the living map's do.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError>
 cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVariant> variants);
 
 /// One window of the map the phone builds (load/Window.hpp): a region's cut at L14 alone, of the features whose
 /// reference point lies in `tile` and the water clipped to its edges, with keep codes and the variants of the features
-/// in it, in the engine's close-up cut where its place is the phone's (cut_region's quays). What the tiles
+/// in it, in the engine's close-up cut where its place is the phone's (cut_region's quays and facades). What the tiles
 /// have no columns for yet is left out where the packer's cut refuses it: a tradition's details (trad, party, lv_why,
 /// roof_why) until step 4's facades; the looks the details lead to (the levels, the roofs, the colours) are carried.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene,
