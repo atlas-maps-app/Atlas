@@ -73,6 +73,7 @@ import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.MapEngine
 import app.atlas.render.live.Moment
+import app.atlas.render.live.RegionFrame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -925,9 +926,10 @@ private class BenchRun(
         }
         val packs = MapEngine.packs(context.assets)
         withContext(Dispatchers.IO) { runCatching { packs.load() } }
-        val living = packs.packs.firstOrNull { it.profile == CameraWriter.PROFILE_LIVING }
+        // the canal ring draws the Westerkerk home too (the APK lists it alone): the app's home, in the living map's frame
+        // (HomeView.westerkerk)
         val canal = packs.packs.firstOrNull { it.id == VkBench.BOARD_PACK }
-        val views = VkBench.mapViews(living?.frame, canal?.frame, canal?.views?.get(VkBench.BOARD_VIEW))
+        val views = VkBench.mapViews(canal?.let { RegionFrame.living() }, canal?.frame, canal?.views?.get(VkBench.BOARD_VIEW))
         if (views.isEmpty()) {
             emit("vkbench map: unavailable (no bundled packs in this build)")
             return
@@ -943,7 +945,7 @@ private class BenchRun(
             }
             val theme = ThemeBlock.allocate()
             val lit = runCatching {
-                CoreMoment.write(theme, Moment.Named(moment), living?.zone ?: ZoneId.of("Europe/Amsterdam"), MapEngine.options.daylight)
+                CoreMoment.write(theme, Moment.Named(moment), canal?.zone ?: ZoneId.of("Europe/Amsterdam"), MapEngine.options.daylight)
                 core.moment(theme)
             }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
             opened to lit
