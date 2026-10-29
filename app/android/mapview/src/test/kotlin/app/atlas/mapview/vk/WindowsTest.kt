@@ -3,6 +3,7 @@ package app.atlas.mapview.vk
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -218,6 +219,222 @@ class WindowsTest {
         assertTrue(withPacks.step(core))
         assertEquals(1, fetched.size)
         assertEquals(String(next), core.built.last())
+    }
+
+    /** The countries' tiles as a window's first source: what each asked got, and the windows asked. */
+    private var tiled: (MapCore.Window) -> Windows.Tiled? = { null }
+    private val tilesAsked = ArrayList<MapCore.Window>()
+
+    /** The windows' status while the tiles were asked. */
+    private val statusAsked = ArrayList<Windows.Status>()
+    private lateinit var withTiles: Windows
+
+    init {
+        withTiles = Windows(
+            dir,
+            fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
+            fetchDiff = { _, since, notBefore -> diffs += since to notBefore; changes(since, notBefore) },
+            clock = { now },
+            edits = { drawn },
+            packs = { w, after -> packsAsked += w to after; packed(w, after) },
+            tiles = { w -> tilesAsked += w; statusAsked += withTiles.status; tiled(w) },
+        )
+    }
+
+    /** The Netherlands' tiles of 26 October: the window's pack, as the phone's core builds it from [nl]. */
+    private val nlDate = Instant.parse("2026-10-26T20:21:24Z")
+    private val nlPack = "the Netherlands' pack of 14/8414/5383".toByteArray()
+
+    /** The window taken from the Netherlands' tiles, in view. */
+    private fun takenFromTheTiles(core: Core) {
+        tiled = { Windows.Tiled(nlPack, nlDate, "netherlands") }
+        core.wanted = listOf(w)
+        assertTrue(withTiles.step(core))
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+    }
+
+    @Test
+    fun aWindowThePhoneHasNoneOfIsTakenFromItsCountrysTilesWithNoDataFetchedOrBuilt() {
+        val core = Core()
+        takenFromTheTiles(core)
+        assertEquals(listOf(w), tilesAsked)
+        // written in its place, with the date of the data it was built from beside it
+        assertArrayEquals(nlPack, withTiles.fileOf(w).readBytes())
+        assertEquals("2026-10-26T20:21:24Z netherlands", withTiles.tiledOf(w).readText().trim())
+        assertEquals(now, withTiles.tiledOf(w).lastModified())
+        assertEquals(setOf("14-8414-5383.atlas", "14-8414-5383.tiles"), dir.list()!!.toSet())
+        // nothing fetched or built: it keeps no data
+        assertTrue(fetched.isEmpty())
+        assertTrue(packsAsked.isEmpty())
+        assertTrue(core.built.isEmpty())
+        // the map's status showed the range fetch as fetching, and the windows rest after it
+        assertTrue(statusAsked.single() is Windows.Status.Fetching)
+        assertEquals(Windows.Status.Idle, withTiles.status)
+        // not asked for again while the core still wants its place, nor refreshed within the week
+        core.wanted = listOf(w)
+        repeat(10) {
+            now += 500
+            assertFalse(withTiles.step(core))
+        }
+        now += 6 * day
+        assertFalse(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        assertTrue(fetched.isEmpty())
+        assertTrue(packsAsked.isEmpty())
+    }
+
+    @Test
+    fun aWindowTheTilesHoldWithNothingToDrawIsMarkedAndNotAskedForAgainUntilItIsDue() {
+        tiled = { Windows.Tiled(ByteArray(0), nlDate, "netherlands") }
+        packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
+        val core = Core()
+        core.wanted = listOf(w)
+        // nothing to hand the core: no pack, the mark alone (PackList lists none)
+        assertFalse(withTiles.step(core))
+        assertFalse(withTiles.fileOf(w).exists())
+        assertEquals(setOf("14-8414-5383.tiles"), dir.list()!!.toSet())
+        assertEquals(Windows.Status.Idle, withTiles.status)
+        repeat(10) {
+            now += 500
+            assertFalse(withTiles.step(core))
+        }
+        now += 6 * day
+        assertFalse(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        assertTrue(packsAsked.isEmpty())
+        // a week on, the core still wanting its place: its release's data from the packs, built as data from now on
+        now += 2 * day
+        assertTrue(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        assertEquals(listOf(w to null), packsAsked)
+        assertEquals(listOf(String(nl)), core.built)
+        assertEquals(String(nl), unzipped(withTiles.dataOf(w)))
+        assertFalse(withTiles.tiledOf(w).exists())
+        assertTrue(fetched.isEmpty())
+    }
+
+    @Test
+    fun aWindowNoCountrysTilesHoldOrWhoseTilesFailIsBuiltFromItsDataAsBefore() {
+        val core = Core()
+        core.wanted = listOf(w)
+        // no country holds it, or another core built its tiles: its data, as before
+        assertTrue(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        assertEquals(1, fetched.size)
+        assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
+        assertFalse(withTiles.tiledOf(w).exists())
+        // a country holds it, but its bytes did not come whole
+        tiled = { throw IOException("window 14/8414/5383 of pack netherlands: not the tiles its index names") }
+        dir.listFiles().orEmpty().forEach { it.delete() }
+        assertTrue(withTiles.step(core))
+        assertEquals(2, tilesAsked.size)
+        assertEquals(2, fetched.size)
+        assertFalse(withTiles.tiledOf(w).exists())
+        // a window built from data is not taken from the tiles again, though they hold it: it goes on from its data
+        tiled = { Windows.Tiled(nlPack, nlDate, "netherlands") }
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 8 * day
+        core.mergeWith = { _, _ -> null }
+        assertFalse(withTiles.step(core))
+        assertEquals(2, tilesAsked.size)
+        assertEquals(1, diffs.size)
+    }
+
+    @Test
+    fun aWindowFromTheTilesIsDueAWeekOnAndTakesItsReleasesDataThenTheChangesSince() {
+        packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
+        val core = Core()
+        takenFromTheTiles(core)
+        now += 8 * day
+        val merged = answer("2026-11-03T11:58:00Z", whole = "2026-10-26T20:21:24Z", id = 9)
+        core.mergeWith = { _, _ -> merged }
+        assertTrue(withTiles.step(core))
+        // its release's data, whatever the window held, kept without a build: its pack is that data's
+        assertEquals(listOf(w to null), packsAsked)
+        // then the changes since its date, merged and built
+        assertEquals(listOf("2026-10-26T19:51:24Z" to "2026-10-26T20:21:24Z"), diffs)
+        assertEquals(String(nl), core.merged.single().first)
+        assertEquals(listOf(String(merged)), core.built)
+        assertEquals(String(merged), unzipped(withTiles.dataOf(w)))
+        assertEquals(now, withTiles.dataOf(w).lastModified())
+        assertFalse(withTiles.tiledOf(w).exists())
+        assertTrue(fetched.isEmpty())
+        // from then on a window built from data: the next week, the changes since the merge's date
+        now += 8 * day
+        core.mergeWith = { _, _ -> null }
+        assertFalse(withTiles.step(core))
+        assertEquals("2026-11-03T11:28:00Z" to "2026-11-03T11:58:00Z", diffs.last())
+        assertEquals(1, tilesAsked.size)
+    }
+
+    @Test
+    fun aDueWindowFromTheTilesWhereNothingChangedKeepsItsPackAndItsReleasesData() {
+        packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
+        val core = Core()
+        takenFromTheTiles(core)
+        now += 8 * day
+        core.mergeWith = { _, _ -> null }
+        assertFalse(withTiles.step(core))
+        assertTrue(core.built.isEmpty())
+        assertArrayEquals(nlPack, withTiles.fileOf(w).readBytes())
+        assertEquals(String(nl), unzipped(withTiles.dataOf(w)))
+        assertEquals(now, withTiles.dataOf(w).lastModified())
+        assertEquals(setOf("14-8414-5383.atlas", "14-8414-5383.json.gz"), dir.list()!!.toSet())
+        // no server gives the changes: the window stays due, and is fetched whole, never from data older than its tiles
+        now += 8 * day
+        changes = { _, _ -> throw IOException("no server answered") }
+        whole = { answer("2026-06-01T08:52:28Z", id = 6) }
+        assertFalse(withTiles.step(core))
+        assertEquals(1, fetched.size)
+        assertTrue(core.built.isEmpty())
+    }
+
+    @Test
+    fun whereNoPackGivesItsReleasesDataADueWindowFromTheTilesIsFetchedWholeNeverFromOlderData() {
+        val core = Core()
+        takenFromTheTiles(core)
+        now += 8 * day
+        // a server months behind: never built, the window waits and keeps its pack from the tiles
+        whole = { answer("2026-06-01T08:52:28Z", id = 6) }
+        assertFalse(withTiles.step(core))
+        assertEquals(listOf(w to null), packsAsked.toList())
+        assertEquals(1, fetched.size)
+        assertTrue(core.built.isEmpty())
+        assertArrayEquals(nlPack, withTiles.fileOf(w).readBytes())
+        assertTrue(withTiles.tiledOf(w).exists())
+        // a newer answer: built from it, a window built from data from then on
+        now += Windows.RETRY_MS + 1
+        whole = { answer("2026-11-03T12:00:00Z", id = 10) }
+        assertTrue(withTiles.step(core))
+        assertEquals(2, fetched.size)
+        assertEquals(listOf(String(answer("2026-11-03T12:00:00Z", id = 10))), core.built)
+        assertFalse(withTiles.tiledOf(w).exists())
+        assertEquals(Instant.parse("2026-11-03T12:00:00Z"), Windows.headOf(withTiles.dataOf(w))!!.base)
+    }
+
+    @Test
+    fun theUsersEditsReachingAWindowFromTheTilesBuildItFromItsReleasesDataWithTheEdits() {
+        packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
+        val core = Core()
+        takenFromTheTiles(core)
+        drawn = listOf(brown)
+        core.editWith = { kept -> (kept.readText() + " edited").toByteArray() }
+        withTiles.edited(52.37, 4.88)
+        assertTrue(withTiles.step(core))
+        // its release's data, kept as it came, built with the edit; no server asked
+        assertEquals(listOf(w to null), packsAsked)
+        assertEquals(listOf(String(nl) + " edited"), core.built)
+        assertEquals(String(nl), unzipped(withTiles.dataOf(w)))
+        assertEquals(setOf("14-8414-5383.atlas", "14-8414-5383.json.gz"), dir.list()!!.toSet())
+        assertTrue(fetched.isEmpty())
+        assertTrue(diffs.isEmpty())
+        // its data counts as fetched when its pack came from the tiles: it is still due a week after that
+        now += 7 * day + 1
+        core.mergeWith = { _, _ -> null }
+        assertFalse(withTiles.step(core))
+        assertEquals(listOf("2026-10-26T19:51:24Z" to "2026-10-26T20:21:24Z"), diffs)
     }
 
     @Test

@@ -274,6 +274,14 @@ object MapEngine {
     var windowPacks: ((app.atlas.mapcore.MapCore.Window, java.time.Instant?) -> app.atlas.mapview.vk.Windows.Packed?)? = null
 
     /**
+     * A window's pack from its country's tiles, as the phone's own core builds it (ENGINE.md step 3, one pack per
+     * country: taken before any data, where the phone has none of the window); the app sets it with the published
+     * packs. Null: every window is built from its data.
+     */
+    @Volatile
+    var windowTiles: ((app.atlas.mapcore.MapCore.Window) -> app.atlas.mapview.vk.Windows.Tiled?)? = null
+
+    /**
      * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),
      * pending or sent, oldest first; the app sets it with its EditQueue. Read on the windows' background thread.
      */
@@ -307,7 +315,7 @@ object MapEngine {
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks)
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles)
                 .also { windowsBuilder = it }
         }
     }
