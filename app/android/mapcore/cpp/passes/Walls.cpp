@@ -279,8 +279,10 @@ void Buildings::update(const frame::FrameState& state) {
         const bool walls = !out(style::camera_part::walls);
         building_runs(walls ? t.cells : 0U, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;
-        // its near cells only in the cells where one of their buildings is near: elsewhere they draw nothing
-        const bool near_tile = walls && std::ranges::find(near_tiles_, tile.handle) != near_tiles_.end();
+        // its near cells only in the cells where one of their buildings is near: elsewhere they draw nothing (and
+        // where the map leaves them out, the walls are drawn plain)
+        const bool near_tile = walls && !out(style::camera_part::near_cells) &&
+                               std::ranges::find(near_tiles_, tile.handle) != near_tiles_.end();
         building_runs(near_tile ? near_cells(*b, t.cells, d.rows, state.ranks->table()) : 0U, b->cells_first, runs_);
         d.cell_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs;
         // the plain list for the roofs and for their thin edges

@@ -115,6 +115,8 @@ class LayoutTest {
         put("CameraWriter.PART_LOCATION", CameraWriter.PART_LOCATION)
         put("CameraWriter.PART_FROSTED", CameraWriter.PART_FROSTED)
         put("CameraWriter.PART_SHADOW_BLUR", CameraWriter.PART_SHADOW_BLUR)
+        put("CameraWriter.PART_NEAR_CELLS", CameraWriter.PART_NEAR_CELLS)
+        put("CameraWriter.PART_KEPT_CULL", CameraWriter.PART_KEPT_CULL)
         put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)

@@ -124,6 +124,8 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
     k.submitted = {};
     std::vector<std::uint32_t>& w = k.words;
     w.assign(header_words, 0U);
+    // the map leaves the cull out: the walls and roofs are drawn as their runs (drawn_kept: no jobs)
+    if (out(style::camera_part::kept_cull)) return;
     std::array<std::uint32_t, lists> first_job{};
     std::array<std::uint32_t, lists> jobs{};
     std::array<std::uint32_t, lists> base{};

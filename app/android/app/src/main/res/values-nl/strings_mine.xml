@@ -380,6 +380,8 @@
     <string name="mine_part_rain">Regen</string>
     <string name="mine_part_golden_wash">Gouden licht</string>
     <string name="mine_part_walls">Muren</string>
+    <string name="mine_part_near_cells">Muren dichtbij</string>
+    <string name="mine_part_kept_cull">GPU-selectie</string>
     <string name="mine_part_roofs">Daken</string>
     <string name="mine_part_roof_edges">Dakranden</string>
     <string name="mine_part_windows">Ramen</string>

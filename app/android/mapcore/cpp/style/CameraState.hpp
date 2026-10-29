@@ -183,8 +183,14 @@ inline constexpr std::uint64_t frosted = 1ULL << 44U;
 // The shadows again.
 /// The soft shadows' blur: their mask and its blur, the shadows drawn sharp (their stencil's union) instead.
 inline constexpr std::uint64_t shadow_blur = 1ULL << 45U;
+// The buildings again.
+/// The walls' near cells (their own list, nearer than 460 m): the walls drawn plain, as beyond it.
+inline constexpr std::uint64_t near_cells = 1ULL << 46U;
+/// The walls' and roofs' cull on the GPU (passes/Kept.cpp: its cull, scan and scatter): the walls and roofs drawn as
+/// their runs instead, every primitive submitted.
+inline constexpr std::uint64_t kept_cull = 1ULL << 47U;
 /// Every part version 3 knows; a state with another is refused.
-inline constexpr std::uint64_t known = (1ULL << 46U) - 1U;
+inline constexpr std::uint64_t known = (1ULL << 48U) - 1U;
 
 /// The facades' detail: every part of a facade wall (ENGINE.md step 4, the facades), its doors and numbers too.
 inline constexpr std::uint64_t facade_detail = windows | window_depth | flat_detail | church_windows | material_faces |

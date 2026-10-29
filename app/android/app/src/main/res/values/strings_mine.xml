@@ -380,6 +380,8 @@
     <string name="mine_part_rain">Rain</string>
     <string name="mine_part_golden_wash">Golden wash</string>
     <string name="mine_part_walls">Walls</string>
+    <string name="mine_part_near_cells">Close-up walls</string>
+    <string name="mine_part_kept_cull">GPU cull</string>
     <string name="mine_part_roofs">Roofs</string>
     <string name="mine_part_roof_edges">Roof edges</string>
     <string name="mine_part_windows">Windows</string>
