@@ -64,6 +64,7 @@ TEST_CASE("the tables hold the documented offsets and numbers") {
     CHECK(at(atlas::style::camera_state_fields(), "keep_out[1]") == 152U);
     CHECK(at(atlas::style::camera_state_fields(), "location") == 512U);
     CHECK(at(atlas::style::camera_state_fields(), "location.heading") == 532U);
+    CHECK(at(atlas::style::camera_state_fields(), "parts") == 544U);
     CHECK(at(atlas::style::shader_theme_fields(), "flags") == 224U);
     CHECK(at(atlas::style::shader_theme_fields(), "bits_lyz") == 272U);
     // the constants Kotlin is held to come from the core's own definitions
@@ -74,6 +75,12 @@ TEST_CASE("the tables hold the documented offsets and numbers") {
     CHECK(value("CameraWriter.LOCATION") == atlas::style::camera_flag::location);
     CHECK(value("CameraWriter.HEADING") == atlas::style::camera_flag::heading);
     CHECK(value("CameraWriter.PROFILE_WORLD_BASE") == 4U);
+    // the parts by their bit numbers: the first, the rain, the last, and how many
+    CHECK(value("CameraWriter.PART_GROUND") == 0U);
+    CHECK(value("CameraWriter.PART_RAIN") == 22U);
+    CHECK(value("CameraWriter.PART_FROSTED") == 44U);
+    CHECK(value("CameraWriter.PART_SHADOW_BLUR") == 45U);
+    CHECK(value("CameraWriter.PARTS") == 46U);
     std::set<std::string_view> names;
     for (const auto& c : atlas::style::layout_constants()) {
         CHECK(names.insert(c.name).second);

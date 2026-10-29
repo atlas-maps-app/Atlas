@@ -58,7 +58,7 @@ constexpr double pool_reach = 10.0;
 void Ground::decide_pools(const view::Camera& cam) {
     GroundFrame& f = frame_;
     f.lamp_pools.clear();
-    if (!f.night || no_pools_ || only_setts_ || f.tiles.empty()) return;
+    if (!f.night || no_pools_ || only_setts_ || f.tiles.empty() || f.out(style::camera_part::lamp_pools)) return;
     // the street lamps in S['nodes']'s order across the drawn tiles
     struct Source {
         std::uint32_t order;

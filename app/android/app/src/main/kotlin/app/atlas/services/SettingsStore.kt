@@ -10,6 +10,9 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import app.atlas.geo.LatLon
+import app.atlas.mapview.MapPart
+import app.atlas.mapview.MapPartGroup
+import app.atlas.mapview.MapParts
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -59,6 +62,22 @@ class SettingsStore(private val store: DataStore<Preferences>) {
 
     val units: Flow<Units> = data.map { p -> p[SettingsKeys.UNITS]?.let { runCatching { Units.valueOf(it) }.getOrNull() } ?: Units.METRIC }
         .distinctUntilChanged()
+
+    /** The map's parts a debug build's Look settings leave out ([leftOutParts]). */
+    val partsOff: Flow<Set<MapPart>> = data.map { leftOutParts(it) }.distinctUntilChanged()
+}
+
+/**
+ * The map's parts left out (SettingsKeys.MAP_PARTS_OFF, their names); until the parts are first switched, as the three
+ * switches before them had them: the clouds' shadows and the water's light off when unset, the facades' detail on.
+ */
+fun leftOutParts(p: Preferences): Set<MapPart> {
+    p[SettingsKeys.MAP_PARTS_OFF]?.let { return MapParts.named(it) }
+    val off = mutableSetOf<MapPart>()
+    if (p[SettingsKeys.MAP_CLOUD_SHADOWS] != true) off += MapPart.CLOUD_SHADOWS
+    if (p[SettingsKeys.MAP_WATER_LIGHT] != true) off += MapPartGroup.WATER_LIGHT.parts
+    if (p[SettingsKeys.MAP_FACADES] == false) off += MapPartGroup.FACADES.parts
+    return off
 }
 
 /** The shell's settings keys. Features add theirs in their own packages, prefixed with the package name. */
@@ -91,10 +110,16 @@ object SettingsKeys {
     val MAP_TRUE_DEPTH = booleanPreferencesKey("map.trueDepth")
 
     /**
-     * A debug build's switches of the core's parts: the clouds' shadows and the water's light (off when unset, until
-     * they are worked on: the user, 28 October 2026), and the facades' detail (on when unset). Off, the map leaves that
-     * part out, so its panel shows on the phone what the part costs (MapEngine.leaveOut); the trees and the soft shadows
-     * are the map's own layers.
+     * A debug build's switches of the core's parts: the names of the map's parts it leaves out (mapview.MapPart: every
+     * layer and effect, each its own switch, and a switch for each group of them), so the map's panel shows on the phone
+     * what each part costs (MapEngine.leaveOut). Unset until a part is first switched: then the three switches before
+     * them decide ([leftOutParts]).
+     */
+    val MAP_PARTS_OFF = stringSetPreferencesKey("map.partsOff")
+
+    /**
+     * The switches before the parts', read only while [MAP_PARTS_OFF] is unset: the clouds' shadows and the water's light
+     * (off when unset, until they are worked on: the user, 28 October 2026), and the facades' detail (on when unset).
      */
     val MAP_CLOUD_SHADOWS = booleanPreferencesKey("map.cloudShadows")
     val MAP_WATER_LIGHT = booleanPreferencesKey("map.waterLight")

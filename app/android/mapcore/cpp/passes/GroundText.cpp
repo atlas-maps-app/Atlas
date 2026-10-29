@@ -219,7 +219,8 @@ void GroundText::update(const frame::FrameState& state) {
     draws_.clear();
     placed_.clear();
     designators_.clear();
-    if (!state.view.has_value()) return;
+    // (the names on the ground: unless the map leaves them out)
+    if (!state.view.has_value() || state.camera.leaves_out(style::camera_part::ground_text)) return;
     gather(state);
     const view::Camera& cam = state.view->camera();
     double radius = 1e9;

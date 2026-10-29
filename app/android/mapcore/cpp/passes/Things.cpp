@@ -278,6 +278,11 @@ void Things::release() noexcept {
 
 void Things::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("thing"); }
 
+void Things::select(const frame::FrameState& state, frame::Selectors& selectors) {
+    // the map leaves its street furniture out: their items take no rank
+    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::furniture));
+}
+
 gpu::Result<void> Things::build(scene::TileBuild& b) const {
     const geometry::TileThings g = geometry::build_things({.tile = &b.tile(), .head = &b.head(), .kind = kind_});
     if (g.things.empty()) return {};
@@ -334,7 +339,10 @@ void Things::drawn(const frame::FrameState& state, std::vector<Drawn>& out) cons
 
 void Things::update(const frame::FrameState& state) {
     counts_ = {};
-    if (decide_ == nullptr || state.heaps == nullptr || !state.view) return;
+    if (decide_ == nullptr || state.heaps == nullptr || !state.view ||
+        state.camera.leaves_out(style::camera_part::furniture)) {
+        return;
+    }
     const tiles::Style* style =
         state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
     if (style == nullptr) return;
@@ -344,6 +352,8 @@ void Things::update(const frame::FrameState& state) {
     const bool night = (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U;
     const bool weather = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
     const bool wet = (state.block.theme.flags.x & shaders::THEME_WET) != 0U;
+    const bool halos = !state.camera.leaves_out(style::camera_part::lamp_halos);
+    const bool streaks = !state.camera.leaves_out(style::camera_part::lamp_streaks);
     const double focal = state.view->camera().focal();
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     words_.clear();
@@ -354,9 +364,12 @@ void Things::update(const frame::FrameState& state) {
         const scene::CoverTile& t = tiles[d.cover];
         const scene::PassTile& mine = t.drawn->passes[me];
         const ThingTile& things = *mine.cpu_as<ThingTile>();
-        const ThingChoice choice =
+        ThingChoice choice =
             thing_choice(things.kinds[d.thing], things.posts[d.thing], d.depth, focal, night, weather, wet);
         if (!choice.drawn) continue;
+        // a lamp's halo and its wet streak, unless the map leaves them out (its records are counted by its flags)
+        if (!halos) choice.flags &= ~shaders::THING_JOB_HALO;
+        if (!streaks) choice.flags &= ~shaders::THING_JOB_STREAK;
         const std::uint32_t n = shaders::thing_record_count(choice.flags);
         if (records + n > max_records) continue;
         // its quads for the plain fills (ENGINE.md gain 18)

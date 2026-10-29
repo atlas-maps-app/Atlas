@@ -420,7 +420,10 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (options_.painter || options_.owners) b.camera.flags.x |= shaders::CAMERA_PAINTER;
     b.theme = style::shader_theme(state_.theme);
     std::uint32_t steps = options_.overdraw || options_.owners ? 0U : steps_of(state_.mode) & options_.steps;
-    if (cam.has(style::camera_flag::no_cloud_shadows)) steps &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
+    // the composite's steps the map leaves out
+    if (cam.leaves_out(style::camera_part::cloud_shadows)) steps &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
+    if (cam.leaves_out(style::camera_part::rain)) steps &= ~shaders::COMPOSITE_RAIN;
+    if (cam.leaves_out(style::camera_part::golden_wash)) steps &= ~shaders::COMPOSITE_WASH;
     if (state_.grounded && (steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U) {
         steps |= shaders::COMPOSITE_CLOUD_GROUND;
     }
@@ -430,6 +433,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (engine) mode |= shaders::FRAME_ENGINE;
     if (state_.theme.has(style::theme_flag::night)) mode |= shaders::FRAME_NIGHT;
     if (!options_.grain) mode |= shaders::FRAME_NO_GRAIN;
+    if (cam.leaves_out(style::camera_part::leaf_filters)) mode |= shaders::FRAME_NO_CROWNS;
     b.info = {mode, 0U, 0U, 0U};
     return true;
 }

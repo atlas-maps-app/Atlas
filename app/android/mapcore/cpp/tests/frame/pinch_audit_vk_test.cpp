@@ -385,11 +385,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             for (const auto& [m, n] : kinds) MESSAGE(std::format("validation {} ({}x): {}", when, n, m));
         };
         const Listed* held = nullptr;
-        // a frame at `d` with the parts `off` leaves out (style::camera_flag::no_*), the pack named as MapController
-        // names it; its line in the log
-        const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint32_t off = 0U) {
+        // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
+        // it; its line in the log
+        const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
             style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
-            c.flags |= off;
+            c.parts |= off;
             held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
             const auto at = std::chrono::steady_clock::now();
@@ -447,11 +447,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             // ATLAS_PINCH_PARTS: each part the phone's switches leave out, alone, its frame's draws, triangles and
             // fragments (the GPU's counts are an earlier frame's: the fourth frame's line is the part's)
             if (!environment("ATLAS_PINCH_PARTS").empty()) {
-                namespace flag = style::camera_flag;
+                namespace part = style::camera_part;
                 for (const auto& [name, off] :
-                     {std::pair{"trees", flag::no_trees}, std::pair{"shadows", flag::no_shadows},
-                      std::pair{"cloud shadows", flag::no_cloud_shadows}, std::pair{"water light", flag::no_water},
-                      std::pair{"facade detail", flag::no_facades}}) {
+                     {std::pair{"trees", part::trees}, std::pair{"shadows", part::building_shadows},
+                      std::pair{"cloud shadows", part::cloud_shadows}, std::pair{"water light", part::water_light},
+                      std::pair{"facade detail", part::facade_detail}}) {
                     for (int k = 0; k < 4; ++k) (void)draw(std::format("without {}", name), d, true, k == 3, off);
                 }
                 for (int k = 0; k < 4; ++k) (void)draw("with every part", d, true, k == 3);

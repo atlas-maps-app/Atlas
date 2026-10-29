@@ -10,7 +10,6 @@ import app.atlas.geo.LatLon
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
-import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.VkHost
@@ -125,20 +124,26 @@ object MapEngine {
         private set
 
     /**
-     * The parts of the picture the app's diagnostics leave out of the core's frames (CameraWriter.NO_CLOUD_SHADOWS,
-     * NO_WATER, NO_FACADES): switched one at a time in a debug build's Look settings, so the map's panel shows on the
+     * The parts of the picture the app's diagnostics leave out of the core's frames (MapPart's bits, the camera state's
+     * parts): every layer and effect, each switched in a debug build's Look settings, so the map's panel shows on the
      * phone what each one costs (ENGINE.md, "On the user's phone first"). Each map's frames carry them with its own
      * layers' (MapController.publishCamera); [leaveOut] draws the maps again.
      */
     @Volatile
-    var leftOut: Int = 0
+    var leftOut: Long = 0L
         private set
 
-    /** Sets [leftOut] from the parts kept (each true: drawn) and draws every map again with it. */
-    fun leaveOut(cloudShadows: Boolean, waterLight: Boolean, facades: Boolean) {
-        val off = (if (cloudShadows) 0 else CameraWriter.NO_CLOUD_SHADOWS) or (if (waterLight) 0 else CameraWriter.NO_WATER) or
-            (if (facades) 0 else CameraWriter.NO_FACADES)
-        if (off == leftOut) return
+    /**
+     * Sets [leftOut] to [parts] and draws every map again with it; today's map (the renderer's port, where the core has no
+     * tiles) leaves out the rain and the golden wash with them, which its screen layers draw ([options]).
+     */
+    fun leaveOut(parts: Set<MapPart>) {
+        val off = MapParts.bits(parts)
+        val o = options
+        val rain = MapPart.RAIN !in parts
+        val wash = MapPart.GOLDEN_WASH !in parts
+        if (o.rain != rain || o.wash != wash) options = o.copy(rain = rain, wash = wash)
+        if (off == leftOut && o.rain == rain && o.wash == wash) return
         leftOut = off
         invalidate()
     }

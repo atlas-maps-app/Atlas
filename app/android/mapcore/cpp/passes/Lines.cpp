@@ -82,6 +82,10 @@ void Ground::decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDec
     for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
         const geo::Stroke& s = g.strokes[i];
         if ((t.cells & (std::uint64_t{1} << s.cell)) == 0) continue;
+        // the sett roads' courses and the other lines, unless the map leaves them out
+        if (f.out(s.kind == geo::StrokeKind::setts ? style::camera_part::setts : style::camera_part::ground_lines)) {
+            continue;
+        }
         if (s.kind == geo::StrokeKind::bridge && (f.weather || f.night)) continue;
         // a sett road's courses: `not night and not eye and cam.depth((pts[0][0], 0, pts[0][1])) < min(500, sett_d)`
         if (s.kind == geo::StrokeKind::setts && (f.night || (f.weather && cam.spec().pitch < 10) ||

@@ -307,6 +307,11 @@ void Trees::release() noexcept {
 
 void Trees::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("tree"); }
 
+void Trees::select(const frame::FrameState& state, frame::Selectors& selectors) {
+    // the map leaves its trees out: their items take no rank
+    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::trees));
+}
+
 gpu::Result<void> Trees::build(scene::TileBuild& b) const {
     const geometry::TileTrees g =
         geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_});
@@ -364,7 +369,10 @@ void Trees::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
 
 void Trees::update(const frame::FrameState& state) {
     counts_ = {};
-    if (decide_ == nullptr || state.heaps == nullptr || !state.view) return;
+    if (decide_ == nullptr || state.heaps == nullptr || !state.view ||
+        state.camera.leaves_out(style::camera_part::trees)) {
+        return;
+    }
     const tiles::Style* style =
         state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
     if (style == nullptr) return;
@@ -495,7 +503,6 @@ void Trees::update(const frame::FrameState& state) {
 }
 
 void Trees::record(const frame::Recording& recording, std::uint32_t phase) {
-    if (recording.state.camera.has(style::camera_flag::no_trees)) return; // the map leaves its trees out
     switch (phase) {
     case draw_phase: record_draw(recording); break;
     case decide_phase: record_decide(recording); break;

@@ -82,7 +82,9 @@ void Ground::decide_rings(const view::Camera& cam, const frame::FrameState& stat
     GroundFrame& f = frame_;
     f.ring_bands.clear();
     // `if th.get('wet')`, inside the water's clip
-    if (!f.weather || !f.water || no_rings_ || only_setts_ || f.tiles.empty()) return;
+    if (!f.weather || !f.water || no_rings_ || only_setts_ || f.tiles.empty() || f.out(style::camera_part::rings)) {
+        return;
+    }
     if (!state.theme.has(style::theme_flag::wet)) return;
     const double h = cam.height();
     const double hy = cam.horizon_y();

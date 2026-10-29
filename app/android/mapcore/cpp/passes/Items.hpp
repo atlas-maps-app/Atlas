@@ -99,6 +99,7 @@ public:
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
     void kinds(frame::Selectors& selectors) override;
+    void select(const frame::FrameState& state, frame::Selectors& selectors) override;
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;

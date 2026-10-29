@@ -109,7 +109,8 @@ gpu::Result<void> Buildings::prepare_strokes(const frame::PassContext& context) 
 }
 
 void Buildings::record_roofs(const frame::Recording& recording) {
-    if (draws_.empty()) return;
+    // (the plain list is drawn for the roofs' thin edges too: not the roofs where the map leaves them out)
+    if (draws_.empty() || out(style::camera_part::roofs)) return;
     if (drawn_kept()) {
         // those the cull kept (passes/Kept.cpp)
         record_kept(recording, 2);
@@ -145,6 +146,7 @@ void Buildings::write_jobs(std::uint32_t slot) {
     s.records_now = 0;
     std::vector<std::uint32_t>& w = s.words;
     w.clear();
+    if (out(style::camera_part::roof_edges)) return; // the map leaves the roofs' thin edges out
     std::uint32_t records = 0;
     // the farthest tile first, as the renders paint; each run of its plain list in jobs of at most 64, a record each
     for (const TileDraw& d : std::ranges::reverse_view(draws_)) {

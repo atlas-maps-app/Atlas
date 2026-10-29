@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <bit>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -24,7 +25,7 @@ namespace flag = atlas::style::camera_flag;
 /// The Main board's camera on a 1080 × 2400 phone, at rest, with the home's two frosted pills.
 CameraState home() {
     CameraState s{};
-    s.version = 2;
+    s.version = 3;
     s.flags = flag::rest;
     s.sequence = 41;
     s.latitude = 52.3746;
@@ -64,8 +65,8 @@ CameraState home() {
     return s;
 }
 
-std::array<std::byte, 544> bytes(const CameraState& s) {
-    std::array<std::byte, 544> out{};
+std::array<std::byte, atlas::style::camera_state_size> bytes(const CameraState& s) {
+    std::array<std::byte, atlas::style::camera_state_size> out{};
     std::memcpy(out.data(), &s, sizeof s);
     return out;
 }
@@ -131,11 +132,17 @@ TEST_CASE("a keep-out shape carries the chrome's fade beside its frosting") {
 TEST_CASE("a camera state out of its ranges is refused, with the reason") {
     std::array<std::byte, 512> short_state{}; // version 1's size
     CHECK(atlas::style::read_camera_state(short_state).error() == CameraError::size);
+    std::array<std::byte, 544> second{}; // version 2's
+    CHECK(atlas::style::read_camera_state(second).error() == CameraError::size);
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const float inf = std::numeric_limits<float>::infinity();
     const std::vector<Breakage> breakages = {
         {"version 0", [](CameraState& s) { s.version = 0; }, CameraError::version},
+        {"version 2", [](CameraState& s) { s.version = 2; }, CameraError::version},
         {"an unknown flag", [](CameraState& s) { s.flags = 2048; }, CameraError::flags},
+        {"version 2's trees flag", [](CameraState& s) { s.flags |= 64U; }, CameraError::flags},
+        {"an unknown part", [](CameraState& s) { s.parts = std::uint64_t{1} << 46U; }, CameraError::parts},
+        {"the parts' last bit", [](CameraState& s) { s.parts = std::uint64_t{1} << 63U; }, CameraError::parts},
         {"a heading without a location", [](CameraState& s) { s.flags |= flag::heading; }, CameraError::flags},
         {"a stale location", [](CameraState& s) { s.location.latitude = 52.37; }, CameraError::reserved},
         {"a location off the globe",
@@ -235,4 +242,26 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
     s.flags |= flag::heading;
     s.location.heading = 371.5F;
     CHECK(accepted(s));
+    // the map leaving out every part it knows
+    s = home();
+    s.parts = atlas::style::camera_part::known;
+    CHECK(accepted(s));
+}
+
+TEST_CASE("a camera state carries the parts the map leaves out") {
+    namespace part = atlas::style::camera_part;
+    CameraState want = home();
+    want.parts = part::rain | part::lit_streets | part::frosted;
+    const auto got = atlas::style::read_camera_state(bytes(want));
+    ATLAS_REQUIRE(got.has_value(), atlas::style::name_of(got.error()));
+    CHECK(got->parts == want.parts);
+    CHECK(got->leaves_out(part::rain));
+    CHECK(got->leaves_out(part::frosted | part::trees));
+    CHECK_FALSE(got->leaves_out(part::trees));
+    CHECK_FALSE(got->leaves_out(part::water_light));
+    // every part once, the groups within them
+    CHECK(std::popcount(part::known) == 46);
+    CHECK((part::facade_detail & ~part::known) == 0U);
+    CHECK((part::buildings & part::doors) == 0U);
+    CHECK((part::water_light & part::water) == 0U);
 }

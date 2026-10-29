@@ -184,6 +184,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_style_StyleHost_cameraDump
         out += std::format("location={} {} {:08x} {:08x}\n", bits(l.latitude), bits(l.longitude),
                            std::bit_cast<std::uint32_t>(l.accuracy), std::bit_cast<std::uint32_t>(l.heading));
     }
+    if (s->parts != 0U) out += std::format("parts={:016x}\n", s->parts);
     return env->NewStringUTF(out.c_str());
 }
 

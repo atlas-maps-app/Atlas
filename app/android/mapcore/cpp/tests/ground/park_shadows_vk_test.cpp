@@ -177,6 +177,15 @@ TEST_CASE("ground: a park's woods' shadows are the union of the twin's 12-gons, 
     CHECK(a->decided.woods);
     CHECK_FALSE(b->decided.woods);
     CHECK(b->decided.track_shadows.empty());
+    // with the sun up, the map leaving the park shadows out (style::camera_part::park_shadows): neither the woods' nor
+    // the tracks' decided, the buildings' as with them
+    style::CameraState no_parks = camera;
+    no_parks.parts = style::camera_part::park_shadows;
+    const auto without = draw_park(*session, path, no_parks, up);
+    ATLAS_REQUIRE(without.has_value(), "the park without its shadows was not drawn");
+    CHECK_FALSE(without->decided.woods);
+    CHECK(without->decided.track_shadows.empty());
+    CHECK(without->decided.shadows == a->decided.shadows);
     REQUIRE(a->woods.size() > 20);
     REQUIRE(!a->tracks.empty());
     const std::uint32_t w = a->pixels.width;

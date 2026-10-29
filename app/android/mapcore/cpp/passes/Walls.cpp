@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <limits>
 #include <span>
 
 namespace atlas::passes {
@@ -27,6 +28,9 @@ namespace atlas::passes {
 namespace {
 
 using Words = std::array<std::uint32_t, 4>;
+
+/// A reach no item lies within (Selectors::detail sets a bit where d < it: never), a part's the map leaves out.
+constexpr double none = -std::numeric_limits<double>::infinity();
 
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
@@ -72,18 +76,26 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     const double win_d =
         state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
     const double focal = state.view ? state.view->camera().focal() : 0.0;
+    // A part the map leaves out reaches no item (its detail bit is never set), so the CPU's jobs and the GPU's stages,
+    // which both count a wall's records by its rank's detail, leave it out alike. A church's own windows share their
+    // reach with a houseboat cabin's panes: those the jobs leave out (passes/Windows.cpp).
+    left_out_ = state.camera.parts;
+    namespace part = style::camera_part;
+    const auto reach = [&](std::uint64_t p, double d) { return out(p) ? none : d; };
     const std::array<double, 11> details{geometry::cells_reach,
-                                         win_d,
+                                         reach(part::windows, win_d),
                                          geometry::church_windows_reach,
-                                         geometry::deep_windows_reach,
-                                         geometry::sash_reach,
-                                         geometry::facades_reach,
-                                         geometry::low_plinth_reach,
-                                         geometry::cornices_reach,
-                                         win_d * 1.35,
-                                         geometry::beams_reach,
-                                         corner_boards_reach(focal)};
+                                         reach(part::window_depth, geometry::deep_windows_reach),
+                                         reach(part::window_depth, geometry::sash_reach),
+                                         reach(part::flat_detail, geometry::facades_reach),
+                                         reach(part::flat_detail, geometry::low_plinth_reach),
+                                         reach(part::flat_detail, geometry::cornices_reach),
+                                         reach(part::material_faces, win_d * 1.35),
+                                         reach(part::hoist_beams, geometry::beams_reach),
+                                         reach(part::kit_details, corner_boards_reach(focal))};
     selectors.set_details(kind_, details);
+    // every part of the buildings left out: their items take no rank
+    selectors.leave_out(kind_, (left_out_ & part::buildings) == part::buildings);
 }
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
@@ -167,10 +179,16 @@ void Buildings::update(const frame::FrameState& state) {
     }
     if (windows_ != nullptr) {
         windows_->jobs_now = 0;
+        windows_->lanes_now = {};
         windows_->walls_now = 0;
         windows_->records_now = 0;
         windows_->nears_now = 0;
         windows_->facades_now = 0;
+        windows_->churches_now = 0;
+        windows_->segments_now = 0;
+        windows_->material_fills_now = 0;
+        windows_->material_lines_now = 0;
+        windows_->beams_now = 0;
         // the lines' records (a kit's walls', then its roofs'), whose draws find each other's by these counts
         windows_->roof_lines_now = 0;
         windows_->kit_lines_now = 0;
@@ -196,6 +214,11 @@ void Buildings::update(const frame::FrameState& state) {
         ++asked_revision_;
     }
     const std::uint32_t slot = state.slot % 2;
+    // every part of the buildings left out: no tile's rows, light or draws
+    if ((left_out_ & style::camera_part::buildings) == style::camera_part::buildings) {
+        drop_ahead();
+        return;
+    }
     // The tiles with a building nearer than the cells' reach (its rank draws the near variant): only theirs can draw
     // their near cells. The ranks' order is far to near, so those buildings are among its last rows.
     near_tiles_.clear();
@@ -252,13 +275,17 @@ void Buildings::update(const frame::FrameState& state) {
         d.reveals = ((base + b->reveals_at) * 4) + (area * b->window_walls);
         d.facades = base + b->facades_at;
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
-        building_runs(t.cells, b->edged_first, runs_);
+        // the walls, unless the map leaves them out
+        const bool walls = !out(style::camera_part::walls);
+        building_runs(walls ? t.cells : 0U, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;
         // its near cells only in the cells where one of their buildings is near: elsewhere they draw nothing
-        const bool near_tile = std::ranges::find(near_tiles_, tile.handle) != near_tiles_.end();
+        const bool near_tile = walls && std::ranges::find(near_tiles_, tile.handle) != near_tiles_.end();
         building_runs(near_tile ? near_cells(*b, t.cells, d.rows, state.ranks->table()) : 0U, b->cells_first, runs_);
         d.cell_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs;
-        building_runs(t.cells, b->plain_first, runs_);
+        // the plain list for the roofs and for their thin edges
+        const bool plain = !out(style::camera_part::roofs) || !out(style::camera_part::roof_edges);
+        building_runs(plain ? t.cells : 0U, b->plain_first, runs_);
         d.plain_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs - d.cell_runs;
         building_runs(t.cells, b->windows_first, runs_);
         d.window_runs =
@@ -367,30 +394,24 @@ void Buildings::release() noexcept {
 }
 
 void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
-    // the facades' detail (windows, material faces, a kit's walls' lines and eaves' shadows), unless the map leaves it
-    // out
-    const bool facades = !recording.state.camera.has(style::camera_flag::no_facades);
+    // (a part the map leaves out has no draws, jobs or records this frame: its phase finds nothing)
     switch (phase) {
     case draw_phase:
         // the windows before their walls: nearer on the wall's plane, they hide what early depth testing then rejects
         // of the walls (under the painter switch their slots' depths lie past the walls' alike)
-        if (facades) record_windows(recording);
+        record_windows(recording);
         record_walls(recording);
         record_roofs(recording);
         break;
     case decide_phase:
         record_kept_cull(recording);
         record_decide(recording);
-        if (facades) record_window_decide(recording);
+        record_window_decide(recording);
         break;
     case strokes_phase: record_strokes(recording); break;
-    case materials_phase:
-        if (facades) record_materials(recording);
-        break;
+    case materials_phase: record_materials(recording); break;
     case roof_lines_phase: record_roof_lines(recording); break;
-    case kit_walls_phase:
-        if (facades) record_kit_walls(recording);
-        break;
+    case kit_walls_phase: record_kit_walls(recording); break;
     default: break;
     }
 }

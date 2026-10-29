@@ -577,6 +577,7 @@ namespace {
     }
     k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
                   (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U);
+    k.bits[n++] = f.left_out;
     return k;
 }
 
@@ -596,7 +597,8 @@ bool Ground::decide(const frame::FrameState& state) {
     f.valid = true;
     const view::Camera& cam = state.view->camera();
     f.exact = state.rest;
-    // the moment's switches and the camera's settings
+    // the moment's switches, the parts the map leaves out and the camera's settings
+    f.left_out = state.camera.parts;
     f.weather = state.theme.has(style::theme_flag::weather);
     f.night = state.theme.has(style::theme_flag::night);
     f.wet = state.theme.has(style::theme_flag::wet);
@@ -618,10 +620,10 @@ bool Ground::decide(const frame::FrameState& state) {
     f.sun_x = light.x;
     f.sun_y = light.y;
     f.sun_z = light.z;
-    f.casting = !f.night && light.y > 0;
+    f.casting = !f.night && light.y > 0 && !f.out(style::camera_part::building_shadows);
     // draw_over's park shadows: `sun = not night and L[1] > 0.05`, toward the moment's own sun
     f.light = state.theme.sun_vector;
-    f.park_sun = !f.night && f.light[1] > 0.05;
+    f.park_sun = !f.night && f.light[1] > 0.05 && !f.out(style::camera_part::park_shadows);
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
     if (state.cover != nullptr) {
@@ -800,7 +802,7 @@ bool Ground::decide(const frame::FrameState& state) {
     const std::array<geo::P2, 4> rect{
         {{.x = -gr, .z = -gr}, {.x = gr, .z = -gr}, {.x = gr, .z = gr}, {.x = -gr, .z = gr}}};
     const ProjectedPoly p = project_poly(cam, rect, 0.0, 900, cam_, sp_);
-    f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2;
+    f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2 && !f.out(style::camera_part::ground);
     if (only_setts_) {
         // the tests' look at the sett roads' courses: nothing else
         std::ranges::fill(f.drawn, std::uint8_t{0});
@@ -835,14 +837,18 @@ void Ground::decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisi
     for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
         const geo::Fill& fill = g.fills[i];
         if (fill.kind == geo::FillKind::water) {
+            if (f.out(style::camera_part::water)) continue; // the map leaves the water out
             // every piece of a ring counts for its ring, in a visible cell or not (the port decides the ring whole)
             if (fill.hole && !f.weather) continue; // without weather the islands are not drawn
             d.water.push_back(view_water(cam, g, i));
             continue;
         }
+        // the canopy, and every other fill (the ground's own), unless the map leaves them out
+        const bool canopy = fill.kind == geo::FillKind::canopy;
+        if (f.out(canopy ? style::camera_part::canopy : style::camera_part::ground)) continue;
         const Box cell = fill.cell < geo::max_cells ? cells[fill.cell] : Box::outside;
-        if (cell == Box::outside) continue;                          // (and a cell the cover does not show)
-        if (fill.kind == geo::FillKind::canopy && f.night) continue; // the canopy by day only
+        if (cell == Box::outside) continue; // (and a cell the cover does not show)
+        if (canopy && f.night) continue;    // the canopy by day only
         // draw_over's radius cut, in engine mode
         if (f.engine && fill.line_count > 0 &&
             !near_line(f, std::span(g.points).subspan(fill.line, fill.line_count), fill.near)) {
@@ -1278,7 +1284,8 @@ void Ground::update(const frame::FrameState& state) {
 }
 
 void Ground::lay_designators(const frame::FrameState& state) const {
-    if (state.ground_runs == nullptr || !state.view) return;
+    // (the names on the ground: unless the map leaves them out)
+    if (state.ground_runs == nullptr || !state.view || frame_.out(style::camera_part::ground_text)) return;
     const view::Camera& cam = state.view->camera();
     text::Runway runway;
     for (const DrawnTile& t : frame_.tiles) {
@@ -1319,16 +1326,14 @@ void Ground::push(const frame::Recording& r, std::uint32_t flags, std::uint32_t 
 
 void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     if (!frame_.valid || pipelines_ == nullptr || words_ == nullptr || !words_->ready) return;
-    // the soft shadows and the water's light, unless the map leaves them out (each one's draws, offscreen and on)
-    const bool shadows = !r.state.camera.has(style::camera_flag::no_shadows);
-    const bool water = !r.state.camera.has(style::camera_flag::no_water);
+    // (a part the map leaves out was not decided: its phases find nothing to draw)
     if (phase == phase_shadow_mask) {
         // before the main pass: it binds every set it draws with
-        if (shadows) record_shadow_mask(r);
+        record_shadow_mask(r);
         return;
     }
     if (phase == phase_ripple) {
-        if (water) record_ripple_layer(r);
+        record_ripple_layer(r);
         return;
     }
     if (phase == phase_lit) {
@@ -1343,35 +1348,25 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         // top first: the quay walls (the tail's, over the shadows), what lies above the water, the water, the land, the
         // plate, the sky
         record_quays(r);
-        record_fills(r, true);
+        if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);
-        record_fills(r, false);
+        if (!frame_.out(style::camera_part::ground)) record_fills(r, false);
         record_plate(r);
-        if (!only_setts_) {
+        if (!only_setts_ && !frame_.out(style::camera_part::sky)) {
             record_sky(r);
             record_sky_layer(r);
         }
         break;
     case phase_canopy: record_canopy(r); break;
-    case phase_water_reflections:
-        if (water) record_reflections(r);
-        break;
-    case phase_water_glitter:
-        if (water) record_glitter(r);
-        break;
-    case phase_water_rings:
-        if (water) record_rings(r);
-        break;
+    case phase_water_reflections: record_reflections(r); break;
+    case phase_water_glitter: record_glitter(r); break;
+    case phase_water_rings: record_rings(r); break;
     case phase_water_tint: record_water_tint(r); break;
-    case phase_water_glints:
-        if (water) record_wind_glints(r);
-        break;
+    case phase_water_glints: record_wind_glints(r); break;
     case phase_water_end: record_water_end(r); break;
     case phase_over:
     case phase_marks: record_lines(r, phase); break;
-    case phase_shadows:
-        if (shadows) record_shadows(r);
-        break;
+    case phase_shadows: record_shadows(r); break;
     case phase_pools:
         record_lit(r);
         record_pools(r);

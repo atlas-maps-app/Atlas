@@ -33,7 +33,10 @@ void Labels::update(const frame::FrameState& state) {
     draws_.clear();
     drawn_.clear();
     const labels::LabelSet* set = state.labels;
-    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value()) return;
+    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value() ||
+        state.camera.leaves_out(style::camera_part::labels)) {
+        return;
+    }
     // Each label's points on the view's device pixels (LabelPainter's GroundView: the ground at street level).
     const view::View& view = *state.view;
     const view::GroundFrame& ground = *state.ground_frame;

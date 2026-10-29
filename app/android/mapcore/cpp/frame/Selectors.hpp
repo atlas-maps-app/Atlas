@@ -72,6 +72,14 @@ public:
     [[nodiscard]] const std::array<double, 3>& thresholds(std::uint16_t kind) const noexcept {
         return thresholds_[kind];
     }
+    /// Leaves kind `kind`'s items out of the frame (`out`) or takes them in: the ranks give a kind left out no slot, so
+    /// none of its items is drawn or decided (the map leaves out the parts that draw them: style::camera_part). Each
+    /// pass says it for its kinds in every select; a kind is in until then.
+    void leave_out(std::uint16_t kind, bool out) noexcept {
+        if (kind < max_kinds) left_out_[kind] = out ? 1U : 0U;
+    }
+    /// Whether kind `kind`'s items are left out of the frame.
+    [[nodiscard]] bool left_out(std::uint16_t kind) const noexcept { return kind < max_kinds && left_out_[kind] != 0U; }
     /// The table set 0 holds: per kind its thresholds rounded to float (xyz) and 0.
     [[nodiscard]] std::span<const hlsl::float4> table() const noexcept { return {table_.data(), names_.size()}; }
 
@@ -80,6 +88,7 @@ private:
     std::array<std::array<double, 3>, max_kinds> thresholds_{};
     std::array<std::array<double, max_details>, max_kinds> details_{};
     std::array<std::uint8_t, max_kinds> details_count_{};
+    std::array<std::uint8_t, max_kinds> left_out_{};
     std::array<hlsl::float4, max_kinds> table_{};
 };
 

@@ -23,6 +23,9 @@ static const uint FRAME_FIELDS = 256u;
 // The app's Look settings' grain is off: the materials' grain (`mat`) leaves the fills, as the paper's grain leaves the
 // composite (its COMPOSITE_GRAIN step). The crowns' filter, which also runs where mat_on says, stays.
 static const uint FRAME_NO_GRAIN = 512u;
+// The map leaves the trees' leaf filters out (style::camera_part::leaf_filters): the crowns are drawn as their circles,
+// as where mat_on says no.
+static const uint FRAME_NO_CROWNS = 1024u;
 
 /// The thin strokes of the buildings in the style of the frame's active pack (tiles/Style.hpp's EdgesStyle, the engine's
 /// style file's `buildings` and `houseboats`; a coarser pack drawn around it, made with the same file, draws them so

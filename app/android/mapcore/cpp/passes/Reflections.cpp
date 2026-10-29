@@ -193,6 +193,10 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     const geo::V3 light{f.light[0], f.light[1], f.light[2]};
     const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
     const bool night = f.night;
+    // the mirrored buildings and trees, and the night's streaks after them, as the map leaves them in
+    const bool mirroring = !f.out(style::camera_part::reflections);
+    const bool streaks = night && !f.out(style::camera_part::water_streaks);
+    if (!mirroring && !streaks) return;
     const bool overcast = state.theme.has(style::theme_flag::overcast) && state.theme.sky_k != 0.0;
     std::vector<Ranked> ranked;
     std::vector<view::Vec3> cs;
@@ -203,7 +207,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
         std::uint32_t mirror;
     };
     std::vector<Mirrored> mirrors;
-    for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+    for (std::uint32_t ti = 0; mirroring && ti < f.tiles.size(); ++ti) {
         const geo::GroundTile& g = *f.tiles[ti].ground;
         if (g.casters == nullptr) continue;
         for (std::uint32_t k = 0; k < g.casters->mirrors.size(); ++k) {
@@ -329,7 +333,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
         std::uint32_t tree;
     };
     std::vector<Tree> trees;
-    for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+    for (std::uint32_t ti = 0; mirroring && ti < f.tiles.size(); ++ti) {
         const geo::GroundTile& g = *f.tiles[ti].ground;
         if (g.casters == nullptr) continue;
         const sun::TileTrees& tt = g.casters->trees;
@@ -393,7 +397,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     std::ranges::stable_sort(ranked, [](const Ranked& a, const Ranked& b) { return a.depth > b.depth; });
     f.reflections.reserve(ranked.size());
     for (const Ranked& r : ranked) f.reflections.push_back(r.element);
-    if (night) decide_streaks(cam, [&](double x, double z, double d) { return edges().near(x, z, d); });
+    if (streaks) decide_streaks(cam, [&](double x, double z, double d) { return edges().near(x, z, d); });
 }
 
 void Ground::decide_streaks(const view::Camera& cam, const std::function<bool(double, double, double)>& near_water) {
@@ -507,7 +511,9 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
                 // a circle of its tree's group under the leaf filter: its centre and radius, then the group's region
                 // and its tree's place in the leaves' field
-                head(e.tile, slot_value, colour, reflection_circle | (no_leaves_ ? 0U : reflection_leaf));
+                head(e.tile, slot_value, colour,
+                     reflection_circle |
+                         (no_leaves_ || frame_.out(style::camera_part::leaf_filters) ? 0U : reflection_leaf));
                 words.push_back(bits_of(static_cast<float>(c.cx)));
                 words.push_back(bits_of(static_cast<float>(c.cy)));
                 words.push_back(bits_of(static_cast<float>(c.r)));

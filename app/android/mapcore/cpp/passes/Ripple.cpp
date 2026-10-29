@@ -82,8 +82,9 @@ const RippleLayer* Ground::ripple_layer() const noexcept {
 
 bool Ground::rippled(const frame::FrameState& state) const noexcept {
     // a filter of the renders: in full mode alone, where the fields are bound
-    return !frame_.reflections.empty() && !no_ripple_ && state.mode == frame::Mode::full &&
-           (state.block.info.x & shaders::FRAME_FIELDS) != 0U && pipelines_ != nullptr && pipelines_->ripple != nullptr;
+    return !frame_.reflections.empty() && !no_ripple_ && !frame_.out(style::camera_part::ripple) &&
+           state.mode == frame::Mode::full && (state.block.info.x & shaders::FRAME_FIELDS) != 0U &&
+           pipelines_ != nullptr && pipelines_->ripple != nullptr;
 }
 
 void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state) {

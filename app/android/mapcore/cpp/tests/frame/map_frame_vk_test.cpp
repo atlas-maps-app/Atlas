@@ -13,9 +13,12 @@
 #include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "scene/Cover.hpp"
+#include "scene/Residency.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "text/Fonts.hpp"
 #include "view/Camera.hpp"
 
 #include <doctest/doctest.h>
@@ -431,8 +434,213 @@ TEST_CASE("the app's map makes a size the disk does not hold on the GPU before i
     CHECK_FALSE(fs::exists(dir / "guard"));
 }
 
-TEST_CASE("the map leaves out the parts its camera's flags name, and draws them again: the trees, the soft shadows, "
-          "the clouds' shadows, the water's light and the facades' detail") {
+namespace {
+
+namespace part = style::camera_part;
+
+/// A camera of the map over the bundled packs (home()'s window and pack 1), its target at (`lat`, `lon`).
+[[nodiscard]] style::CameraState camera_at(double lat, double lon, double bearing, double pitch, double distance,
+                                           std::uint64_t pack = 1) {
+    style::CameraState c = home(pack);
+    c.latitude = lat;
+    c.longitude = lon;
+    c.bearing = bearing;
+    c.pitch = pitch;
+    c.distance = distance;
+    return c;
+}
+
+/// The hour's weather on a wet night (the night's tones, the sun below the horizon, rain in the hour): the lit
+/// streets and their wet cores, the lamps' pools, halos and wet streaks, the streaks on the water, the drizzle's rings
+/// and the rain.
+[[nodiscard]] style::ThemeBlock wet_night() {
+    style::ThemeBlock b = sunny();
+    b.flags = (b.flags | flag::night | flag::wet | flag::wet_set) & ~(flag::shadow_blur | flag::cloud_shadows);
+    b.moment = style::MomentName::night;
+    b.weather_code = 61;
+    b.sky_top = {.r = 0x05, .g = 0x08, .b = 0x14, .a = 255};
+    b.sky_horizon = {.r = 0x1C, .g = 0x23, .b = 0x40, .a = 255};
+    b.haze = {.r = 0x16, .g = 0x1D, .b = 0x36, .a = 255};
+    b.ground = {.r = 0x12, .g = 0x15, .b = 0x1F, .a = 255};
+    b.road = {.r = 0x1B, .g = 0x1F, .b = 0x2C, .a = 255};
+    b.water = {.r = 0x0B, .g = 0x14, .b = 0x22, .a = 255};
+    b.water_top = {.r = 0x13, .g = 0x1B, .b = 0x2A, .a = 255};
+    b.water_bottom = {.r = 0x03, .g = 0x06, .b = 0x0B, .a = 255};
+    b.shadow_opacity = 0.0;
+    b.shadow_blur = 0.0;
+    b.cloud_shadows = 0.0;
+    b.sun_k = 0.0;
+    b.sun_vector = {0.0, -1.0, 0.0};
+    b.sun_elevation = -21.4;
+    b.rain = 1.2;
+    return b;
+}
+
+/// The golden moment: the wash over the frame.
+[[nodiscard]] style::ThemeBlock golden() {
+    style::ThemeBlock b = sunny();
+    b.flags |= flag::golden;
+    b.moment = style::MomentName::golden;
+    return b;
+}
+
+/// One part of the map's picture as the frame's counters show it: the kinds it alone draws or dispatches (none with it
+/// left out), the kinds it shares with other parts (fewer triangles or dispatches with it left out), the composite's
+/// step or the frame's mode bit it takes, the parts it is drawn with (left out with any of them), and those whose
+/// switch draws it another way (its own draws then others).
+struct Part {
+    const char* name;
+    std::uint64_t bit;
+    std::vector<std::string_view> own;
+    std::vector<std::string_view> shared;
+    std::uint32_t step = 0;     // its composite step, off with it left out
+    std::uint32_t mode_bit = 0; // a mode bit the frame takes with it left out
+    std::uint64_t needs = 0;
+    std::uint64_t changes = 0;
+};
+
+/// A part's work in the last frame: its own kinds' draws and dispatches, its shared kinds' triangles and dispatches,
+/// whether its step ran or its mode bit is clear.
+struct Work {
+    std::uint64_t own = 0;
+    std::uint64_t shared = 0;
+    bool step = false;
+    [[nodiscard]] bool any() const noexcept { return own > 0 || shared > 0 || step; }
+};
+
+[[nodiscard]] Work work_of(const frame::FrameBuilder& b, const Part& p) {
+    Work w;
+    for (const frame::PassCounters& c : b.counters()) {
+        for (const frame::KindCount& k : c.kinds()) {
+            if (std::ranges::find(p.own, k.kind) != p.own.end()) w.own += k.count.draws + k.count.dispatches;
+            if (std::ranges::find(p.shared, k.kind) != p.shared.end())
+                w.shared += k.count.triangles + k.count.dispatches;
+        }
+    }
+    const shaders::FrameBlock& block = b.state().block;
+    if (p.step != 0U) w.step = (block.layers.steps.x & p.step) != 0U;
+    if (p.mode_bit != 0U) w.step = (block.info.x & p.mode_bit) == 0U;
+    return w;
+}
+
+/// The parts the map's switches leave out, as the frame's counters name their work.
+const std::vector<Part>& every_part() {
+    static const std::vector<Part> parts{
+        {.name = "land and roads", .bit = part::ground, .own = {"ground above", "ground land", "ground plate"}},
+        {.name = "water", .bit = part::water, .own = {"ground water"}},
+        {.name = "canopy", .bit = part::canopy, .own = {"ground canopy"}},
+        // (a big road's lines go with its asphalt)
+        {.name = "ground lines",
+         .bit = part::ground_lines,
+         .own = {"ground over lines"},
+         .shared = {"ground marks"},
+         .needs = part::ground},
+        {.name = "cobblestones", .bit = part::setts, .shared = {"ground marks"}, .needs = part::ground},
+        {.name = "canal names", .bit = part::ground_text, .own = {"canal names", "runway designators"}},
+        {.name = "quay walls", .bit = part::quays, .own = {"ground quays"}},
+        {.name = "sky",
+         .bit = part::sky,
+         .own = {"ground sky", "ground sun glow", "ground sun disc", "ground city glow"}},
+        // (drawn sharp without their blur: a draw a tile)
+        {.name = "building shadows",
+         .bit = part::building_shadows,
+         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground shadows"},
+         .changes = part::shadow_blur},
+        // (drawn sharp without it: the stencil's union)
+        {.name = "soft shadows",
+         .bit = part::shadow_blur,
+         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur"},
+         .needs = part::building_shadows},
+        {.name = "park shadows", .bit = part::park_shadows, .own = {"ground woods' shadows"}},
+        {.name = "cloud shadows", .bit = part::cloud_shadows, .step = shaders::COMPOSITE_CLOUD_SHADOWS},
+        // (drawn as they are without the ripple)
+        {.name = "reflections",
+         .bit = part::reflections,
+         .own = {"ground reflections", "ground ripple", "ripple layer", "ripple fused"},
+         .needs = part::water,
+         .changes = part::ripple},
+        {.name = "ripple",
+         .bit = part::ripple,
+         .own = {"ground ripple", "ripple layer", "ripple fused"},
+         .needs = part::water | part::reflections | part::water_streaks},
+        {.name = "sun glitter", .bit = part::glitter, .own = {"ground glitter"}, .needs = part::water},
+        {.name = "drizzle rings", .bit = part::rings, .own = {"ground rings"}, .needs = part::water},
+        {.name = "wind glints", .bit = part::glints, .own = {"ground glints"}, .needs = part::water},
+        // (drawn in the reflections' draws: told apart where the reflections are left out)
+        {.name = "water streaks",
+         .bit = part::water_streaks,
+         .shared = {"ground reflections", "ground ripple", "ripple layer", "ripple fused"},
+         .needs = part::water},
+        {.name = "glowing streets",
+         .bit = part::lit_streets,
+         .own = {"lit glow layer", "lit glow box", "ground lit glow"}},
+        {.name = "wet street shine", .bit = part::wet_cores, .own = {"lit cores layer", "ground lit cores"}},
+        {.name = "lamp pools", .bit = part::lamp_pools, .own = {"ground lamp pools"}},
+        {.name = "lamp halos", .bit = part::lamp_halos, .shared = {"thing glints"}, .needs = part::furniture},
+        {.name = "lamp streaks", .bit = part::lamp_streaks, .shared = {"thing glints"}, .needs = part::furniture},
+        {.name = "rain", .bit = part::rain, .step = shaders::COMPOSITE_RAIN},
+        {.name = "golden wash", .bit = part::golden_wash, .step = shaders::COMPOSITE_WASH},
+        {.name = "walls", .bit = part::walls, .own = {"walls", "near cells"}},
+        {.name = "roofs", .bit = part::roofs, .own = {"roofs"}},
+        {.name = "roof edges", .bit = part::roof_edges, .own = {"roof strokes"}},
+        {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
+        {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
+        {.name = "shopfronts and plinths",
+         .bit = part::flat_detail,
+         .own = {"window facades", "facades"},
+         .shared = {"window frames", "window glass"}},
+        {.name = "church windows", .bit = part::church_windows, .own = {"window churches", "church windows"}},
+        {.name = "wall materials",
+         .bit = part::material_faces,
+         .own = {"window materials", "material fills", "material lines"}},
+        {.name = "hoist beams", .bit = part::hoist_beams, .own = {"hoist beams"}},
+        {.name = "tradition details", .bit = part::kit_details, .own = {"kit lines", "kit shadows", "roof lines"}},
+        {.name = "doors",
+         .bit = part::doors,
+         .own = {"door faces", "door fills", "door outlines", "door numbers"},
+         .changes = part::house_numbers},
+        {.name = "house numbers", .bit = part::house_numbers, .own = {"door numbers"}, .needs = part::doors},
+        {.name = "trees", .bit = part::trees, .own = {"trees", "tree fills", "tree sides"}},
+        {.name = "leaf filters", .bit = part::leaf_filters, .mode_bit = shaders::FRAME_NO_CROWNS, .needs = part::trees},
+        // (its translucent records the lamps' halos and wet streaks at night)
+        {.name = "street furniture",
+         .bit = part::furniture,
+         .own = {"things", "thing fills", "thing glints"},
+         .changes = part::lamp_halos | part::lamp_streaks},
+        {.name = "towers and cranes",
+         .bit = part::region_items,
+         .own = {"items", "item faces", "item fills", "item parts", "item sides"}},
+        {.name = "labels", .bit = part::labels, .own = {"label sprites"}},
+        {.name = "routes", .bit = part::routes, .own = {"routes"}},
+        {.name = "markers", .bit = part::markers, .own = {"markers"}},
+        {.name = "location", .bit = part::location, .own = {"location"}},
+        {.name = "frosted glass", .bit = part::frosted, .own = {"boxes", "glass"}},
+    };
+    return parts;
+}
+
+/// A label sprite of `width` x `height` px at one point (markers_vk_test.cpp's).
+[[nodiscard]] labels::LabelSprite label_at(std::uint32_t width, std::uint32_t height, double lat, double lon) {
+    labels::LabelSprite s;
+    s.id = 1;
+    s.priority = 1;
+    s.measures = {.half = (static_cast<float>(width) / 2.0F) + 8.0F,
+                  .pad = 8.0F,
+                  .text_height = static_cast<float>(height),
+                  .baseline = -4.0F};
+    s.points = {{lat, lon}};
+    s.own = {.width = width,
+             .height = height,
+             .pixels = std::vector<std::uint32_t>(std::size_t{width} * height, 0xFF00'00FFU),
+             .anchor_x = static_cast<std::int32_t>(width / 2),
+             .anchor_y = static_cast<std::int32_t>(height / 2)};
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("the map leaves out each part its camera's parts name, every layer and effect, and draws them again: each "
+          "part's work there by default and none with its switch, the rest drawn; and a group's switch") {
     const std::string tiles_dir = environment("ATLAS_TILES_DIR");
     if (tiles_dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
@@ -450,68 +658,217 @@ TEST_CASE("the map leaves out the parts its camera's flags name, and draws them 
     CHECK(session.map(&map).empty());
     std::string why;
     ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
-    map.set_theme(sunny());
-    ATLAS_REQUIRE(draw_until_complete(session, map, home(1)) > 0, "the Westerkerk home never completed");
+    // the fonts of the names on the ground and the house numbers
+    ATLAS_REQUIRE(text::shared_fonts().load_folder(ATLAS_FONTS_DIR).has_value());
 
-    // A part's draws and dispatches in the last frame: its kinds' counts, over every pass.
-    struct Part {
+    // What lies over the map: a label, a marker and a route about the home's target, where the user is, and a frosted
+    // pill of the chrome.
+    const style::CameraState at_home = home(1);
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    const auto labelled =
+        labels::LabelSet::make({label_at(31, 13, at_home.latitude, at_home.longitude)}, 1, 0.0F, 0.0F);
+    ATLAS_REQUIRE(labelled.has_value(), labels::describe(labelled.error()));
+    map.set_labels(*labelled);
+    const std::uint32_t white = 0xFFFF'FFFFU;
+    const std::vector<markers::Marker> pins{{.latitude = at_home.latitude,
+                                             .longitude = at_home.longitude + (30.0 / kx),
+                                             .priority = 5,
+                                             .style = markers::Style::pin,
+                                             .look = 0,
+                                             .look_left = 0}};
+    const markers::Image look{.width = 12,
+                              .height = 12,
+                              .pixels = std::vector<std::uint32_t>(144, 0xFF20'40E0U),
+                              .anchor_x = 6,
+                              .anchor_y = 12};
+    const auto marked = markers::MarkerSet::make(pins, {look}, {}, 1.0F, 1);
+    ATLAS_REQUIRE(marked.has_value(), markers::describe(marked.error()));
+    map.set_markers(*marked);
+    routes::Route way{.width = 6.0F, .colour = 0xFFE0'6020U, .faded = 0xFFE0'6020U, .casing = white};
+    for (int k = -5; k <= 5; ++k) {
+        way.points.push_back({at_home.latitude, at_home.longitude + ((10.0 * k) / kx), (10.0 * k) + 50.0});
+    }
+    const auto routed = routes::RouteSet::make({}, {way}, {}, 1.0F, 1);
+    ATLAS_REQUIRE(routed.has_value(), routes::describe(routed.error()));
+    map.set_routes(*routed);
+    const auto over = [&](style::CameraState c) {
+        c.flags |= style::camera_flag::location;
+        c.location = {.latitude = at_home.latitude, .longitude = at_home.longitude, .accuracy = 12.0F};
+        c.keep_out_count = 1;
+        c.keep_out[0] = style::KeepOut{.left = 16.0F,
+                                       .top = 40.0F,
+                                       .right = 164.0F,
+                                       .bottom = 80.0F,
+                                       .radius = 20.0F,
+                                       .blur16 = 24 * 16,
+                                       .saturation = 180,
+                                       .flags = 1};
+        return c;
+    };
+
+    // The scenes: each draws its parts by default (with `base` left out throughout: the water's streaks are told from
+    // the reflections they draw with at night).
+    struct Scene {
         const char* name;
-        std::uint32_t flag;
-        std::vector<std::string_view> kinds;
+        style::CameraState camera;
+        style::ThemeBlock theme;
+        std::uint64_t base = 0;
     };
-    const std::vector<Part> parts{
-        {"the trees", style::camera_flag::no_trees, {"trees", "tree fills", "tree sides"}},
-        {"the soft shadows",
-         style::camera_flag::no_shadows,
-         {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground shadows"}},
-        {"the water's light",
-         style::camera_flag::no_water,
-         {"ripple layer", "ripple fused", "ground ripple", "ground reflections", "ground glitter", "ground rings",
-          "ground glints"}},
-        {"the facades' detail",
-         style::camera_flag::no_facades,
-         {"windows", "window facades", "window churches", "window materials", "window parts", "window glass",
-          "window frames", "facades", "material fills", "material lines", "church windows", "door faces", "door fills",
-          "door outlines", "door numbers"}},
+    std::vector<Scene> scenes{
+        {.name = "the Westerkerk home on a sunny day", .camera = over(at_home), .theme = sunny()},
+        // the Westerkerk's densest row of doors from 50 m (doors_vk_test.cpp's): doors, their numbers, deep windows
+        {.name = "the row of doors",
+         .camera = camera_at(52.3746 - (-192.11612399270084 / 110540.0), 4.8840 + (82.21656426574002 / kx),
+                             119.50786615381202, 60.0, 50.0),
+         .theme = sunny()},
+        // over the Prinsengracht toward the sun (glitter_vk_test.cpp's)
+        {.name = "the Prinsengracht toward the sun",
+         .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0),
+         .theme = sunny()},
+        {.name = "the home on a wet night", .camera = at_home, .theme = wet_night(), .base = part::reflections},
+        // the street lamps near enough to be drawn (from 1.6 px of focal length over their depth): their halos and
+        // their wet streaks
+        {.name = "the Prinsengracht on a wet night",
+         .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0),
+         .theme = wet_night(),
+         .base = part::reflections},
+        {.name = "the home at the golden moment", .camera = at_home, .theme = golden()},
+        // the canal ring's Main board (its towers, masts and power lines)
+        {.name = "the canal ring's Main board",
+         .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2),
+         .theme = sunny()},
     };
-    const auto counted = [&](const Part& part) {
-        std::uint64_t n = 0;
-        for (const frame::PassCounters& c : map.builder()->counters()) {
-            for (const frame::KindCount& k : c.kinds()) {
-                if (std::ranges::find(part.kinds, k.kind) != part.kinds.end()) n += k.count.draws + k.count.dispatches;
-            }
-        }
-        return n;
-    };
-    const auto clouds = [&] {
-        return (map.builder()->state().block.layers.steps.x & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U;
-    };
-    // Each switch leaves its part out of the next frame and nothing else; the frame after it draws them all again.
-    const auto draw = [&](std::uint32_t off) {
-        style::CameraState c = home(1);
-        c.flags |= off;
+    const std::vector<Part>& parts = every_part();
+    std::vector<bool> drawn(parts.size(), false); // drawn by default in some scene
+    const auto draw = [&](const Scene& scene, std::uint64_t off) {
+        style::CameraState c = scene.camera;
+        c.parts = scene.base | off;
         return session.draw(c, {}).drawn;
     };
-    for (const Part& part : parts) {
-        CAPTURE(part.name);
-        CHECK(draw(0));
-        const std::uint64_t on = counted(part);
-        CHECK(on > 0);
-        CHECK(draw(part.flag));
-        CHECK(counted(part) == 0);
-        for (const Part& other : parts) {
-            if (&other != &part) CHECK(counted(other) > 0);
-        }
-        MESSAGE(std::format("{}: {} draws and dispatches, none with its switch", part.name, on));
+    // toward the sun: the first bearing whose picture holds the point of the water that mirrors it (glitter_vk_test's)
+    map.set_theme(sunny());
+    const Part& glitter = *std::ranges::find(parts, part::glitter, &Part::bit);
+    for (const double bearing : {213.5, 146.5, 33.5, 326.5}) {
+        scenes[2].camera.bearing = bearing;
+        ATLAS_REQUIRE(draw_until_complete(session, map, scenes[2].camera) > 0, "the Prinsengracht never completed");
+        if (work_of(*map.builder(), glitter).own > 0) break;
     }
-    CHECK(draw(0));
-    const bool clouded = clouds();
-    CHECK(draw(style::camera_flag::no_cloud_shadows));
-    CHECK_FALSE(clouds());
-    CHECK(draw(0));
-    CHECK(clouds() == clouded);
-    MESSAGE(std::format("the clouds' shadows: the composite's step {} at the sunny home, off with its switch",
-                        clouded ? "on" : "off"));
+    for (const Scene& scene : scenes) {
+        const std::string_view scene_name = scene.name;
+        CAPTURE(scene_name);
+        map.set_theme(scene.theme);
+        style::CameraState c = scene.camera;
+        c.parts = scene.base;
+        ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, std::format("{} never completed", scene.name));
+        CHECK(draw(scene, 0));
+        std::vector<Work> on;
+        on.reserve(parts.size());
+        for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));
+        // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
+        // again (a stage that keeps its result while its inputs stand changes the counts from one frame to another,
+        // but not between these two), and the tiles each of the two drew (the cover may take one in or let one go at
+        // rest, a frame's fills and lines more or fewer)
+        const auto cover = [&] {
+            std::vector<std::uint64_t> out;
+            for (const scene::CoverTile& t : map.world()->cover()->tiles()) {
+                out.push_back(t.drawn != nullptr ? t.drawn->handle : 0U);
+                out.push_back(t.cells);
+                out.push_back(t.fade >= 1.0F ? 1U : 0U);
+            }
+            return out;
+        };
+        std::vector<std::vector<Work>> with_off(parts.size());
+        std::vector<std::vector<Work>> again(parts.size());
+        std::vector<bool> same_tiles(parts.size(), false);
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if ((parts[i].bit & scene.base) != 0U || !on[i].any()) continue;
+            CHECK(draw(scene, parts[i].bit));
+            with_off[i].reserve(parts.size());
+            for (const Part& q : parts) with_off[i].push_back(work_of(*map.builder(), q));
+            const std::vector<std::uint64_t> tiles = cover();
+            CHECK(draw(scene, 0));
+            again[i].reserve(parts.size());
+            for (const Part& q : parts) again[i].push_back(work_of(*map.builder(), q));
+            same_tiles[i] = tiles == cover();
+        }
+        // drawn here: work of its own, its step, or less of what it shares once it is left out
+        const auto present = [&](std::size_t i) {
+            return !with_off[i].empty() && (on[i].own > 0 || on[i].step || with_off[i][i].shared < on[i].shared);
+        };
+        std::string lines;
+        std::size_t cover_moved = 0; // the switches whose two frames drew other tiles
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (!present(i)) continue;
+            const Part& p = parts[i];
+            drawn[i] = true;
+            const std::string_view part_name = p.name;
+            CAPTURE(part_name);
+            // left out: none of its own work, none more of what it shares, its step off; and drawn again
+            const Work& off = with_off[i][i];
+            CHECK(off.own == 0U);
+            CHECK(off.step == false);
+            CHECK(off.shared <= on[i].shared);
+            CHECK(again[i][i].any());
+            // every other part drawn here drawn as with it (its own draws and dispatches, its step), but those drawn
+            // with it
+            for (std::size_t j = 0; j < parts.size(); ++j) {
+                const Part& q = parts[j];
+                if (j == i || !present(j) || (q.needs & p.bit) != 0U) continue;
+                const std::string_view other = q.name;
+                CAPTURE(other);
+                CHECK(with_off[i][j].any());
+                if (same_tiles[i] && (q.changes & p.bit) == 0U) CHECK(with_off[i][j].own == again[i][j].own);
+                CHECK(with_off[i][j].step == again[i][j].step);
+            }
+            if (!same_tiles[i]) ++cover_moved;
+            lines += std::format("\n  {}: {} draws and dispatches, {} shared{}; with its switch {}, {}", p.name,
+                                 on[i].own, on[i].shared, on[i].step ? ", its step" : "", off.own, off.shared);
+        }
+        MESSAGE(std::format("{} ({} of its switches' two frames drew other tiles):{}", scene.name, cover_moved, lines));
+    }
+    // Every part the bundled packs show is drawn in one of the scenes; the rest are not in them (no theme park's woods
+    // or tracks, no tradition's kit in the Netherlands, no glass or metal wall within reach of these views).
+    std::string none;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::uint64_t b = parts[i].bit;
+        const bool elsewhere = b == part::park_shadows || b == part::kit_details || b == part::material_faces ||
+                               b == part::canopy || b == part::ground_text;
+        if (!drawn[i] && !elsewhere) {
+            const std::string_view part_name = parts[i].name;
+            CAPTURE(part_name);
+            CHECK(drawn[i]);
+        }
+        if (!drawn[i]) none += std::format(" {};", parts[i].name);
+    }
+    MESSAGE(std::format("not drawn in these scenes:{}", none));
+
+    // A group's switch: the facades' detail and the water's light together, and all of the buildings; the trees, the
+    // ground and the water drawn throughout.
+    map.set_theme(sunny());
+    const Scene& doors = scenes[1];
+    for (const std::uint64_t group : {part::facade_detail | part::water_light, part::buildings | part::doors}) {
+        CHECK(draw(doors, group));
+        for (const Part& p : parts) {
+            if ((p.bit & group) == 0U) continue;
+            const std::string_view part_name = p.name;
+            CAPTURE(part_name);
+            CHECK(work_of(*map.builder(), p).own == 0U);
+        }
+        for (const std::uint64_t kept : {part::trees, part::ground, part::water}) {
+            const auto it = std::ranges::find(parts, kept, &Part::bit);
+            const std::string_view kept_name = it->name;
+            CAPTURE(kept_name);
+            CHECK(work_of(*map.builder(), *it).any());
+        }
+    }
+    // every building left out: their items take no rank (the frame's ranks hold no building), and come back
+    CHECK(draw(doors, part::buildings));
+    const std::size_t ranked_without = map.builder()->state().ranks->order().size();
+    CHECK(draw(doors, 0));
+    const std::size_t ranked_with = map.builder()->state().ranks->order().size();
+    CHECK(ranked_without < ranked_with);
+    MESSAGE(
+        std::format("the row of doors' ranks: {} items, {} with the buildings left out", ranked_with, ranked_without));
     session.close();
 }
 
@@ -598,7 +955,7 @@ TEST_CASE("the clouds' shadows of the app's map keep their places on the ground 
         CHECK(draw_until_complete(session, map, c) >= 0);
         for (const bool clouds : {true, false}) {
             style::CameraState k = c;
-            if (!clouds) k.flags |= style::camera_flag::no_cloud_shadows;
+            if (!clouds) k.parts |= style::camera_part::cloud_shadows;
             CHECK(session.draw(k, {}).drawn);
             // the app's map reads its clouds on the ground, where it draws them
             CHECK(((map.builder()->state().block.layers.steps.x & shaders::COMPOSITE_CLOUD_GROUND) != 0U) == clouds);

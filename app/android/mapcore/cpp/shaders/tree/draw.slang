@@ -544,9 +544,10 @@ struct TreeOut {
 };
 
 /// Whether record word `word` draws under the crown filter this frame: a crown's circle, where `mat` runs (the fields
-/// bound in full mode, with weather: the renders' filters).
+/// bound in full mode, with weather: the renders' filters), unless the map leaves the leaf filters out.
 bool crowned(uint word) {
-    return (word & TREE_KIND) == TREE_CIRCLE && (word & TREE_CROWN) != 0u && mat_on(frame);
+    return (word & TREE_KIND) == TREE_CIRCLE && (word & TREE_CROWN) != 0u && mat_on(frame) &&
+           (frame.info.x & FRAME_NO_CROWNS) == 0u;
 }
 
 /// Where a record that draws nothing puts its points: beyond the depth range, so its triangles are clipped away.

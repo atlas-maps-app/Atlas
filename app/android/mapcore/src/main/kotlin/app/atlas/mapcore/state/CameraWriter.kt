@@ -6,22 +6,23 @@ import kotlin.math.roundToInt
 
 /**
  * The gesture camera of one frame (plan-vector T9, Appendix D), written into the reused direct buffer the core hands
- * `FrameSource.camera` at each paced vsync: CameraState, version 2, 544 bytes, little-endian (`CP/style/CameraState.hpp`
- * defines it; [FIELDS] and the flag and profile constants mirror its tables, and `MT/style/LayoutTest.kt` holds them
- * equal). The core refuses a state outside the ranges CameraState.hpp lists (a target off the globe, a pitch outside
+ * `FrameSource.camera` at each paced vsync: CameraState, version 3, 552 bytes, little-endian (`CP/style/CameraState.hpp`
+ * defines it; [FIELDS] and the flag, part and profile constants mirror its tables, and `MT/style/LayoutTest.kt` holds
+ * them equal). The core refuses a state outside the ranges CameraState.hpp lists (a target off the globe, a pitch outside
  * 0-90 degrees, dp sizes that are not the px sizes over the density, shapes far off the frame).
  *
  * Only absolute puts of primitives on the caller's buffer: nothing here allocates, so the render thread's upcall stays
  * allocation-free (K7 counts it on the emulator). The parts can be written separately, each only when it changed:
  * [header] every frame, [view] and [frame] when the camera or the surface moved, the rest when they changed. Version 2
- * carries where the user is ([location], with the [LOCATION] flag): the core draws its puck in the same frame.
+ * carries where the user is ([location], with the [LOCATION] flag): the core draws its puck in the same frame. Version 3
+ * carries the parts of the picture the map leaves out ([parts]: a bit a layer or an effect).
  */
 object CameraWriter {
     /** The layout's version (`camera_state_version`). */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** The state's size in bytes. */
-    const val SIZE = 544
+    const val SIZE = 552
 
     /** The most keep-out shapes a frame carries. */
     const val MAX_KEEP_OUTS = 16
@@ -46,16 +47,60 @@ object CameraWriter {
     const val HEADING = 32
 
     /**
-     * The map leaves a part of its picture out (style::camera_flag's no_* bits): its own layers' trees and soft shadows
-     * ([NO_TREES], [NO_SHADOWS]: MapLayer.TREES and SHADOWS off), and the app's switches that show on the phone what
-     * each part costs: the clouds' shadows, the water's light (reflections, ripple, glitter, rings, glints), the facades'
-     * detail (windows, material faces, doors).
+     * The parts of the picture the map leaves out ([parts]): each one's bit number in that word (style::camera_part's
+     * bits), [PARTS] of them. The map's own layers set two (MapLayer.TREES and SHADOWS off: [PART_TREES],
+     * [PART_BUILDING_SHADOWS]); a debug build's Look settings switch every one, so the map's panel shows on the phone what
+     * each part costs (MapEngine.leaveOut).
      */
-    const val NO_TREES = 64
-    const val NO_SHADOWS = 128
-    const val NO_CLOUD_SHADOWS = 256
-    const val NO_WATER = 512
-    const val NO_FACADES = 1024
+    const val PART_GROUND = 0
+    const val PART_WATER = 1
+    const val PART_CANOPY = 2
+    const val PART_GROUND_LINES = 3
+    const val PART_SETTS = 4
+    const val PART_GROUND_TEXT = 5
+    const val PART_QUAYS = 6
+    const val PART_SKY = 7
+    const val PART_BUILDING_SHADOWS = 8
+    const val PART_PARK_SHADOWS = 9
+    const val PART_CLOUD_SHADOWS = 10
+    const val PART_REFLECTIONS = 11
+    const val PART_RIPPLE = 12
+    const val PART_GLITTER = 13
+    const val PART_RINGS = 14
+    const val PART_GLINTS = 15
+    const val PART_WATER_STREAKS = 16
+    const val PART_LIT_STREETS = 17
+    const val PART_WET_CORES = 18
+    const val PART_LAMP_POOLS = 19
+    const val PART_LAMP_HALOS = 20
+    const val PART_LAMP_STREAKS = 21
+    const val PART_RAIN = 22
+    const val PART_GOLDEN_WASH = 23
+    const val PART_WALLS = 24
+    const val PART_ROOFS = 25
+    const val PART_ROOF_EDGES = 26
+    const val PART_WINDOWS = 27
+    const val PART_WINDOW_DEPTH = 28
+    const val PART_FLAT_DETAIL = 29
+    const val PART_CHURCH_WINDOWS = 30
+    const val PART_MATERIAL_FACES = 31
+    const val PART_HOIST_BEAMS = 32
+    const val PART_KIT_DETAILS = 33
+    const val PART_DOORS = 34
+    const val PART_HOUSE_NUMBERS = 35
+    const val PART_TREES = 36
+    const val PART_LEAF_FILTERS = 37
+    const val PART_FURNITURE = 38
+    const val PART_REGION_ITEMS = 39
+    const val PART_LABELS = 40
+    const val PART_ROUTES = 41
+    const val PART_MARKERS = 42
+    const val PART_LOCATION = 43
+    const val PART_FROSTED = 44
+    const val PART_SHADOW_BLUR = 45
+
+    /** How many parts there are: the bits of [parts] past them are 0. */
+    const val PARTS = 46
 
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0
@@ -88,6 +133,7 @@ object CameraWriter {
     const val RESERVED_AT = 124
     const val KEEP_OUT_AT = 128
     const val LOCATION_AT = 512
+    const val PARTS_AT = 544
 
     /**
      * One keep-out shape's bytes: its box and radius (floats, dp), blur (sixteenths of a dp), saturation (hundredths),
@@ -109,6 +155,7 @@ object CameraWriter {
         Triple("labels_revision", LABELS_REVISION_AT, 4), Triple("overlays_revision", OVERLAYS_REVISION_AT, 4),
         Triple("keep_out_count", KEEP_OUT_COUNT_AT, 4), Triple("reserved", RESERVED_AT, 4),
         Triple("keep_out", KEEP_OUT_AT, KEEP_OUT_SIZE * MAX_KEEP_OUTS), Triple("location", LOCATION_AT, LOCATION_SIZE),
+        Triple("parts", PARTS_AT, 8),
         Triple("keep_out.left", KEEP_OUT_AT, 4), Triple("keep_out.top", KEEP_OUT_AT + 4, 4), Triple("keep_out.right", KEEP_OUT_AT + 8, 4),
         Triple("keep_out.bottom", KEEP_OUT_AT + 12, 4), Triple("keep_out.radius", KEEP_OUT_AT + 16, 4),
         Triple("keep_out.blur16", KEEP_OUT_AT + 20, 2), Triple("keep_out.saturation", KEEP_OUT_AT + 22, 1),
@@ -216,6 +263,16 @@ object CameraWriter {
         out.putFloat(LOCATION_AT + 16, if (accuracyM.isNaN()) 0f else accuracyM.coerceIn(0f, MAX_ACCURACY_M))
         out.putFloat(LOCATION_AT + 20, heading?.takeIf { it.isFinite() }?.let { it % 360f } ?: 0f)
         out.putLong(LOCATION_AT + 24, 0L)
+    }
+
+    /**
+     * The parts of the picture the map leaves out: a bit `1L shl PART_…` each (only the [PARTS] known ones), written
+     * with every frame's [header].
+     */
+    fun parts(out: ByteBuffer, parts: Long) {
+        check(out)
+        require(parts ushr PARTS == 0L) { "parts past the $PARTS known ones" }
+        out.putLong(PARTS_AT, parts)
     }
 
     /** The flag bits of a location with or without a [heading] ([location]'s, for [header]). */

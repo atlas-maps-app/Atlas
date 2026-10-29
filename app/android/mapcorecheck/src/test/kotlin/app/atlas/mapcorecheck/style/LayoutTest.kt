@@ -31,7 +31,8 @@ class LayoutTest {
     fun theCameraStateIsLaidOutAsTheCoreLaysItOut() {
         assertEquals(table("camera_state"), CameraWriter.FIELDS)
         assertEquals(CameraWriter.LOCATION_AT, CameraWriter.KEEP_OUT_AT + CameraWriter.MAX_KEEP_OUTS * CameraWriter.KEEP_OUT_SIZE)
-        assertEquals(CameraWriter.SIZE, CameraWriter.LOCATION_AT + CameraWriter.LOCATION_SIZE)
+        assertEquals(CameraWriter.PARTS_AT, CameraWriter.LOCATION_AT + CameraWriter.LOCATION_SIZE)
+        assertEquals(CameraWriter.SIZE, CameraWriter.PARTS_AT + 8)
     }
 
     @Test
@@ -68,11 +69,53 @@ class LayoutTest {
         put("CameraWriter.FOLLOW", CameraWriter.FOLLOW)
         put("CameraWriter.LOCATION", CameraWriter.LOCATION)
         put("CameraWriter.HEADING", CameraWriter.HEADING)
-        put("CameraWriter.NO_TREES", CameraWriter.NO_TREES)
-        put("CameraWriter.NO_SHADOWS", CameraWriter.NO_SHADOWS)
-        put("CameraWriter.NO_CLOUD_SHADOWS", CameraWriter.NO_CLOUD_SHADOWS)
-        put("CameraWriter.NO_WATER", CameraWriter.NO_WATER)
-        put("CameraWriter.NO_FACADES", CameraWriter.NO_FACADES)
+        put("CameraWriter.PART_GROUND", CameraWriter.PART_GROUND)
+        put("CameraWriter.PART_WATER", CameraWriter.PART_WATER)
+        put("CameraWriter.PART_CANOPY", CameraWriter.PART_CANOPY)
+        put("CameraWriter.PART_GROUND_LINES", CameraWriter.PART_GROUND_LINES)
+        put("CameraWriter.PART_SETTS", CameraWriter.PART_SETTS)
+        put("CameraWriter.PART_GROUND_TEXT", CameraWriter.PART_GROUND_TEXT)
+        put("CameraWriter.PART_QUAYS", CameraWriter.PART_QUAYS)
+        put("CameraWriter.PART_SKY", CameraWriter.PART_SKY)
+        put("CameraWriter.PART_BUILDING_SHADOWS", CameraWriter.PART_BUILDING_SHADOWS)
+        put("CameraWriter.PART_PARK_SHADOWS", CameraWriter.PART_PARK_SHADOWS)
+        put("CameraWriter.PART_CLOUD_SHADOWS", CameraWriter.PART_CLOUD_SHADOWS)
+        put("CameraWriter.PART_REFLECTIONS", CameraWriter.PART_REFLECTIONS)
+        put("CameraWriter.PART_RIPPLE", CameraWriter.PART_RIPPLE)
+        put("CameraWriter.PART_GLITTER", CameraWriter.PART_GLITTER)
+        put("CameraWriter.PART_RINGS", CameraWriter.PART_RINGS)
+        put("CameraWriter.PART_GLINTS", CameraWriter.PART_GLINTS)
+        put("CameraWriter.PART_WATER_STREAKS", CameraWriter.PART_WATER_STREAKS)
+        put("CameraWriter.PART_LIT_STREETS", CameraWriter.PART_LIT_STREETS)
+        put("CameraWriter.PART_WET_CORES", CameraWriter.PART_WET_CORES)
+        put("CameraWriter.PART_LAMP_POOLS", CameraWriter.PART_LAMP_POOLS)
+        put("CameraWriter.PART_LAMP_HALOS", CameraWriter.PART_LAMP_HALOS)
+        put("CameraWriter.PART_LAMP_STREAKS", CameraWriter.PART_LAMP_STREAKS)
+        put("CameraWriter.PART_RAIN", CameraWriter.PART_RAIN)
+        put("CameraWriter.PART_GOLDEN_WASH", CameraWriter.PART_GOLDEN_WASH)
+        put("CameraWriter.PART_WALLS", CameraWriter.PART_WALLS)
+        put("CameraWriter.PART_ROOFS", CameraWriter.PART_ROOFS)
+        put("CameraWriter.PART_ROOF_EDGES", CameraWriter.PART_ROOF_EDGES)
+        put("CameraWriter.PART_WINDOWS", CameraWriter.PART_WINDOWS)
+        put("CameraWriter.PART_WINDOW_DEPTH", CameraWriter.PART_WINDOW_DEPTH)
+        put("CameraWriter.PART_FLAT_DETAIL", CameraWriter.PART_FLAT_DETAIL)
+        put("CameraWriter.PART_CHURCH_WINDOWS", CameraWriter.PART_CHURCH_WINDOWS)
+        put("CameraWriter.PART_MATERIAL_FACES", CameraWriter.PART_MATERIAL_FACES)
+        put("CameraWriter.PART_HOIST_BEAMS", CameraWriter.PART_HOIST_BEAMS)
+        put("CameraWriter.PART_KIT_DETAILS", CameraWriter.PART_KIT_DETAILS)
+        put("CameraWriter.PART_DOORS", CameraWriter.PART_DOORS)
+        put("CameraWriter.PART_HOUSE_NUMBERS", CameraWriter.PART_HOUSE_NUMBERS)
+        put("CameraWriter.PART_TREES", CameraWriter.PART_TREES)
+        put("CameraWriter.PART_LEAF_FILTERS", CameraWriter.PART_LEAF_FILTERS)
+        put("CameraWriter.PART_FURNITURE", CameraWriter.PART_FURNITURE)
+        put("CameraWriter.PART_REGION_ITEMS", CameraWriter.PART_REGION_ITEMS)
+        put("CameraWriter.PART_LABELS", CameraWriter.PART_LABELS)
+        put("CameraWriter.PART_ROUTES", CameraWriter.PART_ROUTES)
+        put("CameraWriter.PART_MARKERS", CameraWriter.PART_MARKERS)
+        put("CameraWriter.PART_LOCATION", CameraWriter.PART_LOCATION)
+        put("CameraWriter.PART_FROSTED", CameraWriter.PART_FROSTED)
+        put("CameraWriter.PART_SHADOW_BLUR", CameraWriter.PART_SHADOW_BLUR)
+        put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)
         put("CameraWriter.PROFILE_REGION", CameraWriter.PROFILE_REGION)
@@ -105,7 +148,7 @@ class LayoutTest {
         val got = parse(StyleHost.cameraDump(b))
         fun bits(d: Double) = "%016x".format(java.lang.Double.doubleToRawLongBits(d))
         val want = linkedMapOf(
-            "version" to "2", "flags" to "9", "sequence" to "9000000001", "latitude" to bits(52.374_6), "longitude" to bits(4.884),
+            "version" to "3", "flags" to "9", "sequence" to "9000000001", "latitude" to bits(52.374_6), "longitude" to bits(4.884),
             "bearing" to bits(52.0), "pitch" to bits(46.0), "distance" to bits(2300.0), "principal_x" to bits(206.0),
             "principal_y" to bits(440.0), "density" to bits(2.621_359_2), "width_px" to "1080", "height_px" to "2400", "width_dp" to "412",
             "height_dp" to "916", "pack_id" to java.lang.Long.toUnsignedString(-0x5a1f_00c3_e2d4_b6a7L), "profile" to "2",
@@ -141,6 +184,13 @@ class LayoutTest {
         assertEquals("reserved", parse(StyleHost.cameraDump(b))["error"])
         CameraWriter.noLocation(b)
         assertTrue("error" !in parse(StyleHost.cameraDump(b)))
+        // the parts the map leaves out: read back as written, the last one too; one past them refused
+        CameraWriter.parts(b, (1L shl CameraWriter.PART_RAIN) or (1L shl CameraWriter.PART_FROSTED))
+        assertEquals("%016x".format((1L shl 22) or (1L shl 44)), parse(StyleHost.cameraDump(b))["parts"])
+        b.putLong(CameraWriter.PARTS_AT, 1L shl CameraWriter.PARTS)
+        assertEquals("parts", parse(StyleHost.cameraDump(b))["error"])
+        CameraWriter.parts(b, 0L)
+        assertTrue("parts" !in parse(StyleHost.cameraDump(b)))
     }
 
     @Test

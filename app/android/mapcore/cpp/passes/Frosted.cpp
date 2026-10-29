@@ -802,6 +802,7 @@ void Frosted::release() noexcept { backdrops_.release(); }
 
 void Frosted::record(const frame::Recording& recording, std::uint32_t phase) {
     (void)phase;
+    if (recording.state.camera.leaves_out(style::camera_part::frosted)) return; // the map leaves the glass out
     const gpu::FrameContext& f = recording.frame;
     backdrops_.record(f.cmd, f.sync, f.image, f.slot.slot, recording.state.camera, recording.counters);
 }

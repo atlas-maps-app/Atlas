@@ -49,7 +49,10 @@ void Ground::decide_glitter(const view::Camera& cam, const frame::FrameState& st
     GroundFrame& f = frame_;
     f.glints.clear();
     // `if not night and L[1] > 0 and not th.get('sky_k')`, inside the water's clip
-    if (!f.weather || !f.water || no_glitter_ || only_setts_ || f.night || f.light[1] <= 0 || f.tiles.empty()) return;
+    if (!f.weather || !f.water || no_glitter_ || only_setts_ || f.night || f.light[1] <= 0 || f.tiles.empty() ||
+        f.out(style::camera_part::glitter)) {
+        return;
+    }
     if (state.theme.has(style::theme_flag::overcast) && state.theme.sky_k != 0.0) return;
     // the point of the water that mirrors the sun: where the eye's ray down at the sun's elevation meets WATER_Y
     const double wy = f.tiles.front().ground->water_y;
