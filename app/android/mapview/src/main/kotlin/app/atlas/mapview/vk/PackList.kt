@@ -47,7 +47,7 @@ class PackList(
     private val windows: () -> File? = { null },
     /**
      * The version of a window built now ([MapCore.Window.version]), or null where it is not known (the JVM's tests): a
-     * window of another version is not listed until [Windows] has built it again from the data it keeps.
+     * window of another version (an earlier APK built it) is not listed.
      */
     private val windowVersion: () -> String? = { null },
 ) {
@@ -159,8 +159,8 @@ class PackList(
         // the windows the phone built: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
         // the place is today's map's (Windows does not fetch such a window again for a week); nor one of another
-        // version than a window built now (another stage P or style, as after an update), which Windows builds again
-        // from its kept data first, so a frame cell's windows are of one version
+        // version than a window built now (another stage P or style: an earlier APK built it), so a frame cell's
+        // windows are of one version
         val version = windowVersion()
         windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
             val w = Windows.windowOf(file) ?: return@forEach

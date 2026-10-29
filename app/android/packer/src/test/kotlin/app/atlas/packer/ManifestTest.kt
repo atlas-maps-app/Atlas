@@ -106,9 +106,6 @@ class ManifestTest {
         assertEquals(listOf(5.733, 49.4455, 6.5322, 50.185), e["bbox"]!!.jsonArray.map { it.jsonPrimitive.double })
         // the places sidecar's time wins over the region pack's
         assertEquals("2026-10-13T20:21:31Z", e["osm_timestamp"]!!.jsonPrimitive.content)
-        // no zoom range: the vector tiles that had one are retired
-        assertNull(e["minzoom"])
-        assertNull(e["maxzoom"])
         assertEquals("packs-20261101", e["release"]!!.jsonPrimitive.content)
         val files = e["files"]!!.jsonArray.map { it.jsonObject }
         assertEquals(listOf("places", "atlas"), files.map { it["kind"]!!.jsonPrimitive.content })
@@ -146,26 +143,6 @@ class ManifestTest {
         // no bbox in regions.json: the region pack's
         assertEquals(6.0, e["bbox"]!!.jsonArray[0].jsonPrimitive.double, 1e-7)
         assertEquals(1, e["files"]!!.jsonArray.size)
-    }
-
-    @Test
-    fun theRetiredTilesLeaveTheList() {
-        val dir = tmp.newFolder("retired")
-        val previous = Json.parseToJsonElement(
-            """{"format": 1, "packs": [
-                {"id": "luxembourg", "name": "Luxembourg", "minzoom": 0, "maxzoom": 14, "release": "packs-20261001", "files": [
-                  {"kind": "tiles", "name": "luxembourg.pmtiles", "url": "https://example.org/luxembourg.pmtiles", "bytes": 10},
-                  {"kind": "places", "name": "luxembourg.places.db.gz", "url": "https://example.org/luxembourg.places.db.gz", "bytes": 10}]},
-                {"id": "tuscany", "name": "Tuscany", "release": "packs-20261001", "files": [
-                  {"kind": "tiles", "name": "tuscany.pmtiles", "url": "https://example.org/tuscany.pmtiles", "bytes": 10}]}
-            ]}""",
-        ).jsonObject
-        val ps = packs(Manifest.build(dir, base, null, previous))
-        // a region with only tiles is gone; the other keeps its places, without the tiles or their zooms
-        assertEquals(listOf("luxembourg"), ps.map { it["id"]!!.jsonPrimitive.content })
-        assertEquals(listOf("places"), ps[0]["files"]!!.jsonArray.map { it.jsonObject["kind"]!!.jsonPrimitive.content })
-        assertNull(ps[0]["maxzoom"])
-        assertTrue(Manifest.ATTRIBUTION.contains("OpenStreetMap") && !Manifest.ATTRIBUTION.contains("OpenMapTiles"))
     }
 
     @Test

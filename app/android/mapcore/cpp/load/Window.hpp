@@ -59,8 +59,8 @@ inline constexpr std::string_view stage_p_version = "core-p7";
 }
 
 /// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
-/// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame
-/// cell's windows are of one version, and an edit to the style file reaches every window.
+/// window of another version (an earlier APK built it) is not drawn: the app's PackList does not list it, so a frame
+/// cell's windows are of one version.
 [[nodiscard]] std::string window_version();
 
 /// The box whose data a window needs, [south, west, north, east] degrees: its tile's box grown by `margin` metres

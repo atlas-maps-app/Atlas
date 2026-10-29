@@ -369,8 +369,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
             /**
              * The version of a window built now: `<stage P's> <the style's>`, as a window's manifest names them
-             * (`engine_version`, `style_version`). A window of another version is built again from the data it keeps
-             * before the map lists it, so a frame cell's windows are of one version.
+             * (`engine_version`, `style_version`). A window of another version (an earlier APK built it) is not listed,
+             * so a frame cell's windows are of one version.
              */
             fun version(): String = current
 

@@ -109,9 +109,7 @@
 // its what names (driver|version|build|cell|<configuration>|attempt), any other Vulkan; what is "pipeline <…>", "module
 // <…>" or "release <…>" when the driver was making a pipeline or a module or destroying something (several separated by
 // "; " where threads made them at once), "drawing <…>" in a frame's first draws), `facts` (the last facts read, shown
-// when Vulkan is off). An off line from before build IDs (driver|version|stage, alpha 6) names no build, so it turns
-// off none; one from before attempts (driver|version|build|stage|what, alpha 7's first) reads as attempt 2, or 1 for
-// the colour stage.
+// when Vulkan is off).
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -201,14 +199,14 @@ struct GuardVerdict {
 struct GuardOff {
     std::string driver;  // "system" when the crash came before the driver was known
     std::string version; // the driver's version, or the system build's fingerprint
-    std::string build;   // the core's build ID; empty on a line from before build IDs
+    std::string build;   // the core's build ID
     /// The stage that crashed (twice, but once for the colour and profiles stages), or "cell" for a VK bench cell
     /// (once).
     std::string stage;
     /// What the driver did: "pipeline <…>", "module <…>", "release <…>", "drawing <…>", or ""; for a cell, the cell
     /// ("B dynamic onepass resolve").
     std::string what;
-    std::uint32_t attempt = 0; // the attempt of the start that crashed; 0 on a line from before attempts
+    std::uint32_t attempt = 0; // the attempt of the start that crashed
 };
 
 /// The guard of one process's core: told about each shader module and pipeline before it is made, about each thing

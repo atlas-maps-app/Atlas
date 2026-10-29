@@ -61,7 +61,7 @@ class AtlasRegionManager(
 
     override fun download(request: RegionRequest): String {
         val id = RegionEngine.idFor(request.name)
-        engine.begin(id, request.name, request.bbox, request.layers, request.maxZoom)
+        engine.begin(id, request.name, request.bbox, request.layers)
         engine.waiting(id)
         scheduler().schedule(id, wifiOnly(), update = false)
         return id
@@ -73,7 +73,7 @@ class AtlasRegionManager(
     /** Refreshes the stale layers of [id]. */
     fun update(id: String) {
         val m = files.get(id) ?: return
-        engine.begin(id, m.name, m.bbox, m.wanted.ifEmpty { m.layers.keys }, m.maxZoom)
+        engine.begin(id, m.name, m.bbox, m.wanted.ifEmpty { m.layers.keys })
         engine.waiting(id)
         scheduler().schedule(id, wifiOnly(), update = true)
     }

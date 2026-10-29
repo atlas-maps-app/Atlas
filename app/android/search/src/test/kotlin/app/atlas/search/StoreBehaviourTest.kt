@@ -242,7 +242,7 @@ class StoreBehaviourTest {
     }
 
     @Test
-    fun aPackOfAnotherSchemaIsRefusedAndARegionIsRebuilt() {
+    fun aStoreOfAnotherSchemaIsRefused() {
         val pack = File(tmp.root, "old.places.db")
         val region = File(tmp.root, "old-region.db")
         for ((f, packer) in listOf(pack to true, region to false)) {
@@ -254,33 +254,14 @@ class StoreBehaviourTest {
                 }
             }
         }
-        try {
-            PlaceStore.open(pack).close()
-            fail("a pack of another schema must be refused")
-        } catch (e: StoreVersionException) {
-            assertTrue(e.message!!, e.message!!.contains("download the region again"))
-        }
-        PlaceStore.open(region).use { s ->
-            assertEquals(0, s.size)
-            assertEquals(StoreSchema.VERSION.toString(), s.meta("schema"))
-            s.importPlaces(listOf(place(2, 52.37, 4.88, "amenity" to "bar")))
-            assertEquals(1, s.size)
-        }
-    }
-
-    @Test
-    fun theTextIndexOfAnotherVersionIsRebuilt() {
-        PlaceStore.inMemory().use { s ->
-            amsterdam(s)
-            s.locked {
-                s.exec("INSERT INTO place_fts(place_fts) VALUES ('delete-all')")
-                s.exec("UPDATE meta SET value = '0' WHERE key = 'text'")
+        // a pack (downloaded) and a store the phone wrote, each of another version of Atlas
+        for ((f, says) in listOf(pack to "download the region again", region to "install Atlas afresh")) {
+            try {
+                PlaceStore.open(f).close()
+                fail("a store of another schema must be refused")
+            } catch (e: StoreVersionException) {
+                assertTrue(e.message!!, e.message!!.contains(says))
             }
-            assertTrue(s.text("molen").isEmpty())
-            s.importPlaces(listOf(place(200, 52.375, 4.884, "amenity" to "bar", "name" to "Kroeg")))
-            assertEquals("Café Molen", s.text("molen").single().tags["name"])
-            assertEquals("Kroeg", s.text("kroeg").single().tags["name"])
-            assertEquals(StoreSchema.TEXT_VERSION.toString(), s.meta("text"))
         }
     }
 

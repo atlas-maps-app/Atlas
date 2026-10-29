@@ -62,8 +62,6 @@ data class Pack(
     val bbox: BBox,
     /** When the OpenStreetMap data was current (ISO 8601), when known. */
     val osmTimestamp: String?,
-    val minZoom: Int,
-    val maxZoom: Int,
     /** The GitHub release the files belong to ("packs-20261101"). */
     val release: String?,
     val files: List<PackFile>,
@@ -165,8 +163,6 @@ class PackCatalog(
                 country = m.str("country"),
                 bbox = BBox(b[0], b[1], b[2], b[3]),
                 osmTimestamp = m.str("osm_timestamp"),
-                minZoom = m.int("minzoom") ?: 0,
-                maxZoom = m.int("maxzoom") ?: 14,
                 release = m.str("release"),
                 files = files,
             )

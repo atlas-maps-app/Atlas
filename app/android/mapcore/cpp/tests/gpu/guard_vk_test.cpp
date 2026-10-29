@@ -2,7 +2,7 @@
 // leaves the guard's marker, which names the pipeline being made; the next start reads it, prints the `vk guard` line
 // with that pipeline and retries once without the pipeline cache; when that crashes too, the start after turns Vulkan
 // off for the driver, its version and this build of the core. A new driver version starts again, and so does another
-// build of the core (its build ID), or a reset; off lines and markers from before build IDs turn nothing off. A crash
+// build of the core (its build ID), or a reset. A crash
 // making a shader module names the module; one in the device's facts (the queries its choice makes, a start's or a
 // rebuild's after a device loss) follows the ladder keyed by the system build, one in the surface stage or the close
 // the driver's; the stand-in's shared objects are the pipelines stage's even when a session's first frame is 10-bit.
@@ -442,24 +442,7 @@ TEST_CASE("the crash guard names the pipeline, retries once without the cache, t
         CHECK(other->retried);
     }
 
-    // 9. What alpha 6 left (before build IDs) turns nothing off: an off line driver|version|stage, and a marker of a
-    // second attempt without a build.
-    {
-        const std::size_t bar = off.find('|');
-        const std::size_t version = bar == std::string::npos ? bar : off.find('|', bar + 1);
-        ATLAS_REQUIRE(version != std::string::npos, "the off file names no driver and version: " << off);
-        std::ofstream(dir / "off", std::ios::trunc) << off.substr(0, version) << "|pipelines\n";
-        std::ofstream(dir / "guard", std::ios::trunc)
-            << "stage pipelines\ndriver " << off.substr(0, bar) << "\nversion "
-            << off.substr(bar + 1, version - bar - 1) << "\nattempt 2\n";
-        auto old = gpu::start_guarded(options_in(dir, "", "build-a"));
-        ATLAS_REQUIRE(old.has_value(), "alpha 6's guard files turned Vulkan off: " << old.error().line);
-        CHECK(has(old->guard_line, " attempt 2 build unknown (another build; this build build-a starts afresh)"));
-        CHECK(has(off_line(old->guard->state(), "pipelines"), "(a build from before build IDs: not off for this one)"));
-        CHECK_FALSE(fs::exists(dir / "guard"));
-    }
-
-    // 10. A crash before the driver is known (the instance stage) keys the system build, for this build of the core.
+    // 9. A crash before the driver is known (the instance stage) keys the system build, for this build of the core.
     fs::remove(dir / "off", ec);
     CHECK(aborted(spawn_child(dir, "instance", "build-a")));
     CHECK(aborted(spawn_child(dir, "instance", "build-a")));
@@ -471,7 +454,7 @@ TEST_CASE("the crash guard names the pipeline, retries once without the cache, t
     }
     CHECK(gpu::start_guarded(options_in(dir, "", "build-b")).has_value());
 
-    // 11. So does a crash in the device's facts, every query the choice of the device makes of the driver (between the
+    // 10. So does a crash in the device's facts, every query the choice of the device makes of the driver (between the
     // instance and the device, before the driver is known): marked, retried once without the cache, then Vulkan off.
     fs::remove(dir / "off", ec);
     CHECK(aborted(spawn_child(dir, "facts", "build-a")));

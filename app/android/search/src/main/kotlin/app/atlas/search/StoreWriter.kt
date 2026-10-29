@@ -2,10 +2,7 @@ package app.atlas.search
 
 import app.atlas.model.OsmType
 import app.atlas.model.Place
-import app.atlas.places.Brands
-import app.atlas.places.Categories
 import app.atlas.places.Geometry
-import app.atlas.places.Presets
 import app.atlas.places.Units
 import app.atlas.providers.OverpassElement
 import java.io.Closeable
@@ -32,9 +29,6 @@ class StoreWriter internal constructor(
     private val sink = ByteSink(512)
     private val extraSink = ByteSink(64)
 
-    /** True when the text index was written by another version: it is then rebuilt whole at [finish]. */
-    private val rebuildText: Boolean
-
     var elements = 0L
         private set
     var places = 0
@@ -49,10 +43,7 @@ class StoreWriter internal constructor(
         private set
 
     init {
-        rebuildText = store.locked {
-            store.exec("BEGIN")
-            store.meta("text") != StoreSchema.TEXT_VERSION.toString() && store.long("SELECT EXISTS (SELECT 1 FROM place)") != 0L
-        }
+        store.locked { store.exec("BEGIN") }
     }
 
     /**
@@ -169,12 +160,10 @@ class StoreWriter internal constructor(
                 category?.let { lookupRow(st, StoreSchema.CATEGORY_KEY, it, key) }
                 brand?.let { lookupRow(st, StoreSchema.BRAND_KEY, it, key) }
             }
-            if (!rebuildText) {
-                store.stmt("INSERT INTO place_fts(rowid, text) VALUES (?1, ?2)") { st ->
-                    st.bindLong(1, StoreSchema.textRow(key, Importance.of(tags)))
-                    st.bindText(2, SearchText.indexText(tags, KindWords.tokensOf(preset, category, tags, dict)))
-                    st.step()
-                }
+            store.stmt("INSERT INTO place_fts(rowid, text) VALUES (?1, ?2)") { st ->
+                st.bindLong(1, StoreSchema.textRow(key, Importance.of(tags)))
+                st.bindText(2, SearchText.indexText(tags, KindWords.tokensOf(preset, category, tags, dict)))
+                st.step()
             }
         }
         places++
@@ -207,13 +196,11 @@ class StoreWriter internal constructor(
             category?.let { lookupRow(st, StoreSchema.CATEGORY_KEY, it, key) }
             brand?.let { lookupRow(st, StoreSchema.BRAND_KEY, it, key) }
         }
-        if (!rebuildText) {
-            // a contentless index forgets a row given the very text it was given
-            store.stmt("INSERT INTO place_fts(place_fts, rowid, text) VALUES ('delete', ?1, ?2)") { st ->
-                st.bindLong(1, StoreSchema.textRow(key, Importance.of(old)))
-                st.bindText(2, SearchText.indexText(old, KindWords.tokensOf(preset, category, old, dict)))
-                st.step()
-            }
+        // a contentless index forgets a row given the very text it was given
+        store.stmt("INSERT INTO place_fts(place_fts, rowid, text) VALUES ('delete', ?1, ?2)") { st ->
+            st.bindLong(1, StoreSchema.textRow(key, Importance.of(old)))
+            st.bindText(2, SearchText.indexText(old, KindWords.tokensOf(preset, category, old, dict)))
+            st.step()
         }
         store.stmt("DELETE FROM place_rt WHERE id = ?1") { st -> st.bindLong(1, key); st.step() }
     }
@@ -325,12 +312,10 @@ class StoreWriter internal constructor(
     fun finish(): ImportStats {
         check(!finished) { "This writer has finished" }
         store.locked {
-            StoreFinish(store, langs).run(rebuildText)
+            StoreFinish(store, langs).run()
             putMeta("langs", langs.joinToString(","))
             regionName?.let { putMeta("name", it) }
             putMeta("imported", Instant.now().toString())
-            putMeta("derived", fingerprint())
-            putMeta("text", StoreSchema.TEXT_VERSION.toString())
             store.exec("COMMIT")
             store.exec("INSERT INTO place_fts(place_fts) VALUES ('optimize')")
             store.exec("INSERT INTO street_fts(street_fts) VALUES ('optimize')")
@@ -411,10 +396,6 @@ class StoreWriter internal constructor(
 
     companion object {
         private const val BATCH = 20_000
-
-        /** Changes when the presets, categories or brands that classified the places change. */
-        fun fingerprint(): String =
-            "${Presets.all.size}/${Categories.leaves().joinToString("|") { "${it.id}:${it.rule}" }.hashCode()}/${Brands.all().size}"
     }
 }
 

@@ -254,9 +254,9 @@ class PackListTest {
     }
 
     @Test
-    fun aWindowOfAnotherVersionIsNotListedUntilItIsBuiltAgain() {
-        // windows built at another style version (as after an update), or before windows named theirs, wait for Windows
-        // to build them again, so a frame cell's windows are of one version; where the version is not known, all list
+    fun aWindowOfAnotherVersionIsNotListed() {
+        // windows built at another style version (an earlier APK's), or before windows named theirs, are not listed, so
+        // a frame cell's windows are of one version; where the version is not known, all list
         val windows = File(dir, "windows").apply { mkdirs() }
         File(windows, "14-8414-5383.atlas").writeBytes(renderPack("window", "region", 4.87, 52.36, 4.89, 52.38, chunks = 1, version = "core-p1 s1.1-aaaa"))
         File(windows, "14-8415-5383.atlas").writeBytes(renderPack("window", "region", 4.89, 52.36, 4.91, 52.38, chunks = 1, version = "core-p1 s1.1-bbbb"))
@@ -265,7 +265,7 @@ class PackListTest {
         val list = PackList(null, null, windows = { windows }, windowVersion = { version })
         list.load()
         assertEquals(listOf("window/14/8415/5383"), list.packs.map { it.id })
-        // built again at the version: listed
+        // built at the version: listed
         File(windows, "14-8414-5383.atlas").writeBytes(renderPack("window", "region", 4.87, 52.36, 4.89, 52.38, chunks = 1, version = "core-p1 s1.1-bbbb"))
         list.load()
         assertEquals(listOf("window/14/8414/5383", "window/14/8415/5383"), list.packs.map { it.id })

@@ -99,7 +99,6 @@ class PlaceStoreTest {
         assertEquals("Amsterdam", s.name)
         assertEquals(PlaceStore.DEFAULT_LANGS, s.languages)
         assertNotNull(s.meta("imported"))
-        assertEquals(StoreWriter.fingerprint(), s.meta("derived"))
     }
 
     @Test
@@ -124,15 +123,6 @@ class PlaceStoreTest {
             assertEquals("ocm", hub.place.source)
             assertEquals("4.5", hub.place.extra["rating"])
             assertEquals(listOf("en"), s.languages)
-            assertFalse(s.isStale)
-            // as after an app update with new presets: the derived columns are worked out again, nothing is lost
-            s.locked {
-                s.exec("UPDATE place SET category = NULL, symbol = ${s.dict.internValue("x")}")
-                s.exec("UPDATE meta SET value = 'old' WHERE key = 'derived'")
-            }
-            assertTrue(s.isStale)
-            s.refresh()
-            assertFalse(s.isStale)
             assertEquals(2, s.size)
             assertEquals("maki-cafe", s.text("cafe molen").single().symbol)
             assertEquals("restaurants", s.text("cafe molen").single().category)

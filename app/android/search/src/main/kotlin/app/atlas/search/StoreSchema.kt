@@ -4,8 +4,9 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 
 /**
- * The tables of a region's store file. Bump [VERSION] when they change: an older store is then rebuilt when it is
- * opened (an Overpass region is imported again), or refused when it is a pack ([PlaceStore.open] says so).
+ * The tables of a region's store file. Bump [VERSION] when they change, or what goes into the text index does (its
+ * words, kind tokens or importance): a store of another version is then refused when it is opened ([PlaceStore.open]
+ * says so).
  *
  * Coordinates are integers of 1e-7 degree ([E7]). Tags are varint blobs over two dictionaries ([TagBlob]); the lookup
  * table holds only the keys searches filter on ([TagIndex]); pure address points live in a compact table of their
@@ -13,12 +14,6 @@ import app.atlas.model.OsmType
  */
 internal object StoreSchema {
     const val VERSION = 3
-
-    /**
-     * Changes when what goes into the text index changes (its words, kind tokens or importance): the index of a store
-     * written by another version is then rebuilt from the places when a writer finishes.
-     */
-    const val TEXT_VERSION = 1
 
     /** The tokenizer of both text indexes: Atlas folds the text itself, so it only splits; `_` starts a kind token. */
     private const val TOKENIZE = "tokenize=\"unicode61 remove_diacritics 0 tokenchars '_'\""
@@ -62,14 +57,11 @@ internal object StoreSchema {
         "CREATE TABLE IF NOT EXISTS tree(id INTEGER PRIMARY KEY, kind INTEGER NOT NULL, height INTEGER)",
     )
 
-    /** Every table of this version, for [PlaceStore.clear] and for dropping. */
+    /** Every table of this version, for [PlaceStore.clear]. */
     val TABLES = listOf(
         "place", "place_rt", "lookup", "stat", "place_fts", "street", "street_rt", "street_fts", "address", "word", "gram",
         "treekind", "tree", "tagkey", "tagvalue",
     )
-
-    /** The tables of version 1 (version 2 has this version's names), dropped when such a store is rebuilt. */
-    val OLD_TABLES = listOf("tag", "tagstat", "keystat", "tree_rt")
 
     /** Longest tag value held by its id in the lookup table; longer ones are held as present and checked on the row. */
     const val MAX_INDEXED_VALUE = 40

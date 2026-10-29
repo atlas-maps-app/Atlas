@@ -31,8 +31,7 @@ import java.time.Instant
  * `packs.json`, the list of packs the app offers: per region its id, name, country, box, the OSM time its data is
  * current to, and its files (kind, URL, bytes, SHA-256): the region pack, the place store, and the windows' data with
  * its index (`packer windows`: the data is cut into parts over the split size, the index stays whole). A build job writes one
- * `<id>.pack.json` per region it built; the publishing job merges those with the previous list. The vector tiles
- * (OpenMapTiles' schema) the list once carried are retired: an earlier entry's tiles are left out.
+ * `<id>.pack.json` per region it built; the publishing job merges those with the previous list.
  */
 object Manifest {
     /** Bumped when a reader would misread the file. */
@@ -88,10 +87,10 @@ object Manifest {
         val base = urlBase.trimEnd('/')
         val byId = regions?.associateBy { it.id }
         val entries = LinkedHashMap<String, JsonObject>()
-        previous?.get("packs")?.jsonArray?.forEach { e -> e.jsonObject.str("id")?.let { id -> withoutTiles(e.jsonObject)?.let { entries[id] = it } } }
+        previous?.get("packs")?.jsonArray?.forEach { e -> e.jsonObject.str("id")?.let { id -> entries[id] = e.jsonObject } }
         val names = dir.listFiles()?.map { it.name }.orEmpty().sorted()
         for (n in names) if (n.endsWith(PACK_SUFFIX)) {
-            val o = withoutTiles(Json.parseToJsonElement(File(dir, n).readText()).jsonObject) ?: continue
+            val o = Json.parseToJsonElement(File(dir, n).readText()).jsonObject
             entries[o.str("id") ?: n.removeSuffix(PACK_SUFFIX)] = o
         }
         val fresh = names.mapNotNull { n ->
@@ -203,14 +202,6 @@ object Manifest {
     /** The release tag in a `…/releases/download/<tag>` URL. */
     fun releaseOf(base: String): String? = Regex("/releases/download/([^/]+)$").find(base)?.groupValues?.get(1)
 
-    /** [o] without the retired vector tiles (their file and their zoom range); null when they were all it had. */
-    private fun withoutTiles(o: JsonObject): JsonObject? {
-        val had = o["files"] as? JsonArray
-        val files = had?.filter { (it as? JsonObject)?.str("kind") != RETIRED_TILES }
-        if (had != null && had.isNotEmpty() && files!!.isEmpty()) return null
-        return JsonObject(o.filterKeys { it != "minzoom" && it != "maxzoom" } + (if (files != null) mapOf("files" to JsonArray(files)) else emptyMap()))
-    }
-
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull
 
@@ -222,8 +213,6 @@ object Manifest {
     /** GitHub release assets must stay under 2 GiB: bigger files go up in parts of this size. */
     const val SPLIT_BYTES = 2_000_000_000L
 
-    /** The kind the retired vector tiles were listed as. */
-    private const val RETIRED_TILES = "tiles"
     const val ATLAS_SUFFIX = ".atlas"
     const val PLACES_GZ_SUFFIX = ".places.db.gz"
     const val PLACES_SUFFIX = ".places.db"

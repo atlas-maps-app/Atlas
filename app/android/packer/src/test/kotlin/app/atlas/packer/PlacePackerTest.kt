@@ -306,7 +306,6 @@ class PlacePackerTest {
             assertEquals("4936", s.meta("osm_sequence"))
             assertEquals(PlacesPackBuilder.VERSION, s.meta("packer"))
             assertEquals("4.0,52.0,5.0,53.0", s.meta("bbox"))
-            assertFalse(s.isStale)
             assertEquals(OsmId(OsmType.RELATION, 200), s.text("vondel", null, null, 3).first().id)
         }
     }

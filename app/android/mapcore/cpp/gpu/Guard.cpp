@@ -143,13 +143,6 @@ void write_synced(const std::filesystem::path& path, std::string_view text, bool
     return line;
 }
 
-/// The attempt an off line names: its own, or for a line from before attempts 2 for Vulkan off (it is written at the
-/// second crash) and 1 for the rungs below it (at the first).
-[[nodiscard]] std::uint32_t attempt_of(const GuardOff& o) noexcept {
-    if (o.attempt != 0) return o.attempt;
-    return rung_below(o.stage) ? 1U : 2U;
-}
-
 [[nodiscard]] std::int64_t now_ms() noexcept {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
@@ -198,7 +191,7 @@ Guard::Guard(std::filesystem::path dir, std::string system, std::string build, s
         plant_.erase(0, cell_plant.size());
     }
     if (system_.empty()) system_ = "unknown";
-    // Never empty: an off line from before build IDs has an empty build, which must match no build.
+    // Never empty, as the system's: the log and the off file name it.
     if (build_.empty()) build_ = "unknown";
     system_ = clean(system_);
     build_ = clean(build_);
@@ -240,7 +233,7 @@ GuardVerdict Guard::check_start(const ProcessExits& exits) {
     for (const GuardOff& o : turned_off()) {
         if (!rung_below(o.stage) && o.driver == "system" && o.version == system_ && o.build == build_) {
             v.off = true;
-            v.line = guard_line(o.stage, "unknown", system_, attempt_of(o), o.what, build_);
+            v.line = guard_line(o.stage, "unknown", system_, o.attempt, o.what, build_);
             return v;
         }
     }
@@ -261,7 +254,7 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
     const std::string what = cell.empty()    ? named
                              : named.empty() ? "cell " + cell
                                              : std::format("cell {} {}", cell, named);
-    const std::string build = field(marker, "build"); // empty: a marker from before build IDs
+    const std::string build = field(marker, "build");
     if (stage.empty()) stage = "unknown";
     if (driver.empty()) driver = "unknown";
     if (version.empty()) version = system_;
@@ -272,8 +265,8 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
 
     // Kills are not crashes: the marker's process is this very one (its id and its start: an earlier core in it left
     // the marker, and it runs), whatever Android records; or, among the exits Android recorded, it was stopped by the
-    // user, the system or the package's update. A marker without a process (from before alpha 7's second round) counts,
-    // and so does any other where the exits are not known (API 29).
+    // user, the system or the package's update. A marker that names no process counts, and so does any where the exits
+    // are not known (API 29).
     const std::optional<std::int64_t> pid = number(field(marker, "pid"));
     const std::optional<std::int64_t> start = number(field(marker, "start"));
     if (pid && start) {
@@ -393,7 +386,7 @@ GuardVerdict Guard::check_driver(std::string_view driver, std::string_view versi
     for (const GuardOff& o : turned_off()) {
         if (!rung_below(o.stage) && o.driver == driver_ && o.version == version_ && o.build == build_) {
             v.off = true;
-            v.line = guard_line(o.stage, driver_, version_, attempt_of(o), o.what, build_);
+            v.line = guard_line(o.stage, driver_, version_, o.attempt, o.what, build_);
             return v;
         }
     }
@@ -405,7 +398,7 @@ std::string Guard::rung_off(std::string_view stage) const {
         if (o.stage != stage || o.build != build_) continue;
         const bool system = o.driver == "system";
         if (system ? o.version != system_ : (o.driver != driver_ || o.version != version_)) continue;
-        return guard_line(o.stage, system ? "unknown" : o.driver, o.version, attempt_of(o), o.what, build_);
+        return guard_line(o.stage, system ? "unknown" : o.driver, o.version, o.attempt, o.what, build_);
     }
     return {};
 }
@@ -424,7 +417,7 @@ std::string Guard::cell_off(const Configuration& configuration) const {
     for (const GuardOff& o : turned_off()) {
         if (o.stage != cell_rung || o.what != cell || o.build != build_ || o.driver != driver_ || o.version != version_)
             continue;
-        return guard_line(cell_rung, o.driver, o.version, attempt_of(o), o.what, build_);
+        return guard_line(cell_rung, o.driver, o.version, o.attempt, o.what, build_);
     }
     return {};
 }
@@ -616,24 +609,14 @@ std::vector<GuardOff> Guard::turned_off() const {
     const std::string text = read_text(dir_ / "off");
     for (const std::string_view line : split(text, '\n')) {
         const std::vector<std::string_view> f = split(line, '|');
-        if (f.size() == 5 || f.size() == 6) {
-            // driver|version|build|stage|what, then the attempt (from alpha 7's second round).
-            const auto attempt = f.size() == 6 ? number(f[5]).value_or(0) : 0;
-            out.push_back({.driver = std::string(f[0]),
-                           .version = std::string(f[1]),
-                           .build = std::string(f[2]),
-                           .stage = std::string(f[3]),
-                           .what = std::string(f[4]),
-                           .attempt = static_cast<std::uint32_t>(std::clamp<std::int64_t>(attempt, 0, 1'000'000))});
-        } else if (f.size() == 3) {
-            // From before build IDs (alpha 6): driver|version|stage.
-            out.push_back({.driver = std::string(f[0]),
-                           .version = std::string(f[1]),
-                           .build = {},
-                           .stage = std::string(f[2]),
-                           .what = {},
-                           .attempt = 0});
-        }
+        if (f.size() != 6) continue; // driver|version|build|stage|what|attempt
+        const auto attempt = std::clamp<std::int64_t>(number(f[5]).value_or(0), 0, 1'000'000);
+        out.push_back({.driver = std::string(f[0]),
+                       .version = std::string(f[1]),
+                       .build = std::string(f[2]),
+                       .stage = std::string(f[3]),
+                       .what = std::string(f[4]),
+                       .attempt = static_cast<std::uint32_t>(attempt)});
     }
     return out;
 }
@@ -654,9 +637,7 @@ std::vector<std::string> Guard::state() const {
                                  : o.stage == cell_rung   ? std::format("VK bench's cell {} is off", o.what)
                                                           : std::string("Vulkan is off");
         std::string whose = "another driver or version: not off here";
-        if (o.build.empty()) {
-            whose = "a build from before build IDs: not off for this one";
-        } else if (o.build != build_) {
+        if (o.build != build_) {
             whose = "another build of the core: not off for this one";
         } else if (here) {
             whose = std::format("this {} and build: {}", system ? "system" : "driver", gone);

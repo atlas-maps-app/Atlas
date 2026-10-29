@@ -428,32 +428,6 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
             w.finish()
         }
 
-    /**
-     * True when the presets, categories or brands that classified the places have changed since the import (an app
-     * update): [refresh] then brings the categories, brands, presets, symbols and kind tokens up to date.
-     */
-    val isStale: Boolean get() = placeCount > 0 && meta("derived") != StoreWriter.fingerprint()
-
-    /** Works out every place's category, brand, preset, symbol and indexed kinds again, in batches. */
-    fun refresh(langs: List<String> = languages.ifEmpty { DEFAULT_LANGS }): ImportStats = writer(langs).use { w ->
-        var after = Long.MIN_VALUE
-        while (true) {
-            val keys = locked {
-                stmt("SELECT id FROM place WHERE id > ?1 ORDER BY id LIMIT ?2") { st ->
-                    st.bindLong(1, after)
-                    st.bindLong(2, REFRESH_BATCH.toLong())
-                    val out = ArrayList<Long>(REFRESH_BATCH)
-                    while (st.step()) out += st.getLong(0)
-                    out
-                }
-            }
-            if (keys.isEmpty()) break
-            for (r in byKeys(keys)) w.add(PlaceRecord.of(r.place))
-            after = keys.last()
-        }
-        w.finish()
-    }
-
     /** Empties the store. */
     fun clear() = locked {
         for (t in StoreSchema.TABLES) {
@@ -632,15 +606,10 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
     private fun setUp() {
         val version = runCatching { stmt("SELECT value FROM meta WHERE key = 'schema'") { st -> if (st.step()) st.getText(0).toIntOrNull() else null } }.getOrNull()
         if (version != null && version != StoreSchema.VERSION) {
+            val name = file?.name ?: "This store"
             val pack = runCatching { meta("packer") }.getOrNull()
-            if (pack != null) {
-                throw StoreVersionException("${file?.name ?: "This store"} is a pack of store schema $version ($pack); Atlas reads schema ${StoreSchema.VERSION}: download the region again")
-            }
-            // an Overpass region of an older version: emptied, to be imported again
-            for (s in statements.values) runCatching { s.close() }
-            statements.clear()
-            for (t in StoreSchema.TABLES + StoreSchema.OLD_TABLES + "meta") exec("DROP TABLE IF EXISTS $t")
-            exec("VACUUM")
+                ?: throw StoreVersionException("$name was written by another version of Atlas (store schema $version; it reads ${StoreSchema.VERSION}): install Atlas afresh")
+            throw StoreVersionException("$name is a pack of store schema $version ($pack); Atlas reads schema ${StoreSchema.VERSION}: download the region again")
         }
         exec("PRAGMA page_size = $PAGE_SIZE")
         exec("PRAGMA journal_mode=WAL")
@@ -662,7 +631,6 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         private const val PAGE_SIZE = 4096
         private const val FUZZY_BELOW = 5
         private const val FUZZY_KIND_TOKENS = 8
-        private const val REFRESH_BATCH = 5_000
         private const val NEAR_TEXT_METRES = 5_000.0
 
         internal const val COLS = "p.id, p.lat, p.lon, p.ds, p.dw, p.dn, p.de, p.preset, p.category, p.brand, p.symbol, p.tags, p.extra, p.edited, p.source"
@@ -675,7 +643,7 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
         private val driver by lazy { BundledSQLiteDriver() }
 
-        /** Opens (or creates) the store in [file]; a pack of another store schema is refused ([StoreVersionException]). */
+        /** Opens (or creates) the store in [file]; one of another store schema is refused ([StoreVersionException]). */
         fun open(file: File): PlaceStore {
             file.absoluteFile.parentFile?.mkdirs()
             return create(file, driver.open(file.absolutePath))

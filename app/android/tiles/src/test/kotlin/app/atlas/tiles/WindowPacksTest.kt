@@ -67,7 +67,7 @@ class WindowPacksTest {
         }
         gh.assets["$id.windows.idx"] = r.index
         return Pack(
-            id, id, "NL", bbox, at.toString(), 0, 14, "packs-20261102",
+            id, id, "NL", bbox, at.toString(), "packs-20261102",
             listOf(
                 PackFile(PackFile.WINDOWS, "$id.windows", r.windows.size.toLong(), hex(r.windows), parts),
                 PackFile(PackFile.WINDOWS_INDEX, "$id.windows.idx", r.index.size.toLong(), hex(r.index), listOf(PackPart(gh.url("$id.windows.idx"), r.index.size.toLong(), null))),

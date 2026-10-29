@@ -39,9 +39,9 @@ object MineFixtures {
 
     /** What Atlas's published list could say for three countries (test data: the sizes are of the order of the real packs). */
     fun packs(): List<app.atlas.tiles.Pack> = listOf(
-        app.atlas.tiles.Pack("netherlands", "Netherlands", "NL", BBox(3.2, 50.7, 7.3, 53.6), null, 0, 14, "packs-test", listOf(packFile("atlas", "netherlands.atlas", 640), packFile("places", "netherlands.places", 210))),
-        app.atlas.tiles.Pack("belgium", "Belgium", "BE", BBox(2.5, 49.5, 6.4, 51.5), null, 0, 14, "packs-test", listOf(packFile("atlas", "belgium.atlas", 520), packFile("places", "belgium.places", 150))),
-        app.atlas.tiles.Pack("portugal", "Portugal", "PT", BBox(-9.6, 36.9, -6.1, 42.2), null, 0, 14, "packs-test", listOf(packFile("atlas", "portugal.atlas", 480), packFile("places", "portugal.places", 130))),
+        app.atlas.tiles.Pack("netherlands", "Netherlands", "NL", BBox(3.2, 50.7, 7.3, 53.6), null, "packs-test", listOf(packFile("atlas", "netherlands.atlas", 640), packFile("places", "netherlands.places", 210))),
+        app.atlas.tiles.Pack("belgium", "Belgium", "BE", BBox(2.5, 49.5, 6.4, 51.5), null, "packs-test", listOf(packFile("atlas", "belgium.atlas", 520), packFile("places", "belgium.places", 150))),
+        app.atlas.tiles.Pack("portugal", "Portugal", "PT", BBox(-9.6, 36.9, -6.1, 42.2), null, "packs-test", listOf(packFile("atlas", "portugal.atlas", 480), packFile("places", "portugal.places", 130))),
     )
 
     /** Like [offlineDeps], with the published list of [packs] and a map builder that would build small areas on the phone. */

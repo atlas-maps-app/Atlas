@@ -122,11 +122,11 @@ class RegionEngine(
     }
 
     /** The region [id] to take offline as asked; the layers wanted are kept so [resume] can finish them. */
-    fun begin(id: String, name: String, bbox: BBox, layers: Set<RegionLayer>, maxZoom: Int): RegionMeta {
+    fun begin(id: String, name: String, bbox: BBox, layers: Set<RegionLayer>): RegionMeta {
         val now = deps.clock()
         val meta = synchronized(files) {
             val old = files.get(id)
-            (old ?: RegionMeta(id, name, bbox, now, now)).copy(name = name, bbox = bbox, wanted = layers, maxZoom = maxZoom, updatedAt = now).also { files.save(it) }
+            (old ?: RegionMeta(id, name, bbox, now, now)).copy(name = name, bbox = bbox, wanted = layers, updatedAt = now).also { files.save(it) }
         }
         errors.remove(id)
         refresh()
@@ -146,7 +146,7 @@ class RegionEngine(
     suspend fun packs(): List<Pack> = deps.packs()
 
     /** What taking [bbox] with [layers] would download, before it is asked for. */
-    suspend fun estimate(bbox: BBox, layers: Set<RegionLayer>, maxZoom: Int = 14): RegionEstimate {
+    suspend fun estimate(bbox: BBox, layers: Set<RegionLayer>): RegionEstimate {
         val packs = runCatching { deps.packs() }.getOrDefault(emptyList())
         val pack = choosePack(bbox, packs)
         val out = LinkedHashMap<RegionLayer, Long?>()
@@ -175,12 +175,12 @@ class RegionEngine(
      * What taking all of [boxes] (the parts of one corridor, say) with [layers] would download: each box's map and places,
      * and the routing tiles of all of them together, so a tile that two boxes need is counted once.
      */
-    suspend fun estimateAll(boxes: List<BBox>, layers: Set<RegionLayer>, maxZoom: Int = 14): AreaEstimate {
+    suspend fun estimateAll(boxes: List<BBox>, layers: Set<RegionLayer>): AreaEstimate {
         val sums = LinkedHashMap<RegionLayer, Long?>()
         var packed = boxes.isNotEmpty()
         var kind = MapKind.NONE
         for (b in boxes) {
-            val e = estimate(b, layers - RegionLayer.ROUTING, maxZoom)
+            val e = estimate(b, layers - RegionLayer.ROUTING)
             if (e.pack == null) packed = false
             kind = e.mapKind
             for ((l, v) in e.bytes) sums[l] = if (sums.containsKey(l) && sums[l] == null || v == null) null else (sums[l] ?: 0L) + v
@@ -200,7 +200,7 @@ class RegionEngine(
         try {
             val packs = runCatching { deps.packs() }.getOrDefault(emptyList())
             val pack = start.packId?.let { pid -> packs.firstOrNull { it.id == pid } } ?: choosePack(start.bbox, packs)
-            val estimate = estimate(start.bbox, layers, start.maxZoom)
+            val estimate = estimate(start.bbox, layers)
             val weights = layers.associateWith { (estimate.bytes[it] ?: 1L).coerceAtLeast(1L).toDouble() }
             val total = weights.values.sum().coerceAtLeast(1.0)
             // After the process was killed nothing is known of what was stale: look again (this is cheap).

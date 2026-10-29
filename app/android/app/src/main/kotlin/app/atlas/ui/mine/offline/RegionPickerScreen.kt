@@ -74,7 +74,7 @@ private class Quote(val bytes: Map<RegionLayer, Long?>, val packed: Boolean, val
 /**
  * Takes an area offline in one of three ways: draw a loop (or set a radius) around where you are, follow a route with a
  * corridor of a few kilometres, or take a whole published country pack. Each shows the size it would be, layer by layer, as
- * the engine works it out (from a pack, built on the phone, or older tiles), before anything is downloaded.
+ * the engine works it out (from a pack, or built on the phone), before anything is downloaded.
  */
 @Composable
 fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {

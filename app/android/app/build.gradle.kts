@@ -153,7 +153,7 @@ dependencies {
 
 // Unit tests run on the JVM, where the Android build of the bundled SQLite cannot load its native library. The JVM build
 // of the same catalog library carries one per desktop platform: unpack this machine's and put it on java.library.path,
-// so MBTiles packs, the tile cache and the place store work in tests as on the phone.
+// so the place store works in tests as on the phone.
 val sqliteJvm: Configuration by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true

@@ -43,11 +43,9 @@ import java.util.zip.GZIPOutputStream
  * fetched whole again once its data is [REFRESH_MS] old, and never built from data older than what it keeps. Until 22
  * October such a window was fetched again every half second while its place was in view.
  *
- * A window of another version than a window built now ([Core.version]: another stage P or style, as after an update of
- * the app or an edit to the style file) is built again from the data it keeps, on the phone, before anything else: the
- * folder is read once, on the first step, and [PackList] does not list such a window meanwhile, so a frame cell's
- * windows are of one version (the core refuses a window of another version than its cell's). One that keeps no data
- * that builds goes, and is fetched whole when the core wants its place.
+ * A window of another version than a window built now (another stage P or style: an earlier APK built it) is not
+ * drawn: [PackList] does not list it, so a frame cell's windows are of one version (the core refuses a window of another
+ * version than its cell's). A new version of Atlas is installed fresh, without such windows.
  *
  * A window's data comes from Atlas's own packs first ([packs]: built on GitHub from Geofabrik's extracts, the answer
  * Overpass gives the window's query as of the extract's date, gzipped), where one holds the window, and from Overpass
@@ -99,9 +97,6 @@ class Windows(
          */
         fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File): Boolean
 
-        /** The version of a window built now ([MapCore.Window.version]); null where it is not known. */
-        fun version(): String? = null
-
         /**
          * The data [kept] with the user's [edits] ([UserEdit.json]) into [out]: true; false where none applies to it
          * (nothing written); throws IllegalStateException where they do not read.
@@ -115,7 +110,6 @@ class Windows(
         override fun box(w: MapCore.Window) = w.box()
         override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
-        override fun version() = runCatching { MapCore.Window.version() }.getOrNull()
         override fun edit(w: MapCore.Window, kept: File, edits: ByteBuffer, out: File) = w.edit(kept, edits, out)
     }
 
@@ -147,9 +141,6 @@ class Windows(
 
     private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
-
-    /** The windows of another version than a window built now, still to be built again; read on the first step. */
-    private var stale: ArrayDeque<MapCore.Window>? = null
 
     /** The places the user edited lately ([edited]): latitude and longitude, their windows not yet looked up. */
     private val touched = ConcurrentLinkedQueue<DoubleArray>()
@@ -189,8 +180,7 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
-            nextEdited(core)?.let { return rebuild(core, it, stale = false) }
-            nextStale(core)?.let { return rebuild(core, it, stale = true) }
+            nextEdited(core)?.let { return rebuild(core, it) }
             val wanted = core.wanted()
             wanted.firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
             // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
@@ -230,24 +220,6 @@ class Windows(
     private fun workOf(w: MapCore.Window, what: String): File = File(dir, "${w.z}-${w.x}-${w.y}.$what.json")
 
     /**
-     * The next window of the folder whose pack is of another version than [core]'s window built now (or does not say,
-     * or does not read), by its name; null when none is left, or while the core's version is not known. The folder is
-     * read once: a window built later is of the core's version.
-     */
-    private fun nextStale(core: Core): MapCore.Window? {
-        val left = stale ?: run {
-            val version = core.version() ?: return null
-            val found = dir.listFiles().orEmpty().sortedBy { it.name }.mapNotNull { f ->
-                val w = windowOf(f) ?: return@mapNotNull null
-                val head = runCatching { f.inputStream().use { PackList.readHead(it) } }.getOrNull()
-                w.takeIf { head?.version != version }
-            }
-            ArrayDeque(found).also { stale = it }
-        }
-        return left.removeFirstOrNull()
-    }
-
-    /**
      * The next window built here whose data reaches a place the user edited ([edited]), by its name; null when none is
      * left. Each place's windows are looked up once, by the boxes [core] gives them.
      */
@@ -266,29 +238,22 @@ class Windows(
 
     /**
      * Builds window [w] again from the data it keeps, on the phone, with the user's edits: no server is asked, and its
-     * data keeps its date. One of another version ([stale]) that keeps no data that builds loses its pack, and is
-     * fetched whole once the core wants its place; one built again for an edit keeps the pack it has. True when it was
-     * built (the packs are to be handed again).
+     * data keeps its date; one that does not build keeps the pack it has. True when it was built (the packs are to be
+     * handed again).
      */
-    private fun rebuild(core: Core, w: MapCore.Window, stale: Boolean): Boolean {
+    private fun rebuild(core: Core, w: MapCore.Window): Boolean {
         val kept = workOf(w, "kept")
         val edited = workOf(w, "edited")
-        val reason = if (stale) "of another version" else "for the user's edits"
         try {
             val data = dataOf(w)
             val read = data.exists() && runCatching { unzip(data, kept) }.isSuccess
             val t0 = clock()
             val why = if (read) core.build(w, withEdits(core, w, kept, edited), fileOf(w)) else "it keeps no data that reads"
             if (why.isEmpty()) {
-                Log.i(EngineFrames.TAG, "vk window ${w.id}: $reason, built again from its kept data in ${clock() - t0} ms")
+                Log.i(EngineFrames.TAG, "vk window ${w.id}: for the user's edits, built again from its kept data in ${clock() - t0} ms")
                 return true
             }
-            if (!stale) {
-                Log.w(EngineFrames.TAG, "vk window ${w.id}: $reason, not built again ($why)")
-                return false
-            }
-            fileOf(w).delete()
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: $reason, not built again ($why): fetched once wanted")
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: for the user's edits, not built again ($why)")
             return false
         } finally {
             kept.delete()

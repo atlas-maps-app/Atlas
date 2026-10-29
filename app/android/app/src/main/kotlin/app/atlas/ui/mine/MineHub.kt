@@ -102,7 +102,7 @@ class MineHub(private val services: Services) {
     private fun start() {
         if (started) return
         started = true
-        services.scope.launch(Dispatchers.IO) { retireTiles(); engine.refresh() }
+        services.scope.launch(Dispatchers.IO) { engine.refresh() }
         services.scope.launch { services.settings.flow(MineKeys.WIFI_ONLY, true).collect { wifiOnlyNow = it } }
         // Voice settings: only a change from the defaults wakes the voice (the speech engine starts on first use).
         services.scope.launch {
@@ -183,20 +183,6 @@ class MineHub(private val services: Services) {
      */
     @Volatile
     var mapBuilder: (suspend (id: String, name: String, bbox: app.atlas.geo.BBox, target: File, report: (Float) -> Unit) -> Long)? = null
-
-    /**
-     * Removes what the retired vector tiles left on the phone, once nothing reads it: the tile cache, and the map tiles
-     * of regions taken before packs (`regions/<id>.mbtiles` with their manifests). Those regions take their map again,
-     * as a pack, when they are next updated.
-     */
-    private fun retireTiles() {
-        File(services.dirs.cache, "tiles").takeIf { it.isDirectory }?.deleteRecursively()
-        for (f in services.dirs.regions.listFiles { f -> f.isFile && f.name.endsWith(".mbtiles") }.orEmpty()) {
-            val id = f.name.removeSuffix(".mbtiles")
-            for (side in listOf("", "-journal", "-wal", "-shm")) File(f.path + side).delete()
-            File(services.dirs.regions, "$id.json").delete()
-        }
-    }
 }
 
 /** Both lists of packs (the renders' and the latest), merged by id with the Atlas region packs of the renders first. */
@@ -209,7 +195,7 @@ class PackLists(private val catalogs: List<PackCatalog>, private val offline: Bo
             val list = runCatching { c.packs(refresh) }.getOrDefault(emptyList())
             for (p in list) {
                 val have = byId[p.id]
-                // The renders' list carries the region packs; the latest list carries places and tiles: keep the richer one.
+                // The renders' list carries the region packs; the latest list carries places and the windows' data: keep the richer one.
                 if (have == null || p.files.size > have.files.size) byId[p.id] = p
             }
         }

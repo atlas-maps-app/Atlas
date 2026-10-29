@@ -28,7 +28,6 @@ data class RegionRequest(
     val name: String,
     val bbox: BBox,
     val layers: Set<RegionLayer> = setOf(RegionLayer.MAP),
-    val maxZoom: Int = 14,
 )
 
 /**

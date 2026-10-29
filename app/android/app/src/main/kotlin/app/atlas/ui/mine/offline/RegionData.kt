@@ -58,7 +58,6 @@ data class RegionMeta(
     val voices: List<String> = emptyList(),
     /** The layers wanted, so an interrupted download knows what is left. */
     val wanted: Set<RegionLayer> = emptySet(),
-    val maxZoom: Int = 14,
 ) {
     fun toJson(): String = buildJsonObject {
         put("id", id)
@@ -67,7 +66,6 @@ data class RegionMeta(
         put("created", createdAt)
         put("updated", updatedAt)
         packId?.let { put("pack", it) }
-        put("maxzoom", maxZoom)
         put("layers", buildJsonObject {
             for ((l, r) in layers) put(l.name.lowercase(), buildJsonObject {
                 put("kind", r.kind)
@@ -83,9 +81,6 @@ data class RegionMeta(
     }.toString()
 
     companion object {
-        /** The kind the older vector tiles were recorded as. */
-        private const val RETIRED_TILES = "tiles"
-
         fun fromJson(text: String): RegionMeta? = runCatching {
             val o = Json.parseToJsonElement(text).jsonObject
             val b = o["bbox"]!!.jsonArray.map { it.jsonPrimitive.doubleOrNull!! }
@@ -93,8 +88,6 @@ data class RegionMeta(
             for ((k, v) in o["layers"]?.jsonObject.orEmpty()) {
                 val layer = RegionLayer.entries.firstOrNull { it.name.equals(k, true) } ?: continue
                 val r = v.jsonObject
-                // the older vector tiles are retired: a map kept as them is taken again, as a pack
-                if (layer == RegionLayer.MAP && r["kind"]?.jsonPrimitive?.contentOrNull == RETIRED_TILES) continue
                 layers[layer] = LayerRecord(
                     r["kind"]?.jsonPrimitive?.contentOrNull ?: "", r["bytes"]?.jsonPrimitive?.longOrNull ?: 0L, r["at"]?.jsonPrimitive?.longOrNull ?: 0L,
                     r["sha"]?.jsonPrimitive?.contentOrNull, r["data"]?.jsonPrimitive?.contentOrNull,
@@ -112,7 +105,6 @@ data class RegionMeta(
                 segments = strings("segments"),
                 voices = strings("voices"),
                 wanted = strings("wanted").mapNotNull { w -> RegionLayer.entries.firstOrNull { it.name.equals(w, true) } }.toSet(),
-                maxZoom = o["maxzoom"]?.jsonPrimitive?.longOrNull?.toInt() ?: 14,
             )
         }.getOrNull()
     }

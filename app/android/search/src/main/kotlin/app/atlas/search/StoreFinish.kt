@@ -2,15 +2,13 @@ package app.atlas.search
 
 /**
  * What a writer does when it finishes, in its transaction under the store's lock: the streets' boxes, counts and text
- * from their address points, the text index again when it was written by another version, the statistics (with the
- * store's place count and bounds), and the typo vocabulary.
+ * from their address points, the statistics (with the store's place count and bounds), and the typo vocabulary.
  */
 internal class StoreFinish(private val store: PlaceStore, private val langs: List<String>) {
     private val dict = store.dict
 
-    fun run(rebuildText: Boolean) {
+    fun run() {
         streets()
-        if (rebuildText) placeText()
         stats()
         vocabulary()
     }
@@ -64,27 +62,6 @@ internal class StoreFinish(private val store: PlaceStore, private val langs: Lis
     }
 
     /** The text index again from every place, for a store whose index another version wrote. */
-    private fun placeText() {
-        store.exec("INSERT INTO place_fts(place_fts) VALUES ('delete-all')")
-        val rows = store.prepare("SELECT id, preset, category, tags FROM place")
-        val insert = store.prepare("INSERT INTO place_fts(rowid, text) VALUES (?1, ?2)")
-        try {
-            while (rows.step()) {
-                val key = rows.getLong(0)
-                val preset = if (rows.isNull(1)) null else rows.getLong(1).toInt()
-                val category = if (rows.isNull(2)) null else rows.getLong(2).toInt()
-                val tags = TagBlob.decode(rows.getBlob(3), dict)
-                insert.bindLong(1, StoreSchema.textRow(key, Importance.of(tags)))
-                insert.bindText(2, SearchText.indexText(tags, KindWords.tokensOf(preset, category, tags, dict)))
-                insert.step()
-                insert.reset()
-            }
-        } finally {
-            rows.close()
-            insert.close()
-        }
-    }
-
     private fun stats() {
         store.exec("DELETE FROM stat")
         store.exec("INSERT INTO stat(k, v, n) SELECT k, v, count(*) FROM lookup GROUP BY k, v")
