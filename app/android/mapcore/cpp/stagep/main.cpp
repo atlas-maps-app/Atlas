@@ -29,6 +29,16 @@
 // asks Overpass for and `packer windows` cuts a window's answer for), a line a window in order of x, then y:
 // `x y south west north east`, each double as std::format writes it (the shortest digits that read back to it). The
 // exit code: 0 done; 2 a usage error.
+//
+//   atlas_stagep windows <list> <out-dir> [threads]
+//
+// builds the windows <list> names, a line each (`x y path`: an L14 window's column and row, and the file holding
+// Overpass's answer to the window's query, as `packer windows` cuts it from an extract), as the phone builds them
+// (load::build_window with load::place_of: the window's frame cell's frame, its country's looks, the answer's SHA-256
+// its source), each into <out-dir>/14-<x>-<y>.atlas, on [threads] threads (the machine's cores by default). A country's
+// pack is its windows built so (`packer country`). Once all are built, a line on stdout a window in the list's order:
+// `x y <features> <bytes> <ms>`, or `x y failed <why>`. The exit code: 0 every window built; 1 any failed; 2 a usage
+// error.
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
@@ -45,7 +55,9 @@
 #include "tiles/TileWriter.hpp"
 #include "tiles/Values.hpp"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <charconv>
 #include <chrono>
@@ -62,6 +74,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -275,6 +288,90 @@ private:
     return {};
 }
 
+/// One window of `windows`' list: its tile and the file of its answer, and what building it made.
+struct ListedWindow {
+    tl::TileKey tile{};
+    std::string path;
+    std::string line; // its line on stdout
+    bool built = false;
+};
+
+/// The windows `list` names built into `out_dir` on `threads` threads (0: one a core), their lines on stdout.
+[[nodiscard]] std::expected<bool, Failure> windows(const std::string& list, const std::string& out_dir,
+                                                   std::uint32_t threads) {
+    std::ifstream in(list);
+    if (!in) return std::unexpected(input(std::format("{} does not open", list)));
+    std::vector<ListedWindow> listed;
+    std::string text;
+    while (std::getline(in, text)) {
+        if (text.empty()) continue;
+        std::uint32_t x = 0;
+        std::uint32_t y = 0;
+        const char* at = text.data();
+        const char* end = text.data() + text.size();
+        auto r = std::from_chars(at, end, x);
+        if (r.ec != std::errc{} || r.ptr == end || *r.ptr != ' ') {
+            return std::unexpected(input(std::format("'{}' is no line `x y path`", text)));
+        }
+        r = std::from_chars(r.ptr + 1, end, y);
+        if (r.ec != std::errc{} || r.ptr == end || *r.ptr != ' ' || r.ptr + 1 == end) {
+            return std::unexpected(input(std::format("'{}' is no line `x y path`", text)));
+        }
+        const std::uint32_t n = std::uint32_t{1} << load::window_level;
+        if (x >= n || y >= n) return std::unexpected(input(std::format("'{}' names no tile of L14", text)));
+        listed.push_back({.tile = tl::TileKey(load::window_level, x, y), .path = std::string(r.ptr + 1, end)});
+    }
+    std::error_code e;
+    std::filesystem::create_directories(out_dir, e);
+    if (e) return std::unexpected(Failure{.why = std::format("{} could not be made: {}", out_dir, e.message())});
+    std::atomic<std::size_t> next{0};
+    const auto work = [&] {
+        using clock = std::chrono::steady_clock;
+        for (std::size_t i = next++; i < listed.size(); i = next++) {
+            ListedWindow& w = listed[i];
+            const auto t0 = clock::now();
+            const std::string name = std::format("{} {}", w.tile.x, w.tile.y);
+            auto source = mapped(w.path);
+            if (!source) {
+                w.line = std::format("{} failed {}", name, source.error().why);
+                continue;
+            }
+            const auto built =
+                load::build_window((*source)->view(0, (*source)->size()), w.tile, load::place_of(w.tile));
+            if (!built) {
+                w.line = std::format("{} failed {}", name, built.error().what);
+                continue;
+            }
+            const std::string file = std::format("{}/{}-{}-{}.atlas", out_dir, w.tile.z, w.tile.x, w.tile.y);
+            const std::string bytes(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes
+                                    built->pack.size());
+            if (auto written = write_whole(file, bytes); !written) {
+                w.line = std::format("{} failed {}", name, written.error().why);
+                continue;
+            }
+            const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+            w.line = std::format("{} {} {} {:.0f}", name, built->features, built->pack.size(), ms);
+            w.built = true;
+        }
+    };
+    const std::uint32_t count =
+        std::max<std::uint32_t>(1, threads != 0 ? threads : std::max(1U, std::thread::hardware_concurrency()));
+    std::vector<std::thread> pool;
+    pool.reserve(count - 1);
+    for (std::uint32_t t = 1; t < count; ++t) pool.emplace_back(work);
+    work();
+    for (std::thread& t : pool) t.join();
+    bool all = true;
+    for (const ListedWindow& w : listed) {
+        all = all && w.built;
+        if (std::fputs((w.line + "\n").c_str(), stdout) < 0) {
+            return std::unexpected(Failure{.why = "stdout could not be written"});
+        }
+    }
+    if (std::fflush(stdout) != 0) return std::unexpected(Failure{.why = "stdout could not be written"});
+    return all;
+}
+
 /// The tiles of the job, read, loaded and cut, and the pack's head and style. Returns the line it prints.
 [[nodiscard]] std::expected<std::string, Failure> tiles(const std::string& raw_path, const std::string& job_path,
                                                         const std::string& out_path) {
@@ -452,9 +549,27 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if ((args.size() == 4 || args.size() == 5) && std::string_view(args[1]) == "windows") {
+        std::uint32_t threads = 0;
+        if (args.size() == 5) {
+            const std::string_view t(args[4]);
+            const auto [at, error] = std::from_chars(t.data(), t.data() + t.size(), threads);
+            if (t.empty() || error != std::errc{} || at != t.data() + t.size()) {
+                (void)std::fprintf(stderr, "atlas_stagep: '%s' is no count of threads\n", args[4]);
+                return usage_error;
+            }
+        }
+        const auto built = windows(args[2], args[3], threads);
+        if (!built) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s\n", built.error().why.c_str());
+            return built.error().code;
+        }
+        return *built ? 0 : 1;
+    }
     if (args.size() != 5 || std::string_view(args[1]) != "tiles") {
         (void)std::fputs("usage: atlas_stagep tiles <raw.json> <job.json> <out>\n"
-                         "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n",
+                         "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n"
+                         "       atlas_stagep windows <list> <out-dir> [threads]\n",
                          stderr);
         return usage_error;
     }
