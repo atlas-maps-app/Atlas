@@ -179,6 +179,20 @@ object Native {
 
     @JvmStatic external fun stats(handle: Long): String
 
+    /**
+     * The frame loop's health for the debug panel (`CP/standin/Session.hpp`'s health): how long the frame drawn now
+     * has run ("vk drawing no" between frames), the frames that failed and the devices lost since the start, the calls
+     * with nothing to draw and why, then the last failure's error on a line of its own. Any thread: it never waits for
+     * the render thread, so it answers while a frame is stuck.
+     */
+    @JvmStatic external fun health(handle: Long): String
+
+    /**
+     * A debug build's switch: each frame presented at a timeline its recent work can make (`CP/frame/Pacing.hpp`, gone
+     * from the map since alpha 16) instead of as soon as it is ready. Any thread; the next frame takes it.
+     */
+    @JvmStatic external fun setPacing(handle: Long, on: Boolean)
+
     @JvmStatic external fun trimMemory(handle: Long, level: Int)
 
     /**

@@ -1127,7 +1127,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val lines = ArrayList<String>(10)
         if (coreLines) {
             // The core's line (§8), and what the transitional rule shows.
-            lines += panelLine
+            lines += panelLine.lines()
             val k = core
             if (k != null) lines += "core %s · today's map %.0f%%".format(Locale.ROOT, drawnPack()?.id ?: "none here", k.transition.canvas * 100f)
         }

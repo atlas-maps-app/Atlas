@@ -16,6 +16,7 @@
 #include "check/NumericsCheck.hpp"
 #include "frame/CompositeCheck.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
 #include "fx/GpuFields.hpp"
@@ -403,6 +404,14 @@ public:
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity) { return session_->records(out, capacity); }
 
+    /// The frame loop's health (Session::health): any thread, never waiting for the render thread, so the panel still
+    /// answers while a frame is stuck.
+    [[nodiscard]] std::string health() const { return session_->health(); }
+
+    /// A debug build's switch: each frame presented at a timeline its recent work can make (gain 15's pacer, gone
+    /// since alpha 16) instead of as soon as it is ready. Any thread; the next frame takes it.
+    void set_pacing(bool on) noexcept { pacing_.store(on, std::memory_order_relaxed); }
+
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
         if (camera == nullptr || env->GetDirectBufferAddress(camera) == nullptr ||
@@ -523,6 +532,7 @@ private:
     /// The app's map (K11): the session draws it while map_on_ (the session's thread alone reads the flag).
     std::unique_ptr<frame::MapFrame> map_;
     bool map_on_ = false;
+    std::atomic<bool> pacing_{false}; // set_pacing
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
@@ -561,6 +571,7 @@ private:
     /// and VK bench's colour stage is left, so no marker is on disk while nothing is drawn).
     void rest() {
         requested_ = false;
+        pacer_.rest();
         session_->rest();
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
@@ -568,7 +579,11 @@ private:
     }
 
     void on_vsync(const platform::Vsync& v) {
-        if (!requested_ || !session_->drawing() || source_ == nullptr) return;
+        if (!requested_ || source_ == nullptr) return;
+        if (!session_->drawing()) {
+            session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
+            return;
+        }
         // The display's period, from the vsyncs themselves; at most 60 frames a second (D5.8): every vsync at 60 Hz,
         // every second one at 120 Hz, at 90 Hz every vsync unless the phone runs warm.
         if (last_vsync_ns_ != 0) {
@@ -613,9 +628,23 @@ private:
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
-        // responsive", and more frames despite more stutter is better there.
-        draw(*camera, v, 0);
+        // responsive", and more frames despite more stutter is better there. A debug build's switch paces again
+        // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
+        const std::int64_t cadence = period_ns_ == 0 ? 0 : (every_second ? 2 * period_ns_ : period_ns_);
+        draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
         ask_vsync();
+    }
+
+    /// The presentation a paced frame asks for at vsync `v`: the pacer's timeline where Choreographer offers them (API
+    /// 33), else the preferred one's (0 where there is none: as soon as possible).
+    [[nodiscard]] std::int64_t present_of(const platform::Vsync& v, std::int64_t cadence_ns) {
+        if (v.timelines == 0) return v.present_ns;
+        std::array<frame::Timeline, platform::max_timelines> t{};
+        for (std::uint32_t i = 0; i < v.timelines; ++i)
+            t.at(i) = {.present_ns = v.presents.at(i), .deadline_ns = v.deadlines.at(i)};
+        const std::size_t pick =
+            pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(), cadence_ns, period_ns_);
+        return t.at(pick).present_ns;
     }
 
     void draw(const style::CameraState& camera, const platform::Vsync& v, std::int64_t present_ns) {
@@ -637,6 +666,11 @@ private:
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
         hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The pacer's work, for the debug switch's pacing: the frame's CPU time and its GPU time, where the GPU's clock
+        // measured it (an earlier frame's, read back after its fence: the percentile does not mind).
+        if ((r.flags & standin::frame_flag::gpu) != 0) {
+            pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
         render_env_->CallVoidMethod(source_, presented_mid_, static_cast<jlong>(r.frame), static_cast<jlong>(r.end_ns),
@@ -650,6 +684,7 @@ private:
     JNIEnv* render_env_ = nullptr;
     platform::HintSession hint_;
     platform::Thermal thermal_;
+    frame::Pacer pacer_; // the presentation each frame asks for under the debug switch's pacing (set_pacing)
     jobject source_ = nullptr;
     jobject camera_ = nullptr;
     const std::byte* camera_bytes_ = nullptr;
@@ -755,6 +790,15 @@ void native_close(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
 jstring native_stats(JNIEnv* env, jclass /*cls*/, jlong handle) {
     Core* core = core_of(handle);
     return java(env, core == nullptr ? std::string("vk no core") : core->stats());
+}
+
+jstring native_health(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    const Core* core = core_of(handle);
+    return java(env, core == nullptr ? std::string("vk no core") : core->health());
+}
+
+void native_set_pacing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->set_pacing(on == JNI_TRUE);
 }
 
 jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
@@ -1304,8 +1348,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 46>& methods() {
-    static const std::array<JNINativeMethod, 46> table{{
+const std::array<JNINativeMethod, 48>& methods() {
+    static const std::array<JNINativeMethod, 48> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1324,6 +1368,8 @@ const std::array<JNINativeMethod, 46>& methods() {
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
+        method("health", "(J)Ljava/lang/String;", fn(&native_health)),
+        method("setPacing", "(JZ)V", fn(&native_set_pacing)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),

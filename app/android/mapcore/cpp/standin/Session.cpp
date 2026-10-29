@@ -603,8 +603,34 @@ bool Session::drawing() const noexcept {
 }
 
 Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
+    if (!drawing()) {
+        note_not_drawing();
+        return {};
+    }
+    // health's stuck frame: how long this one has run, until it returns
+    frame_since_ns_.store(now_ns(), std::memory_order_relaxed);
+    Drawn d = draw_frame(camera, times);
+    frame_since_ns_.store(0, std::memory_order_relaxed);
+    return d;
+}
+
+void Session::note_not_drawing() {
+    std::string why = not_drawing_why();
+    const std::scoped_lock lock(records_mutex_);
+    ++not_drawn_;
+    not_drawn_why_ = std::move(why);
+}
+
+std::string Session::not_drawing_why() const {
+    if (closed_) return "the core is closed";
+    if (lost_ >= 3) return session_off_.empty() ? std::string("the map is off") : "the map is off: " + session_off_;
+    if (output_ == nullptr) return "no surface";
+    if (mode_ == 2) return map_ == nullptr ? "no map" : "the map is not ready";
+    return standin_ == nullptr ? "nothing to draw" : "no renderer";
+}
+
+Drawn Session::draw_frame(const style::CameraState& camera, const FrameTimes& times) {
     Drawn d;
-    if (!drawing()) return d;
     if (!renderer_) {
         // the map's first frame: its renderer now, on the frame's thread (renderer_due_)
         renderer_due_ = false;
@@ -643,6 +669,9 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     if (!report || report->status == gpu::Acquired::lost) {
         if (!report && report.error().code != vk::Result::eErrorDeviceLost) {
             log::error("a frame failed: {}", report.error().text());
+            const std::scoped_lock lock(records_mutex_);
+            ++failed_frames_;
+            failed_why_ = report.error().text();
             return d;
         }
         device_lost();
@@ -768,6 +797,17 @@ std::string Session::stats() const {
         static_cast<double>(r.record_ms), r.draws, r.triangles_k, graphics_mb);
 }
 
+std::string Session::health() const {
+    const std::int64_t since = frame_since_ns_.load(std::memory_order_relaxed);
+    const std::string drawing = since == 0 ? std::string("no") : std::format("{} ms", (now_ns() - since) / 1'000'000);
+    const std::scoped_lock lock(records_mutex_);
+    std::string line =
+        std::format("vk drawing {} failed {} lost {} undrawn {}", drawing, failed_frames_, lost_devices_, not_drawn_);
+    if (not_drawn_ > 0) line += std::format(" ({})", not_drawn_why_);
+    if (!failed_why_.empty()) line += "\nvk failed: " + failed_why_;
+    return line;
+}
+
 // ---- Device loss.
 
 void Session::turn_off_session(std::string why) {
@@ -779,6 +819,10 @@ void Session::turn_off_session(std::string why) {
 void Session::device_lost() {
     if (!started_.device || closed_) return;
     ++lost_;
+    {
+        const std::scoped_lock lock(records_mutex_);
+        ++lost_devices_;
+    }
     // What was made on the lost device goes, each in its stage: the frame and the output (the colour stage's while it
     // is open, which then closes, nothing of 10 bits being left).
     drop_renderer();

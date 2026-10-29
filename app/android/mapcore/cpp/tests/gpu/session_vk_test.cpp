@@ -400,6 +400,8 @@ TEST_CASE("each renderer's first frames are the frames stage's: a new configurat
         ATLAS_REQUIRE(session.bench(1, configurations[0], pills).empty());
         CHECK(draw(session, 120) == 120);
         CHECK(marked(dir).empty());
+        // The panel's health between frames: nothing failed, lost or left undrawn.
+        CHECK(session.health() == "vk drawing no failed 0 lost 0 undrawn 0");
         // A second configuration: its first frame is guarded, until its own 120th, the marker naming the frame drawn.
         ATLAS_REQUIRE(session.bench(1, configurations[1], pills).empty());
         CHECK(marked(dir).empty()); // nothing drawn yet
@@ -422,9 +424,10 @@ TEST_CASE("each renderer's first frames are the frames stage's: a new configurat
         CHECK(marked(dir) == "frames");
         CHECK(draw(session, 118) == 118);
         CHECK(marked(dir).empty());
-        // A device lost and made again: the rebuilt renderer's first frames are guarded.
+        // A device lost and made again: the rebuilt renderer's first frames are guarded, and the health counts it.
         session.lose_device();
         CHECK(session.drawing());
+        CHECK(has(session.health(), " failed 0 lost 1 "));
         CHECK(marked(dir).empty());
         CHECK(draw(session, 1) == 1);
         CHECK(marked(dir) == "frames");

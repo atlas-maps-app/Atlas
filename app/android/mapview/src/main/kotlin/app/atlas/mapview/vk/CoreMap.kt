@@ -28,6 +28,10 @@ import app.atlas.model.OsmType
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * One map's side of the core (plan-vector K11): the camera it hands the core at each vsync ([source], written into
@@ -104,6 +108,9 @@ internal class CoreMap(
     private var intervalNext = 0
     private var lastPresentedNs = 0L
     private var lastGpuMs = 0.0
+    private var lastEndNs = 0L
+    private var lastStats = ""
+    private var statsCall: Future<String>? = null
 
     /** This map has left the screen ([close]; under [switch]). */
     private var gone = false
@@ -263,17 +270,37 @@ internal class CoreMap(
     }
 
     /**
-     * The panel's line (§8): `vk p50 <ms> p95 <ms> gpu <ms> tiles <n> graphics <MB> native <MB>`, the presented
-     * intervals over the last [WINDOW] frames of motion, the GPU's last time, the resident tiles, the core's graphics
-     * memory and the native heap. Off the main thread: it asks the core.
+     * The panel's lines (§8), one string with a line each:
+     * - `vk p50 <ms> p95 <ms> gpu <ms> tiles <n> graphics <MB> native <MB>`: the presented intervals over the last
+     *   [WINDOW] frames of motion, the GPU's last time, the resident tiles, the core's graphics memory, the native heap;
+     * - `frames <n> last <s> ago worst <ms> gpu <ms> offscreen <ms> skipped <n>`: the frames drawn since the last call
+     *   (about a second), how long ago the last one ended, the slowest's time on the render thread and on the GPU (the
+     *   offscreen passes, which hold the decide stages, apart), and those the swapchain skipped;
+     * - the core's health ([MapCore.health]): how long the frame drawn now has run, the failed frames, the devices lost,
+     *   the calls with nothing to draw and why, then the last failure's error.
+     *
+     * Off the main thread. The records and the health never wait for the render thread; the stats do, so while a frame
+     * is stuck the first line's tiles and graphics stay as they last were (after [STATS_WAIT_MS]) and the others go on.
      */
     fun panelLine(): String {
         val n = core.records(records)
+        var worstMs = 0.0
+        var worstGpuMs = 0.0
+        var worstOffscreenMs = 0.0
+        var skipped = 0
         for (i in 0 until n) {
             val o = i * FrameRecords.SIZE
             val flags = records.getInt(o + FrameRecords.FLAGS_AT)
-            val at = if (flags and FrameRecords.PRESENTED != 0) records.getLong(o + FrameRecords.PRESENTED_AT) else records.getLong(o + FrameRecords.END_AT)
-            if (flags and FrameRecords.GPU != 0) lastGpuMs = records.getFloat(o + FrameRecords.GPU_MS_AT).toDouble()
+            val end = records.getLong(o + FrameRecords.END_AT)
+            val at = if (flags and FrameRecords.PRESENTED != 0) records.getLong(o + FrameRecords.PRESENTED_AT) else end
+            worstMs = maxOf(worstMs, (end - records.getLong(o + FrameRecords.START_AT)) / 1e6)
+            lastEndNs = end
+            if (flags and FrameRecords.SKIPPED != 0) skipped++
+            if (flags and FrameRecords.GPU != 0) {
+                lastGpuMs = records.getFloat(o + FrameRecords.GPU_MS_AT).toDouble()
+                worstGpuMs = maxOf(worstGpuMs, lastGpuMs)
+                worstOffscreenMs = maxOf(worstOffscreenMs, records.getFloat(o + FrameRecords.GPU_OFFSCREEN_MS_AT).toDouble())
+            }
             if (lastPresentedNs != 0L) {
                 val ms = (at - lastPresentedNs) / 1e6
                 // A gap longer than a few frames is the map at rest between two motions, not an interval.
@@ -285,7 +312,7 @@ internal class CoreMap(
             }
             lastPresentedNs = at
         }
-        val stats = core.stats()
+        val stats = statsSoon()
         val graphics = Regex("graphics ([0-9.]+) MB").find(stats)?.groupValues?.get(1) ?: "-"
         // the resident tiles, their heaps' MB of the budget, and those waiting for room (a full heap)
         val tiles = Regex("vk tiles ([0-9]+) resident ([0-9.]+)(?: of ([0-9]+))?(?: build [0-9.]+ waiting ([0-9]+))?").find(stats)?.let {
@@ -293,10 +320,29 @@ internal class CoreMap(
             "$n ($mb${if (budget.isNotEmpty()) "/$budget" else ""} MB${if (waiting.isNotEmpty() && waiting != "0") ", $waiting waiting" else ""})"
         } ?: "-"
         val native = Debug.getNativeHeapAllocatedSize() / 1e6
-        return String.format(
+        val first = String.format(
             Locale.ROOT, "vk p50 %s p95 %s gpu %.1f tiles %s graphics %s native %.0f",
             percentile(50.0), percentile(95.0), lastGpuMs, tiles, graphics, native,
         )
+        val ago = if (lastEndNs == 0L) "-" else String.format(Locale.ROOT, "%.1f s", (System.nanoTime() - lastEndNs) / 1e9)
+        val frames = String.format(
+            Locale.ROOT, "frames %d last %s ago worst %.0f ms gpu %.1f offscreen %.1f skipped %d",
+            n, ago, worstMs, worstGpuMs, worstOffscreenMs, skipped,
+        )
+        return (listOf(first, frames) + core.health().lines()).joinToString("\n") { it.take(PANEL_CHARS) }
+    }
+
+    /**
+     * The core's stats for [panelLine], or the last ones where the render thread does not answer within
+     * [STATS_WAIT_MS] (a stuck frame): one call at a time, so such a frame holds the panel's one thread alone.
+     */
+    private fun statsSoon(): String {
+        val call = statsCall?.takeUnless { it.isDone } ?: statsRunner.submit<String> { core.stats() }.also { statsCall = it }
+        return try {
+            call.get(STATS_WAIT_MS, TimeUnit.MILLISECONDS).also { lastStats = it }
+        } catch (_: TimeoutException) {
+            lastStats
+        }
     }
 
     private fun percentile(p: Double): String {
@@ -316,5 +362,14 @@ internal class CoreMap(
         private const val RECORDS = 256
         private const val WINDOW = 240
         private const val GAP_MS = 100.0
+
+        /** How long the panel waits for the core's stats, which run on the render thread (statsSoon). */
+        private const val STATS_WAIT_MS = 200L
+
+        /** The panel's widest line: the rest of a long error is cut. */
+        private const val PANEL_CHARS = 100
+
+        /** The thread that asks for the stats, one call at a time (statsSoon). */
+        private val statsRunner = Executors.newSingleThreadExecutor { Thread(it, "atlas-panel-stats").apply { isDaemon = true } }
     }
 }

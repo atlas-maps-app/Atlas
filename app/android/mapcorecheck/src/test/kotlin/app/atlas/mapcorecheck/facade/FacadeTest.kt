@@ -142,6 +142,8 @@ class FacadeTest {
                 assertEquals(false, Native.attach(handle, Any(), 64, 64, source, CameraWriter.allocate()))
                 assertEquals("hosts have no surfaces", Native.lastError())
                 assertEquals("vk no frames", Native.stats(handle))
+                // The health answers without the render thread: nothing drawn, failed or lost yet.
+                assertEquals("vk drawing no failed 0 lost 0 undrawn 0", Native.health(handle))
                 assertEquals("vkbench pipelines: hosts have no surfaces", Native.pipelines(handle))
             } finally {
                 Native.close(handle)

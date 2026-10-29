@@ -194,6 +194,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The panel's line. */
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 
+    /** The panel's health lines ([Native.health]): they answer while a frame is stuck, as [stats] cannot. */
+    fun health(): String = core.call("vk no core") { Native.health(it) }
+
+    /** A debug build's frame pacing on or off ([Native.setPacing]). */
+    fun setPacing(on: Boolean) = core.call(Unit) { Native.setPacing(it, on) }
+
     /**
      * The app went to the background or memory is short ([level], ComponentCallbacks2's): from TRIM_MEMORY_UI_HIDDEN
      * the frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it and VK bench's

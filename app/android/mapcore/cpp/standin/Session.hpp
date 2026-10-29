@@ -184,6 +184,8 @@ public:
     [[nodiscard]] bool renderer_made() const noexcept { return renderer_ != nullptr; }
     /// Draws one frame at `camera`.
     [[nodiscard]] Drawn draw(const style::CameraState& camera, const FrameTimes& times);
+    /// A frame was due with none to draw (drawing() false): health counts it, and says why.
+    void note_not_drawing();
     /// The frame loop came to rest (nothing changed, or the app's window went to the background): the frames stage
     /// ends, and the next draw within the renderer's first 120 frames opens it again; inside VK bench's colour stage
     /// the stage is left too, as mode 0 leaves it (the 10-bit frame and output go, then it closes). So no marker is on
@@ -213,6 +215,11 @@ public:
     void save_cache();
     /// The panel's line.
     [[nodiscard]] std::string stats() const;
+    /// The frame loop's health, the panel's lines that never wait for the render thread (a stuck frame keeps stats
+    /// from answering): how long the frame drawn now has run (a fence or the swapchain that never returns), the frames
+    /// whose draw failed and the devices lost since the session began, the draws that drew nothing and why, then the
+    /// last failure's error on a line of its own. Any thread.
+    [[nodiscard]] std::string health() const;
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity);
     /// The ADPF hint session's state, for the "vk path" line (the phone's; "none" otherwise).
@@ -292,6 +299,10 @@ private:
     [[nodiscard]] std::string noise_off() const;
     void log_configuration() const;
     void push_record(const FrameRecord& r);
+    /// Why draw has no frame to draw (drawing() false), for health.
+    [[nodiscard]] std::string not_drawing_why() const;
+    /// draw's frame, once drawing() says there is one.
+    [[nodiscard]] Drawn draw_frame(const style::CameraState& camera, const FrameTimes& times);
     /// The map off for this session, saying why (VkFacts' `vulkan.session:` line, and every bench call after).
     void turn_off_session(std::string why);
     void device_lost();
@@ -345,6 +356,15 @@ private:
     std::uint64_t published_ = 0;
     std::uint64_t read_ = 0;
     std::uint64_t count_ = 0;
+    // health's (under records_mutex_): the frames whose draw failed (a device lost aside) and the last one's error, the
+    // devices lost, and the draws with no frame to draw and the last one's reason
+    std::uint64_t failed_frames_ = 0;
+    std::string failed_why_;
+    std::uint32_t lost_devices_ = 0;
+    std::uint64_t not_drawn_ = 0;
+    std::string not_drawn_why_;
+    /// When the frame drawn now began (now_ns), 0 between frames: health's stuck frame.
+    std::atomic<std::int64_t> frame_since_ns_{0};
 };
 
 } // namespace atlas::standin
