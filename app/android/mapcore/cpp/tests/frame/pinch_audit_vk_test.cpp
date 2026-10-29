@@ -22,7 +22,9 @@
 // (beside the composite: what it shades with nothing hiding it) and without it (what the frame saves, the fragments it
 // hid from the others counted against it), and without the facades' detail (style::camera_flag::no_facades).
 // ATLAS_PINCH_OFF: the parts every frame leaves out, as the app's switches do ("cloud_shadows,water": alpha 19's
-// defaults; also trees, shadows, facades).
+// defaults; also trees, shadows, facades). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather:
+// its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's
+// streaks, the streets' wet cores, the drizzle's rings on the water) instead of the sunny moment.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -33,6 +35,7 @@
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tests/ground/ground_support.hpp"
 #include "tests/load/query.hpp"
 #include "tiles/Grid.hpp"
 #include "twin/building/BuildingShader.hpp"
@@ -438,7 +441,24 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         KeptWindow* kept = window.get();
         std::string why;
         REQUIRE_MESSAGE(session.attach(std::move(window), screen.size, why), why);
-        map.set_theme(sunny());
+        // the moment (ATLAS_PINCH_MOMENT): the sunny one, the live night, or the live night in rain
+        {
+            const std::string moment = environment("ATLAS_PINCH_MOMENT");
+            style::ThemeBlock theme = sunny();
+            if (moment == "night" || moment == "wet-night") theme = test::night_weather();
+            if (moment == "wet-night") {
+                theme.flags |= style::theme_flag::wet | style::theme_flag::wet_set;
+                theme.weather_code = 61; // rain
+                theme.rain = 1.2;
+                theme.wind = 22.0;
+                theme.gust = 38.0;
+                theme.wind_direction = 225.0;
+                theme.cloud = 1.0;
+                theme.humidity = 94.0;
+            }
+            REQUIRE((moment.empty() || moment == "sunny" || moment == "night" || moment == "wet-night"));
+            map.set_theme(theme);
+        }
         // the validation layer's messages since the last call (ATLAS_PINCH_VALIDATE), each kind once with its count
         const auto said = [&](const std::string& when) {
             if (!started->instance) return;
