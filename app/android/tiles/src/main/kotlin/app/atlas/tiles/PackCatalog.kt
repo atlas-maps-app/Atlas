@@ -14,11 +14,12 @@ data class PackPart(val url: String, val bytes: Long, val sha256: String?)
 
 /**
  * One file of a pack: the region pack (`.atlas`: the map's and the features' OpenStreetMap elements), its places (a
- * gzipped place store), or its windows' data and their index (the data the phone builds its windows from, read by HTTP
- * range: [WindowsIndex]).
+ * gzipped place store), its windows' data and their index (the data the phone builds its windows from, read by HTTP
+ * range: [WindowsIndex]), or its tiles and their index (each window's pack as the core builds it from that data, the
+ * country's map, read by HTTP range: [TilesIndex]).
  */
 data class PackFile(
-    /** [ATLAS], [PLACES], [WINDOWS] or [WINDOWS_INDEX]. */
+    /** [ATLAS], [PLACES], [WINDOWS], [WINDOWS_INDEX], [TILES] or [TILES_INDEX]. */
     val kind: String,
     val name: String,
     /** Bytes to download: the whole file, all parts together. */
@@ -33,6 +34,8 @@ data class PackFile(
     val rawBytes: Long? = null,
     /** The store's schema version. */
     val schema: String? = null,
+    /** A tiles index's core version (TilesIndex.version: the windows' stage P and style), read before it is downloaded. */
+    val coreVersion: String? = null,
 ) {
     /** The URL of a file published whole. */
     val url: String get() = parts.first().url
@@ -50,6 +53,12 @@ data class PackFile(
 
         /** Where each window's data lies in the [WINDOWS] file ([WindowsIndex]), downloaded whole. */
         const val WINDOWS_INDEX = "windows-index"
+
+        /** The tiles: each window's pack as the core builds it from the [WINDOWS] data, one after another (in parts over 2 GB). */
+        const val TILES = "tiles"
+
+        /** Where each window's pack lies in the [TILES] file ([TilesIndex]), downloaded whole. */
+        const val TILES_INDEX = "tiles-index"
     }
 }
 
@@ -73,6 +82,12 @@ data class Pack(
 
     /** Where each window's data lies in [windows]. */
     val windowsIndex: PackFile? get() = files.firstOrNull { it.kind == PackFile.WINDOWS_INDEX }
+
+    /** The country's tiles, when the pack has them with their index. */
+    val tiles: PackFile? get() = files.firstOrNull { it.kind == PackFile.TILES }?.takeIf { tilesIndex != null }
+
+    /** Where each window's pack lies in [tiles]. */
+    val tilesIndex: PackFile? get() = files.firstOrNull { it.kind == PackFile.TILES_INDEX }
 
     /** Bytes to download for the whole pack. */
     val downloadBytes: Long get() = files.sumOf { it.bytes }
@@ -190,6 +205,7 @@ class PackCatalog(
                 compression = m.str("compression"),
                 rawBytes = m.long("raw_bytes"),
                 schema = m["schema"]?.toString(),
+                coreVersion = m.str("core_version"),
             )
         }
 

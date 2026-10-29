@@ -149,6 +149,26 @@ class PackCatalogTest {
         assertTrue(big.isSplit)
         assertEquals(listOf(400L, 400L, 200L), big.parts.map { it.bytes })
         assertNull(list.packs[1].places)
+        assertNull(lux.tiles)
+    }
+
+    @Test
+    fun aCountrysTilesAreFoundWithTheirIndexAndItsCoreVersion() {
+        val text = """{"format":1,"packs":[{"id":"netherlands","name":"Netherlands","country":"NL","bbox":[2.9,50.7,7.2,54.0],
+            "files":[{"kind":"tiles","name":"netherlands.tiles","bytes":3000,"sha256":"aa",
+                      "parts":[{"url":"https://example.org/netherlands.tiles.000","bytes":2000},{"url":"https://example.org/netherlands.tiles.001","bytes":1000}]},
+                     {"kind":"tiles-index","name":"netherlands.tiles.idx","bytes":100,"sha256":"bb","url":"https://example.org/netherlands.tiles.idx",
+                      "core_version":"core-p8 s1.1-0123456789abcdef"}]},
+            {"id":"lone","name":"Tiles without their index","bbox":[0,0,1,1],
+            "files":[{"kind":"tiles","name":"lone.tiles","bytes":10,"url":"https://example.org/lone.tiles"}]}]}"""
+        val list = PackCatalog.parse(text)
+        val nl = list.packs[0]
+        assertEquals(3000L, nl.tiles!!.bytes)
+        assertTrue(nl.tiles!!.isSplit)
+        assertEquals("core-p8 s1.1-0123456789abcdef", nl.tilesIndex!!.coreVersion)
+        assertNull(nl.windows)
+        // tiles are taken only with their index
+        assertNull(list.packs[1].tiles)
     }
 
     @Test
