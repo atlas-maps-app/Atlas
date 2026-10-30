@@ -84,6 +84,9 @@ object SettingsKeys {
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
 
+    /** The tilt the user last left the map at with their fingers (degrees, `MapState.chosenTilt`): the 3D button's. */
+    val MAP_TILT = doublePreferencesKey("map.tilt")
+
     /**
      * The screen's haze, vignette and grain over the map: off when unset, as each costs frame time (the user, 27 October:
      * "disabled by default if they add performance overhead"); on, the renders' look.

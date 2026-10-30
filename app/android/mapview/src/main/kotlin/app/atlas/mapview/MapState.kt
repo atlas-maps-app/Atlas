@@ -47,6 +47,13 @@ class MapState(initial: CameraPosition) {
     var status: MapStatus by mutableStateOf<MapStatus>(MapStatus.Loading(null))
         internal set
 
+    /**
+     * The tilt the user last left the map at with their fingers (two or three dragged up or down), from
+     * [MapController.MIN_CHOSEN_TILT]° up; null until they have. The 3D button brings it back; the app may keep it for
+     * the next launch and set it again.
+     */
+    var chosenTilt: Double? by mutableStateOf(null)
+
     internal var animator: (suspend (CameraPosition, Int) -> Unit)? = null
     internal var fitter: (suspend (BBox, Int) -> Unit)? = null
     internal var projector: Projector? = null

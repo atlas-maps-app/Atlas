@@ -20,12 +20,14 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -43,8 +45,8 @@ import java.util.Locale
 
 /**
  * The map: Atlas's engine, the 1:1 port of the renderer the screens were drawn with (`app.atlas.render`), from the
- * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two-finger tilt, double tap, long press,
- * two-finger measure) and the overlays on top.
+ * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two- and three-finger tilt with its readout,
+ * double tap, long press, two-finger measure) and the overlays on top.
  *
  * Exact frames are rendered, parsed and rasterised off the main thread; while the next one is made, the last is drawn
  * warped to the camera at once, then the new one fades in. The overlays are projected with the engine's camera in the
@@ -76,6 +78,7 @@ fun AtlasMap(
     val density = LocalDensity.current
     val assets = LocalContext.current.assets
     val direction = LocalLayoutDirection.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val controller = remember(state) { MapController(state, scope) }
     val tap by rememberUpdatedState(onTap)
@@ -105,6 +108,8 @@ fun AtlasMap(
         controller.onLongPress = { longPress(it) }
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
+        // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
+        controller.haptic = { view.performHapticFeedback(it) }
         if (controller.fonts == null) controller.fonts = MapEngine.fonts(assets)
     }
     DisposableEffect(controller) {
@@ -218,7 +223,11 @@ private data class Inputs(
     val ground: Boolean,
 )
 
-/** Feeds the pointer events of the view to the controller's gesture machine, with its timeouts. */
+/**
+ * Feeds the pointer events of the view to the controller's gesture machine, with its timeouts. A cancel (the system
+ * took the touches: an OEM's three-finger screenshot, the shade pulled over the map) reaches Compose's pointer input
+ * as every finger lifting at once, each lift already consumed; the machine hears it as a cancel, not as lifts.
+ */
 private suspend fun PointerInputScope.pointers(controller: MapController) {
     val g = controller.gestures
     try {
@@ -234,6 +243,10 @@ private suspend fun PointerInputScope.pointers(controller: MapController) {
                 if (event == null) {
                     last = deadline!!
                     g.timeout(deadline)
+                    continue
+                }
+                if (isCancel(event)) {
+                    g.cancel()
                     continue
                 }
                 var time = last
@@ -255,3 +268,10 @@ private suspend fun PointerInputScope.pointers(controller: MapController) {
         g.cancel()
     }
 }
+
+/**
+ * Whether [event] is Compose's cancel: every pointer that was down lifted in this one event, its lift consumed before
+ * anyone saw it (real lifts come one pointer an event, unconsumed).
+ */
+internal fun isCancel(event: PointerEvent): Boolean =
+    event.changes.any { it.previousPressed } && event.changes.all { !it.pressed && (!it.previousPressed || it.isConsumed) }
