@@ -359,6 +359,7 @@
     <string name="mine_layers_true_depth">True depth</string>
     <string name="mine_layers_glass">Frosted glass</string>
     <string name="mine_layers_parts">Engine parts (debug)</string>
+    <string name="mine_part_timings">Frame timings</string>
     <string name="mine_part_pacing">Frame pacing</string>
     <string name="mine_layers_cloud_shadows">Cloud shadows</string>
     <string name="mine_layers_water_light">Water light</string>

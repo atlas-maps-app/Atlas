@@ -123,6 +123,13 @@ object SettingsKeys {
      */
     val MAP_PACING = booleanPreferencesKey("map.pacing")
 
+    /**
+     * A debug or bench build's frame timings over the Map home: on when unset, as every such build drew them; off,
+     * nothing is drawn over the map for them and its canvas no longer redraws each frame to show them (the user, 30
+     * October: "Let me toggle off the debug overlay its in the way").
+     */
+    val MAP_TIMINGS = booleanPreferencesKey("map.timings")
+
     val UNITS = stringPreferencesKey("units")
 
     /** The language for place names, null for local names. */

@@ -104,6 +104,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val trueDepth by settings.flow(SettingsKeys.MAP_TRUE_DEPTH, true).collectAsStateWithLifecycle(true)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
+    val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
@@ -171,7 +172,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
-                    PartChips(partsOff, pacing, onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } }) { off ->
+                    PartChips(
+                        partsOff, pacing, timings,
+                        onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } },
+                        onTimings = { on -> scope.launch { settings.set(SettingsKeys.MAP_TIMINGS, on) } },
+                    ) { off ->
                         scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
                     }
                 }
@@ -274,7 +279,14 @@ private fun ScreenChips(
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PartChips(off: Set<MapPart>, pacing: Boolean, onPacing: (Boolean) -> Unit, onChange: (Set<MapPart>) -> Unit) {
+private fun PartChips(
+    off: Set<MapPart>,
+    pacing: Boolean,
+    timings: Boolean,
+    onPacing: (Boolean) -> Unit,
+    onTimings: (Boolean) -> Unit,
+    onChange: (Set<MapPart>) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardLabel(stringResource(R.string.mine_layers_parts))
         for (group in MapPartGroup.entries) {
@@ -298,12 +310,18 @@ private fun PartChips(off: Set<MapPart>, pacing: Boolean, onPacing: (Boolean) ->
                 }
             }
         }
-        val label = stringResource(R.string.mine_part_pacing)
-        TextPill(
-            label, bt(12f, 700, 15.5f), if (pacing) INK else 0xFFF4F5F7, if (pacing) WHITE else INK,
-            Modifier.semantics { contentDescription = label },
-            h = 36f, padH = 12f, onClick = { onPacing(!pacing) },
-        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((label, on, onToggle) in listOf(
+                Triple(stringResource(R.string.mine_part_pacing), pacing, onPacing),
+                Triple(stringResource(R.string.mine_part_timings), timings, onTimings),
+            )) {
+                TextPill(
+                    label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
+                    Modifier.semantics { contentDescription = label },
+                    h = 36f, padH = 12f, onClick = { onToggle(!on) },
+                )
+            }
+        }
     }
 }
 

@@ -64,6 +64,7 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Categories
 import app.atlas.places.Symbols
+import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.LocalBackdrop
 import app.atlas.ui.kit.LocalFrostedGlass
 import app.atlas.ui.kit.SheetStop
@@ -104,6 +105,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
         if (chromeBoxes[key] != r) chromeBoxes[key] = r
     }
     val online by services.connectivity.online.collectAsStateWithLifecycle()
+    // The Look settings' Frame timings chip, its flow kept across this screen's frequent recompositions
+    val timings by remember(services) { services.settings.flow(SettingsKeys.MAP_TIMINGS, true) }.collectAsStateWithLifecycle(true)
     val regions by services.regions.regions.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val chrome = LocalChrome.current
@@ -194,8 +197,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
             onCameraMove = vm::onCameraMove,
-            // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat.
-            debug = BuildConfig.TIMINGS,
+            // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat, unless the
+            // Look settings' Frame timings chip is off.
+            debug = BuildConfig.TIMINGS && timings,
             labelTypeface = labelFace,
             hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             above = {

@@ -359,6 +359,7 @@
     <string name="mine_layers_true_depth">Echte diepte</string>
     <string name="mine_layers_glass">Matglas</string>
     <string name="mine_layers_parts">Engine-onderdelen (debug)</string>
+    <string name="mine_part_timings">Beeldtijden</string>
     <string name="mine_part_pacing">Beeldritme</string>
     <string name="mine_layers_cloud_shadows">Wolkschaduwen</string>
     <string name="mine_layers_water_light">Waterlicht</string>
