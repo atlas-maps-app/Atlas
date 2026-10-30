@@ -62,6 +62,15 @@ val compilerEnvironment: Map<String, String> = listOf("CC", "CXX", "CFLAGS", "CX
 /** ccache as the host build's compiler launcher, as for :mapcore's NDK build (CI sets ATLAS_CCACHE=1). */
 val hostCcache: Boolean = providers.environmentVariable("ATLAS_CCACHE").map { it == "1" }.getOrElse(false)
 
+/**
+ * How many jobs the host build runs at once, as :mapcore's NDK build: -Patlas.jobs or ATLAS_JOBS when given, else
+ * Ninja's own -j on CI (CI=true: every core) and 3 on a developer's machine, where other builds and tests run beside it
+ * (ENGINE.md, How to work).
+ */
+val buildJobs: Int? = providers.gradleProperty("atlas.jobs").orElse(providers.environmentVariable("ATLAS_JOBS")).orNull
+    ?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: throw GradleException("atlas.jobs is a number, not '$it'") }
+    ?: if (providers.environmentVariable("CI").orNull == "true") null else 3
+
 /** CMake's build type for the host build, from -Patlas.mapcore.buildType in any case (Debug when not given). */
 val hostBuildType: String = providers.gradleProperty("atlas.mapcore.buildType").getOrElse("Debug").let { given ->
     when (given.lowercase()) {
@@ -94,6 +103,8 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
     @get:Input abstract val javaHome: Property<String>
     @get:Input abstract val compilerEnv: MapProperty<String, String>
     @get:Input abstract val ccache: Property<Boolean>
+    /** How many jobs Ninja runs at once; not set, its own -j. */
+    @get:Internal abstract val jobs: Property<Int>
     @get:OutputFile abstract val library: RegularFileProperty
     @get:OutputFile abstract val tool: RegularFileProperty
 
@@ -119,7 +130,10 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
         }
         exec.exec {
             environment(env)
-            commandLine(cmake.get(), "--build", dir.path, "--target", "atlasmap", "atlas_stagep")
+            commandLine(
+                listOf(cmake.get(), "--build", dir.path) + jobs.orNull?.let { listOf("-j", "$it") }.orEmpty() +
+                    listOf("--target", "atlasmap", "atlas_stagep"),
+            )
         }
         check(library.get().asFile.isFile) { "the core's host build made no ${library.get().asFile}" }
         check(tool.get().asFile.isFile) { "the core's host build made no ${tool.get().asFile}" }
@@ -139,6 +153,7 @@ val coreHost = tasks.register<CoreHostBuild>("coreHost") {
     javaHome.set(testJdk)
     compilerEnv.set(compilerEnvironment)
     ccache.set(hostCcache)
+    buildJobs?.let { jobs.set(it) }
     library.set(layout.buildDirectory.file("core-host/libatlasmap_host.${if (isMac) "dylib" else "so"}"))
     tool.set(layout.buildDirectory.file("core-host/atlas_stagep"))
     // slangc, pinned and checked (the core's CMake refuses another), when :mapcore is in the build

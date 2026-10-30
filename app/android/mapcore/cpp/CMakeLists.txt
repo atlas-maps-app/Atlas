@@ -35,6 +35,20 @@ option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's ca
 if(ATLAS_TESTS)
     enable_testing()
 endif()
+# At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
+# units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
+# build on a developer's machine (mapcore/build.gradle.kts). Empty, Ninja's own -j decides, as on CI.
+set(ATLAS_JOBS "" CACHE STRING "At most this many compile, link and shader jobs at once (Ninja); empty: no limit")
+set(ATLAS_JOB_POOL "") # the shaders' commands' pool (cmake/Shaders.cmake)
+if(ATLAS_JOBS)
+    if(NOT ATLAS_JOBS MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "ATLAS_JOBS is a number of jobs, not '${ATLAS_JOBS}'")
+    endif()
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS atlas_jobs=${ATLAS_JOBS})
+    set(CMAKE_JOB_POOL_COMPILE atlas_jobs)
+    set(CMAKE_JOB_POOL_LINK atlas_jobs)
+    set(ATLAS_JOB_POOL JOB_POOL atlas_jobs)
+endif()
 
 # ---- Third-party code (third_party/VERSIONS.md), as SYSTEM headers so the core's warnings stay the core's own.
 

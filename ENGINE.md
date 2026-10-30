@@ -991,6 +991,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **The JVM checks:** the tasks `affected.py` names, such as `:mapcorecheck:test --tests 'app.atlas.mapcorecheck.sun.*'` and `:likeness:testDebugUnitTest`.
 - **Gradle settings:**
   - flags: `--no-daemon --max-workers=2 -Patlas.tools=<the main checkout>/cache/atlas-tools`;
+  - the core's builds that Gradle runs (`:mapcorecheck:coreHost`, `:mapcore`'s NDK build) take three jobs at once here and every core on CI; `-Patlas.jobs=<n>` or `ATLAS_JOBS=<n>` sets another number (the NDK build's Vulkan-Hpp units keep their own two);
   - `GRADLE_USER_HOME` on the Download volume;
   - `GRADLE_RO_DEP_CACHE=$HOME/.gradle/caches`.
 - **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time: the Mac has 14 GB and 8 cores.
