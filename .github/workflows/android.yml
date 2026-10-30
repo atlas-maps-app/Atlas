@@ -59,6 +59,10 @@ on:
         description: Attach that VK check asset to this release tag (an alpha; empty for none)
         type: string
         default: ''
+      keep_caches:
+        description: Keep this run's ccache entries for its branch, to measure warm runs of a change to CI (delete them after)
+        type: boolean
+        default: false
 
 # A push to `app` never cancels a run in progress: each push's run has a group of its own and goes to its end beside
 # the others, so an agent pushes when its change is ready, not when CI is idle, and every commit of `app` gets its word
@@ -79,8 +83,9 @@ jobs:
       contents: read
       actions: write # a push to app deletes the older entries of the job's ccache caches
     env:
-      # The caches are kept by a push to app and by the nightly; every other run only restores them.
-      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' }}
+      # The caches are kept by a push to app and by the nightly; every other run only restores them (GitHub lets a
+      # branch's runs read the default branch's caches), unless a run by hand asks to keep its own (keep_caches).
+      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
     defaults:
       run:
         working-directory: app/android
@@ -277,6 +282,24 @@ jobs:
           "$cmake_bin/cmake" --build --preset host-stagep
           ccache --show-stats
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
+      # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
+      # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
+      # APK's tiles; each test job takes it itself.
+      - name: The canal ring's pack
+        uses: actions/cache@v6
+        with:
+          path: cache/packs/regions/grachten.atlas
+          key: likeness-pack-grachten-3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec
+      - name: Fetch the canal ring's pack
+        working-directory: .
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
       - name: The app's unit tests
         run: ./gradlew :app:testDebugUnitTest --continue --stacktrace
       - name: Keep the reports and pictures
@@ -313,6 +336,24 @@ jobs:
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
+      # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
+      # APK's tiles; each test job takes it itself.
+      - name: The canal ring's pack
+        uses: actions/cache@v6
+        with:
+          path: cache/packs/regions/grachten.atlas
+          key: likeness-pack-grachten-3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec
+      - name: Fetch the canal ring's pack
+        working-directory: .
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
       - name: The modules' unit tests
         run: >-
           ./gradlew test testDebugUnitTest -x :app:testDebugUnitTest -x :mapcorecheck:test -x :likeness:testDebugUnitTest
@@ -346,7 +387,7 @@ jobs:
       contents: read
       actions: write # a push to app deletes the older entries of the job's ccache cache
     env:
-      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' }}
+      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
     defaults:
       run:
         working-directory: app/android
@@ -417,6 +458,24 @@ jobs:
             sudo apt-get install -y -q libvulkan1 > /dev/null
             echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
           fi
+      # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
+      # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
+      # APK's tiles; each test job takes it itself.
+      - name: The canal ring's pack
+        uses: actions/cache@v6
+        with:
+          path: cache/packs/regions/grachten.atlas
+          key: likeness-pack-grachten-3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec
+      - name: Fetch the canal ring's pack
+        working-directory: .
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
       - name: The core's host build
         id: core_host
         run: |
