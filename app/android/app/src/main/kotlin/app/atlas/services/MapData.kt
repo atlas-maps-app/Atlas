@@ -16,6 +16,7 @@ import app.atlas.providers.SwitchedOffException
 import app.atlas.render.data.HttpPost
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.RegionBuilder
+import app.atlas.render.data.inTurns
 import app.atlas.render.live.HttpGet
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
@@ -105,8 +106,8 @@ class MapData(private val services: Services) {
         if (Overpass.INFO.id in services.sourcesOff()) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
     }
 
-    /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use. */
-    private val packsIndexDir: File by lazy { File(services.dirs.cache, "engine/windows/index") }
+    /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use: in the app's files. */
+    private val packsIndexDir: File by lazy { File(services.dirs.engine, "windows/index") }
 
     /** Atlas's published packs, as the windows read them: packs-latest's list, the last good copy kept. */
     private val windowCatalog: PackCatalog by lazy {
@@ -131,8 +132,15 @@ class MapData(private val services: Services) {
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
     private val regionFiles by lazy { RegionFiles(services.dirs.regions, services.dirs.places, services.dirs.segments) }
 
-    /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
-    private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
+    /**
+     * Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on
+     * one server; the same record of what they did lately ([Services.overpassServers]), so a server either found down
+     * rests for both; and each request in its server's turn of the app's limiter, so the two run one query at a time on
+     * each server between them.
+     */
+    private val overpass: OverpassClient by lazy {
+        OverpassClient(post.inTurns(services.http.limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
+    }
 
     /**
      * Which region a view draws, and getting it ready. Today's map builds no area of its own from Overpass any more
@@ -165,6 +173,8 @@ class MapData(private val services: Services) {
         // the CPU filters' noise, kept across frames and launches and warmed up for the screen now (in the app's own
         // cache, not in a test's folder)
         if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
+        // the windows the phone took or built, which the map draws offline: in the app's files, never cleared by Android
+        if (services.config.root == null) MapEngine.useKeptDir(services.dirs.engine)
         MapEngine.weather = weather
         MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
@@ -190,6 +200,8 @@ class MapData(private val services: Services) {
         }
         // a country downloaded whole (the Maps board): its windows come from it offline too
         MapEngine.tilesKept = { regionFiles.keepsTiles() }
+        // and the windows taken from it are the first the windows' budget lets go: they come back from the phone at once
+        MapEngine.windowsKept = { windowTiles.keptPacks(MapCore.Window.version()) }
         // the countries whose tiles the core draws, from the published list (its copy kept, offline), read off the main
         // thread: within them the map never hands a place to today's map while its window comes (MapEngine.countries);
         // asked again a minute on while no list is to be had

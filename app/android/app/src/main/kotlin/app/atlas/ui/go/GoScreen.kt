@@ -128,7 +128,7 @@ private fun ReadinessChip(ui: GoTabUi, onDownload: () -> Unit) {
     val ready = r is Readiness.Ready
     val text = when {
         ready -> stringResource(R.string.go_offline_ready)
-        ui.downloading != null -> stringResource(R.string.go_downloading, (ui.downloading * 100).roundToInt())
+        ui.downloading != null -> segmentLine(ui.downloading)
         else -> (r as Readiness.Missing).need.label
     }
     val fg = if (ready) GoBoardColours.READY else GoBoardColours.AMBER

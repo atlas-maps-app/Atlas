@@ -260,6 +260,39 @@ class RestrictionsTest {
         assertEquals(2, calls)
     }
 
+    /** A failure asking again cannot cure, as the app's sources say (Overpass switched off). */
+    private class Refused : java.io.IOException("overpass is switched off: nothing was sent")
+
+    @Test
+    fun offlineOrRefusedTheLimitsComeAtOnceAsAFailureAndAStuckCheckEndsAtItsDeadline() = kotlinx.coroutines.test.runTest {
+        val corridor = Corridor(listOf(LatLon(52.0, 4.0), LatLon(52.01, 4.0)))
+        var calls = 0
+        // how long each check waited, on the test's own clock, whatever the machine's speed: none where it fails at once
+        suspend fun failsWith(source: OverpassRestrictionSource, waited: Long = 0L): java.io.IOException? {
+            val t0 = testScheduler.currentTime
+            val e = runCatching { source.restrictionsAlong(corridor) }.exceptionOrNull()
+            assertEquals(waited, testScheduler.currentTime - t0)
+            return e as? java.io.IOException
+        }
+        // offline: nothing asked, no waits between tries; the router marks the route unchecked
+        val offline = OverpassRestrictionSource({ calls++; "{}" }, retryDelayMillis = 2_000, mayAsk = { false })
+        assertTrue(failsWith(offline)!!.message!!.contains("offline"))
+        assertEquals(0, calls)
+        // refused (switched off): asked once, not again two and four seconds later
+        val refused = OverpassRestrictionSource({ calls++; throw Refused() }, retryDelayMillis = 2_000, retryable = { it !is Refused })
+        assertTrue(failsWith(refused) is Refused)
+        assertEquals(1, calls)
+        // the connection lost between tries: not asked again
+        var online = true
+        val dropped = OverpassRestrictionSource({ calls++; online = false; throw java.io.IOException("unreachable") }, retryDelayMillis = 2_000, mayAsk = { online })
+        assertEquals("unreachable", failsWith(dropped)!!.message)
+        assertEquals(2, calls)
+        // every server stuck: the whole check ends at its deadline, a failure, not the route's cancellation
+        val stuck = OverpassRestrictionSource({ calls++; kotlinx.coroutines.delay(60_000); "{}" }, deadlineMillis = 300)
+        assertTrue(failsWith(stuck, waited = 300)!!.message!!.contains("did not come"))
+        assertEquals(3, calls)
+    }
+
     @Test
     fun theCorridorCoversWhatSimplificationLeavesOut() {
         val f = LocalFrame(LatLon(52.0, 4.0))

@@ -269,6 +269,22 @@ class PackCatalogTest {
     }
 
     @Test
+    fun aPackNeverPassesThroughTheAppsHttpCache() = runBlocking {
+        // the app hands the downloader its own client, which keeps answers in a 64 MB disk cache: a country's tiles are
+        // 780 MB, which OkHttp copied into it as they came
+        val atlas = ByteArray(300_000) { (it * 5).toByte() }
+        publish(atlas, ByteArray(10))
+        val lux = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!
+        val cache = okhttp3.Cache(tempDir("http"), 64L shl 20)
+        val app = okhttp3.OkHttpClient.Builder().cache(cache).build()
+        val target = File(dir, "cached.atlas")
+        PackDownloader(app).download(lux.atlasFile!!, target)
+        assertArrayEquals(atlas, target.readBytes())
+        assertEquals(0L, cache.size())
+        assertEquals(0, cache.requestCount())
+    }
+
+    @Test
     fun aCorruptDownloadIsRefused() = runBlocking {
         publish(ByteArray(5000) { it.toByte() }, ByteArray(10))
         val lux = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!

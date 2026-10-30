@@ -4,6 +4,7 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.geo.PolylineCodec
 import app.atlas.model.Place
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +15,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 class ChargersTest {
     private val westerkerk = LatLon(52.3745, 4.8838)
@@ -521,11 +523,13 @@ class ChargersTest {
         assertTrue(expected.size in 20..180)
         assertEquals(expected, inCorridor(route, 2_000.0, few))
         val many = scatter(5_000)
-        val start = System.nanoTime()
-        val kept = inCorridor(route, 2_000.0, many)
-        val ms = (System.nanoTime() - start) / 1_000_000
+        var measured = 0L
+        val kept = inCorridor(route, 2_000.0, many) { l, at, i -> measured++; l.snap(at, i, i) }
         assertTrue(kept.isNotEmpty())
-        assertTrue("5,000 chargers against 20,000 points took $ms ms", ms < 2_000)
+        // quick by the work it does, whatever the machine's speed (a limit of 2 s on the clock failed at 2,031 ms on a
+        // loaded Mac, and CI's runners vary as much): each charger measured only against the segments near it, a few
+        // hundred, where measuring every one would be 20,000 apiece
+        assertTrue("$measured measures for 5,000 chargers on 20,000 segments", measured < many.size * 500L)
     }
 
     @Test
@@ -576,5 +580,32 @@ class ChargersTest {
         // Without an operator on one side only very close records join.
         val far = Place(null, Geo.destination(westerkerk, 0.0, 25.0), mapOf("amenity" to "charging_station"), source = "bnetza")
         assertEquals(2, ChargerMerge.merge(listOf(listOf(a), listOf(far))).size)
+    }
+
+    @Test
+    fun aNearbySearchSendsItsCentreToAboutAHundredMetres() = runBlocking {
+        Mock().use { m ->
+            m.enqueue("[]")
+            OpenChargeMap(testHttp(), Keys.of("ocm" to "k"), base = m.base).near(LatLon(52.374512, 4.883987), 5_000.0)
+            val req = m.take()
+            assertEquals("52.375", req.url.queryParameter("latitude"))
+            assertEquals("4.884", req.url.queryParameter("longitude"))
+        }
+    }
+
+    @Test
+    fun aSlowOrFailingChargerSourceNeitherHoldsNorFailsTheOthers() = kotlinx.coroutines.test.runTest {
+        val ndw = listOf(Place(null, westerkerk, mapOf("amenity" to "charging_station"), source = "ndw"))
+        // the OSM chargers behind a stuck Overpass server, a register whose answer does not parse, the Dutch register
+        val got = ChargerMerge.gather(listOf("osm", "broken", "ndw"), 300.milliseconds) { id ->
+            when (id) {
+                "osm" -> { delay(60_000); ndw }
+                "broken" -> throw IllegalStateException("not JSON")
+                else -> ndw
+            }
+        }
+        // on the test's own clock, whatever the machine's speed: the answers came at the deadline, not after the minute
+        assertEquals(300L, testScheduler.currentTime)
+        assertEquals(listOf(emptyList(), emptyList(), ndw), got)
     }
 }

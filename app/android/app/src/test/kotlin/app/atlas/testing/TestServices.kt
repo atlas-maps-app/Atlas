@@ -88,7 +88,7 @@ object Fixtures {
 fun Services.keepFixtureForecast(): Boolean {
     val repo = System.getProperty("atlas.repo") ?: return false
     val fixture = File(repo, "app/android/providers/src/test/resources/fixtures/meteo_forecast.json").takeIf { it.isFile } ?: return false
-    val dir = File(dirs.cache, "providers/weather").apply { mkdirs() }
+    val dir = File(dirs.providers, "weather").apply { mkdirs() }
     val at = Services.WESTERKERK
     val name = String.format(java.util.Locale.ROOT, "forecast_%.2f_%.2f.json", at.lat, at.lon)
     File(dir, name).writeText("${clock.instant().epochSecond}\n${fixture.readText()}")

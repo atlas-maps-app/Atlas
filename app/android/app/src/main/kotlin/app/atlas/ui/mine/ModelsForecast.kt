@@ -70,9 +70,18 @@ class ModelsForecast(val at: LatLon, val hours: LongArray, val curves: List<Mode
             "forecast_hours=48", "timeformat=unixtime", "timezone=auto",
         ).joinToString("&")
 
-        /** Reads Open-Meteo's answer with one column per model (`temperature_2m_icon_seamless`); a model with no data is left out. */
+        /**
+         * Reads Open-Meteo's answer with one column per model (`temperature_2m_icon_seamless`); a model with no data is left
+         * out. An answer that is not JSON (a Wi-Fi's sign-in page answers 200 too) is null, as nonsense is: until 30 October
+         * it threw past the fetch's catch and closed the app.
+         */
         fun parse(text: String, at: LatLon, fetchedAt: Instant, kept: Boolean = false): ModelsForecast? {
-            val hourly = (Json.parseToJsonElement(text) as? JsonObject)?.get("hourly") as? JsonObject ?: return null
+            val json = try {
+                Json.parseToJsonElement(text)
+            } catch (_: IllegalArgumentException) {
+                return null
+            }
+            val hourly = (json as? JsonObject)?.get("hourly") as? JsonObject ?: return null
             val times = (hourly["time"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.longOrNull }?.toLongArray() ?: return null
             fun column(key: String): DoubleArray? = (hourly[key] as? JsonArray)?.let { a -> DoubleArray(times.size) { i -> a.getOrNull(i)?.let { e -> (e as? JsonPrimitive)?.doubleOrNull } ?: Double.NaN } }
             val curves = WeatherModel.entries.mapNotNull { m ->

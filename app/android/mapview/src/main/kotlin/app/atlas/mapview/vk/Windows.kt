@@ -22,7 +22,11 @@ import java.util.zip.GZIPOutputStream
  * file, which it maps (a dense window's data is tens of MB, which never pass through the app's heap), into [dir] as
  * `14-<x>-<y>.atlas`, keeps the data beside it (`14-<x>-<y>.json.gz`), and says so, so the map hands its packs again
  * ([PackList] lists the file; the core takes it into its frame cell's pack). One window at a time, on the caller's
- * background thread.
+ * background thread; and while that one's data comes (from Overpass, minutes where its servers are busy), a step called
+ * meanwhile takes the nearest other window the phone has none of from its country's tiles, the tiles' lane, so the
+ * windows the tiles hold come in their seconds, not after the data (the user, 30 October: "are all sources reliable and
+ * respond fast?"; on that day two of Overpass's servers were at capacity and the third took connections and sent
+ * nothing). The two lanes never take the same window.
  *
  * A window built again after a week: where the core wants none, [step] takes the nearest window drawn in view
  * ([MapCore.windowsInView]) whose data was fetched or checked more than [REFRESH_MS] ago, asks Overpass with [fetchDiff]
@@ -58,6 +62,9 @@ import java.util.zip.GZIPOutputStream
  * goes on as a window built from data: Overpass's changes since that date, then the edits. Where no pack gives that
  * release's data, its data comes as any window's, never older than its tiles'. Only where no country's tiles hold a
  * window (another core built them, or none reaches its place) or its bytes did not come is it built from data at once.
+ * Where its bytes did not come, the tiles are asked again on their own short wait ([tilesWait]: [TILES_RETRY_MS],
+ * twice as long after each miss in a row), whatever its data's wait: a range GitHub failed once (a weak signal) costs
+ * the window half a minute, not the five minutes or more its data waits where Overpass failed too.
  *
  * A window's data comes from Atlas's own packs first ([packs]: built on GitHub from Geofabrik's extracts, the answer
  * Overpass gives the window's query as of the extract's date, gzipped), where one holds the window, and from Overpass
@@ -71,6 +78,11 @@ import java.util.zip.GZIPOutputStream
  * is the data as it came, so a window's next diff is asked from its own date. Where the user edits what stands at a
  * place ([edited]), the windows whose data reaches it are built again from their kept data with the edits, before
  * anything else and with no server asked.
+ *
+ * The folder is held to a budget ([budget]: the smallest of 2 GiB, a tenth of the volume and half of what the windows
+ * and the space left free make up), as the app's files are never cleared by Android: after a window's work, where the
+ * folder holds more, windows are evicted, those taken from a country's tiles the phone keeps whole first (they come back
+ * from the phone at once), then the least recently drawn or taken; never one the core wants or has in view.
  */
 class Windows(
     private val dir: File,
@@ -102,6 +114,11 @@ class Windows(
      * whole (an offline region's map): no data is fetched, and no window refreshed.
      */
     private val online: () -> Boolean = { true },
+    /**
+     * How much the folder may hold ([WindowsBudget]): looked at whole at the first step and after each window's work,
+     * windows evicted where it holds more (never one the core wants or has in view). Null: no budget.
+     */
+    private val budget: WindowsBudget? = null,
 ) {
     /** What the windows' folder holds ([kept]): places taken from a country's tiles, places built here, their bytes. */
     data class Kept(val tiled: Int, val built: Int, val bytes: Long) {
@@ -165,10 +182,19 @@ class Windows(
         data class Waiting(val until: Long, val refused: Boolean) : Status
     }
 
-    /** What the windows do now ([Status]); written on the windows' thread, read by the map's status. */
+    /**
+     * What the windows do now ([Status]): the tiles' lane's fetch while one is under way, else what the window the steps
+     * take one at a time does; written on the windows' threads, read by the map's status.
+     */
+    val status: Status get() = tilesStatus.takeIf { it is Status.Fetching } ?: dataStatus
+
+    /** What the window the steps take one at a time does now. */
     @Volatile
-    var status: Status = Status.Idle
-        private set
+    private var dataStatus: Status = Status.Idle
+
+    /** What the tiles' lane does now: fetching a window's pack from its country's tiles, else idle. */
+    @Volatile
+    private var tilesStatus: Status = Status.Idle
 
     /** Milliseconds until [s]'s next try, 0 when it is due. */
     fun remaining(s: Status.Waiting): Long = (s.until - clock()).coerceAtLeast(0L)
@@ -184,8 +210,20 @@ class Windows(
     private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
 
+    /** The tiles' lane ([step]): a step taken while [busy]'s window's data comes. */
+    private val tilesBusy = AtomicBoolean(false)
+
+    /** The windows a step works on now: the other lane leaves them alone. */
+    private val claimed: MutableSet<MapCore.Window> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * The windows whose country's tiles gave no pack lately, and when: [Failure.refused] where none holds them (or no
+     * list of packs was to be had), else their bytes did not come. They are asked again after [tilesWait].
+     */
+    private val tilesMissed = ConcurrentHashMap<MapCore.Window, Failure>()
+
     /** The windows no tiles kept on the phone gave while it was offline: not asked again until the network is back. */
-    private val missedOffline = HashSet<MapCore.Window>()
+    private val missedOffline: MutableSet<MapCore.Window> = ConcurrentHashMap.newKeySet()
 
     /** The places the user edited lately ([edited]): latitude and longitude, their windows not yet looked up. */
     private val touched = ConcurrentLinkedQueue<DoubleArray>()
@@ -211,49 +249,162 @@ class Windows(
     private fun fail(w: MapCore.Window, now: Long, refused: Boolean) {
         val times = (failed[w]?.times ?: 0) + 1
         failed[w] = Failure(now, refused, times)
-        status = Status.Waiting(now + waitAfter(refused, times), refused)
+        dataStatus = Status.Waiting(now + waitAfter(refused, times), refused)
+    }
+
+    /** Whether window [w]'s country's tiles may be asked for it at [now]: never asked, or their wait after a miss is over. */
+    private fun tilesReady(w: MapCore.Window, now: Long): Boolean {
+        val m = tilesMissed[w] ?: return true
+        return now - m.at > tilesWait(m.refused, m.times)
     }
 
     /**
+     * Whether the bytes window [w]'s country's tiles hold, which did not come lately, are due again at [now] (whatever its
+     * data's wait): its tiles are asked again, not its data.
+     */
+    private fun tilesDue(w: MapCore.Window, now: Long): Boolean =
+        tilesMissed[w]?.let { !it.refused && now - it.at > tilesWait(false, it.times) } == true
+
+    /** Whether the phone holds nothing of window [w]: no pack, and no mark that its tiles hold nothing to draw. */
+    private fun none(w: MapCore.Window): Boolean = !fileOf(w).exists() && !tiledOf(w).exists()
+
+    /**
      * Takes or builds the nearest window [core] wants, else refreshes the nearest aged one in view; true when one was
-     * written (the packs are to be handed again).
+     * written (the packs are to be handed again). Called while another step works (a window's data can take minutes from
+     * Overpass), it takes the nearest other window the phone has none of from its country's tiles instead ([tilesStep]).
      */
     fun step(core: MapCore): Boolean = step(Of(core))
 
     fun step(core: Core): Boolean {
-        if (!busy.compareAndSet(false, true)) return false
-        // built behind the screen: at background priority while it is (a shared I/O thread: its own given back after),
-        // so a window's seconds of work never take a core from the frames
+        val wrote = if (!busy.compareAndSet(false, true)) tilesStep(core) else inBackground {
+            try {
+                val now = clock()
+                nextEdited(core)?.let { e ->
+                    if (!claimed.add(e)) {
+                        toEdit.addFirst(e)
+                        return@inBackground false
+                    }
+                    try {
+                        return@inBackground rebuild(core, e, now)
+                    } finally {
+                        release(e)
+                    }
+                }
+                val wanted = core.wanted()
+                val net = online()
+                if (net) missedOffline.clear()
+                val next = wanted.firstOrNull { w ->
+                    w !in claimed && !builtLately(w, now) && (ready(w, now) || tilesDue(w, now) && none(w)) &&
+                        (net || w !in missedOffline && none(w))
+                }
+                if (next != null) {
+                    if (!claimed.add(next)) return@inBackground false
+                    try {
+                        return@inBackground nextOf(core, next, now, net)
+                    } finally {
+                        release(next)
+                    }
+                }
+                // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
+                if (wanted.none { !builtLately(it, now) }) dataStatus = Status.Idle
+                if (!net) return@inBackground false
+                val aged = core.inView().firstOrNull { it !in claimed && ready(it, now) && aged(it, now) } ?: return@inBackground false
+                if (!claimed.add(aged)) return@inBackground false
+                try {
+                    refresh(core, aged, now)
+                } finally {
+                    release(aged)
+                }
+            } finally {
+                busy.set(false)
+            }
+        }
+        return trimmed(core) || wrote
+    }
+
+    /** Window [w]'s work is over: the other lane and the budget may take it, and the budget looks at its files again. */
+    private fun release(w: MapCore.Window) {
+        claimed.remove(w)
+        budget?.wrote(w)
+    }
+
+    /**
+     * Holds the folder to its [budget] after a step: the windows in view noted as drawn, and where the folder holds more
+     * (and at the first step, where it is looked at whole) windows evicted, never one the core wants or has in view, nor
+     * one a step works on. True when one was (the packs are to be handed again).
+     */
+    private fun trimmed(core: Core): Boolean {
+        val b = budget ?: return false
+        val view = runCatching { core.inView() }.getOrDefault(emptyList())
+        b.seen(view)
+        if (!b.over()) return false
+        return inBackground {
+            val keep = HashSet(view).apply { addAll(runCatching { core.wanted() }.getOrDefault(emptyList())) }
+            val gone = b.trim(keep, claim = { claimed.add(it) }, release = { claimed.remove(it) })
+            if (gone.isNotEmpty()) {
+                Log.i(EngineFrames.TAG, "vk windows: ${gone.size} evicted, least lately drawn first; the folder holds ${b.bytes shr 20} MB")
+            }
+            gone.isNotEmpty()
+        }
+    }
+
+    /** Takes or builds window [w], the nearest the core wants ([step]); [net]: the phone may use the network. */
+    private fun nextOf(core: Core, w: MapCore.Window, now: Long, net: Boolean): Boolean {
+        // none on the phone: its country's pack, before any data
+        if (none(w)) tiled(w, now) { dataStatus = it }?.let { return it }
+        // its data waits after a failure: only its tiles were due again, and did not come
+        failed[w]?.takeIf { !ready(w, now) }?.let { f ->
+            dataStatus = Status.Waiting(f.at + waitAfter(f.refused, f.times), f.refused)
+            return false
+        }
+        // offline: no data to fetch; the window waits for the network, not asked of the kept tiles again
+        if (!net) {
+            missedOffline += w
+            dataStatus = Status.Idle
+            return false
+        }
+        return whole(core, w, now, keptBase(w))
+    }
+
+    /**
+     * The tiles' lane: while the step under way fetches or builds a window's data, the nearest other window the core
+     * wants that the phone has none of, taken from its country's tiles; its data, where they give none, is left to the
+     * steps one at a time. True when a pack was written.
+     */
+    private fun tilesStep(core: Core): Boolean {
+        if (tiles == null || !tilesBusy.compareAndSet(false, true)) return false
+        return inBackground {
+            try {
+                val now = clock()
+                val net = online()
+                val w = core.wanted().firstOrNull { w -> w !in claimed && none(w) && tilesReady(w, now) && (net || w !in missedOffline) }
+                    ?: return@inBackground false
+                if (!claimed.add(w)) return@inBackground false
+                try {
+                    val got = tiled(w, now) { tilesStatus = it }
+                    if (got == null && !net) missedOffline += w
+                    got == true
+                } finally {
+                    tilesStatus = Status.Idle
+                    release(w)
+                }
+            } finally {
+                tilesBusy.set(false)
+            }
+        }
+    }
+
+    /**
+     * Runs [work] at background priority (a shared I/O thread: its own given back after): a window is built behind the
+     * screen, so its seconds of work never take a core from the frames.
+     */
+    private inline fun inBackground(work: () -> Boolean): Boolean {
         val priority = runCatching { android.os.Process.getThreadPriority(android.os.Process.myTid()) }.getOrNull()
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
-            val now = clock()
-            nextEdited(core)?.let { return rebuild(core, it, now) }
-            val wanted = core.wanted()
-            val net = online()
-            if (net) missedOffline.clear()
-            val next = wanted.firstOrNull { w ->
-                ready(w, now) && !builtLately(w, now) && (net || w !in missedOffline && !fileOf(w).exists() && !tiledOf(w).exists())
-            }
-            next?.let { w ->
-                // none on the phone: its country's pack, before any data
-                if (!fileOf(w).exists() && !tiledOf(w).exists()) tiled(w, now)?.let { return it }
-                // offline: no data to fetch; the window waits for the network, not asked of the kept tiles again
-                if (!net) {
-                    missedOffline += w
-                    status = Status.Idle
-                    return false
-                }
-                return whole(core, w, now, keptBase(w))
-            }
-            // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
-            if (wanted.none { !builtLately(it, now) }) status = Status.Idle
-            if (!net) return false
-            val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
-            return refresh(core, aged, now)
+            return work()
         } finally {
             priority?.let { p -> runCatching { android.os.Process.setThreadPriority(p) } }
-            busy.set(false)
         }
     }
 
@@ -373,17 +524,23 @@ class Windows(
     /**
      * Window [w]'s pack from its country's tiles, written in its place with what it was built from beside it: true;
      * false where the window holds nothing to draw (marked so: it is not asked for again until it is due); null where
-     * no country's tiles give it, or its bytes did not come whole, so its data is fetched as where none holds it.
+     * no country's tiles give it, or its bytes did not come whole, so its data is fetched as where none holds it (each
+     * noted in [tilesMissed], so they are asked again after [tilesWait]). [report] takes what the step does meanwhile.
      */
-    private fun tiled(w: MapCore.Window, now: Long): Boolean? {
+    private fun tiled(w: MapCore.Window, now: Long, report: (Status) -> Unit): Boolean? {
         val source = tiles ?: return null
         val t0 = clock()
-        status = Status.Fetching(t0, tiles = true)
+        report(Status.Fetching(t0, tiles = true))
         val got = try {
-            source(w) ?: return null
+            source(w)
         } catch (e: Exception) {
             Log.w(EngineFrames.TAG, "vk window ${w.id}: no pack from the tiles: ${e.message}; fetching its data")
             tilesProblem = e.message ?: e.toString()
+            missedTiles(w, now, none = false)
+            return null
+        }
+        if (got == null) {
+            missedTiles(w, now, none = true)
             return null
         }
         try {
@@ -394,14 +551,22 @@ class Windows(
             tiledOf(w).setLastModified(now)
         } catch (e: java.io.IOException) {
             Log.w(EngineFrames.TAG, "vk window ${w.id}: the pack from the tiles of ${got.from} was not written: ${e.message}")
+            missedTiles(w, now, none = false)
             return null
         }
         failed.remove(w)
-        status = Status.Idle
+        tilesMissed.remove(w)
+        report(Status.Idle)
         tilesProblem = null
         val what = if (got.pack.isNotEmpty()) "${got.pack.size} bytes" else "nothing to draw"
         Log.i(EngineFrames.TAG, "vk window ${w.id}: $what from the tiles of ${got.from} (their data of ${got.date}) in ${clock() - t0} ms")
         return got.pack.isNotEmpty()
+    }
+
+    /** Window [w]'s country's tiles gave no pack at [now]: [none], none holds it; else its bytes did not come. */
+    private fun missedTiles(w: MapCore.Window, now: Long, none: Boolean) {
+        val times = (tilesMissed[w]?.takeIf { it.refused == none }?.times ?: 0) + 1
+        tilesMissed[w] = Failure(now, none, times)
     }
 
     /**
@@ -410,7 +575,7 @@ class Windows(
      */
     private fun ask(w: MapCore.Window, after: Instant?): Packed? {
         val source = packs ?: return null
-        status = Status.Fetching(clock())
+        dataStatus = Status.Fetching(clock())
         return try {
             source(w, after)
         } catch (e: Exception) {
@@ -451,7 +616,7 @@ class Windows(
         val answer = workOf(w, "answer")
         try {
             val t0 = clock()
-            status = Status.Fetching(t0)
+            dataStatus = Status.Fetching(t0)
             packed(w, kept, answer, if (asked) got else ask(w, if (dataOf(w).exists()) kept else null), t0)?.let { how ->
                 return build(core, w, answer, now, how)
             }
@@ -497,7 +662,7 @@ class Windows(
     /** Builds window [w] from the JSON in [json], with the user's edits, and keeps the data beside it, without them. */
     private fun build(core: Core, w: MapCore.Window, json: File, now: Long, how: String): Boolean {
         val t1 = clock()
-        status = Status.Building(t1)
+        dataStatus = Status.Building(t1)
         val edited = workOf(w, "edited")
         val why = try {
             core.build(w, withEdits(core, w, json, edited), fileOf(w))
@@ -517,7 +682,7 @@ class Windows(
         // built from data: no longer the tiles' pack
         tiledOf(w).delete()
         failed.remove(w)
-        status = Status.Idle
+        dataStatus = Status.Idle
         Log.i(
             EngineFrames.TAG,
             "vk window ${w.id}: $how, built in $built ms" +
@@ -618,6 +783,29 @@ class Windows(
          */
         fun waitAfter(refused: Boolean, times: Int): Long =
             if (refused) REFUSED_MS else minOf(RETRY_MS shl (times - 1).coerceIn(0, 10), RETRY_CAP_MS)
+
+        /**
+         * How long a window whose bytes its country's tiles hold did not come waits before they are asked again, after
+         * the first miss: half a minute (a range GitHub failed once, on a weak signal, answers again in seconds).
+         */
+        const val TILES_RETRY_MS = 30 * 1000L
+
+        /** The longest the tiles' bytes that did not come wait, however often they missed in a row: ten minutes. */
+        const val TILES_RETRY_CAP_MS = 10 * 60 * 1000L
+
+        /**
+         * How long a window no country's tiles hold waits before the tiles' lane asks them again: a minute (a list of
+         * packs not to be had yet is asked again after half a minute, and a country may be kept meanwhile); the steps one
+         * at a time ask them each time they take the window.
+         */
+        const val TILES_NONE_MS = 60 * 1000L
+
+        /**
+         * How long a window's tiles wait after their [times]th miss in a row: [TILES_NONE_MS] where [none] holds it, else
+         * [TILES_RETRY_MS], twice as long after each miss in a row, [TILES_RETRY_CAP_MS] at most.
+         */
+        fun tilesWait(none: Boolean, times: Int): Long =
+            if (none) TILES_NONE_MS else minOf(TILES_RETRY_MS shl (times - 1).coerceIn(0, 10), TILES_RETRY_CAP_MS)
 
         /**
          * What the map says where the core has no window of the place yet ([status]: what the windows do now; null when

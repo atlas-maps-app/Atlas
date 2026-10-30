@@ -334,8 +334,8 @@ object MapEngine {
         windows()?.edited(lat, lon)
     }
 
-    /** Where the windows the phone built are kept: the engine's cache's `windows/`; null without a cache. */
-    fun windowsDir(): File? = cacheDir?.let { File(it, "windows") }
+    /** Where the windows the phone took or built are kept: [keptDir]'s `windows/`; null where nothing is kept. */
+    fun windowsDir(): File? = keptDir?.let { File(it, "windows") }
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null
@@ -372,9 +372,18 @@ object MapEngine {
         return windowsBuilder ?: synchronized(this) {
             windowsBuilder ?: app.atlas.mapview.vk.Windows(
                 dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles, online = { online() },
+                budget = app.atlas.mapview.vk.WindowsBudget(dir, keptPacks = { windowsKept() }),
             ).also { windowsBuilder = it }
         }
     }
+
+    /**
+     * The packs whose country's tiles the phone keeps whole and the windows read, by id (the Maps board's download of a
+     * country): a window taken from them comes back from the phone at once, so the windows' budget lets those go first.
+     * The app sets it.
+     */
+    @Volatile
+    var windowsKept: () -> Set<String> = { emptySet() }
 
     @Volatile
     private var version: String? = null
@@ -423,9 +432,24 @@ object MapEngine {
         warmUp(Math.round(m.widthPixels / m.density).toFloat(), Math.round(m.heightPixels / m.density).toFloat(), m.density)
     }
 
+    /**
+     * Where the engine keeps what offline use depends on: the windows the phone took or built ([windowsDir]). The app
+     * gives its files, which Android never clears to free space; until 30 October the windows lived in the cache
+     * ([cacheDir]), which it may clear. Null keeps no window.
+     */
+    @Volatile
+    var keptDir: File? = null
+        private set
+
+    /** Keeps the windows under [dir] from now on. The app calls it once at start. */
+    fun useKeptDir(dir: File) {
+        keptDir = dir
+    }
+
     /** Keeps nothing again (tests: the next test class must not write into a deleted directory). */
     internal fun forgetCacheDir() = synchronized(this) {
         cacheDir = null
+        keptDir = null
         TurbulenceCache.shared = null
     }
 

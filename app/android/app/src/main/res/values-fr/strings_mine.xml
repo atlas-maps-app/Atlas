@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Voix : activée</string>
     <string name="mine_voice_off">Voix : coupée, les virages se sentent</string>
     <string name="mine_voice_sub_ready">sur le téléphone, sans réseau</string>
-    <string name="mine_voice_sub_none">pas de synthèse vocale sur ce téléphone</string>
+    <string name="mine_voice_sub_none">pas de voix pour cette langue sur le téléphone même</string>
     <string name="mine_voice_sample">Écouter</string>
     <string name="mine_voice_sample_text">Dans deux cents mètres, tournez à droite.</string>
     <string name="mine_voice_haptics">Vibrations</string>
@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">l\'identifiant Wikidata d\'un lieu, ou le nom d\'une rue</string>
     <string name="mine_sent_notes">une note et son emplacement, seulement si vous en laissez une</string>
     <string name="mine_sent_transit">votre arrêt et l\'heure, quand vous ouvrez un horaire</string>
-    <string name="mine_sent_fuel">la zone que vous regardez, avec votre clé</string>
+    <string name="mine_sent_fuel">là où vous cherchez des stations, à 100 m près, avec votre clé</string>
+    <string name="mine_sent_chargers">là où vous cherchez des bornes, ou l\'itinéraire que vous préparez</string>
     <string name="mine_sent_reverse">le point sur lequel vous interrogez, quand Photon ne répond pas</string>
     <string name="mine_sent_edits">le lieu que vous complétez ; vos modifications et votre nom d\'utilisateur, seulement à l\'envoi</string>
     <string name="mine_sent_windows">les parties de la carte que vous regardez : des octets d\'un paquet</string>
@@ -284,6 +285,7 @@
     <string name="mine_weather_means">Ce que cela signifie pour vous</string>
     <string name="mine_weather_none">Pas de prévision</string>
     <string name="mine_weather_none_text">Pas de connexion, et rien de gardé ici. Ouvrez la météo une fois avec une connexion et elle reste.</string>
+    <string name="mine_weather_unanswered_text">Les services météo n\'ont pas répondu, et rien n\'est gardé pour ici. Réessayez dans un moment.</string>
     <string name="mine_weather_footer">Données météo d\'Open-Meteo.com (CC BY 4.0) · hors ligne : la prévision gardée et le baromètre du téléphone</string>
     <string name="mine_weather_raining">il pleut</string>
     <string name="mine_weather_rain_at">pluie à %1$s</string>

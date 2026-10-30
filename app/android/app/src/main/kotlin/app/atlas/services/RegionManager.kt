@@ -21,6 +21,11 @@ data class OfflineRegion(
     val progress: Float? = null,
     /** Why the last download stopped, when it failed. */
     val error: String? = null,
+    /**
+     * Queued with nothing fetched yet: held until the phone is on Wi-Fi (the Wi-Fi-only setting, on by default) or
+     * until a worker is free. [progress] is 0 meanwhile.
+     */
+    val waiting: Boolean = false,
 )
 
 /** A region to take offline: a named area and the layers wanted. */

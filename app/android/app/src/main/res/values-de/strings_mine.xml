@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Stimme: an</string>
     <string name="mine_voice_off">Stimme: aus, Abbiegungen fühlbar</string>
     <string name="mine_voice_sub_ready">auf dem Telefon, kein Netz nötig</string>
-    <string name="mine_voice_sub_none">keine Sprachausgabe auf diesem Telefon</string>
+    <string name="mine_voice_sub_none">keine Stimme für diese Sprache auf dem Telefon selbst</string>
     <string name="mine_voice_sample">Beispiel</string>
     <string name="mine_voice_sample_text">In zweihundert Metern rechts abbiegen.</string>
     <string name="mine_voice_haptics">Vibration</string>
@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">die Wikidata-Kennung eines Ortes oder ein Straßenname</string>
     <string name="mine_sent_notes">eine Notiz und ihr Ort, nur wenn du eine hinterlässt</string>
     <string name="mine_sent_transit">deine Haltestelle und die Zeit, wenn du einen Fahrplan öffnest</string>
-    <string name="mine_sent_fuel">das Gebiet, das du ansiehst, mit deinem Schlüssel</string>
+    <string name="mine_sent_fuel">wo du Tankstellen suchst, auf 100 m genau, mit deinem Schlüssel</string>
+    <string name="mine_sent_chargers">wo du Ladepunkte suchst, oder die Route, die du planst</string>
     <string name="mine_sent_reverse">der Ort, nach dem du fragst, wenn Photon nicht antwortet</string>
     <string name="mine_sent_edits">der Ort, den du ergänzt; deine Änderungen und dein Benutzername, nur wenn du sie sendest</string>
     <string name="mine_sent_windows">welche Teile der Karte du ansiehst: Bytes eines Pakets</string>
@@ -284,6 +285,7 @@
     <string name="mine_weather_means">Was es für dich bedeutet</string>
     <string name="mine_weather_none">Keine Vorhersage</string>
     <string name="mine_weather_none_text">Keine Verbindung und keine gespeicherte für hier. Öffne das Wetter einmal mit Verbindung, dann bleibt es.</string>
+    <string name="mine_weather_unanswered_text">Die Wetterdienste haben nicht geantwortet, und für hier ist nichts gespeichert. Versuche es später noch einmal.</string>
     <string name="mine_weather_footer">Wetterdaten von Open-Meteo.com (CC BY 4.0) · offline: die gespeicherte Vorhersage und das Barometer des Telefons</string>
     <string name="mine_weather_raining">es regnet</string>
     <string name="mine_weather_rain_at">Regen um %1$s</string>

@@ -9,6 +9,7 @@ import app.atlas.model.Mode
 import app.atlas.model.Place
 import app.atlas.model.RoutePrefs
 import app.atlas.model.RouteRequest
+import app.atlas.providers.Forecast
 import app.atlas.route.RouteResult
 import app.atlas.route.SegmentStore
 import app.atlas.ui.kit.CurrentWeather
@@ -77,7 +78,8 @@ data class GoTabUi(
     val recent: List<SavedPlace> = emptyList(),
     /** Null while they are being counted. */
     val moving: List<MovingCount>? = null,
-    val downloading: Float? = null,
+    /** The segment's download while it runs, or waits for Wi-Fi. */
+    val downloading: SegmentFetch? = null,
 )
 
 /**
@@ -137,8 +139,8 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
         }
         val now = services.clock.instant()
         val rainEnds = forecast?.rainEnds(now)
-        val nextRain = if (rainEnds == null) forecast?.nextRain(now)?.takeIf { it.isBefore(now.plusSeconds(12 * 3600)) } else null
-        val dryAhead = forecast != null && rainEnds == null && nextRain == null
+        val nextRain = if (rainEnds == null) forecast?.nextRain(now)?.takeIf { it.isBefore(now.plusSeconds(DRY_AHEAD_S)) } else null
+        val dryAhead = dryAhead(forecast, now)
         state.update { it.copy(weather = CurrentWeather.of(forecast, now), dryUntil = nextRain, rainUntil = rainEnds, dryAhead = dryAhead) }
         val tile = SegmentStore.tileName(at)
         val readiness = if (services.segments.has(tile)) Readiness.Ready
@@ -185,7 +187,7 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
         val need = (state.value.readiness as? Readiness.Missing)?.need ?: return
         if (state.value.downloading != null) return
         viewModelScope.launch {
-            state.update { it.copy(downloading = 0f) }
+            state.update { it.copy(downloading = SegmentFetch(0f)) }
             try {
                 SegmentOffer.download(services.regions, services.segments, need.tile).collect { f -> state.update { it.copy(downloading = f) } }
                 state.update { it.copy(readiness = Readiness.Ready, downloading = null) }
@@ -207,6 +209,19 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
         const val RELOOK_M = 250.0
         const val MAX_SIGNS = 2
         const val MAX_RECENT_CARDS = 4
+
+        /** How far ahead "dry" speaks for: no rain in the next twelve hours. */
+        const val DRY_AHEAD_S = 12 * 3600L
+
+        /**
+         * Whether [forecast] says it stays dry for the next twelve hours from [now]: only a forecast whose hours cover
+         * them can say so. Until 30 October one kept offline whose hours had run out said "dry", as if no rain were coming.
+         */
+        fun dryAhead(forecast: Forecast?, now: Instant): Boolean {
+            val f = forecast ?: return false
+            if (f.hourAt(now) == null || f.hourAt(now.plusSeconds(DRY_AHEAD_S - 3600)) == null) return false
+            return f.rainEnds(now) == null && f.nextRain(now)?.takeIf { it.isBefore(now.plusSeconds(DRY_AHEAD_S)) } == null
+        }
 
         /** The gantry's signs: home and work when set, then the latest places you went to, two at most. */
         fun signsFor(here: LatLon, home: SavedPlace?, work: SavedPlace?, recent: List<SavedPlace>): List<GuideSign> {

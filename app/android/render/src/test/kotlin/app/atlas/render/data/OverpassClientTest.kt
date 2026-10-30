@@ -189,6 +189,31 @@ class OverpassClientTest {
     }
 
     @Test
+    fun eachRequestGoesInItsServersTurnUntilItsAnswerIsReadOrItFails() {
+        // the phone passes its limiter's turns (MapData), which the app's own Overpass queries take too
+        val events = ArrayList<String>()
+        val bytes = answer(node(1, 52.0, 4.0)).readBytes()
+        val inner = HttpPost { url, _, _ ->
+            events += "ask ${java.net.URI(url).host}"
+            if (url.startsWith("https://busy")) throw IOException("$url answered 502")
+            object : ByteArrayInputStream(bytes) {
+                override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it < 0) events += "read" }
+            }
+        }
+        val client = OverpassClient(
+            http = inner.inTurns { host -> events += "turn $host"; AutoCloseable { events += "end $host" } },
+            hosts = listOf("https://busy.example", "https://good.example"), pause = {},
+        )
+        val into = java.io.File.createTempFile("window", ".json")
+        client.window(BBox(4.0, 52.0, 4.01, 52.01), into)
+        into.delete()
+        assertEquals(
+            listOf("turn busy.example", "ask busy.example", "end busy.example", "turn good.example", "ask good.example", "read", "end good.example"),
+            events,
+        )
+    }
+
+    @Test
     fun aWindowsDataFromAHostFarBehindIsPassedOverForAFreshOneAndTakenWhenNoneIsFresh() {
         // on 22 October 2026 one of the hosts answered with data from June
         val times = listOf("2026-06-01T08:52:28Z", "2026-10-22T13:01:36Z")

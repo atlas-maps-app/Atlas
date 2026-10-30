@@ -27,7 +27,7 @@ class SourcesTruthTest {
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
-        "overpass" to "Overpass(http)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
+        "overpass" to "Overpass(http, servers = overpassServers)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
         "foursquare" to "FoursquareRatings(http", "yelp" to "YelpRatings(http", "tripadvisor" to "TripAdvisorRatings(http",
         "ocm" to "OpenChargeMap(http", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http",
         "bnetza" to "BnetzaChargers(http", "open-meteo" to "Weather(http",
@@ -131,6 +131,24 @@ class SourcesTruthTest {
         assertTrue(asked(setOf("osm-notes", "osm-edits")).containsAll(setOf("osm-notes", "osm-edits")))
         // the hosts the list names are the source's own, not its website
         val overpass = SourcesModel.rows(emptySet(), emptyMap()).first { it.info.id == "overpass" }
-        assertEquals("overpass-api.de, maps.mail.ru +2", overpass.host)
+        assertEquals("overpass-api.de, maps.mail.ru +1", overpass.host)
+    }
+
+    @Test
+    fun theChargersAndFuelPricesSayTheyAreSentWhereTheUserLooks() {
+        // the charger sources said "the area you look at, nothing about you", and Tankerkönig "the area you look at",
+        // though each is sent the spot the user looks around (Open Charge Map's and Tankerkönig's to about 100 m) or
+        // the route planned
+        val privacy = File(android, "app/src/main/kotlin/app/atlas/ui/mine/PrivacyScreen.kt").readText()
+        assertTrue(privacy.contains("\"osm-chargers\", \"ocm\", \"afdc\" -> R.string.mine_sent_chargers"))
+        assertTrue(privacy.contains("\"tankerkoenig\" -> R.string.mine_sent_fuel"))
+        for (lang in listOf("", "-de", "-fr", "-nl")) {
+            val xml = File(android, "app/src/main/res/values$lang/strings_mine.xml").readText()
+            fun line(name: String) = Regex("<string name=\"$name\">([^<]+)</string>").find(xml)?.groupValues?.get(1)
+            val chargers = line("mine_sent_chargers")
+            val fuel = line("mine_sent_fuel")
+            assertTrue("values$lang: $chargers", chargers != null && chargers != line("mine_sent_area"))
+            assertTrue("values$lang: $fuel", fuel != null && "100 m" in fuel)
+        }
     }
 }

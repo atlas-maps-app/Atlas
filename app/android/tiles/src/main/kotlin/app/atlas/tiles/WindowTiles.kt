@@ -83,6 +83,15 @@ class WindowTiles(
     }
 
     /**
+     * The packs whose tiles of core version [version], as packs.json publishes them now, the phone keeps whole ([local]),
+     * by id: a window taken from them is read there again, with no network. Empty where no list of packs is to be had.
+     */
+    fun keptPacks(version: String): Set<String> {
+        val list = reads.list() ?: return emptySet()
+        return list.filter { p -> p.tilesOf(version)?.let { local(p, it) } != null }.mapTo(HashSet()) { it.id }
+    }
+
+    /**
      * Window entry [e]'s bytes from the tiles kept on the phone ([file], a copy of [published]); null where the file is
      * not the one published (its size) or does not read, or the bytes are not the ones the index names.
      */

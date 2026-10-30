@@ -66,10 +66,8 @@ import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.walkMinutes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import java.util.Locale
@@ -120,22 +118,22 @@ object WherePicker {
     )
     private const val LIMIT = 80
 
-    /** The places of every wedge around [at] that pass [f] at [now]: the region on the phone, else the map's labels. */
+    /**
+     * The places of every wedge around [at] that pass [f] at [now]: the region on the phone, else the map's packs, else
+     * Overpass, asked once for every category the phone cannot answer ([PlaceFinder.nearbyMany]), where until 30 October
+     * it was asked for one category after another, each cut at 5 s.
+     */
     suspend fun places(services: Services, at: LatLon, f: WhereFilters, now: LocalDateTime, hours: OpeningHoursContext): WheelPlaces = withContext(Dispatchers.Default) {
+        val answers = try {
+            services.places.nearbyMany(WEDGES.flatMap { it.categories }.distinct(), at, f.radiusM, LIMIT)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyMap()
+        }
         val out = LinkedHashMap<String, List<Place>>()
         for (w in WEDGES) {
-            val found = w.categories.flatMap { id ->
-                val answer = withTimeoutOrNull(5_000) {
-                    try {
-                        services.places.nearby(id, at, f.radiusM, LIMIT).first().places
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-                }
-                answer.orEmpty()
-            }
+            val found = w.categories.flatMap { id -> answers[id]?.places.orEmpty() }
             out[w.id] = found.distinctBy { it.key }.filter { fits(it, w, at, f, now, hours) }
         }
         WheelPlaces(out)

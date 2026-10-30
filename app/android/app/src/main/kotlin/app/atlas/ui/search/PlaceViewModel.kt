@@ -177,7 +177,7 @@ class PlaceViewModel(
 
     private suspend fun wiki(p: Place) {
         val kept = KeptFacts(File(services.dirs.files, "search/wikidata"))
-        val images = KeptImages(File(services.dirs.cache, "search/images"))
+        val images = KeptImages(services.dirs.images)
         val qid = p.tags["wikidata"]?.trim()
         val brandQid = (p.tags["brand:wikidata"] ?: Brands.forTags(p.tags)?.wikidata)?.trim()
         suspend fun entity(q: String?): WikidataEntity? {

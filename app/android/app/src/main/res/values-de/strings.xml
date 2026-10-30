@@ -21,7 +21,7 @@
     <string name="kit_closed">geschlossen</string>
     <string name="kit_hours_unknown">Öffnungszeiten unbekannt</string>
     <string name="kit_mic">Sprechen</string>
-    <string name="kit_mic_unavailable">Keine Spracherkennung auf diesem Telefon</string>
+    <string name="kit_mic_unavailable">Die Sprachsuche braucht die Spracherkennung auf dem Telefon selbst</string>
     <string name="kit_offline">Offline</string>
     <string name="kit_loading">Suche…</string>
     <string name="kit_retry">Erneut</string>

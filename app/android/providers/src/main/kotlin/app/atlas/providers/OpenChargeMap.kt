@@ -90,7 +90,11 @@ class OpenChargeMap(
         return (res.requireOk().json() as? JsonArray)?.mapNotNull { it.asObject() } ?: emptyList()
     }
 
-    private fun c(v: Double) = String.format(Locale.ROOT, "%.6f", v)
+    /**
+     * The centre of a nearby search, to about 100 m: the search reaches kilometres, and the phone keeps what lies within
+     * the radius of the exact centre. Until 30 October it went to the centimetre.
+     */
+    private fun c(v: Double) = String.format(Locale.ROOT, "%.3f", v)
 
     companion object {
         const val ID = "ocm"

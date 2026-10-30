@@ -30,6 +30,8 @@ import app.atlas.search.QueryResult
 import app.atlas.search.Regions
 import app.atlas.search.Selection
 import app.atlas.search.byFilter
+import app.atlas.search.covers
+import app.atlas.search.coversAll
 import app.atlas.search.walk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -163,7 +165,7 @@ class LocalData(
         val pack = packsCovering(at)
         storeCovering(at)?.let { s ->
             val found = fromStore(s).filter(keep)
-            if (found.isNotEmpty() || pack == null) return LocalAnswer(order(found), PlaceOrigin.STORE, partial = s.bounds?.holds(box) != true)
+            if (found.isNotEmpty() || pack == null) return LocalAnswer(order(found), PlaceOrigin.STORE, partial = !s.coversAll(box))
         }
         if (pack != null) return LocalAnswer(order(packPlaces(pack, box, accept).filter(keep)), PlaceOrigin.PACK, partial = !pack.covers(box))
         return null
@@ -491,14 +493,15 @@ class LocalData(
 
     // ---- Layers -----------------------------------------------------------------------------------------------------
 
-    private fun storeCovering(p: LatLon): PlaceSource? = stores()?.takeIf { s -> s.size > 0 && s.bounds?.let { p in it } == true }
+    /**
+     * The regions' stores where they hold [p] by their own places, not their box ([covers]: the Netherlands' box reaches
+     * Antwerp and Aachen).
+     */
+    private fun storeCovering(p: LatLon): PlaceSource? = stores()?.takeIf { s -> s.covers(p) }
 
     private fun packsCovering(p: LatLon): PackFeatures? = packs()?.takeIf { it.covers(p) }
 
     private fun packsMeeting(box: BBox): PackFeatures? = packs()?.takeIf { f -> f.sources.any { it.coverage.intersects(box) } }
-
-    /** True when the whole of [box] lies within this one. */
-    private fun BBox.holds(box: BBox): Boolean = box.west >= west && box.east <= east && box.south >= south && box.north <= north
 
     private fun storesOf(s: PlaceSource): List<PlaceStore> = when (s) {
         is PlaceStore -> listOf(s)

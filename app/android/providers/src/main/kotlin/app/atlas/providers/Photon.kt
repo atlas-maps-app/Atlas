@@ -28,8 +28,8 @@ class Photon(private val http: Http, private val base: String = "https://photon.
             .addQueryParameter("limit", limit.coerceIn(1, 50).toString())
             .apply {
                 near?.let {
-                    addQueryParameter("lat", coord(it.lat))
-                    addQueryParameter("lon", coord(it.lon))
+                    addQueryParameter("lat", bias(it.lat))
+                    addQueryParameter("lon", bias(it.lon))
                 }
                 box?.let { addQueryParameter("bbox", "${coord(it.west)},${coord(it.south)},${coord(it.east)},${coord(it.north)}") }
                 language(lang)?.let { addQueryParameter("lang", it) }
@@ -67,6 +67,12 @@ class Photon(private val http: Http, private val base: String = "https://photon.
         private fun language(lang: String?): String? = lang?.lowercase(Locale.ROOT)?.substringBefore('-')?.takeIf { it in LANGUAGES }
 
         private fun coord(v: Double) = String.format(Locale.ROOT, "%.6f", v)
+
+        /**
+         * The spot a search is ranked around, to about 100 m: enough to put the nearer of two names first. Until
+         * 30 October it went to the centimetre, from the Home and Work picker on every pause in the typing.
+         */
+        private fun bias(v: Double) = String.format(Locale.ROOT, "%.3f", v)
 
         /** Parses a Photon GeoJSON FeatureCollection into places. */
         fun parse(json: JsonObject): List<Place> = json.arr("features").mapNotNull { f -> feature(f.asObject() ?: return@mapNotNull null) }

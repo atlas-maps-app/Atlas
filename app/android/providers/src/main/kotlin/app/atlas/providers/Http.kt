@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import okhttp3.Cache
 import okhttp3.Call
@@ -112,13 +113,13 @@ class Http(
     suspend fun text(url: String, headers: Map<String, String> = emptyMap()): String =
         execute(request(url).headers(headers).build()).requireOk().text
 
-    /** GET [url] as a JSON tree. */
+    /** GET [url] as a JSON tree; an answer that is not JSON throws [NotJsonException]. */
     suspend fun json(url: String, headers: Map<String, String> = emptyMap()): JsonElement =
-        ProviderJson.parseToJsonElement(text(url, headers))
+        parsedJson(url, text(url, headers)) { ProviderJson.parseToJsonElement(it) }
 
-    /** GET [url] and decode it with [deserializer]. */
+    /** GET [url] and decode it with [deserializer]; an answer that is not the JSON asked for throws [NotJsonException]. */
     suspend fun <T> json(url: String, deserializer: DeserializationStrategy<T>, headers: Map<String, String> = emptyMap()): T =
-        ProviderJson.decodeFromString(deserializer, text(url, headers))
+        parsedJson(url, text(url, headers)) { ProviderJson.decodeFromString(deserializer, it) }
 
     /** POST a form and return the response, whatever its status. */
     suspend fun postForm(url: String, fields: Map<String, String>, timeout: Duration? = null): HttpResponse {
@@ -156,7 +157,8 @@ class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val
     val ok: Boolean get() = code in 200..299
     val text: String by lazy { body.toString(Charsets.UTF_8) }
 
-    fun json(): JsonElement = ProviderJson.parseToJsonElement(text)
+    /** The body as a JSON tree; a body that is not JSON throws [NotJsonException]. */
+    fun json(): JsonElement = parsedJson(url, text) { ProviderJson.parseToJsonElement(it) }
 
     /** Throws [HttpException] unless the status is 2xx; returns this for chaining. */
     fun requireOk(): HttpResponse = if (ok) this else throw HttpException(code, url, text.take(Http.MAX_ERROR_BODY))
@@ -167,6 +169,21 @@ class SwitchedOffException(val source: String, val host: String) : IOException("
 
 /** A server answered with a status other than 2xx. */
 class HttpException(val code: Int, val url: String, val body: String) : IOException("HTTP $code from ${url.substringBefore('?')}: ${body.take(200)}")
+
+/**
+ * An answer that is not the JSON asked for: a Wi-Fi's sign-in page answers 200 too, and so does a server's error page now
+ * and then. It is an IOException, so it fails wherever an unreachable server does. Until 30 October the parser's own
+ * exception went past those catches: a search lost its offline results to such a page, and a screen could close the app.
+ */
+class NotJsonException(val url: String, body: String, cause: Throwable) :
+    IOException("${url.substringBefore('?')} answered something that is not the JSON asked for: ${body.take(120)}", cause)
+
+/** [parse] of [text], the answer from [url]; a parser's failure becomes [NotJsonException]. */
+internal inline fun <T> parsedJson(url: String, text: String, parse: (String) -> T): T = try {
+    parse(text)
+} catch (e: SerializationException) {
+    throw NotJsonException(url, text, e)
+}
 
 /** Enqueues the call, resumes with the response, and cancels the call if the coroutine is cancelled. */
 private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { cont ->

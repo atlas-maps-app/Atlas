@@ -1,6 +1,7 @@
 package app.atlas.search
 
 import app.atlas.geo.BBox
+import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.places.TagFilter
@@ -52,6 +53,41 @@ interface PlaceSource {
 /** Places whose tags pass [filter], inside [box] (anywhere when null): looked up through the narrowest index, then checked. */
 fun PlaceSource.byFilter(filter: TagFilter, box: BBox? = null): List<PlaceRecord> =
     OfflineEvaluator(this).matches(Query.Tags(filter), EvalContext(), box ?: bounds)
+
+/**
+ * Whether the source holds the place [p]: its box holds it, and a place of its own lies within [COVER_REACH_M] of it (the
+ * user, 30 October: "What exactly is happening across the app when youre online vs offline?"). A region's box is not
+ * what it covers: the Netherlands' store's reaches Antwerp and Aachen, where it holds nothing, so until then the answers
+ * there were empty offline and the online sources were not asked. A place of its own is one by its own point, with no
+ * outline or a small one: the outline of a country or a province that crosses the extract's border reaches far past
+ * it. Anywhere on the land of a downloaded country a place, an address or a named path lies that near.
+ */
+fun PlaceSource.covers(p: LatLon): Boolean {
+    if (size == 0 || bounds?.let { p in it } != true) return false
+    return inBox(BBox.around(p, COVER_REACH_M), COVER_PROBE).any { r ->
+        val b = r.place.bbox
+        (b == null || b.width <= COVER_SMALL_DEG && b.height <= COVER_SMALL_DEG) && Geo.distance(p, r.location) <= COVER_REACH_M
+    }
+}
+
+/**
+ * Whether the source holds the whole of [box] ([covers]): its middle, its corners and the middles of its sides. A box
+ * across a border, or out to sea, is held only in part: online, the network completes it.
+ */
+fun PlaceSource.coversAll(box: BBox): Boolean {
+    val lats = doubleArrayOf(box.south, (box.south + box.north) / 2, box.north)
+    val lons = doubleArrayOf(box.west, (box.west + box.east) / 2, box.east)
+    return lats.all { lat -> lons.all { lon -> covers(LatLon(lat, lon)) } }
+}
+
+/** How near a place of a source's own must lie for it to hold a point ([covers]): 2 km. */
+const val COVER_REACH_M = 2_000.0
+
+/** The places [covers] looks at around a point, at most: one small one is enough. */
+private const val COVER_PROBE = 64
+
+/** The largest outline (degrees across) that still counts as a place by its own point ([covers]). */
+private const val COVER_SMALL_DEG = 0.01
 
 /** The [k] places nearest [p] that [accept] keeps, within [maxDistance] metres, nearest first: by growing boxes. */
 fun PlaceSource.nearest(p: LatLon, k: Int, maxDistance: Double = 50_000.0, accept: (PlaceRecord) -> Boolean = { true }): List<PlaceRecord> {

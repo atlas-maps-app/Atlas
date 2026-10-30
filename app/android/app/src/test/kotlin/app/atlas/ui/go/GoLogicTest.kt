@@ -6,6 +6,9 @@ import app.atlas.model.Mode
 import app.atlas.model.Place
 import app.atlas.model.RoutePrefs
 import app.atlas.model.Vehicle
+import app.atlas.providers.Forecast
+import app.atlas.providers.Sky
+import app.atlas.providers.WeatherHour
 import app.atlas.route.HazardKind
 import app.atlas.services.Units
 import kotlinx.coroutines.runBlocking
@@ -305,5 +308,20 @@ class GoLogicTest {
         // wider than the radar (a long name at a large font scale): its left edge, where the clamp's range was empty and threw
         assertEquals(0f, pingLabelLeft(100f, 190f, 1f, 424f, 380f), 0f)
         assertEquals(0f, pingLabelLeft(300f, 190f, 2.6f, 1100f, 988f), 0f)
+    }
+
+    @Test
+    fun dryIsSaidOnlyFromAForecastThatCoversTheNextTwelveHours() {
+        val t = Instant.parse("2026-10-30T08:00:00Z")
+        fun hour(at: Instant, mm: Double) = WeatherHour(at, 14.0, 13.0, 50.0, mm, Sky.PARTLY_CLOUDY, 2, 10.0, 12.0, 220.0, 20.0, 1.0, true, 1015.0, 20_000.0)
+        fun forecast(from: Instant, n: Int, wetAt: Int = -1) =
+            Forecast(LatLon(52.3745, 4.8840), 2.0, "Europe/Amsterdam", 3600, null, emptyList(), (0 until n).map { hour(from.plusSeconds(it * 3600L), if (it == wetAt) 1.2 else 0.0) }, emptyList(), from, kept = true)
+        assertTrue("a day of dry hours from now", GoTabViewModel.dryAhead(forecast(t, 24), t))
+        assertFalse("rain in five hours", GoTabViewModel.dryAhead(forecast(t, 24, wetAt = 5), t))
+        assertTrue("rain only after the twelve hours", GoTabViewModel.dryAhead(forecast(t, 24, wetAt = 13), t))
+        // kept offline a week ago: its hours ran out yesterday, and it says nothing about today
+        assertFalse(GoTabViewModel.dryAhead(forecast(t.minusSeconds(7 * 24 * 3600L), 6 * 24), t))
+        assertFalse("three dry hours left are not twelve", GoTabViewModel.dryAhead(forecast(t.minusSeconds(21 * 3600L), 24), t))
+        assertFalse(GoTabViewModel.dryAhead(null, t))
     }
 }

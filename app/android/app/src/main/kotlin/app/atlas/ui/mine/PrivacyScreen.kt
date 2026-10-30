@@ -194,7 +194,9 @@ private fun OnlineRow(name: String, host: String?, line: String) {
 @Composable
 internal fun sentLine(id: String): String = stringResource(
     when (id) {
-        "overpass", "osm-chargers", "ocm", "afdc" -> R.string.mine_sent_area
+        "overpass" -> R.string.mine_sent_area
+        // the chargers around where the user looks, or along the route planned: not "nothing about you"
+        "osm-chargers", "ocm", "afdc" -> R.string.mine_sent_chargers
         "ndw", "bnetza", "iss-orbit" -> R.string.mine_sent_nothing
         "photon" -> R.string.mine_sent_words
         "nominatim" -> R.string.mine_sent_reverse

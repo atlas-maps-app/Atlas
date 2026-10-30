@@ -3,6 +3,7 @@ package app.atlas.search
 import app.atlas.geo.BBox
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
+import app.atlas.model.Place
 import app.atlas.places.TagFilter
 import app.atlas.providers.Http
 import app.atlas.providers.Overpass
@@ -96,6 +97,18 @@ class OnlineMockTest {
                 assertTrue(inAms.places.all { it.hit.record.location in BBox(4.72, 52.28, 5.08, 52.43) })
             }
             empty.close()
+        }
+    }
+
+    /** A Wi-Fi's sign-in page answering for Photon (200, HTML): the offline results stand, as where Photon cannot be reached. */
+    @Test
+    fun aSignInPageInsteadOfPhotonsAnswerLeavesTheOfflineResults() = runBlocking {
+        server { MockResponse.Builder().body("<html><body>Sign in to the hotel's Wi-Fi</body></html>").build() }.use { s ->
+            val kerk = Place(OsmId(OsmType.WAY, 99205257), Fixtures.westerkerk, mapOf("amenity" to "place_of_worship", "name" to "Westerkerk"))
+            val engine = SearchEngine(MemoryPlaces(listOf(kerk)), geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
+            val r = engine.search("westerkerk", SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday))
+            assertEquals(listOf("Westerkerk"), r.places.map { it.hit.place.name() })
+            assertTrue("Photon was asked", s.requestCount > 0)
         }
     }
 

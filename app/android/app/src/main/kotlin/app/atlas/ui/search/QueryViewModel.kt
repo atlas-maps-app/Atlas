@@ -9,6 +9,7 @@ import app.atlas.providers.OverpassArea
 import app.atlas.search.EvalContext
 import app.atlas.search.Hit
 import app.atlas.search.OfflineEvaluator
+import app.atlas.search.OnlineAnswer
 import app.atlas.search.OnlineSearch
 import app.atlas.search.OverpassCompiler
 import app.atlas.search.ParsedQuery
@@ -20,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,7 +55,7 @@ data class QueryState(
 /**
  * The query builder's brain: the text read into a query (natural or power syntax), each ↳ row's distance editable,
  * run offline over the regions with the spatial join, and online through Overpass when asked (or when the regions
- * have nothing). [ql] is the Overpass QL of the same query, for `{} QL`.
+ * have nothing, once the typing has rested a second). [ql] is the Overpass QL of the same query, for `{} QL`.
  */
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class QueryViewModel(
@@ -61,6 +63,10 @@ class QueryViewModel(
     initial: String,
     private val here: () -> LatLon,
     private val lang: String,
+    /** Whether Overpass may be asked: not in a test's offline mode, and the phone connected; tests give their own. */
+    private val connected: () -> Boolean = { !services.config.offline && services.connectivity.online.value },
+    /** The query run on Overpass over an area ([OnlineSearch]); tests give their own. */
+    private val askOnline: suspend (Query, OverpassArea, EvalContext) -> OnlineAnswer = { q, area, ctx -> OnlineSearch(services.overpass).run(q, area, ctx) },
 ) : ViewModel() {
     private val input = MutableStateFlow(initial to emptyMap<Int, Double>())
     private val mutable = MutableStateFlow(QueryState(text = initial, running = initial.isNotBlank()))
@@ -104,7 +110,7 @@ class QueryViewModel(
         mutable.update { it.copy(running = true, error = null) }
         onlineJob = viewModelScope.launch {
             try {
-                val answer = withContext(Dispatchers.IO) { OnlineSearch(services.overpass).run(q, area(), context()) }
+                val answer = withContext(Dispatchers.IO) { askOnline(q, area(), context()) }
                 mutable.update { it.copy(running = false, result = answer.result, online = true, circles = circlesOf(answer.result.hits)) }
             } catch (e: CancellationException) {
                 throw e
@@ -114,7 +120,7 @@ class QueryViewModel(
         }
     }
 
-    fun online(): Boolean = !services.config.offline && services.connectivity.online.value
+    fun online(): Boolean = connected()
 
     private suspend fun run(text: String, distances: Map<Int, Double>) {
         onlineJob?.cancel()
@@ -134,9 +140,17 @@ class QueryViewModel(
             runCatching { OfflineEvaluator(services.placeStores).run(q, context()) }
         }
         result.onSuccess { r ->
-            mutable.update { it.copy(result = r, online = false, circles = circlesOf(r.hits), running = false, error = null) }
-            // Nothing on the phone (no region here) but a connection: ask Overpass at once.
-            if (r.hits.isEmpty() && services.placeStores.size == 0 && online()) runOnline()
+            // Nothing on the phone (no region here) but a connection: Overpass, once the typing has rested a second
+            // ([ONLINE_PAUSE_MS]), still looking meanwhile. The phone's own answer comes at each pause of [DEBOUNCE_MS],
+            // and until 30 October so did a query to Overpass, one a word typed (the user, 30 October: "are all sources
+            // reliable and respond fast?").
+            val ask = r.hits.isEmpty() && services.placeStores.size == 0 && online()
+            mutable.update { it.copy(result = r, online = false, circles = circlesOf(r.hits), running = ask, error = null) }
+            if (ask) {
+                delay(ONLINE_PAUSE_MS - DEBOUNCE_MS)
+                // the connection may have gone meanwhile: then the phone's answer stands
+                if (online()) runOnline() else mutable.update { it.copy(running = false) }
+            }
         }.onFailure { e ->
             if (e is CancellationException) throw e
             mutable.update { it.copy(running = false, error = e.message ?: e.toString()) }
@@ -159,6 +173,9 @@ class QueryViewModel(
     companion object {
         const val LIMIT = 60
         const val DEBOUNCE_MS = 220L
+
+        /** How long the typing rests before a query the phone cannot answer goes to Overpass. */
+        const val ONLINE_PAUSE_MS = 1_000L
         private const val AROUND_M = 1_500.0
         private const val AREA_MARGIN_M = 300.0
         private const val MAX_CIRCLES = 40

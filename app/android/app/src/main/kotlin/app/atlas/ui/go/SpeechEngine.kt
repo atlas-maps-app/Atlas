@@ -8,11 +8,12 @@ import android.media.AudioManager
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import java.util.Locale
 
 /** What [TtsVoice] needs of a speech engine: the phone's TextToSpeech in the app, a fake in tests. */
 interface SpeechEngine {
-    /** Starts the engine; [ready] gets true once it can speak in [locale] (offline voices preferred), false if never. */
+    /** Starts the engine; [ready] gets true once it can speak in [locale] with a voice on the phone, false if never. */
     fun start(locale: Locale, ready: (Boolean) -> Unit)
 
     /** Speaks [text]; [flush] drops what is queued first. [pan] −1 … 1 is applied as given (0 for none). */
@@ -33,7 +34,11 @@ interface AudioFocus {
     fun abandon()
 }
 
-/** The phone's TextToSpeech with navigation-guidance audio attributes, choosing an installed offline voice. */
+/**
+ * The phone's TextToSpeech with navigation-guidance audio attributes, speaking only with a voice installed on the phone:
+ * what Atlas says is never synthesised on a server (the user, 30 October: Atlas never contacts Google, and that includes
+ * a network voice, which the phone's engine is Google's on most phones).
+ */
 class AndroidSpeechEngine(private val context: Context) : SpeechEngine {
     private var tts: TextToSpeech? = null
     private var finished: (String) -> Unit = {}
@@ -60,22 +65,21 @@ class AndroidSpeechEngine(private val context: Context) : SpeechEngine {
         tts = engine
     }
 
-    /** Picks the best installed voice for [locale] that needs no network; falls back to the language's default. */
+    /**
+     * Sets the best installed voice for [locale] that needs no network ([offlineVoice]); false where the language has
+     * none, and the voice stays off. Until 30 October a language without one fell back to the engine's default voice for
+     * it, which may synthesise on a server.
+     */
     private fun chooseVoice(t: TextToSpeech, locale: Locale): Boolean {
-        val voices = runCatching { t.voices }.getOrNull().orEmpty()
-        val offline = voices.filter { v ->
-            v.locale.language == locale.language && !v.isNetworkConnectionRequired &&
-                TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in v.features.orEmpty()
-        }
-        val best = offline.sortedWith(compareByDescending<android.speech.tts.Voice> { it.locale.country == locale.country }.thenByDescending { it.quality })
-            .firstOrNull()
-        if (best != null && t.setVoice(best) == TextToSpeech.SUCCESS) return true
-        val r = t.setLanguage(locale)
-        return r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
+        val best = offlineVoice(runCatching { t.voices }.getOrNull().orEmpty(), locale) ?: return false
+        return t.setVoice(best) == TextToSpeech.SUCCESS
     }
 
     override fun speak(text: String, flush: Boolean, pan: Float, id: String) {
         val t = tts ?: return finished(id)
+        // the voice chosen speaks on the phone; should the engine have moved to one that needs the network (its settings
+        // changed meanwhile), the line is dropped rather than sent to a server
+        if (runCatching { t.voice }.getOrNull()?.isNetworkConnectionRequired == true) return finished(id)
         val params = Bundle()
         if (pan != 0f) params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, pan.coerceIn(-1f, 1f))
         val r = t.speak(text, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, params, id)
@@ -96,6 +100,18 @@ class AndroidSpeechEngine(private val context: Context) : SpeechEngine {
     }
 
     companion object {
+        /**
+         * The best of [voices] for [locale]: one that synthesises on the phone and is installed there, of the locale's
+         * country where there is one, then of the highest quality; null where none speaks the language on the phone.
+         */
+        fun offlineVoice(voices: Collection<Voice>, locale: Locale): Voice? = voices
+            .filter { v ->
+                v.locale.language == locale.language && !v.isNetworkConnectionRequired &&
+                    TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in v.features.orEmpty()
+            }
+            .sortedWith(compareByDescending<Voice> { it.locale.country == locale.country }.thenByDescending { it.quality })
+            .firstOrNull()
+
         val NAVIGATION_SPEECH: AudioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)

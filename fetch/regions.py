@@ -13,7 +13,7 @@ def overpass(bbox):
     q = ('[out:json][timeout:240][bbox:%s,%s,%s,%s];'
          '(node(if:count_tags()>0);way;relation[type=multipolygon];relation[boundary~"^(national_park|protected_area)$"];);'
          'out geom;') % (s, w, n, e)
-    for attempt, host in enumerate(['https://overpass-api.de', 'https://overpass.private.coffee', 'https://overpass.kumi.systems', 'https://overpass-api.de']):
+    for attempt, host in enumerate(['https://overpass-api.de', 'https://overpass.private.coffee', 'https://overpass-api.de']):
         req = urllib.request.Request(host + '/api/interpreter', data=urllib.parse.urlencode({'data': q}).encode(), headers={'User-Agent': UA})
         try:
             with urllib.request.urlopen(req, timeout=300) as r: return json.load(r)

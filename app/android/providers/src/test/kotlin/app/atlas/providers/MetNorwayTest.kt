@@ -105,6 +105,23 @@ class MetNorwayTest {
     }
 
     @Test
+    fun answersWhenOpenMeteoRefusesTheRequestOrAnswersSomethingElse() = runBlocking {
+        // a 400 (a key it no longer takes, say), then a Wi-Fi's sign-in page answering 200: MET Norway answers both times
+        Mock().use { meteo ->
+            Mock().use { met ->
+                meteo.fixture("meteo_error.json", 400)
+                meteo.enqueue("<html><body>Sign in to the hotel's Wi-Fi</body></html>", 200)
+                met.fixture("met_forecast.json")
+                met.fixture("met_forecast.json")
+                val w = Weather(testHttp(), base = meteo.base, metBase = met.base, zone = { zone }) { fetched }
+                assertEquals(6, w.forecast(amsterdam).hours.size)
+                assertEquals(6, w.forecast(amsterdam).hours.size)
+                assertEquals(2, met.count)
+            }
+        }
+    }
+
+    @Test
     fun failsWhenNeitherAnswersAndNothingIsKept() = runBlocking {
         Mock().use { meteo ->
             Mock().use { met ->

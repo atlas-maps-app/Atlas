@@ -194,6 +194,7 @@ class MineStateTest {
         assertTrue(f.count < 5)
         assertNull(ModelsForecast.parse("{\"hourly\":{}}", at, Instant.now()))
         assertNull(ModelsForecast.parse("{}", at, Instant.now()))
+        assertNull("a Wi-Fi's sign-in page is no forecast", ModelsForecast.parse("<html><body>Sign in</body></html>", at, Instant.now()))
     }
 
     @Test
@@ -207,6 +208,30 @@ class MineStateTest {
     private fun keep(dir: File, p: LatLon, fetched: Instant) {
         dir.mkdirs()
         File(dir, "models_${"%.2f_%.2f".format(java.util.Locale.ROOT, p.lat, p.lon)}.json").writeText("${fetched.epochSecond}\n${models()}")
+    }
+
+    @Test
+    fun aForecastThatFailedWithAConnectionSaysTheServicesDidNotAnswerNotThatThereIsNone() {
+        val ctx = RuntimeEnvironment.getApplication()
+        assertTrue(ctx.getString(noForecastText(askedOnline = true, app.atlas.R.string.mine_weather_none_text)).startsWith("The weather services did not answer"))
+        assertTrue(ctx.getString(noForecastText(askedOnline = false, app.atlas.R.string.mine_weather_none_text)).startsWith("No connection"))
+        assertTrue(ctx.getString(noForecastText(askedOnline = false, app.atlas.R.string.mine_forecast_none_text)).startsWith("No connection"))
+    }
+
+    @Test
+    fun whatOfflineUseDependsOnIsKeptInTheAppsFilesNotItsCache() {
+        // Android may clear the cache to free space: the forecasts, the charger registers, the places' pictures and the
+        // map's windows are kept in the files, which it never clears
+        val s = testServices()
+        for (kept in listOf(s.dirs.providers, s.dirs.images, s.dirs.engine)) {
+            assertTrue("$kept", kept.startsWith(s.dirs.files))
+            assertFalse("$kept", kept.startsWith(s.dirs.cache))
+        }
+        // the code names the cache only for what comes again by itself: today's map's work and the map's noise
+        val android = File(System.getProperty("atlas.repo")!!, "app/android")
+        val uses = listOf("app", "mapview").flatMap { m -> File(android, "$m/src/main").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() }
+            .flatMap { f -> f.readLines().map { it.trim() }.filter { "dirs.cache" in it && !it.startsWith("*") && !it.startsWith("//") }.map { "${f.name}: $it" } }
+        assertTrue(uses.toString(), uses.isNotEmpty() && uses.all { "LiveEngine.workDir" in it || "useCacheDir" in it })
     }
 
     @Test

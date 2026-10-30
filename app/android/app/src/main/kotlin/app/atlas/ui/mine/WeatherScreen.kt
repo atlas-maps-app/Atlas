@@ -90,12 +90,14 @@ fun WeatherScreen(args: Dest.Weather, nav: Navigator) {
     val at = if (args.lat != null && args.lon != null) LatLon(args.lat, args.lon) else here
     var forecast by remember(at) { mutableStateOf<Forecast?>(null) }
     var done by remember(at) { mutableStateOf(false) }
+    var askedOnline by remember(at) { mutableStateOf(false) }
     var live by remember { mutableStateOf<Double?>(null) }
     var cafe by remember(at) { mutableStateOf<app.atlas.model.Place?>(null) }
     LaunchedEffect(at) {
+        askedOnline = !services.config.offline && services.connectivity.online.value
         forecast = withContext(Dispatchers.IO) {
             runCatching {
-                if (services.config.offline || !services.connectivity.online.value) services.weather.kept(at) else services.weather.forecast(at)
+                if (!askedOnline) services.weather.kept(at) else services.weather.forecast(at)
             }.getOrNull()
                 // The network said online but the answer failed (a captive portal, a server error): the kept forecast still serves.
                 ?: runCatching { services.weather.kept(at) }.getOrNull()
@@ -162,13 +164,20 @@ fun WeatherScreen(args: Dest.Weather, nav: Navigator) {
                     OutLink("ui.charge", stringResource(R.string.mine_power_title), Modifier.weight(1f)) { nav.go(Dest.Power) }
                 }
             }
-            done -> MineState("ui.no-signal", stringResource(R.string.mine_weather_none), text = stringResource(R.string.mine_weather_none_text), tint = Color(W_SOFT))
+            done -> MineState("ui.no-signal", stringResource(R.string.mine_weather_none), text = stringResource(noForecastText(askedOnline, R.string.mine_weather_none_text)), tint = Color(W_SOFT))
             else -> BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), W_SOFT)
         }
         // the board's foot: 10 on 13, centred, 25 px under the sun's strip
         BText(stringResource(R.string.mine_weather_footer), bt(10f, 400, 13f, align = TextAlign.Center), 0xFF6A7A98, Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 25.dp), lines = 4)
     }
 }
+
+/**
+ * The text of a screen's no-forecast state: [offline] (the screen's own "no connection" text) when it was not asked
+ * online, and that the weather services did not answer when it was. Until 30 October a failure with a connection said
+ * "No connection" too.
+ */
+internal fun noForecastText(askedOnline: Boolean, offline: Int): Int = if (askedOnline) R.string.mine_weather_unanswered_text else offline
 
 /** Formats a clock time in the setting's way. */
 internal object ZonedLocal {

@@ -14,6 +14,9 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.time.Instant
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The windows the phone builds and builds again (ENGINE.md step 3), with a core and servers of the test's own: a window
@@ -405,6 +408,74 @@ class WindowsTest {
         assertFalse(withTiles.step(core))
         assertEquals(2, tilesAsked.size)
         assertEquals(1, diffs.size)
+    }
+
+    @Test
+    fun aWindowWhoseTilesFailedIsAskedOfThemAgainInHalfAMinuteNotAfterItsDatasWait() {
+        val core = Core()
+        core.wanted = listOf(w)
+        // GitHub's range failed once, and every Overpass server with it: its data waits five minutes
+        tiled = { throw IOException("timeout") }
+        whole = { throw IOException("every server is busy") }
+        assertFalse(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        assertEquals(1, fetched.size)
+        assertEquals(now + Windows.RETRY_MS, (withTiles.status as Windows.Status.Waiting).until)
+        // within the tiles' half minute nothing is asked
+        now += Windows.TILES_RETRY_MS - 1_000
+        assertFalse(withTiles.step(core))
+        assertEquals(1, tilesAsked.size)
+        // after it the tiles are asked again, whatever its data's wait; missing again, they wait twice as long
+        now += 2_000
+        assertFalse(withTiles.step(core))
+        assertEquals(2, tilesAsked.size)
+        assertTrue(withTiles.status is Windows.Status.Waiting)
+        now += Windows.TILES_RETRY_MS + 1_000
+        assertFalse(withTiles.step(core))
+        assertEquals(2, tilesAsked.size)
+        // GitHub answers again: the window comes from the tiles, its data neither fetched again nor waited for
+        tiled = { Windows.Tiled(nlPack, nlDate, "netherlands") }
+        now += Windows.TILES_RETRY_MS
+        assertTrue(withTiles.step(core))
+        assertEquals(3, tilesAsked.size)
+        assertArrayEquals(nlPack, withTiles.fileOf(w).readBytes())
+        assertEquals(1, fetched.size)
+        assertEquals(Windows.Status.Idle, withTiles.status)
+        assertNull(withTiles.tilesProblem)
+    }
+
+    @Test
+    fun whileAWindowsDataComesTheWindowsTheTilesHoldStillComeFromThem() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val near = MapCore.Window(14, 8415, 5383)
+        val asked: MutableList<MapCore.Window> = Collections.synchronizedList(ArrayList())
+        val lanes = Windows(
+            dir,
+            fetch = { _, file -> started.countDown(); release.await(20, TimeUnit.SECONDS); file.writeBytes(whole()) },
+            clock = { now },
+            tiles = { x -> asked += x; if (x == near) Windows.Tiled(nlPack, nlDate, "netherlands") else null },
+        )
+        val core = Core()
+        // the nearest window no country's tiles hold: its data, from a server that takes its time
+        core.wanted = listOf(w, near)
+        var first = false
+        val data = Thread { first = lanes.step(core) }.apply { start() }
+        assertTrue(started.await(20, TimeUnit.SECONDS))
+        assertFalse((lanes.status as Windows.Status.Fetching).tiles)
+        // meanwhile the next step takes the other window from its country's tiles, at once
+        assertTrue(lanes.step(core))
+        assertArrayEquals(nlPack, lanes.fileOf(near).readBytes())
+        assertEquals(listOf(w, near), asked.toList())
+        // the window under way is the data's alone: no step takes it from the tiles, nor asks for its data again
+        assertFalse(lanes.step(core))
+        assertEquals(2, asked.size)
+        assertFalse((lanes.status as Windows.Status.Fetching).tiles)
+        release.countDown()
+        data.join(20_000)
+        assertTrue(first)
+        assertEquals("pack 1", lanes.fileOf(w).readText())
+        assertEquals(Windows.Status.Idle, lanes.status)
     }
 
     @Test

@@ -1,22 +1,54 @@
 package app.atlas.render.data
 
 import app.atlas.geo.BBox
+import app.atlas.net.OverpassServers
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 
 /** Posts a form and hands back the response body. The phone may supply OkHttp; [HttpUrlPost] needs nothing. */
 fun interface HttpPost {
     /** Throws [IOException] for a response that is not a 200. The caller closes the stream. */
     fun post(url: String, form: Map<String, String>, userAgent: String): InputStream
+}
+
+/**
+ * This post with each request in its server's turn: [turn] is taken, by the server's host, before the request goes, and
+ * ends once its answer's stream is closed or the request failed. The phone passes its limiter's turns, so the map's
+ * windows and the app's own Overpass queries run one query at a time on each server between them.
+ */
+fun HttpPost.inTurns(turn: (host: String) -> AutoCloseable): HttpPost = HttpPost { url, form, userAgent ->
+    val held = turn(runCatching { URI(url).host }.getOrNull() ?: url)
+    val ended = AtomicBoolean(false)
+    fun end() {
+        if (ended.compareAndSet(false, true)) held.close()
+    }
+    val stream = try {
+        this@inTurns.post(url, form, userAgent)
+    } catch (e: Throwable) {
+        end()
+        throw e
+    }
+    object : FilterInputStream(stream) {
+        override fun close() {
+            try {
+                super.close()
+            } finally {
+                end()
+            }
+        }
+    }
 }
 
 /** [HttpPost] on the JDK's own HttpURLConnection (also on Android). */
@@ -58,6 +90,11 @@ class OverpassResult(val header: JsonObject, val elements: List<OsmElement>) {
  * failure in a row, [REST_CAP_MS] at most), so the next window does not ask it again; where every host rests, a window
  * fails at once without asking any. On 27 October 2026 every public server failed for an hour, and each window the
  * phone wanted asked each of them in turn.
+ *
+ * What the hosts did lately is [servers]: the phone passes the app's own Overpass queries the same record, so a host
+ * either found down rests for both, the one either heard from last is asked first, and a host with a query under way
+ * (the user's search on it) is asked after the free ones. Until 30 October each kept its own, and each waited minutes
+ * on a server the other had found dead.
  */
 class OverpassClient(
     private val http: HttpPost = HttpUrlPost(),
@@ -70,51 +107,37 @@ class OverpassClient(
     /** Seconds to wait after a failed attempt, times the attempt number. */
     private val backoffSeconds: Long = 15,
     /** Monotonic milliseconds, for the hosts' rests; tests pass their own. */
-    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** What the hosts did lately, shared with the app's own Overpass client on the phone. */
+    val servers: OverpassServers = OverpassServers(clock),
 ) {
-    /** A host that failed a window lately: until when it rests ([clock]'s time), and how often it failed in a row. */
-    private class Rest(val until: Long, val times: Int)
-
-    private val rests = HashMap<String, Rest>()
-
-    /** The host whose answer a window took last: asked first. */
-    private var lastGood: String? = null
-
     /** The hosts whose data was behind lately: asked after the others. */
     private val behind = HashSet<String>()
 
     /**
-     * The hosts a window asks, in turn: the one that answered last first, then the others in their order, those whose
-     * data was behind lately last; none that rests. Throws where every host rests.
+     * The hosts a window asks, in turn: the one that answered last first, then the others in their order, a host with a
+     * query under way after the free ones, those whose data was behind lately last; none that rests. Throws where every
+     * host rests.
      */
-    private fun windowHosts(): List<String> = synchronized(rests) {
-        val now = clock()
+    private fun windowHosts(): List<String> {
+        val now = servers.now()
         val all = hosts.distinct()
-        val awake = all.filter { (rests[it]?.until ?: Long.MIN_VALUE) <= now }
+        val awake = all.filter { servers.restUntil(it) <= now }
         if (awake.isEmpty()) {
-            val next = all.minOf { rests.getValue(it).until }
+            val next = all.minOf { servers.restUntil(it) }
             throw IOException("every Overpass server failed lately; the first is asked again in ${(next - now + 999) / 1000} s")
         }
-        awake.sortedBy { h -> if (h == lastGood) 0 else if (h in behind) 2 else 1 }
+        val late = synchronized(behind) { behind.toSet() }
+        return awake.sortedBy { h -> if (h in late) 3 else if (servers.busy(h)) 2 else if (servers.isFirst(h)) 0 else 1 }
     }
 
     /** [host] failed a window's request: it rests, longer after each failure in a row. */
-    private fun failed(host: String) = synchronized(rests) {
-        val times = (rests[host]?.times ?: 0) + 1
-        rests[host] = Rest(clock() + minOf(REST_MS shl (times - 1).coerceAtMost(10), REST_CAP_MS), times)
-        if (lastGood == host) lastGood = null
-    }
+    private fun failed(host: String) = servers.failed(host, REST_MS, REST_CAP_MS)
 
     /** [host] answered a window whole: it rests no more, and is asked first where its data was [fresh], else last. */
-    private fun answered(host: String, fresh: Boolean) = synchronized(rests) {
-        rests.remove(host)
-        if (fresh) {
-            behind.remove(host)
-            lastGood = host
-        } else {
-            behind.add(host)
-            if (lastGood == host) lastGood = null
-        }
+    private fun answered(host: String, fresh: Boolean) {
+        synchronized(behind) { if (fresh) behind.remove(host) else behind.add(host) }
+        servers.answered(host, first = fresh)
     }
 
     /** The Overpass QL of `fetch/regions.py overpass()` for a box. */
@@ -288,7 +311,11 @@ class OverpassClient(
     }
 
     companion object {
-        val HOSTS = listOf("https://overpass-api.de", "https://overpass.private.coffee", "https://overpass.kumi.systems", "https://overpass-api.de")
+        /**
+         * The hosts `fetch/regions.py` asks, in its order. overpass.kumi.systems, private.coffee's older name for the same
+         * machine, went on 30 October: it asked that one server twice.
+         */
+        val HOSTS = listOf("https://overpass-api.de", "https://overpass.private.coffee", "https://overpass-api.de")
         const val USER_AGENT = "Atlas/1 (offline maps on OpenStreetMap; +https://github.com/atlas-maps-app/Atlas)"
 
         private val DATE = Regex("""(?:"timestamp_osm_base"\s*:\s*"|osm_base=")(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")

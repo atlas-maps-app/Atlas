@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Stem: aan</string>
     <string name="mine_voice_off">Stem: uit, bochten voel je</string>
     <string name="mine_voice_sub_ready">op de telefoon, geen bereik nodig</string>
-    <string name="mine_voice_sub_none">geen spraakmotor op deze telefoon</string>
+    <string name="mine_voice_sub_none">geen stem voor deze taal op de telefoon zelf</string>
     <string name="mine_voice_sample">Voorbeeld</string>
     <string name="mine_voice_sample_text">Over tweehonderd meter rechtsaf, de gracht op.</string>
     <string name="mine_voice_haptics">Trillingen</string>
@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">de Wikidata-id van een plek, of de naam van een straat</string>
     <string name="mine_sent_notes">een notitie en haar plek, alleen als je er een achterlaat</string>
     <string name="mine_sent_transit">je halte en de tijd, als je een dienstregeling opent</string>
-    <string name="mine_sent_fuel">het gebied waar je naar kijkt, met je sleutel</string>
+    <string name="mine_sent_fuel">waar je tankstations zoekt, tot 100 m, met je sleutel</string>
+    <string name="mine_sent_chargers">waar je laadpunten zoekt, of de route die je plant</string>
     <string name="mine_sent_reverse">de plek waar je naar vraagt, als Photon geen antwoord heeft</string>
     <string name="mine_sent_edits">de plek die je aanvult; je bewerkingen en gebruikersnaam, alleen als je ze verstuurt</string>
     <string name="mine_sent_windows">welke delen van de kaart je bekijkt: bytes van een pakket</string>
@@ -284,6 +285,7 @@
     <string name="mine_weather_means">Wat het voor jou betekent</string>
     <string name="mine_weather_none">Geen voorspelling</string>
     <string name="mine_weather_none_text">Geen verbinding, en geen bewaarde voor hier. Open het weer één keer met verbinding en het blijft bewaard.</string>
+    <string name="mine_weather_unanswered_text">De weerdiensten gaven geen antwoord, en er is niets bewaard voor hier. Probeer het straks opnieuw.</string>
     <string name="mine_weather_footer">Weergegevens van Open-Meteo.com (CC BY 4.0) · offline: de bewaarde voorspelling en de barometer van de telefoon</string>
     <string name="mine_weather_raining">het regent</string>
     <string name="mine_weather_rain_at">regen om %1$s</string>

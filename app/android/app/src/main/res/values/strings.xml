@@ -25,7 +25,7 @@
     <string name="kit_closed">closed</string>
     <string name="kit_hours_unknown">hours not mapped</string>
     <string name="kit_mic">Speak</string>
-    <string name="kit_mic_unavailable">No speech recognition on this phone</string>
+    <string name="kit_mic_unavailable">Voice search needs the phone\'s on-device speech recognition</string>
     <string name="kit_offline">Offline</string>
     <string name="kit_loading">Looking…</string>
     <string name="kit_retry">Try again</string>

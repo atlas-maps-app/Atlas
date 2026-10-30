@@ -1,6 +1,7 @@
 package app.atlas.render.data
 
 import app.atlas.geo.BBox
+import app.atlas.net.OverpassServers
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -177,6 +178,35 @@ class OverpassHostsTest {
         always(1) { status(502) }
         val f = window(c)
         assertEquals(Instant.parse("2026-06-01T08:52:28Z"), OverpassClient.dataDate(f.readBytes()))
+    }
+
+    @Test
+    fun aServerTheAppsQueriesFoundDownIsNotAskedForAWindowAndOneInUseComesAfterTheFreeOnes() {
+        always(0) { answer() }
+        always(1) { answer() }
+        always(2) { answer() }
+        val inUse = HashSet<String>()
+        // the record the phone hands the app's own Overpass queries too (Services.overpassServers)
+        val shared = OverpassServers(clock = { now }, inUse = { OverpassServers.keyOf(it) in inUse })
+        val c = OverpassClient(http = post, hosts = servers.indices.map(::host), pause = { pauses += it }, servers = shared)
+        // the app's query found the first server down (the app names its interpreter, the map the server)
+        shared.failed("${host(0)}/api/interpreter", pauseMs = 30_000, capMs = 10 * 60_000)
+        window(c)
+        assertEquals("a server resting for the app is not asked", listOf(0, 1, 0), asked())
+        // the app heard from the third since: the next window asks it first
+        shared.answered("${host(2)}/api/interpreter")
+        window(c)
+        assertEquals(listOf(0, 1, 1), asked())
+        // the user's search is under way on it: the window asks a free server instead of waiting for it
+        inUse += OverpassServers.keyOf(host(2))
+        window(c)
+        assertEquals(listOf(0, 2, 1), asked())
+        // and what a window learns, the app's queries see
+        always(1) { status(502) }
+        inUse.clear()
+        window(c)
+        assertTrue(shared.restUntil("${host(1)}/api/interpreter") > now)
+        assertTrue(shared.isFirst("${host(2)}/api/interpreter"))
     }
 
     @Test

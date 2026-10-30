@@ -46,6 +46,7 @@
     <string name="go_needs_data_title">No routing data here yet</string>
     <string name="go_needs_data_text">Routing works offline once this is on the phone: %1$s</string>
     <string name="go_downloading">Downloading… %1$d %%</string>
+    <string name="go_waiting_wifi">Waiting for Wi-Fi</string>
     <string name="go_download_data">Download</string>
     <string name="go_download_offline">Connect to download it</string>
     <string name="go_no_route">No way found</string>

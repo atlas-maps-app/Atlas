@@ -92,6 +92,9 @@ class Etymology(private val fetch: suspend (String) -> String) {
             val found = items(ids)
             val people = ids.mapNotNull { found[it] }.map { namesake(it, langs) }
             return NamedAfter(name, street, people, text, if (people.isEmpty()) NamedAfter.State.NOT_RECORDED else NamedAfter.State.FOUND)
+        } catch (e: app.atlas.providers.NotJsonException) {
+            // a broken answer is the source's error, not the phone being offline
+            return NamedAfter(name, street, emptyList(), text, NamedAfter.State.ERROR)
         } catch (e: java.io.IOException) {
             return NamedAfter(name, street, emptyList(), text, NamedAfter.State.OFFLINE)
         } catch (e: kotlinx.serialization.SerializationException) {

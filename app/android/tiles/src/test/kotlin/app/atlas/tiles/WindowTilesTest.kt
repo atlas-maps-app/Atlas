@@ -134,6 +134,18 @@ class WindowTilesTest {
     }
 
     @Test
+    fun anIndexNeverPassesThroughTheAppsHttpCache() {
+        // the app hands the windows its own client, which keeps answers in a disk cache: an index is kept in the folder
+        val c = country()
+        val list = listOf(publish("netherlands", c, date))
+        val cache = okhttp3.Cache(tempDir("http"), 64L shl 20)
+        val app = okhttp3.OkHttpClient.Builder().cache(cache).build()
+        assertArrayEquals(c.packs[westerkerk], WindowTiles({ list }, dir, app).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        assertEquals(0L, cache.size())
+        assertEquals(0, cache.requestCount())
+    }
+
+    @Test
     fun aCountryKeptOnThePhoneIsReadThereWithoutTheNetwork() {
         val c = country()
         val list = listOf(publish("netherlands", c, date))
@@ -155,6 +167,20 @@ class WindowTilesTest {
         val start = c.stored.getValue(neighbour).size
         assertEquals(listOf("bytes=$start-${start + c.stored.getValue(westerkerk).size - 1}"), ranges())
         kept.deleteRecursively()
+    }
+
+    @Test
+    fun theCountriesKeptOnThePhoneAreTheOnesItsWindowsComeBackFromWithoutTheNetwork() {
+        // the windows' budget lets the windows taken from them go first: they are read there again at once
+        val list = listOf(publish("netherlands", country(), date), publish("belgium", country(), date))
+        val kept = WindowTiles.Local(java.io.File(dir, "netherlands.tiles"), java.io.File(dir, "netherlands.tiles.idx"))
+        val tiles = WindowTiles({ list }, dir, local = { p, _ -> kept.takeIf { p.id == "netherlands" } })
+        assertEquals(setOf("netherlands"), tiles.keptPacks(version))
+        // another core's tiles are not the ones this phone's windows take
+        assertEquals(emptySet<String>(), tiles.keptPacks("core-p9 s1.2-fedcba9876543210"))
+        // no list of packs to be had: none
+        assertEquals(emptySet<String>(), WindowTiles({ throw IOException("offline") }, dir).keptPacks(version))
+        assertTrue(gh.storageRequests.isEmpty())
     }
 
     @Test

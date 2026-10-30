@@ -164,7 +164,8 @@ fun SkyScreen(args: Dest.Sky, nav: Navigator) {
         val headline = when (rainMoment) {
             is Moment.RainStarts -> if (rainMoment.lasts != null) stringResource(R.string.sky_rain_in_lasts, rainMoment.minutes, rainMoment.lasts) else stringResource(R.string.sky_rain_in, rainMoment.minutes)
             is Moment.RainStops -> stringResource(R.string.sky_raining_until, hm.format(rainMoment.at.atZone(zone)))
-            else -> if (!covers) stringResource(R.string.sky_no_forecast) else stringResource(R.string.sky_dry)
+            // still being read: not "needs a connection", which it said meanwhile, online or not
+            else -> if (snap == null) stringResource(R.string.kit_loading) else if (!covers) stringResource(R.string.sky_no_forecast) else stringResource(R.string.sky_dry)
         }
         BoardLine(headline, boardStyle(16f, 800, Navy.css(), 20.5f))
         Spacer(Modifier.height(47.5.dp))

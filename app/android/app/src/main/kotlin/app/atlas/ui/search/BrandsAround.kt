@@ -8,6 +8,7 @@ import app.atlas.model.Place
 import app.atlas.places.Brand
 import app.atlas.places.Brands
 import app.atlas.places.TagFilter
+import app.atlas.search.covers
 import app.atlas.services.PlaceOrigin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,7 +37,7 @@ object BrandsAround {
     suspend fun near(services: Services, at: LatLon, radiusM: Double): BrandsNearby = withContext(Dispatchers.Default) {
         val store = services.placeStores
         val (places, origin) = when {
-            store.size > 0 && store.bounds?.let { at in it } == true -> store.inBox(BBox.around(at, radiusM)).map { it.place } to PlaceOrigin.STORE
+            store.covers(at) -> store.inBox(BBox.around(at, radiusM)).map { it.place } to PlaceOrigin.STORE
             else -> {
                 val got = runCatching { services.localData.places(at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull()
                 got?.value.orEmpty() to got?.origin

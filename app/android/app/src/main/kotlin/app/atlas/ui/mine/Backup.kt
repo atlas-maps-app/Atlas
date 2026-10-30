@@ -148,7 +148,7 @@ object Backup {
         for (b in saved.hiddenBrands.value) saved.hideBrand(b, false)
         services.mine.trail.clear()
         services.mine.pressure.clear()
-        File(services.dirs.cache, "providers").deleteRecursively()
+        services.dirs.providers.deleteRecursively()
         services.dirs.http.deleteRecursively()
     }
 

@@ -37,7 +37,11 @@
     <string name="go_no_route">Aucun chemin trouvé</string>
     <string name="go_finding_route">Recherche du chemin…</string>
     <string name="go_needs_data_title">Pas encore de données d’itinéraire ici</string>
+    <string name="go_needs_data_text">L\'itinéraire fonctionne hors ligne une fois ceci sur le téléphone : %1$s</string>
+    <string name="go_downloading">Téléchargement… %1$d %%</string>
+    <string name="go_waiting_wifi">Attend le Wi-Fi</string>
     <string name="go_download_data">Télécharger</string>
+    <string name="go_download_offline">Connectez-vous pour le télécharger</string>
     <string name="go_offline_ready">Prêt hors ligne</string>
     <string name="go_keep_moving">Rester en route</string>
     <string name="go_fuel">Carburant</string>

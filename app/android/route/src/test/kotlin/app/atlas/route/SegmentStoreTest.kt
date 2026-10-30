@@ -174,6 +174,22 @@ class SegmentStoreTest {
     }
 
     @Test
+    fun aSegmentFileNeverPassesThroughTheAppsHttpCache() = runBlocking {
+        // the app hands the store its providers' client, which keeps answers in a 64 MB disk cache: E0_N50 is 80 MB
+        val bytes = Random(11).nextBytes(300_000)
+        fake.files["segments4/E0_N50.rd5"] = bytes
+        val cache = okhttp3.Cache(Files.createTempDirectory("atlas-http").toFile(), 64L shl 20)
+        val shared = okhttp3.OkHttpClient.Builder().cache(cache).build()
+        val store = SegmentStore(
+            dir, client = shared, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(),
+        )
+        store.download("E0_N50", verify = false).toList()
+        assertArrayEquals(bytes, File(dir, "E0_N50.rd5").readBytes())
+        assertEquals(0L, cache.size())
+        assertEquals(0, cache.requestCount())
+    }
+
+    @Test
     fun refusesACorruptFile() = runBlocking {
         fake.files["segments4/E0_N50.rd5"] = Random(6).nextBytes(10_000)
         try {
@@ -207,6 +223,51 @@ class SegmentStoreTest {
         assertEquals(SegmentProgress.Stage.DONE, progress.last().stage)
         assertArrayEquals(fresh, File(dir, "E0_N50.rd5").readBytes())
         assertTrue(fake.requests.any { it.method == "HEAD" && it.url.encodedPath.contains("/diff/E0_N50/") })
+    }
+
+    /**
+     * An update stopped part way goes on from where it stopped (the user, 30 October: "are all sources reliable and
+     * respond fast?"): until then each try deleted the part and started again from nothing.
+     */
+    @Test
+    fun anUpdateStoppedPartWayGoesOnFromWhereItStopped() = runBlocking {
+        // a tile too old for a diff: the whole file again, of which an earlier try took 70 000 bytes
+        File(dir, "E0_N50.rd5").writeBytes(Random(10).nextBytes(40_000))
+        val fresh = Random(11).nextBytes(200_000)
+        fake.files["segments4/E0_N50.rd5"] = fresh
+        File(dir, "E0_N50.rd5.part").writeBytes(fresh.copyOf(70_000))
+        File(dir, "E0_N50.rd5.part.etag").writeText(fake.etag("segments4/E0_N50.rd5"))
+        val progress = store().update("E0_N50", verify = false).toList()
+        assertEquals(SegmentProgress.Stage.DONE, progress.last().stage)
+        assertArrayEquals(fresh, File(dir, "E0_N50.rd5").readBytes())
+        val get = fake.requests.single { it.method == "GET" }
+        assertEquals("bytes=70000-", get.headers["Range"])
+        assertEquals(206, fake.lastCode)
+        assertFalse(File(dir, "E0_N50.rd5.part").exists())
+        assertFalse(File(dir, "E0_N50.rd5.part.etag").exists())
+    }
+
+    /** A tile's size is asked of the server once a day: every mode's plan asks it, for each tile its route lacks. */
+    @Test
+    fun aTilesSizeIsAskedOfTheServerOnceADay() = runBlocking {
+        fake.files["segments4/E0_N50.rd5"] = ByteArray(1234)
+        var now = 1_800_000_000_000L
+        val s = SegmentStore(dir, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(), clock = { now })
+        fun heads(tile: String) = fake.requests.count { it.method == "HEAD" && it.url.encodedPath.endsWith("/$tile") }
+        // a tile the server has and one it has not: each asked once
+        repeat(3) {
+            assertEquals(1234L, s.remoteSize("E0_N50"))
+            assertNull(s.remoteSize("E5_N50.rd5"))
+        }
+        assertEquals(1, heads("E0_N50.rd5"))
+        assertEquals(1, heads("E5_N50.rd5"))
+        // a day on, it is asked again and says what it has then
+        fake.files["segments4/E0_N50.rd5"] = ByteArray(1300)
+        now += SegmentStore.SIZE_KEPT_MS - 1
+        assertEquals(1234L, s.remoteSize("E0_N50"))
+        now += 1
+        assertEquals(1300L, s.remoteSize("E0_N50"))
+        assertEquals(2, heads("E0_N50.rd5"))
     }
 
     @Test

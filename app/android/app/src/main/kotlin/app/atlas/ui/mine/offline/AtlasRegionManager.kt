@@ -122,6 +122,7 @@ class AtlasRegionManager(
         complete = d.complete,
         progress = d.progress?.fraction,
         error = d.error,
+        waiting = d.progress?.waiting == true,
     )
 
     /** The complete region that holds [point] with a map layer, for the map's "offline ready" sign. */

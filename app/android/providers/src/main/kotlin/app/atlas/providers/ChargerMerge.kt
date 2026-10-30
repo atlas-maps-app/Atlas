@@ -4,6 +4,12 @@ import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.PointIndex
 import app.atlas.model.Place
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
 
 /**
  * Merges chargers from several sources into one list without doubles: two records are the same charger when they lie
@@ -17,6 +23,27 @@ import app.atlas.model.Place
 object ChargerMerge {
     /** Sources in order of trust: the first one present leads a merged charger. */
     val PRIORITY = listOf("osm", "ndw", "bnetza", "afdc", "ocm", "chargemap")
+
+    /**
+     * What each of [sources] answers [ask] within [deadline], all asked at once; none from a source that failed (a parse
+     * error as much as an unreachable server) or took longer, so one source never holds the others' answers back (the
+     * OSM chargers wait their turn behind every other Overpass query of the app, and on 30 October 2026 two of its
+     * servers were at capacity while the Dutch register's answer was on the phone) nor fails them. Cancelling the
+     * caller cancels them all.
+     */
+    suspend fun <P> gather(sources: List<P>, deadline: Duration, ask: suspend (P) -> List<Place>): List<List<Place>> = coroutineScope {
+        sources.map { p ->
+            async {
+                try {
+                    withTimeoutOrNull(deadline) { ask(p) } ?: emptyList()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+        }.awaitAll()
+    }
 
     fun merge(sources: List<List<Place>>, radiusM: Double = 30.0, priority: List<String> = PRIORITY): List<Place> {
         val all = sources.flatten()

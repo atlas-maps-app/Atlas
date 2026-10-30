@@ -31,7 +31,10 @@ class GeocoderTest {
             assertEquals("Utrecht", got[1]["addr:city"])
             val req = m.take()
             assertEquals("/api/", req.url.encodedPath)
-            assertEquals("52.374500", req.url.queryParameter("lat"))
+            // the spot to rank around goes to about 100 m, not the centimetre
+            val lat = req.url.queryParameter("lat")!!
+            assertEquals(3, lat.substringAfter('.').length)
+            assertEquals(westerkerk.lat, lat.toDouble(), 0.0006)
             // Photon's public instance answers 400 to Dutch, so no language is sent.
             assertNull(req.url.queryParameter("lang"))
         }

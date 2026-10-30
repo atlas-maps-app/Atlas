@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Voice: on</string>
     <string name="mine_voice_off">Voice: off, turns are felt</string>
     <string name="mine_voice_sub_ready">on the phone, no signal needed</string>
-    <string name="mine_voice_sub_none">no speech engine on this phone</string>
+    <string name="mine_voice_sub_none">no voice for this language on the phone itself</string>
     <string name="mine_voice_sample">Play sample</string>
     <string name="mine_voice_sample_text">In two hundred metres, turn right onto the canal.</string>
     <string name="mine_voice_haptics">Vibrations</string>
@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">the Wikidata id of a place, or a street\'s name</string>
     <string name="mine_sent_notes">a note and its spot, only when you leave one</string>
     <string name="mine_sent_transit">your stop and the time, when you open a timetable</string>
-    <string name="mine_sent_fuel">the area you look at, with your key</string>
+    <string name="mine_sent_fuel">where you look for fuel stations, to about 100 m, with your key</string>
+    <string name="mine_sent_chargers">where you look for charging sites, or the route you plan</string>
     <string name="mine_sent_reverse">the spot you ask about, when Photon cannot answer</string>
     <string name="mine_sent_edits">the place you fill in; your edits and user name, only when you send them</string>
     <string name="mine_sent_windows">which parts of the map you look at: a pack\'s bytes</string>
@@ -284,6 +285,7 @@
     <string name="mine_weather_means">What it means for you</string>
     <string name="mine_weather_none">No forecast</string>
     <string name="mine_weather_none_text">No connection, and none kept on the phone for here. Open the weather once with a connection and it stays.</string>
+    <string name="mine_weather_unanswered_text">The weather services did not answer, and nothing is kept on the phone for here. Try again in a while.</string>
     <string name="mine_weather_footer">Weather data by Open-Meteo.com (CC BY 4.0) · offline: the forecast kept on the phone and its barometer</string>
     <string name="mine_weather_raining">raining</string>
     <string name="mine_weather_rain_at">rain at %1$s</string>
