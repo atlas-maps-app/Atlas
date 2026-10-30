@@ -300,7 +300,9 @@ if(ATLAS_TESTS)
     # one entry, beside the runner's others, runs as parts (_test_parts, <area>/<name>=<n>,<n>...): part k, the entry
     # <area>/<name>:<k>, takes the next n of the cases the file defines in their order (doctest's --first and --last
     # over them), and the last part every case after those, so a case added later runs too.
-    set(_test_parts "")
+    # building/buildings_vk_test took 17 of a shard's 18 minutes of tests on 30 October, and map_frame_vk_test 11: their
+    # cases one a part (each opens its own session, so a process apiece costs little).
+    set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1" "frame/map_frame_vk_test=1,1,1,1,1")
     set(_test_patterns "")
     set(_test_entries "")
     foreach(source IN LISTS _test_sources _test_vulkan_sources)
