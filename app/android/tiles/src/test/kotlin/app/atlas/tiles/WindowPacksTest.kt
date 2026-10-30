@@ -6,6 +6,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -42,12 +43,15 @@ class WindowPacksTest {
     /** A region's windows as `packer windows` writes them: each window's answer gzipped, back to back, and the index. */
     private class Region(val windows: ByteArray, val index: ByteArray, val data: Map<Pair<Int, Int>, ByteArray>)
 
-    private fun region(at: Instant, of: List<Pair<Int, Int>> = cells, query: Int = WindowsIndex.QUERY): Region {
+    /** [pad] random hex digits in each window's data make it as big as a dense window's (about half as many bytes gzipped). */
+    private fun region(at: Instant, of: List<Pair<Int, Int>> = cells, query: Int = WindowsIndex.QUERY, pad: Int = 0): Region {
         val out = ByteArrayOutputStream()
         val entries = ArrayList<WindowsIndex.Entry>()
         val data = HashMap<Pair<Int, Int>, ByteArray>()
+        val random = java.util.Random(7)
         for ((x, y) in of.sortedWith(compareBy({ it.first }, { it.second }))) {
-            val gz = gzip("""{"version":0.6,"osm3s":{"timestamp_osm_base":"$at"},"elements":[{"type":"node","id":$x$y,"lat":52.37,"lon":4.88,"tags":{"x":"$at"}}]}""")
+            val filler = CharArray(pad) { "0123456789abcdef"[random.nextInt(16)] }.concatToString()
+            val gz = gzip("""{"version":0.6,"osm3s":{"timestamp_osm_base":"$at"},"elements":[{"type":"node","id":$x$y,"lat":52.37,"lon":4.88,"tags":{"x":"$at","pad":"$filler"}}]}""")
             entries += WindowsIndex.Entry(x, y, out.size().toLong(), gz.size, sha(gz))
             data[x to y] = gz
             out.write(gz)
@@ -152,6 +156,25 @@ class WindowPacksTest {
         val got = WindowPacks({ list }, dir).window(14, westerkerk.first, westerkerk.second, null)!!
         assertArrayEquals(r.data[westerkerk], got.gz)
         assertEquals(listOf(null, "bytes=$first-${first + 9}", "bytes=0-${got.gz.size - 11}"), ranges())
+    }
+
+    @Test
+    fun aDenseWindowOnASlowLineStillComesAndAServerThatFailsLeavesItToOverpass() {
+        val r = region(date, pad = 600_000)
+        val list = listOf(publish("netherlands", r, date))
+        // the app's shared client limits a whole call to 60 s: here to a second, with a window that takes two to come
+        val shared = okhttp3.OkHttpClient.Builder().callTimeout(1, java.util.concurrent.TimeUnit.SECONDS).build()
+        val packs = WindowPacks({ list }, dir, shared)
+        assertEquals("netherlands", packs.window(14, 8413, 5384, null)!!.pack)
+        gh.bytesPerSecond = 150_000
+        val t0 = System.nanoTime()
+        val got = packs.window(14, westerkerk.first, westerkerk.second, null)!!
+        assertTrue("took ${(System.nanoTime() - t0) / 1e9} s", System.nanoTime() - t0 > 1_200_000_000L)
+        assertArrayEquals(r.data[westerkerk], got.gz)
+        // GitHub answers 503: the window's data does not come, and Windows asks Overpass for it (its packed() takes the throw)
+        gh.bytesPerSecond = 0
+        gh.down = true
+        assertThrows(IOException::class.java) { packs.window(14, 8414, 5385, null) }
     }
 
     @Test
