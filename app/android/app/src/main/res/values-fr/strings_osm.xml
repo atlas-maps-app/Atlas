@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The OpenStreetMap account: signing in and out, the user's edits and what came of them (OsmAccountScreen, the
+     place sheet's card, the map's chips, Settings and Privacy). -->
+<resources>
+    <string name="osm_account_title">Compte OpenStreetMap</string>
+    <string name="osm_account_not_signed_in">Non connecté</string>
+    <string name="osm_account_signed_in_sub">Connecté sur openstreetmap.org</string>
+    <string name="osm_account_signed_out_sub">Connectez-vous pour envoyer vos modifications</string>
+    <string name="osm_account_sign_in">Se connecter avec OpenStreetMap</string>
+    <string name="osm_account_sign_out">Se déconnecter</string>
+    <string name="osm_account_public">Les modifications que vous envoyez sont publiques sur OpenStreetMap sous votre nom d’utilisateur, visibles et réutilisables par tous. Atlas garde votre connexion scellée sur ce téléphone et ne l’envoie qu’à openstreetmap.org.</string>
+    <string name="osm_account_waiting">Terminez la connexion dans votre navigateur : Atlas revient tout seul.</string>
+    <string name="osm_account_declined">Vous n’avez pas autorisé Atlas à modifier avec votre compte.</string>
+    <string name="osm_account_failed">La connexion n’a pas abouti : %1$s</string>
+    <string name="osm_account_failed_unknown">La connexion n’a pas abouti. Réessayez.</string>
+    <string name="osm_account_unavailable">Cette version ne peut pas se connecter : elle ne contient aucun identifiant client OpenStreetMap.</string>
+    <string name="osm_account_no_browser">Aucun navigateur de ce téléphone n’ouvre la page de connexion.</string>
+    <string name="osm_edits_label">VOS MODIFICATIONS</string>
+    <string name="osm_edits_none">Aucune modification pour l’instant. Complétez les lacunes d’un bâtiment depuis Qu’y a-t-il ici : vos modifications attendent ici jusqu’à leur envoi.</string>
+    <string name="osm_edits_send_now">Envoyer maintenant</string>
+    <string name="osm_edit_cancel">Annuler</string>
+    <string name="osm_edit_remove">Retirer</string>
+    <string name="osm_edit_retry">Réessayer</string>
+    <string name="osm_edit_look_again">Revoir</string>
+    <string name="osm_edit_mapped">Sur OpenStreetMap · groupe de modifications %1$d</string>
+    <string name="osm_edit_on_osm">Sur OpenStreetMap</string>
+    <string name="osm_edit_signed_out">En attente · connectez-vous pour l’envoyer</string>
+    <string name="osm_edit_offline">En attente · envoyée dès que vous êtes en ligne</string>
+    <string name="osm_edit_unreachable">En attente · OpenStreetMap injoignable, nouvel essai prévu</string>
+    <string name="osm_edit_busy">En attente · OpenStreetMap est occupé, nouvel essai prévu</string>
+    <string name="osm_edit_sending">En attente · en route vers OpenStreetMap</string>
+    <string name="osm_edit_conflict">Non envoyée · le bâtiment a changé sur OpenStreetMap depuis votre passage</string>
+    <string name="osm_edit_refused">Non envoyée · OpenStreetMap l’a refusée : %1$s</string>
+    <string name="osm_settings_signed_out">non connecté</string>
+    <plurals name="osm_settings_waiting">
+        <item quantity="one">%d modification en attente</item>
+        <item quantity="other">%d modifications en attente</item>
+    </plurals>
+    <string name="osm_dev_label">SERVEUR DE TEST</string>
+    <string name="osm_dev_text">Essayez la connexion et l’envoi sur le serveur de test d’OpenStreetMap, master.apis.dev.openstreetmap.org, avec un compte propre à celui-ci. Rien n’atteint la vraie carte.</string>
+    <string name="osm_dev_round_trip">Essayer un aller-retour</string>
+    <string name="osm_dev_running">Création d’un nœud puis modification…</string>
+    <string name="osm_dev_done">Terminé : nœud %1$d créé, puis modifié dans le groupe de modifications %2$d</string>
+    <string name="osm_dev_failed">L’aller-retour a échoué : %1$s</string>
+    <string name="osm_place_edit">Votre modification à OpenStreetMap</string>
+    <string name="osm_chip_waiting">en attente</string>
+    <string name="osm_chip_not_sent">non envoyée</string>
+    <string name="osm_fillin_sign_in">Se connecter à OpenStreetMap</string>
+    <string name="osm_fillin_sign_in_short">Se connecter</string>
+    <string name="osm_privacy_signed_in">connecté en tant que %1$s · scellé sur ce téléphone</string>
+    <string name="osm_privacy_signed_out">non connecté · vos modifications attendent sur ce téléphone</string>
+</resources>

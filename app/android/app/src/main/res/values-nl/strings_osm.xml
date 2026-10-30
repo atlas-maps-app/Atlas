@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The OpenStreetMap account: signing in and out, the user's edits and what came of them (OsmAccountScreen, the
+     place sheet's card, the map's chips, Settings and Privacy). -->
+<resources>
+    <string name="osm_account_title">OpenStreetMap-account</string>
+    <string name="osm_account_not_signed_in">Niet ingelogd</string>
+    <string name="osm_account_signed_in_sub">Ingelogd op openstreetmap.org</string>
+    <string name="osm_account_signed_out_sub">Log in om je wijzigingen te versturen</string>
+    <string name="osm_account_sign_in">Inloggen met OpenStreetMap</string>
+    <string name="osm_account_sign_out">Uitloggen</string>
+    <string name="osm_account_public">Wijzigingen die je verstuurt zijn openbaar op OpenStreetMap onder je gebruikersnaam, voor iedereen om te zien en te hergebruiken. Atlas bewaart je login verzegeld op deze telefoon en stuurt die alleen naar openstreetmap.org.</string>
+    <string name="osm_account_waiting">Rond het inloggen af in je browser: Atlas komt vanzelf terug.</string>
+    <string name="osm_account_declined">Je hebt Atlas geen toestemming gegeven om met je account te bewerken.</string>
+    <string name="osm_account_failed">Inloggen is niet gelukt: %1$s</string>
+    <string name="osm_account_failed_unknown">Inloggen is niet gelukt. Probeer het opnieuw.</string>
+    <string name="osm_account_unavailable">Deze versie kan niet inloggen: er zit geen OpenStreetMap-client-id in.</string>
+    <string name="osm_account_no_browser">Geen browser op deze telefoon opent de inlogpagina.</string>
+    <string name="osm_edits_label">JE WIJZIGINGEN</string>
+    <string name="osm_edits_none">Nog geen wijzigingen. Vul de gaten van een gebouw in via Wat is hier: je wijzigingen wachten hier tot ze verstuurd zijn.</string>
+    <string name="osm_edits_send_now">Nu versturen</string>
+    <string name="osm_edit_cancel">Annuleren</string>
+    <string name="osm_edit_remove">Verwijderen</string>
+    <string name="osm_edit_retry">Opnieuw proberen</string>
+    <string name="osm_edit_look_again">Opnieuw bekijken</string>
+    <string name="osm_edit_mapped">Op OpenStreetMap · wijzigingenset %1$d</string>
+    <string name="osm_edit_on_osm">Op OpenStreetMap</string>
+    <string name="osm_edit_signed_out">Wacht · log in om het te versturen</string>
+    <string name="osm_edit_offline">Wacht · verstuurd zodra je online bent</string>
+    <string name="osm_edit_unreachable">Wacht · OpenStreetMap was niet bereikbaar, probeert het opnieuw</string>
+    <string name="osm_edit_busy">Wacht · OpenStreetMap is druk, probeert het opnieuw</string>
+    <string name="osm_edit_sending">Wacht · onderweg naar OpenStreetMap</string>
+    <string name="osm_edit_conflict">Niet verstuurd · het gebouw is op OpenStreetMap veranderd sinds je keek</string>
+    <string name="osm_edit_refused">Niet verstuurd · OpenStreetMap weigerde het: %1$s</string>
+    <string name="osm_settings_signed_out">niet ingelogd</string>
+    <plurals name="osm_settings_waiting">
+        <item quantity="one">%d wijziging wacht</item>
+        <item quantity="other">%d wijzigingen wachten</item>
+    </plurals>
+    <string name="osm_dev_label">TESTSERVER</string>
+    <string name="osm_dev_text">Probeer inloggen en versturen op de testserver van OpenStreetMap, master.apis.dev.openstreetmap.org, met een eigen account daar. Niets bereikt de echte kaart.</string>
+    <string name="osm_dev_round_trip">Probeer een rondje</string>
+    <string name="osm_dev_running">Maakt daar een node en bewerkt die…</string>
+    <string name="osm_dev_done">Klaar: node %1$d gemaakt, daarna bewerkt in wijzigingenset %2$d</string>
+    <string name="osm_dev_failed">Het rondje is mislukt: %1$s</string>
+    <string name="osm_place_edit">Jouw wijziging aan OpenStreetMap</string>
+    <string name="osm_chip_waiting">wacht</string>
+    <string name="osm_chip_not_sent">niet verstuurd</string>
+    <string name="osm_fillin_sign_in">Inloggen bij OpenStreetMap</string>
+    <string name="osm_fillin_sign_in_short">Inloggen</string>
+    <string name="osm_privacy_signed_in">ingelogd als %1$s · verzegeld op deze telefoon</string>
+    <string name="osm_privacy_signed_out">niet ingelogd · je wijzigingen wachten op deze telefoon</string>
+</resources>
