@@ -11,7 +11,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <span>
 #include <string_view>
@@ -297,6 +299,55 @@ void closest_roofs(Scene& s) {
                 b.guessed.add(Guess::roof_height);
             }
         }
+    }
+}
+
+/// The zoo or theme park whose woods a window plants, of its outer rings; none where they hold less than
+/// zoo_least_area.
+std::optional<Zoo> zoo_of(std::vector<std::vector<V2>> rings) {
+    double area = 0.0;
+    double x0 = std::numeric_limits<double>::infinity();
+    double z0 = x0;
+    double x1 = -x0;
+    double z1 = -x0;
+    for (const std::vector<V2>& r : rings) {
+        area += std::fabs(signed_area(r));
+        for (const V2& p : r) {
+            x0 = std::min(x0, p.x);
+            x1 = std::max(x1, p.x);
+            z0 = std::min(z0, p.z);
+            z1 = std::max(z1, p.z);
+        }
+    }
+    if (area < zoo_least_area) return std::nullopt;
+    const double reach = (pymath::hypot(x1 - x0, z1 - z0) / 2) + zoo_woods_reach;
+    return Zoo{.rings = std::move(rings), .middle = V2((x0 + x1) / 2, (z0 + z1) / 2), .reach = reach};
+}
+
+/// Whether (x, z) lies in a zoo's outline or within zoo_woods_reach of it.
+bool by_zoo(const Zoo& zoo, double x, double z) {
+    for (const std::vector<V2>& r : zoo.rings) {
+        if (pip(x, z, r)) return true;
+        for (std::size_t i = 0; i + 1 < r.size(); ++i) {
+            const V2& a = r[i];
+            const double dx = r[i + 1].x - a.x;
+            const double dz = r[i + 1].z - a.z;
+            const double l = (dx * dx) + (dz * dz);
+            const double t = l == 0.0 ? 0.0 : std::clamp((((x - a.x) * dx) + ((z - a.z) * dz)) / l, 0.0, 1.0);
+            if (pymath::hypot(x - a.x - (t * dx), z - a.z - (t * dz)) <= zoo_woods_reach) return true;
+        }
+    }
+    return false;
+}
+
+/// The zoos and theme parks of the data, no city farm, whose woods a window plants (RegionConfig::zoo_woods); an
+/// outline may be land or an area too.
+void zoo_features(const osm::Document& doc, Scene& s, Frame& frame) {
+    for (const osm::Element& e : doc.elements()) {
+        if (!e.has_tags || e.tags.count == 0 || e.kind == osm::Kind::node) continue;
+        const Tags t(doc.tags(e));
+        if ((!t.is("tourism", "zoo") && !t.is("tourism", "theme_park")) || t.is("zoo", "petting_zoo")) continue;
+        if (std::optional<Zoo> z = zoo_of(frame.rings_of(doc, e))) s.zoos.push_back(std::move(*z));
     }
 }
 
@@ -757,6 +808,7 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     }
     std::vector<std::span<const LL>> coast;
     region_features(doc, s, frame, region.name, coast);
+    if (region.zoo_woods && !region.woods) zoo_features(doc, s, frame);
     region_water(doc, s, frame, region, coast);
     std::ranges::stable_sort(s.land, [](const Land& a, const Land& b) {
         const int oa = land_of(a.kind)->order;
@@ -778,8 +830,19 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
         s.coasters = std::move(*coasters);
     }
     // a park's or a zoo's woods: generic trees inside the mapped outlines, off everything mapped in them, planted once
-    // for the region
-    if (region.woods) s.woods = plant_woods(s, region.woods->cx, region.woods->cz, region.woods->reach);
+    // for the region; a window's in and about each zoo and theme park in its data, a tree an earlier one planted
+    // about it left to it
+    if (region.woods) {
+        s.woods = plant_woods(s, region.woods->cx, region.woods->cz, region.woods->reach);
+    } else if (region.zoo_woods) {
+        for (std::size_t i = 0; i < s.zoos.size(); ++i) {
+            const Zoo& z = s.zoos[i];
+            for (const WoodTree& t : plant_woods(s, z.middle.x, z.middle.z, z.reach)) {
+                const auto planted = [&t](const Zoo& e) { return by_zoo(e, t.x, t.z); };
+                if (planted(z) && std::ranges::none_of(s.zoos | std::views::take(i), planted)) s.woods.push_back(t);
+            }
+        }
+    }
     return loaded;
 }
 

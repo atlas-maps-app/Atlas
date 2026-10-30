@@ -349,6 +349,15 @@ struct WoodTree {
     std::int64_t id = 0;
 };
 
+/// A zoo or a theme park of the data whose woods a window plants (RegionConfig::zoo_woods, load/Woods.hpp's
+/// zoo_least_area and zoo_woods_reach): its outer rings, and the circle about their box's middle that holds them and
+/// zoo_woods_reach beyond them, which its planting covers.
+struct Zoo {
+    std::vector<std::vector<V2>> rings;
+    V2 middle;
+    double reach = 0.0;
+};
+
 /// A national park's (or the dunes' protected area's) ring (`S['park']`).
 struct ParkEdge {
     std::vector<V2> ring;
@@ -385,8 +394,10 @@ struct Scene {
     std::vector<Item> mtowers;
     std::vector<Tower> towers; ///< in the order their ids came
     std::vector<ParkEdge> park;
-    std::vector<CoasterTrack> coasters;       ///< a theme park's coaster tracks
-    std::vector<WoodTree> woods;              ///< the trees a park or a zoo plants in its woods
+    std::vector<CoasterTrack> coasters; ///< a theme park's coaster tracks
+    std::vector<WoodTree> woods;        ///< the trees a park or a zoo plants in its woods
+    /// The zoos and theme parks of the data whose woods a window plants (tourism=zoo, theme_park), in its order.
+    std::vector<Zoo> zoos;
     std::vector<std::vector<V2>> water_holes; ///< islands: the inner rings of the water's relations
     std::vector<bool> natural_shore;          ///< per ring of `water`: a natural shore (no quay wall)
     /// Per ring of `water`: the sea regions.py closes from a coastline (sea_from_coast), whose shore stays natural even

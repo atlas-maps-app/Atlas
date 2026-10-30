@@ -59,6 +59,12 @@ struct RegionConfig {
     const RideProfiles* park = nullptr;
     /// Where a theme park or a zoo (region.json's `park` or `zoo`) plants its woods about; none for another region.
     std::optional<WoodsAnchor> woods;
+    /// Whether the woods in and about each zoo and theme park in the data (tourism=zoo, theme_park, of zoo_least_area
+    /// or more and no petting zoo) are planted, as the renders plant a zoo's or a park's region (`woods`): every tree
+    /// of woods.py's planting that stands in its outline or within zoo_woods_reach of it (load/Woods.hpp). The phone's
+    /// windows, which no region.json marks (load::place_of); the forest and wood elsewhere stay outlines, as in every
+    /// renders' region but a park's and a zoo's. Ignored where `woods` is given.
+    bool zoo_woods = false;
 };
 
 /// regions.py's PALETTE for a region (Paris, Schiphol, the port), else Amsterdam's.

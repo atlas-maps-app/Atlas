@@ -300,6 +300,8 @@ tasks.test {
     providers.systemProperty("atlas.load.packs").orNull?.let { systemProperty("atlas.load.packs", it) }
     // a region's windows' data (`packer windows`: <id>.windows, its index beside it) load/WindowPackBuildTest builds from
     providers.systemProperty("atlas.windows").orNull?.let { systemProperty("atlas.windows", it) }
+    // and where load/ZooWoodsTest keeps the windows about Artis it builds with and without their woods
+    providers.systemProperty("atlas.zoowoods.out").orNull?.let { systemProperty("atlas.zoowoods.out", it) }
 
     // K4's likeness harness: the references are inputs (they live outside the build folder), the report goes to
     // atlas.likeness.report, and the harness's settings pass through.

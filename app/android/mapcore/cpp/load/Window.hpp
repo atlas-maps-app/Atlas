@@ -52,8 +52,10 @@ inline constexpr double window_margin = 200.0;
 /// and shopfront opens onto (the doors and their house numbers), which core-p5 left out; core-p7 the New looks' red
 /// tiles on about one canal house in four (the canal ring pack's tiles_red), which core-p6 drew all dark; core-p8 the
 /// quay walls the buildings line close up (RegionConfig::close_up), where core-p7 gave the water natural shores;
-/// core-p9 the doors and house numbers on the facades close up, which core-p8 left out.
-inline constexpr std::string_view stage_p_version = "core-p9";
+/// core-p9 the doors and house numbers on the facades close up, which core-p8 left out; core-p10 the woods planted
+/// about a zoo or a theme park (RegionConfig::zoo_woods), as the renders plant a zoo's and a park's region, which
+/// core-p9 left as outlines.
+inline constexpr std::string_view stage_p_version = "core-p10";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and the living map's
 /// light (no TONE: frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.
@@ -93,9 +95,13 @@ struct WindowPlace {
     std::string_view zone = "UTC";
     std::int32_t tz_h = 0;
     /// A theme park's rides (its coaster tracks load) and whether it plants its woods, as a region with a park or a zoo
-    /// does: a test's window of a park; the phone's windows have neither.
+    /// does: a test's window of a park; the phone's windows have neither, and plant the woods of the zoos and theme
+    /// parks in their data instead ([zoo_woods]).
     const RideProfiles* park = nullptr;
     std::optional<WoodsAnchor> woods;
+    /// Whether the woods about the zoos and theme parks in its data are planted (RegionConfig::zoo_woods): the phone's
+    /// windows anywhere (place_of).
+    bool zoo_woods = false;
 };
 
 /// The place of window `tile` anywhere: frame_of's frame, its country at its centre, that country's tradition and

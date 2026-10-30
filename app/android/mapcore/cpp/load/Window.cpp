@@ -105,6 +105,9 @@ tiles::Frame frame_of(const tiles::TileKey& tile) noexcept {
     return {.lat0 = lat0, .lon0 = lon0, .kx = kx_equator * pymath::cos(pymath::radians(lat0)), .kz = kz};
 }
 
+// a zoo's woods are planted within a window's margin of its outline, so every window they reach holds the zoo
+static_assert(zoo_woods_reach <= window_margin);
+
 WindowPlace place_of(const tiles::TileKey& tile) {
     const tl::GridPoint c = tl::centre_of(tl::tile_box(tile));
     const double lat = degrees(c.lat);
@@ -124,6 +127,10 @@ WindowPlace place_of(const tiles::TileKey& tile) {
     // regions are cut for a view from afar (the user, 29 October, of the canal ring the Westerkerk is drawn from since
     // alpha 20: "I cannot see any reflections on the water", "Make sure no quality is lost")
     p.close_up = true;
+    // the woods about a zoo or a theme park planted, as the renders plant a zoo's or a park's region: today's map drew
+    // Artis's woods with their trees where the windows drew them dark and bare (the user, 29 October: "Make sure no
+    // quality is lost")
+    p.zoo_woods = true;
     p.zone = timezone_of(p.country, lat, lon);
     p.tz_h = tz_hours(p.zone);
     return p;
@@ -160,7 +167,8 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                               .close_up = place.close_up,
                               .palette = region_palette(place.region),
                               .park = place.park,
-                              .woods = place.woods};
+                              .woods = place.woods,
+                              .zoo_woods = place.zoo_woods};
     BuiltWindow out;
     const auto t0 = clock::now();
     // One scene at a time (ENGINE.md step 3's budget for a window's memory): the attributes of the scene at tolerance
