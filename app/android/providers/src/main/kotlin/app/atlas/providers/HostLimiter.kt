@@ -16,7 +16,6 @@ data class HostPolicy(val minIntervalMs: Long = 0, val maxConcurrent: Int = 6) {
         val DEFAULTS: Map<String, HostPolicy> = mapOf(
             "nominatim.openstreetmap.org" to HostPolicy(minIntervalMs = 1_000, maxConcurrent = 1),
             "overpass-api.de" to HostPolicy(maxConcurrent = 1),
-            "overpass.kumi.systems" to HostPolicy(maxConcurrent = 1),
             "maps.mail.ru" to HostPolicy(maxConcurrent = 1),
             "overpass.private.coffee" to HostPolicy(maxConcurrent = 1),
             "api.mangrove.reviews" to HostPolicy(minIntervalMs = 250, maxConcurrent = 2),

@@ -346,4 +346,18 @@ class OverpassTest {
         assertTrue(text.startsWith("runtime error: open64: 0 Success /osm3s_osm_base Dispatcher_Client::request_read_and_idx::timeout"))
         assertNotNull(Overpass.ENDPOINTS.map { it.toHttpUrl().host }.single { it == "overpass-api.de" })
     }
+
+    @Test
+    fun eachServerIsAskedUnderOneNameAndEveryOneHasItsOwnLimit() {
+        val hosts = Overpass.ENDPOINTS.map { it.toHttpUrl().host }
+        assertEquals(hosts.distinct(), hosts)
+        // kumi.systems is private.coffee under its older name: one machine, asked once and held to one query at a time
+        for ((alias, server) in Overpass.ALIASES) {
+            assertTrue(alias !in hosts)
+            assertTrue(server in hosts)
+            assertTrue(alias !in HostPolicy.DEFAULTS)
+        }
+        for (h in hosts) assertEquals(1, HostPolicy.DEFAULTS.getValue(h).maxConcurrent)
+        assertEquals(hosts, Overpass.INFO.hosts)
+    }
 }

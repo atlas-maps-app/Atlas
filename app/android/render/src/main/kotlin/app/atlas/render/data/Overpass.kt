@@ -288,7 +288,11 @@ class OverpassClient(
     }
 
     companion object {
-        val HOSTS = listOf("https://overpass-api.de", "https://overpass.private.coffee", "https://overpass.kumi.systems", "https://overpass-api.de")
+        /**
+         * The hosts `fetch/regions.py` asks, in its order. overpass.kumi.systems, private.coffee's older name for the same
+         * machine, went on 30 October: it asked that one server twice.
+         */
+        val HOSTS = listOf("https://overpass-api.de", "https://overpass.private.coffee", "https://overpass-api.de")
         const val USER_AGENT = "Atlas/1 (offline maps on OpenStreetMap; +https://github.com/atlas-maps-app/Atlas)"
 
         private val DATE = Regex("""(?:"timestamp_osm_base"\s*:\s*"|osm_base=")(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")

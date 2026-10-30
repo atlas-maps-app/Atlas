@@ -85,6 +85,10 @@ class WikidataTest {
             assertEquals("Dietmar Rabich, CC BY-SA 4.0", photo.credit)
             assertFalse(photo.thumbUrl!!.contains("utm_"))
             assertEquals("File:Albert Heijn Logo.svg|File:Amsterdam (NL), Westerkerk -- 2015 -- 7186.jpg", m.take().url.queryParameter("titles"))
+            // every picture comes from a host the privacy list names (and switching Commons off holds back)
+            for (f in files.values) for (u in listOfNotNull(f.url, f.thumbUrl)) {
+                assertTrue(u, java.net.URI(u).host in Commons.INFO.hosts)
+            }
         }
     }
 }

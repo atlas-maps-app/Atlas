@@ -261,7 +261,8 @@ class Commons(private val http: Http, private val base: String = "https://common
         val INFO = ProviderInfo(
             id = "commons", name = "Wikimedia Commons", licence = "Per picture", attribution = "Pictures from Wikimedia Commons, each with its licence",
             url = "https://commons.wikimedia.org", note = "The pictures of places, logos and namesakes, each shown with its own licence.",
-            hosts = listOf("commons.wikimedia.org", "upload.wikimedia.org"),
+            // the thumbnails Commons names come from thumb.wikimedia.org (30 October 2026), the files from upload.
+            hosts = listOf("commons.wikimedia.org", "upload.wikimedia.org", "thumb.wikimedia.org"),
         )
 
         /** "Albert_Heijn Logo.svg" and "File:Albert Heijn Logo.svg" are the same file. */

@@ -197,13 +197,21 @@ class Overpass(
             "[\"lock\"=\"yes\"]", "[\"bridge:movable\"]",
         )
 
-        /** The public instances, in the order Atlas prefers them. */
+        /**
+         * The public instances, in the order Atlas prefers them: each a machine of its own. overpass.kumi.systems is
+         * private.coffee's older name for the same server (both resolve to 193.219.97.30 and 2a0d:f302:126:78ea::1, 30
+         * October 2026), so it is not asked as well: a query asked it twice where that one server was down (that day it
+         * took the connection and sent nothing in 40 s), the windows waiting out their 330 s each time, and two queries
+         * could run on it at once under its two names.
+         */
         val ENDPOINTS = listOf(
             "https://overpass-api.de/api/interpreter",
             "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter",
             "https://overpass.private.coffee/api/interpreter",
         )
+
+        /** Older names of a server [ENDPOINTS] asks: never asked beside it. */
+        internal val ALIASES = mapOf("overpass.kumi.systems" to "overpass.private.coffee")
 
         val INFO = ProviderInfo(
             id = "overpass",

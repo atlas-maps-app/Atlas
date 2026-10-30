@@ -131,6 +131,6 @@ class SourcesTruthTest {
         assertTrue(asked(setOf("osm-notes", "osm-edits")).containsAll(setOf("osm-notes", "osm-edits")))
         // the hosts the list names are the source's own, not its website
         val overpass = SourcesModel.rows(emptySet(), emptyMap()).first { it.info.id == "overpass" }
-        assertEquals("overpass-api.de, maps.mail.ru +2", overpass.host)
+        assertEquals("overpass-api.de, maps.mail.ru +1", overpass.host)
     }
 }
