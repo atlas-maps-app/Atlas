@@ -354,6 +354,11 @@ if(ATLAS_TESTS)
         endforeach()
         list(APPEND _test_patterns "*tests/${_test_file}")
     endforeach()
+    # An entry whose checks time the runner runs alone (RUN_SERIAL) with lavapipe's every thread, as when atlas_tests
+    # was one process: gpu/standin_vk_test holds the stand-in's steady S1 frame to half a second with the shipped flags
+    # (K1's host acceptance), which four entries at once made 0.95 s on 30 October. tools/ctest/shards.py starts such
+    # an entry first, before the others.
+    set_tests_properties(gpu/standin_vk_test PROPERTIES RUN_SERIAL TRUE ENVIRONMENT_MODIFICATION "LP_NUM_THREADS=unset:")
     list(JOIN _test_patterns "," _test_excluded)
     add_test(NAME atlas_tests_rest COMMAND atlas_tests "--source-file-exclude=${_test_excluded}" --duration=true)
     string(APPEND _test_entries "atlas_tests_rest\t--source-file-exclude=${_test_excluded}\n")

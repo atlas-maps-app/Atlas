@@ -7,8 +7,10 @@
       ctest --tests-from-file. The split is the longest-processing-time rule over the measured seconds and the shards'
       ctest slots (n times j, ctest -j <j>): the costliest entry first, each to the slot with the least so far (the
       lowest on a tie), as ctest -j runs a shard's entries the costliest first, so a shard that holds one long entry
-      takes less beside it. Every shard of the job, computing it from the same build and table, gets the same split.
-      An entry the table lacks counts as the column's median.
+      takes less beside it. An entry ctest runs alone (RUN_SERIAL: its checks time the runner) holds every slot of its
+      shard while it runs, so it is placed first, and the cost file starts it before the others, when no slot need
+      wait for it. Every shard of the job, computing it from the same build and table, gets the same split. An entry
+      the table lacks counts as the column's median.
       It checks that the shards take every entry once, prints each shard's share, and with --cost-data writes ctest's
       own cost file, so ctest -j starts the shard's longest entries first; with --every, every entry's name (the
       plan the costs command holds the shards' runs to).
@@ -76,22 +78,29 @@ def write_costs(path, jobs, costs):
 
 
 def read_tests(path):
-    """The entries' names from ctest --show-only=json-v1, in ctest's order."""
+    """The entries' names from ctest --show-only=json-v1, in ctest's order, and those ctest runs alone (RUN_SERIAL)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     names = [test["name"] for test in data.get("tests", [])]
+    alone = {test["name"] for test in data.get("tests", [])
+             if any(p.get("name") == "RUN_SERIAL" and p.get("value") for p in test.get("properties", []))}
     if len(set(names)) != len(names):
         sys.exit("shards.py: ctest lists an entry twice")
     if not names:
         sys.exit("shards.py: ctest lists no entry")
-    return names
+    return names, alone
 
 
-def split(names, seconds, shards, slots=1):
+def split(names, seconds, shards, slots=1, alone=frozenset()):
     """The longest-processing-time rule over shards * slots slots: [(load, wall, [names])] per shard, its wall the
-    longest of its slots."""
+    longest of its slots. An entry run alone first holds every slot of the shard it goes to."""
     loads = [0.0] * (shards * slots)
     parts = [[] for _ in range(shards)]
-    for name in sorted(names, key=lambda n: (-seconds[n], n)):
+    for name in sorted((n for n in names if n in alone), key=lambda n: (-seconds[n], n)):
+        k = min(range(shards), key=lambda j: (max(loads[j * slots:(j + 1) * slots]), j))
+        parts[k].append(name)
+        for i in range(k * slots, (k + 1) * slots):
+            loads[i] += seconds[name]
+    for name in sorted((n for n in names if n not in alone), key=lambda n: (-seconds[n], n)):
         i = min(range(len(loads)), key=lambda j: (loads[j], j))
         parts[i // slots].append(name)
         loads[i] += seconds[name]
@@ -100,7 +109,7 @@ def split(names, seconds, shards, slots=1):
 
 
 def plan(args):
-    names = read_tests(args.tests)
+    names, alone = read_tests(args.tests)
     _, costs = read_costs(args.costs)
     measured = costs.get(args.job, {})
     default = statistics.median(measured.values()) if measured else DEFAULT_SECONDS
@@ -108,7 +117,7 @@ def plan(args):
     unknown = [name for name in names if name not in measured]
     if not 1 <= args.shard <= args.shards:
         sys.exit(f"shards.py: shard {args.shard} of {args.shards}?")
-    parts = split(names, seconds, args.shards, args.slots)
+    parts = split(names, seconds, args.shards, args.slots, alone)
     taken = [name for _, _, part in parts for name in part]
     if sorted(taken) != sorted(names):
         sys.exit("shards.py: the shards do not take every entry exactly once")
@@ -121,6 +130,8 @@ def plan(args):
               f" the longest {longest:.0f} s{mark}")
     if unknown and len(unknown) <= 20:
         print("  not measured yet: " + ", ".join(unknown))
+    if alone:
+        print("  run alone, first: " + ", ".join(sorted(alone)))
     mine = parts[args.shard - 1][2]
     Path(args.out).write_text("".join(f"{name}\n" for name in mine), encoding="utf-8")
     if args.every:
@@ -128,10 +139,12 @@ def plan(args):
         Path(args.every).write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
     if args.cost_data:
         # ctest's own file (Testing/Temporary/CTestCostData.txt): "<name> <runs> <seconds>" lines, then "---" and
-        # the names that failed last time; ctest -j starts the costliest first.
+        # the names that failed last time; ctest -j starts the costliest first, and so the entries run alone first.
+        top = 2 * max(seconds.values()) + 1
         path = Path(args.cost_data)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"{name} 1 {seconds[name]:.2f}\n" for name in names) + "---\n", encoding="utf-8")
+        path.write_text("".join(f"{name} 1 {seconds[name] + (top if name in alone else 0):.2f}\n" for name in names)
+                        + "---\n", encoding="utf-8")
 
 
 def costs(args):
