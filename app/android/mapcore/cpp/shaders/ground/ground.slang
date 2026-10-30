@@ -1025,7 +1025,16 @@ float4 ground_clip(float2 css, float depth) {
     return clip_of(frame.camera, css, 1.0f, depth);
 }
 
-/// The face of the record at word `at` (a quay wall's, a reflection's), its box's corner `vertex` at its slot's depth.
+/// How many vertices a face's record draws (face_vs): a fan of up to three triangles.
+static const uint FACE_VERTICES = 9u;
+
+/// The face of the record at word `at` (a quay wall's, a reflection's) at its slot's depth: its polygon (Camera.poly's
+/// near clip of its corners, device px of the view) grown by its stroke's half width and a pixel, each side moved out
+/// along its normal and the corners mitred, as a fan of up to three triangles (`vertex` 0 to 8, one past the fan's
+/// last triangle folded); where a corner's mitre would reach past four times that growth or a side has no length, the
+/// polygon's box grown alike (two triangles, the third folded). The fragment keeps the samples inside the polygon or
+/// within the half width of it, each of which lies inside either shape, so the shape spares only pixels it would
+/// discard.
 QuayOut face_vs(uint at, uint vertex) {
     uint tile = words[at];
     uint slot = words[at + 1u];
@@ -1063,16 +1072,61 @@ QuayOut face_vs(uint at, uint vertex) {
     }
     float density = frame.camera.frame.z;
     float hw = (flags & QUAY_STROKE) != 0u ? 0.15f * density : 0.0f;
-    float2 lo = p[0];
-    float2 hi = p[0];
-    for (uint i = 1u; i < n; ++i) {
-        lo = min(lo, p[i]);
-        hi = max(hi, p[i]);
+    float grow = hw + 1.0f;
+    // its turn (the shoelace sum's sign) and each side's outward unit normal
+    float twice = 0.0f;
+    for (uint i = 0u; i < n; ++i) {
+        float2 a = p[i];
+        float2 b = p[(i + 1u) % n];
+        twice = twice + (a.x * b.y - b.x * a.y);
     }
-    lo = lo - (hw + 1.0f);
-    hi = hi + (hw + 1.0f);
-    float2 c = quad_corners[vertex];
-    float2 device = float2(c.x < 0.0f ? lo.x : hi.x, c.y < 0.0f ? lo.y : hi.y);
+    float turn = twice >= 0.0f ? 1.0f : -1.0f;
+    float2 normal[5] = {float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f),
+                        float2(0.0f, 0.0f)};
+    bool tight = true;
+    for (uint i = 0u; i < n; ++i) {
+        float2 e = p[(i + 1u) % n] - p[i];
+        float l = length(e);
+        if (!(l > 0.001f)) {
+            tight = false;
+        } else {
+            normal[i] = float2(e.y, -e.x) * (turn / l);
+        }
+    }
+    // each corner moved out along both its sides' normals: the sides' offset lines meet there
+    float2 grown[5] = {p[0], p[1], p[2], p[2], p[2]};
+    for (uint i = 0u; i < n; ++i) {
+        float2 n0 = normal[(i + n - 1u) % n];
+        float2 n1 = normal[i];
+        float k = 1.0f + dot(n0, n1);
+        if (!(k >= 0.125f)) tight = false;
+        grown[i] = p[i] + (n0 + n1) * (grow / max(k, 0.125f));
+    }
+    float2 device;
+    if (tight) {
+        uint fan = vertex / 3u;
+        uint corner = vertex % 3u;
+        if (fan + 2u >= n) {
+            o.position = FOLDED;
+            return o;
+        }
+        device = grown[corner == 0u ? 0u : fan + corner];
+    } else {
+        if (vertex >= 6u) {
+            o.position = FOLDED;
+            return o;
+        }
+        float2 lo = p[0];
+        float2 hi = p[0];
+        for (uint i = 1u; i < n; ++i) {
+            lo = min(lo, p[i]);
+            hi = max(hi, p[i]);
+        }
+        lo = lo - grow;
+        hi = hi + grow;
+        float2 c = quad_corners[vertex];
+        device = float2(c.x < 0.0f ? lo.x : hi.x, c.y < 0.0f ? lo.y : hi.y);
+    }
     o.position = ground_clip(device / density, painter_depth(frame.camera, slot));
     o.colour = unpack(colour);
     o.p01 = float4(p[0], p[1]);
@@ -1177,8 +1231,18 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
         f.colour.a = (flags & REFLECTION_SHEER) != 0u ? 0.0f : 1.0f;
         return f;
     }
-    // a circle or an ellipse: its box grown by a pixel, its centre and radii in device px (no points; a circle's second
-    // radius 0); a streak's colour alpha 2, its opacity and stops beside
+    // a circle or an ellipse: its box grown by a pixel (two triangles, the third folded), its centre and radii in
+    // device px (no points; a circle's second radius 0); a streak's colour alpha 2, its opacity and stops beside
+    if (vertex >= 6u) {
+        QuayOut folded;
+        folded.position = FOLDED;
+        folded.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        folded.p01 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        folded.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        folded.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        folded.extra = uint4(0u, 0u, 0u, 0u);
+        return folded;
+    }
     bool ellipse = (flags & REFLECTION_ELLIPSE) != 0u;
     float density = frame.camera.frame.z;
     float2 c = float2(asfloat(words[at + 4u]), asfloat(words[at + 5u])) * density;

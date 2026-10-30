@@ -202,9 +202,8 @@ class MapData(private val services: Services) {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
         }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: the clouds' shadows and the water's light off when unset until they are worked on (the user, 28 October:
-        // "turn off cloud shadows and water light by default without them it runs pretty well"); set before the settings
-        // are read, so no first frame draws them
+        // cost: every part drawn when unset (MapParts.byDefault); set before the settings are read, so the first frame
+        // draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }

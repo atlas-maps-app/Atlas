@@ -10,8 +10,9 @@ import org.junit.Test
 /** The map's parts a debug build's Look settings leave out (SettingsStore.kt's leftOutParts): their names, or unset the defaults. */
 class PartsSettingsTest {
     @Test
-    fun unsetTheCloudsShadowsAndTheWatersLightAreLeftOut() {
+    fun unsetEveryPartIsDrawn() {
         assertEquals(MapParts.byDefault, leftOutParts(preferencesOf()))
+        assertEquals(emptySet<MapPart>(), leftOutParts(preferencesOf()))
     }
 
     @Test

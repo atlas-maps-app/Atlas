@@ -148,7 +148,6 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     RipplePlan& plan = ripple_plan_;
     plan = {};
     if (!state.view) return;
-    const view::Camera& cam = state.view->camera();
     const double density = state.camera.density;
     double min_x = std::numeric_limits<double>::infinity();
     double min_y = min_x;
@@ -160,7 +159,6 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         max_x = std::max(max_x, x);
         max_y = std::max(max_y, y);
     };
-    std::vector<view::Vec3> cs;
     for (const Reflection& e : frame_.reflections) {
         if (e.kind == Reflection::Kind::streak) {
             const ReflectionStreak& k = frame_.reflection_streaks[e.first];
@@ -177,20 +175,10 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
             continue;
         }
         for (std::uint32_t k = 0; k < e.count; ++k) {
-            const ReflectionFace& face = frame_.reflection_faces[e.first + k];
-            cs.clear();
-            const view::Vec3 first = cam.cam(face.q[0]);
-            view::Vec3 a = first;
-            for (std::uint32_t i = 1; i < face.n; ++i) {
-                const view::Vec3 b = cam.cam(face.q[i]);
-                ProjectedPoly::clip_edge(a, b, cam.near(), cs);
-                a = b;
-            }
-            ProjectedPoly::clip_edge(a, first, cam.near(), cs);
-            for (const view::Vec3& c : cs) {
-                const view::Vec2 q = cam.pc(c);
-                take(q.x, q.y);
-            }
+            // its Camera.poly's points' box, as face() took them deciding it
+            const std::array<double, 4>& b = frame_.reflection_faces[e.first + k].box;
+            take(b[0], b[1]);
+            take(b[2], b[3]);
         }
     }
     const vk::Extent2D extent = pipelines_->ripple->extent;
@@ -547,8 +535,8 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     // the leaf filter's offsets and reach, for the trees' circles
     pc.colour = {w.leaf_offsets, 0U, 0U, 0U};
     cmd.pushConstants<Push>(*p.layout, frame::push_stages, 0, pc);
-    cmd.draw(6, w.reflection_count, 0, 0);
-    r.counters.draw("ripple layer", std::uint64_t{w.reflection_count} * 2, w.reflection_count);
+    cmd.draw(face_vertices, w.reflection_count, 0, 0);
+    r.counters.draw("ripple layer", std::uint64_t{w.reflection_count} * (face_vertices / 3), w.reflection_count);
     cmd.endRenderPass();
     sync.barrier(cmd, gpu::ImageDependency{.image = s.layer.handle(),
                                            .src_stage = S::eColorAttachmentOutput,

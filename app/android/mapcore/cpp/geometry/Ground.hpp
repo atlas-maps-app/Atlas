@@ -332,6 +332,41 @@ struct QuayEdge {
     bool drawn = false;
 };
 
+/// A building or part the water mirrors (the casters' mirror `mirror`), as the reflections read it whatever the camera
+/// (passes::prepare_reflections, as its tile is built): its footprint's centroid (the radius cut's) and box, its walls'
+/// base and top as Amsterdam.reflections takes them (a houseboat's from the water's level), the mirrored heights its
+/// depth, its walls' middles, faces and gable apexes take ((2 WY) - y), and its walls of 0.3 m or more, [first, first
+/// + count) of the tile's mirror walls.
+struct MirrorHead {
+    std::uint32_t mirror = 0;
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    P2 centre;
+    double x0 = 0; ///< the footprint's box
+    double x1 = 0;
+    double z0 = 0;
+    double z1 = 0;
+    double y0 = 0;
+    double top = 0;
+    double depth_y = 0; ///< (2 WY) - ((y0 + h) / 2): its mirrored middle, whose depth sorts it
+    double mid_y = 0;   ///< (2 WY) - ((y0 + top) / 2): its walls' mirrored middles
+    double base_y = 0;  ///< (2 WY) - y0
+    double top_y = 0;   ///< (2 WY) - top
+    double apex_y = 0;  ///< (2 WY) - h: a gable's apex
+};
+
+/// One wall of a mirror: its footprint's side from point `from` to the next, its unit normal (y 0), its reflection
+/// sample's place among its mirror's walls, whether a gable mirrors on it (a gabled roof's wall across its ridge) and
+/// whether it is long enough for window rows (over 2.2 m).
+struct MirrorWall {
+    std::uint32_t from = 0;
+    std::uint32_t sample = 0;
+    double nx = 0;
+    double nz = 0;
+    bool gable = false;
+    bool rows = false;
+};
+
 /// A runway the frame lays designators on: its pavement (its index in the tile's fills: the runway's line is the
 /// pavement's), its ref (draw_over's `t.get('ref') or ''`) and its marks' paint.
 struct RunwayRef {
@@ -528,6 +563,10 @@ struct GroundTile {
     /// pack's style.
     double water_y = -1.5;
     tiles::ReflectionsStyle reflection_style;
+    /// The reflections' mirrors whatever the camera (passes::prepare_reflections, as the tile is built): each mirrored
+    /// building's and part's head, in the casters' mirrors' order, and their walls.
+    std::vector<MirrorHead> mirror_heads;
+    std::vector<MirrorWall> mirror_walls;
     tiles::DrizzleStyle drizzle_style;
     /// The night's light: the tile's street lamps, its lit roads, their streaks' points on the water and their
     /// centrelines (the lit streets' glow).
