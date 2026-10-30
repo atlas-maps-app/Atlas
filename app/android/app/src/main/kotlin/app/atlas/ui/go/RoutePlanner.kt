@@ -80,8 +80,8 @@ data class RouteUi(
     val chosen: Int = 0,
     /** The selected mode's ways compared; empty until planned. */
     val ways: List<WayOption> = emptyList(),
-    /** Segment downloads in progress (0..1) by tile. */
-    val downloading: Map<String, Float> = emptyMap(),
+    /** Segment downloads in progress, or waiting for Wi-Fi, by tile. */
+    val downloading: Map<String, SegmentFetch> = emptyMap(),
     val downloadError: String? = null,
     /** True when the routes come from the demo fixtures (no data on the phone, demo mode). */
     val demo: Boolean = false,

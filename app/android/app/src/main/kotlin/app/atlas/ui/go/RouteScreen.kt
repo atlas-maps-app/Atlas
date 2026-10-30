@@ -658,7 +658,8 @@ private fun CompareWays(ui: RouteUi, vm: RouteViewModel) {
 private fun NeedsData(p: Plan.NeedsData, ui: RouteUi, vm: RouteViewModel) {
     val services = LocalServices.current
     val online by services.connectivity.online.collectAsStateWithLifecycle()
-    val progress = p.needs.mapNotNull { ui.downloading[it.tile] }.takeIf { it.isNotEmpty() }?.average()
+    val progress = p.needs.mapNotNull { ui.downloading[it.tile] }.takeIf { it.isNotEmpty() }
+        ?.let { f -> SegmentFetch(f.map { it.fraction }.average().toFloat(), waiting = f.any { it.waiting }) }
     Spacer(Modifier.height(6.dp))
     Column(
         Modifier.fillMaxWidth().cssBox(bg = 0xFFFFF1D6, r = CssCorners(20f, 20f, 20f, 20f)).padding(14.dp),
@@ -672,7 +673,7 @@ private fun NeedsData(p: Plan.NeedsData, ui: RouteUi, vm: RouteViewModel) {
         ui.downloadError?.let { BoardText(it, boardType(GEIST, 12f, lineHeight = 15.5f), 0xFFD93025, lines = 3) }
         val enabled = online && progress == null
         val text = when {
-            progress != null -> stringResource(R.string.go_downloading, (progress * 100).roundToInt())
+            progress != null -> segmentLine(progress)
             !online -> stringResource(R.string.go_download_offline)
             else -> stringResource(R.string.go_download_data)
         }

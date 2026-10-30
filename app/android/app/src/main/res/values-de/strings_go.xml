@@ -37,7 +37,11 @@
     <string name="go_no_route">Kein Weg gefunden</string>
     <string name="go_finding_route">Weg wird gesucht…</string>
     <string name="go_needs_data_title">Hier noch keine Routendaten</string>
+    <string name="go_needs_data_text">Die Routenplanung funktioniert offline, sobald dies auf dem Telefon ist: %1$s</string>
+    <string name="go_downloading">Wird heruntergeladen… %1$d %%</string>
+    <string name="go_waiting_wifi">Wartet auf WLAN</string>
     <string name="go_download_data">Herunterladen</string>
+    <string name="go_download_offline">Braucht Verbindung zum Herunterladen</string>
     <string name="go_offline_ready">Offline bereit</string>
     <string name="go_keep_moving">In Bewegung bleiben</string>
     <string name="go_fuel">Tanken</string>

@@ -45,6 +45,7 @@
     <string name="go_needs_data_title">Hier nog geen routegegevens</string>
     <string name="go_needs_data_text">Routeren werkt offline zodra dit op de telefoon staat: %1$s</string>
     <string name="go_downloading">Downloaden… %1$d %%</string>
+    <string name="go_waiting_wifi">Wacht op wifi</string>
     <string name="go_download_data">Downloaden</string>
     <string name="go_download_offline">Maak verbinding om te downloaden</string>
     <string name="go_no_route">Geen weg gevonden</string>

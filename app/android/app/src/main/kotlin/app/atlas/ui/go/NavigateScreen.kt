@@ -136,16 +136,16 @@ fun NavigateScreen(args: Dest.Navigate, nav: Navigator) {
                 Spacer(Modifier.height(40.dp))
                 when (val f = failure) {
                     is Plan.NeedsData -> {
-                        var downloading by remember { mutableStateOf<Float?>(null) }
+                        var downloading by remember { mutableStateOf<SegmentFetch?>(null) }
                         StateMessage(
                             "ui-download", stringResource(R.string.go_needs_data_title),
                             text = stringResource(R.string.go_needs_data_text, f.needs.joinToString { it.label }), tint = NavColours.amber,
                         )
                         PrimaryButton(
-                            downloading?.let { stringResource(R.string.go_downloading, (it * 100).toInt()) } ?: stringResource(R.string.go_download_data),
+                            downloading?.let { segmentLine(it) } ?: stringResource(R.string.go_download_data),
                             onClick = {
                                 if (downloading == null) scope.launch {
-                                    downloading = 0f
+                                    downloading = SegmentFetch(0f)
                                     runCatching {
                                         for (n in f.needs) SegmentOffer.download(services.regions, services.segments, n.tile).collect { downloading = it }
                                     }

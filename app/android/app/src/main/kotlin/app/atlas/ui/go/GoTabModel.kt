@@ -78,7 +78,8 @@ data class GoTabUi(
     val recent: List<SavedPlace> = emptyList(),
     /** Null while they are being counted. */
     val moving: List<MovingCount>? = null,
-    val downloading: Float? = null,
+    /** The segment's download while it runs, or waits for Wi-Fi. */
+    val downloading: SegmentFetch? = null,
 )
 
 /**
@@ -186,7 +187,7 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
         val need = (state.value.readiness as? Readiness.Missing)?.need ?: return
         if (state.value.downloading != null) return
         viewModelScope.launch {
-            state.update { it.copy(downloading = 0f) }
+            state.update { it.copy(downloading = SegmentFetch(0f)) }
             try {
                 SegmentOffer.download(services.regions, services.segments, need.tile).collect { f -> state.update { it.copy(downloading = f) } }
                 state.update { it.copy(readiness = Readiness.Ready, downloading = null) }

@@ -9,10 +9,14 @@ import app.atlas.model.Fix
 import app.atlas.model.Mode
 import app.atlas.model.RoutePrefs
 import app.atlas.services.NoVoice
+import app.atlas.services.RegionLayer
 import app.atlas.testing.testServices
+import app.atlas.ui.mine.offline.RegionScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -26,6 +30,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** The go package's state holders on a test phone: what the Go tab keeps, the planner on the real segment, Ears only. */
 @RunWith(RobolectricTestRunner::class)
@@ -104,6 +109,31 @@ class GoModelsTest {
         val needs = (plan as Plan.NeedsData).needs
         assertEquals("E0_N50", needs.single().tile)
         assertEquals("E0_N50 · 79 MB", needs.single().label)
+        s.close()
+    }
+
+    /**
+     * A segment held for Wi-Fi says so (the user, 30 October: "What exactly is happening across the app when youre
+     * online vs offline?"): queued by the offline regions with the Wi-Fi-only setting, on mobile data, its download
+     * said 0 % with no reason for as long as it waited.
+     */
+    @Test
+    fun aSegmentHeldForWifiSaysSoUntilItsDownloadStarts() = runBlocking {
+        val s = testServices()
+        val queued = CopyOnWriteArrayList<Pair<String, Boolean>>()
+        s.mine.useScheduler(object : RegionScheduler {
+            override fun schedule(id: String, wifiOnly: Boolean, update: Boolean) { queued += id to wifiOnly }
+            override fun cancel(id: String) = Unit
+        })
+        val latest = MutableStateFlow<SegmentFetch?>(null)
+        val job = launch(Dispatchers.Default) { SegmentOffer.download(s.regions, s.segments, "E0_N50").collect { latest.value = it } }
+        // queued for Wi-Fi, as the setting is by default: nothing fetched, and it waits
+        assertEquals(SegmentFetch(0f, waiting = true), withTimeout(10_000) { latest.first { it?.waiting == true } })
+        assertTrue(queued.single().second)
+        // its worker starts and reports: the share done, waiting no more
+        s.mine.offline.engine.report(queued.single().first, RegionLayer.ROUTING, 0.4f)
+        assertEquals(SegmentFetch(0.4f), withTimeout(10_000) { latest.first { it?.waiting == false && it.fraction > 0f } })
+        job.cancel()
         s.close()
     }
 

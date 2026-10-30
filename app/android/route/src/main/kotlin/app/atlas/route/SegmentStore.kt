@@ -25,6 +25,7 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 
@@ -58,6 +59,8 @@ class SegmentStore(
     val profilesUrl: String = PROFILES_URL,
     /** Download speed cap in bytes per second; the default stays under 16 Mbit/s. */
     val maxBytesPerSecond: Long = 1_900_000,
+    /** Now, in Unix ms: when a size asked of the server ([remoteSize]) was answered. */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     // a segment file takes minutes (E0_N50 is 80 MB, 42 s at the cap and longer on most lines): no limit on the whole
     // call, which the app's shared client sets at 60 s, only on each wait for bytes; and not through its HTTP cache (64
@@ -78,16 +81,32 @@ class SegmentStore(
 
     fun delete(tile: String): Boolean = file(tile).delete()
 
-    /** The size of [tile] on the server, by a HEAD request; null when it has none (no data there). */
-    suspend fun remoteSize(tile: String): Long? = withContext(Dispatchers.IO) {
-        val req = request(baseUrl + normalise(tile)).head().build()
-        client.newCall(req).execute().use { r ->
-            when {
-                r.code == 404 -> null
-                !r.isSuccessful -> throw IOException("HEAD ${req.url} returned ${r.code}")
-                else -> r.header("Content-Length")?.toLongOrNull()
+    /** A size the server answered ([remoteSize]): the bytes, or null where it has no tile, and when (Unix ms). */
+    private class Asked(val bytes: Long?, val at: Long)
+
+    private val asked = ConcurrentHashMap<String, Asked>()
+
+    /**
+     * The size of [tile] on the server, by a HEAD request; null when it has none (no data there). Each answer stands for
+     * a day ([SIZE_KEPT_MS]): a plan asks it for every mode's route and every tile the route lacks, each HEAD half a
+     * second to three, and a file's size changes little from one day's build to the next. A failure is not remembered.
+     */
+    suspend fun remoteSize(tile: String): Long? {
+        val name = normalise(tile)
+        val now = clock()
+        asked[name]?.let { a -> if (now - a.at in 0 until SIZE_KEPT_MS) return a.bytes }
+        val bytes = withContext(Dispatchers.IO) {
+            val req = request(baseUrl + name).head().build()
+            client.newCall(req).execute().use { r ->
+                when {
+                    r.code == 404 -> null
+                    !r.isSuccessful -> throw IOException("HEAD ${req.url} returned ${r.code}")
+                    else -> r.header("Content-Length")?.toLongOrNull()
+                }
             }
         }
+        asked[name] = Asked(bytes, now)
+        return bytes
     }
 
     /** Every tile the server offers, from its directory index. */
@@ -114,7 +133,8 @@ class SegmentStore(
 
     /**
      * Brings [tile] up to date: with the daily diff for the local file's MD5 when the server has one (an empty diff means it is
-     * current), else with a full download. A missing tile is downloaded.
+     * current), else with a full download. A missing tile is downloaded. A full download stopped part way (the network
+     * lost, the app or its worker stopped) goes on from where it stopped the next time, as [download] does.
      */
     fun update(tile: String, verify: Boolean = true): Flow<SegmentProgress> = flow {
         val name = normalise(tile)
@@ -145,6 +165,8 @@ class SegmentStore(
                     return@flow
                 }
                 val out = File(dir, "$name.part")
+                // the diff's output is no download: a part it leaves, stopped, must never be continued as the file
+                etagOf(out).delete()
                 emit(SegmentProgress(name, SegmentProgress.Stage.APPLYING_DIFF, 0, 100))
                 val context = currentCoroutineContext()
                 try {
@@ -160,9 +182,10 @@ class SegmentStore(
                 emit(SegmentProgress(name, SegmentProgress.Stage.DONE, local.length(), local.length()))
             }
             head.first == 404 -> {
-                // the local file is too old for a diff (diffs are kept for about a week)
+                // the local file is too old for a diff (diffs are kept for about a week): the whole file again, going on
+                // from a part an earlier update left where the server's file is still the same (its ETag: fetchResumable),
+                // where until 30 October each try started again from nothing, 80 MB on a line that drops
                 val part = File(dir, "$name.part")
-                part.delete()
                 fetchResumable(baseUrl + name, part, name)
                 install(name, part, verify)
                 emit(SegmentProgress(name, SegmentProgress.Stage.DONE, local.length(), local.length()))
@@ -205,10 +228,13 @@ class SegmentStore(
 
     private fun request(url: String) = Request.Builder().url(url).header("User-Agent", USER_AGENT)
 
+    /** The server's ETag for the download into [target], kept beside it while the download is unfinished. */
+    private fun etagOf(target: File) = File(target.parentFile, target.name + ".etag")
+
     /** GETs [url] into [target], continuing a partial file with a Range request when the server's ETag still matches. */
     private suspend fun FlowCollector<SegmentProgress>.fetchResumable(url: String, target: File, tile: String) {
         if (!dir.isDirectory && !dir.mkdirs()) throw IOException("cannot create $dir")
-        val etagFile = File(target.parentFile, target.name + ".etag")
+        val etagFile = etagOf(target)
         var have = if (target.isFile) target.length() else 0L
         val etag = if (have > 0 && etagFile.isFile) etagFile.readText().trim() else null
         if (have > 0 && etag == null) {
@@ -299,6 +325,9 @@ class SegmentStore(
         const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
         const val SEGMENTS_URL = "https://brouter.de/brouter/segments4/"
         const val PROFILES_URL = "https://brouter.de/brouter/profiles2/"
+
+        /** How long a size the server answered stands ([remoteSize]): a day. */
+        const val SIZE_KEPT_MS = 24 * 3600 * 1000L
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
