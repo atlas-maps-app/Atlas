@@ -137,8 +137,8 @@ def plan(args):
 def costs(args):
     jobs, table = read_costs(args.costs)
     root = Path(args.junit)
-    summary = ["| job | shard | entries | measured seconds (the runs added up) | the longest entry |",
-               "|---|---|---|---|---|"]
+    summary = ["| job | shard | entries | the entries' seconds (the runs added up) | each run's wall | the longest entry |",
+               "|---|---|---|---|---|---|"]
     peaks = {}  # job -> entry -> the largest peak in KB over its runs
     problems = []
     for job_dir in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -156,9 +156,12 @@ def costs(args):
                     problems.append(f"{job}: shard {shard_dir.name}'s build lists other entries than another shard's")
             shard_seconds, longest = 0.0, ("", 0.0)
             count = 0
+            walls = []
             for junit in sorted(shard_dir.glob("*.xml")):
                 run = junit.stem
-                for case in ET.parse(junit).getroot().iter("testcase"):
+                root = ET.parse(junit).getroot()
+                walls.append(f"{run} {float(root.get('time') or 0):.0f} s")
+                for case in root.iter("testcase"):
                     name = case.get("name")
                     seconds = float(case.get("time") or 0.0)
                     for found in RESOURCES.finditer("".join(case.itertext())):
@@ -171,7 +174,8 @@ def costs(args):
                     count += 1
                     if seconds > longest[1]:
                         longest = (name, seconds)
-            summary.append(f"| {job} | {shard_dir.name} | {count} | {shard_seconds:.0f} | {longest[0]} {longest[1]:.0f} s |")
+            summary.append(f"| {job} | {shard_dir.name} | {count} | {shard_seconds:.0f} | {', '.join(walls)} |"
+                           f" {longest[0]} {longest[1]:.0f} s |")
         if planned is None:
             problems.append(f"{job}: no shard kept its plan (plan.txt)")
         else:
