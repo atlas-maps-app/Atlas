@@ -21,6 +21,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <span>
 
 namespace atlas::passes {
 
@@ -80,10 +81,10 @@ constexpr std::uint32_t job_row = 65535;
 
 } // namespace
 
-std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double origin_x, double origin_y,
-                                    double origin_z) {
+std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double origin_x, double origin_y, double origin_z,
+                                    bool lean) {
     std::vector<hlsl::uint4> out;
-    out.reserve(trees.trees.size() * shaders::TREE_VECTORS);
+    out.reserve(trees.trees.size() * (lean ? shaders::TREE_LEAN_VECTORS : shaders::TREE_VECTORS));
     for (const geometry::Tree& t : trees.trees) {
         // tree_close: cb = h * (0.38 if form != 'weep' else 0.3), the trunk's top cb + (h - cb) * 0.3, the crown's
         // centre cy = cb + (h - cb) * 0.5, in double
@@ -93,7 +94,9 @@ std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double ori
         out.push_back(hlsl::uint4{f32_bits(t.x - origin_x), f32_bits(t.gy - origin_y), f32_bits(t.z - origin_z),
                                   t.evergreen ? shaders::TREE_EVERGREEN : 0U});
         out.push_back(hlsl::uint4{f32_bits(top), f32_bits(cy), f32_bits(t.h), f32_bits(t.r)});
-        for (const geometry::TreeClump& c : t.clumps) {
+        // a level's tree has no clumps (tree.slangh's TREE_LEAN_VECTORS)
+        for (const geometry::TreeClump& c :
+             lean ? std::span<const geometry::TreeClump>() : std::span<const geometry::TreeClump>(t.clumps)) {
             out.push_back(hlsl::uint4{f32_bits(c.dx), f32_bits(c.y), f32_bits(c.dz),
                                       f32_bits(c.br) | (c.under ? 0x8000'0000U : 0U)});
         }
@@ -104,10 +107,11 @@ std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double ori
     return out;
 }
 
-TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool night, bool right) {
+TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool night, bool right, bool lean) {
     TreeChoice c;
     const auto nb = [](std::uint32_t n) { return n << shaders::TREE_JOB_NB_SHIFT; };
     if (night) c.flags |= shaders::TREE_JOB_NIGHT;
+    if (lean) c.flags |= shaders::TREE_JOB_LEAN;
     if (!weather) {
         // draw_tree3d: nb = 9 if d < 400 else 5 (26 needs weather, which takes tree_close), the trunk's stroke-width
         // '%.2f' % max(0.6, 0.3 * cam.focal / d)
@@ -118,7 +122,7 @@ TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool 
     // tree_close: r * cam.focal / max(d, 1) < 6.5 is a small crown, rr = max(0.8, that), one circle where rr < 4.2
     const double d1 = pymath::max(depth, 1.0);
     const double rpx = r * focal / d1;
-    if (rpx < 6.5) {
+    if (rpx < 6.5 || lean) {
         const double rr = pymath::max(0.8, rpx);
         c.flags |= shaders::TREE_JOB_SMALL | (rr < 4.2 ? shaders::TREE_JOB_ONE : 0U);
         c.w0 = static_cast<float>(rr);
@@ -316,13 +320,16 @@ gpu::Result<void> Trees::build(scene::TileBuild& b) const {
     const geometry::TileTrees g =
         geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_});
     if (g.trees.empty()) return {};
-    const std::vector<hlsl::uint4> words = tree_words(g, b.origin().x, b.origin().y, b.origin().z);
+    // a frame cell's level's tile (L13, L12, drawn beyond the finest level's reach): lean records, small crowns
+    const bool lean = b.tile().header.level < 14;
+    const std::vector<hlsl::uint4> words = tree_words(g, b.origin().x, b.origin().y, b.origin().z, lean);
     ATLAS_GPU_LET(
         range, b.allocate(scene::HeapKind::points, static_cast<std::uint32_t>(words.size() * sizeof(hlsl::uint4)), 16));
     b.heaps().write(range, std::as_bytes(std::span(words)));
     b.out().ranges[0] = range;
     auto layout = std::make_shared<TreeTile>();
     layout->trees = static_cast<std::uint32_t>(g.trees.size());
+    layout->lean = lean;
     layout->r.reserve(g.trees.size());
     layout->evergreen.reserve(g.trees.size());
     layout->ids.reserve(g.trees.size());
@@ -392,7 +399,8 @@ void Trees::update(const frame::FrameState& state) {
         const scene::CoverTile& t = tiles[d.cover];
         const scene::PassTile& mine = t.drawn->passes[me];
         const TreeTile& trees = *mine.cpu_as<TreeTile>();
-        const TreeChoice choice = tree_choice(d.depth, camera.focal(), trees.r[d.tree], weather, night, right);
+        const TreeChoice choice =
+            tree_choice(d.depth, camera.focal(), trees.r[d.tree], weather, night, right, trees.lean);
         const std::uint32_t n = shaders::tree_record_count(choice.flags);
         if (records + n > max_records) {
             if (!capped_) {
@@ -406,6 +414,7 @@ void Trees::update(const frame::FrameState& state) {
             fill_words_.push_back(records + shaders::tree_trunk_record(choice.flags));
         }
         const bool side = (choice.flags & shaders::TREE_JOB_SIDE) != 0U;
+        const std::uint32_t vectors = trees.lean ? shaders::TREE_LEAN_VECTORS : shaders::TREE_VECTORS;
         const std::uint32_t crowns = t.sun && t.sun->now ? t.sun->now->crowns_from : 0U;
         const std::uint32_t words[] = {bits(t.place.offset.x),
                                        bits(t.place.offset.y),
@@ -415,7 +424,7 @@ void Trees::update(const frame::FrameState& state) {
                                        bits(t.place.scale.y),
                                        bits(t.place.scale.z),
                                        bits(t.place.scale.w),
-                                       (mine.ranges[0].offset / 16) + (d.tree * shaders::TREE_VECTORS),
+                                       (mine.ranges[0].offset / 16) + (d.tree * vectors),
                                        choice.flags,
                                        shaders::rank_slot(d.rank),
                                        records,

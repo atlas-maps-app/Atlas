@@ -24,6 +24,7 @@
 #include <bit>
 #include <cmath>
 #include <format>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,51 @@ TEST_CASE("trees: the render thread's choices, as tree_close and draw_tree3d com
     CHECK(sh::tree_record_count(far.flags) == 2);
     CHECK(sh::tree_record_count(mid.flags) == 6 + (3 * 16));
     CHECK(sh::tree_record_count(dry.flags) == 1 + (2 * 9));
+    // a level's lean record (ENGINE.md one pack per country, step 7): where a full record's tree is a small crown or
+    // the generic tree, the same job, said lean; where it would be close, a small crown of its size all the same
+    const auto lean_far = tree_choice(400, 700, 3.5, true, false, true, true);
+    CHECK(lean_far.flags == (far.flags | sh::TREE_JOB_LEAN));
+    CHECK(lean_far.w0 == far.w0);
+    const auto lean_beyond = tree_choice(500, 700, 3.5, false, false, true, true);
+    CHECK(lean_beyond.flags == (beyond.flags | sh::TREE_JOB_LEAN));
+    CHECK(lean_beyond.w0 == beyond.w0);
+    const auto lean_mid = tree_choice(100, 700, 3.5, true, false, true, true);
+    CHECK(lean_mid.flags == (sh::TREE_JOB_SMALL | sh::TREE_JOB_LEAN));
+    CHECK(lean_mid.w0 == static_cast<float>(3.5 * 700 / 100));
+    CHECK(sh::tree_record_count(lean_mid.flags) == 2);
+}
+
+TEST_CASE("trees: a frame cell's level's tree is its header and blobs alone, as the full record holds them") {
+    // ENGINE.md one pack per country, step 7: a level's tile (L13, L12) keeps no clumps, which only a close tree reads
+    gm::TileTrees g;
+    for (int k = 0; k < 2; ++k) {
+        gm::Tree t{.id = 7 + k, .x = 10.0 + k, .z = -4.0, .h = 12.0, .r = 3.5, .gy = 1.5, .evergreen = k == 0};
+        for (std::size_t i = 0; i < t.clumps.size(); ++i) {
+            const auto f = static_cast<double>(i);
+            t.clumps.at(i) = {.dx = 0.1 * f, .y = 6.0, .dz = -0.1 * f, .br = 1.0, .under = i % 2 == 0};
+        }
+        for (std::size_t i = 0; i < t.blobs.size(); ++i) {
+            t.blobs.at(i) = {.dx = 0.2 * static_cast<double>(i), .y = 7.0, .dz = 0.3, .br = 1.5};
+        }
+        g.trees.push_back(t);
+    }
+    const std::vector<atlas::hlsl::uint4> full = atlas::passes::tree_words(g, 1.0, 0.5, 2.0);
+    const std::vector<atlas::hlsl::uint4> lean = atlas::passes::tree_words(g, 1.0, 0.5, 2.0, true);
+    REQUIRE(full.size() == 2 * sh::TREE_VECTORS);
+    REQUIRE(lean.size() == 2 * sh::TREE_LEAN_VECTORS);
+    const auto same = [](std::span<const atlas::hlsl::uint4> a, std::span<const atlas::hlsl::uint4> b) {
+        return std::ranges::equal(a, b, [](const atlas::hlsl::uint4& p, const atlas::hlsl::uint4& q) {
+            return p.x == q.x && p.y == q.y && p.z == q.z && p.w == q.w;
+        });
+    };
+    for (std::size_t k = 0; k < 2; ++k) {
+        const std::span<const atlas::hlsl::uint4> f = std::span(full).subspan(k * sh::TREE_VECTORS, sh::TREE_VECTORS);
+        const std::span<const atlas::hlsl::uint4> l =
+            std::span(lean).subspan(k * sh::TREE_LEAN_VECTORS, sh::TREE_LEAN_VECTORS);
+        CHECK(same(l.first(sh::TREE_HEADER_VECTORS), f.first(sh::TREE_HEADER_VECTORS)));
+        CHECK(same(l.subspan(sh::TREE_HEADER_VECTORS, sh::TREE_BLOBS),
+                   f.subspan(sh::TREE_HEADER_VECTORS + sh::TREE_CLUMPS, sh::TREE_BLOBS)));
+    }
 }
 
 TEST_CASE("trees: stage T of every bundled tile") {
@@ -172,6 +218,7 @@ TEST_CASE("trees: stage T of every bundled tile") {
             }
             const std::vector<atlas::hlsl::uint4> words = atlas::passes::tree_words(g, 0.0, 0.0, 0.0);
             CHECK(words.size() == g.trees.size() * sh::TREE_VECTORS);
+            CHECK(atlas::passes::tree_words(g, 0.0, 0.0, 0.0, true).size() == g.trees.size() * sh::TREE_LEAN_VECTORS);
             most = std::max(most, words.size() * sizeof(atlas::hlsl::uint4));
             trees += g.trees.size();
         }

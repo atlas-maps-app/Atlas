@@ -63,12 +63,23 @@ void TreeTwin::put(std::uint32_t k, const shaders::TreeRecord& r) {
 
 void TreeTwin::tree(const scene::CoverTile& tile, const passes::TreeTile& trees, std::span<const std::byte> heap,
                     std::uint32_t tree, std::uint32_t rank, double depth) {
-    const std::size_t at = std::size_t{tree} * shaders::TREE_VECTORS * sizeof(hlsl::uint4);
-    if (at + (shaders::TREE_VECTORS * sizeof(hlsl::uint4)) > heap.size()) return;
+    const std::size_t vectors = trees.lean ? shaders::TREE_LEAN_VECTORS : shaders::TREE_VECTORS;
+    const std::size_t at = std::size_t{tree} * vectors * sizeof(hlsl::uint4);
+    if (at + (vectors * sizeof(hlsl::uint4)) > heap.size()) return;
     std::array<hlsl::uint4, shaders::TREE_VECTORS> words{};
-    std::memcpy(words.data(), heap.data() + at, sizeof words);
+    if (trees.lean) {
+        // a level's lean record: its header and its blobs, where a full record holds them (its job, a small crown's or
+        // the generic tree's, reads no clump)
+        constexpr std::size_t header = shaders::TREE_HEADER_VECTORS * sizeof(hlsl::uint4);
+        std::memcpy(words.data(), heap.data() + at, header);
+        std::memcpy(words.data() + shaders::TREE_HEADER_VECTORS + shaders::TREE_CLUMPS, heap.data() + at + header,
+                    shaders::TREE_BLOBS * sizeof(hlsl::uint4));
+    } else {
+        std::memcpy(words.data(), heap.data() + at, sizeof words);
+    }
     // the job, as the pass writes it
-    const passes::TreeChoice choice = passes::tree_choice(depth, focal_, trees.r[tree], weather_, night_, right_);
+    const passes::TreeChoice choice =
+        passes::tree_choice(depth, focal_, trees.r[tree], weather_, night_, right_, trees.lean);
     shaders::TreeJob j{};
     j.place = tile.place;
     j.flags = choice.flags;
