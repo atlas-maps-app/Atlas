@@ -243,7 +243,8 @@ JNIEXPORT void JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_screen(JNIE
 /// Draws at `camera` (a camera state as MapCameraSource writes it) until the picture is complete and a few frames on,
 /// as the phone's frame loop draws at rest, or until it cannot be with the packs listed (no tile under way and no fade:
 /// windows it wants that no pack holds, which the tool takes and draws again with, or none within reach), or `seconds`
-/// pass; "<frames> frames, complete <yes|no>, pack <drawn>; <tiles line>", or "" with lastError set.
+/// pass; "<frames> frames, complete <yes|no>, pack <drawn>; <tiles line>; the last frame: <its draws, triangles,
+/// fragments and recording time>", or "" with lastError set.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNIEnv* env, jclass /*unused*/,
                                                                              jlong handle, jobject camera,
                                                                              jdouble seconds) {
@@ -259,10 +260,12 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<std::int64_t>(seconds * 1000));
     int frames = 0;
     int complete_frames = 0;
+    standin::FrameRecord last{};
     while (std::chrono::steady_clock::now() < until) {
         const standin::Drawn d = session.draw(*cam, {});
         if (d.stale) session.remake();
         frames += d.drawn ? 1 : 0;
+        if (d.drawn) last = d.record;
         complete_frames = map.complete() ? complete_frames + 1 : 0;
         // complete, and the fades over: a few frames more at rest
         if (complete_frames > 4 && !map.animating()) break;
@@ -273,8 +276,10 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
         if (frames > 4 && !map.complete() && map.world()->residency().stats().pending == 0) break;
     }
     last_error.clear();
-    return java(env, std::format("{} frames, complete {}, pack {}; {}", frames, map.complete() ? "yes" : "no",
-                                 map.drawn_pack(), map.tiles_line()));
+    return java(env, std::format("{} frames, complete {}, pack {}; {}; the last frame: {} draws, {}k triangles, {}k "
+                                 "fragments, record {:.1f} ms",
+                                 frames, map.complete() ? "yes" : "no", map.drawn_pack(), map.tiles_line(), last.draws,
+                                 last.triangles_k, last.fragments_k, last.record_ms));
 }
 
 /// The windows the map's world wants built, nearest first (MapCore.wantedWindows), packed z << 48 | x << 24 | y.

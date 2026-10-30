@@ -3,6 +3,7 @@ package app.atlas.mapcorecheck.likeness
 import app.atlas.geo.BBox
 import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.vk.CoreMoment
 import app.atlas.render.Amsterdam
@@ -101,7 +102,8 @@ internal object LookHost {
  *         -Datlas.phonelook.views='edge=52.3735,4.8745,900,60,50'
  *
  * with the views, `-Datlas.phonelook.moment` and `-Datlas.phonelook.size` as PhoneCanvas.kt takes them, and
- * optionally `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
+ * optionally `-Datlas.phonelook.parts=default|all` (the parts the app leaves out by default, or none),
+ * `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
  * are taken by, else packs-latest's) and `-Datlas.phonelook.work=<folder>` (the windows and indexes, kept between runs;
  * `<out>/core-work` by default). It writes `<name>-core<path>.png` and `.txt` (what was drawn and how it settled, the
  * windows taken, the light). Then
@@ -133,7 +135,14 @@ class PhoneLook {
                 .also { require(it.isFile) { "no canal ring at $it" } }
         } else null
         val list = System.getProperty("atlas.phonelook.list")?.takeIf { it.isNotBlank() }?.let { File(it).readText() }
-        val phone = PhoneCore(work, list, canal)
+        // the parts left out: the app's default (the clouds' shadows and the water's light), or none (every part drawn,
+        // as a debug build's Look settings can switch them back on)
+        val off = when (val parts = System.getProperty("atlas.phonelook.parts")?.takeIf { it.isNotBlank() } ?: "default") {
+            "default" -> MapParts.bits(MapParts.byDefault)
+            "all" -> 0L
+            else -> error("the parts are the app's default (default) or every one (all), not '$parts'")
+        }
+        val phone = PhoneCore(work, list, canal, off)
         for ((name, spec) in views) {
             val f = phone.draw(spec, moment, w, h, density)
             png(f.argb, w, h, File(out, "$name-core$path.png"))
@@ -226,9 +235,15 @@ class PhoneLook {
 
 /**
  * The core on the phone, here: the windows in [work] (taken from their country's tiles as the phone takes them, by the
- * published list [listText], else packs-latest's), and alpha 21's bundled [canal] ring beside them when given.
+ * published list [listText], else packs-latest's), and alpha 21's bundled [canal] ring beside them when given; the
+ * parts [off] left out of its camera states.
  */
-internal class PhoneCore(private val work: File, listText: String?, private val canal: File?) {
+internal class PhoneCore(
+    private val work: File,
+    listText: String?,
+    private val canal: File?,
+    private val off: Long = MapParts.bits(MapParts.byDefault),
+) {
     class Frame(val argb: IntArray, val notes: String)
 
     /** A pack as PackList lists it: its id, number for the process, MapCore.PackRef's kind, box, profile and views' distances. */
@@ -291,7 +306,8 @@ internal class PhoneCore(private val work: File, listText: String?, private val 
             notes.insert(0, "$drew\n")
             notes.appendLine("camera names ${pack?.id ?: "none"} (#${pack?.number ?: 0}, profile ${pack?.profile ?: 0}); ${listed.size} packs listed after $rounds rounds")
             notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")})")
-            notes.appendLine("parts left out: ${MapParts.byDefault.joinToString(" ") { it.name.lowercase() }}; screen: no haze, vignette or grain; true depth")
+            val leftOut = MapPart.entries.filter { it.bit and off != 0L }.joinToString(" ") { it.name.lowercase() }.ifEmpty { "none" }
+            notes.appendLine("parts left out: $leftOut; screen: no haze, vignette or grain; true depth")
             notes.appendLine("window version $version")
             notes.appendLine("light " + light(moment))
             notes.appendLine("view lat ${view.lat} lon ${view.lon} zoom ${view.zoom} bearing ${view.bearing} pitch ${view.pitch} ${view.widthDp}x${view.heightDp}dp cy ${view.cyDp} distance ${view.distance}")
@@ -424,7 +440,7 @@ internal class PhoneCore(private val work: File, listText: String?, private val 
         val b = CameraWriter.allocate()
         CameraWriter.header(b, ++sequence, CameraWriter.REST)
         // MapController.publishCamera: the style's trees and shadows are drawn, the app's default parts left out
-        CameraWriter.parts(b, MapParts.bits(MapParts.byDefault))
+        CameraWriter.parts(b, off)
         CameraWriter.view(b, view.lat, view.lon, view.bearing, view.pitch, view.distance, view.widthDp / 2.0, view.cyDp)
         CameraWriter.frame(b, w, h, view.widthDp, view.heightDp, density)
         CameraWriter.pack(b, pack?.number ?: 0L, pack?.profile ?: CameraWriter.PROFILE_NONE)

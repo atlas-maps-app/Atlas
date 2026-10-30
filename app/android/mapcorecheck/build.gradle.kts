@@ -321,7 +321,7 @@ tasks.test {
     if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
     // The phone look tool (likeness/PhoneLook.kt): what to draw and where, and the folder it compares; it runs every
     // time it is asked.
-    for (p in listOf("out", "views", "moment", "size", "path", "canal", "list", "work", "compare")) {
+    for (p in listOf("out", "views", "moment", "size", "parts", "path", "canal", "list", "work", "compare")) {
         providers.systemProperty("atlas.phonelook.$p").orNull?.let {
             systemProperty("atlas.phonelook.$p", it)
             outputs.upToDateWhen { false }
