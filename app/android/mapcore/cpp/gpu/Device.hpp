@@ -52,6 +52,8 @@ struct Enabled {
     bool independent_blend = false;
     /// Sample-rate shading (a fragment run per sample where a pipeline asks: the water's glitter, K16).
     bool sample_rate_shading = false;
+    /// Anisotropic filtering (the canopy's field read on the ground, fx/FieldCache.hpp).
+    bool sampler_anisotropy = false;
 };
 
 /// The physical device the core would use, with its facts, before anything is created on it (the crash guard checks

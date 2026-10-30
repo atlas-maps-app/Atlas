@@ -1,4 +1,4 @@
-// The screen-wide noise fields (plan-vector D10, D5.5, N16, N17, K17a): the renders' eight noises whose turbulence is
+// The screen-wide noise fields (plan-vector D10, D5.5, N16, N17, K17a): the renders' nine noises whose turbulence is
 // fixed to the screen and spans it, made once per surface size on the CPU, exactly, and kept on disk.
 //
 // The fields (render/amsterdam.py, all fractal noise anchored at the user-space origin, so the same at every camera):
@@ -10,6 +10,7 @@
 //   crown          seed 5, .15, 2 octaves: the crowns' displacement (render/closeup.py's crown_filter, `n`; K17)
 //   crown tone     seed 2, .42, 2 octaves: the crowns' mottled tone (crown_filter's `m`; K17)
 //   leaf           seed 3, .55, 2 octaves: the reflected trees' leaves (amsterdam.py's `leaf` filter; K17)
+//   canopy         seed 17, .55, 2 octaves: the regions' canopy over the woods (regions.py's `canopy` filter; K17)
 // Each filter region is whole filter pixels from the user-space origin (SvgFilterRaster), so a tree's crown filter
 // reads the crowns' noise at its pixels as the screen's field holds it there.
 // A field's pixel (x, y) of a W × H px frame is fx/Noise.hpp's noise at the filter pixel (x, y), the filter scale
@@ -20,12 +21,14 @@
 // opaque), the grain's filter result (premultiplied sRGB grey and alpha, which fin overlays at its opacity), the
 // ripple's, the crowns' and the leaves' red and green as their displacements read them, and the glints', the cloud
 // shadows' and the crown tone's red as their colour matrices read it (the noise premultiplied, then unpremultiplied;
-// the matrices' rows, which depend on the moment, are tables of that byte for K17). Twelve bytes a pixel, the GPU's
-// three images (D5.5):
-//   rgba: mat's grey, the grain's grey, the grain's alpha, the cloud shadows' red
-//   rg:   the ripple's red and green, the crown's red and green (four bytes: the image is RGBA8)
-//   r:    the glints' red, the crown tone's red, the leaf's red and green (four bytes: the image is RGBA8)
-// 31.1 MB at S1, 53.9 MB at S3 (N16).
+// the matrices' rows, which depend on the moment, are tables of that byte for K17). The canopy's matrix depends on
+// nothing, so its field keeps what the matrix makes of that red: the result's alpha (fx/Canopy.hpp), which can be
+// averaged where the app's map reads it on the ground. Thirteen bytes a pixel, the GPU's four images (D5.5):
+//   rgba:   mat's grey, the grain's grey, the grain's alpha, the cloud shadows' red
+//   rg:     the ripple's red and green, the crown's red and green (four bytes: the image is RGBA8)
+//   r:      the glints' red, the crown tone's red, the leaf's red and green (four bytes: the image is RGBA8)
+//   canopy: the canopy's alpha (R8, with its mipmaps on the GPU)
+// 33.7 MB at S1, 58.4 MB at S3 (N16).
 //
 // The fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes), or on the
 // GPU where the device passes its byte check (fx/GpuFields.hpp: the same bytes), and kept in cacheDir/fields, one file
@@ -54,10 +57,10 @@
 namespace atlas::fx {
 
 /// The renders' screen-wide fields.
-enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone, leaf };
+enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone, leaf, canopy };
 
 /// The number of screen-wide fields.
-inline constexpr std::size_t field_count = 8;
+inline constexpr std::size_t field_count = 9;
 
 /// A screen-wide field: its name, its turbulence, the channels its filter's next primitive reads, and how many bytes
 /// the core keeps of a pixel.
@@ -68,8 +71,9 @@ struct FieldSpec {
     std::uint8_t bytes = 1;
 };
 
-/// The eight, in Field's order (the parameters amsterdam.py and closeup.py write; mapview's ByteTablesExportTest holds
-/// them to it).
+/// The nine, in Field's order (the parameters amsterdam.py, closeup.py and regions.py write; mapview's
+/// ByteTablesExportTest holds them to it). The canopy's matrix reads the red alone, and its premultiplication the
+/// alpha: its noise is those two channels.
 inline constexpr std::array<FieldSpec, field_count> screen_fields{{
     {.name = "mat", .noise = {.seed = 13.0F, .base_x = 0.16F, .base_y = 0.75F, .octaves = 2}, .bytes = 1},
     {.name = "grain", .noise = {.seed = 8.0F, .base_x = 0.9F, .base_y = 0.9F, .octaves = 1}, .bytes = 2},
@@ -88,6 +92,10 @@ inline constexpr std::array<FieldSpec, field_count> screen_fields{{
      .noise = {.seed = 3.0F, .base_x = 0.55F, .base_y = 0.55F, .octaves = 2},
      .need = channel_red | channel_green,
      .bytes = 2},
+    {.name = "canopy",
+     .noise = {.seed = 17.0F, .base_x = 0.55F, .base_y = 0.55F, .octaves = 2},
+     .need = channel_red | channel_alpha,
+     .bytes = 1},
 }};
 
 /// The spec of field `f`.
@@ -119,8 +127,11 @@ struct FieldSize {
 inline constexpr std::uint32_t rgba_bytes = 4;
 inline constexpr std::uint32_t rg_bytes = 4;
 inline constexpr std::uint32_t r_bytes = 4;
+inline constexpr std::uint32_t canopy_bytes = 1;
+/// The bytes a pixel of the four images holds in all.
+inline constexpr std::uint32_t pixel_bytes = rgba_bytes + rg_bytes + r_bytes + canopy_bytes;
 
-/// Where field `f`'s bytes lie in the three images: the image (0 rgba, 1 rg, 2 r) and the first channel.
+/// Where field `f`'s bytes lie in the four images: the image (0 rgba, 1 rg, 2 r, 3 canopy) and the first channel.
 struct Placement {
     std::uint32_t image = 0;
     std::uint32_t channel = 0;
@@ -135,11 +146,12 @@ struct Placement {
     case Field::glints: return {.image = 2, .channel = 0};
     case Field::crown_tone: return {.image = 2, .channel = 1};
     case Field::leaf: return {.image = 2, .channel = 2};
+    case Field::canopy: return {.image = 3, .channel = 0};
     }
     return {};
 }
 
-/// A size's eight fields, as the GPU's images take them: rows from the top, the images' bytes one after the other.
+/// A size's nine fields, as the GPU's images take them: rows from the top, the images' bytes one after the other.
 /// Made in memory, mapped from the disk cache, or read back from the GPU; immutable.
 class ScreenFields {
 public:
@@ -148,12 +160,14 @@ public:
     /// Fields of `size` viewed in the bytes `owner` holds and keeps alive with them: a mapping of the disk cache's
     /// file (`mapped`), or the GPU's buffer they were made in.
     ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped, std::span<const std::uint8_t> rgba,
-                 std::span<const std::uint8_t> rg, std::span<const std::uint8_t> r);
+                 std::span<const std::uint8_t> rg, std::span<const std::uint8_t> r,
+                 std::span<const std::uint8_t> canopy);
 
     [[nodiscard]] FieldSize size() const noexcept { return size_; }
     [[nodiscard]] std::span<const std::uint8_t> rgba() const noexcept { return rgba_; }
     [[nodiscard]] std::span<const std::uint8_t> rg() const noexcept { return rg_; }
     [[nodiscard]] std::span<const std::uint8_t> r() const noexcept { return r_; }
+    [[nodiscard]] std::span<const std::uint8_t> canopy() const noexcept { return canopy_; }
     /// Whether they came from the disk cache.
     [[nodiscard]] bool mapped() const noexcept { return mapped_; }
 
@@ -167,17 +181,20 @@ public:
     [[nodiscard]] std::span<std::uint8_t> rgba_mut() noexcept { return owned_rgba_; }
     [[nodiscard]] std::span<std::uint8_t> rg_mut() noexcept { return owned_rg_; }
     [[nodiscard]] std::span<std::uint8_t> r_mut() noexcept { return owned_r_; }
+    [[nodiscard]] std::span<std::uint8_t> canopy_mut() noexcept { return owned_canopy_; }
 
 private:
     FieldSize size_;
     std::vector<std::uint8_t> owned_rgba_;
     std::vector<std::uint8_t> owned_rg_;
     std::vector<std::uint8_t> owned_r_;
+    std::vector<std::uint8_t> owned_canopy_;
     std::shared_ptr<const void> owner_;
     bool mapped_ = false;
     std::span<const std::uint8_t> rgba_;
     std::span<const std::uint8_t> rg_;
     std::span<const std::uint8_t> r_;
+    std::span<const std::uint8_t> canopy_;
 };
 
 /// How fields are made.
@@ -190,7 +207,7 @@ struct MakeOptions {
     std::uint32_t band_rows = 32;
 };
 
-/// Makes the eight fields of `size`.
+/// Makes the nine fields of `size`.
 [[nodiscard]] std::shared_ptr<const ScreenFields> make_fields(FieldSize size, const MakeOptions& options = {});
 
 /// make_fields' bytes of the pixels of `block` of a frame at filter scale `scale`, as fields of the block's size, by
@@ -199,7 +216,8 @@ struct MakeOptions {
 
 /// make_fields' keep tables as the GPU reads them (shaders/fx/fields.slang): a channel premultiplied and
 /// unpremultiplied again at each alpha (entry a · 256 + c), then the grain's grey from its matrix written as
-/// premultiplied sRGB at each alpha (65536 + a · 256 + grey).
+/// premultiplied sRGB at each alpha (65536 + a · 256 + grey), then the canopy's alpha for each red (131072 + red,
+/// fx::canopy_alpha).
 [[nodiscard]] std::vector<std::uint8_t> keep_tables_bytes();
 
 /// The fields kept on disk (cacheDir/fields): one file a size, written whole by a rename, its head and checksum checked
@@ -227,7 +245,7 @@ private:
 
 /// The version of the fields' bytes: bump it whenever a kept byte could change (the turbulence, a step, the layout),
 /// so files made by older code are never read as this code's.
-inline constexpr std::uint32_t fields_algorithm = 3;
+inline constexpr std::uint32_t fields_algorithm = 4;
 
 /// The workers that make the fields: the latest size asked for, from the disk cache when it holds them, else made on
 /// `threads` threads, published for the frame to take, then kept there.
@@ -304,7 +322,7 @@ struct GpuPart {
 };
 
 /// `fields <w>x<h> cpu <ms> gpu <gpu> hash <h> ok` (plan-vector Appendix C), or `... FAIL <field> <h> expected <h>`
-/// where a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the eight
+/// where a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the nine
 /// fields of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone. `<gpu>` is the GPU's
 /// milliseconds where it made them too (fx/GpuFields.hpp's fields_line), and then the line ends `FAIL gpu <field> <h>
 /// expected <h>` where its bytes are not the CPU's; else `off`, or `off (<why>)`.

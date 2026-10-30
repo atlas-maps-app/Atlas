@@ -55,6 +55,7 @@ std::string_view name_of(Global g) noexcept {
     case Global::glyph_curves: return "glyph_curves";
     case Global::glyph_bands: return "glyph_bands";
     case Global::sprites: return "sprites";
+    case Global::noise_canopy: return "noise_canopy";
     }
     return "?";
 }

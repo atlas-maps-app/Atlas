@@ -50,7 +50,7 @@ internal object FieldHost {
  * with the port's Turbulence, so the file the C++ tests read (on CI's arm64 runner too) is the port's.
  */
 class FieldParityTest {
-    /** A screen-wide field as amsterdam.py writes it (the core's fx/Fields.hpp, in its order). */
+    /** A screen-wide field as the renders write it (the core's fx/Fields.hpp, in its order). */
     private class Field(val name: String, val seed: Float, val baseX: Float, val baseY: Float, val octaves: Int, val need: Int)
 
     private class Size(val name: String, val w: Int, val h: Int, val density: Double) {
@@ -66,6 +66,7 @@ class FieldParityTest {
         Field("crown", 5f, 0.15f, 0.15f, 2, 3),
         Field("crown_tone", 2f, 0.42f, 0.42f, 2, 15),
         Field("leaf", 3f, 0.55f, 0.55f, 2, 3),
+        Field("canopy", 17f, 0.55f, 0.55f, 2, 9),
     )
 
     private val sizes: List<Size> = run {

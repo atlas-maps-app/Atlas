@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::test {
@@ -35,6 +36,7 @@ struct GroundDraw {
     passes::GroundFrame decided;
     frame::Count count;
     std::uint32_t kept = 0; ///< frames that kept the last frame's decisions, of `frames`
+    gpu::Packed packed;     ///< the frame as the image holds it (10 bits a channel where the device draws them)
 };
 
 /// The registry's ground pass among `passes`, or one added when the registry has none.
@@ -64,13 +66,14 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 /// the active one, `frames` frames 50 ms apart, in `mode`; `before` sees the pass before the frame builder prepares
 /// it, `after` sees it and the last frame's state before the world goes. `globals` (may be null) provides some of set
 /// 1's bindings to the world (the noise fields), and `settle` (may be empty) runs after each frame (their worker's
-/// wait).
+/// wait); `options` are the frame builder's (no composite step by default).
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
             const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
             const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
-            const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {}) {
+            const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {},
+            const frame::FrameOptions& options = {.steps = 0}) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -79,7 +82,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
     passes::Ground* g = ground_of(passes);
     if (before) before(*g);
-    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0});
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), options);
     if (!builder) return std::nullopt;
     double now = 0;
     // the ground reads no sun bits: the world's sun stays off
@@ -124,7 +127,11 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     (*renderer)->drain();
     auto packed = (*output)->read_packed((*output)->latest());
     if (!packed) return std::nullopt;
-    GroundDraw d{.pixels = gpu::to_rgba8(*packed), .decided = g->decided(), .count = (*builder)->total(), .kept = kept};
+    GroundDraw d{.pixels = gpu::to_rgba8(*packed),
+                 .decided = g->decided(),
+                 .count = (*builder)->total(),
+                 .kept = kept,
+                 .packed = std::move(*packed)};
     if (after) after(*g, (*builder)->state());
     renderer->reset();
     return d;

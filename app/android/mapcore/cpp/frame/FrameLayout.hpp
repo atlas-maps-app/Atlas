@@ -41,14 +41,15 @@ enum class Global : std::uint8_t {
     glyph_curves = 11, ///< the glyphs' curves and bands (storage buffers, K13)
     glyph_bands = 12,  ///<
     sprites = 13,      ///< the sprite atlas: the board's labels (a storage buffer: K13 copies its texels whole)
+    noise_canopy = 14, ///< the canopy's field, with its mipmaps (a combined image sampler that filters, K17a)
 };
 
 /// The number of set 1's bindings.
-inline constexpr std::uint32_t global_count = 14;
+inline constexpr std::uint32_t global_count = 15;
 
 /// Whether a global binding is a storage buffer (else a combined image sampler).
 [[nodiscard]] constexpr bool is_buffer(Global g) noexcept {
-    return g != Global::noise_rgba && g != Global::noise_rg && g != Global::noise_r;
+    return g != Global::noise_rgba && g != Global::noise_rg && g != Global::noise_r && g != Global::noise_canopy;
 }
 
 /// The global binding's name.

@@ -295,7 +295,16 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
                                               << samples_bytes << " bytes");
     CHECK(grid_bytes == other_grid_bytes);
     CHECK(mask == other_mask);
-    CHECK(blurred == other_blurred);
+    // the blur where it writes, the grid's input: past it a buffer holds what its memory held before
+    std::size_t slots_differ = 0;
+    for (std::int32_t y = 0; y < grid.input[3]; ++y) {
+        for (std::int32_t x = 0; x < grid.input[2]; ++x) {
+            const std::size_t at = (static_cast<std::size_t>(y) * stride) + (static_cast<std::size_t>(x) / 4);
+            const std::uint32_t shift = 8U * (static_cast<std::uint32_t>(x) % 4U);
+            if ((((blurred[at] ^ other_blurred[at]) >> shift) & 0xFFU) != 0) ++slots_differ;
+        }
+    }
+    CHECK_MESSAGE(slots_differ == 0, slots_differ << " texels of the two slots' blurs differ");
 
     // 1. the box: the twin's paths' (SvgBounds over their printed points), within a print step of the GPU's
     std::array<float, 4> box{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(),

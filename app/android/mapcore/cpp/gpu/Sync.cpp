@@ -24,10 +24,11 @@ namespace {
     return vk::AccessFlags(static_cast<VkAccessFlags>(bits));
 }
 
-[[nodiscard]] vk::ImageSubresourceRange whole(vk::ImageAspectFlags aspect) noexcept {
-    return {.aspectMask = aspect,
-            .baseMipLevel = 0,
-            .levelCount = VK_REMAINING_MIP_LEVELS,
+/// The dependency's levels of every layer of the image.
+[[nodiscard]] vk::ImageSubresourceRange range_of(const ImageDependency& d) noexcept {
+    return {.aspectMask = d.aspect,
+            .baseMipLevel = d.base_level,
+            .levelCount = d.levels,
             .baseArrayLayer = 0,
             .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
@@ -58,7 +59,7 @@ void Sync::barrier(const vk::raii::CommandBuffer& cmd, std::span<const MemoryDep
                     .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
                     .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
                     .image = d.image,
-                    .subresourceRange = whole(d.aspect)};
+                    .subresourceRange = range_of(d)};
         }
         cmd.pipelineBarrier2({.dependencyFlags = flags,
                               .memoryBarrierCount = static_cast<std::uint32_t>(memory.size()),
@@ -88,7 +89,7 @@ void Sync::barrier(const vk::raii::CommandBuffer& cmd, std::span<const MemoryDep
                 .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
                 .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
                 .image = d.image,
-                .subresourceRange = whole(d.aspect)};
+                .subresourceRange = range_of(d)};
     }
     if (!src) src = vk::PipelineStageFlagBits::eTopOfPipe;
     if (!dst) dst = vk::PipelineStageFlagBits::eBottomOfPipe;

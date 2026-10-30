@@ -28,6 +28,9 @@ struct ImageDependency {
     vk::AccessFlags2 dst_access;
     vk::ImageLayout old_layout = vk::ImageLayout::eUndefined;
     vk::ImageLayout new_layout = vk::ImageLayout::eUndefined;
+    /// The mipmap levels it covers: from `base_level`, `levels` of them (every level by default).
+    std::uint32_t base_level = 0;
+    std::uint32_t levels = VK_REMAINING_MIP_LEVELS;
 };
 
 /// Records barriers in whichever form the device has.

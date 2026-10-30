@@ -6,6 +6,7 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/GroundRuns.hpp"
+#include "fx/Canopy.hpp"
 #include "gen/layouts.hpp"
 #include "gen/spirv/ground/ground.hpp"
 #include "gpu/Descriptors.hpp"
@@ -1148,6 +1149,12 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
                   .reference = ground_stencil::canopy};
     ATLAS_GPU_LET(c, frame::make_pipeline(context, co, frame::Overdraw::translucent));
     p.canopy_composite = std::move(c);
+    // and through its filter, where the fields are bound in full mode
+    gpu::GraphicsDesc cf = co;
+    cf.label.name = "ground canopy filtered";
+    cf.fragment = "canopy_fs";
+    ATLAS_GPU_LET(filtered, frame::make_pipeline(context, cf, frame::Overdraw::translucent));
+    p.canopy_filtered = std::move(filtered);
     // the quay walls' faces: opaque at their painter depth, their samples their own (the polygon dilated by its stroke)
     gpu::GraphicsDesc quay = ground_desc(context, p, "ground quays", "quay_vs", "quay_fs");
     opaque_depth(quay);
@@ -1253,6 +1260,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_lit(v, state);
     write_ripple(v, state);
     write_wind_glints(v, state);
+    write_canopy(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1407,6 +1415,26 @@ void Ground::record_plate(const frame::Recording& r) {
     r.counters.draw("ground plate", 2);
 }
 
+bool Ground::canopy_filtered(const frame::FrameState& state) const noexcept {
+    return frame_.canopy && state.mode == frame::Mode::full && (state.block.info.x & shaders::FRAME_FIELDS) != 0U &&
+           pipelines_ != nullptr && *pipelines_->canopy_filtered;
+}
+
+void Ground::write_canopy(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
+    Words& w = *words_;
+    w.canopy = static_cast<std::uint32_t>(words.size());
+    if (!canopy_filtered(state) || !state.view) return;
+    const std::array<fx::Argb, 256>& table = fx::canopy_table();
+    words.insert(words.end(), table.begin(), table.end());
+    // the app's map reads the field where the ground lies, as the clouds' shadows on the ground do (the user, 27
+    // October: "The leafs and water streaks should be drawn with the object like buildings are")
+    if (state.grounded) {
+        const std::array<float, 9> map =
+            water_map(state.view->camera(), 0.0, state.camera.density, state.camera.width_px, state.camera.height_px);
+        for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
+    }
+}
+
 void Ground::record_canopy(const frame::Recording& r) {
     if (!frame_.canopy) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
@@ -1420,12 +1448,14 @@ void Ground::record_canopy(const frame::Recording& r) {
         cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
         r.counters.draw("ground canopy", draw.count / 3);
     }
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->canopy_composite);
+    const bool filtered = canopy_filtered(r.state);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                     filtered ? *pipelines_->canopy_filtered : *pipelines_->canopy_composite);
     const Words& w = *words_;
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
-    pc.mode = {0U, slot(geo::group::canopy, 0, 0), 0U, 0U};
-    pc.rows = {0.0F, 0.0F, 0.55F, 0.0F};
+    pc.mode = {0U, slot(geo::group::canopy, 0, 0), filtered ? w.canopy : 0U, filtered && r.state.grounded ? 1U : 0U};
+    pc.rows = {0.0F, 0.0F, fx::canopy_opacity, 0.0F};
     pc.colour = {0U, 0U, geo::Rgba{.r = 0, .g = 0, .b = 0, .a = 255}.packed(), 0U};
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
     cmd.draw(3, 1, 0, 0);

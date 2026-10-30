@@ -1,20 +1,22 @@
 // The screen-wide noise fields and the byte tables on the GPU (plan-vector D5.5, D5.6, D10, K17a): set 1's noise_rgba,
-// noise_rg and noise_r (combined image samplers: R8G8B8A8, R8G8 and R8 UNORM at the frame's upright device pixels,
-// fx/Fields.hpp's three images) and byte_tables (a storage buffer: the to-linear table, the to-sRGB table and `mat`'s
-// opaque table, 64 KB each; fx/ByteTables.hpp, fx/Mat.hpp). FieldCache is their provider (frame/Globals.hpp), which
-// the world holds (World::add_globals): each frame it gives set 1 its bindings (an unchanged one costs a comparison)
-// and asks its worker for the fields of the frame's size (made on worker threads, or mapped from cacheDir/fields);
-// when they arrive it makes images of their size, binds them and records their upload before the frame's passes. The
-// effects that read them (mat, the grain) run once they are bound for the frame's size (FRAME_FIELDS, which the frame
-// keeps in full mode alone); until then, and for the moment a resize takes, they are stubbed. Where its owner asks
-// (FieldCacheOptions::gpu: the app's map on a GPU, standin/Session.hpp), a size the disk does not hold is made on the
-// GPU instead (fx/GpuFields.hpp), after its byte check, before the frame that wants it (make_on_gpu, which the session
-// runs behind the crash guard's noise stage): that frame waits for its fields and draws with them, uploaded from the
-// GPU's own buffer, and the worker keeps them on disk; where the check fails the worker makes them, as elsewhere. A
-// size's images live until the frames that read them have finished (D5.2's two frames in flight), however often the
-// size changes: what is let go is counted in the renderer's frame numbers, as each frame's record gives them
-// (FrameBuilder::emit runs the update alone), and a frame builder drawing the world finishes its frames before another
-// draws it. The shaders read the fields and the tables through shaders/fx/mat.slang.
+// noise_rg, noise_r and noise_canopy (combined image samplers: three R8G8B8A8 UNORM and one R8 UNORM with its mipmaps,
+// at the frame's upright device pixels, fx/Fields.hpp's four images) and byte_tables (a storage buffer: the to-linear
+// table, the to-sRGB table and `mat`'s opaque table, 64 KB each; fx/ByteTables.hpp, fx/Mat.hpp). The canopy's
+// mipmaps are made from its field on the GPU as it is uploaded, each level the mean of the one above, so the app's
+// map can read the canopy on the ground at any zoom (shaders/fx/mat.slang's fx_canopy_on_ground). FieldCache is their
+// provider (frame/Globals.hpp), which the world holds (World::add_globals): each frame it gives set 1 its bindings (an
+// unchanged one costs a comparison) and asks its worker for the fields of the frame's size (made on worker threads, or
+// mapped from cacheDir/fields); when they arrive it makes images of their size, binds them and records their upload
+// before the frame's passes. The effects that read them (mat, the grain) run once they are bound for the frame's size
+// (FRAME_FIELDS, which the frame keeps in full mode alone); until then, and for the moment a resize takes, they are
+// stubbed. Where its owner asks (FieldCacheOptions::gpu: the app's map on a GPU, standin/Session.hpp), a size the disk
+// does not hold is made on the GPU instead (fx/GpuFields.hpp), after its byte check, before the frame that wants it
+// (make_on_gpu, which the session runs behind the crash guard's noise stage): that frame waits for its fields and draws
+// with them, uploaded from the GPU's own buffer, and the worker keeps them on disk; where the check fails the worker
+// makes them, as elsewhere. A size's images live until the frames that read them have finished (D5.2's two frames in
+// flight), however often the size changes: what is let go is counted in the renderer's frame numbers, as each frame's
+// record gives them (FrameBuilder::emit runs the update alone), and a frame builder drawing the world finishes its
+// frames before another draws it. The shaders read the fields and the tables through shaders/fx/mat.slang.
 #pragma once
 
 #include "frame/Globals.hpp"
@@ -53,14 +55,14 @@ public:
     /// Makes images for `fields` (new ones when the size changed) and copies their bytes into a staging buffer;
     /// record_upload records the rest.
     [[nodiscard]] gpu::Result<void> stage(const ScreenFields& fields);
-    /// Makes images for `size` (new ones when the size changed) and takes `bytes`, the three images' bytes one after
+    /// Makes images for `size` (new ones when the size changed) and takes `bytes`, the four images' bytes one after
     /// the other that the GPU made (fx/GpuFields.hpp's), as what record_upload copies into them.
     [[nodiscard]] gpu::Result<void> stage(FieldSize size, std::shared_ptr<const gpu::Buffer> bytes);
     /// Whether staged bytes wait for record_upload.
     [[nodiscard]] bool staged() const noexcept { return staging_ != nullptr; }
-    /// Records the staged bytes' upload into `cmd`, outside any render pass, as frame `frame`, then the images made
-    /// ready for the vertex, fragment and compute stages' reads: the staging buffer is kept until that frame has
-    /// finished, and the images the new ones replaced until the frame before it has.
+    /// Records the staged bytes' upload into `cmd`, outside any render pass, as frame `frame`, and the canopy's
+    /// mipmaps, then the images made ready for the vertex, fragment and compute stages' reads: the staging buffer is
+    /// kept until that frame has finished, and the images the new ones replaced until the frame before it has.
     void record_upload(const vk::raii::CommandBuffer& cmd, const gpu::Sync& sync, std::uint64_t frame);
     /// Lets go of what only frames up to `finished` read (the renderer's frame numbers).
     void collect(std::uint64_t finished) noexcept;
@@ -68,11 +70,16 @@ public:
     /// Whether images are made, and their size.
     [[nodiscard]] bool ready() const noexcept { return ready_; }
     [[nodiscard]] FieldSize size() const noexcept { return current_.size; }
-    /// Image `image`'s view (0 rgba, 1 rg, 2 r; fx/Fields.hpp's placement_of).
+    /// Image `image`'s view (0 rgba, 1 rg, 2 r, 3 canopy with its mipmaps; fx/Fields.hpp's placement_of).
     [[nodiscard]] vk::ImageView view(std::uint32_t image) const noexcept;
     /// Image `image` itself (the tests read it back).
     [[nodiscard]] vk::Image image(std::uint32_t image) const noexcept;
     [[nodiscard]] vk::Sampler sampler() const noexcept { return *sampler_; }
+    /// The canopy's sampler: between its texels and its mipmaps' levels, anisotropic where the device allows it, in
+    /// mirror images past its edges (mat.slang's fx_wrap), as the app's map reads it on the ground.
+    [[nodiscard]] vk::Sampler canopy_sampler() const noexcept { return *canopy_sampler_; }
+    /// The canopy image's mipmap levels for `size` (a level a halving, down to 1 × 1).
+    [[nodiscard]] static std::uint32_t canopy_levels(FieldSize size) noexcept;
     [[nodiscard]] vk::Buffer tables() const noexcept { return tables_.handle(); }
     /// The GPU memory held: the images, the tables and what waits to be let go.
     [[nodiscard]] vk::DeviceSize bytes() const noexcept;
@@ -87,12 +94,12 @@ private:
     /// upload's.
     [[nodiscard]] gpu::Result<void> images_for(FieldSize size);
 
-    /// A size's three images and their views.
+    /// A size's four images and their views.
     struct Images {
         FieldSize size;
-        std::array<gpu::Image, 3> images;
-        std::array<vk::raii::ImageView, 3> views{vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
-                                                 vk::raii::ImageView{nullptr}};
+        std::array<gpu::Image, 4> images;
+        std::array<vk::raii::ImageView, 4> views{vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
+                                                 vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}};
     };
     /// What waits for the frames that read it to finish.
     struct Retired {
@@ -104,6 +111,8 @@ private:
     const gpu::Device& device_;
     gpu::Buffer tables_;
     vk::raii::Sampler sampler_{nullptr};
+    vk::raii::Sampler canopy_sampler_{nullptr};
+    bool canopy_mipmaps_ = false; ///< the device blits the canopy's levels
     Images current_;
     bool ready_ = false;
     std::shared_ptr<const gpu::Buffer> staging_; ///< staged bytes waiting for record_upload
@@ -127,7 +136,7 @@ struct FieldCacheOptions {
     gpu::PipelineWatch* watch = nullptr;
 };
 
-/// The provider of set 1's noise_rgba, noise_rg, noise_r and byte_tables.
+/// The provider of set 1's noise_rgba, noise_rg, noise_r, noise_canopy and byte_tables.
 class FieldCache final : public frame::GlobalProvider {
 public:
     [[nodiscard]] static gpu::Result<std::unique_ptr<FieldCache>> create(const gpu::Device& device,
@@ -173,8 +182,9 @@ private:
     /// device was lost.
     bool gpu_failed(std::string_view what, const gpu::Error& error);
 
-    static constexpr std::array<frame::Global, 4> bound{frame::Global::noise_rgba, frame::Global::noise_rg,
-                                                        frame::Global::noise_r, frame::Global::byte_tables};
+    static constexpr std::array<frame::Global, 5> bound{frame::Global::noise_rgba, frame::Global::noise_rg,
+                                                        frame::Global::noise_r, frame::Global::noise_canopy,
+                                                        frame::Global::byte_tables};
 
     std::unique_ptr<FieldImages> images_;
     std::shared_ptr<const FieldDisk> disk_;

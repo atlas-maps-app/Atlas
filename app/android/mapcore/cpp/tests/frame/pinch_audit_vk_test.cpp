@@ -22,9 +22,9 @@
 // (beside the composite: what it shades with nothing hiding it) and without it (what the frame saves, the fragments it
 // hid from the others counted against it), and without the facades' detail (style::camera_part::facade_detail).
 // ATLAS_PINCH_OFF: the parts every frame leaves out, as the app's switches do ("cloud_shadows,water": alpha 19's
-// defaults; also trees, shadows, facades). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather:
-// its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's
-// streaks, the streets' wet cores, the drizzle's rings on the water) instead of the sunny moment.
+// defaults; also trees, shadows, facades, canopy). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's
+// weather: its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the
+// rain's streaks, the streets' wet cores, the drizzle's rings on the water) instead of the sunny moment.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -482,7 +482,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             for (const auto& [name, bits] :
                  {std::pair{"trees", part::trees}, std::pair{"shadows", part::building_shadows | part::park_shadows},
                   std::pair{"cloud_shadows", part::cloud_shadows}, std::pair{"water", part::water_light},
-                  std::pair{"facades", part::facade_detail}}) {
+                  std::pair{"facades", part::facade_detail}, std::pair{"canopy", part::canopy}}) {
                 if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bits;
             }
         }

@@ -2,7 +2,8 @@
 // CP/fx/Mat.hpp). Set 1 holds the fields and the byte tables (CP/frame/FrameLayout.hpp), which FieldCache provides:
 //   noise_rgba (binding 7): mat's grey, the grain's premultiplied sRGB grey and alpha, the cloud shadows' red;
 //   noise_rg (binding 8): the ripple's red and green, the crowns' red and green; noise_r (binding 9): the glints' red,
-//   the crown tone's red, the leaves' red and green;
+//   the crown tone's red, the leaves' red and green; noise_canopy (binding 14): the canopy's alpha, with its mipmaps
+//   and a sampler that filters (CP/fx/Canopy.hpp);
 //   byte_tables (binding 10): bytes packed four to a uint, little-endian: the to-linear table at 0, the to-sRGB table
 //   at 65536, mat's opaque table at 131072, each indexed row · 256 + column.
 // The fields are the frame's upright device pixels; fx_pixel finds a fragment's. Every module that reads a field or a
@@ -35,6 +36,7 @@ static const uint FX_TABLE_CROWN = 199168u;
 [[vk::binding(8, 1)]] Sampler2D<float4> noise_rg;
 [[vk::binding(9, 1)]] Sampler2D<float4> noise_r;
 [[vk::binding(10, 1)]] StructuredBuffer<uint> byte_tables;
+[[vk::binding(14, 1)]] Sampler2D<float4> noise_canopy;
 
 /// Byte `index` of the byte tables.
 uint fx_table_byte(uint index) {
@@ -226,6 +228,23 @@ uint3 fx_crown(int2 p) {
     uint3 b = {fx_byte(d.b), fx_byte(d.a), fx_byte(noise_r.Load(at).g)};
     return b;
 }
+/// The canopy's alpha at the upright pixel `p` (noise_canopy's first level): its matrix's, as the renders read it there.
+uint fx_canopy(int2 p) {
+    int3 at = {p.x, p.y, 0};
+    return fx_byte(noise_canopy.Load(at).r);
+}
+/// The canopy's alpha (0 to 255) at the fields' point `q` (device px, anywhere: fx_wrap's mirror images), which a step
+/// of a pixel across moves by `dx` and down by `dy`: between the field's texels and its mipmaps' levels, anisotropic
+/// where the device allows (CP/fx/FieldCache.hpp's canopy_sampler), a texel's value at its pixel's point as
+/// fx_glints_red takes it. Where the ground under a pixel lies in the field (the canopy on the ground): a far pixel
+/// takes the mean of the canopy it sees.
+float fx_canopy_on_ground(float2 q, float2 dx, float2 dy) {
+    uint w = 0u;
+    uint h = 0u;
+    noise_rgba.GetDimensions(w, h);
+    float2 size = {float(w), float(h)};
+    return noise_canopy.SampleGrad((q + 0.5f) / size, dx / size, dy / size).r * 255.0f;
+}
 /// The leaves' displacement's red and green at the upright pixel `p` (noise_r's last two).
 uint2 fx_leaf(int2 p) {
     int3 at = {p.x, p.y, 0};
@@ -286,7 +305,8 @@ struct FxProbe {
 [[vk::binding(0, 2)]] StructuredBuffer<FxProbe> fx_probes;
 [[vk::binding(1, 2)]] RWStructuredBuffer<uint4> fx_results;
 
-/// Per probe: the twelve bytes the fields hold at its pixel (rgba's four in x, rg's four in y, r's four in z).
+/// Per probe: the thirteen bytes the fields hold at its pixel (rgba's four in x, rg's four in y, r's four in z, the
+/// canopy's in w).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void fields_check(uint3 id : SV_DispatchThreadID) {
@@ -303,7 +323,7 @@ void fields_check(uint3 id : SV_DispatchThreadID) {
     uint3 k = fx_crown(p);
     uint2 l = fx_leaf(p);
     uint4 out = {a.x | (a.y << 8u) | (a.z << 16u) | (a.w << 24u), b.x | (b.y << 8u) | (k.x << 16u) | (k.y << 24u),
-                 c | (k.z << 8u) | (l.x << 16u) | (l.y << 24u), 0u};
+                 c | (k.z << 8u) | (l.x << 16u) | (l.y << 24u), fx_canopy(p)};
     fx_results[id.x] = out;
 }
 

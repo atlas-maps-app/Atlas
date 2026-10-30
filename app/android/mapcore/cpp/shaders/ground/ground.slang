@@ -12,7 +12,8 @@
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
 //     (render's #sky: sky_top to sky_hor between two rows), the water's surface (#wgrad, or th['water'] without
-//     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy).
+//     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy);
+//     screen_vs with canopy_fs: the canopy's union through its filter where the fields are bound in full mode.
 //   - stroke_vs and stroke_fs: the ground's lines (passes/Lines.cpp; their coverage in ground/lines.slangh), a sett
 //     road's courses each line's share of the path's layer (ground/setts.slangh).
 //   - quay_vs and quay_fs: the quay walls' faces (passes/Quays.cpp); reflection_vs and reflection_fs: the water's
@@ -650,6 +651,52 @@ ColourOut flat_fs(ScreenOut v) {
     float a = push.rows.z;
     ColourOut o;
     o.colour = float4(c.rgb * a, a);
+    return o;
+}
+
+/// A premultiplied pixel (a r g b, a byte each) as 0-255 values in r g b a order.
+float4 levels_of(uint s) {
+    float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
+    return c;
+}
+
+/// The canopy where the stencil holds its rings' union (screen_vs; passes/Ground.cpp): its filter's result over the
+/// pixel, one of fx/Canopy.hpp's table of 256 in `words` from push.mode.z (premultiplied sRGB, a r g b) by the
+/// canopy's alpha, at the path's opacity (push.rows.z), premultiplied. The alpha is the field's at the pixel, as the
+/// renders read it there; in the app's map (push.mode.w 1) it is the field's where the ground under the pixel lies in
+/// it (the ground's map after the table: passes::water_map at the ground's height), between its texels and mipmaps (a
+/// far pixel the mean of the canopy it sees), the table between the two alphas about it: so the canopy keeps its
+/// place on the ground as the map moves, and holds still as it zooms out.
+[shader("fragment")]
+ColourOut canopy_fs(ScreenOut v) {
+    // no discard: the stencil's union is tested before the fragment runs, so only the canopy's pixels run it
+    float4 c = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    if (push.mode.w == 0u) {
+        c = levels_of(words[push.mode.z + fx_canopy(fx_pixel(frame.camera, v.position.xy))]);
+    } else {
+        uint m = push.mode.z + 256u;
+        float3 r0 = {asfloat(words[m]), asfloat(words[m + 1u]), asfloat(words[m + 2u])};
+        float3 r1 = {asfloat(words[m + 3u]), asfloat(words[m + 4u]), asfloat(words[m + 5u])};
+        float3 r2 = {asfloat(words[m + 6u]), asfloat(words[m + 7u]), asfloat(words[m + 8u])};
+        float2 p = css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z;
+        float w = ((r2.x * p.x) + (r2.y * p.y)) + r2.z;
+        if (!(w < 0.0f)) {
+            ColourOut none;
+            none.colour = c; // the canopy lies on the ground, below the horizon
+            return none;
+        }
+        float2 q = {(((r0.x * p.x) + (r0.y * p.y)) + r0.z) / w, (((r1.x * p.x) + (r1.y * p.y)) + r1.z) / w};
+        // the map's derivatives a device pixel across and down: the pixel's footprint in the field
+        float2 dx = float2(r0.x - (q.x * r2.x), r1.x - (q.y * r2.x)) / w;
+        float2 dy = float2(r0.y - (q.x * r2.y), r1.y - (q.y * r2.y)) / w;
+        float a = clamp(fx_canopy_on_ground(q, dx, dy), 0.0f, 255.0f);
+        float f = floor(a);
+        uint lo = uint(f);
+        uint hi = min(lo + 1u, 255u);
+        c = lerp(levels_of(words[push.mode.z + lo]), levels_of(words[push.mode.z + hi]), a - f);
+    }
+    ColourOut o;
+    o.colour = (c * (1.0f / 255.0f)) * push.rows.z;
     return o;
 }
 

@@ -1,23 +1,24 @@
 // The screen-wide noise fields on the GPU (plan-vector D10, N17; CP/fx/Fields.hpp, CP/fx/GpuFields.hpp): a block of a
-// frame's eight fields, each pixel's noises fx/noise.slang's turbulence (every byte the CPU's where the device passes
+// frame's nine fields, each pixel's noises fx/noise.slang's turbulence (every byte the CPU's where the device passes
 // the byte check) and the bytes the core keeps of each as fx/FieldCache.cpp's make_fields keeps them, from the same
-// tables and with the same arithmetic, packed as the GPU's three images hold them.
+// tables and with the same arithmetic, packed as the GPU's four images hold them.
 //
 // fields_make_cs: pixel (x, y) of the block is the frame's filter pixel (left + x, top + y), its noises at the user point
 // ((left + x + 1) · inv_x, (top + y + 1) · inv_y). Its three words (rgba, rg, r) go to `fields` at y · width + x of
-// three planes of width · height words, one after the other: the images' bytes as fx::ScreenFields holds them.
+// three planes of width · height words, one after the other, and its canopy byte into the fourth plane after them,
+// four bytes a word (zeroed before, each byte ORed in): the images' bytes as fx::ScreenFields holds them.
 //
 // atlas: exact
 
-/// The eight fields' specs in fx/Fields.hpp's order, four words each (base_x's bits, base_y's bits, the octaves, the
+/// The nine fields' specs in fx/Fields.hpp's order, four words each (base_x's bits, base_y's bits, the octaves, the
 /// channels needed with fractal noise at bit 8), then their lattices one after the other, each fx/GpuNoise.hpp's
 /// lattice_words.
 [[vk::binding(0, 0)]] StructuredBuffer<uint> lattice;
 /// make_fields' keep tables, four bytes a word, the first in the low byte: a channel premultiplied and unpremultiplied
 /// again at each alpha (entry a · 256 + c), then the grain's grey written as premultiplied sRGB at each alpha
-/// (65536 + a · 256 + grey).
+/// (65536 + a · 256 + grey), then the canopy's alpha for each red its matrix reads (131072 + red).
 [[vk::binding(1, 0)]] StructuredBuffer<uint> keep;
-/// The block's three planes of words.
+/// The block's three planes of words and its plane of canopy bytes.
 [[vk::binding(2, 0)]] RWStructuredBuffer<uint> fields;
 
 #define ATLAS_NOISE_FUNCTIONS
@@ -30,10 +31,11 @@ struct FieldsPush {
 
 [[vk::push_constant]] ConstantBuffer<FieldsPush> push;
 
-static const uint FIELDS_COUNT = 8u;
+static const uint FIELDS_COUNT = 9u;
 static const uint FIELDS_SPEC_WORDS = 4u;
 static const uint FIELDS_LATTICE_WORDS = 2562u; // a lattice's words: its selector's 514, its gradients' 2048
 static const uint FIELDS_GRAIN_SRGB = 65536u;   // the second keep table's first entry
+static const uint FIELDS_CANOPY = 131072u;      // the third's
 
 /// Field `f`'s turbulence.
 NoiseSpec fields_spec(uint f) {
@@ -98,10 +100,11 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
     float x = float(push.block.x + int(id.x) + 1) * push.grid.x;
     float y = float(push.block.y + int(id.y) + 1) * push.grid.y;
     // rgba: mat's grey, the grain's grey and alpha, the cloud shadows' red; rg: the ripple's red and green, the
-    // crown's red and green; r: the glints' red, the crown tone's red, the leaf's red and green.
+    // crown's red and green; r: the glints' red, the crown tone's red, the leaf's red and green; the canopy's alpha.
     uint rgba = 0u;
     uint rg = 0u;
     uint r = 0u;
+    uint canopy = 0u;
     // One field at a time, in fx/Fields.hpp's order (a loop, so the module holds the turbulence once).
     [loop]
     for (uint f = 0u; f < FIELDS_COUNT; ++f) {
@@ -120,8 +123,10 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
             rg = rg | (fields_channel(p, 16u) << 16u) | (fields_channel(p, 8u) << 24u);
         } else if (f == 6u) { // the crown tone
             r = r | (fields_round_trip(p, 16u) << 8u);
-        } else { // the leaf
+        } else if (f == 7u) { // the leaf
             r = r | (fields_channel(p, 16u) << 16u) | (fields_channel(p, 8u) << 24u);
+        } else { // the canopy: its matrix's alpha of the red it reads
+            canopy = fields_keep(FIELDS_CANOPY + fields_round_trip(p, 16u));
         }
     }
     uint plane = uint(push.block.z) * uint(push.block.w);
@@ -129,4 +134,6 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
     fields[at] = rgba;
     fields[plane + at] = rg;
     fields[2u * plane + at] = r;
+    uint unused = 0u;
+    InterlockedOr(fields[3u * plane + (at >> 2u)], canopy << ((at & 3u) * 8u), unused);
 }

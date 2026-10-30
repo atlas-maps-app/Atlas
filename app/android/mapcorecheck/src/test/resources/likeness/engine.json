@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "27",
+  "version": "28",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -464,6 +464,21 @@
           "home night": "5d6604f83c6cb57e67bf52f462fa47c1ae6d41e75a341178a043ee340549d5b2",
           "board sunny": "33da19676e1d0be4d463db0b675c3c196b28e6635dc95d978b3a8ee605d1e1df",
           "board grey": "f52b48c77b54264ea2c9d76f31dd888793acd8728088aebf34a1b57ba2c587fe",
+          "board wet": "fa926207bfbca7741efaecd70884f31447faaabb542a1b5cee8226698ff42a66",
+          "board night": "16e4a90494d8521fe24f560ccdeea2241a1c3a8ffe4ac32d363266eb79895e19"
+        }
+      }
+    },
+    "28": {
+      "note": "Step 4, the effects: the regions' canopy through its filter (render/regions.py's noise and colour matrix, .16 .24 .12 in linear light at the noise's alpha, at .55), where the core drew its union flat black at .55. The board's sunny and grey frames changed (the canal ring's woods by day); its wet and night frames (21:30: no canopy at night) and the home's four are version 27's.",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "7ce15ff3cb2fe6d1729f76a9ebe9f8dcf91e64387e6d6e99138d37485fc8745f",
+          "home grey": "00c72710ca75683d19d9af5af8625c0758b39a9fdc0b20df7d9535502d7d9156",
+          "home wet": "bb4be0344c277466c3aa785a3641787b7371d9c2761e7a402c40df06860ad12e",
+          "home night": "5d6604f83c6cb57e67bf52f462fa47c1ae6d41e75a341178a043ee340549d5b2",
+          "board sunny": "3a3a0aca20e37ba573dde721bd95b8c8402e444290765a09fd402798dcf28b5f",
+          "board grey": "69fd913f729eda6cbee5f7613ec3935844f4e4af228ab194a843dabaa3a84301",
           "board wet": "fa926207bfbca7741efaecd70884f31447faaabb542a1b5cee8226698ff42a66",
           "board night": "16e4a90494d8521fe24f560ccdeea2241a1c3a8ffe4ac32d363266eb79895e19"
         }

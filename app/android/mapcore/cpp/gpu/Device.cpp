@@ -194,11 +194,13 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     on.pipeline_statistics = has.pipeline_statistics;
     on.independent_blend = has.independent_blend;
     on.sample_rate_shading = has.sample_rate_shading;
+    on.sampler_anisotropy = has.sampler_anisotropy;
 
     // The features, through the structures of the device's version.
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.independentBlend = on.independent_blend ? vk::True : vk::False;
     features2.features.sampleRateShading = on.sample_rate_shading ? vk::True : vk::False;
+    features2.features.samplerAnisotropy = on.sampler_anisotropy ? vk::True : vk::False;
     features2.features.pipelineStatisticsQuery = on.pipeline_statistics ? vk::True : vk::False;
     features2.features.shaderStorageImageReadWithoutFormat = has.read_without_format ? vk::True : vk::False;
     void** tail = &features2.pNext;

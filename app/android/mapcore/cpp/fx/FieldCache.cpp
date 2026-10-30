@@ -10,6 +10,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "fx/ByteTables.hpp"
+#include "fx/Canopy.hpp"
 #include "fx/Fields.hpp"
 #include "fx/Mat.hpp"
 #include "tiles/Checksums.hpp"
@@ -72,13 +73,14 @@ struct KeepTables {
     return t;
 }
 
-/// The generators of the eight fields, made once.
+/// The generators of the nine fields, made once.
 [[nodiscard]] const std::array<Lattice, field_count>& lattices() noexcept {
     static const std::array<Lattice, field_count> l{
         Lattice(screen_fields[0].noise.seed), Lattice(screen_fields[1].noise.seed),
         Lattice(screen_fields[2].noise.seed), Lattice(screen_fields[3].noise.seed),
         Lattice(screen_fields[4].noise.seed), Lattice(screen_fields[5].noise.seed),
-        Lattice(screen_fields[6].noise.seed), Lattice(screen_fields[7].noise.seed)};
+        Lattice(screen_fields[6].noise.seed), Lattice(screen_fields[7].noise.seed),
+        Lattice(screen_fields[8].noise.seed)};
     return l;
 }
 
@@ -158,10 +160,20 @@ void keep_band(Field f, std::span<const Argb> noise, std::uint32_t width, std::u
         }
         break;
     }
+    case Field::canopy: {
+        // the matrix's alpha of the red it reads
+        const std::array<std::uint8_t, 256>& alpha = canopy_alpha();
+        std::uint8_t* dst = out.canopy_mut().data() + first;
+        for (std::size_t i = 0; i < n; ++i) {
+            const Argb p = noise[i];
+            dst[i] = alpha[k.round_trip[(static_cast<std::size_t>(p >> 24U) << 8U) | bytes::channel(p, 16)]];
+        }
+        break;
+    }
     }
 }
 
-// ---- the disk cache's file: a 64-byte head, then the three images.
+// ---- the disk cache's file: a 64-byte head, then the four images.
 
 constexpr std::uint32_t file_magic = 0x44465441; // "ATFD"
 constexpr std::uint32_t file_format = 1;
@@ -221,7 +233,7 @@ void put_u64(std::span<std::uint8_t> b, std::size_t at, std::uint64_t v) noexcep
     put_u32(h, 16, s.height);
     put_u32(h, 20, std::bit_cast<std::uint32_t>(s.scale));
     put_u64(h, 24, specs_hash());
-    put_u64(h, 32, pixels_of(s) * (rgba_bytes + rg_bytes + r_bytes));
+    put_u64(h, 32, pixels_of(s) * pixel_bytes);
     put_u32(h, 40, crc);
     put_u32(h, 60, tiles::crc32(std::as_bytes(std::span<const std::uint8_t>(h.data(), 60))));
     return h;
@@ -256,23 +268,35 @@ void keep(Field f, Argb p, std::span<std::uint8_t> out) noexcept {
     case Field::crown_tone:
         out[0] = static_cast<std::uint8_t>(bytes::channel(bytes::unpremultiply(bytes::premultiply(p)), 16));
         break;
+    case Field::canopy: out[0] = canopy_alpha()[bytes::channel(bytes::unpremultiply(bytes::premultiply(p)), 16)]; break;
     }
 }
 
 ScreenFields::ScreenFields(FieldSize size)
     : size_(size), owned_rgba_(pixels_of(size) * rgba_bytes), owned_rg_(pixels_of(size) * rg_bytes),
-      owned_r_(pixels_of(size) * r_bytes), rgba_(owned_rgba_), rg_(owned_rg_), r_(owned_r_) {}
+      owned_r_(pixels_of(size) * r_bytes), owned_canopy_(pixels_of(size) * canopy_bytes), rgba_(owned_rgba_),
+      rg_(owned_rg_), r_(owned_r_), canopy_(owned_canopy_) {}
 
 ScreenFields::ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped,
                            std::span<const std::uint8_t> rgba, std::span<const std::uint8_t> rg,
-                           std::span<const std::uint8_t> r)
-    : size_(size), owner_(std::move(owner)), mapped_(mapped), rgba_(rgba), rg_(rg), r_(r) {}
+                           std::span<const std::uint8_t> r, std::span<const std::uint8_t> canopy)
+    : size_(size), owner_(std::move(owner)), mapped_(mapped), rgba_(rgba), rg_(rg), r_(r), canopy_(canopy) {}
 
 std::array<std::uint8_t, 2> ScreenFields::at(Field f, std::uint32_t x, std::uint32_t y) const noexcept {
     const std::size_t i = (static_cast<std::size_t>(y) * size_.width) + x;
     const Placement p = placement_of(f);
-    const std::span<const std::uint8_t> image = p.image == 0 ? rgba_ : (p.image == 1 ? rg_ : r_);
-    const std::size_t stride = p.image == 0 ? rgba_bytes : (p.image == 1 ? rg_bytes : r_bytes);
+    std::span<const std::uint8_t> image = canopy_;
+    std::size_t stride = canopy_bytes;
+    if (p.image == 0) {
+        image = rgba_;
+        stride = rgba_bytes;
+    } else if (p.image == 1) {
+        image = rg_;
+        stride = rg_bytes;
+    } else if (p.image == 2) {
+        image = r_;
+        stride = r_bytes;
+    }
     const std::size_t at = (i * stride) + p.channel;
     return {image[at], spec_of(f).bytes == 2 ? image[at + 1] : std::uint8_t{0}};
 }
@@ -354,6 +378,7 @@ std::vector<std::uint8_t> keep_tables_bytes() {
     const KeepTables& k = keep_tables();
     std::vector<std::uint8_t> out(k.round_trip.begin(), k.round_trip.end());
     out.insert(out.end(), k.grain_srgb.begin(), k.grain_srgb.end());
+    out.insert(out.end(), canopy_alpha().begin(), canopy_alpha().end());
     return out;
 }
 
@@ -372,7 +397,7 @@ std::shared_ptr<const ScreenFields> FieldDisk::read(FieldSize size) const {
     auto opened = tiles::MappedSource::open(p.string());
     if (!opened) return nullptr;
     std::shared_ptr<const tiles::MappedSource> mapping = std::move(*opened);
-    const std::uint64_t data = pixels_of(size) * (rgba_bytes + rg_bytes + r_bytes);
+    const std::uint64_t data = pixels_of(size) * pixel_bytes;
     if (mapping->size() != head_bytes + data) return nullptr;
     const std::span<const std::byte> all = mapping->view(0, head_bytes + data);
     if (all.size() != head_bytes + data) return nullptr;
@@ -394,9 +419,10 @@ std::shared_ptr<const ScreenFields> FieldDisk::read(FieldSize size) const {
     const std::span<const std::uint8_t> rgba(bytes, n * rgba_bytes);
     const std::span<const std::uint8_t> rg(bytes + (n * rgba_bytes), n * rg_bytes);
     const std::span<const std::uint8_t> r(bytes + (n * (rgba_bytes + rg_bytes)), n * r_bytes);
+    const std::span<const std::uint8_t> canopy(bytes + (n * (rgba_bytes + rg_bytes + r_bytes)), n * canopy_bytes);
     // touch the file, so the budget's trim drops the least recently used
     fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
-    return std::make_shared<const ScreenFields>(size, std::move(mapping), true, rgba, rg, r);
+    return std::make_shared<const ScreenFields>(size, std::move(mapping), true, rgba, rg, r, canopy);
 }
 
 bool FieldDisk::holds(FieldSize size) const {
@@ -413,6 +439,7 @@ bool FieldDisk::write(const ScreenFields& fields) const {
     std::uint32_t crc = tiles::crc32(std::as_bytes(fields.rgba()));
     crc = tiles::crc32(std::as_bytes(fields.rg()), crc);
     crc = tiles::crc32(std::as_bytes(fields.r()), crc);
+    crc = tiles::crc32(std::as_bytes(fields.canopy()), crc);
     const auto head = head_of(s, crc);
     const fs::path p = path(s);
     fs::path tmp = p;
@@ -427,6 +454,7 @@ bool FieldDisk::write(const ScreenFields& fields) const {
         put(fields.rgba());
         put(fields.rg());
         put(fields.r());
+        put(fields.canopy());
         if (!out) {
             out.close();
             fs::remove(tmp, ec);
@@ -702,13 +730,17 @@ std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu) {
 
 namespace {
 
-/// The images' formats and bytes a pixel: rgba, rg and r, four bytes each since the crowns' and the leaves' fields
-/// (fx/Fields.hpp's placement_of).
-constexpr std::array<vk::Format, 3> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm,
-                                                  vk::Format::eR8G8B8A8Unorm};
-constexpr std::array<std::uint32_t, 3> image_bytes{rgba_bytes, rg_bytes, r_bytes};
-constexpr std::array<frame::Global, 3> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
-                                                     frame::Global::noise_r};
+/// The images' formats and bytes a pixel: rgba, rg and r, four bytes each since the crowns' and the leaves' fields,
+/// and the canopy's one (fx/Fields.hpp's placement_of).
+constexpr std::array<vk::Format, 4> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm,
+                                                  vk::Format::eR8G8B8A8Unorm, vk::Format::eR8Unorm};
+constexpr std::array<std::uint32_t, 4> image_bytes{rgba_bytes, rg_bytes, r_bytes, canopy_bytes};
+constexpr std::array<frame::Global, 4> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
+                                                     frame::Global::noise_r, frame::Global::noise_canopy};
+/// The canopy's image, the one with mipmaps.
+constexpr std::size_t canopy_image = 3;
+/// The most the canopy's sampler takes of a footprint's length over its width (the device's limit may be less).
+constexpr float canopy_anisotropy = 8.0F;
 
 /// The stages that read the fields.
 constexpr vk::PipelineStageFlags2 reading_stages = vk::PipelineStageFlagBits2::eVertexShader |
@@ -736,18 +768,45 @@ gpu::Result<std::unique_ptr<FieldImages>> FieldImages::create(const gpu::Device&
                                                 .maxLod = 0.0F}),
                  "the noise fields' sampler");
     self->sampler_ = std::move(sampler);
+    // The canopy's, where the app's map reads it on the ground: between its texels and its levels, past its edges in
+    // mirror images.
+    const bool anisotropic = device.enabled().sampler_anisotropy;
+    ATLAS_VK_LET(canopy_sampler,
+                 device.handle().createSampler(
+                     {.magFilter = vk::Filter::eLinear,
+                      .minFilter = vk::Filter::eLinear,
+                      .mipmapMode = vk::SamplerMipmapMode::eLinear,
+                      .addressModeU = vk::SamplerAddressMode::eMirroredRepeat,
+                      .addressModeV = vk::SamplerAddressMode::eMirroredRepeat,
+                      .addressModeW = vk::SamplerAddressMode::eMirroredRepeat,
+                      .anisotropyEnable = anisotropic ? vk::True : vk::False,
+                      .maxAnisotropy =
+                          anisotropic ? std::min(canopy_anisotropy, device.facts().limits.maxSamplerAnisotropy) : 1.0F,
+                      .maxLod = vk::LodClampNone}),
+                 "the canopy's sampler");
+    self->canopy_sampler_ = std::move(canopy_sampler);
+    // The mipmaps are blits of each level into the next, filtered: where the device cannot, the canopy has one level
+    // (R8's blits and linear filter are among the formats' required features).
+    constexpr vk::FormatFeatureFlags blits = vk::FormatFeatureFlagBits::eBlitSrc | vk::FormatFeatureFlagBits::eBlitDst |
+                                             vk::FormatFeatureFlagBits::eSampledImageFilterLinear;
+    self->canopy_mipmaps_ =
+        (device.physical().getFormatProperties(image_formats[canopy_image]).optimalTilingFeatures & blits) == blits;
     return self;
 }
 
 FieldImages::~FieldImages() = default;
 
+std::uint32_t FieldImages::canopy_levels(FieldSize size) noexcept {
+    return static_cast<std::uint32_t>(std::bit_width(std::max({size.width, size.height, 1U})));
+}
+
 vk::ImageView FieldImages::view(std::uint32_t image) const noexcept {
-    ATLAS_ASSERT(ready_ && image < 3, "the fields have three images once staged");
+    ATLAS_ASSERT(ready_ && image < 4, "the fields have four images once staged");
     return *current_.views[image];
 }
 
 vk::Image FieldImages::image(std::uint32_t image) const noexcept {
-    ATLAS_ASSERT(ready_ && image < 3, "the fields have three images once staged");
+    ATLAS_ASSERT(ready_ && image < 4, "the fields have four images once staged");
     return current_.images[image].handle();
 }
 
@@ -755,25 +814,29 @@ gpu::Result<void> FieldImages::images_for(FieldSize size) {
     if (!ready_ || current_.size != size) {
         Images next;
         next.size = size;
-        for (std::size_t i = 0; i < 3; ++i) {
-            ATLAS_GPU_LET(image, device_.memory().image(
-                                     {.imageType = vk::ImageType::e2D,
-                                      .format = image_formats[i],
-                                      .extent = {.width = size.width, .height = size.height, .depth = 1},
-                                      .mipLevels = 1,
-                                      .arrayLayers = 1,
-                                      .samples = vk::SampleCountFlagBits::e1,
-                                      .tiling = vk::ImageTiling::eOptimal,
-                                      .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
-                                      .initialLayout = vk::ImageLayout::eUndefined},
-                                     gpu::MemoryUse::gpu));
+        for (std::size_t i = 0; i < 4; ++i) {
+            const bool canopy = i == canopy_image;
+            const std::uint32_t levels = canopy && canopy_mipmaps_ ? canopy_levels(size) : 1;
+            vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst;
+            if (levels > 1) usage |= vk::ImageUsageFlagBits::eTransferSrc;
+            ATLAS_GPU_LET(image,
+                          device_.memory().image({.imageType = vk::ImageType::e2D,
+                                                  .format = image_formats[i],
+                                                  .extent = {.width = size.width, .height = size.height, .depth = 1},
+                                                  .mipLevels = levels,
+                                                  .arrayLayers = 1,
+                                                  .samples = vk::SampleCountFlagBits::e1,
+                                                  .tiling = vk::ImageTiling::eOptimal,
+                                                  .usage = usage,
+                                                  .initialLayout = vk::ImageLayout::eUndefined},
+                                                 gpu::MemoryUse::gpu));
             ATLAS_VK_LET(
                 view,
                 device_.handle().createImageView({.image = image.handle(),
                                                   .viewType = vk::ImageViewType::e2D,
                                                   .format = image_formats[i],
                                                   .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                                       .levelCount = 1,
+                                                                       .levelCount = levels,
                                                                        .layerCount = 1}}),
                 "a noise field's view");
             next.images[i] = std::move(image);
@@ -791,11 +854,11 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
     const FieldSize size = fields.size();
     ATLAS_GPU_CHECK(images_for(size));
     const std::size_t pixels = static_cast<std::size_t>(size.width) * size.height;
-    ATLAS_GPU_LET(staging, device_.memory().buffer(pixels * (rgba_bytes + rg_bytes + r_bytes),
-                                                   vk::BufferUsageFlagBits::eTransferSrc, gpu::MemoryUse::upload));
-    const std::array<std::span<const std::uint8_t>, 3> planes{fields.rgba(), fields.rg(), fields.r()};
+    ATLAS_GPU_LET(staging, device_.memory().buffer(pixels * pixel_bytes, vk::BufferUsageFlagBits::eTransferSrc,
+                                                   gpu::MemoryUse::upload));
+    const std::array<std::span<const std::uint8_t>, 4> planes{fields.rgba(), fields.rg(), fields.r(), fields.canopy()};
     std::size_t offset = 0;
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t i = 0; i < 4; ++i) {
         ATLAS_ASSERT(planes[i].size() == pixels * image_bytes[i], "a field's image holds its bytes a pixel");
         std::memcpy(staging.bytes().subspan(offset).data(), planes[i].data(), planes[i].size());
         offset += planes[i].size();
@@ -807,9 +870,9 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
 }
 
 gpu::Result<void> FieldImages::stage(FieldSize size, std::shared_ptr<const gpu::Buffer> bytes) {
-    ATLAS_ASSERT(bytes != nullptr && bytes->size() == static_cast<vk::DeviceSize>(size.width) * size.height *
-                                                          (rgba_bytes + rg_bytes + r_bytes),
-                 "the GPU's fields hold the three images' bytes");
+    ATLAS_ASSERT(bytes != nullptr &&
+                     bytes->size() >= static_cast<vk::DeviceSize>(size.width) * size.height * pixel_bytes,
+                 "the GPU's fields hold the four images' bytes");
     ATLAS_GPU_CHECK(images_for(size));
     staging_ = std::move(bytes);
     return {};
@@ -819,9 +882,10 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
     if (staging_ == nullptr) return;
     const FieldSize size = current_.size;
     const vk::DeviceSize pixels = static_cast<vk::DeviceSize>(size.width) * size.height;
-    std::array<gpu::ImageDependency, 3> to_copy{};
-    std::array<gpu::ImageDependency, 3> to_read{};
-    for (std::size_t i = 0; i < 3; ++i) {
+    const std::uint32_t levels = canopy_mipmaps_ ? canopy_levels(size) : 1;
+    std::array<gpu::ImageDependency, 4> to_copy{};
+    std::array<gpu::ImageDependency, 5> to_read{};
+    for (std::size_t i = 0; i < 4; ++i) {
         // Earlier frames' reads of the image come first; what it held is not kept.
         to_copy[i] = {.image = current_.images[i].handle(),
                       .src_stage = reading_stages,
@@ -830,17 +894,29 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
                       .dst_access = vk::AccessFlagBits2::eTransferWrite,
                       .old_layout = vk::ImageLayout::eUndefined,
                       .new_layout = vk::ImageLayout::eTransferDstOptimal};
+        // the canopy's last level is the last its mipmaps write; the levels above it were read
         to_read[i] = {.image = current_.images[i].handle(),
                       .src_stage = vk::PipelineStageFlagBits2::eTransfer,
                       .src_access = vk::AccessFlagBits2::eTransferWrite,
                       .dst_stage = reading_stages,
                       .dst_access = vk::AccessFlagBits2::eShaderRead,
                       .old_layout = vk::ImageLayout::eTransferDstOptimal,
-                      .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal};
+                      .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                      .base_level = i == canopy_image ? levels - 1 : 0,
+                      .levels = 1};
     }
+    to_read[4] = {.image = current_.images[canopy_image].handle(),
+                  .src_stage = vk::PipelineStageFlagBits2::eTransfer,
+                  .src_access = vk::AccessFlagBits2::eTransferRead,
+                  .dst_stage = reading_stages,
+                  .dst_access = vk::AccessFlagBits2::eShaderRead,
+                  .old_layout = vk::ImageLayout::eTransferSrcOptimal,
+                  .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                  .base_level = 0,
+                  .levels = levels - 1};
     sync.barrier(cmd, {}, to_copy);
     vk::DeviceSize offset = 0;
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t i = 0; i < 4; ++i) {
         const vk::BufferImageCopy region{
             .bufferOffset = offset,
             .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
@@ -849,7 +925,33 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
                               region);
         offset += pixels * image_bytes[i];
     }
-    sync.barrier(cmd, {}, to_read);
+    // the canopy's mipmaps: each level the mean of the one above, a filtered blit of it at half its size
+    const vk::Image canopy = current_.images[canopy_image].handle();
+    auto w = static_cast<std::int32_t>(size.width);
+    auto h = static_cast<std::int32_t>(size.height);
+    for (std::uint32_t level = 1; level < levels; ++level) {
+        sync.barrier(cmd, gpu::ImageDependency{.image = canopy,
+                                               .src_stage = vk::PipelineStageFlagBits2::eTransfer,
+                                               .src_access = vk::AccessFlagBits2::eTransferWrite,
+                                               .dst_stage = vk::PipelineStageFlagBits2::eTransfer,
+                                               .dst_access = vk::AccessFlagBits2::eTransferRead,
+                                               .old_layout = vk::ImageLayout::eTransferDstOptimal,
+                                               .new_layout = vk::ImageLayout::eTransferSrcOptimal,
+                                               .base_level = level - 1,
+                                               .levels = 1});
+        const std::int32_t half_w = std::max(w / 2, 1);
+        const std::int32_t half_h = std::max(h / 2, 1);
+        const vk::ImageBlit blit{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = level - 1, .layerCount = 1},
+            .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0}, vk::Offset3D{.x = w, .y = h, .z = 1}}},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = level, .layerCount = 1},
+            .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0}, vk::Offset3D{.x = half_w, .y = half_h, .z = 1}}}};
+        cmd.blitImage(canopy, vk::ImageLayout::eTransferSrcOptimal, canopy, vk::ImageLayout::eTransferDstOptimal, blit,
+                      vk::Filter::eLinear);
+        w = half_w;
+        h = half_h;
+    }
+    sync.barrier(cmd, {}, std::span(to_read).first(levels > 1 ? 5 : 4));
     for (Images& old : replaced_)
         retired_.push_back(Retired{.images = std::move(old), .last_frame = frame > 0 ? frame - 1 : 0});
     replaced_.clear();
@@ -955,8 +1057,9 @@ void FieldCache::update(const frame::FrameState& state, frame::Globals& globals)
         take(size);
     }
     if (!images_->ready()) return;
-    for (std::size_t i = 0; i < 3; ++i) {
-        globals.image(image_globals[i], images_->view(static_cast<std::uint32_t>(i)), images_->sampler());
+    for (std::size_t i = 0; i < 4; ++i) {
+        globals.image(image_globals[i], images_->view(static_cast<std::uint32_t>(i)),
+                      i == canopy_image ? images_->canopy_sampler() : images_->sampler());
     }
 }
 

@@ -614,6 +614,9 @@ public:
 
     /// The last frame's decisions (tests, and the twin).
     [[nodiscard]] const GroundFrame& decided() const noexcept { return frame_; }
+    /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
+    /// full mode; else its union is black at .55, as a frame without filters draws it.
+    [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
     /// What the last select cost, milliseconds of the render thread's CPU time.
     [[nodiscard]] double select_ms() const noexcept { return select_ms_; }
     /// The absolute painter slot of a group's element this frame (from update on).
@@ -739,6 +742,9 @@ private:
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
     void record_fills(const frame::Recording& r, bool above);
     void record_plate(const frame::Recording& r);
+    /// The filter's 256 results (fx::canopy_table) into the frame's words, then in the app's map
+    /// (FrameState::grounded) the ground's map its field is read by.
+    void write_canopy(std::vector<std::uint32_t>& words, const frame::FrameState& state);
     void record_canopy(const frame::Recording& r);
     // Roads.cpp: the fills' and the plate's twin
     void emit_fills(const frame::FrameState& state, twin::Stream& out, std::int32_t mat, std::int32_t above) const;
@@ -938,6 +944,7 @@ struct Ground::Pipelines {
     vk::raii::Pipeline plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};
     vk::raii::Pipeline canopy_composite{nullptr};
+    vk::raii::Pipeline canopy_filtered{nullptr};
     // Water.cpp
     vk::raii::Pipeline water_count{nullptr};
     vk::raii::Pipeline water_convert{nullptr};
@@ -1138,6 +1145,7 @@ struct Ground::Words {
     std::uint32_t ripple_plan = 0;  ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
     std::uint32_t ripple_map = 0;   ///< the water's map the ripple reads its field by (the app's map), 0: the screen's
     std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results (glints_fs)
+    std::uint32_t canopy = 0;       ///< the canopy's filter's 256 results, then the ground's map (canopy_fs)
     std::uint32_t slot = 0;         ///< the frame slot whose buffer holds them
     bool ready = false;
 };
