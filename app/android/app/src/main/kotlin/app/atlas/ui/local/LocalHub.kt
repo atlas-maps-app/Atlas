@@ -113,6 +113,7 @@ class LocalHub(private val services: Services) {
             bundled = { services.context.resources.openRawResource(R.raw.local_iss).bufferedReader().use { it.readText() } },
             fetch = { services.http.text(TleStore.URL) },
             clock = services.clock,
+            second = { services.http.text(TleStore.SECOND_URL) },
         )
     }
 

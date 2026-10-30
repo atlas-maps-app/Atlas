@@ -8,10 +8,12 @@ import app.atlas.model.Place
 import app.atlas.providers.ChargerFilters
 import app.atlas.providers.ChargerMerge
 import app.atlas.providers.ChargerProvider
+import app.atlas.providers.FailoverGeocoder
 import app.atlas.providers.FoursquareRatings
 import app.atlas.providers.Geocoder
 import app.atlas.providers.Http
 import app.atlas.providers.Mangrove
+import app.atlas.providers.Nominatim
 import app.atlas.providers.OpenChargeMap
 import app.atlas.providers.OsmChargers
 import app.atlas.providers.Overpass
@@ -44,6 +46,7 @@ import app.atlas.services.PlaceCache
 import app.atlas.services.PlaceFinder
 import app.atlas.services.RegionManager
 import app.atlas.services.SavedCamera
+import app.atlas.services.SettingsKeys
 import app.atlas.services.SettingsStore
 import app.atlas.services.SwitchableLocation
 import app.atlas.services.SystemConnectivity
@@ -200,7 +203,10 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     val overpass: Overpass by lazy { Overpass(http) }
     val weather: Weather by lazy { Weather(http, File(dirs.cache, "providers"), keys, clock = { clock.instant() }) }
-    val geocoder: Geocoder by lazy { Photon(http) }
+    /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer, unless switched off. */
+    val geocoder: Geocoder by lazy {
+        FailoverGeocoder(Photon(http), Nominatim(http)) { Nominatim.INFO.id !in settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).first() }
+    }
     val mangrove: Mangrove by lazy { Mangrove(http) }
 
     /** Ratings from Mangrove (open, no key) and the keyed providers the user enabled with a key. */
