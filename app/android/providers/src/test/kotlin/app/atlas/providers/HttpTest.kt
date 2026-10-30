@@ -1,8 +1,12 @@
 package app.atlas.providers
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -15,6 +19,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -189,6 +195,36 @@ class HttpTest {
         limiter.penalise("overpass-api.de", 30.seconds)
         val at = limiter.withPermit("overpass-api.de") { testScheduler.currentTime }
         assertEquals(30_000L, at)
+    }
+
+    @Test
+    fun theMapsBlockingTurnAndTheAppsQueriesShareAServersOneQueryAtATime() = runBlocking {
+        val limiter = HostLimiter(mapOf("overpass-api.de" to HostPolicy(maxConcurrent = 1)))
+        // the map's window holds the server: the app's query waits for it, and the server is busy meanwhile
+        val turn = limiter.turn("overpass-api.de")
+        assertTrue(limiter.busy("overpass-api.de"))
+        assertFalse("a host without a policy is never busy", limiter.busy("example.org"))
+        val query = async(Dispatchers.Default) { limiter.withPermit("overpass-api.de") { "asked" } }
+        delay(300)
+        assertFalse(query.isCompleted)
+        turn.close()
+        turn.close() // closed again, it gives nothing more back
+        assertEquals("asked", withTimeout(5.seconds) { query.await() })
+        assertFalse(limiter.busy("overpass-api.de"))
+        // the app's query holds it: the map's turn waits for it
+        val held = CompletableDeferred<Unit>()
+        val done = CompletableDeferred<Unit>()
+        val app = launch(Dispatchers.Default) { limiter.withPermit("overpass-api.de") { held.complete(Unit); done.await() } }
+        held.await()
+        val got = AtomicBoolean(false)
+        val map = thread { limiter.turn("overpass-api.de").use { got.set(true) } }
+        map.join(300)
+        assertFalse(got.get())
+        done.complete(Unit)
+        map.join(5_000)
+        assertTrue(got.get())
+        app.join()
+        assertFalse(limiter.busy("overpass-api.de"))
     }
 
     @Test

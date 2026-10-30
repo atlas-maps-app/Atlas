@@ -27,7 +27,7 @@ class SourcesTruthTest {
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
-        "overpass" to "Overpass(http)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
+        "overpass" to "Overpass(http, servers = overpassServers)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
         "foursquare" to "FoursquareRatings(http", "yelp" to "YelpRatings(http", "tripadvisor" to "TripAdvisorRatings(http",
         "ocm" to "OpenChargeMap(http", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http",
         "bnetza" to "BnetzaChargers(http", "open-meteo" to "Weather(http",

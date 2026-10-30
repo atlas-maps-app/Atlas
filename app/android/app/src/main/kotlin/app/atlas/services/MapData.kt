@@ -16,6 +16,7 @@ import app.atlas.providers.SwitchedOffException
 import app.atlas.render.data.HttpPost
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.RegionBuilder
+import app.atlas.render.data.inTurns
 import app.atlas.render.live.HttpGet
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
@@ -131,8 +132,15 @@ class MapData(private val services: Services) {
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
     private val regionFiles by lazy { RegionFiles(services.dirs.regions, services.dirs.places, services.dirs.segments) }
 
-    /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
-    private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
+    /**
+     * Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on
+     * one server; the same record of what they did lately ([Services.overpassServers]), so a server either found down
+     * rests for both; and each request in its server's turn of the app's limiter, so the two run one query at a time on
+     * each server between them.
+     */
+    private val overpass: OverpassClient by lazy {
+        OverpassClient(post.inTurns(services.http.limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
+    }
 
     /**
      * Which region a view draws, and getting it ready. Today's map builds no area of its own from Overpass any more

@@ -2,6 +2,7 @@ package app.atlas.providers
 
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import app.atlas.net.OverpassServers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -30,23 +31,23 @@ class OverpassException(message: String, val query: String) : ProviderException(
  * that rests while another may answer; where every one rests, only the one whose rest ends first is asked. On 27 and 30
  * October 2026 every public server failed or gave no answer for an hour, and each query (a search, the places nearby,
  * each piece of a lorry's route) waited for every one of them in turn.
+ *
+ * What the servers did lately is [servers]: the app passes the map's windows the same record, so a server either found
+ * down rests for both, and the one either heard from last is asked first; a server whose one query at a time is under
+ * way (the map's window on it) is asked after the free ones.
  */
 class Overpass(
     private val http: Http,
     val endpoints: List<String> = ENDPOINTS,
     private val defaultTimeoutSeconds: Int = 60,
-    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    val servers: OverpassServers = OverpassServers(clock),
 ) : Provider {
     override val info = INFO
 
     override fun state() = ProviderState.READY
 
     private val sequential = Mutex()
-    private var preferred = 0
-    private val restUntil = LongArray(endpoints.size)
-
-    /** How often each server failed in a row. */
-    private val failedInARow = IntArray(endpoints.size)
 
     /** The endpoint that answered last, for the UI's "via …" line. */
     @Volatile
@@ -104,8 +105,7 @@ class Overpass(
             val url = endpoints[i]
             try {
                 val result = fetch(url, query, timeout, retryOnRemark, parse)
-                preferred = i
-                failedInARow[i] = 0
+                servers.answered(url)
                 lastEndpoint = url
                 return@withLock result
             } catch (e: OverpassException) {
@@ -129,20 +129,21 @@ class Overpass(
     }
 
     /**
-     * The next endpoint to try: the preferred one first, then the others in order, none that rests; where every one
-     * rests before any was asked, the one whose rest ends first. Null where those left all rest.
+     * The next endpoint to try: the one that answered last (here or for the map) first, then the others in order, none
+     * that rests, a free one before one with a query under way; where every one rests before any was asked, the one whose
+     * rest ends first. Null where those left all rest.
      */
     private fun pick(tried: Set<Int>): Int? {
-        val now = clock()
-        val order = endpoints.indices.map { (preferred + it) % endpoints.size }.filter { it !in tried }
-        return order.firstOrNull { restUntil[it] <= now } ?: if (tried.isEmpty()) order.minByOrNull { restUntil[it] } else null
+        val now = servers.now()
+        val start = endpoints.indices.firstOrNull { servers.isFirst(endpoints[it]) } ?: 0
+        val order = endpoints.indices.map { (start + it) % endpoints.size }.filter { it !in tried }
+        val awake = order.filter { servers.restUntil(endpoints[it]) <= now }
+        return awake.firstOrNull { !servers.busy(endpoints[it]) } ?: awake.firstOrNull()
+            ?: if (tried.isEmpty()) order.minByOrNull { servers.restUntil(endpoints[it]) } else null
     }
 
     /** Rests endpoint [i] for [pause], twice as long for each failure in a row before this one, [MAX_REST] at most. */
-    private fun rest(i: Int, pause: Duration) {
-        val n = ++failedInARow[i]
-        restUntil[i] = clock() + minOf(pause.inWholeMilliseconds shl (n - 1).coerceAtMost(10), MAX_REST.inWholeMilliseconds)
-    }
+    private fun rest(i: Int, pause: Duration) = servers.failed(endpoints[i], pause.inWholeMilliseconds, MAX_REST.inWholeMilliseconds)
 
     private suspend fun <T> fetch(url: String, query: String, timeout: Duration, retryOnRemark: Boolean, parse: (Reader) -> T): T {
         // OkHttp asks for gzip and inflates it itself, as long as we do not set Accept-Encoding by hand.

@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import app.atlas.net.OverpassServers
 import app.atlas.providers.ChargerFilters
 import app.atlas.providers.ChargerMerge
 import app.atlas.providers.BnetzaChargers
@@ -74,6 +75,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 import java.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -228,7 +230,14 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     // ---- Providers -----------------------------------------------------------------------------------------------
 
-    val overpass: Overpass by lazy { Overpass(http) }
+    /**
+     * What the public Overpass servers did lately, for the map's windows (MapData) and the app's queries alike: a server
+     * either found down rests for both, the one either heard from last is asked first, and one with a query under way in
+     * [http]'s limiter (one at a time on each, for both) after the free ones.
+     */
+    val overpassServers: OverpassServers by lazy { OverpassServers(inUse = { url -> url.toHttpUrlOrNull()?.let { http.limiter.busy(it.host) } == true }) }
+
+    val overpass: Overpass by lazy { Overpass(http, servers = overpassServers) }
     val weather: Weather by lazy { Weather(http, dirs.providers, keys, clock = { clock.instant() }) }
     /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer (each unless switched off). */
     val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http), Nominatim(http)) }

@@ -4,6 +4,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
+import app.atlas.net.OverpassServers
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
@@ -299,6 +300,42 @@ class OverpassTest {
                 now = 105_000
                 ask()
                 assertEquals(3 to 6, counts())
+            }
+        }
+    }
+
+    @Test
+    fun aServerTheMapFoundDownIsNotAskedAndAFreeServerGoesBeforeOneTheMapIsUsing() = runBlocking {
+        Mock().use { a ->
+            Mock().use { b ->
+                a.dispatch { response(Fixtures.text("overpass_cafes.json")) }
+                b.dispatch { response(Fixtures.text("overpass_cafes.json")) }
+                val now = 0L
+                val inUse = HashSet<String>()
+                // the record the app hands the map's windows too (Services.overpassServers)
+                val shared = OverpassServers(clock = { now }, inUse = { OverpassServers.keyOf(it) in inUse })
+                val o = Overpass(testHttp(), listOf(a.url("/i"), b.url("/i")), servers = shared)
+                fun counts() = a.count to b.count
+                // the map's window found a down (the map names the server, the app its interpreter)
+                shared.failed(a.base, pauseMs = 60_000, capMs = 30 * 60_000)
+                o.query("node(1); out;")
+                assertEquals("a server resting for the map is not asked", 0 to 1, counts())
+                // the map heard from a since: it is asked first
+                shared.answered(a.base)
+                o.query("node(1); out;")
+                assertEquals(1 to 1, counts())
+                // the map's window is under way on a: the free server goes first, and nothing rests for it
+                inUse += OverpassServers.keyOf(a.base)
+                o.query("node(1); out;")
+                assertEquals(1 to 2, counts())
+                assertEquals(Long.MIN_VALUE, shared.restUntil(a.base))
+                // what the app's queries learn, the map's windows see: b fails and rests, a answered last
+                inUse.clear()
+                b.dispatch { response("<html><body>502: the server is at capacity</body></html>", 502) }
+                o.query("node(1); out;")
+                assertEquals(2 to 3, counts())
+                assertTrue(shared.restUntil(b.base) > now)
+                assertTrue(shared.isFirst(a.base))
             }
         }
     }
