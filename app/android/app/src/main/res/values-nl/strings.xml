@@ -21,7 +21,7 @@
     <string name="kit_closed">dicht</string>
     <string name="kit_hours_unknown">openingstijden onbekend</string>
     <string name="kit_mic">Spreek</string>
-    <string name="kit_mic_unavailable">Geen spraakherkenning op deze telefoon</string>
+    <string name="kit_mic_unavailable">Spraakzoeken heeft de spraakherkenning op de telefoon zelf nodig</string>
     <string name="kit_offline">Offline</string>
     <string name="kit_loading">Zoeken…</string>
     <string name="kit_retry">Opnieuw</string>

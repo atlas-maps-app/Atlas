@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Stem: aan</string>
     <string name="mine_voice_off">Stem: uit, bochten voel je</string>
     <string name="mine_voice_sub_ready">op de telefoon, geen bereik nodig</string>
-    <string name="mine_voice_sub_none">geen spraakmotor op deze telefoon</string>
+    <string name="mine_voice_sub_none">geen stem voor deze taal op de telefoon zelf</string>
     <string name="mine_voice_sample">Voorbeeld</string>
     <string name="mine_voice_sample_text">Over tweehonderd meter rechtsaf, de gracht op.</string>
     <string name="mine_voice_haptics">Trillingen</string>

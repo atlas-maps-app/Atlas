@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Voix : activée</string>
     <string name="mine_voice_off">Voix : coupée, les virages se sentent</string>
     <string name="mine_voice_sub_ready">sur le téléphone, sans réseau</string>
-    <string name="mine_voice_sub_none">pas de synthèse vocale sur ce téléphone</string>
+    <string name="mine_voice_sub_none">pas de voix pour cette langue sur le téléphone même</string>
     <string name="mine_voice_sample">Écouter</string>
     <string name="mine_voice_sample_text">Dans deux cents mètres, tournez à droite.</string>
     <string name="mine_voice_haptics">Vibrations</string>

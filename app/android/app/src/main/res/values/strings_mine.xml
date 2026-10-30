@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Voice: on</string>
     <string name="mine_voice_off">Voice: off, turns are felt</string>
     <string name="mine_voice_sub_ready">on the phone, no signal needed</string>
-    <string name="mine_voice_sub_none">no speech engine on this phone</string>
+    <string name="mine_voice_sub_none">no voice for this language on the phone itself</string>
     <string name="mine_voice_sample">Play sample</string>
     <string name="mine_voice_sample_text">In two hundred metres, turn right onto the canal.</string>
     <string name="mine_voice_haptics">Vibrations</string>

@@ -98,7 +98,7 @@
     <string name="mine_voice_on">Stimme: an</string>
     <string name="mine_voice_off">Stimme: aus, Abbiegungen fühlbar</string>
     <string name="mine_voice_sub_ready">auf dem Telefon, kein Netz nötig</string>
-    <string name="mine_voice_sub_none">keine Sprachausgabe auf diesem Telefon</string>
+    <string name="mine_voice_sub_none">keine Stimme für diese Sprache auf dem Telefon selbst</string>
     <string name="mine_voice_sample">Beispiel</string>
     <string name="mine_voice_sample_text">In zweihundert Metern rechts abbiegen.</string>
     <string name="mine_voice_haptics">Vibration</string>
