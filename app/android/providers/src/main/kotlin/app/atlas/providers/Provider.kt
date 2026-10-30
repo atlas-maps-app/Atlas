@@ -37,7 +37,7 @@ enum class ProviderState {
 
 /**
  * What the Settings · Data screen shows for a source: its name, its licence label, the credit line,
- * whether it needs a key and whether it is on by default.
+ * whether it needs a key and whether it is on by default; and for the privacy board, the hosts it is asked at.
  */
 data class ProviderInfo(
     val id: String,
@@ -49,6 +49,12 @@ data class ProviderInfo(
     val onByDefault: Boolean = keyNeed == KeyNeed.NONE,
     /** Anything the user should know: terms, limits, why it is off. */
     val note: String? = null,
+    /** The hosts the app sends this source's requests to (its servers, not its website), as the privacy board names them. */
+    val hosts: List<String> = emptyList(),
+    /** False where the source is asked only when the user acts (a note they leave, edits they send): it has no switch. */
+    val switchable: Boolean = true,
+    /** The source whose servers this one is asked through (OpenStreetMap's chargers, through Overpass), if any. */
+    val via: String? = null,
 )
 
 /** A source of data with an identity and a state. */

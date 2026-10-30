@@ -44,6 +44,7 @@ class NdwChargers(
             attribution = "Charging data: NDW, Nationaal Dataportaal Wegverkeer",
             url = "https://opendata.ndw.nu",
             note = "Every public charger in the Netherlands with live status, published under the EU's AFIR. About 18 MB; Atlas fetches it on Wi-Fi.",
+            hosts = listOf("opendata.ndw.nu"),
         )
 
         /**

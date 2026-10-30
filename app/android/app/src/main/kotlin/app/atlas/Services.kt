@@ -50,6 +50,7 @@ import app.atlas.services.SettingsKeys
 import app.atlas.services.SettingsStore
 import app.atlas.services.SwitchableLocation
 import app.atlas.services.SystemConnectivity
+import app.atlas.ui.mine.SourcesModel
 import app.atlas.services.Voice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -62,10 +63,13 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
@@ -128,8 +132,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     val connectivity: Connectivity by lazy { if (config.offline) FixedConnectivity(online = false) else SystemConnectivity(this.context) }
 
-    /** The one HTTP client of the providers: shared pool, disk cache, polite per-host limits. */
-    val http: Http by lazy { Http(cacheDir = dirs.http) }
+    /**
+     * The one HTTP client of the providers, and of the map's clients built on it: shared pool, disk cache, polite per-host
+     * limits, and no request to a source the user switched off (Settings · Data).
+     */
+    val http: Http by lazy { Http(cacheDir = dirs.http, gate = { host -> SourcesModel.blockedBy(host, sourcesOff()) }) }
+
+    private val sourcesOffNow: StateFlow<Set<String>?> by lazy {
+        settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).stateIn(scope, SharingStarted.Eagerly, null)
+    }
+
+    /** The sources the user switched off, by id; the first ask waits for the settings, so nothing goes out before they are read. */
+    fun sourcesOff(): Set<String> = sourcesOffNow.value ?: runBlocking { settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).first() }
 
     private val regionVersion = MutableStateFlow(0)
 
@@ -203,10 +217,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     val overpass: Overpass by lazy { Overpass(http) }
     val weather: Weather by lazy { Weather(http, File(dirs.cache, "providers"), keys, clock = { clock.instant() }) }
-    /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer, unless switched off. */
-    val geocoder: Geocoder by lazy {
-        FailoverGeocoder(Photon(http), Nominatim(http)) { Nominatim.INFO.id !in settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).first() }
-    }
+    /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer (each unless switched off). */
+    val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http), Nominatim(http)) }
     val mangrove: Mangrove by lazy { Mangrove(http) }
 
     /** Ratings from Mangrove (open, no key) and the keyed providers the user enabled with a key. */
@@ -270,10 +282,11 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions, namer = localData.wayNamer())
     }
 
-    /** Charging stops for the EV planner, from every charger source that is ready, merged. */
+    /** Charging stops for the EV planner, from every charger source that is ready and not switched off, merged. */
     val chargerSource: ChargerSource by lazy {
         ChargerSource { corridor, minKw, connectors ->
-            val ready = chargers.filter { it.state() == ProviderState.READY }
+            val off = sourcesOff()
+            val ready = chargers.filter { it.state() == ProviderState.READY && it.id !in off }
             val found = coroutineScope {
                 ready.map { p ->
                     async {

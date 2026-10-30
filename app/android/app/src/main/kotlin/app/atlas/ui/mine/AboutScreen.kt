@@ -83,7 +83,7 @@ fun AboutScreen(args: Dest.About, nav: Navigator) {
             BText(stringResource(R.string.mine_about_osm), bt(14f, 800, 18f), INK, Modifier.padding(top = 8.dp), lines = 2)
             BText(stringResource(R.string.mine_about_osm_text), bt(12f, 400, 15.5f), SOFT, Modifier.padding(top = 3.dp), lines = 12)
         }
-        val credits = remember { (Catalogue.ALL + Catalogue.BUNDLED + SourcesModel.TANKERKOENIG).distinctBy { it.id } }
+        val credits = remember { (SourcesModel.ALL + Catalogue.BUNDLED).distinctBy { it.id } }
         Section(stringResource(R.string.mine_about_credits)) {
             for (p in credits) LicenceRow(p.name, p.attribution, p.licence)
         }

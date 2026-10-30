@@ -110,6 +110,9 @@ class Overpass(
                 return@withLock result
             } catch (e: OverpassException) {
                 throw e
+            } catch (e: SwitchedOffException) {
+                // the user switched Overpass off: no server failed, so none rests
+                throw e
             } catch (e: OverpassBusy) {
                 failures += "${host(url)}: ${e.message}"
                 rest(i, e.pause)
@@ -208,7 +211,9 @@ class Overpass(
             licence = "ODbL",
             attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org/copyright",
-            note = "Shared public servers: Atlas asks one query at a time and only when you search beyond your downloads.",
+            note = "Shared public servers, one query at a time: the map's windows that Atlas's packs do not hold, searches beyond " +
+                "your downloads, the places nearby and a lorry's route checks.",
+            hosts = ENDPOINTS.map { it.toHttpUrl().host },
         )
 
         private fun host(url: String) = runCatching { url.toHttpUrl().host }.getOrDefault(url)

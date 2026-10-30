@@ -1091,6 +1091,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             is Windows.Status.Waiting ->
                 if (s.refused) {
                     "This area's data could not be built"
+                } else if (MapEngine.overpassOff()) {
+                    "No pack holds this area, and Overpass is switched off"
                 } else {
                     val minutes = ((w.remaining(s) + 59_999L) / 60_000L).coerceAtLeast(1L)
                     "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), minutes)

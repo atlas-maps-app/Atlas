@@ -37,6 +37,9 @@ const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
 /**
  * The one HTTP client all providers share: a single OkHttp connection pool and disk cache, polite per-host rate limits,
  * and `suspend` calls that cancel the network request when the coroutine is cancelled.
+ *
+ * Every request passes [gate] first, by its host: a host whose source the user switched off is never asked (a
+ * [SwitchedOffException] instead). The map's clients build on [client], so the gate holds for every request the app sends.
  */
 class Http(
     cacheDir: File? = null,
@@ -48,6 +51,8 @@ class Http(
     policies: Map<String, HostPolicy> = HostPolicy.DEFAULTS,
     base: OkHttpClient? = null,
     clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** The id of the switched-off source a host belongs to, which holds its requests back; null lets them go. */
+    private val gate: (host: String) -> String? = { null },
 ) {
     /** The shared OkHttp client; other modules may build on it with [OkHttpClient.newBuilder] to share its pool. */
     val client: OkHttpClient = (base?.newBuilder() ?: OkHttpClient.Builder())
@@ -57,6 +62,7 @@ class Http(
         .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
         .addInterceptor { chain ->
             val req = chain.request()
+            gate(req.url.host)?.let { throw SwitchedOffException(it, req.url.host) }
             chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
         }
         .build()
@@ -155,6 +161,9 @@ class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val
     /** Throws [HttpException] unless the status is 2xx; returns this for chaining. */
     fun requireOk(): HttpResponse = if (ok) this else throw HttpException(code, url, text.take(Http.MAX_ERROR_BODY))
 }
+
+/** A request to [host], whose source [source] the user switched off (Settings · Data): it was never sent. */
+class SwitchedOffException(val source: String, val host: String) : IOException("$source is switched off: nothing was sent to $host")
 
 /** A server answered with a status other than 2xx. */
 class HttpException(val code: Int, val url: String, val body: String) : IOException("HTTP $code from ${url.substringBefore('?')}: ${body.take(200)}")

@@ -51,6 +51,7 @@ class BnetzaChargers(
             attribution = "Ladesäulenregister: Bundesnetzagentur.de, CC BY 4.0",
             url = "https://www.bundesnetzagentur.de/ladesaeulenkarte",
             note = "Germany's official register, monthly and without live status. About 55 MB; Atlas fetches it on Wi-Fi.",
+            hosts = listOf("www.bundesnetzagentur.de", "data.bundesnetzagentur.de"),
         )
 
         /** The newest register CSV linked from the page [html] at [base]. */

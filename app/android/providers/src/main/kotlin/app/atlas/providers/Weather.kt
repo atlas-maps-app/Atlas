@@ -303,6 +303,7 @@ class Weather(
             id = ID, name = "Open-Meteo", licence = "CC BY 4.0", attribution = "Weather data by Open-Meteo.com",
             url = "https://open-meteo.com", keyNeed = KeyNeed.OPTIONAL, onByDefault = true,
             note = "Free for non-commercial use, which Atlas is; a commercial Open-Meteo key can be added.",
+            hosts = listOf("api.open-meteo.com", "marine-api.open-meteo.com", "customer-api.open-meteo.com", "customer-marine-api.open-meteo.com"),
         )
 
         val CURRENT = listOf(

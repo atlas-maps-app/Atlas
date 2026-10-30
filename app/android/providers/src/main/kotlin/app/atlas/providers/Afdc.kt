@@ -98,6 +98,7 @@ class Afdc(
             attribution = "Charging data: Alternative Fuels Data Center, U.S. Department of Energy",
             url = "https://afdc.energy.gov/stations", keyNeed = KeyNeed.OPTIONAL, onByDefault = true,
             note = "Every public charger in the US and Canada, asked with Atlas's free key from developer.nlr.gov.",
+            hosts = listOf("developer.nlr.gov"),
         )
 
         /** AFDC connector codes that serve [connectors] (OSM socket names). */

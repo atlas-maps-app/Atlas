@@ -144,19 +144,25 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                 clear = if (home != null || work != null) ({ scope.launch { services.go.store.setHome(null); services.go.store.setWork(null) } }) else null,
             )
         }
-        // What goes online: the label, then one line a host (a blue dot, the name, what it is sent), 10 px apart.
+        // What goes online: the label, then one line a source the app asks now (a blue dot, the name, what it is sent and
+        // its hosts), 10 px apart: a source switched off is asked no more, as the app's HTTP client holds its hosts back.
         BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
             CardLabel(stringResource(R.string.mine_privacy_online), Modifier.padding(bottom = 9.dp))
+            val live = SourcesModel.asked(rows)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                val live = rows.filter { it.on && (it.state == app.atlas.providers.ProviderState.READY) }
                 for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id))
                 if (live.isEmpty()) BText(stringResource(R.string.mine_privacy_online_none), bt(12f, 400, 15.5f), SOFT, lines = 3)
             }
-            // What a download you start asks of its server (these hosts see your address and what you asked for).
-            CardLabel(stringResource(R.string.mine_privacy_downloads), Modifier.padding(top = 14.dp, bottom = 9.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
-                OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
+            // What a download you start asks of its server (these hosts see your address and what you asked for), where its
+            // source is not switched off.
+            val packs = live.any { it.info.id == SourcesModel.ATLAS_PACKS.id }
+            val routing = live.any { it.info.id == SourcesModel.BROUTER.id }
+            if (packs || routing) {
+                CardLabel(stringResource(R.string.mine_privacy_downloads), Modifier.padding(top = 14.dp, bottom = 9.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (packs) OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
+                    if (routing) OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
+                }
             }
         }
         exported?.let { BText(stringResource(R.string.mine_privacy_exported, it), bt(12f, 500, 15.5f), 0xFF178A4E, Modifier.padding(horizontal = 8.dp), lines = 2) }
@@ -188,13 +194,21 @@ private fun OnlineRow(name: String, host: String?, line: String) {
 @Composable
 internal fun sentLine(id: String): String = stringResource(
     when (id) {
-        "overpass", "osm-chargers", "ocm", "ndw", "bnetza", "afdc" -> R.string.mine_sent_area
-        "nominatim", "photon" -> R.string.mine_sent_words
+        "overpass", "osm-chargers", "ocm", "afdc" -> R.string.mine_sent_area
+        "ndw", "bnetza", "iss-orbit" -> R.string.mine_sent_nothing
+        "photon" -> R.string.mine_sent_words
+        "nominatim" -> R.string.mine_sent_reverse
         "mangrove" -> R.string.mine_sent_mangrove
         "foursquare", "yelp", "tripadvisor" -> R.string.mine_sent_ratings
         "open-meteo", "met-norway" -> R.string.mine_sent_weather
         "wikidata" -> R.string.mine_sent_wikidata
+        "commons" -> R.string.mine_sent_images
         "osm-notes" -> R.string.mine_sent_notes
+        "osm-edits" -> R.string.mine_sent_edits
+        "atlas-packs" -> R.string.mine_sent_windows
+        "brouter" -> R.string.mine_sent_brouter
+        "panoramax" -> R.string.mine_sent_photo
+        "open-prices" -> R.string.mine_sent_prices
         "transitous" -> R.string.mine_sent_transit
         "tankerkoenig" -> R.string.mine_sent_fuel
         else -> R.string.mine_sent_area
