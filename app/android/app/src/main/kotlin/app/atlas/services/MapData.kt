@@ -204,7 +204,7 @@ class MapData(private val services: Services) {
                     val sets = list.flatMap { p -> p.tileSets.map { "${p.id} ${it.index.coreVersion}" } }
                     val own = list.filter { p -> version != null && p.tilesOf(version) != null }.map { it.id }
                     android.util.Log.i(
-                        app.atlas.mapview.EngineFrames.TAG,
+                        "AtlasMap",
                         "vk windows: this core builds ${version ?: "?"}; tiles published: ${sets.joinToString().ifEmpty { "none" }}; " +
                             "its own: ${own.joinToString().ifEmpty { "none, so every window is built on the phone" }}",
                     )
