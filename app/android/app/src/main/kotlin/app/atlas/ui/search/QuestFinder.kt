@@ -10,6 +10,7 @@ import app.atlas.places.FactKind
 import app.atlas.places.Facts
 import app.atlas.places.OpeningHoursContext
 import app.atlas.search.PlaceRecord
+import app.atlas.search.covers
 import app.atlas.services.PlaceOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,7 @@ object QuestFinder {
         val store = services.placeStores
         val now = LocalDateTime.now(services.clock)
         val answered = services.saved.answers.value.mapTo(HashSet()) { it.placeKey + "|" + it.key }
-        if (store.size > 0 && store.bounds?.let { at in it } == true) {
+        if (store.covers(at)) {
             val places = store.inBox(BBox.around(at, RADIUS_M)).map { it.place }
             return@withContext questsOf(places, at, lang, now, answered) to PlaceOrigin.STORE
         }

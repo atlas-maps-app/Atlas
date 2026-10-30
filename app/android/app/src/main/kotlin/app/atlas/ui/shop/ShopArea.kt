@@ -10,6 +10,7 @@ import app.atlas.providers.OverpassArea
 import app.atlas.providers.OverpassQl
 import app.atlas.search.PlaceSource
 import app.atlas.search.byFilter
+import app.atlas.search.covers
 import app.atlas.services.OverpassSelectors
 import app.atlas.services.PlaceOrigin
 import app.atlas.services.LocalData
@@ -67,7 +68,7 @@ internal class ShopFinder(
             return@flow
         }
         val s = store()
-        if (s.size > 0 && s.bounds?.contains(centre) == true) {
+        if (s.covers(centre)) {
             val box = BBox.around(centre, radiusM)
             val found = s.byFilter(filter, box).map { it.place }
             val answer = AreaPlaces(nearest(found, centre, radiusM, limit), PlaceOrigin.STORE)

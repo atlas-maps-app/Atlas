@@ -13,6 +13,7 @@ import app.atlas.model.RouteRequest
 import app.atlas.model.Vehicle
 import app.atlas.places.TagFilter
 import app.atlas.route.RouteResult
+import app.atlas.search.covers
 import app.atlas.search.within
 import app.atlas.services.LocationQuality
 import app.atlas.services.LocalData
@@ -165,7 +166,7 @@ class GoHub(private val services: Services) {
      */
     suspend fun placesAround(at: LatLon, radiusM: Double): List<Place> = withContext(Dispatchers.IO) {
         val store = services.placeStores
-        if (store.size > 0 && store.bounds?.let { at in it } == true) return@withContext runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList())
+        if (store.covers(at)) return@withContext runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList())
         runCatching { services.localData.places(at, radiusM, ANY_PLACE, 300).value }.getOrDefault(emptyList())
     }
 

@@ -131,6 +131,32 @@ class LocalDataTest {
     }
 
     @Test
+    fun aCountrysStoreDoesNotCoverWhatItsBoxReachesBeyondItsBorders() = runBlocking {
+        // the Netherlands' store: its box the country's rectangle (its outline's), which holds Antwerp; its own places
+        // by the Westerkerk
+        val nl = app.atlas.search.MemoryPlaces(
+            listOf(
+                app.atlas.model.Place(OsmId(OsmType.RELATION, 47796), LatLon(52.15, 5.30), mapOf("boundary" to "administrative", "name" to "Nederland"), bbox = BBox(3.31, 50.75, 7.23, 53.56)),
+                app.atlas.model.Place(OsmId(OsmType.NODE, 1), LatLon(52.3746, 4.8838), mapOf("amenity" to "cafe", "name" to "'t Smalle")),
+            ),
+        )
+        val antwerp = LatLon(51.2194, 4.4011)
+        val cafe = TagFilter.Equals("amenity", "cafe")
+        val op = start()
+        // online, Overpass is asked there, where the store answered with nothing until 30 October
+        val online = LocalData(stores = { nl }, packs = { null }, overpass = { op }, isOnline = { true }).places(antwerp, 300.0, cafe)
+        assertEquals(PlaceOrigin.ONLINE, online.origin)
+        assertEquals(1, asked.get())
+        // offline: nothing on the phone covers it, which the screens say, not "nothing here"
+        assertNull(LocalData(stores = { nl }, packs = { null }, overpass = { op }, isOnline = { false }).places(antwerp, 300.0, cafe).origin)
+        // by the Westerkerk the store answers, and the network is not asked
+        val home = LocalData(stores = { nl }, packs = { null }, overpass = { op }, isOnline = { true }).places(here, 300.0, cafe)
+        assertEquals(PlaceOrigin.STORE, home.origin)
+        assertEquals(listOf("'t Smalle"), home.value.map { it.tags["name"] })
+        assertEquals(1, asked.get())
+    }
+
+    @Test
     fun placesFromAPackHoldingPartOfTheCircleAreCompletedOnline() = runBlocking {
         val op = start()
         answer = OVERPASS_BEYOND_THE_PACK

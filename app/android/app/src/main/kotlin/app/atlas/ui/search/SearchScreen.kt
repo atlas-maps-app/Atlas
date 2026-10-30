@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -67,6 +68,7 @@ import app.atlas.places.Categories
 import app.atlas.search.QueryResult
 import app.atlas.search.SearchItem
 import app.atlas.search.SearchResults
+import app.atlas.search.covers
 import app.atlas.ui.kit.CssCorners
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.rememberHere
@@ -75,6 +77,7 @@ import app.atlas.ui.kit.rememberSpeechInput
 import app.atlas.ui.kit.shortDistance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import java.util.Locale
 
@@ -109,7 +112,8 @@ fun SearchScreen(args: Dest.Search, nav: Navigator) {
     val now = rememberNow(state.results)
     val focus = remember { FocusRequester() }
     val mic = rememberSpeechInput(onText = { field = it; vm.onText(it) })
-    val coversHere = remember(here) { services.placeStores.bounds?.let { here in it } == true }
+    // the regions hold the place by their own data, not their box (which reaches Antwerp and Aachen), off the main thread
+    val coversHere by produceState(false, here) { value = withContext(Dispatchers.IO) { runCatching { services.placeStores.covers(here) }.getOrDefault(false) } }
     val category = remember(args.category) { args.category?.let { Categories.byId(it) } }
     val searchLabel = stringResource(R.string.search_title)
 
