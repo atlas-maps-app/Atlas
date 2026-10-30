@@ -68,6 +68,19 @@ jobs:
             "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
           "$cmake_bin/cmake" --build --preset host-stagep
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
+      # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read where
+      # it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's cases out,
+      # and TextShapingTest fails, as android.yml's test jobs say. The packer's cut of the APK's tiles fetched it until
+      # alpha 22, which carries no map, so alpha 22's first build failed there (30 October).
+      - name: The canal ring's pack
+        working-directory: .
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
       - name: Release key
         env:
           KEYSTORE: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}
