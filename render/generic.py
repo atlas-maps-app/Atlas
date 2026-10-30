@@ -48,6 +48,10 @@ ROOF = {
 # New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic looks drew
 # them): about one canal house in four has red tiles in the summer aerial photo (PDOK, cleaned, 119 houses counted, 28 Oct 2026)
 RED_TILES = 0.25
+# New looks: the shares of homes' guessed flat roofs in the generic looks' bitumen and gravel: on the same photo (cleaned
+# the same way) about half the flat roofs about the Westerpark are dark bitumen and one in ten light gravel or a light
+# coating, the rest the mid greys guessed for them (120 homes counted, 30 Oct 2026)
+FLAT_DARK, FLAT_LIGHT = 0.55, 0.10
 # Paris stone is not one tone: the guessed building:colour of an unmapped limestone front is one of these, per building
 STONE_FR = ['#DCD0B6', '#D3C4A6', '#E2D8C3', '#CDC1A8', '#D8C8AA', '#C8BCA3', '#E0D2B5', '#D6CCB9']
 NO_WIN = {'industrial', 'hangar', 'tank', 'canopy', 'shed', 'parking', 'greenhouse', 'bunker', 'caravan', 'kiosk', 'terminal'}
@@ -514,6 +518,10 @@ def apply(S, region, landuse_at=None, keep_homes=False):
                 b['look_why'] = '%s · %s' % (kind_label(kind), why)
                 if b.get('roof') == 'gabled' and g.get('roof:colour') and random.Random(b['id'] * 31 + 5).random() < RED_TILES:
                     b['rcol'] = ROOF['tiles_red'][1]; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06)      # the canal ring pack's red
+                elif b.get('roof') == 'flat' and g.get('roof:colour'):
+                    f = random.Random(b['id'] * 37 + 11).random()
+                    if f < FLAT_DARK + FLAT_LIGHT:      # the generic looks' bitumen, or their gravel
+                        b['rmat_draw'], b['rcol'] = ROOF['bitumen' if f < FLAT_DARK else 'gravel']; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06)
                 if lw:          # learned palettes: its mapped neighbours' colours over the varied brick guessed for it
                     lwall, lroof = lw.get('building:colour'), lw.get('roof:colour')
                     if lwall: b['col'] = lwall['value']; b['col_draw'] = jitter(colour_hex(lwall['value']), b['id']); b['mat_draw'] = lwall['material'] or b.get('mat_draw')

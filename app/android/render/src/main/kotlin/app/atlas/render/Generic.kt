@@ -74,6 +74,11 @@ object Generic {
     /** New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (about one in four, 28 Oct 2026). */
     const val RED_TILES = 0.25
 
+    // render/generic.py FLAT_DARK, FLAT_LIGHT
+    /** New looks: the shares of homes' guessed flat roofs in bitumen and in gravel (about half and one in ten, 30 Oct 2026). */
+    const val FLAT_DARK = 0.55
+    const val FLAT_LIGHT = 0.10
+
     /** Paris stone is not one tone: the guessed building:colour of an unmapped limestone front is one of these, per building. */
     val STONE_FR = listOf("#DCD0B6", "#D3C4A6", "#E2D8C3", "#CDC1A8", "#D8C8AA", "#C8BCA3", "#E0D2B5", "#D6CCB9")
     val NO_WIN: Set<String> = s("industrial", "hangar", "tank", "canopy", "shed", "parking", "greenhouse", "bunker", "caravan", "kiosk", "terminal")
@@ -653,6 +658,12 @@ object Generic {
                     if (b["roof"] == "gabled" && truthy(g["roof:colour"]) && PyRandom(add(mul(b["id"], 31), 5)).random() < RED_TILES) {
                         val rc = ROOF.getValue("tiles_red").second // the canal ring pack's red
                         b["rcol"] = rc; b["rcol_draw"] = jitter(rc, add(b["id"], 7), 0.06)
+                    } else if (b["roof"] == "flat" && truthy(g["roof:colour"])) {
+                        val f = PyRandom(add(mul(b["id"], 37), 11)).random()
+                        if (f < FLAT_DARK + FLAT_LIGHT) { // the generic looks' bitumen, or their gravel
+                            val (rm, rc) = ROOF.getValue(if (f < FLAT_DARK) "bitumen" else "gravel")
+                            b["rmat_draw"] = rm; b["rcol"] = rc; b["rcol_draw"] = jitter(rc, add(b["id"], 7), 0.06)
+                        }
                     }
                     continue
                 }

@@ -69,6 +69,11 @@ constexpr std::array<Keyed, 11> roofs = {{
 /// New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic
 /// looks drew them): about one canal house in four has red tiles in the summer aerial photo (28 October 2026).
 constexpr double red_tiles = 0.25;
+/// New looks: the shares of homes' guessed flat roofs in the generic looks' bitumen and gravel: about half the flat
+/// roofs about the Westerpark are dark bitumen and one in ten light gravel on the same photo, the rest the mid greys
+/// guessed for them (120 homes counted, 30 October 2026).
+constexpr double flat_dark = 0.55;
+constexpr double flat_light = 0.10;
 constexpr std::array<Pair, 11> mat_draw = {{
     {.key = "brick", .value = "#9C5A45"},
     {.key = "stone", .value = "#CFC6B4"},
@@ -1046,6 +1051,14 @@ void apply_looks(Scene& s, const Looks& looks) {
                         pymath::PyRandom((b.id * 31) + 5).random() < red_tiles) {
                         b.rcol = keyed(roofs, "tiles_red").colour; // the canal ring pack's red
                         b.rcol_draw = jitter(*b.rcol, b.id + 7, 0.06);
+                    } else if (b.roof == "flat" && g.has(Guess::roof_colour)) {
+                        const double f = pymath::PyRandom((b.id * 37) + 11).random();
+                        if (f < flat_dark + flat_light) { // the generic looks' bitumen, or their gravel
+                            const auto& r = keyed(roofs, f < flat_dark ? "bitumen" : "gravel");
+                            b.rmat_draw = r.material;
+                            b.rcol = r.colour;
+                            b.rcol_draw = jitter(*b.rcol, b.id + 7, 0.06);
+                        }
                     }
                     continue;
                 }
