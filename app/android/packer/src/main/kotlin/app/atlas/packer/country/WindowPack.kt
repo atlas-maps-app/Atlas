@@ -79,8 +79,10 @@ class WindowPack private constructor(
         return raw
     }
 
-    /** The style's tables: its frame decompressed. */
-    fun style(): ByteArray = section(Format.SECTION_STYLE).let { s -> unframe(stored(s.name), s.raw.toInt(), "the style") }
+    /** The style's tables: its frame decompressed, or its bytes where it is stored as they are. */
+    fun style(): ByteArray = section(Format.SECTION_STYLE).let { s ->
+        if (s.method == Format.METHOD_STORED) stored(s.name) else unframe(stored(s.name), s.raw.toInt(), "the style")
+    }
 
     /**
      * This pack with each chunk's tile and the style compressed by [zstd] into a frame of its own (one frame each,
@@ -168,8 +170,11 @@ class WindowPack private constructor(
         /** The fewest bytes of a chunk table's entry: zoom, five one-byte varints and the SHA-256. */
         private const val CHUNK_ENTRY_MIN = 38
 
-        /** The pack in [bytes], checked: the core's layout, each section's CRC-32, the chunk table against its frames. */
-        fun read(bytes: ByteArray): WindowPack {
+        /**
+         * The pack in [bytes], checked: the core's layout, each section's CRC-32, the chunk table against its frames;
+         * its style by [styleMethod] (the core's zstd, or stored as the phone writes a country's back: CountryStyle).
+         */
+        fun read(bytes: ByteArray, styleMethod: Int = Format.METHOD_ZSTD): WindowPack {
             if (bytes.size < HEADER || String(bytes, 0, 8, Charsets.US_ASCII) != PackWriter.MAGIC) throw PackFormatException("not an Atlas pack")
             if (bytes[8].toInt() != 0 || bytes[9].toInt() != Format.VERSION || bytes[10].toInt() != 0 || bytes[11].toInt() != 0) {
                 throw PackFormatException("not a render pack of format ${Format.VERSION}")
@@ -192,7 +197,11 @@ class WindowPack private constructor(
                 // end to end after the directory, as the core writes them
                 if (offset != at || stored < 0 || offset + stored > bytes.size) throw PackFormatException("section $name lies at $offset, not at $at where the core writes it")
                 if (CRC32().also { it.update(bytes, offset.toInt(), stored.toInt()) }.value != crc) throw PackFormatException("section $name is damaged")
-                val want = if (name == Format.SECTION_CHUNKS || name == Format.SECTION_STYLE) Format.METHOD_ZSTD else Format.METHOD_STORED
+                val want = when (name) {
+                    Format.SECTION_CHUNKS -> Format.METHOD_ZSTD
+                    Format.SECTION_STYLE -> styleMethod
+                    else -> Format.METHOD_STORED
+                }
                 if (method != want) throw PackFormatException("section $name has method $method, not the core's $want")
                 if (method == Format.METHOD_STORED && raw != stored) throw PackFormatException("section $name is stored in $stored bytes of $raw")
                 sections += Section(name, offset.toInt(), stored.toInt(), raw, crc, method)

@@ -232,13 +232,14 @@ jobs:
           df -h "$WORK"
       - name: Country tiles
         # The country's map (ENGINE.md step 3, one pack per country): every window of the windows' data built by the
-        # core's stage P tool as the phone builds it (load::build_window), each window's pack with its chunks and style
-        # at zstd 19 and every other byte the core's, in <id>.tiles with their index <id>.tiles.idx. The answers are
-        # unzipped 400 windows at a time into a folder beside the output and deleted once built. Noord-Holland (29
-        # October, the Mac's 4 threads): 2,334 windows from 602 MB of windows' data, 4.6 GB of JSON, at most 1.8 GB of
-        # it at a time (Amsterdam's batch), made 79 MB of tiles in 84 s; the Netherlands (29 October, the runner's 4
-        # threads, core-p8) 23,268 windows from 5.5 GB of windows' data made 709 MiB of tiles in 13 minutes. The disk
-        # needs a fifth of the data's size and room for a city's batch, checked first.
+        # core's stage P tool as the phone builds it (load::build_window), each window's pack with its chunks at zstd
+        # 19, its style as what differs from the country's (which the index holds once) and every other byte the
+        # core's, in <id>.tiles with their index <id>.tiles.idx. The answers are unzipped 400 windows at a time into a
+        # folder beside the output and deleted once built. Noord-Holland (30 October, core-p9, the Mac's 2 threads):
+        # 2,334 windows from 602 MB of windows' data, 4.6 GB of JSON, at most 1.8 GB of it at a time (Amsterdam's
+        # batch), made 87.6 MB of tiles in 6 minutes; the Netherlands (29 October, the runner's 4 threads, core-p9,
+        # each window's style still whole) 23,268 windows from 5.5 GB of windows' data made 825 MB of tiles in 15
+        # minutes. The disk needs a fifth of the data's size and room for a city's batch, checked first.
         if: env.WINDOWS == 'true'
         env:
           # the windows' index and the packs being compressed (the packer's process took 380 MB at most for

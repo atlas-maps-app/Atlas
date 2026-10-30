@@ -17,8 +17,9 @@ import java.time.Instant
 /**
  * A window's pack from its country's tiles, on GitHub releases faked by MockWebServer: the index downloaded once and
  * kept beside the windows' data indexes, each window by a range of its own bytes (two where it spans two parts), held
- * to the index; a window with nothing to draw answered without bytes; the newest country that holds a window; and no
- * answer where no country holds it, or where another core built the tiles.
+ * to the index, its style written back whole from the country's; a window with nothing to draw answered without
+ * bytes; the newest country that holds a window; and no answer where no country holds it, or where another core built
+ * the tiles.
  */
 class WindowTilesTest {
     private val gh = FakeGitHub()
@@ -44,27 +45,41 @@ class WindowTilesTest {
 
     private fun hex(b: ByteArray) = sha(b).joinToString("") { "%02x".format(it) }
 
-    /** A country's tiles as `packer country` writes them: each drawn window's pack, back to back, and the index. */
-    private class Country(val tiles: ByteArray, val index: ByteArray, val packs: Map<Pair<Int, Int>, ByteArray>)
+    /**
+     * A country's tiles as `packer country` writes them: each drawn window's pack as the tiles hold it ([stored]), back
+     * to back, and the index; and each window's pack as the core reads it ([packs]).
+     */
+    private class Country(
+        val tiles: ByteArray,
+        val index: ByteArray,
+        val stored: Map<Pair<Int, Int>, ByteArray>,
+        val packs: Map<Pair<Int, Int>, ByteArray>,
+    )
 
     private fun country(at: Instant = date, core: String = version, of: List<Pair<Int, Int>> = cells, empty: Set<Pair<Int, Int>> = setOf(water)): Country {
         val out = ByteArrayOutputStream()
         val entries = ArrayList<TilesIndex.Entry>()
+        val stored = HashMap<Pair<Int, Int>, ByteArray>()
         val packs = HashMap<Pair<Int, Int>, ByteArray>()
+        // the country's style: the first window's in the file
+        var country: ByteArray? = null
         for ((x, y) in of.sortedWith(compareBy({ it.first }, { it.second }))) {
             if (x to y in empty) {
                 entries += TilesIndex.Entry(x, y, out.size().toLong(), 0, ByteArray(32))
                 continue
             }
-            // a window's pack, as far as the phone's reader of the tiles cares: its bytes
-            val pack = "ATLASPCK window $x/$y of $at by $core ".repeat(3 + x % 2).toByteArray()
-            entries += TilesIndex.Entry(x, y, out.size().toLong(), pack.size, sha(pack))
+            // a window's pack, as far as the phone's reader of the tiles cares: its container, its style the last section
+            val style = windowStyle(x, y)
+            val pack = storedPack("{\"window\":\"14/$x/$y\",\"of\":\"$at\",\"by\":\"$core\"}", listOf("chunks" to ByteArray(100 + x % 2) { (it * x).toByte() }, "style" to style))
+            val b = CountryStyle.store(pack, style, country ?: style.also { country = it })
+            entries += TilesIndex.Entry(x, y, out.size().toLong(), b.size, sha(b))
+            stored[x to y] = b
             packs[x to y] = pack
-            out.write(pack)
+            out.write(b)
         }
         val tiles = out.toByteArray()
-        val index = ByteArrayOutputStream().also { TilesIndex.of(14, at, tiles.size.toLong(), core, entries).write(it) }.toByteArray()
-        return Country(tiles, index, packs)
+        val index = ByteArrayOutputStream().also { TilesIndex.of(14, at, tiles.size.toLong(), core, country ?: ByteArray(0), entries).write(it) }.toByteArray()
+        return Country(tiles, index, stored, packs)
     }
 
     /**
@@ -103,9 +118,10 @@ class WindowTilesTest {
         assertTrue(got.drawn)
         assertEquals(date, got.date)
         assertEquals("netherlands", got.pack)
-        // the index whole, then the window's own bytes
-        val start = c.packs.getValue(neighbour).size
-        assertEquals(listOf(null, "bytes=$start-${start + got.bytes.size - 1}"), ranges())
+        // the index whole, then the window's own bytes as the tiles hold them
+        val start = c.stored.getValue(neighbour).size
+        val length = c.stored.getValue(westerkerk).size
+        assertEquals(listOf(null, "bytes=$start-${start + length - 1}"), ranges())
         // its neighbour: its bytes alone
         assertArrayEquals(c.packs[neighbour], tiles.window(14, neighbour.first, neighbour.second, version)!!.bytes)
         assertEquals(3, gh.storageRequests.size)
@@ -114,7 +130,7 @@ class WindowTilesTest {
         // the app started again: the index kept in the folder serves
         assertArrayEquals(c.packs[westerkerk], WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
         assertEquals(4, gh.storageRequests.size)
-        assertEquals("bytes=$start-${start + got.bytes.size - 1}", ranges().last())
+        assertEquals("bytes=$start-${start + length - 1}", ranges().last())
     }
 
     @Test
@@ -131,12 +147,12 @@ class WindowTilesTest {
     @Test
     fun aWindowAcrossTwoPartsComesInARangeOfEach() {
         val c = country()
-        val first = c.packs.getValue(neighbour).size
+        val first = c.stored.getValue(neighbour).size
         // the first part ends inside the Westerkerk's window
         val list = listOf(publish("netherlands", c, date, split = first + 10))
         val got = WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!
         assertArrayEquals(c.packs[westerkerk], got.bytes)
-        assertEquals(listOf(null, "bytes=$first-${first + 9}", "bytes=0-${got.bytes.size - 11}"), ranges())
+        assertEquals(listOf(null, "bytes=$first-${first + 9}", "bytes=0-${c.stored.getValue(westerkerk).size - 11}"), ranges())
     }
 
     @Test
