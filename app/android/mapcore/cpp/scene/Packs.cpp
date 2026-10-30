@@ -9,6 +9,10 @@
 #include <chrono>
 #include <format>
 
+#if defined(__ANDROID__)
+#include <sys/resource.h>
+#endif
+
 namespace atlas::scene {
 
 gpu::Result<void> PackBuild::tiles(const std::function<void(const tiles::Tile&, const tiles::ChunkRef&)>& each,
@@ -72,6 +76,13 @@ void PackStage::wait_idle() {
 }
 
 void PackStage::work(const std::stop_token& stop) {
+#if defined(__ANDROID__)
+    // Background priority, as the residency's workers and the sun's threads have (ENGINE.md gain 8): made on the render
+    // thread, this thread would keep its display priority, and a pack's stage T decodes every tile of the pack (the
+    // canal names of a frame cell's windows, of the active pack and of up to three neighbours where four cells meet),
+    // which must not take the frames' time. This thread alone on Linux.
+    (void)setpriority(PRIO_PROCESS, 0, 10);
+#endif
     for (;;) {
         std::shared_ptr<const tiles::StorePack> pack;
         {

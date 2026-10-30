@@ -1,10 +1,10 @@
 // The packs' own stage T (plan-vector D13's canal names; K7's hook): what a pass derives from a whole pack rather than
 // from a tile, such as each canal name's first way in source order across the pack's label layer, which a tile's own
-// records cannot tell. When a pack becomes the active or the coarser one (scene/World.hpp), a thread of the world's
-// runs every pass's build_pack over it once (frame::Pass::build_pack, reading its tiles through PackBuild::tiles) and
-// publishes what each kept (PackBuild::keep) as the pack's ResidentPack; the render thread takes it between frames
-// and the passes read it in frame::FrameState (active_pack, coarser_pack), like a tile's PassTile::cpu: made on the
-// worker, const once published, freed when the world lets the pack go.
+// records cannot tell. When a pack becomes the active one, the coarser one or a neighbour (scene/World.hpp), a thread
+// of the world's, at background priority, runs every pass's build_pack over it once (frame::Pass::build_pack, reading
+// its tiles through PackBuild::tiles) and publishes what each kept (PackBuild::keep) as the pack's ResidentPack; the
+// render thread takes it between frames and the passes read it in frame::FrameState (active_pack, coarser_pack), like a
+// tile's PassTile::cpu: made on the worker, const once published, freed when the world lets the pack go.
 #pragma once
 
 #include "frame/Pass.hpp"
