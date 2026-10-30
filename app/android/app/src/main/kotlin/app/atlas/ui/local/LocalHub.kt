@@ -133,11 +133,11 @@ class LocalHub(private val services: Services) {
 
     /**
      * The passes of the space station over [at] in the next [window] after [now]. Orbit data comes from CelesTrak when
-     * online (at most every two hours), else what is kept, else what the app was built with; the passes are computed
+     * [online] (at most every two hours), else what is kept, else what the app was built with; the passes are computed
      * on the phone with SGP4.
      */
-    suspend fun iss(at: LatLon, now: Instant, window: Duration = Duration.ofHours(48)): IssOutlook = withContext(Dispatchers.Default) {
-        val orbit = orbitOverride?.invoke() ?: orbits.orbit(online = online())
+    suspend fun iss(at: LatLon, now: Instant, window: Duration = Duration.ofHours(48), online: Boolean = online()): IssOutlook = withContext(Dispatchers.Default) {
+        val orbit = orbitOverride?.invoke() ?: orbits.orbit(online = online)
         if (orbit == null || orbit.useless) return@withContext IssOutlook(orbit, emptyList())
         val key = "${orbit.tle.epochDays1950}|${(at.lat * 20).roundToInt()}|${(at.lon * 20).roundToInt()}|${now.epochSecond / 600}|${window.toHours()}"
         cached?.takeIf { it.first == key }?.let { return@withContext it.second }
