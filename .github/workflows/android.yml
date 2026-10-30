@@ -252,7 +252,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
+      # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
+      # canal ring's pack, could leave a failure behind a result kept from before).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -341,7 +346,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
+      # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
+      # canal ring's pack, could leave a failure behind a result kept from before).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -408,7 +418,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
+      # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
+      # canal ring's pack, could leave a failure behind a result kept from before).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -547,7 +562,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
+      # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
+      # canal ring's pack, could leave a failure behind a result kept from before).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
