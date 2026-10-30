@@ -150,7 +150,8 @@ private fun OpenRow(r: SourcesModel.Row, editing: Boolean, onToggle: (Boolean) -
         SourceRow(r, 2) {
             LicenceTag(SourcesModel.licenceLabel(r.info.licence))
             if (r.canTakeKey) KeyButton(r.keySet, onKey)
-            MineSwitch(r.on, onToggle, r.info.name, onColour = ON, knobShadow = 0x40000000)
+            // a source asked only when you act (a note, your edits) has no switch: nothing goes out unless you ask
+            if (r.info.switchable) MineSwitch(r.on, onToggle, r.info.name, onColour = ON, knobShadow = 0x40000000)
         }
         if (editing) KeyField(r, onSave)
     }
@@ -184,6 +185,13 @@ private fun feeds(id: String): String = stringResource(
         "open-meteo" -> R.string.mine_feeds_weather
         "wikidata" -> R.string.mine_feeds_wikidata
         "osm-notes" -> R.string.mine_feeds_notes
+        "osm-edits" -> R.string.mine_feeds_edits
+        "commons" -> R.string.mine_feeds_images
+        "atlas-packs" -> R.string.mine_feeds_packs
+        "brouter" -> R.string.mine_feeds_routing
+        "panoramax" -> R.string.mine_feeds_photos
+        "open-prices" -> R.string.mine_feeds_prices
+        "iss-orbit" -> R.string.mine_feeds_orbit
         "transitous" -> R.string.mine_feeds_transit
         "foursquare" -> R.string.mine_feeds_foursquare
         "yelp", "tripadvisor" -> R.string.mine_feeds_ratings

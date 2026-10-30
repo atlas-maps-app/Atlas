@@ -3,9 +3,12 @@ package app.atlas.providers
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -24,7 +27,12 @@ import kotlin.time.Duration.Companion.seconds
  * few hundred bytes. The download is streamed straight into a compact [ChargerIndex]; the raw file is never kept.
  *
  * With [autoDownload] false (the default, as these files run to tens of megabytes) nothing is fetched until the app
- * calls [refresh], say on Wi-Fi; until then the state is [ProviderState.NEEDS_DOWNLOAD].
+ * calls [refresh], say on Wi-Fi; until then the state is [ProviderState.NEEDS_DOWNLOAD]. With it, a download starts
+ * only while [mayDownload] (the app's: on Wi-Fi), and only for a place within reach of [covers] (the register's
+ * country): nobody looking for chargers in Spain downloads the Dutch register.
+ *
+ * A charger's live status (free now, in use) counts as live only for [LIVE_MAX_AGE] after the data came; older data
+ * gives the chargers without it, so a file refreshed weekly never shows last week's free points as free now.
  */
 abstract class DownloadedChargers(
     protected val http: Http,
@@ -35,6 +43,12 @@ abstract class DownloadedChargers(
     /** Keep only chargers in this box, to keep memory small on a phone; null keeps everything. */
     private val region: BBox?,
     private val clock: () -> Instant,
+    /** Whether a download may start now (the app: on Wi-Fi); the kept copy serves meanwhile. */
+    private val mayDownload: () -> Boolean = { true },
+    /** The box of the register's country: a place farther from it than the search's reach is not asked; null: anywhere. */
+    private val covers: BBox? = null,
+    /** Where a stale register is refreshed while the kept copy answers (the app's); null: before answering. */
+    private val background: CoroutineScope? = null,
 ) : ChargerProvider {
     /** The cache file's base name, such as "ndw". */
     protected abstract val cacheName: String
@@ -63,33 +77,83 @@ abstract class DownloadedChargers(
     override fun state(): ProviderState =
         if (loaded != null || dataFile?.exists() == true || autoDownload) ProviderState.READY else ProviderState.NEEDS_DOWNLOAD
 
-    override suspend fun near(center: LatLon, radiusM: Double, filters: ChargerFilters): List<Place> = index().nearNow(center, radiusM, filters)
+    override suspend fun near(center: LatLon, radiusM: Double, filters: ChargerFilters): List<Place> {
+        if (!reaches(center, radiusM)) return emptyList()
+        val found = index().nearNow(center, radiusM, filters)
+        return if (live()) found else found.map(::withoutStatus)
+    }
 
-    override suspend fun status(ids: List<String>): Map<String, ChargerStatus> = index().status(ids)
+    override suspend fun status(ids: List<String>): Map<String, ChargerStatus> = if (live()) index().status(ids) else emptyMap()
+
+    /** Whether a search within [radiusM] of [center] reaches the register's country ([covers]). */
+    private fun reaches(center: LatLon, radiusM: Double): Boolean {
+        val box = covers ?: return true
+        val dLat = radiusM / 111_320.0
+        val dLon = radiusM / (111_320.0 * kotlin.math.cos(Math.toRadians(center.lat)).coerceAtLeast(0.01))
+        return center.lat in box.south - dLat..box.north + dLat && center.lon in box.west - dLon..box.east + dLon
+    }
+
+    /** Whether the data came within [LIVE_MAX_AGE], so its chargers' status is still live. */
+    private fun live(): Boolean = meta()?.let { java.time.Duration.between(it.fetched, clock()).toMillis() <= LIVE_MAX_AGE.inWholeMilliseconds } == true
+
+    /** [p] without its live status: what the data said a while ago is not what is free now. */
+    private fun withoutStatus(p: Place): Place =
+        if (p.extra.keys.none { it == "status" || it.startsWith("status:") }) p else p.copy(extra = p.extra.filterKeys { it != "status" && !it.startsWith("status:") })
 
     // When an automatic refresh last failed, and why: the kept copy serves until RETRY_AFTER has passed.
     @Volatile
     private var failure: Pair<Instant, String>? = null
 
     /**
-     * The chargers: in memory, else from the cache, refreshed first when stale and [autoDownload] allows.
-     * Callers that find the data stale together share one download; after a failed one the kept copy serves for
-     * [RETRY_AFTER] before the server is asked again. Throws [ProviderException] when there is nothing yet.
+     * The chargers: in memory, else from the cache, refreshed first when stale and [autoDownload] allows; with
+     * [background], refreshed there instead, while the kept copy answers now (a register of tens of megabytes never
+     * holds up the screen that asked). Callers that find the data stale together share one download; after a failed one
+     * the kept copy serves for [RETRY_AFTER] before the server is asked again. Throws [ProviderException] when there is
+     * nothing yet.
      */
     suspend fun index(): ChargerIndex {
-        if (autoDownload && isStale() && !resting()) {
-            try {
-                lock.withLock { if (isStale()) fetch(force = false) }
-                failure = null
-            } catch (e: IOException) {
-                currentCoroutineContext().ensureActive()
-                failure = clock() to (e.message ?: e.javaClass.simpleName)
-                // Offline or the server is down: the kept copy, however old, is better than nothing.
-                loaded ?: readCache() ?: throw e
+        if (autoDownload && isStale() && !resting() && mayDownload()) {
+            val scope = background
+            if (scope != null) {
+                refreshIn(scope)
+            } else {
+                try {
+                    refreshNow()
+                } catch (e: IOException) {
+                    // Offline or the server is down: the kept copy, however old, is better than nothing.
+                    loaded ?: readCache() ?: throw e
+                }
             }
         }
         return loaded ?: readCache()
             ?: throw ProviderException(id, "${info.name}: nothing downloaded yet" + (failure?.let { " (the last try failed: ${it.second})" } ?: ""))
+    }
+
+    /** The refresh under way in [background], if any. */
+    @Volatile
+    private var refreshing: Job? = null
+
+    /** Refreshes the stale data, remembering a failure for [RETRY_AFTER]. */
+    private suspend fun refreshNow() {
+        try {
+            lock.withLock { if (isStale()) fetch(force = false) }
+            failure = null
+        } catch (e: IOException) {
+            currentCoroutineContext().ensureActive()
+            failure = clock() to (e.message ?: e.javaClass.simpleName)
+            throw e
+        }
+    }
+
+    /** Starts [refreshNow] in [scope] unless one is under way there. */
+    private fun refreshIn(scope: CoroutineScope) {
+        if (refreshing?.isActive == true) return
+        refreshing = scope.launch { runCatching { refreshNow() } }
+    }
+
+    /** Waits for the refresh under way in [background], if any: for tests. */
+    internal suspend fun settled() {
+        refreshing?.join()
     }
 
     /**

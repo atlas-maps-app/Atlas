@@ -158,6 +158,22 @@ class SegmentStoreTest {
     }
 
     @Test
+    fun aDownloadLongerThanTheSharedClientsCallLimitStillComes() = runBlocking {
+        // the app hands the store its providers' client, whose limit on a whole call is 60 s; E0_N50 is 80 MB, 42 s at the cap
+        val bytes = Random(10).nextBytes(400_000)
+        fake.files["segments4/E0_N50.rd5"] = bytes
+        val shared = okhttp3.OkHttpClient.Builder().callTimeout(1, java.util.concurrent.TimeUnit.SECONDS).build()
+        val store = SegmentStore(
+            dir, client = shared, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(),
+            maxBytesPerSecond = 200_000,
+        )
+        val t0 = System.nanoTime()
+        store.download("E0_N50", verify = false).toList()
+        assertTrue("took ${(System.nanoTime() - t0) / 1e9} s, past the call limit", System.nanoTime() - t0 > 1_500_000_000L)
+        assertArrayEquals(bytes, File(dir, "E0_N50.rd5").readBytes())
+    }
+
+    @Test
     fun refusesACorruptFile() = runBlocking {
         fake.files["segments4/E0_N50.rd5"] = Random(6).nextBytes(10_000)
         try {

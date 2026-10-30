@@ -4,6 +4,7 @@ import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.exp
@@ -20,9 +21,13 @@ internal class PackReads(
     private val packs: () -> List<Pack>,
     /** Where the packs' indexes are kept. */
     private val dir: File,
-    private val client: OkHttpClient,
+    client: OkHttpClient,
     private val clock: () -> Long,
 ) {
+    // a dense window's data or pack is megabytes, a country's index more: no limit on the whole call, which the app's
+    // shared client sets at 60 s, only on each wait for bytes, so a slow line still takes them, not the public servers
+    private val client = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+
     /** When the list of packs last could not be had: it is not asked for again within [LIST_RETRY_MS]. */
     @Volatile
     private var listFailed = Long.MIN_VALUE

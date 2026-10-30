@@ -13,6 +13,7 @@ import java.io.InputStreamReader
 import java.io.Reader
 import java.io.StringReader
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** Overpass answered, but with an error that another server would repeat: a bad query, or one too heavy for anyone. */
@@ -24,6 +25,11 @@ class OverpassException(message: String, val query: String) : ProviderException(
  * It follows the main instance's policy: one query at a time from this app, an identifying User-Agent, and a 30 s pause
  * on a server that answers 429. A server that is busy (504), down or unreachable is rested and the next one is tried;
  * a query error (400) is ours, so it is thrown at once. The last server that answered is tried first next time.
+ *
+ * A server that fails again rests twice as long each time in a row ([MAX_REST] at most), and a query asks no server
+ * that rests while another may answer; where every one rests, only the one whose rest ends first is asked. On 27 and 30
+ * October 2026 every public server failed or gave no answer for an hour, and each query (a search, the places nearby,
+ * each piece of a lorry's route) waited for every one of them in turn.
  */
 class Overpass(
     private val http: Http,
@@ -38,6 +44,9 @@ class Overpass(
     private val sequential = Mutex()
     private var preferred = 0
     private val restUntil = LongArray(endpoints.size)
+
+    /** How often each server failed in a row. */
+    private val failedInARow = IntArray(endpoints.size)
 
     /** The endpoint that answered last, for the UI's "via …" line. */
     @Volatile
@@ -90,15 +99,19 @@ class Overpass(
         val failures = ArrayList<String>()
         val tried = HashSet<Int>()
         while (tried.size < endpoints.size) {
-            val i = pick(tried)
+            val i = pick(tried) ?: break
             tried += i
             val url = endpoints[i]
             try {
                 val result = fetch(url, query, timeout, retryOnRemark, parse)
                 preferred = i
+                failedInARow[i] = 0
                 lastEndpoint = url
                 return@withLock result
             } catch (e: OverpassException) {
+                throw e
+            } catch (e: SwitchedOffException) {
+                // the user switched Overpass off: no server failed, so none rests
                 throw e
             } catch (e: OverpassBusy) {
                 failures += "${host(url)}: ${e.message}"
@@ -115,15 +128,20 @@ class Overpass(
         throw ProviderException("overpass", "No Overpass server could answer (${failures.joinToString("; ")})")
     }
 
-    /** The next endpoint to try: the preferred one first, then the others in order, resting ones only when all rest. */
-    private fun pick(tried: Set<Int>): Int {
+    /**
+     * The next endpoint to try: the preferred one first, then the others in order, none that rests; where every one
+     * rests before any was asked, the one whose rest ends first. Null where those left all rest.
+     */
+    private fun pick(tried: Set<Int>): Int? {
         val now = clock()
         val order = endpoints.indices.map { (preferred + it) % endpoints.size }.filter { it !in tried }
-        return order.firstOrNull { restUntil[it] <= now } ?: order.first()
+        return order.firstOrNull { restUntil[it] <= now } ?: if (tried.isEmpty()) order.minByOrNull { restUntil[it] } else null
     }
 
+    /** Rests endpoint [i] for [pause], twice as long for each failure in a row before this one, [MAX_REST] at most. */
     private fun rest(i: Int, pause: Duration) {
-        restUntil[i] = clock() + pause.inWholeMilliseconds
+        val n = ++failedInARow[i]
+        restUntil[i] = clock() + minOf(pause.inWholeMilliseconds shl (n - 1).coerceAtMost(10), MAX_REST.inWholeMilliseconds)
     }
 
     private suspend fun <T> fetch(url: String, query: String, timeout: Duration, retryOnRemark: Boolean, parse: (Reader) -> T): T {
@@ -169,6 +187,9 @@ class Overpass(
     private class OverpassBusy(message: String, val pause: Duration) : IOException(message)
 
     companion object {
+        /** The longest a server rests, however often it failed in a row. */
+        val MAX_REST: Duration = 10.minutes
+
         /** Ways that can stop a lorry, a camper or a boat: legal limits, lorry and hazmat rules, locks and movable bridges. */
         val RESTRICTION_SELECTORS = listOf(
             "[\"maxheight\"]", "[\"maxweight\"]", "[\"maxwidth\"]", "[\"maxlength\"]", "[\"maxaxleload\"]",
@@ -190,7 +211,9 @@ class Overpass(
             licence = "ODbL",
             attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org/copyright",
-            note = "Shared public servers: Atlas asks one query at a time and only when you search beyond your downloads.",
+            note = "Shared public servers, one query at a time: the map's windows that Atlas's packs do not hold, searches beyond " +
+                "your downloads, the places nearby and a lorry's route checks.",
+            hosts = ENDPOINTS.map { it.toHttpUrl().host },
         )
 
         private fun host(url: String) = runCatching { url.toHttpUrl().host }.getOrDefault(url)

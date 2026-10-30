@@ -153,6 +153,8 @@ data class MarineForecast(
     val now: SeaState?,
     val hours: List<SeaState>,
     val fetchedAt: Instant,
+    /** True when it was read back from the phone because there was no signal or no answer. */
+    val kept: Boolean = false,
 )
 
 data class SeaState(
@@ -240,22 +242,39 @@ class Weather(
      * The forecast kept on the phone nearest [at] (within [withinM]), or null. One fetched more than [maxAge] ago has
      * run out (a forecast covers seven days) and is not offered.
      */
-    suspend fun kept(at: LatLon, withinM: Double = 25_000.0, maxAge: Duration = 7.days): Forecast? = withContext(Dispatchers.IO) {
-        val dir = cacheDir?.let { File(it, "weather") } ?: return@withContext null
-        val files = dir.listFiles { f -> f.name.startsWith("forecast_") && f.name.endsWith(".json") } ?: return@withContext null
-        val oldest = clock().minusMillis(maxAge.inWholeMilliseconds)
-        files.mapNotNull { f -> placeOf(f.name)?.let { f to Geo.distance(at, it) } }.filter { it.second <= withinM }.sortedBy { it.second }
-            .firstNotNullOfOrNull { (file, _) ->
-                runCatching {
-                    val lines = file.readText()
-                    val fetched = Instant.ofEpochSecond(lines.substringBefore('\n').toLong())
-                    if (fetched.isBefore(oldest)) null
-                    else parseForecast(ProviderJson.parseToJsonElement(lines.substringAfter('\n')).asObject()!!, fetched).copy(kept = true)
-                }.getOrNull()
-            }
-    }
+    suspend fun kept(at: LatLon, withinM: Double = 25_000.0, maxAge: Duration = 7.days): Forecast? =
+        keptNearest(FORECAST, at, withinM, maxAge) { json, fetched -> parseForecast(json, fetched).copy(kept = true) }
 
-    /** Waves, swell, currents and water temperature at sea; null on land or inland, where the marine models have no data. */
+    /**
+     * The sea's forecast kept on the phone nearest [at] (within [withinM]), as [marine] fetched it, or null. Its hours
+     * run for two days, so one fetched more than [maxAge] ago is not offered; the sea now is its hour of now.
+     */
+    suspend fun keptMarine(at: LatLon, withinM: Double = 25_000.0, maxAge: Duration = 2.days): MarineForecast? =
+        keptNearest(MARINE, at, withinM, maxAge) { json, fetched ->
+            parseMarine(json, fetched)?.let { f -> f.copy(now = f.hours.lastOrNull { !it.time.isAfter(clock()) } ?: f.now, kept = true) }
+        }
+
+    /** The answer kept under [prefix] nearest [at], within [withinM] and [maxAge], as [read] makes it of its JSON. */
+    private suspend fun <T> keptNearest(prefix: String, at: LatLon, withinM: Double, maxAge: Duration, read: (JsonObject, Instant) -> T?): T? =
+        withContext(Dispatchers.IO) {
+            val dir = cacheDir?.let { File(it, "weather") } ?: return@withContext null
+            val files = dir.listFiles { f -> f.name.startsWith(prefix) && f.name.endsWith(".json") } ?: return@withContext null
+            val oldest = clock().minusMillis(maxAge.inWholeMilliseconds)
+            files.mapNotNull { f -> placeOf(f.name, prefix)?.let { f to Geo.distance(at, it) } }.filter { it.second <= withinM }.sortedBy { it.second }
+                .firstNotNullOfOrNull { (file, _) ->
+                    runCatching {
+                        val lines = file.readText()
+                        val fetched = Instant.ofEpochSecond(lines.substringBefore('\n').toLong())
+                        if (fetched.isBefore(oldest)) null else read(ProviderJson.parseToJsonElement(lines.substringAfter('\n')).asObject()!!, fetched)
+                    }.getOrNull()
+                }
+        }
+
+    /**
+     * Waves, swell, currents and water temperature at sea; null on land or inland, where the marine models have no data.
+     * Each answer is kept on the phone, so with no connection (or no answer) the kept one nearest stands in ([keptMarine],
+     * marked kept); throws when there is neither.
+     */
     suspend fun marine(at: LatLon): MarineForecast? {
         val b = (if (key() != null) customerMarineBase else marineBase).toHttpUrl().newBuilder().addPathSegments("v1/marine")
             .addQueryParameter("latitude", c(at.lat)).addQueryParameter("longitude", c(at.lon))
@@ -264,8 +283,18 @@ class Weather(
             .addQueryParameter("forecast_days", "7").addQueryParameter("forecast_hours", "48")
             .addQueryParameter("timezone", "auto").addQueryParameter("timeformat", "unixtime")
         key()?.let { b.addQueryParameter("apikey", it) }
-        val json = http.execute(http.request(b.build()).build()).requireOk().json().asObject() ?: return null
-        return parseMarine(json, clock())
+        val res = try {
+            http.execute(http.request(b.build()).build())
+        } catch (e: IOException) {
+            currentCoroutineContext().ensureActive()
+            return keptMarine(at) ?: throw e
+        }
+        if (!res.ok) return keptMarine(at) ?: throw HttpException(res.code, res.url, res.text.take(300))
+        val json = res.json().asObject() ?: return null
+        val now = clock()
+        val forecast = parseMarine(json, now) ?: return null
+        runCatching { keep(at, res.text, now, MARINE) }
+        return forecast
     }
 
     internal fun forecastUrl(at: LatLon): HttpUrl {
@@ -285,24 +314,27 @@ class Weather(
         return b.build()
     }
 
-    private suspend fun keep(at: LatLon, text: String, now: Instant) {
+    private suspend fun keep(at: LatLon, text: String, now: Instant, prefix: String = FORECAST) {
         val dir = cacheDir?.let { File(it, "weather") } ?: return
         withContext(Dispatchers.IO) {
             dir.mkdirs()
-            File(dir, "forecast_${c2(at.lat)}_${c2(at.lon)}.json").writeText("${now.epochSecond}\n$text")
+            File(dir, "$prefix${c2(at.lat)}_${c2(at.lon)}.json").writeText("${now.epochSecond}\n$text")
             // Keep the eight most recent places: home, work, and where you went.
-            dir.listFiles { f -> f.name.startsWith("forecast_") }?.sortedByDescending { it.lastModified() }?.drop(KEEP)?.forEach { it.delete() }
+            dir.listFiles { f -> f.name.startsWith(prefix) }?.sortedByDescending { it.lastModified() }?.drop(KEEP)?.forEach { it.delete() }
         }
     }
 
     companion object {
         const val ID = "open-meteo"
         private const val KEEP = 8
+        private const val FORECAST = "forecast_"
+        private const val MARINE = "marine_"
 
         val INFO = ProviderInfo(
             id = ID, name = "Open-Meteo", licence = "CC BY 4.0", attribution = "Weather data by Open-Meteo.com",
             url = "https://open-meteo.com", keyNeed = KeyNeed.OPTIONAL, onByDefault = true,
             note = "Free for non-commercial use, which Atlas is; a commercial Open-Meteo key can be added.",
+            hosts = listOf("api.open-meteo.com", "marine-api.open-meteo.com", "customer-api.open-meteo.com", "customer-marine-api.open-meteo.com"),
         )
 
         val CURRENT = listOf(
@@ -326,8 +358,8 @@ class Weather(
         private fun c(v: Double) = String.format(Locale.ROOT, "%.4f", v)
         private fun c2(v: Double) = String.format(Locale.ROOT, "%.2f", v)
 
-        private fun placeOf(name: String): LatLon? {
-            val parts = name.removePrefix("forecast_").removeSuffix(".json").split('_')
+        private fun placeOf(name: String, prefix: String): LatLon? {
+            val parts = name.removePrefix(prefix).removeSuffix(".json").split('_')
             if (parts.size != 2) return null
             return LatLon(parts[0].toDoubleOrNull() ?: return null, parts[1].toDoubleOrNull() ?: return null)
         }
