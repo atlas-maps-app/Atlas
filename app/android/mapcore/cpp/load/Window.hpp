@@ -55,8 +55,9 @@ inline constexpr double window_margin = 200.0;
 /// core-p9 the doors and house numbers on the facades close up, which core-p8 left out; core-p10 the woods planted
 /// about a zoo or a theme park (RegionConfig::zoo_woods), as the renders plant a zoo's and a park's region, which
 /// core-p9 left as outlines; core-p11 the New looks' bitumen and gravel on about half and one in ten of the homes' flat
-/// roofs whose colour is guessed, which core-p10 drew all mid grey.
-inline constexpr std::string_view stage_p_version = "core-p11";
+/// roofs whose colour is guessed, which core-p10 drew all mid grey; core-p12 the New looks' red tiles a step warmer
+/// (red_tiles_colour), which core-p11 drew in tiles_red's.
+inline constexpr std::string_view stage_p_version = "core-p12";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and every pack there
 /// lights with TONE (frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.

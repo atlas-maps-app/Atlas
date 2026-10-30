@@ -69,6 +69,9 @@ constexpr std::array<Keyed, 11> roofs = {{
 /// New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic
 /// looks drew them): about one canal house in four has red tiles in the summer aerial photo (28 October 2026).
 constexpr double red_tiles = 0.25;
+/// New looks: those red tiles' colour, a step warmer than tiles_red's: #B4624B on a sunlit roof at the Westerkerk with
+/// TONE, where tiles_red drew #A25C49 without it (the palette review's pick, 30 October 2026).
+constexpr std::string_view red_tiles_colour = "#AE573F";
 /// New looks: the shares of homes' guessed flat roofs in the generic looks' bitumen and gravel: about half the flat
 /// roofs about the Westerpark are dark bitumen and one in ten light gravel on the same photo, the rest the mid greys
 /// guessed for them (120 homes counted, 30 October 2026).
@@ -1049,7 +1052,7 @@ void apply_looks(Scene& s, const Looks& looks) {
                     b.look_why = std::format("{} · {}", kind_label(kind), why);
                     if (b.roof == "gabled" && g.has(Guess::roof_colour) &&
                         pymath::PyRandom((b.id * 31) + 5).random() < red_tiles) {
-                        b.rcol = keyed(roofs, "tiles_red").colour; // the canal ring pack's red
+                        b.rcol = red_tiles_colour; // the canal ring pack's red, warmer
                         b.rcol_draw = jitter(*b.rcol, b.id + 7, 0.06);
                     } else if (b.roof == "flat" && g.has(Guess::roof_colour)) {
                         const double f = pymath::PyRandom((b.id * 37) + 11).random();

@@ -48,6 +48,9 @@ ROOF = {
 # New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic looks drew
 # them): about one canal house in four has red tiles in the summer aerial photo (PDOK, cleaned, 119 houses counted, 28 Oct 2026)
 RED_TILES = 0.25
+# New looks: those red tiles' colour, a step warmer than tiles_red's: #B4624B on a sunlit roof at the Westerkerk with TONE, where
+# tiles_red drew #A25C49 without it (the palette review's pick, 30 Oct 2026: "Do whats right")
+RED_TILES_COL = '#AE573F'
 # New looks: the shares of homes' guessed flat roofs in the generic looks' bitumen and gravel: on the same photo (cleaned
 # the same way) about half the flat roofs about the Westerpark are dark bitumen and one in ten light gravel or a light
 # coating, the rest the mid greys guessed for them (120 homes counted, 30 Oct 2026)
@@ -517,7 +520,7 @@ def apply(S, region, landuse_at=None, keep_homes=False):
                 else: b['rmat_draw'] = t['roof:material']
                 b['look_why'] = '%s · %s' % (kind_label(kind), why)
                 if b.get('roof') == 'gabled' and g.get('roof:colour') and random.Random(b['id'] * 31 + 5).random() < RED_TILES:
-                    b['rcol'] = ROOF['tiles_red'][1]; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06)      # the canal ring pack's red
+                    b['rcol'] = RED_TILES_COL; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06)      # the canal ring pack's red, warmer
                 elif b.get('roof') == 'flat' and g.get('roof:colour'):
                     f = random.Random(b['id'] * 37 + 11).random()
                     if f < FLAT_DARK + FLAT_LIGHT:      # the generic looks' bitumen, or their gravel
