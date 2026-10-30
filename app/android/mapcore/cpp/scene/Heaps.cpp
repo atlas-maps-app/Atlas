@@ -111,7 +111,14 @@ gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
 }
 
 std::optional<HeapRange> Heaps::place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment) {
-    const VmaVirtualAllocationCreateInfo info{.size = bytes, .alignment = alignment, .flags = 0, .pUserData = nullptr};
+    // The smallest free piece that holds it (best fit): VMA's default takes a piece of a larger size first, so the
+    // pieces the largest tiles had left, a level's 15 to 27 MB of ground or walls, went in parts to small ranges, and
+    // after zooming out from the Westerkerk (5 to 20 km) the densest far tile's 14.6 MB of ground found no piece
+    // though 56 MB were free.
+    const VmaVirtualAllocationCreateInfo info{.size = bytes,
+                                              .alignment = alignment,
+                                              .flags = VMA_VIRTUAL_ALLOCATION_CREATE_STRATEGY_MIN_MEMORY_BIT,
+                                              .pUserData = nullptr};
     VmaVirtualAllocation allocation = nullptr;
     VkDeviceSize offset = 0;
     if (vmaVirtualAllocate(block_, &info, &allocation, &offset) != VK_SUCCESS) return std::nullopt;
@@ -180,6 +187,12 @@ void Heaps::retire(const HeapRange& range, std::uint64_t frame) {
     if (!range) return;
     const std::scoped_lock lock(render_lock_);
     retired_.push_back({.range = range, .frame = frame});
+}
+
+void Heaps::give_back(const HeapRange& range) {
+    if (!range) return;
+    const std::scoped_lock lock(blocks_lock_);
+    unplace(range);
 }
 
 vk::Buffer Heaps::bind(std::uint64_t frame) {

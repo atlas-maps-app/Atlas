@@ -126,6 +126,10 @@ public:
 
     /// Frees `range` once frame `frame` (the last that may read it) has finished on the GPU. Render thread.
     void retire(const HeapRange& range, std::uint64_t frame);
+    /// Frees `range` at once, which no frame has drawn (a tile whose build failed lets its ranges go), and not as one
+    /// of frees(): the tile that found no room would take its own ranges' going back for room and be built again,
+    /// and again (Alkmaar's L13 tile 13/4205/2681 from 5 km, every other frame at rest). Any thread.
+    void give_back(const HeapRange& range);
     /// Frame `frame` binds the heap as it is now: the buffer it binds, taken with the marking of what a growth replaced
     /// (let go of once the frames before `frame` have finished), so no growth falls between the two. Render thread; it
     /// never waits for a growth's copy.
