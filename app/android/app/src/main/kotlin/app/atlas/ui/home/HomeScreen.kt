@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -64,6 +65,7 @@ import app.atlas.nav.Navigator
 import app.atlas.places.Categories
 import app.atlas.places.Symbols
 import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.LocalFrostedGlass
 import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.backdropSource
 import app.atlas.ui.kit.rememberSheetState
@@ -167,7 +169,11 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The board's overlays start 48 dp down; a taller status bar pushes them below it.
     val top = maxOf(48.dp, statusTop + 8.dp)
+    // The chrome over the map is solid unless the Look settings' frosted glass is on: then the boards' glass, which the
+    // map's core blurs under each pill.
+    val glass by services.frostedGlass.collectAsStateWithLifecycle(initialValue = false)
 
+    CompositionLocalProvider(LocalFrostedGlass provides glass) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val screenHeight = maxHeight
       // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
@@ -292,6 +298,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 onClose = { scope.launch { vm.selectCategory(null) } },
             )
         }
+    }
     }
 }
 

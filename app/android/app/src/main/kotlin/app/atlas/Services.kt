@@ -64,11 +64,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -392,6 +394,16 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     @Volatile
     var ciTheme: app.atlas.mapview.Theme? = null
+
+    /**
+     * CI's glass (`atlas.ci.glass`): the Map home's chrome and the bottom bar frosted whatever the settings say, so CI's
+     * pill check still judges the core's glass under them (ci/smoke.sh).
+     */
+    @Volatile
+    var ciGlass: Boolean = false
+
+    /** Whether the Map home's chrome and the bottom bar are frosted glass ([SettingsKeys.FROSTED_GLASS], CI's [ciGlass]). */
+    val frostedGlass: Flow<Boolean> by lazy { settings.flow(SettingsKeys.FROSTED_GLASS, false).map { it || ciGlass } }
 
     init {
         if (config.mapEngine) mapData.wire()

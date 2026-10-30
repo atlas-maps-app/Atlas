@@ -93,6 +93,13 @@ object SettingsKeys {
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
 
     /**
+     * The frosted glass of the Map home's chrome and the bottom bar: off when unset, so they are solid and the map's core
+     * blurs nothing under them (the user, 30 October: "For now turn the frosted glass off by default. It costs
+     * performance isnt done right"); on, the boards' glass. Other screens keep their glass.
+     */
+    val FROSTED_GLASS = booleanPreferencesKey("ui.frostedGlass")
+
+    /**
      * Whether what stands up is drawn at its true depth (on when unset, the engine's own) or in the renderer's painter's
      * order (whole buildings by one point each, which melts some into each other: a drawing's look).
      */

@@ -357,6 +357,7 @@
     <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_grain">Körnung</string>
     <string name="mine_layers_true_depth">Echte Tiefe</string>
+    <string name="mine_layers_glass">Milchglas</string>
     <string name="mine_layers_parts">Engine-Teile (Debug)</string>
     <string name="mine_part_pacing">Bildtakt</string>
     <string name="mine_layers_cloud_shadows">Wolkenschatten</string>
