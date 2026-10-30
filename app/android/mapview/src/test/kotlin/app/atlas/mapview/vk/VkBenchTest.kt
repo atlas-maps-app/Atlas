@@ -130,8 +130,8 @@ class VkBenchTest {
     @Test
     fun theMapsLinesSayWhatItDrewAndHowSoonItWasComplete() {
         assertEquals(
-            "vkbench map: the packs (grachten opened), the sunny moment, haze on, vignette off, true depth",
-            VkBench.mapHead("grachten opened", "sunny", haze = true, vignette = false, painter = false),
+            "vkbench map: the packs (grachten opened), the sunny moment, haze on, vignette off",
+            VkBench.mapHead("grachten opened", "sunny", haze = true, vignette = false),
         )
         assertEquals("vkbench map first picture: complete after 412.50 ms (at the home)", VkBench.mapPictureLine("home", 0.4125, first = true))
         assertEquals("vkbench map board picture: not complete within 60 s (at the board)", VkBench.mapPictureLine("board", Double.NaN, first = false))

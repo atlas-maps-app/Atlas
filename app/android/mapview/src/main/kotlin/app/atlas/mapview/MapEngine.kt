@@ -120,22 +120,6 @@ object MapEngine {
     var host: VkHost = VkHost.SURFACE
 
     /**
-     * The painter switch (the app's Look settings' "True depth" chip, off; and VK facts' "Buildings" button in debug and
-     * bench builds): what stands up is drawn in the renderer's painter's order (whole buildings by one point each, which
-     * makes some melt into each other: a drawing's look) instead of the core's true depth. Each map binding hands it to
-     * the core; [painterOrder] hands it to the core at once.
-     */
-    @Volatile
-    var painter: Boolean = false
-        private set
-
-    /** Sets the painter switch, and hands it to the running core (off the main thread). */
-    fun painterOrder(on: Boolean) {
-        painter = on
-        (core as? CoreState.Ready)?.core?.painterOrder(on)
-    }
-
-    /**
      * The screen's haze, vignette and grain (the app's Look settings; off by default, as each costs frame time: the user,
      * 27 October; on, the renders' look): off, the core draws the map without them, its own colours there and less work
      * a pixel. Each map binding hands them to the

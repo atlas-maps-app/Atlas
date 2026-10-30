@@ -99,11 +99,6 @@ public:
     void set_routes(std::shared_ptr<const routes::RouteSet> routes) noexcept { routes_ = std::move(routes); }
     /// The building the app asks about from now on (MapCore.ask; none: no question open), drawn as asked.
     void set_asked(std::optional<AskedBuilding> asked) noexcept { asked_ = asked; }
-    /// The painter switch from now on (FrameOptions::painter), kept for every frame builder made.
-    void set_painter(bool on) noexcept {
-        painter_ = on;
-        if (builder_) builder_->set_painter(on);
-    }
     /// The screen's haze, vignette and grain on or off from now on (the app's Look settings: FrameOptions::steps
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
@@ -175,7 +170,6 @@ private:
     std::shared_ptr<const markers::MarkerSet> markers_;
     std::shared_ptr<const routes::RouteSet> routes_;
     std::optional<AskedBuilding> asked_;
-    bool painter_ = false;
     bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;

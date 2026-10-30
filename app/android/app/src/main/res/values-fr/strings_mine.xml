@@ -356,7 +356,6 @@
     <string name="mine_layers_haze">Brume</string>
     <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_grain">Grain</string>
-    <string name="mine_layers_true_depth">Vraie profondeur</string>
     <string name="mine_layers_glass">Verre dépoli</string>
     <string name="mine_layers_parts">Parties du moteur (débogage)</string>
     <string name="mine_part_timings">Temps des images</string>

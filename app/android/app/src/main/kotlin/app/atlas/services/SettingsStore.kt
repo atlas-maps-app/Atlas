@@ -103,12 +103,6 @@ object SettingsKeys {
     val FROSTED_GLASS = booleanPreferencesKey("ui.frostedGlass")
 
     /**
-     * Whether what stands up is drawn at its true depth (on when unset, the engine's own) or in the renderer's painter's
-     * order (whole buildings by one point each, which melts some into each other: a drawing's look).
-     */
-    val MAP_TRUE_DEPTH = booleanPreferencesKey("map.trueDepth")
-
-    /**
      * A debug build's switches of the core's parts: the names of the map's parts it leaves out (mapview.MapPart: every
      * layer and effect, each its own switch, and a switch for each group of them), so the map's panel shows on the phone
      * what each part costs (MapEngine.leaveOut). Unset, every part is drawn ([leftOutParts]): the clouds' shadows and

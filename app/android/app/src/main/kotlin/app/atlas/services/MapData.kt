@@ -227,13 +227,6 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
-        // true depth or the renderer's painter's order for what stands up, as the Look settings have it
-        services.scope.launch {
-            services.settings.data
-                .map { it[SettingsKeys.MAP_TRUE_DEPTH] ?: true }
-                .distinctUntilChanged()
-                .collect { trueDepth -> MapEngine.painterOrder(!trueDepth) }
-        }
         // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }

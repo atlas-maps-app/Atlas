@@ -911,7 +911,7 @@ private class BenchRun(
     /**
      * The app's map (ENGINE.md step 2: VK bench runs the real paths): the core's map over the packs the map lists, drawn as
      * the app draws it (the facts' own configuration, the sunny moment, the haze and the vignette as the Look settings
-     * have them, the painter's order as VK facts left it; no labels) under scripted paths at its real views
+     * have them; no labels) under scripted paths at its real views
      * ([VkBench.mapViews]): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main
      * board and its pitch of 70°, turning. Before a view's first path the run waits, at most
      * [VkBench.MAP_WAIT_SECONDS], for its complete picture: the first, at the home just after the map was turned on, is
@@ -945,12 +945,11 @@ private class BenchRun(
             }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
             opened to lit
         }
-        emit(VkBench.mapHead(said.lines().filter { it.isNotBlank() }.joinToString(", "), moment, MapEngine.haze, MapEngine.vignette, MapEngine.painter))
+        emit(VkBench.mapHead(said.lines().filter { it.isNotBlank() }.joinToString(", "), moment, MapEngine.haze, MapEngine.vignette))
         if (lit.isNotEmpty()) {
             emit("vkbench map: unavailable ($lit)")
             return
         }
-        core.painterOrder(MapEngine.painter)
         core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
         source.packs = packs
         val on = core.map(true, texture = false)

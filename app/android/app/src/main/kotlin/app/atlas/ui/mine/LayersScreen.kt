@@ -101,7 +101,6 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
-    val trueDepth by settings.flow(SettingsKeys.MAP_TRUE_DEPTH, true).collectAsStateWithLifecycle(true)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
@@ -164,11 +163,10 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     }
                 }
                 ScreenChips(
-                    haze, vignette, grain, trueDepth, glass,
+                    haze, vignette, grain, glass,
                     onHaze = { on -> scope.launch { settings.set(SettingsKeys.MAP_HAZE, on) } },
                     onVignette = { on -> scope.launch { settings.set(SettingsKeys.MAP_VIGNETTE, on) } },
                     onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
-                    onTrueDepth = { on -> scope.launch { settings.set(SettingsKeys.MAP_TRUE_DEPTH, on) } },
                     onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
@@ -241,12 +239,10 @@ private fun ScreenChips(
     haze: Boolean,
     vignette: Boolean,
     grain: Boolean,
-    trueDepth: Boolean,
     glass: Boolean,
     onHaze: (Boolean) -> Unit,
     onVignette: (Boolean) -> Unit,
     onGrain: (Boolean) -> Unit,
-    onTrueDepth: (Boolean) -> Unit,
     onGlass: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -256,7 +252,6 @@ private fun ScreenChips(
                 Triple(stringResource(R.string.mine_layers_haze), haze, onHaze),
                 Triple(stringResource(R.string.mine_layers_vignette), vignette, onVignette),
                 Triple(stringResource(R.string.mine_layers_grain), grain, onGrain),
-                Triple(stringResource(R.string.mine_layers_true_depth), trueDepth, onTrueDepth),
                 Triple(stringResource(R.string.mine_layers_glass), glass, onGlass),
             )) {
                 TextPill(
