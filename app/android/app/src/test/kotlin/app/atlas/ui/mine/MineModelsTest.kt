@@ -256,6 +256,12 @@ class TankerkoenigTest {
     }
 
     @Test
+    fun theSpotAskedAboutGoesToAboutAHundredMetres() {
+        val u = Tankerkoenig.listUrl("https://t.example", LatLon(52.520812, 13.409418), 5.0, "k")
+        assertTrue(u, u.startsWith("https://t.example/json/list.php?lat=52.521&lng=13.409&rad=5.0&"))
+    }
+
+    @Test
     fun aKeyCanHelpOnlyInGermany() {
         assertTrue(Tankerkoenig.inGermany(LatLon(52.52, 13.4)))
         assertFalse(Tankerkoenig.inGermany(LatLon(52.37, 4.88)))

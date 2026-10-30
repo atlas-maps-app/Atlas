@@ -18,6 +18,7 @@ import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
+import java.util.Locale
 
 /** A street photo from Panoramax (open, CC-BY-SA): who took it, when, under what licence, and whether it is a 360 degree panorama. */
 class StreetPhoto(
@@ -70,7 +71,9 @@ class PanoramaxSource(private val services: Services) : StreetPhotoSource {
 }
 
 object StreetPhotos {
-    fun searchUrl(at: LatLon): String = "https://api.panoramax.xyz/api/search?place_position=${at.lon},${at.lat}&place_distance=0-40&limit=1"
+    /** The search for a photo within 40 m of [at], which is sent to about 10 m (until 30 October, to the full double). */
+    fun searchUrl(at: LatLon): String =
+        "https://api.panoramax.xyz/api/search?place_position=${String.format(Locale.ROOT, "%.4f,%.4f", at.lon, at.lat)}&place_distance=0-40&limit=1"
 
     /** The first picture of a Panoramax search answer (a GeoJSON feature collection), or null when it has none. */
     fun parse(json: String): StreetPhoto? {

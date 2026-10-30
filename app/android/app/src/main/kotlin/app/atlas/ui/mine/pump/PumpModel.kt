@@ -132,8 +132,7 @@ class Tankerkoenig(private val http: Http, private val keys: Keys, private val b
 
     suspend fun near(at: LatLon, radiusKm: Double = 5.0): List<Priced> = withContext(Dispatchers.IO) {
         val key = keys.key(ID)?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
-        val url = "$base/json/list.php?lat=${String.format(Locale.ROOT, "%.5f", at.lat)}&lng=${String.format(Locale.ROOT, "%.5f", at.lon)}&rad=${radiusKm.coerceIn(1.0, 25.0)}&sort=dist&type=all&apikey=$key"
-        val res = http.execute(http.request(url).build())
+        val res = http.execute(http.request(listUrl(base, at, radiusKm, key)).build())
         if (!res.ok) throw java.io.IOException("Tankerkönig answered ${res.code}")
         parse(res.text)
     }
@@ -143,6 +142,14 @@ class Tankerkoenig(private val http: Http, private val keys: Keys, private val b
 
         /** Germany, roughly: where a key can help. */
         fun inGermany(p: LatLon): Boolean = p.lat in 47.2..55.1 && p.lon in 5.8..15.1
+
+        /**
+         * The stations within [radiusKm] of [at], which is sent to about 100 m: the search reaches kilometres. Until
+         * 30 October it went to the metre.
+         */
+        fun listUrl(base: String, at: LatLon, radiusKm: Double, key: String): String =
+            "$base/json/list.php?lat=${String.format(Locale.ROOT, "%.3f", at.lat)}&lng=${String.format(Locale.ROOT, "%.3f", at.lon)}" +
+                "&rad=${radiusKm.coerceIn(1.0, 25.0)}&sort=dist&type=all&apikey=$key"
 
         fun parse(text: String): List<Priced> {
             val root = Json.parseToJsonElement(text) as? JsonObject ?: return emptyList()

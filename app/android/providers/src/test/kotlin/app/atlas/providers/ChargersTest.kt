@@ -581,6 +581,17 @@ class ChargersTest {
     }
 
     @Test
+    fun aNearbySearchSendsItsCentreToAboutAHundredMetres() = runBlocking {
+        Mock().use { m ->
+            m.enqueue("[]")
+            OpenChargeMap(testHttp(), Keys.of("ocm" to "k"), base = m.base).near(LatLon(52.374512, 4.883987), 5_000.0)
+            val req = m.take()
+            assertEquals("52.375", req.url.queryParameter("latitude"))
+            assertEquals("4.884", req.url.queryParameter("longitude"))
+        }
+    }
+
+    @Test
     fun aSlowOrFailingChargerSourceNeitherHoldsNorFailsTheOthers() = runBlocking {
         val ndw = listOf(Place(null, westerkerk, mapOf("amenity" to "charging_station"), source = "ndw"))
         val t0 = System.nanoTime()

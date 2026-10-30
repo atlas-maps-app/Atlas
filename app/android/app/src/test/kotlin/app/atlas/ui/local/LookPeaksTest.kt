@@ -139,7 +139,9 @@ class LookPeaksTest {
         assertEquals(52.374182, photo.at.lat, 1e-6)
         assertNull(StreetPhotos.parse("{\"features\":[]}"))
         assertNull(StreetPhotos.parse("not json"))
-        assertTrue(StreetPhotos.searchUrl(LatLon(52.3745, 4.884)).contains("place_position=4.884,52.3745"))
+        assertTrue(StreetPhotos.searchUrl(LatLon(52.3745, 4.884)).contains("place_position=4.8840,52.3745"))
+        // to about 10 m, for a photo within 40 m
+        assertTrue(StreetPhotos.searchUrl(LatLon(52.374512345, 4.884012345)).contains("place_position=4.8840,52.3745&"))
     }
 
     @Test
