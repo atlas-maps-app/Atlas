@@ -4,6 +4,7 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.geo.PolylineCodec
 import app.atlas.model.Place
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +15,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 class ChargersTest {
     private val westerkerk = LatLon(52.3745, 4.8838)
@@ -576,5 +578,21 @@ class ChargersTest {
         // Without an operator on one side only very close records join.
         val far = Place(null, Geo.destination(westerkerk, 0.0, 25.0), mapOf("amenity" to "charging_station"), source = "bnetza")
         assertEquals(2, ChargerMerge.merge(listOf(listOf(a), listOf(far))).size)
+    }
+
+    @Test
+    fun aSlowOrFailingChargerSourceNeitherHoldsNorFailsTheOthers() = runBlocking {
+        val ndw = listOf(Place(null, westerkerk, mapOf("amenity" to "charging_station"), source = "ndw"))
+        val t0 = System.nanoTime()
+        // the OSM chargers behind a stuck Overpass server, a register whose answer does not parse, the Dutch register
+        val got = ChargerMerge.gather(listOf("osm", "broken", "ndw"), 300.milliseconds) { id ->
+            when (id) {
+                "osm" -> { delay(60_000); ndw }
+                "broken" -> throw IllegalStateException("not JSON")
+                else -> ndw
+            }
+        }
+        assertTrue("took ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 5_000_000_000L)
+        assertEquals(listOf(emptyList(), emptyList(), ndw), got)
     }
 }

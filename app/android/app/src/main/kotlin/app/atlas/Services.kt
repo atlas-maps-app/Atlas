@@ -19,9 +19,11 @@ import app.atlas.providers.Nominatim
 import app.atlas.providers.OpenChargeMap
 import app.atlas.providers.OsmChargers
 import app.atlas.providers.Overpass
+import app.atlas.providers.OverpassException
 import app.atlas.providers.Photon
 import app.atlas.providers.ProviderState
 import app.atlas.providers.RatingsAggregator
+import app.atlas.providers.SwitchedOffException
 import app.atlas.providers.TripAdvisorRatings
 import app.atlas.providers.Weather
 import app.atlas.providers.YelpRatings
@@ -54,16 +56,13 @@ import app.atlas.services.SwitchableLocation
 import app.atlas.services.SystemConnectivity
 import app.atlas.ui.mine.SourcesModel
 import app.atlas.services.Voice
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -76,9 +75,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-import java.io.IOException
 import java.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.seconds
 
 /** How [Services] is set up: the real app uses the defaults; tests and CI point it elsewhere. */
 data class ServicesConfig(
@@ -294,7 +293,13 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         dirs.segments.mkdirs()
         val memoryClass = this.context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 64
         // Road limits for trucks and campers, and bridge clearances and depths for boats (the water router uses this router).
-        val restrictions = if (config.offline) null else OverpassRestrictionSource({ ql -> overpass.raw(ql) }, OverpassRestrictionSource.Scope.BOTH)
+        // Asked only while online, and not again where asking cannot change the answer (Overpass switched off, a query
+        // refused): the route then comes at once, unchecked, where it waited for nothing.
+        val restrictions = if (config.offline) null else OverpassRestrictionSource(
+            { ql -> overpass.raw(ql) }, OverpassRestrictionSource.Scope.BOTH,
+            mayAsk = { connectivity.online.value },
+            retryable = { e -> e !is SwitchedOffException && e !is OverpassException },
+        )
         // Street names for the instructions come from the map's packs, else Overpass (BRouter's data has none).
         BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions, namer = localData.wayNamer())
     }
@@ -304,18 +309,9 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         ChargerSource { corridor, minKw, connectors ->
             val off = sourcesOff()
             val ready = chargers.filter { it.state() == ProviderState.READY && it.id !in off }
-            val found = coroutineScope {
-                ready.map { p ->
-                    async {
-                        try {
-                            p.along(corridor.line, corridor.bufferMetres, ChargerFilters(minKw = minKw, connectors = connectors))
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: IOException) {
-                            emptyList()
-                        }
-                    }
-                }.awaitAll()
+            // each source by its deadline, and none failing the plan: one source's bad answer (a parse error) failed it
+            val found = ChargerMerge.gather(ready, CHARGERS_ALONG_DEADLINE) { p ->
+                p.along(corridor.line, corridor.bufferMetres, ChargerFilters(minKw = minKw, connectors = connectors))
             }
             ChargerMerge.merge(found)
         }
@@ -419,5 +415,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     companion object {
         /** The Westerkerk, Amsterdam: the CI demo location and the first view before any fix. */
         val WESTERKERK = LatLon(52.37452, 4.88377)
+
+        /** The longest the EV planner waits for one charger source along a route: the others' chargers plan without it. */
+        val CHARGERS_ALONG_DEADLINE = 90.seconds
     }
 }

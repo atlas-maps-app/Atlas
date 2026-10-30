@@ -8,14 +8,11 @@ import app.atlas.providers.ChargerMerge
 import app.atlas.providers.ProviderState
 import app.atlas.services.PlaceOrigin
 import app.atlas.services.SettingsKeys
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import kotlin.time.Duration.Companion.seconds
 
 /** Chargers around a point and where they came from: the providers when online, the phone's own data when not. */
 data class ChargeResult(val places: List<Place>, val online: Boolean, val sources: List<String>, val error: String? = null)
@@ -34,9 +31,9 @@ class ChargeRepository(private val services: Services) {
         if (online) {
             val ready = services.chargers.filter { it.state() == ProviderState.READY && it.id !in off && "${it.id}-chargers" !in off }
             try {
-                val found = coroutineScope {
-                    ready.map { p -> async { runCatching { p.near(centre, radiusM, ChargerFilters(maxResults = 120)) }.getOrElse { e -> if (e is CancellationException) throw e else emptyList() } } }.awaitAll()
-                }
+                // each source by its deadline: the OSM chargers queue behind the app's other Overpass queries, and the
+                // screen spun while the Dutch register's answer was ready (ChargerMerge.gather)
+                val found = ChargerMerge.gather(ready, SOURCE_DEADLINE) { p -> p.near(centre, radiusM, ChargerFilters(maxResults = 120)) }
                 val merged = ChargerMerge.merge(found)
                 if (merged.isNotEmpty()) return@withContext ChargeResult(withStatus(ready.firstOrNull { it.id == "ocm" }, merged), true, ready.map { it.id })
             } catch (e: IOException) {
@@ -55,5 +52,10 @@ class ChargeRepository(private val services: Services) {
         val status = runCatching { provider.status(ids.take(200)) }.getOrDefault(emptyMap())
         if (status.isEmpty()) return places
         return places.map { p -> status[p.extra["charger:id"]]?.let { s -> p.copy(extra = p.extra + s.toExtra()) } ?: p }
+    }
+
+    companion object {
+        /** The longest the screen waits for one source: the others' chargers show without it after that. */
+        val SOURCE_DEADLINE = 30.seconds
     }
 }

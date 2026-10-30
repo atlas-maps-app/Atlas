@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.Locale
 import kotlin.math.sqrt
@@ -23,6 +24,12 @@ import kotlin.math.sqrt
  * queries and reads the answers. Long corridors are asked for in pieces of at most [pieceMetres], one query each, so no
  * single query gets heavy, and a failed query is tried again [attempts] times in all, waiting longer each time: the public
  * servers often answer 504 or 429 when busy.
+ *
+ * Nothing is asked where [mayAsk] says the network is not to be had (offline), and a failure asking again cannot cure
+ * ([retryable] says no: the user switched the servers off, or the query is refused) is not asked again: the route then
+ * comes at once, unchecked, where it waited six seconds a piece for nothing. The whole check ends after [deadlineMillis],
+ * the route unchecked: a lorry's route waited about twenty minutes where every server was stuck (30 October 2026, the user:
+ * "are all sources reliable and respond fast?").
  */
 class OverpassRestrictionSource(
     private val query: suspend (String) -> String,
@@ -31,6 +38,12 @@ class OverpassRestrictionSource(
     private val pieceMetres: Double = 30_000.0,
     private val attempts: Int = 3,
     private val retryDelayMillis: Long = 2_000,
+    /** Whether the servers may be asked now (the app: the phone is online). */
+    private val mayAsk: () -> Boolean = { true },
+    /** Whether a query that failed so may be asked again. */
+    private val retryable: (IOException) -> Boolean = { true },
+    /** The longest the whole check takes, all its pieces and tries. */
+    private val deadlineMillis: Long = DEADLINE_MS,
 ) : RestrictionSource {
 
     enum class Scope { ROAD, WATER, BOTH }
@@ -41,6 +54,12 @@ class OverpassRestrictionSource(
 
     override suspend fun restrictionsAlong(corridor: Corridor): List<Restriction> {
         if (corridor.line.isEmpty()) return emptyList()
+        if (!mayAsk()) throw IOException("offline: the limits along the route were not checked")
+        return withTimeoutOrNull(deadlineMillis) { along(corridor) }
+            ?: throw IOException("the limits along the route did not come in ${deadlineMillis / 1000} s")
+    }
+
+    private suspend fun along(corridor: Corridor): List<Restriction> {
         val seen = HashSet<String>()
         val out = ArrayList<Restriction>()
         for (piece in OverpassQl.pieces(corridor.line, pieceMetres, corridor.bufferMetres)) {
@@ -59,11 +78,17 @@ class OverpassRestrictionSource(
             try {
                 return OverpassQl.parse(query(ql), scope)
             } catch (e: IOException) {
+                if (!retryable(e) || !mayAsk()) throw e
                 delay(wait)
                 wait *= 2
             }
         }
         return OverpassQl.parse(query(ql), scope)
+    }
+
+    companion object {
+        /** The longest a route's whole check takes: four minutes (a long route's pieces answer in seconds each). */
+        const val DEADLINE_MS = 4 * 60 * 1000L
     }
 }
 
