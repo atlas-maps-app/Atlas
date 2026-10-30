@@ -37,6 +37,24 @@ class HttpTest {
     }
 
     @Test
+    fun anAnswerThatIsNotJsonFailsAsAnUnreachableServerDoes() = runBlocking {
+        // a Wi-Fi's sign-in page answers 200: an IOException, caught wherever a failed request is
+        Mock().use { m ->
+            m.enqueue("<html><body>Sign in to the hotel's Wi-Fi</body></html>")
+            m.enqueue("<html><body>Sign in to the hotel's Wi-Fi</body></html>")
+            val http = testHttp()
+            for (read in listOf<suspend () -> Unit>({ http.json(m.url("/x")) }, { http.execute(http.request(m.url("/y")).build()).json() })) {
+                try {
+                    read()
+                    fail("a sign-in page read as JSON")
+                } catch (e: java.io.IOException) {
+                    assertTrue(e.toString(), e is NotJsonException && e.message!!.contains("Sign in"))
+                }
+            }
+        }
+    }
+
+    @Test
     fun non2xxThrowsHttpExceptionWithTheStatus() = runBlocking {
         Mock().use { m ->
             m.enqueue("nope", 404)
