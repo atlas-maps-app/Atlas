@@ -25,8 +25,10 @@ internal class PackReads(
     private val clock: () -> Long,
 ) {
     // a dense window's data or pack is megabytes, a country's index more: no limit on the whole call, which the app's
-    // shared client sets at 60 s, only on each wait for bytes, so a slow line still takes them, not the public servers
-    private val client = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+    // shared client sets at 60 s, only on each wait for bytes, so a slow line still takes them, not the public servers;
+    // and not through its HTTP cache, which kept each index downloaded under a signed address never asked again (the
+    // index itself is kept in [dir])
+    private val client = client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).build()
 
     /** When the list of packs last could not be had: it is not asked for again within [LIST_RETRY_MS]. */
     @Volatile

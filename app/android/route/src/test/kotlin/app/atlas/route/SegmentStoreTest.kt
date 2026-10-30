@@ -174,6 +174,22 @@ class SegmentStoreTest {
     }
 
     @Test
+    fun aSegmentFileNeverPassesThroughTheAppsHttpCache() = runBlocking {
+        // the app hands the store its providers' client, which keeps answers in a 64 MB disk cache: E0_N50 is 80 MB
+        val bytes = Random(11).nextBytes(300_000)
+        fake.files["segments4/E0_N50.rd5"] = bytes
+        val cache = okhttp3.Cache(Files.createTempDirectory("atlas-http").toFile(), 64L shl 20)
+        val shared = okhttp3.OkHttpClient.Builder().cache(cache).build()
+        val store = SegmentStore(
+            dir, client = shared, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(),
+        )
+        store.download("E0_N50", verify = false).toList()
+        assertArrayEquals(bytes, File(dir, "E0_N50.rd5").readBytes())
+        assertEquals(0L, cache.size())
+        assertEquals(0, cache.requestCount())
+    }
+
+    @Test
     fun refusesACorruptFile() = runBlocking {
         fake.files["segments4/E0_N50.rd5"] = Random(6).nextBytes(10_000)
         try {

@@ -60,8 +60,9 @@ class SegmentStore(
     val maxBytesPerSecond: Long = 1_900_000,
 ) {
     // a segment file takes minutes (E0_N50 is 80 MB, 42 s at the cap and longer on most lines): no limit on the whole
-    // call, which the app's shared client sets at 60 s, only on each wait for bytes
-    private val client = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+    // call, which the app's shared client sets at 60 s, only on each wait for bytes; and not through its HTTP cache (64
+    // MB), into which OkHttp copied each file as it came, taking its size again on disk and pushing out every answer kept
+    private val client = client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).build()
 
     fun file(tile: String): File = File(dir, normalise(tile))
 

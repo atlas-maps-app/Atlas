@@ -134,6 +134,18 @@ class WindowTilesTest {
     }
 
     @Test
+    fun anIndexNeverPassesThroughTheAppsHttpCache() {
+        // the app hands the windows its own client, which keeps answers in a disk cache: an index is kept in the folder
+        val c = country()
+        val list = listOf(publish("netherlands", c, date))
+        val cache = okhttp3.Cache(tempDir("http"), 64L shl 20)
+        val app = okhttp3.OkHttpClient.Builder().cache(cache).build()
+        assertArrayEquals(c.packs[westerkerk], WindowTiles({ list }, dir, app).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        assertEquals(0L, cache.size())
+        assertEquals(0, cache.requestCount())
+    }
+
+    @Test
     fun aCountryKeptOnThePhoneIsReadThereWithoutTheNetwork() {
         val c = country()
         val list = listOf(publish("netherlands", c, date))

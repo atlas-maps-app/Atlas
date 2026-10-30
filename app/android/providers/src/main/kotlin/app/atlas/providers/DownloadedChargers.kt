@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -176,7 +177,9 @@ abstract class DownloadedChargers(
         // Ask conditionally only with a copy to fall back on: a cache file that no longer reads must come again whole.
         val kept = if (force) null else loaded ?: readCache()
         val old = meta()?.takeIf { it.url == url && kept != null }
-        val request = http.request(url).header("Accept", "*/*").apply {
+        // never into the app's HTTP cache (64 MB): the register is kept here, and OkHttp copied each one (Germany's is 55
+        // MB) into the cache as it came, pushing out every answer it kept
+        val request = http.request(url).header("Accept", "*/*").cacheControl(CacheControl.Builder().noStore().build()).apply {
             old?.etag?.let { header("If-None-Match", it) }
             old?.lastModified?.let { header("If-Modified-Since", it) }
         }.build()

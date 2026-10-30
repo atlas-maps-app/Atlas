@@ -66,6 +66,21 @@ class DownloadedChargersTest {
     }
 
     @Test
+    fun aRegisterNeverPassesThroughTheAppsHttpCache() = runBlocking {
+        // the app's client keeps answers in a 64 MB disk cache; a register (Germany's: 55 MB) is kept by its source alone
+        Mock().use { m ->
+            m.enqueueBytes(Fixtures.bytes("ndw_sample.json.gz"), 200, "ETag" to "\"abc\"", "Last-Modified" to "Tue, 13 Oct 2026 07:33:00 GMT")
+            val http = Http(cacheDir = tmp.newFolder("http"), policies = emptyMap())
+            val ndw = NdwChargers(http, tmp.newFolder("kept"), url = m.url("/charging_point_locations_ocpi.json.gz")) { Instant.parse("2026-10-13T08:00:00Z") }
+            assertTrue(ndw.refresh())
+            assertTrue(ndw.near(westerkerk, 500.0).isNotEmpty())
+            val cache = http.client.cache!!
+            assertEquals(0L, cache.size())
+            assertEquals(0, cache.writeSuccessCount())
+        }
+    }
+
+    @Test
     fun aRegisterIsAskedOnlyInItsCountryAndDownloadsOnWifiInTheBackground() = runBlocking {
         Mock().use { m ->
             m.enqueueBytes(Fixtures.bytes("ndw_sample.json.gz"))
