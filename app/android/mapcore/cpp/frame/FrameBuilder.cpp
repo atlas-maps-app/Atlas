@@ -464,6 +464,14 @@ void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
     }
 }
 
+bool FrameBuilder::fading() const noexcept {
+    for (std::size_t p = 0; p < passes_.size(); ++p) {
+        if (p < 64 && ((options_.passes >> p) & 1U) == 0) continue; // left out (FrameOptions::passes): not drawn
+        if (passes_[p]->fading()) return true;
+    }
+    return false;
+}
+
 bool FrameBuilder::built_by(std::span<const std::string_view> names) {
     if (names.empty()) return true; // the scene does not say
     const bool same =
@@ -497,6 +505,7 @@ void FrameBuilder::stage_f() {
     state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
     state_.active_pack = ours ? scene->active_pack() : nullptr;
     state_.coarser_pack = ours ? scene->coarser_pack() : nullptr;
+    state_.neighbour_packs = ours ? scene->neighbour_packs() : std::span<const scene::ResidentPack* const>();
     // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
     state_.block.strokes = strokes_of(state_.active_pack);
     state_.block.windows = windows_of(state_.active_pack);

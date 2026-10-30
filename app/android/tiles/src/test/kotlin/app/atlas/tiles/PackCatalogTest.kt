@@ -45,6 +45,9 @@ internal class FakeGitHub : AutoCloseable {
     /** Answer a range with 206 but from the file's start (a confused proxy). */
     @Volatile var rangeFromStart = false
 
+    /** Send a range's bytes at this many a second (a slow line); 0 at once. */
+    @Volatile var bytesPerSecond = 0L
+
     init {
         github.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -73,6 +76,7 @@ internal class FakeGitHub : AutoCloseable {
                 val to = m.groupValues[2].takeIf { it.isNotEmpty() }?.toInt()?.coerceAtMost(body.size - 1) ?: (body.size - 1)
                 return MockResponse.Builder().code(206).setHeader("ETag", etag)
                     .setHeader("Content-Range", "bytes $from-$to/${body.size}")
+                    .apply { if (bytesPerSecond > 0) throttleBody(bytesPerSecond / 10, 100, TimeUnit.MILLISECONDS) }
                     .body(Buffer().write(body.copyOfRange(from, to + 1))).build()
             }
         }

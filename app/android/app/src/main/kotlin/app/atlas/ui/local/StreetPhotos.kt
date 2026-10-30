@@ -50,7 +50,8 @@ class PanoramaxSource(private val services: Services) : StreetPhotoSource {
         if (!services.local.online()) return@withContext null
         try {
             val photo = StreetPhotos.parse(services.http.text(StreetPhotos.searchUrl(at))) ?: return@withContext null
-            val bytes = services.http.execute(okhttp3.Request.Builder().url(photo.imageUrl).header("User-Agent", "Atlas").build()).requireOk().body
+            // the photo from the instance that keeps it (nl.panoramax.xyz, for one), asked as Atlas asks every server
+            val bytes = services.http.execute(services.http.request(photo.imageUrl).header("Accept", "image/*").build()).requireOk().body
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             var sample = 1

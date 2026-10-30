@@ -15,13 +15,21 @@
 #include "text/Outlines.hpp"
 #include "tiles/Error.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/Store.hpp"
 #include "tiles/layers/Labels.hpp"
 #include "twin/Twin.hpp"
+#include "view/Frames.hpp"
+#include "view/Ladder.hpp"
 
 #include <algorithm>
 #include <bit>
 #include <cstring>
 #include <format>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace atlas::passes {
 
@@ -44,6 +52,11 @@ static_assert(static_cast<int>(text::Anchor::start) == static_cast<int>(twin::Te
               static_cast<int>(text::Anchor::end) == static_cast<int>(twin::TextAnchor::end));
 
 } // namespace
+
+double canal_names_radius(std::optional<double> view_radius, double dist, bool engine_mode) noexcept {
+    if (view_radius && *view_radius > 0) return *view_radius;
+    return engine_mode ? 1e9 : view::live_names_radius(dist);
+}
 
 GroundText::~GroundText() { GroundText::release(); }
 
@@ -84,7 +97,7 @@ std::vector<std::shared_ptr<frame::GlobalProvider>> GroundText::providers(const 
 }
 
 gpu::Result<void> GroundText::build_pack(scene::PackBuild& b) const {
-    auto canals = text::pack_canals(b.pack().pack);
+    auto canals = text::pack_canals(b.pack().pack, b.pack().kind == tiles::PackKind::window);
     if (!canals) return gpu::fail(std::format("the canal names: {}", tiles::describe(canals.error())));
     auto kept = std::make_shared<text::PackCanals>(std::move(*canals));
     std::size_t bytes = sizeof(text::PackCanals) + (kept->candidates.capacity() * sizeof(text::CanalCandidate));
@@ -94,12 +107,12 @@ gpu::Result<void> GroundText::build_pack(scene::PackBuild& b) const {
 }
 
 void GroundText::gather(const frame::FrameState& state) {
-    // The drawn pack's names whole, once its own stage T has given them; until then, or with none drawn, the cover's
+    const std::uint32_t me = index(); // this pass's place in a tile's and a pack's stage T
+    // The active pack's names whole, once its own stage T has given them; until then, or with none drawn, its cover's
     // tiles' (a pack the tests hand over with use_pack stays).
-    const std::shared_ptr<const void>* built =
-        state.active_pack != nullptr && index() < state.active_pack->passes.size()
-            ? &state.active_pack->passes[index()].cpu
-            : nullptr;
+    const std::shared_ptr<const void>* built = state.active_pack != nullptr && me < state.active_pack->passes.size()
+                                                   ? &state.active_pack->passes[me].cpu
+                                                   : nullptr;
     if (built != nullptr && *built) {
         pack_ = std::static_pointer_cast<const text::PackCanals>(*built);
         pack_from_frame_ = true;
@@ -107,57 +120,96 @@ void GroundText::gather(const frame::FrameState& state) {
         pack_.reset();
         pack_from_frame_ = false;
     }
-    if (pack_) {
-        // The pack's names whole: read again only when the pack's data change.
-        if (pack_ != pack_read_) {
-            pack_read_ = pack_;
-            tiles_.clear();
-            water_level_ = pack_->water_level;
-            look_ = pack_->look;
-            names_.set_candidates(pack_->candidates);
-        }
-        return;
+    // Every pack drawn but the coarser one, which lies under the active pack: the active one and the neighbours (frame
+    // cells' windows where four cells meet), each its names whole where its stage T is built, else its cover's tiles'.
+    struct Whole {
+        std::shared_ptr<const text::PackCanals> canals;
+        std::string_view id;
+        std::optional<view::GroundFrame> frame; ///< its points' (none: the frame drawn's, the active pack's)
+    };
+    std::vector<Whole> whole;
+    const std::string_view active = state.cover != nullptr ? state.cover->active() : std::string_view();
+    if (pack_) whole.push_back({.canals = pack_, .id = active, .frame = std::nullopt});
+    for (const scene::ResidentPack* n : state.neighbour_packs) {
+        if (n == nullptr || n->source == nullptr || me >= n->passes.size() || !n->passes[me].cpu) continue;
+        whole.push_back({.canals = std::static_pointer_cast<const text::PackCanals>(n->passes[me].cpu),
+                         .id = n->id,
+                         .frame = view::frame_of(n->source->pack.head()->frame)});
     }
-    pack_read_.reset();
-    const std::uint32_t me = index();                           // the tiles' PassTile of this pass, as for the packs
-    std::vector<std::pair<std::uint64_t, std::uint32_t>> tiles; // the tiles holding candidates: key, handle
+    const std::string_view coarser = state.cover != nullptr ? state.cover->coarser() : std::string_view();
+    std::vector<const scene::CoverTile*> loose; // the cover's tiles of the packs not read whole
+    std::vector<std::uint64_t> tiles;
     if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->tiles()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
-            if (c.drawn->passes[me].cpu_as<CanalTile>() == nullptr) continue;
-            tiles.emplace_back(c.drawn->key.packed(), c.drawn->handle);
+            if (c.drawn->passes[me].cpu_as<CanalTile>() == nullptr || c.drawn->pack == coarser) continue;
+            if (std::ranges::any_of(whole, [&c](const Whole& w) { return w.id == c.drawn->pack; })) continue;
+            loose.push_back(&c);
+            tiles.push_back(c.drawn->key.packed());
+            tiles.push_back(c.drawn->handle);
         }
     }
     std::ranges::sort(tiles);
-    std::vector<std::uint32_t> flat;
-    flat.reserve(tiles.size() * 3);
-    for (const auto& [key, handle] : tiles) {
-        flat.push_back(static_cast<std::uint32_t>(key >> 32U));
-        flat.push_back(static_cast<std::uint32_t>(key));
-        flat.push_back(handle);
-    }
-    if (flat == tiles_) return;
-    tiles_ = std::move(flat);
-    // The candidates of the cover's tiles, each once, from the finest tile that holds it (the cover may hold a tile and
-    // its ancestor): every tile the cover draws is the active pack's, so all are in the frame drawn's metres.
-    std::vector<std::pair<std::uint8_t, const text::CanalCandidate*>> all; // its tile's zoom, the candidate
-    if (state.cover != nullptr) {
-        for (const scene::CoverTile& c : state.cover->tiles()) {
-            if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
-            const auto* kept = c.drawn->passes[me].cpu_as<CanalTile>();
-            if (kept == nullptr) continue;
-            for (const text::CanalCandidate& k : kept->candidates) all.emplace_back(c.drawn->key.z, &k);
-            water_level_ = kept->water_level;
-            look_ = kept->look;
+    // Read again only when what they come from changes: a pack's names, the cover's tiles, the frame drawn.
+    const std::optional<view::GroundFrame> drawn = state.ground_frame;
+    const bool same_packs = std::ranges::equal(
+        whole, read_packs_, [](const Whole& w, const auto& r) { return w.canals == r.first && w.id == r.second; });
+    if (same_packs && tiles == read_tiles_ && drawn == read_frame_) return;
+    read_packs_.clear();
+    for (const Whole& w : whole) read_packs_.emplace_back(w.canals, std::string(w.id));
+    read_tiles_ = std::move(tiles);
+    read_frame_ = drawn;
+    // Each candidate in the frame drawn (a neighbour's points are its frame cell's metres), known by its source's group
+    // and index: a pack's own source order is its group (canal_group), a frame cell's windows' each window's.
+    const auto taken = [&drawn](text::CanalCandidate k, const std::optional<view::GroundFrame>& from,
+                                std::uint64_t group) {
+        if (k.group == 0) k.group = group;
+        if (from && drawn && *from != *drawn) {
+            const view::Vec3 mid = view::convert(*from, *drawn, {k.mid_x, 0.0, k.mid_z});
+            const view::Vec3 prev = view::convert(*from, *drawn, {k.prev_x, 0.0, k.prev_z});
+            k.mid_x = mid.x;
+            k.mid_z = mid.z;
+            k.prev_x = prev.x;
+            k.prev_z = prev.z;
+        }
+        return k;
+    };
+    std::vector<std::pair<std::uint8_t, text::CanalCandidate>> all; // its tile's zoom, the candidate
+    bool styled = false;
+    for (const Whole& w : whole) {
+        const std::uint64_t group = text::canal_group(w.id);
+        for (const text::CanalCandidate& k : w.canals->candidates) all.emplace_back(0xFF, taken(k, w.frame, group));
+        if (!styled) {
+            water_level_ = w.canals->water_level;
+            look_ = w.canals->look;
+            styled = true;
         }
     }
+    for (const scene::CoverTile* c : loose) {
+        const auto* kept = c->drawn->passes[me].cpu_as<CanalTile>();
+        const std::uint64_t group =
+            c->drawn->kind == tiles::PackKind::window ? c->drawn->key.packed() : text::canal_group(c->drawn->pack);
+        for (const text::CanalCandidate& k : kept->candidates) {
+            all.emplace_back(c->drawn->key.z, taken(k, c->drawn->frame, group));
+        }
+        if (!styled) {
+            water_level_ = kept->water_level;
+            look_ = kept->look;
+            styled = true;
+        }
+    }
+    // each once, from the finest tile that holds it (the cover may hold a tile and its ancestor)
     std::ranges::sort(all, [](const auto& a, const auto& b) {
-        return a.second->index != b.second->index ? a.second->index < b.second->index : a.first > b.first;
+        const auto ka = std::pair{a.second.group, a.second.index};
+        const auto kb = std::pair{b.second.group, b.second.index};
+        return ka != kb ? ka < kb : a.first > b.first;
     });
     std::vector<text::CanalCandidate> merged;
     merged.reserve(all.size());
-    for (const auto& [z, k] : all) {
-        if (merged.empty() || merged.back().index != k->index) merged.push_back(*k);
+    for (auto& [z, k] : all) {
+        if (merged.empty() || merged.back().group != k.group || merged.back().index != k.index) {
+            merged.push_back(std::move(k));
+        }
     }
     names_.set_candidates(std::move(merged));
 }
@@ -219,14 +271,14 @@ void GroundText::update(const frame::FrameState& state) {
     draws_.clear();
     placed_.clear();
     designators_.clear();
+    fading_ = false; // a frame that places no names leaves none fading
     // (the names on the ground: unless the map leaves them out)
     if (!state.view.has_value() || state.camera.leaves_out(style::camera_part::ground_text)) return;
     gather(state);
     const view::Camera& cam = state.view->camera();
-    double radius = 1e9;
-    if (state.placed) {
-        if (const auto r = state.placed->number("radius"); r && *r > 0) radius = *r;
-    }
+    const double radius = state.placed ? canal_names_radius(state.placed->number("radius"), state.placed->dist(),
+                                                            state.camera.has(style::camera_flag::engine_mode))
+                                       : 1e9;
     const text::CanalView view{.camera = &cam,
                                .target_x = cam.spec().target.x,
                                .target_z = cam.spec().target.z,
@@ -239,6 +291,7 @@ void GroundText::update(const frame::FrameState& state) {
                                .rest = state.rest,
                                .seconds = state.seconds};
     const auto names = names_.update(view);
+    fading_ = names_.fading();
     placed_.assign(names.begin(), names.end());
     for (const text::PlacedName& p : placed_) draw_run(state, p.drawn, first_ground_slot(), p.alpha);
     const auto named = static_cast<std::uint32_t>(draws_.size());

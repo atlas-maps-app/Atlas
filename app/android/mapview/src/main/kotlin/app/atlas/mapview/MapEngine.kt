@@ -363,6 +363,13 @@ object MapEngine {
     @Volatile
     var windowsAllowed: () -> Boolean = { true }
 
+    /**
+     * Whether the user switched Overpass off (the app's Settings · Data): the windows then come from Atlas's packs alone,
+     * and the map says why a place no pack holds stays empty.
+     */
+    @Volatile
+    var overpassOff: () -> Boolean = { false }
+
     /** The windows the phone builds, online, once the app gave a cache and their data's source; else null. */
     fun windows(): app.atlas.mapview.vk.Windows? {
         if (!online() || !windowsAllowed()) return null

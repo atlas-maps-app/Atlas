@@ -123,9 +123,10 @@ public:
 
     /// Whether the last frame's picture was complete.
     [[nodiscard]] bool complete() const noexcept;
-    /// Whether the last frame left the picture mid-transition (a fade or the frame's blend): another is due at the
-    /// same camera.
-    [[nodiscard]] bool animating() const noexcept { return made() && world_->animating(); }
+    /// Whether the last frame left the picture mid-transition (a fade, the frame's blend, or a pass's own fade such as
+    /// a label's or a canal name's: FrameBuilder::fading): another is due at the same camera, so none stops part-faded
+    /// when the gesture ends on its first frame.
+    [[nodiscard]] bool animating() const noexcept { return made() && (world_->animating() || builder_->fading()); }
     /// The pack the last frame drew ("" for none).
     [[nodiscard]] std::string_view drawn_pack() const noexcept;
     /// Its world's `vk tiles <n> resident <MB> build <ms>` line (Appendix C).

@@ -4,7 +4,8 @@
 // active pack for the camera, its ladder snapping the Westerkerk home onto the living map's view, the cover's requests
 // built on the workers by every pass's stage T into the heaps, published, taken with their items, drawn with their
 // visible cells, fading in, and let go of when the camera leaves, the passes' CPU-side data with them (counted in the
-// tiles' native bytes); the sun's scene the resident tiles and their 220 m halo.
+// tiles' native bytes); the sun's scene the resident tiles and their 220 m halo; and frame cells' windows beside the
+// active pack, where four cells meet the three around it, each with its own sun.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
@@ -18,6 +19,7 @@
 #include "scene/World.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "tests/load/corner.hpp"
 #include "tests/load/query.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
@@ -34,6 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -885,6 +888,425 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     CHECK(w.windows_ahead() == 0);
     CHECK(!w.wanted_windows().empty());
     MESSAGE((moving.size() - ahead) << " windows wanted in view while panning east, " << ahead << " ahead of it");
+    (void)session->take_messages();
+}
+
+TEST_CASE("every cell in view is drawn: where four frame cells meet, the three around the active one beside it, each "
+          "with its own sun") {
+    // A building in each of the four windows around a corner of four frame cells (tests/load/corner.hpp), the camera's
+    // target a metre inside the south-east one, 1.6 km away, the world as the app's map has it (MapFrame: the window
+    // under the target named, the enclosing pack its own choice). One neighbour drew two of the four.
+    const auto made = test::corner_windows(std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-corner");
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    std::vector<std::string> distinct = m.cells; // each window's frame cell, the target's last
+    std::ranges::sort(distinct);
+    ATLAS_REQUIRE(std::ranges::adjacent_find(distinct) == distinct.end()); // four cells
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, file] : m.windows) {
+        const auto joined = w.store().add({.id = name, .kind = tiles::PackKind::window, .path = file.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    w.set_coarser_enclosing(true);
+    style::CameraState c = home();
+    c.latitude = m.lat0 - (1.0 / 110540.0);
+    c.longitude = m.lon0 + (1.0 / m.kx);
+    c.distance = 1600.0;
+    c.flags = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    std::uint64_t n = 0;
+    const auto frames = [&](std::uint64_t count) {
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+        }
+    };
+    // No window's tile reaches the corner (each holds one building 120 m off), so the world's own choice, a pack whose
+    // tiles reach over the target, finds none; the app names the window whose box holds the target (PackList.choose),
+    // and the world draws its frame cell's pack.
+    frames(2);
+    CHECK(w.active() == nullptr);
+    w.set_active(m.windows.back().first);
+    frames(58);
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->kind == tiles::PackKind::window);
+    CHECK(w.active()->id == m.cells.back());
+    CHECK(w.coarser() == nullptr); // a cell's windows are never one
+    // The other three cells' windows beside it, each once.
+    const auto beside = [&w] {
+        std::vector<std::string> ids;
+        for (const tiles::StorePack* p : w.neighbours()) {
+            if (p == nullptr) continue;
+            CHECK(p->kind == tiles::PackKind::window);
+            ids.push_back(p->id);
+        }
+        return ids;
+    };
+    std::vector<std::string> sorted = beside();
+    std::ranges::sort(sorted);
+    std::vector<std::string> others(m.cells.begin(), m.cells.end() - 1);
+    std::ranges::sort(others);
+    CHECK(sorted == others);
+    // Every cell's building drawn: a tile of each of the four packs in the cover.
+    std::vector<std::string> drawn;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (std::ranges::find(drawn, t.drawn->pack) == drawn.end()) drawn.push_back(t.drawn->pack);
+    }
+    std::ranges::sort(drawn);
+    CHECK(drawn == distinct);
+    // Each cell's own sun: once the lanes' scenes are built and their buckets run, every tile the cover draws at its
+    // finest zoom has its bits, the neighbours' from their own lanes. The south-west window's tile lies under the eye
+    // (1 km west and 0.8 km south of the target), in another cell's frame than the one drawn, which is 24 km off: its
+    // windows are tested too, the eye taken into its own cell's frame.
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    const tiles::TileKey under_eye = m.places[2];
+    const auto lit = [&] {
+        std::size_t count = 0;
+        bool windows_tested = false;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            CHECK(t.drawn->key.z == 14); // a window's one level: no stand-in
+            const bool has = t.sun && t.sun_base != scene::no_sun;
+            CHECK_MESSAGE(has, t.drawn->pack << " drew " << t.drawn->key.x << "/" << t.drawn->key.y << " without sun");
+            if (!has) continue;
+            ++count;
+            CHECK(t.sun_weight == 1.0F);
+            if (t.drawn->key == under_eye) windows_tested = t.sun->now->windows;
+        }
+        CHECK(windows_tested);
+        return count;
+    };
+    w.sun()->wait_idle();
+    now = now + 1.0; // past every fade
+    frames(1);
+    CHECK(lit() == w.cover()->tiles().size());
+    // The neighbours' order changes as the target moves (nearest first), but each keeps its sun's lane: no scene is
+    // built again and no bucket run again, every tile's bits still there.
+    // the target `south` and `east` metres of the corner, the window under it named (as the app names it) where given
+    const auto move = [&](double south, double east, std::string_view named = {}) {
+        c.latitude = m.lat0 - (south / 110540.0);
+        c.longitude = m.lon0 + (east / m.kx);
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        if (!named.empty()) w.set_active(std::string(named));
+        frames(10);
+        w.sun()->wait_idle();
+        frames(1);
+    };
+    move(1.0, 60.0); // the north-east cell's building nearest
+    const std::vector<std::string> east_first = beside();
+    ATLAS_REQUIRE(east_first.size() == 3);
+    CHECK(east_first.front() == m.cells[1]);
+    const scene::SunStats before = w.sun()->stats();
+    move(60.0, 1.0); // the south-west cell's
+    const std::vector<std::string> south_first = beside();
+    ATLAS_REQUIRE(south_first.size() == 3);
+    CHECK(south_first.front() == m.cells[2]);
+    const scene::SunStats after = w.sun()->stats();
+    CHECK(after.scenes == before.scenes);
+    CHECK(after.runs == before.runs);
+    CHECK(lit() == w.cover()->tiles().size());
+    // Crossing the cell's edge: the target 60 m into the north-east window, named, so that cell's windows are the
+    // active pack and the south-east cell's a neighbour. Each pack keeps its lane and only the active role moves: no
+    // scene is built and no bucket run again, every tile's bits still there, and the active role's bits the north-east
+    // cell's.
+    move(-60.0, 60.0, m.windows[1].first);
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->id == m.cells[1]);
+    std::vector<std::string> crossed = beside();
+    std::ranges::sort(crossed);
+    std::vector<std::string> others_now{m.cells[0], m.cells[2], m.cells[3]};
+    std::ranges::sort(others_now);
+    CHECK(crossed == others_now);
+    const scene::SunStats across = w.sun()->stats();
+    CHECK(across.scenes == before.scenes);
+    CHECK(across.runs == before.runs);
+    CHECK(lit() == w.cover()->tiles().size());
+    CHECK(w.sun()->bits().view(m.places[1], now.load()).has_value());
+    // and back
+    move(1.0, 1.0, m.windows.back().first);
+    CHECK(w.active()->id == m.cells.back());
+    CHECK(w.sun()->stats().scenes == before.scenes);
+    CHECK(w.sun()->stats().runs == before.runs);
+    CHECK(lit() == w.cover()->tiles().size());
+    MESSAGE(w.cover()->tiles().size() << " tiles drawn from " << drawn.size()
+                                      << " cells' windows at the corner, each lit by its cell's sun; "
+                                      << w.residency().resident().size() << " resident, " << across.scenes
+                                      << " scenes, " << across.runs << " runs, after the neighbours' order changed and "
+                                      << "the target crossed into the north-east cell and back; " << w.tiles_line());
+    (void)session->take_messages();
+}
+
+namespace {
+
+/// A live moment with the sun at `azimuth` and `elevation` degrees (sun::bucket_of's live bucket).
+[[nodiscard]] style::ThemeBlock sun_at(double azimuth, double elevation) {
+    style::ThemeBlock t{};
+    t.moment = style::MomentName::other;
+    const sun::Sun s = sun::sun_vector(azimuth, elevation);
+    t.sun_vector = {s.x, s.y, s.z};
+    t.sun_azimuth = azimuth;
+    t.sun_elevation = elevation;
+    return t;
+}
+
+/// The lit samples of the drawn tile `key` (its newest bits), or nothing where it is not drawn with bits.
+[[nodiscard]] std::optional<std::size_t> lit_samples(const scene::World& w, const tiles::TileKey& key) {
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key != key || !t.sun) continue;
+        const sun::TileBits& b = *t.sun->now;
+        std::size_t n = 0;
+        for (std::uint32_t i = 0; i < b.count; ++i) n += b.bit(i) ? 1U : 0U;
+        return n;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+TEST_CASE(
+    "a building's shadow crosses a frame cell's edge: the next cell's walls in its shade, and its own in the next "
+    "cell's, as within one cell") {
+    // The windows either side of the edge between cells 525/337 and 526/337 (tests/load/corner.hpp's south-west and
+    // south-east): in each a tower 60 m tall 10 m from the edge, and across the edge from it a house 8 m tall 10 m from
+    // the edge. The sun low in the west puts the south-west tower's shadow over the south-east house; low in the east,
+    // the south-east tower's over the south-west house. The camera's target 250 m south of the corner, by the edge.
+    const auto made =
+        test::corner_windows(std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-edge",
+                             [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+                                 constexpr std::string_view tower = R"("building":"yes","height":"60")";
+                                 constexpr std::string_view house = R"("building":"house","height":"8")";
+                                 if (window == 2) {
+                                     return test::made_building(id, tower, -40, -130, -10, -100, c) + "," +
+                                            test::made_building(id, house, -30, -430, -10, -410, c);
+                                 }
+                                 if (window == 3) {
+                                     return test::made_building(id, house, 10, -125, 30, -105, c) + "," +
+                                            test::made_building(id, tower, 10, -435, 40, -405, c);
+                                 }
+                                 return {};
+                             });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    const tiles::TileKey west_place = m.places[2];
+    const tiles::TileKey east_place = m.places[3];
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    w.set_coarser_enclosing(true);
+    const auto add = [&](std::size_t i) {
+        const auto joined = w.store().add(
+            {.id = m.windows[i].first, .kind = tiles::PackKind::window, .path = m.windows[i].second.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    };
+    style::CameraState c = home();
+    c.latitude = m.at(1.0, -250.0)[0];
+    c.longitude = m.at(1.0, -250.0)[1];
+    c.distance = 900.0;
+    c.flags = 0;
+    std::uint64_t n = 0;
+    // frames until the tiles are in and the sun has made their bits, then one to draw them
+    const auto settle = [&](const style::ThemeBlock& theme) {
+        (*builder)->set_inputs({.camera = c, .theme = theme, .scene = &w});
+        for (int k = 0; k < 30; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.pack_stage().wait_idle();
+        }
+        w.sun()->wait_idle();
+        now = now.load() + 1.0;
+        ++n;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    const style::ThemeBlock west_sun = sun_at(270.0, 15.0);
+    const style::ThemeBlock east_sun = sun_at(90.0, 15.0);
+
+    // The south-east window alone: its house in the sun.
+    add(3);
+    w.set_active(m.windows[3].first);
+    settle(west_sun);
+    const auto east_alone = lit_samples(w, east_place);
+    ATLAS_REQUIRE(east_alone.has_value());
+    CHECK(w.sun()->stats().others == 0);
+    // The south-west window joins (the app lists it), its cell beside the active one: the south-east lane's scene
+    // takes its tiles' solids, and the house's bits are made again, in the tower's shadow.
+    add(2);
+    settle(west_sun);
+    ATLAS_REQUIRE(w.neighbour() != nullptr);
+    CHECK(w.neighbour()->id == m.cells[2]);
+    const auto east_shaded = lit_samples(w, east_place);
+    ATLAS_REQUIRE(east_shaded.has_value());
+    CHECK(*east_shaded < *east_alone);
+    CHECK(w.sun()->stats().others == 1);
+    // The sun in the east: the south-west lane's scene holds the south-east tower, whose shadow falls on its house.
+    settle(east_sun);
+    const auto west_shaded = lit_samples(w, west_place);
+    ATLAS_REQUIRE(west_shaded.has_value());
+    // Without the south-east window (the app's list without it), the south-west house is in the sun again.
+    CHECK(w.store().remove(m.windows[3].first));
+    w.set_active(m.windows[2].first);
+    settle(east_sun);
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->id == m.cells[2]);
+    const auto west_alone = lit_samples(w, west_place);
+    ATLAS_REQUIRE(west_alone.has_value());
+    CHECK(*west_shaded < *west_alone);
+    MESSAGE("the south-east window's lit samples: " << *east_alone << " alone, " << *east_shaded
+                                                    << " with the south-west tower across the edge; the south-west "
+                                                    << "window's: " << *west_alone << " alone, " << *west_shaded
+                                                    << " with the south-east tower");
+    (void)session->take_messages();
+}
+
+TEST_CASE("the march across a frame cell's edge over the zoo's windows: what it costs a frame and a lane") {
+    const std::string regions = environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: the zoo's windows are not measured here");
+        return;
+    }
+    // The zoo's data (artis' raw.json) either side of the edge between cells 525/336 and 526/336 (lon 4.921875): the
+    // windows 14/8415/5384, west of it, and 14/8416/5384, east, built anywhere's way; a sunny afternoon's sun (from the
+    // south-west, 25° up); the camera 600 m from a target by the edge. Each window alone, then the other beside it.
+    std::ifstream in(std::filesystem::path(regions) / "artis" / "raw.json", std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    const std::array<tiles::TileKey, 2> places{tiles::TileKey(14, 8415, 5384), tiles::TileKey(14, 8416, 5384)};
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-zoo";
+    std::filesystem::create_directories(folder);
+    std::array<std::pair<std::string, std::filesystem::path>, 2> windows;
+    for (std::size_t i = 0; i < places.size(); ++i) {
+        const tiles::TileKey k = places.at(i);
+        const auto built =
+            load::build_window(test::query(*doc, load::window_box(k)), tiles::Sha256Digest{}, k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        const std::filesystem::path file = folder / (std::to_string(k.x) + "-" + std::to_string(k.y) + ".atlas");
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                  static_cast<std::streamsize>(built->pack.size()));
+        windows.at(i) = {"window/" + load::place_of(k).name, file};
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    style::CameraState c = home();
+    c.latitude = 52.3685;
+    c.longitude = 4.921875 + (1.0 / (111320.0 * pymath::cos(pymath::radians(52.3685))));
+    c.distance = 600.0;
+    c.flags = 0;
+    const style::ThemeBlock afternoon = sun_at(225.0, 25.0);
+    struct Measured {
+        scene::SunStats alone;
+        scene::SunStats beside;
+        std::size_t lit_alone = 0;
+        std::size_t lit_beside = 0;
+        double frame_alone_us = 0;
+        double frame_beside_us = 0;
+    };
+    // `first` alone, then `second` beside it, each settled: the first's lane's scene and lit samples, and the world's
+    // update a frame at rest (its sun's prepare among it), the mean of 60.
+    const auto measure = [&](std::size_t first, std::size_t second) {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE_OR_RETURN(Measured{}, builder.has_value());
+        std::atomic<double> now{0};
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE_OR_RETURN(Measured{}, world.has_value());
+        scene::World& w = **world;
+        w.set_coarser_enclosing(true);
+        (*builder)->set_inputs({.camera = c, .theme = afternoon, .scene = &w});
+        std::uint64_t n = 0;
+        const auto settle = [&] {
+            for (int k = 0; k < 40; ++k) {
+                ++n;
+                now = now.load() + 0.016;
+                ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+                w.update((*builder)->state());
+                w.residency().wait_idle();
+                w.pack_stage().wait_idle();
+            }
+            w.sun()->wait_idle();
+            now = now.load() + 1.0;
+            ++n;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+        };
+        const auto at_rest = [&] {
+            double total = 0;
+            for (int k = 0; k < 60; ++k) {
+                ++n;
+                now = now.load() + 0.016;
+                ATLAS_REQUIRE_OR_RETURN(0.0, (*builder)->derive(n, 0, nullptr));
+                const auto started = std::chrono::steady_clock::now();
+                w.update((*builder)->state());
+                total += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count();
+            }
+            return total / 60.0;
+        };
+        Measured out;
+        const auto add = [&](std::size_t i) {
+            ATLAS_REQUIRE(w.store().add(
+                {.id = windows.at(i).first, .kind = tiles::PackKind::window, .path = windows.at(i).second.string()}));
+        };
+        add(first);
+        w.set_active(windows.at(first).first);
+        settle();
+        out.alone = w.sun()->stats();
+        out.lit_alone = lit_samples(w, places.at(first)).value_or(0);
+        out.frame_alone_us = at_rest();
+        add(second);
+        settle();
+        out.beside = w.sun()->stats();
+        out.lit_beside = lit_samples(w, places.at(first)).value_or(0);
+        out.frame_beside_us = at_rest();
+        return out;
+    };
+    for (const auto& [first, second] : {std::pair<std::size_t, std::size_t>{1, 0}, {0, 1}}) {
+        const Measured r = measure(first, second);
+        CHECK(r.alone.others == 0);
+        CHECK(r.beside.others >= 1);
+        CHECK(r.lit_beside <= r.lit_alone);
+        MESSAGE(std::format(
+            "{} (the active pack's lane): alone a scene of {} tiles, {} solids, made in {:.1f} ms, {} "
+            "samples lit; beside {}: {} tiles, {} of them its ({} solids of {}), made in {:.1f} ms, {} "
+            "lit, the lanes' other tiles worked out in {:.3f} ms; the world's update at rest {:.0f} us a "
+            "frame alone, {:.0f} us beside it",
+            windows.at(first).first, r.alone.tiles, r.alone.solids, r.alone.scene_ms, r.lit_alone,
+            windows.at(second).first, r.beside.tiles, r.beside.others, r.beside.other_solids, r.beside.solids,
+            r.beside.scene_ms, r.lit_beside, r.beside.others_ms, r.frame_alone_us, r.frame_beside_us));
+    }
     (void)session->take_messages();
 }
 

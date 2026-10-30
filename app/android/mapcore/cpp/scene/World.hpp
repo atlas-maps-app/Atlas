@@ -125,11 +125,16 @@ public:
     /// The coarser pack drawn now (null: none) and its mask.
     [[nodiscard]] const tiles::StorePack* coarser() const noexcept { return coarser_.get(); }
     [[nodiscard]] const std::optional<tiles::GridBox>& mask() const noexcept { return mask_; }
-    /// The pack drawn beside the active one now (null: none): around a render pack, the windows of the frame cell
-    /// holding the camera's target (tiles::Store's cell packs); around a cell's windows, the render pack nearest the
-    /// target within the cover's reach, else the nearest other cell's windows. Its tiles are drawn where neither the
-    /// active nor the coarser pack has one (scene/Cover.hpp).
-    [[nodiscard]] const tiles::StorePack* neighbour() const noexcept { return neighbour_.get(); }
+    /// The packs drawn beside the active one now (max_neighbours at most, null past the last), across kinds alone:
+    /// around a render pack, cells' windows (tiles::Store's cell packs), the frame cell's holding the camera's target
+    /// first, then the other cells' within the cover's reach of the target, nearest first; around a cell's windows, the
+    /// render packs within that reach, then the other cells' windows, each nearest first. Never a render pack beside a
+    /// render pack. So every cell in view is drawn (ENGINE.md one pack per country, step 4: where four cells meet, the
+    /// three around the active one). Each one's tiles are drawn where neither the active nor the coarser pack nor a
+    /// neighbour before it has one (scene/Cover.hpp).
+    [[nodiscard]] std::array<const tiles::StorePack*, max_neighbours> neighbours() const noexcept;
+    /// The nearest of them (null: none).
+    [[nodiscard]] const tiles::StorePack* neighbour() const noexcept { return neighbours_[0].get(); }
     /// The L14 places in view the phone may build a window for (ENGINE.md step 3: the core asks, the app fetches):
     /// each seen by the frustum within the finest level's reach of the eye, where no pack of the store has a tile and
     /// no bundled or render pack's box holds the place whole (an empty place of that pack's data), nearest first; then,
@@ -155,6 +160,9 @@ public:
     [[nodiscard]] std::optional<view::GroundFrame> ground_frame() const noexcept override { return frames_.current(); }
     [[nodiscard]] const ResidentPack* active_pack() const noexcept override { return built(active_); }
     [[nodiscard]] const ResidentPack* coarser_pack() const noexcept override { return built(coarser_); }
+    [[nodiscard]] std::span<const ResidentPack* const> neighbour_packs() const noexcept override {
+        return neighbour_packs_;
+    }
     /// The packs' stage T (tests: wait_idle).
     [[nodiscard]] PackStage& pack_stage() noexcept { return *pack_stage_; }
 
@@ -166,7 +174,7 @@ public:
 
     /// Wakes the frame loop at rest: called on a worker thread as each tile is published (cheap and never blocking:
     /// post a frame request), so the next frame takes the tile and fades it in.
-    /// The sun's workers call it too, as each tile's bits are published. It must stay valid until the world is gone.
+    /// The sun's workers call it too, once a run's bits are published. It must stay valid until the world is gone.
     void set_wake(std::function<void()> wake);
     /// Whether the last update left the frame mid-transition: a tile drawn still fading in, a change of the frame
     /// drawn still blending, or a tile's sun bits still cross-fading. The frame loop draws another frame while it is
@@ -183,7 +191,8 @@ public:
 private:
     explicit World(WorldOptions options) noexcept : options_(std::move(options)) {}
     /// The active pack for the camera's target: the forced one, else the first render pack (in the store's order)
-    /// whose finest level has a tile under the target.
+    /// whose finest level has a tile reaching over the target (its chunks' reach, what their features draw: a sparse
+    /// window may reach over part of its place alone, and the app names the window whose box holds the target).
     void choose(const style::CameraState& camera);
     void release_idle(double seconds, std::uint64_t frame);
     /// The coarser pack and its mask for the frame (set_coarser's, else the enclosing pack's when chosen, else none).
@@ -191,8 +200,8 @@ private:
     /// The smallest other render pack whose box holds the active one's (set_coarser_enclosing), or "": a frame cell's
     /// windows are never one.
     [[nodiscard]] std::string enclosing_pack();
-    /// The neighbour for the frame (neighbour()), for the camera's target.
-    void choose_neighbour(const style::CameraState& camera);
+    /// The neighbours for the frame (neighbours()), for the camera's target.
+    void choose_neighbours(const style::CameraState& camera);
     /// The windows wanted in `view` around the camera's target (wanted_windows), at most every half second; `frame`
     /// the view's ground frame (the frame drawn, or without a pack one centred on the target, as the view then is).
     void want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
@@ -202,6 +211,8 @@ private:
     void place_items(const ResidentTile& tile);
     /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
     void take_packs();
+    /// The neighbours' stage T, as built so far (neighbour_packs).
+    void take_neighbour_packs() noexcept;
     /// What was built of `pack`, or null.
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
 
@@ -233,8 +244,9 @@ private:
     std::optional<tiles::GridBox> mask_wanted_;
     std::shared_ptr<const tiles::StorePack> coarser_;
     std::optional<tiles::GridBox> mask_;
-    std::shared_ptr<const tiles::StorePack> neighbour_;
-    std::shared_ptr<const tiles::StorePack> last_neighbour_;
+    std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> neighbours_;
+    std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> last_neighbours_;
+    std::array<const ResidentPack*, max_neighbours> neighbour_packs_{}; ///< their stage T, once built (update)
     mutable std::mutex wanted_mutex_;
     std::vector<tiles::TileKey> wanted_;                     ///< under wanted_mutex_
     std::optional<std::array<std::int32_t, 2>> last_target_; ///< the camera's target at the last look (render thread)

@@ -179,4 +179,30 @@ class WeatherTest {
             assertNull(w.marine(LatLon(50.0, 10.0)))
         }
     }
+
+    @Test
+    fun theSeasForecastIsKeptForNoSignalAndRunsOutWithItsHours() = runBlocking {
+        val cache = tmp.newFolder("sea")
+        var now = fetched
+        Mock().use { m ->
+            m.fixture("meteo_marine.json")
+            val sea = Weather(testHttp(), cache, marineBase = m.base, metBase = NO_MET) { now }.marine(LatLon(52.47, 4.45))!!
+            assertFalse(sea.kept)
+        }
+        // no signal five hours on, a kilometre away: the kept forecast, marked kept, the sea now its hour of now
+        now = fetched.plusSeconds(5 * 3600)
+        val offline = Weather(testHttp(), cache, marineBase = NO_MET, metBase = NO_MET) { now }
+        val kept = offline.marine(LatLon(52.46, 4.44))!!
+        assertTrue(kept.kept)
+        assertEquals(fetched, kept.fetchedAt)
+        assertEquals(Instant.parse("2026-10-13T22:00:00Z"), kept.now!!.time)
+        assertEquals(kept.hours.last { !it.time.isAfter(now) }, kept.now)
+        // the app's offline path asks the kept one alone
+        assertTrue(offline.keptMarine(LatLon(52.47, 4.45))!!.kept)
+        // too far from anything kept: the failure shows
+        assertTrue(runCatching { offline.marine(LatLon(54.0, 3.0)) }.exceptionOrNull() is java.io.IOException)
+        // two days on its hours have run out: not passed off as the sea
+        now = fetched.plusSeconds(2 * 86_400 + 60)
+        assertNull(offline.keptMarine(LatLon(52.47, 4.45)))
+    }
 }

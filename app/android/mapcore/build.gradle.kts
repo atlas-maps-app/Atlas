@@ -137,6 +137,13 @@ tasks.register<FetchTool>("fetchModsCmake") {
 val packageValidationLayer = providers.gradleProperty("atlas.vvl").map { it != "false" }.getOrElse(true)
 // ccache on CI (android.yml sets ATLAS_CCACHE=1), keyed there by the NDK and the flags.
 val ccache = providers.environmentVariable("ATLAS_CCACHE").map { it == "1" }.getOrElse(false)
+// How many jobs the NDK build runs at once, as :mapcorecheck's host build: -Patlas.jobs or ATLAS_JOBS when given, else
+// Ninja's own -j on CI (CI=true: every core) and 3 on a developer's machine (ENGINE.md, How to work). AGP runs Ninja
+// itself, without -j, so the limit is the core's Ninja pool (ATLAS_JOBS in cpp/CMakeLists.txt); another number
+// configures the NDK build again.
+val buildJobs: Int? = providers.gradleProperty("atlas.jobs").orElse(providers.environmentVariable("ATLAS_JOBS")).orNull
+    ?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: throw GradleException("atlas.jobs is a number, not '$it'") }
+    ?: if (providers.environmentVariable("CI").orNull == "true") null else 3
 
 android {
     namespace = "app.atlas.mapcore"
@@ -154,6 +161,7 @@ android {
                     "-DATLAS_SLANGC=${slangDir.resolve("bin/slangc").path}",
                 )
                 if (ccache) arguments += listOf("-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+                buildJobs?.let { arguments += "-DATLAS_JOBS=$it" }
             }
         }
     }

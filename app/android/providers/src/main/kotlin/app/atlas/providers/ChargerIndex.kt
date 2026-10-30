@@ -17,8 +17,9 @@ import java.util.zip.GZIPOutputStream
 
 /**
  * Chargers held in memory as compact records with a k-d tree, answering [near] in microseconds: for the national
- * registers (NDW, Bundesnetzagentur) and offline packs. A whole country (80,000 Dutch locations) takes a few megabytes:
- * positions are primitive arrays and each charger's tags stay UTF-8 bytes until a query returns it as a [Place].
+ * registers (NDW, Bundesnetzagentur) and offline packs. Positions are primitive arrays and each charger's tags stay UTF-8
+ * bytes until a query returns it as a [Place]; measured on 30 October 2026, the Netherlands' 79,530 chargers took about
+ * 24 MB of heap and 5.1 MB on disk, Germany's 116,443 about 33 MB and 3.6 MB.
  * Immutable once built; [write] and [read] keep it on disk between runs.
  */
 class ChargerIndex private constructor(override val info: ProviderInfo, private val data: Data) : ChargerProvider {

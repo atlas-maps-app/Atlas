@@ -131,6 +131,12 @@ class EdgeTest {
             Windows.line(true, Windows.Status.Waiting(since + 150_000L, refused = false), 150_000L, "Netherlands"),
         )
         assertEquals("This area's data could not be built", Windows.line(true, Windows.Status.Waiting(since, refused = true), 0L, null))
+        // with Overpass switched off in the sources, no server is waited for: no pack holds the place
+        assertEquals(
+            "No pack holds this area, and Overpass is switched off",
+            Windows.line(true, Windows.Status.Waiting(since + 150_000L, refused = false), 150_000L, "Netherlands", overpassOff = true),
+        )
+        assertEquals("This area's data could not be built", Windows.line(true, Windows.Status.Waiting(since, refused = true), 0L, null, overpassOff = true))
         assertEquals("Offline · this area is not on the phone yet", Windows.line(false, null, 0L, "Netherlands"))
         assertEquals("Offline · this area is not on the phone yet", Windows.line(false, Windows.Status.Idle, 0L, null))
         // resting windows: nothing to say

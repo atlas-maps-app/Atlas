@@ -66,7 +66,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
     val partsOff: Flow<Set<MapPart>> = data.map { leftOutParts(it) }.distinctUntilChanged()
 }
 
-/** The map's parts left out (SettingsKeys.MAP_PARTS_OFF, their names); unset, the clouds' shadows and the water's light. */
+/** The map's parts left out (SettingsKeys.MAP_PARTS_OFF, their names); unset, the defaults (MapParts.byDefault: none). */
 fun leftOutParts(p: Preferences): Set<MapPart> = p[SettingsKeys.MAP_PARTS_OFF]?.let { MapParts.named(it) } ?: MapParts.byDefault
 
 /** The shell's settings keys. Features add theirs in their own packages, prefixed with the package name. */
@@ -84,6 +84,9 @@ object SettingsKeys {
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
 
+    /** The tilt the user last left the map at with their fingers (degrees, `MapState.chosenTilt`): the 3D button's. */
+    val MAP_TILT = doublePreferencesKey("map.tilt")
+
     /**
      * The screen's haze, vignette and grain over the map: off when unset, as each costs frame time (the user, 27 October:
      * "disabled by default if they add performance overhead"); on, the renders' look.
@@ -91,6 +94,13 @@ object SettingsKeys {
     val MAP_HAZE = booleanPreferencesKey("map.haze")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
+
+    /**
+     * The frosted glass of the Map home's chrome and the bottom bar: off when unset, so they are solid and the map's core
+     * blurs nothing under them (the user, 30 October: "For now turn the frosted glass off by default. It costs
+     * performance isnt done right"); on, the boards' glass. Other screens keep their glass.
+     */
+    val FROSTED_GLASS = booleanPreferencesKey("ui.frostedGlass")
 
     /**
      * Whether what stands up is drawn at its true depth (on when unset, the engine's own) or in the renderer's painter's
@@ -101,8 +111,8 @@ object SettingsKeys {
     /**
      * A debug build's switches of the core's parts: the names of the map's parts it leaves out (mapview.MapPart: every
      * layer and effect, each its own switch, and a switch for each group of them), so the map's panel shows on the phone
-     * what each part costs (MapEngine.leaveOut). Unset, the clouds' shadows and the water's light are left out until they
-     * are worked on (the user, 28 October 2026), every other part drawn ([leftOutParts]).
+     * what each part costs (MapEngine.leaveOut). Unset, every part is drawn ([leftOutParts]): the clouds' shadows and
+     * the water's light too since their rework (left out from alpha 19 until it, the user, 28 October 2026).
      */
     val MAP_PARTS_OFF = stringSetPreferencesKey("map.partsOff")
 

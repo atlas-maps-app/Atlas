@@ -523,6 +523,7 @@ function(atlas_add_shaders target shaders_dir)
                 DEPFILE "${dep}"
                 DEPENDS "${src}" "${ATLAS_SLANGC}"
                 COMMENT "slangc ${rel}${suffix}"
+                ${ATLAS_JOB_POOL}
                 VERBATIM)
             # Every module loses the capabilities it declares without needing them (tools/nocontract/capabilities.hpp:
             # Slang declares StorageImageReadWithoutFormat for subpass inputs); an exact module is then made exact.
@@ -540,6 +541,7 @@ function(atlas_add_shaders target shaders_dir)
                     COMMAND ${ATLAS_NOCONTRACT} check "${spv}"
                     DEPENDS "${raw}" ${ATLAS_NOCONTRACT_DEPENDS}
                     COMMENT "nocontract ${rel}${suffix}"
+                    ${ATLAS_JOB_POOL}
                     VERBATIM)
             else()
                 add_custom_command(
@@ -549,6 +551,7 @@ function(atlas_add_shaders target shaders_dir)
                     COMMAND ${ATLAS_NOCONTRACT} capabilities "${raw}" "${spv}"
                     DEPENDS "${raw}" ${ATLAS_NOCONTRACT_DEPENDS}
                     COMMENT "nocontract capabilities ${rel}${suffix}"
+                    ${ATLAS_JOB_POOL}
                     VERBATIM)
             endif()
             add_custom_command(
@@ -557,6 +560,7 @@ function(atlas_add_shaders target shaders_dir)
                         -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Embed.cmake"
                 DEPENDS "${spv}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Embed.cmake"
                 COMMENT "embed ${symbol}"
+                ${ATLAS_JOB_POOL}
                 VERBATIM)
             # where the tests are built, each compute entry point measured alone (the test spirv_budget)
             if(ATLAS_TESTS)
@@ -574,6 +578,7 @@ function(atlas_add_shaders target shaders_dir)
                             -DSHADERS=${shaders_dir} -DOUTPUT=${budget} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
                     DEPENDS "${raw}" "${json}" ${ATLAS_NOCONTRACT_DEPENDS} "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
                     COMMENT "budget ${rel}${suffix}"
+                    ${ATLAS_JOB_POOL}
                     VERBATIM)
                 list(APPEND budgets "${budget}")
             endif()
@@ -627,6 +632,7 @@ ${module_hashes}};
                 -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
         DEPENDS ${reflections} "${manifest_file}" "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
         COMMENT "layouts from Slang's reflection"
+        ${ATLAS_JOB_POOL}
         VERBATIM)
     # the compute entry points' measures, which the test spirv_budget reads
     list(JOIN budgets "\n" budget_list)

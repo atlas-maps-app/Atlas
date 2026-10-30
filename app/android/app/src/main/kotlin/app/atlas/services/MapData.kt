@@ -11,6 +11,8 @@ import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
 import app.atlas.providers.Forecast
+import app.atlas.providers.Overpass
+import app.atlas.providers.SwitchedOffException
 import app.atlas.render.data.HttpPost
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.RegionBuilder
@@ -97,6 +99,11 @@ class MapData(private val services: Services) {
 
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
+    /** Throws where the user switched Overpass off (Settings · Data): the windows ask none of its servers then. */
+    private fun overpassAllowed() {
+        if (Overpass.INFO.id in services.sourcesOff()) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
+    }
+
     /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use. */
     private val packsIndexDir: File by lazy { File(services.dirs.cache, "engine/windows/index") }
 
@@ -152,13 +159,17 @@ class MapData(private val services: Services) {
         MapEngine.weather = weather
         MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
-        // is of the last day where one answers; built again after a week from the changes since
+        // is of the last day where one answers; built again after a week from the changes since. Where the user switched
+        // Overpass off, none is asked (and none rested for it), and the map says so.
         MapEngine.windowData = { b, file ->
+            overpassAllowed()
             overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), file, freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
         }
         MapEngine.windowDiff = { b, since, notBefore ->
+            overpassAllowed()
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
         }
+        MapEngine.overpassOff = { Overpass.INFO.id in services.sourcesOff() }
         // and before them, Atlas's own packs, built on GitHub from Geofabrik's extracts, where one holds the window
         MapEngine.windowPacks = { w, after ->
             windowPacks.window(w.z, w.x, w.y, after)?.let { app.atlas.mapview.vk.Windows.Packed(it.gz, it.date, it.pack) }
@@ -208,9 +219,8 @@ class MapData(private val services: Services) {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
         }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: the clouds' shadows and the water's light off when unset until they are worked on (the user, 28 October:
-        // "turn off cloud shadows and water light by default without them it runs pretty well"); set before the settings
-        // are read, so no first frame draws them
+        // cost: every part drawn when unset (MapParts.byDefault); set before the settings are read, so the first frame
+        // draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }

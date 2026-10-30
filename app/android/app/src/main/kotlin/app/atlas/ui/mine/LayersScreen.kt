@@ -100,6 +100,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val haze by settings.flow(SettingsKeys.MAP_HAZE, false).collectAsStateWithLifecycle(false)
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
+    val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
     val trueDepth by settings.flow(SettingsKeys.MAP_TRUE_DEPTH, true).collectAsStateWithLifecycle(true)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
@@ -162,11 +163,12 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     }
                 }
                 ScreenChips(
-                    haze, vignette, grain, trueDepth,
+                    haze, vignette, grain, trueDepth, glass,
                     onHaze = { on -> scope.launch { settings.set(SettingsKeys.MAP_HAZE, on) } },
                     onVignette = { on -> scope.launch { settings.set(SettingsKeys.MAP_VIGNETTE, on) } },
                     onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
                     onTrueDepth = { on -> scope.launch { settings.set(SettingsKeys.MAP_TRUE_DEPTH, on) } },
+                    onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
                     PartChips(partsOff, pacing, onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } }) { off ->
@@ -225,7 +227,8 @@ private fun LayerChips(layers: Set<MapLayer>, onToggle: (MapLayer, Boolean) -> U
 /**
  * The screen's effects over the map, each a chip as the layers' are (dark when on): the haze that thickens with the
  * ground's distance and the vignette that darkens the corners, both the renders' and on by default; off, the map keeps
- * its own colours there (and the phone does less work a pixel).
+ * its own colours there (and the phone does less work a pixel). Last, the frosted glass of the Map home's chrome and the
+ * bottom bar (off by default: solid, and the map's core blurs nothing under them).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -234,10 +237,12 @@ private fun ScreenChips(
     vignette: Boolean,
     grain: Boolean,
     trueDepth: Boolean,
+    glass: Boolean,
     onHaze: (Boolean) -> Unit,
     onVignette: (Boolean) -> Unit,
     onGrain: (Boolean) -> Unit,
     onTrueDepth: (Boolean) -> Unit,
+    onGlass: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardLabel(stringResource(R.string.mine_layers_screen))
@@ -247,6 +252,7 @@ private fun ScreenChips(
                 Triple(stringResource(R.string.mine_layers_vignette), vignette, onVignette),
                 Triple(stringResource(R.string.mine_layers_grain), grain, onGrain),
                 Triple(stringResource(R.string.mine_layers_true_depth), trueDepth, onTrueDepth),
+                Triple(stringResource(R.string.mine_layers_glass), glass, onGlass),
             )) {
                 TextPill(
                     name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,

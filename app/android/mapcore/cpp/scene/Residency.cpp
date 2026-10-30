@@ -105,6 +105,11 @@ void Residency::stop() {
 }
 
 void Residency::want(std::span<const Request> requests) {
+    // The hints hear whether the frame now waits before a worker can take a tile of these wants (under the lock that
+    // queues them): a tile in view never begins at the workers' background priority, nor is a piece of it reported
+    // before the frame waits on it.
+    std::unique_lock<std::mutex> hinting;
+    if (hints_) hinting = std::unique_lock(hint_mutex_);
     {
         const std::scoped_lock lock(mutex_);
         ++generation_;
@@ -148,9 +153,9 @@ void Residency::want(std::span<const Request> requests) {
         });
         queue_ = std::move(queue);
         for (Job& j : queue_) j.request.pack = j.pack; // the views follow the strings into the new vector
+        if (hints_) tell(urgent_locked());
     }
     wake_.notify_all();
-    hint();
 }
 
 bool Residency::urgent_locked() const noexcept {
@@ -168,6 +173,10 @@ void Residency::hint() {
         const std::scoped_lock lock(mutex_);
         urgent = urgent_locked();
     }
+    tell(urgent);
+}
+
+void Residency::tell(bool urgent) {
     if (urgent == urgent_) return;
     urgent_ = urgent;
     hints_->urgent(urgent);

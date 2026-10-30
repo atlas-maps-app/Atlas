@@ -182,8 +182,10 @@ struct Deck {
     std::array<double, 4> box = {}; ///< min x, max x, min z, max z, widened
 };
 
-/// The decks of a tile's records at a level: its bridge roads and bridge areas.
+/// The decks of a tile's records at a level: its bridge roads and bridge areas, in its pack's frame (`head`'s), or in
+/// `frame`'s metres (a tile of another pack drawn beside it: a point of the grid is a place in every frame).
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out);
+void collect_decks(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level, std::vector<Deck>& out);
 
 /// A tile's solids and trees at one level of the ladder: what the sun's grid holds and what casts the ground's shadows
 /// (Hulls.hpp).
@@ -199,6 +201,8 @@ struct TileCasters {
 /// shadows (K9) read the solids the sun's march reads, and the water's reflections (K16) the solids it mirrors, in the
 /// order of their reflection samples (SunTile::reflections).
 [[nodiscard]] TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level);
+/// The same in `frame`'s metres (a tile of another pack drawn beside it, whose solids a scene holds: SunGlobals).
+[[nodiscard]] TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level);
 
 /// A tile's part of the sun's scene at one level of the ladder.
 struct SunTile {

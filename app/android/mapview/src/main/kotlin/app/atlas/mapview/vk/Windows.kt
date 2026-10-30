@@ -588,10 +588,11 @@ class Windows(
          * What the map says where the core has no window of the place yet ([status]: what the windows do now; null when
          * there are none): offline, that the place is not on the phone; taking its pack from [country]'s tiles (its name,
          * where the place is a country's whose tiles the core draws), or its data from OpenStreetMap's servers (or
-         * Atlas's own packs of them); building it; or waiting [remainingMs] for the servers, or after the core refused its
-         * data. Null where the windows rest.
+         * Atlas's own packs of them); building it; or waiting [remainingMs] for the servers (or, where the sources switch
+         * Overpass off, [overpassOff], that no pack holds the place), or after the core refused its data. Null where the
+         * windows rest.
          */
-        fun line(online: Boolean, status: Status?, remainingMs: Long, country: String?): String? {
+        fun line(online: Boolean, status: Status?, remainingMs: Long, country: String?, overpassOff: Boolean = false): String? {
             if (!online) return "Offline · this area is not on the phone yet"
             return when (status) {
                 null, Status.Idle -> null
@@ -601,10 +602,10 @@ class Windows(
                     else -> "Getting this area's map…"
                 }
                 is Status.Building -> "Building the map here…"
-                is Status.Waiting -> if (status.refused) {
-                    "This area's data could not be built"
-                } else {
-                    "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L))
+                is Status.Waiting -> when {
+                    status.refused -> "This area's data could not be built"
+                    overpassOff -> "No pack holds this area, and Overpass is switched off"
+                    else -> "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L))
                 }
             }
         }

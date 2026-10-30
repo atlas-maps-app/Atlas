@@ -113,6 +113,13 @@ Scene::Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::S
     grid_ = std::move(b).build(scene_maxh);
 }
 
+std::uint64_t Scene::context(std::size_t t) const noexcept {
+    if (t >= chunks_.size()) return 0;
+    std::uint64_t c = 0;
+    for (std::size_t i = 0; i < 8; ++i) c |= std::uint64_t{std::to_integer<std::uint8_t>(chunks_[t][i])} << (8 * i);
+    return c;
+}
+
 std::optional<std::uint32_t> Scene::find(tiles::TileKey key) const noexcept {
     for (std::size_t t = 0; t < tiles_.size(); ++t) {
         if (tiles_[t].key == key) return static_cast<std::uint32_t>(t);
@@ -563,10 +570,14 @@ Worker::~Worker() {
     // the jthread's destruction (first of the members, being the last) joins it before anything it uses goes
 }
 
-void Worker::request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs) {
+void Worker::request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs,
+                     unsigned threads) {
     {
         const std::lock_guard lock(mutex_);
-        next_ = Request{.scene = std::move(scene), .bucket = bucket, .jobs = std::move(jobs)};
+        next_ = Request{.scene = std::move(scene),
+                        .bucket = bucket,
+                        .jobs = std::move(jobs),
+                        .threads = threads == 0 ? threads_ : std::min(threads, threads_)};
     }
     wake_.notify_one();
 }
@@ -603,6 +614,12 @@ void Worker::loop(const std::stop_token& stop) {
         std::uint64_t from_disk = 0;
         std::vector<TileJob> jobs;
         jobs.reserve(r.jobs.size());
+        // The run's bits, published together once it is done: one wake of the frame loop a run, so at rest its tiles
+        // come in one frame. Published a tile at a time, each woke a frame of its own wherever the GPU's frames starve
+        // this thread between them (CI's emulator: a frame a tile, each 2 s on lavapipe with the water's light on).
+        std::vector<std::pair<tiles::TileKey, TileBits>> made;
+        made.reserve(r.jobs.size());
+        std::mutex made_mutex;
         for (const TileJob& j : r.jobs) {
             const tiles::Sha256Digest* chunk = r.scene->chunk(j.tile);
             if (r.bucket.named && cache_ != nullptr && chunk != nullptr) {
@@ -610,22 +627,26 @@ void Worker::loop(const std::stop_token& stop) {
                 if (auto b = cache_->load(*chunk, t.level, r.bucket, t.samples.size(), j.windows)) {
                     b->quays = t.quays;
                     b->reflections = t.reflections;
-                    bits_.publish(t.key, std::move(*b), clock_());
+                    b->context = r.scene->context(j.tile);
+                    made.emplace_back(t.key, std::move(*b));
                     ++from_disk;
                     continue;
                 }
             }
             jobs.push_back(j);
         }
-        run(*r.scene, r.bucket, jobs, threads_, [&](std::uint32_t tile, TileBits bits) {
+        run(*r.scene, r.bucket, jobs, r.threads, [&](std::uint32_t tile, TileBits bits) {
             const SunTile& t = r.scene->tiles()[tile];
             if (r.bucket.named && cache_ != nullptr) {
                 if (const tiles::Sha256Digest* chunk = r.scene->chunk(tile)) (void)cache_->store(*chunk, t.level, bits);
             }
             bits.quays = t.quays;
             bits.reflections = t.reflections;
-            bits_.publish(t.key, std::move(bits), clock_());
+            bits.context = r.scene->context(tile);
+            const std::scoped_lock held(made_mutex);
+            made.emplace_back(t.key, std::move(bits));
         });
+        bits_.publish(std::move(made), clock_());
         lock.lock();
         busy_ = false;
         ++runs_;

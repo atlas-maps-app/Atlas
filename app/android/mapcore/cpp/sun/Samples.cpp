@@ -1141,7 +1141,10 @@ Region region_of(const tiles::Style& style) noexcept {
 }
 
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out) {
-    const tl::Frame& frame = head.frame;
+    collect_decks(tile, head.frame, level, out);
+}
+
+void collect_decks(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level, std::vector<Deck>& out) {
     if (const tl::Layer* roads = tile.layer(tl::LayerId::road)) {
         for (std::uint32_t i = 0; i < roads->count; ++i) {
             if (!roads->boolean(tl::road::bridge, i).value_or(false)) continue;
@@ -1208,8 +1211,11 @@ void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::
 }
 
 TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level) {
+    return solids_of(tile, head.frame, level);
+}
+
+TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level) {
     TileCasters c;
-    const tl::Frame& frame = head.frame;
     const Variants variants = variants_at(tile, level);
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;

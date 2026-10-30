@@ -116,14 +116,29 @@ int2 fx_pixel(FrameCamera camera, float2 position) {
     return p;
 }
 
+/// Index `v` of an axis of `n` texels in the axis's mirror period (0 to 2 n - 1): `v % (2 n)`, made positive. The
+/// remainder is taken only where `v` lies outside the period, as an integer remainder is dear on a phone's GPU.
+int fx_period(int v, int n) {
+    int p = 2 * n;
+    if (v >= 0 && v < p) {
+        return v;
+    }
+    int m = v % p;
+    if (m < 0) {
+        m = m + p;
+    }
+    return m;
+}
+
+/// The texel a place `m` of the mirror period (fx_period) reads: 0 to n - 1, then n - 1 back to 0.
+int fx_fold(int m, int n) {
+    return m < n ? m : (2 * n - 1) - m;
+}
+
 /// Index `v` of an axis of `n` texels mirrored into it: past either end the axis reads on as its mirror image (0 to n
 /// - 1, then n - 1 back to 0, and so on), so a field read anywhere is continuous.
 int fx_mirror(int v, int n) {
-    int m = v % (2 * n);
-    if (m < 0) {
-        m = m + 2 * n;
-    }
-    return m < n ? m : (2 * n - 1) - m;
+    return fx_fold(fx_period(v, n), n);
 }
 
 /// The fields' pixel `q` mirrored into them (fx_mirror on each axis): each field is a block of its noise the frame's
@@ -133,6 +148,22 @@ int2 fx_wrap(int2 q) {
     uint h = 0u;
     noise_rgba.GetDimensions(w, h);
     int2 m = {fx_mirror(q.x, int(w)), fx_mirror(q.y, int(h))};
+    return m;
+}
+
+/// The fields' four pixels about pixel `i` as a blend between them reads them: fx_wrap of i (x, y) and of i + (1, 1)
+/// (z, w), each axis's place in its period taken once and the next place stepped from it.
+int4 fx_wrap4(int2 i) {
+    uint w = 0u;
+    uint h = 0u;
+    noise_rgba.GetDimensions(w, h);
+    int nw = int(w);
+    int nh = int(h);
+    int px = fx_period(i.x, nw);
+    int py = fx_period(i.y, nh);
+    int qx = px + 1 == 2 * nw ? 0 : px + 1;
+    int qy = py + 1 == 2 * nh ? 0 : py + 1;
+    int4 m = {fx_fold(px, nw), fx_fold(py, nh), fx_fold(qx, nw), fx_fold(qy, nh)};
     return m;
 }
 
@@ -180,10 +211,11 @@ uint fx_glints_red(float2 q) {
     float2 f = floor(q);
     int2 i = int2(f);
     float2 t = q - f;
-    float a = float(fx_r(fx_wrap(i)));
-    float b = float(fx_r(fx_wrap(i + int2(1, 0))));
-    float c = float(fx_r(fx_wrap(i + int2(0, 1))));
-    float d = float(fx_r(fx_wrap(i + int2(1, 1))));
+    int4 m = fx_wrap4(i);
+    float a = float(fx_r(m.xy));
+    float b = float(fx_r(m.zy));
+    float c = float(fx_r(m.xw));
+    float d = float(fx_r(m.zw));
     float top = a + ((b - a) * t.x);
     float bottom = c + ((d - c) * t.x);
     float r = top + ((bottom - top) * t.y);
@@ -196,10 +228,11 @@ uint fx_cloud_alpha(float2 q) {
     float2 f = floor(q);
     int2 i = int2(f);
     float2 t = q - f;
-    float a = float(fx_rgba(fx_wrap(i)).w);
-    float b = float(fx_rgba(fx_wrap(i + int2(1, 0))).w);
-    float c = float(fx_rgba(fx_wrap(i + int2(0, 1))).w);
-    float d = float(fx_rgba(fx_wrap(i + int2(1, 1))).w);
+    int4 m = fx_wrap4(i);
+    float a = float(fx_rgba(m.xy).w);
+    float b = float(fx_rgba(m.zy).w);
+    float c = float(fx_rgba(m.xw).w);
+    float d = float(fx_rgba(m.zw).w);
     float top = a + ((b - a) * t.x);
     float bottom = c + ((d - c) * t.x);
     float r = top + ((bottom - top) * t.y);
@@ -212,10 +245,11 @@ uint2 fx_rg_between(float2 q) {
     float2 f = floor(q);
     int2 i = int2(f);
     float2 t = q - f;
-    float2 a = float2(fx_rg(fx_wrap(i)));
-    float2 b = float2(fx_rg(fx_wrap(i + int2(1, 0))));
-    float2 c = float2(fx_rg(fx_wrap(i + int2(0, 1))));
-    float2 d = float2(fx_rg(fx_wrap(i + int2(1, 1))));
+    int4 m = fx_wrap4(i);
+    float2 a = float2(fx_rg(m.xy));
+    float2 b = float2(fx_rg(m.zy));
+    float2 c = float2(fx_rg(m.xw));
+    float2 d = float2(fx_rg(m.zw));
     float2 top = a + ((b - a) * t.x);
     float2 bottom = c + ((d - c) * t.x);
     float2 r = top + ((bottom - top) * t.y);

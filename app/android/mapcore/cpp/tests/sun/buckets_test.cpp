@@ -1,8 +1,9 @@
 // The sun worker (sun/Buckets.hpp, sun/BitTiles.hpp): buckets from the theme block, a bucket's run on several threads
 // giving one thread's bits, each tile handed on once when its last piece is done, windows tested only where asked;
-// the worker publishing the latest request, a named moment's tiles kept on disk and read back; the bits a frame draws,
-// fading 300 ms over a swap. The host-tsan build runs these with ThreadSanitizer; the disk cache's files go to the
-// build folder's scratch (ATLAS_TEST_SCRATCH) and are removed.
+// the worker publishing the latest request, a run's tiles together at one time with one wake of the frame loop, a
+// named moment's tiles kept on disk and read back; the bits a frame draws, fading 300 ms over a swap. The host-tsan
+// build runs these with ThreadSanitizer; the disk cache's files go to the build folder's scratch (ATLAS_TEST_SCRATCH)
+// and are removed.
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "style/Theme.hpp"
@@ -275,4 +276,40 @@ TEST_CASE("sun: the worker publishes the latest request, and a named moment from
         idle.wait_idle();
     }
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("sun: a run's tiles are published together, at one time, and tell the frame loop once") {
+    BitTiles bits;
+    const auto scene = drawn_scene(4, 3000);
+    std::atomic<int> told{0};
+    std::atomic<int> there{0}; // the tiles with bits when last told
+    bits.on_publish([&] {
+        int n = 0;
+        for (std::uint32_t t = 0; t < 4; ++t) n += bits.view(scene->tiles()[t].key, 0.0).has_value() ? 1 : 0;
+        there.store(n);
+        told.fetch_add(1);
+    });
+    std::atomic<int> ticks{0};
+    const auto clock = [&ticks] { return 100.0 + ticks.fetch_add(1); };
+    std::vector<TileJob> jobs;
+    jobs.reserve(4);
+    for (std::uint32_t t = 0; t < 4; ++t) jobs.push_back({t, true});
+    Worker w(bits, 3, nullptr, clock);
+    // The first bits: four tiles, one wake, every tile's there by then.
+    w.request(scene, bucket_of(sun_vector(120.0, 33.0), false), jobs);
+    w.wait_idle();
+    CHECK(told.load() == 1);
+    CHECK(there.load() == 4);
+    // A new bucket: the four swap at the run's one time, so their fades go together, and one wake more.
+    w.request(scene, bucket_of(sun_vector(121.0, 33.0), false), jobs);
+    w.wait_idle();
+    CHECK(told.load() == 2);
+    const double swapped = 100.0 + (ticks.load() - 1); // the clock's last time: the run's
+    for (std::uint32_t t = 0; t < 4; ++t) {
+        const auto at = bits.view(scene->tiles()[t].key, swapped);
+        const auto half = bits.view(scene->tiles()[t].key, swapped + (fade_seconds / 2));
+        ATLAS_REQUIRE(at.has_value() && half.has_value());
+        CHECK(at->weight == 0.0);
+        CHECK(half->weight == doctest::Approx(0.5));
+    }
 }

@@ -57,7 +57,8 @@ class Photon(private val http: Http, private val base: String = "https://photon.
             licence = "ODbL",
             attribution = "Search by Photon (komoot) · © OpenStreetMap contributors",
             url = "https://photon.komoot.io",
-            note = "Used only when your downloaded places have too little for a search.",
+            note = "Used when your downloaded places have too little for a search, and for the address at a place.",
+            hosts = listOf("photon.komoot.io"),
         )
 
         /** The public instance speaks these languages (it answers 400 to others); anything else falls back to local names. */

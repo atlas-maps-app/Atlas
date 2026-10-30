@@ -55,7 +55,8 @@
 # apart off the diagonal or not run, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it
 # with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
-# first, 1.5 s warm), a map frame from 4 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
+# first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
+# frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
 # switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
@@ -64,7 +65,13 @@
 # bits' hash the host build computes), ATLAS_GROUND_HASH (the ground's stage T hash the host build computes),
 # ATLAS_TWIN_HASH (the twin check's hash the host build computes): each as ci/hashes.env holds it, unless the
 # environment sets another; ATLAS_PACKS (a folder of render packs put on the device for the debug and bench builds to
-# draw: the canal ring, android.yml's build job's :app:benchTiles, as no APK carries a map).
+# draw: the canal ring, android.yml's apk job's :app:benchTiles, as no APK carries a map).
+# A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
+# of "screens vk pills map truth" (the default, all of them: the debug loop over the screens; VK facts, bench and the
+# crash guard; the frosted pills; the map drawn by the core; the truth phase, which ATLAS_BENCH=0 skips too);
+# ATLAS_SCREENS_SKIP, screens another part opens; ATLAS_SCREENS_PART=<k>/<n>, every n-th of the screens left from the
+# k-th, in the app's order. The part writes the app's whole list (screens-all.txt), its own screens (screens.txt) and
+# its phases (phases.txt), which android.yml's emulator-coverage holds the parts to: each screen and phase once.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 # The hashes the emulator must reproduce, each the host build's: ci/hashes.env's (outside the workflows, so a change of
@@ -81,6 +88,9 @@ IDLE=${ATLAS_IDLE:-20}
 # `timeout` is coreutils (the CI runner has it); a Mac may not.
 LIMIT=""; command -v timeout >/dev/null 2>&1 && LIMIT="timeout 900"
 FAIL=0
+PHASES=${ATLAS_PHASES:-screens vk pills map truth}
+# Whether this part runs phase $1 (ATLAS_PHASES).
+has_phase() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # The device's watchdog. An emulator that dies leaves every later adb call waiting for it ("- waiting for device -") until
 # the job's own timeout: on 28 Oct (7f28e5d) it went offline at the walk screen and the job waited 110 minutes. Gone for
@@ -287,6 +297,28 @@ wait_line() {
   return 1
 }
 
+# Whether the core's map rests since marker $1 (its `vk frame` lines, under atlas.vk.ci): no frame for $2 s, waiting at
+# most $3 s.
+vk_rest() {
+  local n m waited=0
+  n=$(since_marker "$1" | grep -c 'AtlasMap: vk frame ')
+  while [ "$waited" -lt "$3" ]; do
+    sleep "$2"
+    waited=$((waited + $2))
+    m=$(since_marker "$1" | grep -c 'AtlasMap: vk frame ')
+    [ "$m" -eq "$n" ] && return 0
+    n=$m
+  done
+  return 1
+}
+
+# The time of the core's last three frames since marker $1, the median, ms: each `vk frame` line's CPU or GPU time, the
+# longer (the emulator's frame is lavapipe's GPU time, on the CPU; the frames before a complete picture draw less).
+vk_frame_ms() {
+  since_marker "$1" | grep 'AtlasMap: vk frame ' | tail -3 | awk '{ c = $(NF - 2) + 0; g = $NF + 0; print (g > c ? g : c) }' |
+    sort -n | awk '{ v[NR] = $1 } END { printf "%d", NR ? v[int((NR + 1) / 2)] : 0 }'
+}
+
 # --- the debug loop: every screen, at the debug build's first launch ---------------------------------------------------
 
 adb wait-for-device
@@ -310,13 +342,30 @@ else
 fi
 adb logcat -c
 CLK_TCK=$(adb shell getconf CLK_TCK 2>/dev/null | tr -d '\r'); [[ $CLK_TCK =~ ^[0-9]+$ ]] || CLK_TCK=100
-SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
+APP_SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
 # The list run leaves its process behind (it finishes during the splash screen); a first launch starts a fresh one.
 adb shell am force-stop $PKG
-[ -n "$SCREENS" ] || SCREENS="home"
-# A run by hand may name its own screens.
+[ -n "$APP_SCREENS" ] || APP_SCREENS="home"
+# shellcheck disable=SC2086
+printf '%s\n' $APP_SCREENS > "$OUT/screens-all.txt"
+SCREENS=$APP_SCREENS
+# A run by hand may name its own screens; a part leaves out those another opens, and takes its share of the rest.
 [ -n "${ATLAS_SCREENS:-}" ] && SCREENS="$ATLAS_SCREENS"
-echo "Screens: $SCREENS"
+if [ -n "${ATLAS_SCREENS_SKIP:-}" ]; then
+  # shellcheck disable=SC2086
+  SCREENS=$(printf '%s\n' $SCREENS | grep -v -x -F -f <(printf '%s\n' $ATLAS_SCREENS_SKIP) | tr '\n' ' ')
+fi
+if [ -n "${ATLAS_SCREENS_PART:-}" ]; then
+  # shellcheck disable=SC2086
+  SCREENS=$(printf '%s\n' $SCREENS | awk -v k="${ATLAS_SCREENS_PART%/*}" -v n="${ATLAS_SCREENS_PART#*/}" '(NR - k) % n == 0' | tr '\n' ' ')
+fi
+has_phase screens || SCREENS=""
+# shellcheck disable=SC2086
+printf '%s\n' $SCREENS | grep . > "$OUT/screens.txt"
+# shellcheck disable=SC2086
+printf '%s\n' $PHASES | grep . > "$OUT/phases.txt"
+echo "Phases: $PHASES"
+echo "Screens: $SCREENS ($(grep -c . "$OUT/screens.txt") of the app's $(grep -c . "$OUT/screens-all.txt"))"
 
 for s in $SCREENS; do
   measure "$s" debug-first
@@ -605,8 +654,10 @@ vk_phase() {
   vk_crashes vkguard3
   fresh_state
 }
-vk_phase
-adb logcat -d > "$OUT/logcat.vk.txt"
+if has_phase vk; then
+  vk_phase
+  adb logcat -d > "$OUT/logcat.vk.txt"
+fi
 
 # --- the frosted pills (plan-vector D5.1, K11b) -----------------------------------------------------------------------
 
@@ -681,12 +732,17 @@ pills_phase() {
   home_capture() { # $1 label, $2 picture, then the activity's extras
     local l=$1 picture=$2 i; shift 2
     fresh_state
-    vk_launch "$l" --es atlas.screen home --ez atlas.ci true "$@"
+    vk_launch "$l" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true "$@"
     for i in $(seq 1 90); do
       since_marker "$l" | grep -q -e 'vk first frame' -e 'drawn in' && break
       sleep 2
     done
     sleep 8
+    # Still pills: the map at rest first (no frame for 5 s). Its first picture's late parts (the noise fields made on
+    # lavapipe in 10 to 14 s, the sun's bits) come after its first frame, each a frame of 2 s with the water's light on:
+    # on 30 October one came between the raw capture and the PNG, MAD 2.07 against HWUI's where the two PNGs were 0.05 to
+    # 0.48 apart in each pill.
+    vk_rest "$l" 5 60 || echo "PILLS: the home ($l) drew on for 60 s after its first frame: captured as it was"
     adb exec-out screencap > "$OUT/${picture%.png}.raw"
     adb exec-out screencap -p > "$OUT/$picture"
     since_marker "$l" > "$OUT/${picture%.png}.atlasmap.txt"
@@ -694,7 +750,8 @@ pills_phase() {
   }
   # Both in the sunny moment: in the live one each launch drew the light the forecast gave it by then (28 October,
   # 7ed9a86: the SurfaceView's capture came before the forecast, sunny, the TextureView's after it, grey, MAD 2.4).
-  home_capture homesurface pills-home.png --es atlas.ci.theme DAY
+  # The glass is off by default on the home (the user, 30 October): these launches turn it on, so the check sees it.
+  home_capture homesurface pills-home.png --es atlas.ci.theme DAY --ez atlas.ci.glass true
   if ! grep -q 'AtlasMap: vk frosted [1-9]' "$OUT/pills-home.atlasmap.txt"; then
     echo "PILLS: the home is not drawn by the map's core yet (no 'vk frosted' line): its pills against HWUI's wait for it"
     rm -f "$OUT"/pills-home*.raw
@@ -703,7 +760,7 @@ pills_phase() {
   python3 -I "$HERE/pillcheck.py" check "$OUT/pills-home.raw" --shapes "$OUT/pills-home.atlasmap.txt" > "$OUT/pills-home.txt" 2>&1; rc_home=$?
   sed 's/^/  home: /' "$OUT/pills-home.txt"
   [ $rc_home -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills did not pass the pill check"; FAIL=1; }
-  home_capture hometexture pills-home-texture.png --es atlas.ci.theme DAY --es atlas.vk.host texture
+  home_capture hometexture pills-home-texture.png --es atlas.ci.theme DAY --ez atlas.ci.glass true --es atlas.vk.host texture
   if ! grep -q 'AtlasMap: vk window: texture' "$OUT/pills-home-texture.atlasmap.txt"; then
     echo "PILLS: the home took no TextureView (no 'vk window: texture' line): its pills against HWUI's wait for atlas.vk.host"
     rm -f "$OUT"/pills-home*.raw
@@ -714,7 +771,7 @@ pills_phase() {
   sed 's/^/  core against HWUI: /' "$OUT/pills-home-mad.txt"
   [ $rc_mad -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills are further than MAD 2 from HWUI's"; FAIL=1; }
 }
-pills_phase
+has_phase pills && pills_phase
 
 # --- the map's core (plan-vector K11, Appendix C): the home drawn by the core -----------------------------------------
 
@@ -731,13 +788,15 @@ first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*'
 # since that afternoon, when both runs on 95856df drew it in 30.7 to 35.9 s against 16.1 to 17.1 s on the commit before,
 # on runners whose own work was slower alike (the ten tiles' build 2,599.9 ms against 1,019.3, VK bench's pipelines 2.5
 # to 3.5 times as long, the emulator's boot 36.1 s against 24.7), none of it the commit's; ENGINE.md's gain 7, stage T kept on disk, is what makes a warm
-# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), no frame from 4 s after a swipe (CI's `vk frame` lines:
-# the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25 October), the Java
+# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), the warm home at rest within
+# 60 s of its first frame, no frame from three of the emulator's frames after a swipe on it, 4 s at the least (CI's `vk
+# frame` lines: the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25
+# October; lavapipe's frames take about 2 s with the water's light on by default, 30 October), the Java
 # heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
 # back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
 # fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
 map_phase() {
-  local run line ms kind limit before after heap
+  local run line ms kind limit before after heap frame_ms tail
   for run in mapfirst mapwarm; do
     vk_launch "$run" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
     wait_line "$run" 60 "vk first frame" || echo "MAP FAILED: no 'vk first frame' within 60 s ($run)"
@@ -751,20 +810,26 @@ map_phase() {
     # is a warm one.
     [ "$run" = mapfirst ] && { adb shell input keyevent KEYCODE_HOME; sleep 3; }
   done
-  # A swipe on the warm home, then rest: frames while it moves, none from 4 s after (a map that does not rest draws on
-  # through the 6 s that follow).
-  sleep 3
+  # A swipe on the warm home once it rests (its first picture's late parts in: the sun's bits, one frame a run), then
+  # rest: frames while it moves, the rest picture and a fade's frame, none from three of the emulator's frames after it
+  # (4 s at the least), and none through the 6 s that follow (a map that does not rest draws on). With the water's light
+  # on by default lavapipe's frames take about 2 s: on 30 October the swipe's last came 4.0 s after it.
+  vk_rest mapwarm 4 60 || { echo "MAP FAILED: the home drew on for 60 s after its first frame (the map does not rest)"; FAIL=1; }
+  echo "map: the home drew $(since_marker mapwarm | sed -n '/AtlasMap: vk first frame /,$p' | grep -c 'AtlasMap: vk frame ') frames after its first complete one, then rested"
+  frame_ms=$(vk_frame_ms mapwarm)
+  tail=$(( (3 * frame_ms + 999) / 1000 ))
+  [ "$tail" -ge 4 ] || tail=4
   adb shell log -t AtlasMap "vk swipe: start"
   adb shell input swipe 540 1500 540 900 300
   adb shell log -t AtlasMap "vk swipe: done"
-  sleep 4
-  adb shell log -t AtlasMap "vk swipe: 4 s after"
+  sleep "$tail"
+  adb shell log -t AtlasMap "vk swipe: $tail s after"
   sleep 6
-  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: 4 s after$/p' | grep -c 'AtlasMap: vk frame ')
-  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: 4 s after$/,$p' | grep -c 'AtlasMap: vk frame ')
-  echo "map: the swipe drew $before frames, $after from 4 s after it"
+  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: [0-9]* s after$/p' | grep -c 'AtlasMap: vk frame ')
+  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: [0-9]* s after$/,$p' | grep -c 'AtlasMap: vk frame ')
+  echo "map: the swipe drew $before frames, $after from $tail s after it (the emulator's frames $frame_ms ms at the median)"
   [ "$before" -gt 0 ] || { echo "MAP FAILED: the swipe drew no frame (the map did not move)"; FAIL=1; }
-  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from 4 s after the swipe (the map does not rest)"; FAIL=1; }
+  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from $tail s after the swipe (the map does not rest)"; FAIL=1; }
   # The Java heap at the canal ring, after the swipe (dumpsys' Dalvik heap in use); the native heap and graphics reported.
   PEAK_ALLOC=0; PEAK_NATIVE=0; PEAK_GFX=0; mem_poll; heap=$((PEAK_ALLOC / 1024))
   echo "map: Java heap at the canal ring ${heap} MB (native heap $((PEAK_NATIVE / 1024)) MB, graphics $((PEAK_GFX / 1024)) MB)"
@@ -788,8 +853,10 @@ map_phase() {
   adb exec-out screencap -p > "$OUT/map-off.png"
   vk_crashes mapoff; vk_anr mapoff
 }
-map_phase
-adb logcat -d > "$OUT/logcat.map.txt"
+if has_phase map; then
+  map_phase
+  adb logcat -d > "$OUT/logcat.map.txt"
+fi
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 
@@ -905,7 +972,7 @@ compose() {
   mv "$OUT/$s.atlasmap.new" "$OUT/$s.atlasmap.txt"
 }
 
-if [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
+if has_phase truth && [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
   echo "Truth phase: $APK, then $BENCH_APK"
   truth_runs debug "$APK"
   truth_runs bench "$BENCH_APK"
@@ -918,6 +985,8 @@ if [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
   echo; grep -E '^(device\.(model|soc|cores|cpu|heap|thermal)|app\.|gl\.(version|renderer|highp\.fragment|EXT_multisampled_render_to_texture|KHR_blend_equation_advanced|EXT_shader_framebuffer_fetch|max\.samples):|gl:)' "$OUT/glcaps.txt"
   [ -f "$OUT/home.simpleperf.txt" ] && { echo; sed -n '/^RASTER split/,/^$/p' "$OUT/home.simpleperf.txt"; sed -n '1,3p' "$OUT/home.simpleperf.txt"; }
 else
+  # No truth phase here: phases.txt says so, for emulator-coverage.
+  grep -v -x truth "$OUT/phases.txt" > "$OUT/phases.new"; mv "$OUT/phases.new" "$OUT/phases.txt"
   RUNS="debug-first"
   for s in home filters; do [ -f "$OUT/$s.debug-first.atlasmap.txt" ] && compose "$s"; done
 fi

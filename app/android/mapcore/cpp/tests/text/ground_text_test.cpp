@@ -1,24 +1,38 @@
 // Ground text and canal names (plan-vector D13, K13): the port's printing; ground_text's map and its refusals; the
 // renders' canal rule (the first way of each name in source order within the radius, a degenerate map passed over to
 // the next way, nothing at night or from low); a placed name kept on its way while moving, fading on a change; the
-// readability flip with its hysteresis; runway designators; a run laid out as glyph instances. With ATLAS_TILES_DIR:
+// readability flip with its hysteresis; runway designators; a run laid out as glyph instances; a frame cell's windows
+// each a source of their own (their canals known by window and index). With ATLAS_TILES_DIR:
 // the bundled packs' candidates at their boards' views, and a pan across the canal ring on which no name changes its
 // way more than once in 5 s. The port's own SVG holds the rule at both home views in :mapcorecheck's TextParityTest.
 #include "base/pymath/PyMath.hpp"
+#include "load/Window.hpp"
+#include "passes/GroundText.hpp"
 #include "tests/base/require.hpp"
+#include "tests/load/corner.hpp"
 #include "tests/text/text_support.hpp"
 #include "tests/tiles/support.hpp"
 #include "text/CanalNames.hpp"
 #include "text/GroundText.hpp"
 #include "tiles/Chunks.hpp"
+#include "tiles/Grid.hpp"
+#include "tiles/Store.hpp"
+#include "view/Ladder.hpp"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <format>
+#include <fstream>
 #include <map>
+#include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -155,6 +169,114 @@ TEST_CASE("the canal rule: each name's first way in source order within the radi
     CHECK(text::canal_rule(candidates, night).empty());
     const view::Camera low = camera(0.0, 20.0);
     CHECK(text::canal_rule(candidates, view_of(low)).empty());
+}
+
+TEST_CASE("over a pack without views a live frame's names take the canal ring's radius: a far first way gives way") {
+    // The windows' bare ladder sets no radius, so the rule took each name's first way anywhere in the frame cell (here
+    // 2 km east, off the screen) and drew none by the view; a live frame takes the canal ring's radius at its distance.
+    const view::Camera cam = camera();
+    const std::vector<CanalCandidate> candidates{candidate(0, "Prinsengracht", 2000, 0, 1, 0),
+                                                 candidate(1, "Prinsengracht", 50, -40, 1, 0)};
+    CanalView engine = view_of(cam);
+    engine.radius = passes::canal_names_radius(std::nullopt, 400, true); // engine mode: none, as the renders draw it
+    CHECK(engine.radius == 1e9);
+    const auto far = text::canal_rule(candidates, engine);
+    ATLAS_REQUIRE(far.size() == 1);
+    CHECK(far[0].candidate == 0);
+    CanalView live = view_of(cam);
+    live.radius = passes::canal_names_radius(std::nullopt, 400, false);
+    CHECK(live.radius == 350); // the canal ring's 1,400 m at 1,600, scaled
+    const auto near = text::canal_rule(candidates, live);
+    ATLAS_REQUIRE(near.size() == 1);
+    CHECK(near[0].candidate == 1);
+    // A pack with views keeps its own radius in either mode; a radius of 0 is none.
+    CHECK(passes::canal_names_radius(1400.0, 1600, false) == 1400);
+    CHECK(passes::canal_names_radius(1400.0, 1600, true) == 1400);
+    CHECK(passes::canal_names_radius(0.0, 400, false) == 350);
+    CHECK(passes::canal_names_radius(0.0, 400, true) == 1e9);
+}
+
+TEST_CASE("a frame cell's windows are each a source of their own: two windows' canals, each its window's first label, "
+          "both kept, and a pack's names by group and index") {
+    // Two windows of one frame cell (L10 526/337: its places 14/8416/5392 and 14/8417/5392), each with one canal, so
+    // each canal is its window's label 0; the cell's pack composes them.
+    test::CornerWindows at;
+    at.corner = tiles::TileKey(14, 526U << 4U, 337U << 4U);
+    const std::array<std::int32_t, 4> box = tiles::tile_box(at.corner);
+    at.lat0 = static_cast<double>(box[2]) / 1e7;
+    at.lon0 = static_cast<double>(box[1]) / 1e7;
+    at.kx = 111320.0 * pymath::cos(pymath::radians(at.lat0));
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "names-cell";
+    std::filesystem::create_directories(folder);
+    tiles::Store store;
+    std::int64_t id = 1;
+    for (const auto& [x, name] : {std::pair{0U, "Eerstegracht"}, std::pair{1U, "Tweedegracht"}}) {
+        const tiles::TileKey k(14, at.corner.x + x, at.corner.y);
+        const double east = (1490.0 * x) + 700.0;
+        const std::array<std::array<double, 2>, 3> line{{{east - 100, -300}, {east, -300}, {east + 100, -300}}};
+        const std::string json =
+            std::format(R"({{"version":0.6,"elements":[{}]}})",
+                        test::made_way(id, std::format(R"("waterway":"canal","name":"{}")", name), line, at));
+        const auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        const std::filesystem::path file = folder / std::format("{}-{}.atlas", k.x, k.y);
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                  static_cast<std::streamsize>(built->pack.size()));
+        out.close();
+        ATLAS_REQUIRE(store.add(
+            {.id = "window/" + load::place_of(k).name, .kind = tiles::PackKind::window, .path = file.string()}));
+    }
+    const auto packs = store.packs();
+    ATLAS_REQUIRE(packs.size() == 1); // one cell
+    const auto by_window = text::pack_canals(packs[0]->pack, true);
+    const auto by_index = text::pack_canals(packs[0]->pack, false);
+    ATLAS_REQUIRE(by_window.has_value() && by_index.has_value());
+    std::vector<std::string> names;
+    for (const CanalCandidate& k : by_window->candidates) {
+        names.push_back(k.name);
+        CHECK(k.index == 0);
+        CHECK(k.group == tiles::TileKey(14, at.corner.x + (k.name == "Eerstegracht" ? 0U : 1U), at.corner.y).packed());
+    }
+    std::ranges::sort(names);
+    CHECK(names == std::vector<std::string>{"Eerstegracht", "Tweedegracht"});
+    CHECK(by_index->candidates.size() == 1); // by index alone one window's canal took the other's place
+    // the names keep both, a render pack's group before every window's
+    text::CanalNames kept;
+    kept.set_candidates(by_window->candidates);
+    CHECK(kept.candidates().size() == 2);
+    CHECK(text::canal_group("grachten") < (std::uint64_t{14} << 48U));
+}
+
+TEST_CASE("the canal ring's own ladder gives the live names' radius at every distance between and beyond its views") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the canal ring's views are not checked here");
+        return;
+    }
+    auto pack = test::open_pack((std::filesystem::path(dir) / "grachten.atlas").string());
+    ATLAS_REQUIRE(pack.has_value(), tiles::describe(pack.error()));
+    const auto ladder = view::Ladder::of(*pack->head());
+    ATLAS_REQUIRE(ladder.has_value());
+    std::size_t checked = 0;
+    // nearer than the nearest view, about each view, between them and beyond the farthest
+    for (const double dist : {120.0,  200.0,  333.3,  400.0,  760.0,  1100.0, 1599.9, 1600.0, 1600.1, 1777.0, 1950.0,
+                              2299.9, 2300.0, 2300.1, 2512.5, 2699.9, 2700.0, 2700.1, 3500.0, 5000.0, 8000.0}) {
+        // by the Westerkerk, turned off every view, so that none snaps
+        const view::LiveView v{.latitude = 52.3749,
+                               .longitude = 4.8839,
+                               .distance = dist,
+                               .bearing = 31,
+                               .pitch = 47,
+                               .width_dp = 412,
+                               .height_dp = 915,
+                               .cy_dp = 440};
+        const view::Placed placed = ladder->place(v);
+        ATLAS_REQUIRE(!placed.view().has_value());
+        CHECK(placed.number("radius") == view::live_names_radius(dist));
+        ++checked;
+    }
+    MESSAGE("the canal ring's radius matched at " << checked << " distances");
 }
 
 TEST_CASE("moving, a name keeps its way while the rule could draw it there, else takes the nearest well inside the "

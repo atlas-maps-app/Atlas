@@ -32,6 +32,7 @@ void Labels::update(const frame::FrameState& state) {
     drawn_count_.at(slot) = 0;
     draws_.clear();
     drawn_.clear();
+    fading_ = false; // a frame that places no labels leaves none fading
     const labels::LabelSet* set = state.labels;
     if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value() ||
         state.camera.leaves_out(style::camera_part::labels)) {
@@ -72,6 +73,7 @@ void Labels::update(const frame::FrameState& state) {
     // The map's scale: the reciprocal of the camera's distance (a tilted view keeps the zoom's size).
     const double scale = state.camera.distance > 0.0 ? 1.0 / state.camera.distance : 0.0;
     const auto drawn = placement_.update(candidates_, frame, scale, state.seconds);
+    fading_ = placement_.fading();
     drawn_.assign(drawn.begin(), drawn.end());
     for (const labels::Drawn& d : drawn_) {
         if (draws_.size() >= max_draws) break;

@@ -11,6 +11,7 @@
 #include "scene/World.hpp"
 #include "tests/base/require.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "tests/load/corner.hpp"
 #include "tests/text/text_support.hpp"
 #include "tests/tiles/support.hpp"
 #include "text/Fonts.hpp"
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -389,5 +391,141 @@ TEST_CASE("the names from the pack whole: at the Main board the pass's names are
                     rule.size(), w.cover()->tiles().size(), from_cover.size(), differ, from_pack.size(), leaving));
     CHECK(from_pack == rule);
     CHECK(rule.size() > 50);
+}
+
+TEST_CASE(
+    "the canal names of every cell drawn: at a corner of four frame cells a name across a cell's edge placed once, "
+    "on the same way whichever cell is active, while the camera crosses the edge and at rest") {
+    // The four windows around a corner of four frame cells (tests/load/corner.hpp): "Hoekgracht" a canal with a way on
+    // either side of the edge between the south-west and south-east cells, 200 m south of the corner; "Noordsingel" a
+    // canal in the north-east cell alone; a building in each window. The camera 1.6 km from a target in the south-east
+    // window (the names within 1,400 m: view::live_names_radius), the window under the target named as the app names
+    // it, crossing into the south-west window and back.
+    const auto made = test::corner_windows(
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / "names-corner",
+        [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+            const auto canal = [&](std::string_view name, double x0, double x1, double z) {
+                const std::array<std::array<double, 2>, 3> line{{{x0, z}, {(x0 + x1) / 2, z}, {x1, z}}};
+                return test::made_way(id, std::format(R"("waterway":"canal","name":"{}")", name), line, c);
+            };
+            const double x = window % 2 == 1 ? 120.0 : -120.0;
+            const double z = window >= 2 ? -120.0 : 120.0;
+            std::string building = test::made_building(id, R"("building":"yes","building:levels":"4")", x - 15.0,
+                                                       z - 15.0, x + 15.0, z + 15.0, c);
+            if (window == 1) return canal("Noordsingel", 100.0, 300.0, 300.0) + "," + building;
+            if (window == 2) return canal("Hoekgracht", -300.0, -20.0, -200.0) + "," + building;
+            if (window == 3) return canal("Hoekgracht", 20.0, 300.0, -200.0) + "," + building;
+            return building;
+        });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::array<std::string_view, 1> composite{"composite"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
+    auto owned = std::make_unique<passes::GroundText>();
+    const passes::GroundText* text = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.clear = clear, .steps = 0});
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [id, file] : m.windows) {
+        const auto joined = w.store().add({.id = id, .kind = tiles::PackKind::window, .path = file.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    w.set_coarser_enclosing(true);
+    style::CameraState c = home();
+    c.distance = 1600.0;
+    // the target `east` metres of the corner, 100 m south, the window under it named
+    const auto aim = [&](double east, bool rest) {
+        c.latitude = m.at(east, -100.0)[0];
+        c.longitude = m.at(east, -100.0)[1];
+        c.flags = rest ? style::camera_flag::rest : 0U;
+        w.set_active(m.windows[east < 0 ? 2 : 3].first);
+        (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+    };
+    aim(60.0, true);
+    std::uint64_t n = 0;
+    for (; n < 60; ++n) {
+        now += 0.016;
+        (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+        ATLAS_REQUIRE((*builder)->derive(n + 1, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+        w.pack_stage().wait_idle();
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->id == m.cells[3]);
+    twin::Stream stream;
+    // Each frame's names: every name once (a way it leaves fading out aside), and its way, by its source's group (the
+    // window's tile) and index.
+    struct Seen {
+        std::map<std::string, std::pair<std::uint64_t, std::uint32_t>> ways;
+        std::size_t twice = 0;
+        std::size_t leaving = 0;
+    };
+    const auto frame = [&]() {
+        now += 0.016;
+        (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+        (*builder)->emit(stream, ++n);
+        Seen s;
+        for (const text::PlacedName& p : text->names()) {
+            if (p.leaving) {
+                ++s.leaving;
+                continue;
+            }
+            const text::CanalCandidate& k = text->candidates()[p.candidate];
+            if (!s.ways.emplace(k.name, std::pair{k.group, k.index}).second) ++s.twice;
+        }
+        return s;
+    };
+    const Seen rest = frame();
+    ATLAS_REQUIRE(rest.ways.contains("Hoekgracht") && rest.ways.contains("Noordsingel"));
+    CHECK(rest.twice == 0);
+    // At rest the renders' rule over every cell's names, by group and index: Hoekgracht's first way is the south-west
+    // window's (its tile's key is the lowest), a neighbour's though the south-east cell is the active one; Noordsingel
+    // the north-east cell's, a neighbour's.
+    CHECK(rest.ways.at("Hoekgracht").first == m.places[2].packed());
+    CHECK(rest.ways.at("Noordsingel").first == m.places[1].packed());
+    // Across the edge and back, 2 s each way at 60 m a second: every name once, on its way, nothing fading out; at each
+    // stop the rule's way, the same.
+    std::size_t moving = 0;
+    std::size_t changed = 0;
+    std::size_t twice = 0;
+    std::size_t leaving = 0;
+    const auto pan = [&](double from, double to) {
+        for (int k = 1; k <= 120; ++k) {
+            aim(from + ((to - from) * k / 120.0), false);
+            const Seen s = frame();
+            ++moving;
+            twice += s.twice;
+            leaving += s.leaving;
+            for (const auto& [name, way] : rest.ways) {
+                const auto it = s.ways.find(name);
+                if (it == s.ways.end() || it->second != way) ++changed;
+            }
+        }
+        aim(to, true);
+        const Seen s = frame();
+        CHECK(s.ways == rest.ways);
+        CHECK(s.twice == 0);
+    };
+    pan(60.0, -60.0);
+    CHECK(w.active()->id == m.cells[2]); // the south-west cell's windows drawn now, the south-east's beside them
+    pan(-60.0, 60.0);
+    CHECK(w.active()->id == m.cells[3]);
+    CHECK(twice == 0);
+    CHECK(leaving == 0);
+    CHECK(changed == 0);
+    MESSAGE(std::format("at the corner {} names of {} candidates from {} cells; across the edge and back, {} moving "
+                        "frames: {} changes of way, {} names twice, {} ways fading out",
+                        rest.ways.size(), text->candidates().size(), m.cells.size(), moving, changed, twice, leaving));
 }
 #endif

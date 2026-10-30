@@ -232,6 +232,20 @@ TEST_CASE("a pack without views frames the live camera in its own frame, with a 
     CHECK_FALSE(living.truthy("no_fin"));
     CHECK_FALSE(living.number("haze0").has_value());
     CHECK(living.camera().target.x == c.target.x);
+    // and no radius: a live frame's canal names take the canal ring's (passes::canal_names_radius)
+    CHECK_FALSE(p.number("radius").has_value());
+}
+
+TEST_CASE("a live frame's canal names over a pack without views: the canal ring's radius at the view's distance") {
+    // places.py's grachten: 'eat' 1,400 m at 1,600, 'home' 1,500 m at 2,300, the overview 1,500 m at 2,700
+    CHECK(view::live_names_radius(200) == 175);
+    CHECK(view::live_names_radius(400) == 350);
+    CHECK(view::live_names_radius(1600) == 1400);
+    CHECK(view::live_names_radius(1950) == 1450);
+    CHECK(view::live_names_radius(2300) == 1500);
+    CHECK(view::live_names_radius(2500) == 1500);
+    CHECK(view::live_names_radius(2700) == 1500);
+    CHECK(view::live_names_radius(5400) == 3000);
 }
 
 TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pass as the camera turns") {

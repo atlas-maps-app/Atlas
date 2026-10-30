@@ -291,7 +291,7 @@ private:
 
 /// One window of `windows`' list: its tile and the file of its answer, and what building it made.
 struct ListedWindow {
-    tl::TileKey tile{};
+    tl::TileKey tile;
     std::string path;
     std::string line; // its line on stdout
     bool built = false;

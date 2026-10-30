@@ -3,8 +3,10 @@
 // take them) opened in the world when it is made and kept across a device's loss; the moment's theme; the pack the
 // camera state names drawn, with its profile's rules (TONE off for the living map, on for the regions'); the picture
 // complete once every tile the cover wants is resident and drawn and every fade is done, and nothing more due at the
-// same camera after that; the world's wake called as tiles land; the map off and on again; VK bench taking the window
-// and giving it back; and after the close, no marker of the crash guard on disk.
+// same camera after that; the world's wake called as tiles land, and at rest a frame for each picture the workers
+// finish (a run of the sun's bits wakes it once), a pan ending in the rest picture; the map off and on again; VK bench
+// taking the window and giving it back; and after the close, no marker of the crash guard on disk. And the windows
+// alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with its own sun.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -13,11 +15,16 @@
 #include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "passes/Labels.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
+#include "scene/World.hpp"
 #include "standin/Session.hpp"
+#include "sun/Buckets.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tests/load/corner.hpp"
 #include "text/Fonts.hpp"
 #include "view/Camera.hpp"
 
@@ -37,6 +44,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -211,9 +219,13 @@ constexpr vk::Extent2D size{.width = 180, .height = 400};
 /// Draws `camera` until the map's picture is complete (tiles built by the workers, their fades done) and stays so, at
 /// most `seconds`; how many frames went out, or -1 when it never completed. A complete picture waits on the named
 /// pack's tiles alone, and the packs drawn under it or beside it may take theirs in after (on a slow build, as
-/// TSan's, a frame or more after): the workers finish, and the next frame draws the same tiles.
+/// TSan's, a frame or more after): the workers finish, and the next frame draws the same tiles. The bound catches a
+/// picture that never completes, not a slow one (timing gates hold only with ATLAS_TIMED=1, on a quiet machine): 240 s,
+/// as look_compare_vk_test's and pinch_audit_vk_test's own loops wait. 30 s was too short for a case in a process of
+/// its own on CI's runners, beside other tests (ci/flow, 30 October: the clouds' case under ASan, the Prinsengracht
+/// on a wet night under TSan).
 int draw_until_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
-                        double seconds = 30.0) {
+                        double seconds = 240.0) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
     int drawn = 0;
     std::optional<std::vector<std::uint64_t>> complete; // the tiles of the last frame, when it was complete
@@ -233,6 +245,21 @@ int draw_until_complete(standin::Session& session, frame::MapFrame& map, const s
         map.world()->residency().wait_idle();
     }
     return -1;
+}
+
+/// Draws `camera` until the last frame leaves nothing mid-transition (MapFrame::animating: the world's fades, the
+/// frame's blend and the passes' own, a label's among them), at most `seconds`; whether it came to rest. A complete
+/// picture may still hold a label fading where the camera left it (250 ms of the steady clock), which a fast build
+/// draws inside its fade. The bound catches a map that never comes to rest, as draw_until_complete's does: a frame
+/// under TSan beside other tests on CI's runners takes seconds, and a fade's end may wait for the frame after it.
+bool draw_until_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
+                      double seconds = 240.0) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+    while (map.animating()) {
+        if (std::chrono::steady_clock::now() >= until) return false;
+        if (session.draw(camera, {}).stale) session.remake();
+    }
+    return true;
 }
 
 /// The theme the last frame drew with.
@@ -670,6 +697,223 @@ const std::vector<Part>& every_part() {
 
 } // namespace
 
+TEST_CASE("a label's fade keeps the map's frames due at the same camera until it ends, from its first frame on, and a "
+          "frame that leaves the labels out ends it: none stops part-faded when a gesture ends on its first frame") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("label-fade");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    map.set_theme(sunny());
+    const style::CameraState at_home = home(1);
+    const auto labelled =
+        labels::LabelSet::make({label_at(31, 13, at_home.latitude, at_home.longitude)}, 1, 0.0F, 0.0F);
+    ATLAS_REQUIRE(labelled.has_value(), labels::describe(labelled.error()));
+    map.set_labels(*labelled);
+    // the labels' pass of the frames (the canal names may fade beside it: its own fade is what is held here)
+    const auto labels_pass = [&]() -> const passes::Labels& {
+        const auto all = map.builder()->passes();
+        const auto it = std::ranges::find(all, std::string_view("labels"), [](const auto& p) { return p->name(); });
+        REQUIRE(it != all.end());
+        return static_cast<const passes::Labels&>(**it); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
+    };
+    const auto mid_fade = [&] {
+        return std::ranges::count_if(labels_pass().drawn(),
+                                     [](const labels::Drawn& d) { return d.alpha > 0.0F && d.alpha < 1.0F; });
+    };
+
+    // At rest at the home: the label placed whole, nothing due.
+    ATLAS_REQUIRE(draw_until_complete(session, map, at_home) > 0, "the home never completed");
+    ATLAS_REQUIRE(draw_until_still(session, map, at_home), "the home never came to rest");
+    CHECK_FALSE(labels_pass().fading());
+    CHECK(mid_fade() == 0);
+    // Looking away (the parts case's row of doors): the label fades out over 250 ms where it stood, and from that first
+    // frame on the frames stay due, whatever the tiles do; at rest it is gone whole.
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    const style::CameraState away = camera_at(52.3746 - (-192.11612399270084 / 110540.0),
+                                              4.8840 + (82.21656426574002 / kx), 119.50786615381202, 60.0, 50.0);
+    CHECK(session.draw(away, {}).drawn);
+    CHECK(labels_pass().fading());
+    CHECK(map.animating());
+    ATLAS_REQUIRE(draw_until_still(session, map, away), "the row of doors never came to rest");
+    CHECK_FALSE(labels_pass().fading());
+    CHECK(mid_fade() == 0);
+    // Home again: the label comes back in from none, due from its first frame on; and a frame that leaves the labels
+    // out ends their fade at once (no frames are due for labels nobody sees).
+    CHECK(session.draw(at_home, {}).drawn);
+    CHECK(labels_pass().fading());
+    CHECK(map.animating());
+    style::CameraState without = at_home;
+    without.parts |= part::labels;
+    CHECK(session.draw(without, {}).drawn);
+    CHECK_FALSE(labels_pass().fading());
+}
+
+namespace {
+
+/// The sunny moment as the live map writes its hour (MomentName::other), its sun at `azimuth`: a live bucket (0.5°
+/// steps, sun/Buckets.hpp), whose bits the sun's workers make and never read from disk. The light's vector stays
+/// sunny()'s and the frame's theme holds no azimuth, so the moment's light stays as it was: only the bucket moves.
+[[nodiscard]] style::ThemeBlock live(double azimuth) {
+    style::ThemeBlock b = sunny();
+    b.moment = style::MomentName::other;
+    b.sun_azimuth = azimuth;
+    return b;
+}
+
+/// What the frame loop drew at rest (draw_at_rest): the frames a wake asked for, the frames due after them
+/// (MapFrame::animating: fades), and whether it came to rest.
+struct AtRest {
+    int woken = 0;
+    int due = 0;
+    bool rested = false;
+};
+
+/// The frame loop at rest as a slow phone runs it, where each wake comes between two frames and costs a frame of its
+/// own (the GPU's frames starve the workers between them, as on CI's emulator: a frame of 2 s on lavapipe with the
+/// water's light on): a frame for each wake as it comes and every frame due, until nothing has come for half a second
+/// and the workers are idle with nothing more, at most `seconds`.
+AtRest draw_at_rest(standin::Session& session, frame::MapFrame& map, std::atomic<int>& wakes,
+                    const style::CameraState& camera, double seconds = 30.0) {
+    using clock = std::chrono::steady_clock;
+    const auto until = clock::now() + std::chrono::duration<double>(seconds);
+    auto quiet_since = clock::now();
+    AtRest r;
+    while (clock::now() < until) {
+        bool draw = false;
+        if (wakes.load() > 0) {
+            wakes.fetch_sub(1);
+            ++r.woken;
+            draw = true;
+        } else if (map.animating()) {
+            ++r.due;
+            draw = true;
+        }
+        if (draw) {
+            if (session.draw(camera, {}).stale) session.remake();
+            quiet_since = clock::now();
+            continue;
+        }
+        if (clock::now() - quiet_since < std::chrono::milliseconds(500)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        // Half a second with nothing: the workers finish what they were asked for (they wake the loop as they
+        // publish), and if nothing more comes the map rests.
+        if (map.world() != nullptr) {
+            map.world()->residency().wait_idle();
+            if (scene::SunGlobals* sun = map.world()->sun()) sun->wait_idle();
+        }
+        if (wakes.load() == 0 && !map.animating()) {
+            r.rested = true;
+            break;
+        }
+    }
+    return r;
+}
+
+/// The bucket of the sun's bits each tile of the last frame drew with (0: none).
+[[nodiscard]] std::vector<std::uint64_t> drawn_buckets(frame::MapFrame& map) {
+    std::vector<std::uint64_t> out;
+    for (const scene::CoverTile& t : map.world()->cover()->tiles()) out.push_back(t.sun ? t.sun->now->bucket : 0U);
+    return out;
+}
+
+/// `c` moved `metres` ahead along its bearing.
+[[nodiscard]] style::CameraState ahead(style::CameraState c, double metres) {
+    const double kx = 111320 * pymath::cos(pymath::radians(c.latitude));
+    c.latitude += metres * pymath::cos(pymath::radians(c.bearing)) / 110540.0;
+    c.longitude += metres * pymath::sin(pymath::radians(c.bearing)) / kx;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("the map at rest draws once for each picture its workers finish, every part on: a run of the sun's bits "
+          "wakes it once however many tiles it lights, and a pan ends in the rest picture and its fades") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("rest");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    std::atomic<int> wakes{0};
+    frame::MapFrame map(2, [&wakes] { wakes.fetch_add(1); }, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    // Every part on, as the app's defaults leave them (the camera leaves none out), in the live moment's sun.
+    map.set_theme(live(213.5));
+    const style::CameraState at_home = home(1);
+    CHECK(at_home.parts == 0);
+    ATLAS_REQUIRE(draw_until_complete(session, map, at_home) > 0, "the home never completed");
+    // The first picture's late parts (the sun's bits, the noise fields) come, and the map rests. (The wakes before the
+    // complete picture were its frames'.)
+    wakes.store(0);
+    const AtRest first = draw_at_rest(session, map, wakes, at_home);
+    CHECK(first.rested);
+    scene::SunGlobals* sun = map.world()->sun();
+    ATLAS_REQUIRE(sun != nullptr, "the map's world has no sun");
+    const std::size_t lit = sun->stats().resident;
+    MESSAGE(std::format("the sun lights {} resident tiles; the first picture's late parts woke {} frames, {} due", lit,
+                        first.woken, first.due));
+    ATLAS_REQUIRE(lit >= 2, "the sun lights fewer than two tiles here, so a frame a tile would be one frame too");
+
+    // The sun's azimuth 1° on, a new live bucket: every resident tile's bits made again, a run for each pack drawn (the
+    // Westerkerk's and the canal ring's around it), each waking the frame loop once, and their swaps' fades drawn on
+    // from there. A tile at a time, a slow phone drew a frame a tile.
+    map.set_theme(live(214.5));
+    const std::uint64_t bucket = sun::bucket_of(live(214.5)).key;
+    CHECK(bucket != sun::bucket_of(live(213.5)).key);
+    const std::uint64_t runs = sun->stats().runs;
+    wakes.store(0);
+    CHECK(session.draw(at_home, {}).drawn); // the frame that asks for the new bucket's bits
+    const AtRest moved = draw_at_rest(session, map, wakes, at_home);
+    const std::uint64_t ran = sun->stats().runs - runs;
+    MESSAGE(std::format("the sun 1° on: {} runs, {} frames woken, {} due", ran, moved.woken, moved.due));
+    CHECK(moved.rested);
+    CHECK(ran >= 1);
+    CHECK(ran < lit + 1); // fewer runs than the tiles they lit: the Westerkerk's pack alone lights `lit`
+    CHECK(static_cast<std::uint64_t>(moved.woken) == ran);
+    const std::vector<std::uint64_t> buckets = drawn_buckets(map);
+    CHECK(std::ranges::count(buckets, bucket) > 0);
+    CHECK(std::ranges::all_of(buckets, [bucket](std::uint64_t b) { return b == 0 || b == bucket; }));
+
+    // A pan along the view, as CI's swipe on the home: moving frames, the frame at rest, then the rest picture's fades
+    // (a label's) and nothing woken: nothing deferred comes after it (one picture at most, one frame).
+    for (int i = 1; i <= 20; ++i) {
+        style::CameraState moving = ahead(at_home, 3.0 * i);
+        moving.flags = 0;
+        CHECK(session.draw(moving, {}).drawn);
+    }
+    const style::CameraState still = ahead(at_home, 60.0);
+    wakes.store(0);
+    CHECK(session.draw(still, {}).drawn);
+    const AtRest panned = draw_at_rest(session, map, wakes, still);
+    MESSAGE(std::format("after the pan: {} frames woken, {} due", panned.woken, panned.due));
+    CHECK(panned.rested);
+    CHECK(panned.woken <= 1);
+}
+
 TEST_CASE("the map leaves out each part its camera's parts name, every layer and effect, and draws them again: each "
           "part's work there by default and none with its switch, the rest drawn; and a group's switch") {
     const std::string tiles_dir = environment("ATLAS_TILES_DIR");
@@ -791,6 +1035,8 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         style::CameraState c = scene.camera;
         c.parts = scene.base;
         ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, std::format("{} never completed", scene.name));
+        // at rest before the reference frame: the scene before may have left a label fading out where it stood
+        ATLAS_REQUIRE(draw_until_still(session, map, c), std::format("{} never came to rest", scene.name));
         CHECK(draw(scene, 0));
         std::vector<Work> on;
         on.reserve(parts.size());
@@ -1045,6 +1291,71 @@ TEST_CASE("the clouds' shadows of the app's map keep their places on the ground 
     CHECK(compared > 400);
     CHECK(shaded > compared / 20); // the clouds do shade the home
     CHECK(kept_place >= compared * 9 / 10);
+    session.close();
+}
+
+TEST_CASE("the app's map draws every cell in view: at a corner where four frame cells meet, each cell's windows with "
+          "their own sun") {
+    // The four windows around a corner of four frame cells (tests/load/corner.hpp), listed as alpha 22's PackList lists
+    // them (each a pack of its own, numbered; the core takes each into its cell's pack), and the camera 1.6 km from a
+    // target a metre inside the south-east one, naming it (PackList.choose: the window whose box holds the target).
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("corner");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    const auto made = test::corner_windows(dir / "windows");
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    std::vector<frame::MapPack> packs;
+    std::string listed;
+    for (const auto& [id, file] : made->windows) {
+        frame::MapPack p;
+        p.number = packs.size() + 1;
+        p.ref.id = id;
+        p.ref.kind = tiles::PackKind::window;
+        p.ref.path = file.string();
+        packs.push_back(std::move(p));
+        listed += id + " listed\n";
+    }
+    CHECK(map.set_packs(std::move(packs)) == listed);
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    map.set_theme(sunny());
+    style::CameraState c = home(made->windows.size()); // the south-east window, listed last
+    c.latitude = made->lat0 - (1.0 / 110540.0);
+    c.longitude = made->lon0 + (1.0 / made->kx);
+    c.distance = 1600.0;
+    ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, "the corner never completed");
+    CHECK(map.drawn_pack() == made->cells.back());
+    // The packs beside the one named take their tiles and their sun after it (a complete picture waits on its own):
+    // drawn until every cell's tile is drawn with its bits, at most 40 frames.
+    scene::World& w = *map.world();
+    REQUIRE(w.sun() != nullptr);
+    std::vector<std::string> drawn;
+    std::size_t lit = 0;
+    for (int k = 0; k < 40 && (drawn.size() < made->cells.size() || lit < w.cover()->tiles().size()); ++k) {
+        w.residency().wait_idle();
+        w.sun()->wait_idle();
+        if (session.draw(c, {}).stale) session.remake();
+        drawn.clear();
+        lit = 0;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (std::ranges::find(drawn, t.drawn->pack) == drawn.end()) drawn.push_back(t.drawn->pack);
+            if (t.sun && t.sun_base != scene::no_sun) ++lit;
+        }
+    }
+    std::ranges::sort(drawn);
+    std::vector<std::string> cells = made->cells;
+    std::ranges::sort(cells);
+    CHECK(drawn == cells);
+    CHECK(lit == w.cover()->tiles().size());
+    CHECK(map.drawn_pack() == made->cells.back());
+    MESSAGE(w.cover()->tiles().size() << " tiles drawn from " << drawn.size() << " cells, " << lit
+                                      << " with their sun; " << map.tiles_line());
     session.close();
 }
 

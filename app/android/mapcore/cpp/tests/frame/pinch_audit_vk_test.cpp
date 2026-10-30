@@ -22,15 +22,18 @@
 // (beside the composite: what it shades with nothing hiding it) and without it (what the frame saves, the fragments it
 // hid from the others counted against it), and without the facades' detail (style::camera_part::facade_detail).
 // ATLAS_PINCH_OFF: the parts every frame leaves out, as the app's switches do ("cloud_shadows,water": alpha 19's
-// defaults; also trees, shadows, facades, canopy). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's
-// weather: its lit streets and their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the
-// rain's streaks, the streets' wet cores, the drizzle's rings on the water) instead of the sunny moment.
+// defaults, "water" the water's light; also trees, shadows, facades, and each part by its own name, the water's surface
+// as water_surface). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather: its lit streets and
+// their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's streaks, the streets' wet
+// cores, the drizzle's rings on the water) instead of the sunny moment. ATLAS_PINCH_HASH: each frame's decisions of the
+// water's reflections hashed, to hold two builds to the same ones.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
+#include "passes/Ground.hpp"
 #include "scene/ItemTable.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -43,6 +46,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -293,6 +298,59 @@ struct Listed {
     return v[v.size() / 2];
 }
 
+/// What the last frame's ground decided of the water's reflections (ATLAS_PINCH_HASH), FNV-1a over each element's
+/// fields, its faces' corners, its circles and streaks, so two builds' pinches can be held to the same decisions:
+/// `reflections <hash> <elements>`.
+[[nodiscard]] std::string reflections_hash(const frame::FrameBuilder& builder) {
+    const passes::Ground* ground = nullptr;
+    for (const std::unique_ptr<frame::Pass>& p : builder.passes()) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the pass named "ground" is passes::Ground
+        if (p->name() == "ground") ground = static_cast<const passes::Ground*>(p.get());
+    }
+    if (ground == nullptr) return "reflections none";
+    const passes::GroundFrame& f = ground->decided();
+    std::uint64_t h = 0xCBF2'9CE4'8422'2325ULL;
+    const auto put = [&h](std::uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (v >> (8 * i)) & 0xFFU;
+            h *= 0x100'0000'01B3ULL;
+        }
+    };
+    const auto put_d = [&put](double v) { put(std::bit_cast<std::uint64_t>(v)); };
+    for (const passes::Reflection& e : f.reflections) {
+        put(static_cast<std::uint64_t>(e.kind));
+        put(e.tile);
+        put(e.count);
+        put(e.colour);
+        put(e.lit);
+        put(e.unlit);
+        put(e.sample);
+        put(e.sampled ? 1U : 0U);
+        for (const std::int32_t v : e.region) put(static_cast<std::uint32_t>(v));
+        put(e.anchor);
+        for (std::uint32_t k = 0; k < e.count; ++k) {
+            if (e.kind == passes::Reflection::Kind::tree) {
+                const passes::ReflectionCircle& c = f.reflection_circles[e.first + k];
+                put_d(c.cx);
+                put_d(c.cy);
+                put_d(c.r);
+            } else if (e.kind == passes::Reflection::Kind::streak) {
+                const passes::ReflectionStreak& s = f.reflection_streaks[e.first + k];
+                for (const double v : {s.cx, s.cy, s.rx, s.ry, s.opacity}) put_d(v);
+            } else {
+                const passes::ReflectionFace& q = f.reflection_faces[e.first + k];
+                put(q.n);
+                for (const view::Vec3& c : q.q) {
+                    put_d(c.x);
+                    put_d(c.y);
+                    put_d(c.z);
+                }
+            }
+        }
+    }
+    return std::format("reflections {:016x} {}", h, f.reflections.size());
+}
+
 } // namespace
 
 TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU and each pass's counts") {
@@ -482,9 +540,26 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             for (const auto& [name, bits] :
                  {std::pair{"trees", part::trees}, std::pair{"shadows", part::building_shadows | part::park_shadows},
                   std::pair{"cloud_shadows", part::cloud_shadows}, std::pair{"water", part::water_light},
-                  std::pair{"facades", part::facade_detail}, std::pair{"canopy", part::canopy}}) {
+                  std::pair{"facades", part::facade_detail}}) {
                 if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bits;
             }
+            // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, flat_detail ...;
+            // the water's surface as water_surface, as "water" names the water's light (alpha 19's defaults above)
+            constexpr std::array<const char*, 48> each{
+                "ground",         "water_surface",  "canopy",       "ground_lines",     "setts",
+                "ground_text",    "quays",          "sky",          "building_shadows", "park_shadows",
+                "cloud_shadows",  "reflections",    "ripple",       "glitter",          "rings",
+                "glints",         "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
+                "lamp_halos",     "lamp_streaks",   "rain",         "golden_wash",      "walls",
+                "roofs",          "roof_edges",     "windows",      "window_depth",     "flat_detail",
+                "church_windows", "material_faces", "hoist_beams",  "kit_details",      "doors",
+                "house_numbers",  "trees",          "leaf_filters", "furniture",        "region_items",
+                "labels",         "routes",         "markers",      "location",         "frosted",
+                "shadow_blur",    "near_cells",     "kept_cull"};
+            for (std::size_t i = 0; i < each.size(); ++i) {
+                if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
+            }
+            MESSAGE(std::format("parts left out: {:#x}", always_off));
         }
         const Listed* held = nullptr;
         // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
@@ -507,6 +582,9 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k,
                                     b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
                                     b != nullptr ? stage_f_parts(*b) : std::string()));
+                if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
+                    MESSAGE(std::format("{} {:6.0f} m: {}", tag, d, reflections_hash(*b)));
+                }
             }
             return s;
         };

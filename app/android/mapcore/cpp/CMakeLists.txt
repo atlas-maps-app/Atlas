@@ -29,8 +29,25 @@ option(ATLAS_TESTS "Build the unit tests" ${ATLAS_HOST})
 option(ATLAS_BENCH "Build the microbenchmarks" OFF)
 option(ATLAS_FUZZ "Build the fuzz targets" OFF)
 set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into atlas_tests (CI's planted failures)")
+# CI's planted failure of pymath's check (core.yml's canaries): the platform's sin in pymath's place, defined for
+# base/pymath/fdlibm/Trig.cpp alone, so the rest of the canary's build is the host build's own, and ccache's.
+option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
+endif()
+# At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
+# units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
+# build on a developer's machine (mapcore/build.gradle.kts). Empty, Ninja's own -j decides, as on CI.
+set(ATLAS_JOBS "" CACHE STRING "At most this many compile, link and shader jobs at once (Ninja); empty: no limit")
+set(ATLAS_JOB_POOL "") # the shaders' commands' pool (cmake/Shaders.cmake)
+if(ATLAS_JOBS)
+    if(NOT ATLAS_JOBS MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "ATLAS_JOBS is a number of jobs, not '${ATLAS_JOBS}'")
+    endif()
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS atlas_jobs=${ATLAS_JOBS})
+    set(CMAKE_JOB_POOL_COMPILE atlas_jobs)
+    set(CMAKE_JOB_POOL_LINK atlas_jobs)
+    set(ATLAS_JOB_POOL JOB_POOL atlas_jobs)
 endif()
 
 # ---- Third-party code (third_party/VERSIONS.md), as SYSTEM headers so the core's warnings stay the core's own.
@@ -183,6 +200,9 @@ endforeach()
 
 add_library(atlas_stage_p OBJECT ${_stage_p_sources})
 target_link_libraries(atlas_stage_p PUBLIC atlas_stage_p_requirements)
+if(ATLAS_PLANTED_PLATFORM_SIN)
+    set_source_files_properties(base/pymath/fdlibm/Trig.cpp PROPERTIES COMPILE_DEFINITIONS ATLAS_PLANTED_PLATFORM_SIN)
+endif()
 atlas_tidy(atlas_stage_p)
 
 # The packer's tool (stagep/main.cpp): a region's or the living map's render tiles from Overpass's JSON, as the packer
@@ -284,7 +304,85 @@ if(ATLAS_TESTS)
         target_sources(atlas_tests PRIVATE $<TARGET_OBJECTS:atlas_tests_vulkan>)
     endif()
     atlas_tidy(atlas_tests)
-    add_test(NAME atlas_tests COMMAND atlas_tests)
+    # One ctest entry per test file, tests/<area>/<name>.cpp as <area>/<name>, each a process of its own, so ctest -j
+    # runs them side by side and picks a part by label: the area (ctest -L <area>), vk (every *_vk_test.cpp) or
+    # atlas_tests (all of them). doctest's --source-file takes the cases a file defines by their __FILE__, which ends in
+    # tests/<area>/<name>.cpp however the build names the source (-fmacro-prefix-map makes it relative to the
+    # repository, ccache's base_dir relative to the build folder). atlas_tests_rest runs every case none of them takes
+    # (one a header defines, say), so the split loses none, and atlas_tests_split proves it (cmake/TestSplit.cmake).
+    # Each entry prints its cases' seconds (--duration), where a file's cost lies. A file whose cases take too long for
+    # one entry, beside the runner's others, runs as parts (_test_parts, <area>/<name>=<n>,<n>...): part k, the entry
+    # <area>/<name>:<k>, takes the next n of the cases the file defines in their order (doctest's --first and --last
+    # over them), and the last part every case after those, so a case added later runs too.
+    # building/buildings_vk_test took 17 of a shard's 18 minutes of tests on 30 October (30 under TSan),
+    # ground/ripple_vk_test and frame/map_frame_vk_test 11 each, frame/composite_vk_test 9 under TSan: their cases one a
+    # part (each opens its own session, so a process apiece costs little).
+    set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1" "frame/map_frame_vk_test=1,1,1,1,1,1,1,1"
+        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1")
+    set(_test_patterns "")
+    set(_test_entries "")
+    foreach(source IN LISTS _test_sources _test_vulkan_sources)
+        file(RELATIVE_PATH _test_file "${CMAKE_CURRENT_SOURCE_DIR}/tests" "${source}")
+        if(_test_file STREQUAL "main.cpp")
+            continue()
+        endif()
+        string(REGEX REPLACE "\\.cpp$" "" _test_name "${_test_file}")
+        string(REGEX MATCH "^[^/]+/" _test_area "${_test_file}")
+        string(REGEX REPLACE "/$" "" _test_area "${_test_area}")
+        set(_test_labels atlas_tests ${_test_area})
+        if(_test_file MATCHES "_vk_test\\.cpp$")
+            list(APPEND _test_labels vk)
+        endif()
+        set(_test_filter "--source-file=*tests/${_test_file}")
+        set(_test_sizes "")
+        foreach(_test_part IN LISTS _test_parts)
+            if(_test_part MATCHES "^([^=]+)=(.+)$" AND CMAKE_MATCH_1 STREQUAL _test_name)
+                string(REPLACE "," ";" _test_sizes "${CMAKE_MATCH_2}")
+            endif()
+        endforeach()
+        set(_test_runs "")
+        if(_test_sizes)
+            set(_test_first 1)
+            set(_test_k 1)
+            foreach(_test_size IN LISTS _test_sizes)
+                math(EXPR _test_last "${_test_first} + ${_test_size} - 1")
+                list(APPEND _test_runs "${_test_name}:${_test_k}|--first=${_test_first}|--last=${_test_last}")
+                math(EXPR _test_first "${_test_last} + 1")
+                math(EXPR _test_k "${_test_k} + 1")
+            endforeach()
+            list(APPEND _test_runs "${_test_name}:${_test_k}|--first=${_test_first}")
+        else()
+            list(APPEND _test_runs "${_test_name}")
+        endif()
+        foreach(_test_run IN LISTS _test_runs)
+            string(REPLACE "|" ";" _test_run "${_test_run}")
+            list(POP_FRONT _test_run _test_entry)
+            add_test(NAME "${_test_entry}" COMMAND atlas_tests "${_test_filter}" ${_test_run} --duration=true)
+            set_tests_properties("${_test_entry}" PROPERTIES LABELS "${_test_labels}")
+            list(JOIN _test_run "\t" _test_range)
+            string(APPEND _test_entries "${_test_entry}\t${_test_filter}")
+            if(_test_range)
+                string(APPEND _test_entries "\t${_test_range}")
+            endif()
+            string(APPEND _test_entries "\n")
+        endforeach()
+        list(APPEND _test_patterns "*tests/${_test_file}")
+    endforeach()
+    # An entry whose checks time the runner runs alone (RUN_SERIAL) with lavapipe's every thread, as when atlas_tests
+    # was one process: gpu/standin_vk_test holds the stand-in's steady S1 frame to half a second with the shipped flags
+    # (K1's host acceptance; under ASan and TSan it only reports it), which four entries at once made 0.95 s on 30
+    # October. tools/ctest/shards.py starts such an entry first, before the others.
+    if(NOT ATLAS_SANITIZE MATCHES "^(asan|tsan)$")
+        set_tests_properties(gpu/standin_vk_test PROPERTIES RUN_SERIAL TRUE
+                             ENVIRONMENT_MODIFICATION "LP_NUM_THREADS=unset:")
+    endif()
+    list(JOIN _test_patterns "," _test_excluded)
+    add_test(NAME atlas_tests_rest COMMAND atlas_tests "--source-file-exclude=${_test_excluded}" --duration=true)
+    string(APPEND _test_entries "atlas_tests_rest\t--source-file-exclude=${_test_excluded}\n")
+    file(WRITE "${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" "${_test_entries}")
+    add_test(NAME atlas_tests_split COMMAND "${CMAKE_COMMAND}" "-DATLAS_TESTS_EXE=$<TARGET_FILE:atlas_tests>"
+        "-DATLAS_TESTS_SPLIT=${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestSplit.cmake")
+    set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
 endif()
 if(ATLAS_BENCH)
     add_subdirectory(bench)

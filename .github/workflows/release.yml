@@ -47,7 +47,7 @@ jobs:
             "${native[@]}" > /dev/null
       - name: "The packer's tool: the core's stage P"
         # The APK's tiles (the Westerkerk's living pack, for VK facts' hash lines alone: it carries no map) are cut by
-        # the core's stage P (mapcore/cpp/stagep), as android.yml's build job cuts them: built alone (the host-stagep
+        # the core's stage P (mapcore/cpp/stagep), as android.yml's apk job cuts them: built alone (the host-stagep
         # preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++ at core.yml's pin and the SDK's CMake and
         # Ninja; :app's generateFactsTiles reads ATLAS_STAGEP. A tag from before the tool has no stagep folder, and its
         # packer cuts them as it did.
@@ -84,9 +84,9 @@ jobs:
           export ATLAS_VERSION="${TAG#v}"
           case "$TAG" in *alpha*) TASK=assembleBench ;; *) TASK=assembleRelease ;; esac
           # :mapcorecheck's tests build the map core for this machine with LLVM's clang and libc++, which android.yml's
-          # build job installs to run them on every push; a release leaves them out (a tag from before them has none).
-          # So it does :likeness's: they draw the canal ring from its pack, which android.yml's build job fetches for its
-          # likeness steps, and on CI a missing pack fails them.
+          # mapcorecheck job installs to run them on every push; a release leaves them out (a tag from before them has
+          # none). So it does :likeness's: they draw the canal ring from its pack, which android.yml's test jobs fetch,
+          # and on CI a missing pack fails them.
           skip=()
           if [ -d mapcorecheck ]; then skip=(-x :mapcorecheck:test); fi
           if [ -d likeness ]; then skip+=(-x :likeness:testDebugUnitTest); fi

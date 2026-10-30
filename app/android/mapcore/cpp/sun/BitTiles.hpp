@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace atlas::sun {
@@ -49,7 +50,10 @@ struct TileBits {
     std::uint32_t crowns_from = 0;  ///< where its trees' crowns begin (tree i's sample is crowns_from + i)
     bool windows = false;           ///< whether the window group was tested (else its bits are 0)
     std::uint64_t bucket = 0;       ///< the bucket's key
-    Sun sun;                        ///< the bucket's sun
+    /// What its scene held within the march's reach of it (sun::Scene::context): bits made against other solids, a
+    /// neighbouring cell's tile come into the scene or a window joined near it, are made again.
+    std::uint64_t context = 0;
+    Sun sun; ///< the bucket's sun
     /// Its tile's quay walls' pieces, as its samples have them (null: none).
     std::shared_ptr<const std::vector<QuayPiece>> quays;
     /// Its tile's mirrored buildings' first reflection samples, one per mirror in the tile's order (TileCasters::
@@ -84,14 +88,18 @@ public:
     /// bits that fade was heading to.
     void publish(tiles::TileKey key, TileBits bits, double t);
 
+    /// Publishes a run's bits together at time `t`, each tile's as the one above, and tells the callback once: the
+    /// frame loop at rest draws a run's tiles in one frame, however many there are and however slowly the run went.
+    void publish(std::vector<std::pair<tiles::TileKey, TileBits>> run, double t);
+
     /// What a frame at time `t` draws tile `key` with, or nothing before its first bits.
     [[nodiscard]] std::optional<TileView> view(tiles::TileKey key, double t) const;
 
     /// Forgets a tile (it left the scene).
     void forget(tiles::TileKey key);
 
-    /// Called on the publishing thread after each publish, outside the lock (null: nothing): cheap and never blocking,
-    /// such as the frame loop's wake (K7's scene/SunGlobals.hpp).
+    /// Called on the publishing thread after each publication (a run's bits are one), outside the lock (null:
+    /// nothing): cheap and never blocking, such as the frame loop's wake (K7's scene/SunGlobals.hpp).
     void on_publish(std::function<void()> callback);
 
     /// How many tiles have bits.

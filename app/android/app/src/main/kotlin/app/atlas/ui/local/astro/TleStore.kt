@@ -23,8 +23,9 @@ class OrbitData(val tle: Tle, val source: OrbitSource, val ageDays: Double) {
 }
 
 /**
- * The space station's two-line element set: the one on the phone (fetched from CelesTrak, kept in [file]), else the one
- * bundled with the app ([bundled]). CelesTrak asks to be fetched at most every two hours; the data is good for days.
+ * The space station's two-line element set: the one on the phone (fetched from CelesTrak, else from [second], kept in
+ * [file]), else the one bundled with the app ([bundled]). CelesTrak asks to be fetched at most every two hours; the data
+ * is good for days.
  */
 class TleStore(
     private val file: File,
@@ -32,6 +33,8 @@ class TleStore(
     private val fetch: suspend () -> String?,
     private val clock: Clock = Clock.systemUTC(),
     private val minInterval: Duration = Duration.ofHours(2),
+    /** The second way in, asked where [fetch] gives nothing that reads: ARISS's copy of the same set ([SECOND_URL]). */
+    private val second: (suspend () -> String?)? = null,
 ) {
     @Volatile
     private var lastTry: Instant? = null
@@ -46,12 +49,14 @@ class TleStore(
         val tried = lastTry
         if (online && (keptAt == null || Duration.between(keptAt, now) > minInterval) && (tried == null || Duration.between(tried, now) > minInterval)) {
             lastTry = now
-            val text = try { fetch() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
-            val tle = text?.let { Tle.parse(it) }
-            if (tle != null) {
+            val got = listOfNotNull(fetch, second).firstNotNullOfOrNull { ask ->
+                val text = try { ask() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+                text?.let { t -> Tle.parse(t)?.let { t to it } }
+            }
+            if (got != null) {
                 file.parentFile?.mkdirs()
-                file.writeText(text)
-                kept = tle
+                file.writeText(got.first)
+                kept = got.second
                 source = OrbitSource.FRESH
             }
         }
@@ -67,5 +72,8 @@ class TleStore(
 
     companion object {
         const val URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"
+
+        /** ARISS's copy of the station's set: the same as CelesTrak's on 30 October 2026. */
+        const val SECOND_URL = "https://live.ariss.org/iss.txt"
     }
 }

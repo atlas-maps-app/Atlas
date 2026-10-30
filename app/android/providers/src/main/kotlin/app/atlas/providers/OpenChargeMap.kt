@@ -27,7 +27,7 @@ class OpenChargeMap(
     private val appKey: String? = null,
     private val base: String = "https://api.openchargemap.io/v3",
 ) : ChargerProvider {
-    override val info = INFO.copy(keyNeed = if (appKey.isNullOrBlank()) KeyNeed.REQUIRED else KeyNeed.OPTIONAL)
+    override val info = if (appKey.isNullOrBlank()) INFO else INFO.copy(keyNeed = KeyNeed.OPTIONAL, onByDefault = true)
 
     override fun state() = if (key() == null) ProviderState.NEEDS_KEY else ProviderState.READY
 
@@ -96,8 +96,9 @@ class OpenChargeMap(
         const val ID = "ocm"
         val INFO = ProviderInfo(
             id = ID, name = "Open Charge Map", licence = "CC BY 4.0", attribution = "Charging data from Open Charge Map and its data providers",
-            url = "https://openchargemap.org", keyNeed = KeyNeed.OPTIONAL, onByDefault = true,
-            note = "Open data, asked with Atlas's own free app key; a personal key from openchargemap.org spreads the load.",
+            url = "https://openchargemap.org", keyNeed = KeyNeed.REQUIRED,
+            note = "Open data, asked only with a key: your own free one from openchargemap.org, as Atlas builds in none.",
+            hosts = listOf("api.openchargemap.io"),
         )
 
         /**
