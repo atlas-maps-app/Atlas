@@ -197,11 +197,14 @@ sourceSets {
         val androidOnly = mapcoreAndroidOnly.map(mapcoreKotlin::resolve).toSet()
         kotlin.srcDir(mapcoreKotlin)
         kotlin.exclude { it.file in androidOnly }
-        // K17a's field parity (MT/fx) runs the port's Turbulence beside the core's: one file of :mapview, an Android
-        // library this module cannot depend on, that needs only :core's ExactMath, compiled here without its neighbours.
-        val turbulence = rootProject.layout.projectDirectory.file("mapview/src/main/kotlin/app/atlas/mapview/svg/Turbulence.kt").asFile
-        kotlin.srcDir(turbulence.parentFile)
-        kotlin.exclude { it.file.parentFile == turbulence.parentFile && it.file != turbulence }
+        // Files of :mapview, an Android library this module cannot depend on, that use no Android types, compiled here
+        // without their neighbours: K17a's field parity (MT/fx) runs the port's Turbulence beside the core's (it needs
+        // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
+        // parts with the app's own CoreMoment and MapParts.
+        val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
+        val mapviewShared = listOf("svg/Turbulence.kt", "MapParts.kt", "vk/CoreMoment.kt").map(mapviewKotlin::resolve).toSet()
+        kotlin.srcDir(mapviewKotlin)
+        kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
     }
 }
 
@@ -237,8 +240,9 @@ tasks.named("compileTestKotlin") { dependsOn(mapcoreAndroidFree) }
 dependencies {
     packerTool(project(":packer"))
     testImplementation(project(":core"))
-    // the phone's reader of a region's windows' index (WindowPackBuildTest)
+    // the phone's reader of a region's windows' index (WindowPackBuildTest), and of its country's tiles (PhoneLook)
     testImplementation(project(":tiles"))
+    testImplementation(libs.okhttp)
     testImplementation(project(":render"))
     testImplementation(project(":rendertiles"))
     testImplementation(testFixtures(project(":rendertiles")))
@@ -315,6 +319,14 @@ tasks.test {
         providers.systemProperty("atlas.render.$p").orNull?.let { systemProperty("atlas.render.$p", it) }
     }
     if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
+    // The phone look tool (likeness/PhoneLook.kt): what to draw and where, and the folder it compares; it runs every
+    // time it is asked.
+    for (p in listOf("out", "views", "moment", "size", "path", "canal", "list", "work", "compare")) {
+        providers.systemProperty("atlas.phonelook.$p").orNull?.let {
+            systemProperty("atlas.phonelook.$p", it)
+            outputs.upToDateWhen { false }
+        }
+    }
     // The engine's own references (likeness/EngineRefs.kt): a run that records them writes the source tree's
     // likeness/engine.json, so it runs every time it is asked.
     providers.systemProperty("atlas.engine.record").orNull?.let {

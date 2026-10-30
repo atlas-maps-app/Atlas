@@ -35,6 +35,10 @@ android {
                     "atlas.likeness.packs", "atlas.likeness.style", "atlas.likeness.asset", "atlas.likeness.budget", "atlas.likeness.require",
                     "atlas.calibrate"))
                     providers.systemProperty(p).orNull?.let { v -> it.systemProperty(p, v) }
+                // The phone look tool's canvas side (PhoneCanvas.kt): what to draw and where, the packs on the phone and
+                // its heap.
+                for (p in listOf("out", "views", "moment", "size", "packs", "heap", "canvas"))
+                    providers.systemProperty("atlas.phonelook.$p").orNull?.let { v -> it.systemProperty("atlas.phonelook.$p", v) }
             }
         }
     }
