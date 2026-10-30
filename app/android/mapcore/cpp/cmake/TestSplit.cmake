@@ -1,9 +1,10 @@
-# The ctest entry atlas_tests_split (CMakeLists.txt): the split of atlas_tests into one entry per test file and
-# atlas_tests_rest runs every test case exactly once. doctest's own filters count each entry's cases (--list-test-cases
-# with the entry's arguments, from atlas_tests_split.tsv): every case passes atlas_tests_rest's filter or a file's, so
+# The ctest entry atlas_tests_split (CMakeLists.txt): the split of atlas_tests into one entry per test file (or its
+# parts) and atlas_tests_rest runs every test case exactly once. doctest's own filters list each entry's cases
+# (--list-test-cases with the entry's arguments, from atlas_tests_split.tsv, counted in its XML): every case passes
+# atlas_tests_rest's filter or a file's, and a file's parts take consecutive ranges of its cases, the last one open, so
 # the counts add up to the whole list's exactly when no case passes two. It fails when they do not, and when a file's
-# entry takes no case (its pattern misses the cases' __FILE__, which would leave them all to atlas_tests_rest); it
-# names the cases atlas_tests_rest takes, if any.
+# entry takes no case (its pattern misses the cases' __FILE__, which would leave them all to atlas_tests_rest, or a
+# part lies past the file's last case); it names the cases atlas_tests_rest takes, if any.
 #   cmake -DATLAS_TESTS_EXE=<atlas_tests> -DATLAS_TESTS_SPLIT=<atlas_tests_split.tsv> -P TestSplit.cmake
 cmake_minimum_required(VERSION 3.28)
 
@@ -19,17 +20,20 @@ foreach(var IN ITEMS ATLAS_VULKAN_LOADER VK_DRIVER_FILES VK_ADD_LAYER_PATH)
     unset(ENV{${var}})
 endforeach()
 
-# The number of test cases that pass the filters in ARGN, into out (and their names into out_names).
+# The number of test cases the arguments in ARGN select, into out (and the listing into out_names): the cases doctest
+# lists in its XML, which keeps to --first and --last, where its own count line counts every case the filters pass.
 function(atlas_count_cases out out_names)
-    execute_process(COMMAND "${ATLAS_TESTS_EXE}" --list-test-cases --no-version=true ${ARGN}
+    execute_process(COMMAND "${ATLAS_TESTS_EXE}" --list-test-cases --reporters=xml ${ARGN}
         OUTPUT_VARIABLE text ERROR_VARIABLE errors RESULT_VARIABLE result)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "atlas_tests --list-test-cases ${ARGN} failed (${result}):\n${text}${errors}")
     endif()
-    if(NOT text MATCHES "unskipped test cases passing the current filters: ([0-9]+)")
-        message(FATAL_ERROR "atlas_tests --list-test-cases ${ARGN} printed no count:\n${text}${errors}")
+    if(NOT text MATCHES "<OverallResultsTestCases")
+        message(FATAL_ERROR "atlas_tests --list-test-cases ${ARGN} listed nothing:\n${text}${errors}")
     endif()
-    set(${out} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    string(REGEX MATCHALL "<TestCase " cases "${text}")
+    list(LENGTH cases count)
+    set(${out} "${count}" PARENT_SCOPE)
     set(${out_names} "${text}" PARENT_SCOPE)
 endfunction()
 
