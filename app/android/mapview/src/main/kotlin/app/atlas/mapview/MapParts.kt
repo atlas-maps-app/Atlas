@@ -7,8 +7,10 @@ import app.atlas.mapcore.state.CameraWriter
  * CameraWriter.PART_*; style::camera_part in the core), each a switch of its own in a debug build's Look settings (Mine →
  * Map look → Engine parts), so the map's panel shows on the phone what each one costs (ENGINE.md, "On the user's phone
  * first"). A part left out costs nothing: the core decides, lays and draws none of it. Each is listed in one [group]
- * (its home), and [drawn] is its default: every part but the clouds' shadows and the water's light (the user, 28 October:
- * "turn off cloud shadows and water light by default without them it runs pretty well").
+ * (its home), and [drawn] is its default: every part. The clouds' shadows and the water's light were left out from alpha
+ * 19 (the user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these
+ * need to be worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows
+ * on the ground) brought a moving frame with them to within about a millisecond and a half of one without them.
  */
 enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = true) {
     GROUND(CameraWriter.PART_GROUND, MapPartGroup.GROUND),
@@ -24,15 +26,15 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     /** The soft shadows' blur: without it the buildings' shadows are drawn sharp, with no mask or blur. */
     SHADOW_BLUR(CameraWriter.PART_SHADOW_BLUR, MapPartGroup.SHADOWS),
     PARK_SHADOWS(CameraWriter.PART_PARK_SHADOWS, MapPartGroup.SHADOWS),
-    CLOUD_SHADOWS(CameraWriter.PART_CLOUD_SHADOWS, MapPartGroup.WEATHER, drawn = false),
-    REFLECTIONS(CameraWriter.PART_REFLECTIONS, MapPartGroup.WATER_LIGHT, drawn = false),
-    RIPPLE(CameraWriter.PART_RIPPLE, MapPartGroup.WATER_LIGHT, drawn = false),
-    GLITTER(CameraWriter.PART_GLITTER, MapPartGroup.WATER_LIGHT, drawn = false),
-    RINGS(CameraWriter.PART_RINGS, MapPartGroup.WATER_LIGHT, drawn = false),
-    GLINTS(CameraWriter.PART_GLINTS, MapPartGroup.WATER_LIGHT, drawn = false),
+    CLOUD_SHADOWS(CameraWriter.PART_CLOUD_SHADOWS, MapPartGroup.WEATHER),
+    REFLECTIONS(CameraWriter.PART_REFLECTIONS, MapPartGroup.WATER_LIGHT),
+    RIPPLE(CameraWriter.PART_RIPPLE, MapPartGroup.WATER_LIGHT),
+    GLITTER(CameraWriter.PART_GLITTER, MapPartGroup.WATER_LIGHT),
+    RINGS(CameraWriter.PART_RINGS, MapPartGroup.WATER_LIGHT),
+    GLINTS(CameraWriter.PART_GLINTS, MapPartGroup.WATER_LIGHT),
 
     /** The night's light streaks on the water, which drew with the reflections until each part had its switch. */
-    WATER_STREAKS(CameraWriter.PART_WATER_STREAKS, MapPartGroup.WATER_LIGHT, drawn = false),
+    WATER_STREAKS(CameraWriter.PART_WATER_STREAKS, MapPartGroup.WATER_LIGHT),
     LIT_STREETS(CameraWriter.PART_LIT_STREETS, MapPartGroup.NIGHT),
     WET_CORES(CameraWriter.PART_WET_CORES, MapPartGroup.NIGHT),
     LAMP_POOLS(CameraWriter.PART_LAMP_POOLS, MapPartGroup.NIGHT),
@@ -104,7 +106,7 @@ enum class MapPartGroup(private val also: () -> Set<MapPart> = { emptySet() }) {
 
 /** The parts the map leaves out, as the settings keep them (their names) and as the camera state carries them. */
 object MapParts {
-    /** The parts left out until the user switches one: the clouds' shadows and the water's light. */
+    /** The parts left out until the user switches one: none, every part drawn. */
     val byDefault: Set<MapPart> = MapPart.entries.filterTo(mutableSetOf()) { !it.drawn }
 
     /** The camera state's word of [parts]. */
