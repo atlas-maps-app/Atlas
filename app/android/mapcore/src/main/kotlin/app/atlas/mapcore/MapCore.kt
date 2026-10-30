@@ -325,13 +325,6 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The fling is over: no landing. */
     fun noLanding() = core.call(Unit) { Native.landing(it, false, 0.0, 0.0, 0.0, 0.0, 0.0) }
 
-    /**
-     * The painter switch from now on: [on], what stands up is drawn in the renderer's painter's order (whole buildings
-     * by one point each, as the renders sort them, which makes some melt into each other), to compare with the core's
-     * true depth; off, true depth (the default). Off the main thread.
-     */
-    fun painterOrder(on: Boolean) = core.call(Unit) { Native.painter(it, on) }
-
     /** A window of the map the phone builds (ENGINE.md step 3): one L14 tile, by its zoom, column and row. */
     data class Window(val z: Int, val x: Int, val y: Int) {
         /** Its pack's id among the map's packs. */

@@ -160,11 +160,11 @@ object VkBench {
 
     /**
      * The map's first line: what it draws from and with ([packs], the core's line for each pack; the moment; the Look
-     * settings' [haze] and [vignette]; the [painter]'s order or true depth).
+     * settings' [haze] and [vignette]).
      */
-    fun mapHead(packs: String, moment: String, haze: Boolean, vignette: Boolean, painter: Boolean): String =
+    fun mapHead(packs: String, moment: String, haze: Boolean, vignette: Boolean): String =
         "vkbench map: the packs (${packs.ifEmpty { "none" }}), the $moment moment, haze ${if (haze) "on" else "off"}, " +
-            "vignette ${if (vignette) "on" else "off"}, ${if (painter) "the painter's order" else "true depth"}"
+            "vignette ${if (vignette) "on" else "off"}"
 
     /**
      * The line of a view's complete picture: how long after the map stood at [view] its picture was complete (the first

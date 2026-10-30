@@ -126,7 +126,6 @@ internal class CoreMap(
         val on = synchronized(switch) {
             if (gone) return ""
             owner = this
-            core.painterOrder(MapEngine.painter)
             core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
             core.setPacing(MapEngine.paced)
             core.map(true, texture)

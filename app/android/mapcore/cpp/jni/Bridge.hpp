@@ -31,8 +31,10 @@ namespace atlas::jni {
 /// (the building FillIn asks about, drawn plain in its flat colour and hatched before the answer). 22:
 /// Native.coreFieldsLine (the noise fields' check on the core's device, made on the GPU where it passes the byte
 /// check). 23: the camera state's version 3, 552 bytes, with the parts of the picture the map leaves out (a switch for
-/// every layer and effect, style::camera_part). 24: Native.blurLine (VK facts' blur check, passes/BlurCheck.hpp).
-inline constexpr jint abi = 24;
+/// every layer and effect, style::camera_part). 24: Native.blurLine (VK facts' blur check, passes/BlurCheck.hpp). 25:
+/// Native.painter gone (the phone draws true depth alone since 30 October; the core keeps the painter's order for its
+/// own checks).
+inline constexpr jint abi = 25;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

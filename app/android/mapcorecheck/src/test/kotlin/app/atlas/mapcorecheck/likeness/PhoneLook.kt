@@ -43,7 +43,7 @@ import kotlin.math.pow
  */
 internal object LookHost {
     /** The layout of its calls; the library refuses another. */
-    const val ABI = 1
+    const val ABI = 2
 
     @JvmStatic external fun abi(): Int
     @JvmStatic external fun lastError(): String
@@ -60,8 +60,8 @@ internal object LookHost {
     /** MapCore.moment: the theme block from now on. */
     @JvmStatic external fun theme(handle: Long, theme: ByteBuffer): Boolean
 
-    /** MapCore.screenEffects and MapCore.painterOrder. */
-    @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean, painter: Boolean)
+    /** MapCore.screenEffects. */
+    @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)
 
     /** Draws at the camera state until the picture is complete (or [seconds] pass); what it drew, or "". */
     @JvmStatic external fun draw(handle: Long, camera: ByteBuffer, seconds: Double): String
@@ -81,8 +81,8 @@ internal object LookHost {
  * (`:likeness`'s PhoneCanvas.kt draws that one into the same folder). Each step is the app's own code or the same
  * calls with the same inputs:
  *
- * - the map: the app's map frame driven as the Bridge drives it ([LookHost]), the screen's haze, vignette and grain off
- *   and the painter switch off (MapData.wire with the Look settings unset: MapCore.screenEffects, painterOrder);
+ * - the map: the app's map frame driven as the Bridge drives it ([LookHost]), at true depth as the phone draws it, the
+ *   screen's haze, vignette and grain off (MapData.wire with the Look settings unset: MapCore.screenEffects);
  * - the moment: the theme block [CoreMoment] writes for the core (the map's live moment, the clock in five-minute steps,
  *   lit by the forecast's hours: the same Moment today's map draws), for the drawn pack's zone;
  * - each frame's camera state as MapCameraSource writes it at rest: the view, the frame, the pack PackList names, and
@@ -267,8 +267,8 @@ internal class PhoneCore(
         check(handle != 0L) { "the host map: ${LookHost.lastError()}" }
         val notes = StringBuilder()
         try {
-            // MapData.wire with the Look settings unset: no haze, vignette or grain, true depth
-            LookHost.screen(handle, haze = false, vignette = false, grain = false, painter = false)
+            // MapData.wire with the Look settings unset: no haze, vignette or grain
+            LookHost.screen(handle, haze = false, vignette = false, grain = false)
             val taken = ArrayList<String>()
             var drew = ""
             var listed: List<Listed>

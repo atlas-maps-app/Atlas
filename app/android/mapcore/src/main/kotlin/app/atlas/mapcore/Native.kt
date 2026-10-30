@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 24
+    const val ABI = 25
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -242,9 +242,6 @@ object Native {
 
     /** The moment's theme for the map (`state.ThemeBlock`'s 256 bytes in a direct buffer); "" or why it was refused. */
     @JvmStatic external fun moment(handle: Long, theme: ByteBuffer): String
-
-    /** The painter switch for the map ([on]: the renderer's painter's order for what stands up, else true depth). */
-    @JvmStatic external fun painter(handle: Long, on: Boolean)
 
     /** The windows the map wants built, nearest first, each its tile's key packed as `z shl 48 or x shl 24 or y`. */
     @JvmStatic external fun wantedWindows(handle: Long): LongArray

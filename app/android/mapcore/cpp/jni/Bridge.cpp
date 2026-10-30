@@ -302,15 +302,6 @@ public:
         });
     }
 
-    /// The painter switch for the map from now on (frame::FrameOptions::painter): the renderer's painter's order for
-    /// what stands up, to compare with true depth.
-    void painter(bool on) {
-        on_session([this, on] {
-            map_->set_painter(on);
-            ask_frame();
-        });
-    }
-
     /// Where the fling under way lands (ENGINE.md gain 26), or none: handed to the map's world without waiting for the
     /// render thread, since a fling begins on the main thread.
     void landing(std::optional<scene::World::Landing> l) {
@@ -1108,11 +1099,6 @@ jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) 
     return java(env, "");
 }
 
-void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
-    Core* core = core_of(handle);
-    if (core != nullptr) core->painter(on == JNI_TRUE);
-}
-
 void native_landing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean has, jdouble latitude, jdouble longitude,
                     jdouble bearing, jdouble pitch, jdouble distance) {
     Core* core = core_of(handle);
@@ -1366,8 +1352,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 49>& methods() {
-    static const std::array<JNINativeMethod, 49> table{{
+const std::array<JNINativeMethod, 48>& methods() {
+    static const std::array<JNINativeMethod, 48> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1423,7 +1409,6 @@ const std::array<JNINativeMethod, 49>& methods() {
         method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
-        method("painter", "(JZ)V", fn(&native_painter)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
         method("windowVersion", "()Ljava/lang/String;", fn(&native_window_version)),
