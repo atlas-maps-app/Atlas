@@ -159,7 +159,9 @@ def costs(args):
         measured = {}
         planned = None
         ran = {}  # run -> entry -> times run
+        runs_of = {}  # shard -> the runs it kept
         for shard_dir in sorted(p for p in job_dir.iterdir() if p.is_dir()):
+            runs_of[shard_dir.name] = {junit.stem for junit in shard_dir.glob("*.xml")}
             plan_file = shard_dir / "plan.txt"
             if plan_file.exists():
                 every = [line for line in plan_file.read_text(encoding="utf-8").split("\n") if line]
@@ -192,7 +194,13 @@ def costs(args):
         if planned is None:
             problems.append(f"{job}: no shard kept its plan (plan.txt)")
         else:
+            every_run = set().union(*runs_of.values())
+            for shard, runs in sorted(runs_of.items()):
+                for run in sorted(every_run - runs):
+                    problems.append(f"{job}: shard {shard} kept no {run} run (did its tests fail before it?)")
             for run, counts in sorted(ran.items()):
+                if any(run not in runs for runs in runs_of.values()):
+                    continue  # its shards' entries are not all there to hold to the plan
                 missing = [name for name in planned if counts.get(name, 0) == 0]
                 twice = [name for name, n in counts.items() if n > 1]
                 extra = [name for name in counts if name not in planned]
