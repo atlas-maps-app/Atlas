@@ -491,10 +491,15 @@ jobs:
           # under ASan, on the runners' 16.
           kept="$RUNNER_TEMP/ctest/$JOB/$SHARD"
           at_once=$(nproc)
+          # host-debug's shards run their entries once more without Vulkan (below), after the first run: the split
+          # adds that run's seconds (the table's column $JOB:novk) to each shard's wall.
+          later=
+          if [ "$TASK" = host-debug ] && grep -q 'alloc_dealloc_mismatch=0' "$RUNNER_TEMP/vulkan.env"; then later=novk; fi
           ctest --test-dir "build/$TASK" --show-only=json-v1 > "$RUNNER_TEMP/ctest.json"
           python3 -I tools/ctest/shards.py plan --tests "$RUNNER_TEMP/ctest.json" --costs tools/ctest/costs.tsv \
             --job "$JOB" --shards "$SHARDS" --shard "$SHARD" --slots "$at_once" --out "$RUNNER_TEMP/shard.txt" \
-            --every "$kept/plan.txt" --cost-data "build/$TASK/Testing/Temporary/CTestCostData.txt"
+            --later-runs "$later" --every "$kept/plan.txt" \
+            --cost-data "build/$TASK/Testing/Temporary/CTestCostData.txt" --later-cost-data "$RUNNER_TEMP/later-costs"
           [ -s "$RUNNER_TEMP/shard.txt" ] || { echo "::error::shard $SHARD of $SHARDS takes no entry"; exit 1; }
           echo "LP_NUM_THREADS=1" >> "$RUNNER_TEMP/vulkan.env"
           # The JUnit file keeps every test's output, passed or not, for the skips below.
@@ -523,9 +528,11 @@ jobs:
           fi
           # vulkan.env turned one ASan check off for the emulator's lavapipe (its step says why): the shard's entries
           # run once more with every check and no Vulkan at all (a loader that is not there, so the SDK's emulator
-          # package is not looked for either; the cases that need Vulkan ran above, and skip here).
-          if [ "$TASK" = host-debug ] && grep -q 'alloc_dealloc_mismatch=0' "$RUNNER_TEMP/vulkan.env"; then
+          # package is not looked for either; the cases that need Vulkan ran above, and skip here), the costliest first
+          # by this run's own seconds.
+          if [ "$later" = novk ]; then
             echo "== every ASan check, no Vulkan"
+            cp "$RUNNER_TEMP/later-costs/novk.txt" "build/$TASK/Testing/Temporary/CTestCostData.txt"
             ATLAS_REQUIRE_VULKAN=0 ATLAS_VULKAN_LOADER=/nonexistent/libvulkan.so.1 \
               ctest --test-dir "build/$TASK" --output-on-failure -j "$at_once" --tests-from-file "$RUNNER_TEMP/shard.txt" \
               --output-junit "$kept/novk.xml" --test-output-size-passed 8000000 --test-output-truncation middle
@@ -924,9 +931,9 @@ jobs:
           done
 
   # Every host job's shards ran each of its ctest entries exactly once, in each of its runs (the plan each shard kept
-  # against their JUnit files), and the cost table measured again from their times: the artifact ctest-costs holds it
-  # (costs.tsv, to copy over tools/ctest/costs.tsv when the shards drift apart) and a table of each shard's seconds,
-  # also in the run's summary.
+  # against their JUnit files), and the cost table measured again from their times, each entry's seconds the mean of
+  # the table's and this run's: the artifact ctest-costs holds it (costs.tsv, to copy over tools/ctest/costs.tsv when
+  # the shards drift apart) and a table of each shard's seconds, also in the run's summary.
   core-tests:
     needs: [core-changes, core]
     if: ${{ !cancelled() && needs.core.result != 'skipped' }}

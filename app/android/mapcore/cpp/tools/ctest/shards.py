@@ -2,25 +2,32 @@
 """The core's ctest entries split into shards, balanced by their measured cost (core.yml's host jobs).
 
   shards.py plan --tests <ctest --show-only=json-v1> --job <job> --shards <n> --shard <k> --out <file>
-                 [--slots <j>] [--costs <costs.tsv>] [--cost-data <CTestCostData.txt>] [--every <file>]
+                 [--slots <j>] [--costs <costs.tsv>] [--later-runs <run>,...] [--cost-data <CTestCostData.txt>]
+                 [--later-cost-data <dir>] [--every <file>]
       The entries of shard k (1..n) of job <job> (a column of costs.tsv, host-debug-x86_64 say), one name a line, for
-      ctest --tests-from-file. The split is the longest-processing-time rule over the measured seconds and the shards'
-      ctest slots (n times j, ctest -j <j>): the costliest entry first, each to the slot with the least so far (the
-      lowest on a tie), as ctest -j runs a shard's entries the costliest first, so a shard that holds one long entry
-      takes less beside it. An entry ctest runs alone (RUN_SERIAL: its checks time the runner) holds every slot of its
-      shard while it runs, so it is placed first, and the cost file starts it before the others, when no slot need
-      wait for it. Every shard of the job, computing it from the same build and table, gets the same split. An entry
-      the table lacks counts as the column's median.
+      ctest --tests-from-file. Each shard runs its entries in ctest -j <j>, and once more after that for each later
+      run (--later-runs: host-debug's run without Vulkan, novk, whose seconds are the column <job>:novk), so a shard's
+      wall is its runs' added up, each run's the longest of its j slots. The split is the longest-processing-time
+      rule: the costliest entry first (its runs' seconds added up), each to the shard with the most room (its runs'
+      least loaded slots) among those whose wall it keeps within the longest so far, else to the one whose wall it
+      raises least, the lowest on a tie; within a shard, each run's seconds to that run's least loaded slot, as ctest
+      -j runs the entries the costliest first, so a shard that holds one long entry takes less beside it. An entry ctest runs alone (RUN_SERIAL: its checks time the runner) holds every slot
+      of its shard while it runs, so it is placed first, and the cost file starts it before the others, when no slot
+      need wait for it. Every shard of the job, computing it from the same build and table, gets the same split. An
+      entry a column lacks counts as the column's median; a later run without a column, as nothing.
       It checks that the shards take every entry once, prints each shard's share, and with --cost-data writes ctest's
-      own cost file, so ctest -j starts the shard's longest entries first; with --every, every entry's name (the
+      own cost file for the first run, so ctest -j starts the shard's longest entries first (with --later-cost-data,
+      <dir>/<run>.txt for each later run, to put in its place before that run); with --every, every entry's name (the
       plan the costs command holds the shards' runs to).
 
   shards.py costs --junit <dir> --into <costs.tsv> [--costs <costs.tsv>] [--summary <file>]
-      The table measured again: each job's seconds per entry from the JUnit files under <dir>, laid out as
-      <dir>/<job>/<shard>/<run>.xml (a job's runs, Vulkan's and the one without, added up), its other jobs' columns
-      kept from --costs. Fails when a job's shards did not run each entry of its plan (<dir>/<job>/<shard>/plan.txt,
-      every entry) exactly once in each run. With --summary, Markdown tables of each shard's measured seconds and of
-      the entries' peak memory, where their output has it (core.yml's test launcher, GNU time).
+      The table measured again: each job's seconds per entry and run from the JUnit files under <dir>, laid out as
+      <dir>/<job>/<shard>/<run>.xml (the run tests in the column <job>, any other in <job>:<run>), each the mean of
+      the measured seconds and those of --costs, as the runners' speeds vary from run to run (x86_64's most), with
+      the other columns kept from --costs. A case that failed is not a measure: its seconds stay those of --costs.
+      Fails when a job's shards did not run each entry of its plan (<dir>/<job>/<shard>/plan.txt, every entry)
+      exactly once in each run. With --summary, Markdown tables of each shard's measured seconds and of the entries'
+      peak memory, where their output has it (core.yml's test launcher, GNU time).
 
 Python 3's standard library only; no network.
 """
@@ -34,12 +41,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 DEFAULT_SECONDS = 60.0  # an entry of a job the table has no column for
+FIRST_RUN = "tests"  # core.yml's first run in each shard (tests.xml); a later run R's seconds are the column <job>:R
 # core.yml's test launcher (GNU time) ends each entry's output with this line
 RESOURCES = re.compile(r"atlas-test-resources: ([0-9.]+) s, peak ([0-9]+) KB")
 
 
 def read_costs(path):
-    """costs.tsv as {job: {entry: seconds}} and the jobs' order; # lines are comments."""
+    """costs.tsv as {column: {entry: seconds}} and the columns' order; # lines are comments."""
     jobs, costs = [], {}
     if path is None or not Path(path).exists():
         return jobs, costs
@@ -62,10 +70,10 @@ def read_costs(path):
 def write_costs(path, jobs, costs):
     entries = sorted({entry for job in jobs for entry in costs.get(job, {})})
     lines = [
-        "# Each ctest entry's measured seconds in each of core.yml's host jobs (Vulkan's run and the one without added",
-        "# up), from the JUnit files of a push run's shards: tools/ctest/shards.py splits a job's entries into shards by",
-        "# them. Refreshed from a run's ctest-costs artifact (ENGINE.md, Checks); an entry missing here counts as its",
-        "# job's median.",
+        "# Each ctest entry's measured seconds in each of core.yml's host jobs (<job>), and in a job's later run (<job>:",
+        "# <run>, host-debug's without Vulkan), from the JUnit files of push runs' shards, each refresh the mean of the",
+        "# table's seconds and a run's: tools/ctest/shards.py splits a job's entries into shards by them. Refreshed from",
+        "# a run's ctest-costs artifact (ENGINE.md, Checks); an entry missing here counts as its column's median.",
         "\t".join(["entry"] + jobs),
     ]
     for entry in entries:
@@ -90,41 +98,76 @@ def read_tests(path):
     return names, alone
 
 
-def split(names, seconds, shards, slots=1, alone=frozenset()):
-    """The longest-processing-time rule over shards * slots slots: [(load, wall, [names])] per shard, its wall the
-    longest of its slots. An entry run alone first holds every slot of the shard it goes to."""
-    loads = [0.0] * (shards * slots)
+def split(names, runs, shards, slots=1, alone=frozenset()):
+    """The longest-processing-time rule over the shards' runs (`runs`: each run's {entry: seconds}, one after another
+    in each shard), each of `slots` slots: [(load, wall, [names])] per shard, its wall its runs' longest slots added
+    up. An entry run alone first holds every slot of its shard's runs."""
+    loads = [[[0.0] * slots for _ in runs] for _ in range(shards)]  # shard -> run -> slot -> seconds
     parts = [[] for _ in range(shards)]
-    for name in sorted((n for n in names if n in alone), key=lambda n: (-seconds[n], n)):
-        k = min(range(shards), key=lambda j: (max(loads[j * slots:(j + 1) * slots]), j))
-        parts[k].append(name)
-        for i in range(k * slots, (k + 1) * slots):
-            loads[i] += seconds[name]
-    for name in sorted((n for n in names if n not in alone), key=lambda n: (-seconds[n], n)):
-        i = min(range(len(loads)), key=lambda j: (loads[j], j))
-        parts[i // slots].append(name)
-        loads[i] += seconds[name]
-    return [(sum(seconds[n] for n in part), max(loads[k * slots:(k + 1) * slots]), part)
-            for k, part in enumerate(parts)]
+    total = {name: sum(seconds[name] for seconds in runs) for name in names}
+
+    def raised(k, name, whole):
+        """Shard k's wall with the entry in it."""
+        wall = 0.0
+        for run, seconds in zip(loads[k], runs):
+            wall += max(run) + seconds[name] if whole else max(max(run), min(run) + seconds[name])
+        return wall
+
+    for whole, group in ((True, [n for n in names if n in alone]), (False, [n for n in names if n not in alone])):
+        for name in sorted(group, key=lambda n: (-total[n], n)):
+            # within the longest wall so far, the shard with the most room; past it, the one it raises least
+            bound = max(sum(max(run) for run in loads[j]) for j in range(shards))
+            k = min(range(shards),
+                    key=lambda j: (max(raised(j, name, whole), bound), sum(min(run) for run in loads[j]), j))
+            parts[k].append(name)
+            for run, seconds in zip(loads[k], runs):
+                if whole:
+                    for i in range(slots):
+                        run[i] += seconds[name]
+                else:
+                    i = min(range(slots), key=lambda j: (run[j], j))
+                    run[i] += seconds[name]
+    return [(sum(total[n] for n in part), sum(max(run) for run in loads[k]), part) for k, part in enumerate(parts)]
+
+
+def cost_file(path, names, seconds, alone):
+    """ctest's own file (Testing/Temporary/CTestCostData.txt): "<name> <runs> <seconds>" lines, then "---" and the
+    names that failed last time; ctest -j starts the costliest first, and so the entries run alone first."""
+    top = 2 * max(seconds.values()) + 1
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{name} 1 {seconds[name] + (top if name in alone else 0):.2f}\n" for name in names)
+                    + "---\n", encoding="utf-8")
 
 
 def plan(args):
     names, alone = read_tests(args.tests)
     _, costs = read_costs(args.costs)
-    measured = costs.get(args.job, {})
-    default = statistics.median(measured.values()) if measured else DEFAULT_SECONDS
-    seconds = {name: measured.get(name, default) for name in names}
-    unknown = [name for name in names if name not in measured]
+    later = [run for run in (args.later_runs or "").split(",") if run]
+    columns = [args.job] + [f"{args.job}:{run}" for run in later]
+    runs = []
+    unknown = []
+    for n, column in enumerate(columns):
+        measured = costs.get(column, {})
+        if n > 0 and not measured:
+            runs.append({name: 0.0 for name in names})  # a later run not measured yet: planned as the first alone
+            continue
+        default = statistics.median(measured.values()) if measured else DEFAULT_SECONDS
+        runs.append({name: measured.get(name, default) for name in names})
+        if n == 0:
+            unknown = [name for name in names if name not in measured]
+            first_default = default
     if not 1 <= args.shard <= args.shards:
         sys.exit(f"shards.py: shard {args.shard} of {args.shards}?")
-    parts = split(names, seconds, args.shards, args.slots, alone)
+    parts = split(names, runs, args.shards, args.slots, alone)
     taken = [name for _, _, part in parts for name in part]
     if sorted(taken) != sorted(names):
         sys.exit("shards.py: the shards do not take every entry exactly once")
+    then = "" if not later else f", then its run{'s' if len(later) > 1 else ''} {', '.join(later)} (the walls added up)"
     print(f"{args.job}: {len(names)} entries in {args.shards} shards of {args.slots} slots by the measured seconds"
-          f" ({len(unknown)} not measured, counted as {default:.1f} s each)")
+          f"{then} ({len(unknown)} not measured, counted as {first_default:.1f} s each)")
     for k, (load, wall, part) in enumerate(parts, start=1):
-        longest = max((seconds[n] for n in part), default=0.0)
+        longest = max((runs[0][n] for n in part), default=0.0)
         mark = " <- this one" if k == args.shard else ""
         print(f"  shard {k}/{args.shards}: {len(part)} entries, {load:.0f} s in all, about {wall:.0f} s in its slots,"
               f" the longest {longest:.0f} s{mark}")
@@ -138,13 +181,10 @@ def plan(args):
         Path(args.every).parent.mkdir(parents=True, exist_ok=True)
         Path(args.every).write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
     if args.cost_data:
-        # ctest's own file (Testing/Temporary/CTestCostData.txt): "<name> <runs> <seconds>" lines, then "---" and
-        # the names that failed last time; ctest -j starts the costliest first, and so the entries run alone first.
-        top = 2 * max(seconds.values()) + 1
-        path = Path(args.cost_data)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"{name} 1 {seconds[name] + (top if name in alone else 0):.2f}\n" for name in names)
-                        + "---\n", encoding="utf-8")
+        cost_file(args.cost_data, names, runs[0], alone)
+    if args.later_cost_data:
+        for run, seconds in zip(later, runs[1:]):
+            cost_file(Path(args.later_cost_data) / f"{run}.txt", names, seconds, alone)
 
 
 def costs(args):
@@ -156,7 +196,7 @@ def costs(args):
     problems = []
     for job_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         job = job_dir.name
-        measured = {}
+        measured = {}  # run -> entry -> seconds, of the cases that passed
         planned = None
         ran = {}  # run -> entry -> times run
         runs_of = {}  # shard -> the runs it kept
@@ -174,9 +214,9 @@ def costs(args):
             walls = []
             for junit in sorted(shard_dir.glob("*.xml")):
                 run = junit.stem
-                root = ET.parse(junit).getroot()
-                walls.append(f"{run} {float(root.get('time') or 0):.0f} s")
-                for case in root.iter("testcase"):
+                suite = ET.parse(junit).getroot()
+                walls.append(f"{run} {float(suite.get('time') or 0):.0f} s")
+                for case in suite.iter("testcase"):
                     name = case.get("name")
                     seconds = float(case.get("time") or 0.0)
                     for found in RESOURCES.finditer("".join(case.itertext())):
@@ -184,7 +224,8 @@ def costs(args):
                         peaks.setdefault(job, {})[name] = max(kb, peaks.get(job, {}).get(name, 0))
                     ran.setdefault(run, {})
                     ran[run][name] = ran[run].get(name, 0) + 1
-                    measured[name] = measured.get(name, 0.0) + seconds
+                    if case.get("status") != "fail" and case.find("failure") is None:
+                        measured.setdefault(run, {})[name] = measured.get(run, {}).get(name, 0.0) + seconds
                     shard_seconds += seconds
                     count += 1
                     if seconds > longest[1]:
@@ -210,9 +251,18 @@ def costs(args):
                     problems.append(f"{job} ({run}): entries ran in more than one shard: " + ", ".join(twice))
                 if extra:
                     problems.append(f"{job} ({run}): entries ran that the plan lacks: " + ", ".join(extra))
-        if job not in jobs:
-            jobs.append(job)
-        table[job] = measured
+        for run, seconds in sorted(measured.items(), key=lambda item: (item[0] != FIRST_RUN, item[0])):
+            column = job if run == FIRST_RUN else f"{job}:{run}"
+            if column not in jobs:
+                jobs.append(column)
+            kept = table.get(column, {})
+            # the mean of the table's seconds and this run's; an entry this run did not measure keeps the table's
+            blended = dict(kept)
+            for name, value in seconds.items():
+                blended[name] = (kept[name] + value) / 2 if name in kept else value
+            if planned is not None:
+                blended = {name: value for name, value in blended.items() if name in planned}
+            table[column] = blended
     write_costs(args.into, jobs, table)
     summary += ["", "| job | the largest peaks of memory, by entry |", "|---|---|"]
     for job, by_entry in sorted(peaks.items()):
@@ -236,8 +286,10 @@ def main():
     p.add_argument("--shards", type=int, required=True)
     p.add_argument("--shard", type=int, required=True)
     p.add_argument("--slots", type=int, default=1)
+    p.add_argument("--later-runs")
     p.add_argument("--out", required=True)
     p.add_argument("--cost-data")
+    p.add_argument("--later-cost-data")
     p.add_argument("--every")
     p.set_defaults(run=plan)
     c = sub.add_parser("costs")
