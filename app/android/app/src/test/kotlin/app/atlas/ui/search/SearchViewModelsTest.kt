@@ -64,6 +64,52 @@ class SearchViewModelsTest {
     }
 
     @Test
+    fun onlineTheRegionsAnswerShowsAtOnceAndTheOnlineOneTakesItsPlaceWhenItComes() {
+        val s = testServices(places = true)
+        val network = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val asked = java.util.Collections.synchronizedList(ArrayList<Boolean>())
+        val paris = app.atlas.model.Place(null, app.atlas.geo.LatLon(48.8566, 2.3522), mapOf("name" to "Apotheek Parijs"), source = "photon")
+        val vm = SearchViewModel(
+            s, "apothek", null, { Services.WESTERKERK }, "nl",
+            search = { t, ctx ->
+                asked += ctx.online
+                val regions = s.search.search(t, ctx.copy(online = false))
+                if (!ctx.online) regions else {
+                    // the geocoder answers when the test says
+                    network.await()
+                    regions.copy(items = regions.items + SearchItem.Online(paris, null, "ui.pin", 0.01), usedOnline = true)
+                }
+            },
+            online = { true },
+        )
+        // the regions' places while the network has not answered
+        until { vm.state.value.results != null }
+        assertTrue(vm.state.value.searching)
+        assertTrue(vm.state.value.results!!.places.any { it.title == "BENU" })
+        assertTrue(vm.state.value.results!!.items.none { it is SearchItem.Online })
+        network.complete(Unit)
+        until { !vm.state.value.searching }
+        val merged = vm.state.value.results!!
+        assertTrue(merged.usedOnline)
+        assertTrue(merged.places.any { it.title == "BENU" })
+        assertTrue(merged.items.any { it is SearchItem.Online && it.place == paris })
+        assertEquals(listOf(false, true), asked.toList())
+    }
+
+    @Test
+    fun anOnlineSearchThatFailsLeavesTheRegionsAnswerStanding() {
+        val s = testServices(places = true)
+        val vm = SearchViewModel(
+            s, "apothek", null, { Services.WESTERKERK }, "nl",
+            search = { t, ctx -> if (ctx.online) throw IllegalStateException("Photon answered with an HTML page") else s.search.search(t, ctx) },
+            online = { true },
+        )
+        until { vm.state.value.results != null && !vm.state.value.searching }
+        assertNull(vm.state.value.error)
+        assertTrue(vm.state.value.results!!.places.any { it.title == "BENU" })
+    }
+
+    @Test
     fun aCategorySearchKeepsToItsKind() {
         val s = testServices(places = true)
         val vm = SearchViewModel(s, "Kalkhoven", "health", { Services.WESTERKERK }, "en")

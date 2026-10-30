@@ -49,8 +49,12 @@ data class SearchState(
 
 /**
  * The search box's brain: each keystroke (debounced) runs `SearchEngine` over the downloaded regions, a newer
- * keystroke cancelling the older search; online it adds Photon and Overpass. Chips narrow the answer offline with the
- * same evaluator. [category] keeps only places of one category (and its leaves).
+ * keystroke cancelling the older search; online it adds Photon and Overpass. Online, the regions' answer shows at once,
+ * and the online one, which merges the geocoder's and Overpass's places with the regions', takes its place when it
+ * comes (the user, 30 October: "are all sources reliable and respond fast?"; until then nothing showed until the
+ * network answered, seconds where Photon was slow); an online search that fails leaves the regions' answer standing.
+ * Chips narrow the answer offline with the same evaluator. [category] keeps only places of one category (and its
+ * leaves).
  */
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class SearchViewModel(
@@ -59,6 +63,10 @@ class SearchViewModel(
     private val category: String? = null,
     private val here: () -> LatLon,
     private val lang: String,
+    /** The search itself: the app's engine ([Services.search]); a test's own. */
+    private val search: suspend (String, SearchContext) -> SearchResults = { t, ctx -> services.search.search(t, ctx) },
+    /** Whether the phone may go online now. */
+    private val online: () -> Boolean = { !services.config.offline && services.connectivity.online.value },
 ) : ViewModel() {
     private val text = MutableStateFlow(initial)
     private val selected = MutableStateFlow<Set<String>>(emptySet())
@@ -105,15 +113,27 @@ class SearchViewModel(
             mutable.value = mutable.value.copy(text = t, searching = false, results = null, refined = null, error = null)
             return
         }
+        var shown = false
         try {
             // The context asks the regions for the country (a query), so it is made off the main thread.
-            val r = withContext(Dispatchers.Default) { services.search.search(t, context()) }
+            val ctx = withContext(Dispatchers.Default) { context() }
+            if (ctx.online) {
+                // the regions' answer first, where it has something (an empty one would say "nothing found" until the
+                // network's answer came)
+                val regions = withContext(Dispatchers.Default) { search(t, ctx.copy(online = false)) }
+                if (regions.items.isNotEmpty()) {
+                    mutable.value = mutable.value.copy(text = t, searching = true, results = narrow(regions), error = null)
+                    shown = true
+                }
+            }
+            val r = withContext(Dispatchers.Default) { search(t, ctx) }
             mutable.value = mutable.value.copy(text = t, searching = false, results = narrow(r), error = null)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // Offline, a store closed under the search (a region deleted meanwhile), a broken answer: say so, never crash.
-            mutable.value = mutable.value.copy(searching = false, error = e.message ?: e.toString())
+            // Offline, a store closed under the search (a region deleted meanwhile), a broken answer: say so, never crash;
+            // where the regions' answer shows, it stands
+            mutable.value = if (shown) mutable.value.copy(searching = false) else mutable.value.copy(searching = false, error = e.message ?: e.toString())
         }
     }
 
@@ -151,7 +171,7 @@ class SearchViewModel(
             location = at,
             lang = lang,
             now = now,
-            online = !services.config.offline && services.connectivity.online.value,
+            online = online(),
             country = null,
             limit = LIMIT,
             hours = HereContext.hours(services, at, now.zone),
