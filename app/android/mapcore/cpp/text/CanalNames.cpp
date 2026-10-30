@@ -4,6 +4,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "tiles/Chunks.hpp"
 #include "tiles/Container.hpp"
+#include "tiles/Store.hpp"
 #include "tiles/layers/Labels.hpp"
 
 #include <algorithm>
@@ -79,6 +80,7 @@ tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack, bool windows) {
     std::vector<std::byte> raw;
     std::vector<std::byte> scratch;
     const std::uint8_t finest = head->levels.front();
+    if (tiles::Store::derived(finest)) return out; // a frame cell's coarse and far tiles keep no labels
     for (const tiles::ChunkRef& c : pack.chunks().chunks()) {
         if (c.tile.z != finest) continue;
         Arena arena(std::size_t{1} << 20U, Growth::grows, "canal names");

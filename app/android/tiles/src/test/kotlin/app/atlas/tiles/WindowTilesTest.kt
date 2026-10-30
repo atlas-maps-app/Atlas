@@ -56,30 +56,38 @@ class WindowTilesTest {
         val packs: Map<Pair<Int, Int>, ByteArray>,
     )
 
-    private fun country(at: Instant = date, core: String = version, of: List<Pair<Int, Int>> = cells, empty: Set<Pair<Int, Int>> = setOf(water)): Country {
+    private fun country(
+        at: Instant = date,
+        core: String = version,
+        of: List<Pair<Int, Int>> = cells,
+        empty: Set<Pair<Int, Int>> = setOf(water),
+        levels: List<Triple<Int, Int, Int>> = emptyList(),
+    ): Country {
         val out = ByteArrayOutputStream()
         val entries = ArrayList<TilesIndex.Entry>()
         val stored = HashMap<Pair<Int, Int>, ByteArray>()
         val packs = HashMap<Pair<Int, Int>, ByteArray>()
         // the country's style: the first window's in the file
         var country: ByteArray? = null
-        for ((x, y) in of.sortedWith(compareBy({ it.first }, { it.second }))) {
+        // the windows, then a frame cell's levels' tiles after them (each kept under its column and row here)
+        val tiles = of.sortedWith(compareBy({ it.first }, { it.second })).map { Triple(14, it.first, it.second) } + levels
+        for ((z, x, y) in tiles) {
             if (x to y in empty) {
-                entries += TilesIndex.Entry(x, y, out.size().toLong(), 0, ByteArray(32))
+                entries += TilesIndex.Entry(x, y, out.size().toLong(), 0, ByteArray(32), z)
                 continue
             }
             // a window's pack, as far as the phone's reader of the tiles cares: its container, its style the last section
             val style = windowStyle(x, y)
-            val pack = storedPack("{\"window\":\"14/$x/$y\",\"of\":\"$at\",\"by\":\"$core\"}", listOf("chunks" to ByteArray(100 + x % 2) { (it * x).toByte() }, "style" to style))
+            val pack = storedPack("{\"window\":\"$z/$x/$y\",\"of\":\"$at\",\"by\":\"$core\"}", listOf("chunks" to ByteArray(100 + x % 2) { (it * x).toByte() }, "style" to style))
             val b = CountryStyle.store(pack, style, country ?: style.also { country = it })
-            entries += TilesIndex.Entry(x, y, out.size().toLong(), b.size, sha(b))
+            entries += TilesIndex.Entry(x, y, out.size().toLong(), b.size, sha(b), z)
             stored[x to y] = b
             packs[x to y] = pack
             out.write(b)
         }
-        val tiles = out.toByteArray()
-        val index = ByteArrayOutputStream().also { TilesIndex.of(14, at, tiles.size.toLong(), core, country ?: ByteArray(0), entries).write(it) }.toByteArray()
-        return Country(tiles, index, stored, packs)
+        val bytes = out.toByteArray()
+        val index = ByteArrayOutputStream().also { TilesIndex.of(14, at, bytes.size.toLong(), core, country ?: ByteArray(0), entries).write(it) }.toByteArray()
+        return Country(bytes, index, stored, packs)
     }
 
     /**
@@ -155,6 +163,27 @@ class WindowTilesTest {
         val start = c.stored.getValue(neighbour).size
         assertEquals(listOf("bytes=$start-${start + c.stored.getValue(westerkerk).size - 1}"), ranges())
         kept.deleteRecursively()
+    }
+
+    @Test
+    fun aFrameCellsLevelsTilesComeByARangeOfTheirOwnAsAWindowDoes() {
+        // ENGINE.md one pack per country, step 7: the Westerkerk's cell's L13 and L12 tiles after its windows
+        val coarse = Triple(13, 4207, 2692)
+        val far = Triple(12, 2103, 1346)
+        val c = country(levels = listOf(coarse, far))
+        val list = listOf(publish("netherlands", c, date))
+        val tiles = WindowTiles({ list }, dir)
+        val got = tiles.window(13, coarse.second, coarse.third, version)!!
+        assertArrayEquals(c.packs[coarse.second to coarse.third], got.bytes)
+        assertEquals(date, got.date)
+        val start = c.stored.getValue(neighbour).size + c.stored.getValue(westerkerk).size
+        assertEquals(listOf(null, "bytes=$start-${start + c.stored.getValue(coarse.second to coarse.third).size - 1}"), ranges())
+        assertArrayEquals(c.packs[far.second to far.third], tiles.window(12, far.second, far.third, version)!!.bytes)
+        // a level's tile reaching over the pack's box from beyond it is still asked for: its cell lies across the border
+        val edge = listOf(publish("netherlands", c, date, bbox = BBox(4.89, 52.36, 7.2, 53.6)))
+        assertArrayEquals(c.packs[far.second to far.third], WindowTiles({ edge }, tempDir("edge")).window(12, far.second, far.third, version)!!.bytes)
+        // the window with the same column and row at another level is another tile
+        assertNull(tiles.window(14, coarse.second, coarse.third, version))
     }
 
     @Test
@@ -235,8 +264,9 @@ class WindowTilesTest {
         val before = gh.storageRequests.size
         assertNull(WindowTiles({ list }, tempDir("far")).window(14, 0, 0, version))
         assertEquals(before, gh.storageRequests.size)
-        // another level than the phone's windows
+        // a level's tile the country's tiles do not list, and a level the phone does not take
         assertNull(tiles.window(13, 4207, 2692, version))
+        assertNull(tiles.window(11, 2103, 1346, version))
         // a pack with the windows' data alone
         val data = list.map { p -> p.copy(files = p.files.filter { it.kind != PackFile.TILES }) }
         assertNull(WindowTiles({ data }, tempDir("data")).window(14, westerkerk.first, westerkerk.second, version))

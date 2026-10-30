@@ -64,8 +64,11 @@ class WindowsTest {
         var mergeWith: (File, ByteBuffer) -> ByteArray? = { _, _ -> null }
         var refusal = ""
 
+        var levels = listOf<MapCore.Window>()
+
         override fun wanted() = wanted
         override fun inView() = inView
+        override fun levels() = levels
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
         override fun build(w: MapCore.Window, json: File, file: File): String {
             built += json.readText()
@@ -375,6 +378,52 @@ class WindowsTest {
         assertEquals(String(nl), unzipped(withTiles.dataOf(w)))
         assertFalse(withTiles.tiledOf(w).exists())
         assertTrue(fetched.isEmpty())
+    }
+
+    @Test
+    fun aFrameCellsLevelsTilesComeFromTheTilesAloneAFewAStepBeforeAnyWindow() {
+        // ENGINE.md one pack per country, step 7: the L12 tiles of a far view, in the core's order, and its window
+        val levels = (0 until 10).map { MapCore.Window(12, 2100 + it, 1346) }
+        val missing = levels[1]
+        tiled = { t -> if (t == missing) null else Windows.Tiled("the tile ${t.id}".toByteArray(), nlDate, "netherlands") }
+        packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
+        val core = Core()
+        core.levels = levels
+        core.wanted = listOf(w)
+        // a step takes eight of them, the window waiting
+        assertTrue(withTiles.step(core))
+        assertEquals(levels.take(8), tilesAsked)
+        assertArrayEquals("the tile ${levels[0].id}".toByteArray(), withTiles.fileOf(levels[0]).readBytes())
+        assertEquals("2026-10-26T20:21:24Z netherlands", withTiles.tiledOf(levels[0]).readText().trim())
+        // one the tiles do not give is not asked of the packs or the servers, nor built: it waits, and the map's
+        // status does not say so (the windows' own status is the map's)
+        assertFalse(withTiles.fileOf(missing).exists())
+        assertTrue(packsAsked.isEmpty())
+        assertTrue(fetched.isEmpty())
+        assertTrue(core.built.isEmpty())
+        assertEquals(Windows.Status.Idle, withTiles.status)
+        // the next step the last two; then the window, from the tiles
+        assertTrue(withTiles.step(core))
+        assertEquals(levels.take(8) + levels.drop(8), tilesAsked)
+        assertTrue(withTiles.step(core))
+        assertEquals(w, tilesAsked.last())
+        assertEquals(11, tilesAsked.size)
+        // the one that did not come is asked again once its wait is over, from the tiles alone
+        now += 10 * 60 * 1000L
+        withTiles.step(core)
+        assertEquals(missing, tilesAsked[11])
+        assertTrue(packsAsked.isEmpty())
+        assertTrue(fetched.isEmpty())
+        // the user's edits build the window that holds them again, never a level's tile (its data is the country's)
+        core.levels = emptyList()
+        drawn = listOf(brown)
+        core.editWith = { kept -> (kept.readText() + " edited").toByteArray() }
+        withTiles.edited(52.37, 4.88)
+        assertTrue(withTiles.step(core))
+        assertEquals(listOf(w to null), packsAsked)
+        assertEquals(listOf(String(nl) + " edited"), core.built)
+        assertArrayEquals("the tile ${levels[0].id}".toByteArray(), withTiles.fileOf(levels[0]).readBytes())
+        assertFalse(withTiles.dataOf(levels[0]).exists())
     }
 
     @Test

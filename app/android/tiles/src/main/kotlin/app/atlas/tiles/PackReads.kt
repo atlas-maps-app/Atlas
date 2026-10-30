@@ -148,14 +148,27 @@ internal class PackReads(
 
         /** Whether [pack]'s box holds the middle of window ([x], [y]) of level [LEVEL]. */
         fun holds(pack: Pack, x: Int, y: Int): Boolean {
-            val lat = tileLat(y + 0.5)
+            val lat = tileLat(y + 0.5, LEVEL)
             val lon = (x + 0.5) / (1 shl LEVEL) * 360.0 - 180.0
             return pack.bbox.west <= lon && lon <= pack.bbox.east && pack.bbox.south <= lat && lat <= pack.bbox.north
         }
 
-        /** The latitude of the Web Mercator row [row] (fractional) of level [LEVEL]. */
-        private fun tileLat(row: Double): Double {
-            val n = PI * (1.0 - 2.0 * row / (1 shl LEVEL))
+        /**
+         * Whether [pack]'s box may hold tile ([z], [x], [y]): a window's middle ([holds]); a coarser level's tile, any of
+         * it (a frame cell's coarse and far tiles reach over a country's border and its coast).
+         */
+        fun holds(pack: Pack, z: Int, x: Int, y: Int): Boolean {
+            if (z == LEVEL) return holds(pack, x, y)
+            val north = tileLat(y.toDouble(), z)
+            val south = tileLat(y + 1.0, z)
+            val west = x.toDouble() / (1 shl z) * 360.0 - 180.0
+            val east = (x + 1.0) / (1 shl z) * 360.0 - 180.0
+            return west <= pack.bbox.east && pack.bbox.west <= east && south <= pack.bbox.north && pack.bbox.south <= north
+        }
+
+        /** The latitude of the Web Mercator row [row] (fractional) of level [z]. */
+        private fun tileLat(row: Double, z: Int): Double {
+            val n = PI * (1.0 - 2.0 * row / (1 shl z))
             return Math.toDegrees(atan(0.5 * (exp(n) - exp(-n))))
         }
     }

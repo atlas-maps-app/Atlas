@@ -937,6 +937,11 @@ TileBuildings build_buildings(const BuildingInput& in) {
     for (Polygon& p : out.polygons) {
         if (p.count > 0) p.first = moved[p.first];
     }
+    // A level's tile (a frame cell's L13 or L12, drawn beyond the finest level's reach) is in no sun's scene: its faces
+    // are lit by their facing alone, as a deck is (BUILDING_FACE_DAY), not drawn as if in the shade.
+    if (tile.header.level < 14) {
+        for (Face& f : out.faces) f.lit = Lit::day;
+    }
     return out;
 }
 

@@ -13,6 +13,7 @@
 #include "frame/Ranks.hpp"
 #include "frame/Selectors.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "load/Levels.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "scene/Heaps.hpp"
@@ -47,6 +48,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 using namespace atlas;
@@ -1183,6 +1185,384 @@ TEST_CASE(
                                                     << " with the south-west tower across the edge; the south-west "
                                                     << "window's: " << *west_alone << " alone, " << *west_shaded
                                                     << " with the south-east tower");
+    (void)session->take_messages();
+}
+
+TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: the near place at L14, one 7 km off at "
+          "L13 while it fits, else at L12") {
+    // Two windows of cell 525/336, 6 km apart from south to north, a hall of four floors 40 m square in the middle of
+    // each, and their cell's levels (load::build_levels: an L13 and an L12 tile each, the hall large enough for the
+    // far level's), all in the store as the phone keeps them; the camera 1.6 km from the south window's middle,
+    // looking north 70° from down, so the north place lies 7.5 km from the eye, in the coarse level's reach (4.7 to
+    // 9.4 km).
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey north = tiles::tile_of(14, 523'542'800, 47'500'000);
+    ATLAS_REQUIRE((south.x >> 4U) == (north.x >> 4U));
+    ATLAS_REQUIRE((south.y >> 4U) == (north.y >> 4U));
+    const tiles::TileKey north_coarse(13, north.x >> 1U, north.y >> 1U);
+    const tiles::TileKey north_far(12, north.x >> 2U, north.y >> 2U);
+    ATLAS_REQUIRE(north_far != tiles::TileKey(12, south.x >> 2U, south.y >> 2U));
+    const auto middle = [](const tiles::TileKey& k) {
+        const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+        return std::array<double, 2>{(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
+    };
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    std::vector<std::span<const std::byte>> windows;
+    for (const tiles::TileKey& k : {south, north}) {
+        const auto [lat, lon] = middle(k);
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            k.y, geometry);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        ATLAS_REQUIRE(built->features > 0);
+        packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
+    }
+    windows.reserve(packs.size());
+    for (const auto& [name, pack] : packs) windows.emplace_back(pack);
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 4); // each window's L13 and L12 tile
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    struct Seen {
+        std::vector<std::pair<tiles::TileKey, std::uint64_t>> drawn; // the drawn tiles' own keys, their cells drawn
+        std::vector<tiles::TileKey> asked;
+        std::vector<tiles::TileKey> kept; // resident under the places in view, not drawn
+        std::uint64_t planned = 0;
+        std::size_t coarser = 0;
+    };
+    // The cover after a second of frames, its budget plan_fraction of the heaps' 64 MB; or, `out` metres given, of a
+    // camera looking straight down from 300 m over the south window, whose view holds none of the south L12's other
+    // places, the first frame after it then moved out there at once, before any tile is built.
+    const auto look = [&](double plan_fraction, double out = 0.0) -> std::optional<Seen> {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
+        std::atomic<double> now{0};
+        // moving out: a tile not drawn for 0.1 s goes whatever the heaps hold, as one of a dense view's would
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3,
+                                           .idle_seconds = out > 0 ? 0.1 : 2.0,
+                                           .keep_fraction = out > 0 ? 0.0 : 0.75,
+                                           .plan_fraction = plan_fraction,
+                                           .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
+        scene::World& w = **world;
+        for (const auto& [name, pack] : packs) {
+            std::string file = name;
+            std::ranges::replace(file, '/', '-');
+            const std::filesystem::path path = folder / (file + ".atlas");
+            std::ofstream o(path, std::ios::binary | std::ios::trunc);
+            o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                    static_cast<std::streamsize>(pack.size()));
+            o.close();
+            const auto joined =
+                w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+            ATLAS_REQUIRE_OR_RETURN(std::nullopt, joined.has_value(), tiles::describe(joined.error()));
+        }
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, w.store().packs().size() == 1);
+        style::CameraState c = home();
+        const auto [lat, lon] = middle(south);
+        c.latitude = lat;
+        c.longitude = lon;
+        c.bearing = 0.0;
+        c.pitch = out > 0 ? 0.0 : 70.0;
+        c.distance = out > 0 ? 300.0 : 1600.0;
+        c.flags = 0;
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        std::uint64_t n = 0;
+        const auto frames = [&](std::uint64_t count) {
+            for (std::uint64_t k = 0; k < count; ++k) {
+                ++n;
+                now = now.load() + 0.016;
+                ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+                w.update((*builder)->state());
+                w.residency().wait_idle();
+            }
+        };
+        frames(2);
+        w.set_active(std::format("window/14/{}/{}", south.x, south.y));
+        frames(60);
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, w.active() != nullptr);
+        if (out > 0) {
+            c.distance = out;
+            (*builder)->set_inputs({.camera = c, .scene = &w});
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE_OR_RETURN(std::nullopt, (*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+        }
+        Seen seen;
+        for (const scene::CoverTile& t : w.cover()->tiles()) seen.drawn.emplace_back(t.drawn->key, t.cells);
+        for (const scene::Request& r : w.cover()->requests()) seen.asked.push_back(r.key);
+        for (const std::uint32_t handle : w.cover()->kept()) {
+            for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+                if (t->handle == handle) seen.kept.push_back(t->key);
+            }
+        }
+        seen.planned = w.cover()->planned();
+        seen.coarser = w.cover()->coarsened();
+        CHECK(w.residency().stats().waiting == 0);
+        return seen;
+    };
+    // whether a tile drew, at any of its cells, or at the north place's cell of the far level's (4 × 4 places)
+    const auto drew = [](const Seen& s, const tiles::TileKey& k, std::uint64_t cells = ~std::uint64_t{0}) {
+        return std::ranges::any_of(s.drawn, [&](const auto& d) { return d.first == k && (d.second & cells) != 0; });
+    };
+    const std::uint64_t north_cell = std::uint64_t{1} << (((north.y & 3U) * 4U) + (north.x & 3U));
+    // Every tile fits: the south place at L14, the north one at L13; nothing asked for is missing.
+    const std::optional<Seen> all = look(1.0);
+    ATLAS_REQUIRE(all.has_value());
+    CHECK(drew(*all, south));
+    CHECK(drew(*all, north_coarse));
+    CHECK_FALSE(drew(*all, north_far, north_cell));
+    CHECK(all->asked.empty());
+    CHECK(all->coarser == 0);
+    CHECK(all->planned > 0);
+    // Each place's coarsest level kept resident under it, not drawn: the south place's L12 under its L14, the north
+    // place's under its L13.
+    const tiles::TileKey south_far(12, south.x >> 2U, south.y >> 2U);
+    CHECK(std::ranges::find(all->kept, south_far) != all->kept.end());
+    CHECK(std::ranges::find(all->kept, north_far) != all->kept.end());
+    CHECK_FALSE(drew(*all, south_far));
+    // Over the south window from 300 m, then out to 12 km at once (the place 12 km from the eye, at its far level),
+    // tiles not drawn let go of after 0.1 s: the first frame draws the south L12, kept under its place, not its L14,
+    // which goes as no place draws it. Without it kept, the L12 had gone (built as the L14's ancestor, then idle), the
+    // L14 stood in for its place while the L12 was built again, and in the heaps of a dense view held the room the L12
+    // tiles around it waited for, which then showed nothing (the Westerkerk zoomed out from 5 to 20 km).
+    const std::optional<Seen> zoomed_out = look(1.0, 12'000.0);
+    ATLAS_REQUIRE(zoomed_out.has_value());
+    CHECK(drew(*zoomed_out, south_far));
+    CHECK_FALSE(drew(*zoomed_out, south));
+    // Short of that by half the north L13's bytes (the probe's 80: sixteen cells): the plan gives the north place its
+    // coarsest level, which every view asks for first, and asks no more for its L13 (built while its bytes were still
+    // guessed, then left undrawn for the world to let go of); the south place keeps its L14.
+    const double heaps = static_cast<double>(scene::WorldOptions{}.heaps.total);
+    const std::optional<Seen> short_of = look(static_cast<double>(all->planned - 40) / heaps);
+    ATLAS_REQUIRE(short_of.has_value());
+    CHECK(drew(*short_of, south));
+    CHECK(drew(*short_of, north_far, north_cell));
+    CHECK_FALSE(drew(*short_of, north_coarse));
+    CHECK(std::ranges::find(short_of->asked, north_coarse) == short_of->asked.end());
+    CHECK(short_of->coarser >= 1);
+    CHECK(short_of->planned < all->planned);
+    // With no room at all (a budget of a byte): every place's coarsest level and the south place's L14 all the same,
+    // whatever they cost (the near view as before the levels), the north place at L12.
+    const std::optional<Seen> none = look(1.0 / heaps);
+    ATLAS_REQUIRE(none.has_value());
+    CHECK(drew(*none, south));
+    CHECK(drew(*none, north_far, north_cell));
+    CHECK_FALSE(drew(*none, north_coarse));
+    CHECK(none->coarser >= 1);
+    MESSAGE("the plan: " << all->planned << " bytes with the north place at L13, " << short_of->planned << " at L12 ("
+                         << short_of->coarser << " places coarser)");
+    (void)session->take_messages();
+}
+
+TEST_CASE("a place whose pack holds no coarser tile is drawn within the cover's reach before the levels, 12 km") {
+    // Two windows of cell 525/336, 6 km apart from south to north, a hall of four floors 40 m square in the middle of
+    // each, and no levels (a cell before the phone took them, windows outside the countries); the camera looking north
+    // 70° from down at the south window's middle. From 7 km the cover reaches 14 km (twice the distance), but the
+    // north place, 12.7 km from the eye, has no coarser tile and is not drawn: drawn with their own tiles out to the
+    // levels' 30 km, a cell's windows took the heaps a place apiece. From 6 km it lies 11.8 km off and is drawn.
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-reach";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey north = tiles::tile_of(14, 523'542'800, 47'500'000);
+    ATLAS_REQUIRE((south.x >> 4U) == (north.x >> 4U));
+    ATLAS_REQUIRE((south.y >> 4U) == (north.y >> 4U));
+    const auto middle = [](const tiles::TileKey& k) {
+        const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+        return std::array<double, 2>{(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
+    };
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    for (const tiles::TileKey& k : {south, north}) {
+        const auto [lat, lon] = middle(k);
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            k.y, geometry);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        ATLAS_REQUIRE(built->features > 0);
+        packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // The tiles drawn after a second of frames from `distance`, each with its distance from the eye.
+    const auto look = [&](double distance) -> std::optional<std::vector<std::pair<tiles::TileKey, double>>> {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
+        std::atomic<double> now{0};
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
+        scene::World& w = **world;
+        for (const auto& [name, pack] : packs) {
+            std::string file = name;
+            std::ranges::replace(file, '/', '-');
+            const std::filesystem::path path = folder / (file + ".atlas");
+            std::ofstream o(path, std::ios::binary | std::ios::trunc);
+            o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                    static_cast<std::streamsize>(pack.size()));
+            o.close();
+            const auto joined =
+                w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+            ATLAS_REQUIRE_OR_RETURN(std::nullopt, joined.has_value(), tiles::describe(joined.error()));
+        }
+        style::CameraState c = home();
+        const auto [lat, lon] = middle(south);
+        c.latitude = lat;
+        c.longitude = lon;
+        c.bearing = 0.0;
+        c.pitch = 70.0;
+        c.distance = distance;
+        c.flags = 0;
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        for (std::uint64_t n = 1; n <= 62; ++n) {
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE_OR_RETURN(std::nullopt, (*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            if (n == 2) w.set_active(std::format("window/14/{}/{}", south.x, south.y));
+        }
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, w.active() != nullptr);
+        std::vector<std::pair<tiles::TileKey, double>> drawn;
+        for (const scene::CoverTile& t : w.cover()->tiles()) drawn.emplace_back(t.drawn->key, t.distance);
+        return drawn;
+    };
+    const auto at = [](const std::vector<std::pair<tiles::TileKey, double>>& drawn, const tiles::TileKey& k) {
+        const auto it = std::ranges::find_if(drawn, [&k](const auto& d) { return d.first == k; });
+        return it != drawn.end() ? std::optional<double>(it->second) : std::nullopt;
+    };
+    const auto from6 = look(6'000.0);
+    ATLAS_REQUIRE(from6.has_value());
+    CHECK(at(*from6, south).has_value());
+    const std::optional<double> north6 = at(*from6, north);
+    ATLAS_REQUIRE(north6.has_value());
+    CHECK(*north6 > scene::WorldOptions{}.coarse_reach);
+    CHECK(*north6 <= scene::WorldOptions{}.far);
+    const auto from7 = look(7'000.0);
+    ATLAS_REQUIRE(from7.has_value());
+    CHECK(at(*from7, south).has_value());
+    const std::optional<double> north7 = at(*from7, north);
+    CHECK_FALSE(north7.has_value());
+    if (north7) MESSAGE("from 7 km the north place was drawn " << *north7 << " m from the eye");
+    MESSAGE("the north place drawn " << *north6 << " m from the eye from 6 km, not from 7 km");
+    (void)session->take_messages();
+}
+
+TEST_CASE("a place in view none of whose cells is seen keeps its tile, built once, while the heaps are full") {
+    // A window with a hall of four floors 40 m square at its south-west and one at its north-east, so its reach spans
+    // the window, and a camera looking straight down from 300 m over the window's middle: the place is in view, none of
+    // its cells (each hall's is the only one that holds anything). With every tile not drawn for 0.1 s let go of
+    // whatever the heaps hold, its tile is kept, not drawn, and built once: let go of as not drawn, it was asked for
+    // again the next frame and built again, frame after frame, while the heaps were full (Alkmaar from 5 km).
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-unseen";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey k = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+    const double south = b[0] / 1e7;
+    const double west = b[1] / 1e7;
+    const double north = b[2] / 1e7;
+    const double east = b[3] / 1e7;
+    const double dlat = 40.0 / 110540.0;
+    const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians((south + north) / 2)));
+    std::string elements;
+    for (const auto& [id, lat, lon] :
+         {std::tuple{1, south + (3 * dlat), west + (3 * dlon)}, std::tuple{2, north - (4 * dlat), east - (4 * dlon)}}) {
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        elements += std::format(R"({}{{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+                                R"("building:levels":"4"}},"geometry":[{}]}})",
+                                elements.empty() ? "" : ",", id, geometry);
+    }
+    const std::string json = std::format(R"({{"version":0.6,"elements":[{}]}})", elements);
+    auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    ATLAS_REQUIRE(built->features >= 2);
+    const std::filesystem::path path = folder / std::format("14-{}-{}.atlas", k.x, k.y);
+    {
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(built->pack.size()));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    auto owned = std::make_unique<BuildProbe>();
+    const BuildProbe* probe = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(
+        *session->device, (*builder)->passes(),
+        {.workers = 3, .idle_seconds = 0.1, .keep_fraction = 0.0, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const std::string id = std::format("window/14/{}/{}", k.x, k.y);
+    const auto joined = w.store().add({.id = id, .kind = tiles::PackKind::window, .path = path.string()});
+    ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    style::CameraState c = home();
+    c.latitude = (south + north) / 2;
+    c.longitude = (west + east) / 2;
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.distance = 300.0;
+    c.flags = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    for (std::uint64_t n = 1; n <= 62; ++n) {
+        now = now.load() + 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+        if (n == 2) w.set_active(id);
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(std::ranges::none_of(w.cover()->tiles(), [&](const scene::CoverTile& t) { return t.drawn->key == k; }));
+    const auto resident = std::ranges::find(w.residency().resident(), k, [](const auto& t) { return t->key; });
+    ATLAS_REQUIRE(resident != w.residency().resident().end());
+    CHECK(std::ranges::find(w.cover()->kept(), (*resident)->handle) != w.cover()->kept().end());
+    CHECK(probe->built.load() == 1);
+    CHECK(w.cover()->missing() == 0);
+    MESSAGE(w.tiles_line() << "; built " << probe->built.load() << " times over 60 frames");
     (void)session->take_messages();
 }
 

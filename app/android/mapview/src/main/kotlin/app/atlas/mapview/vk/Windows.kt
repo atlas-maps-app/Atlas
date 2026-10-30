@@ -66,6 +66,14 @@ import java.util.zip.GZIPOutputStream
  * a pack's data only when it is newer than the data it keeps. Data from a pack counts as fetched when it came, so the
  * window is asked for Overpass's changes since the pack's date a week later, as any other.
  *
+ * A frame cell's levels' tiles (ENGINE.md one pack per country, step 7: the L12 and L13 tiles the core derives from a
+ * cell's windows and draws beyond their reach) come from the country's tiles alone, as the core asks for them
+ * ([MapCore.wantedLevels]: the L12 tiles in view first, so a far view is whole soon, then the L13 tiles nearer): before
+ * any window, each a range of its own bytes, written as `<z>-<x>-<y>.atlas` with its mark beside it, and listed as a
+ * window. One that no country's tiles hold, or whose bytes did not come, waits as a window whose data did not come
+ * (without a word on the map's status: no server is asked); the phone never builds one. A level's tile is kept as it
+ * came: a new core (a new install) takes its country's tiles anew.
+ *
  * The user's own edits to OpenStreetMap waiting on the phone ([edits]: FillIn's, until the map's data carries them;
  * ENGINE.md step 6) are drawn as mapped: every window is built from its data with them ([Core.edit]), and the data kept
  * is the data as it came, so a window's next diff is asked from its own date. Where the user edits what stands at a
@@ -103,7 +111,10 @@ class Windows(
      */
     private val online: () -> Boolean = { true },
 ) {
-    /** What the windows' folder holds ([kept]): places taken from a country's tiles, places built here, their bytes. */
+    /**
+     * What the windows' folder holds ([kept]): places taken from a country's tiles, places built here, and their bytes with
+     * the frame cells' levels' tiles'.
+     */
     data class Kept(val tiled: Int, val built: Int, val bytes: Long) {
         val places: Int get() = tiled + built
     }
@@ -121,6 +132,9 @@ class Windows(
     interface Core {
         fun wanted(): List<MapCore.Window>
         fun inView(): List<MapCore.Window>
+
+        /** The frame cells' levels' tiles the core wants, in its order ([MapCore.wantedLevels]). */
+        fun levels(): List<MapCore.Window> = emptyList()
         fun box(w: MapCore.Window): DoubleArray
         /** Builds window [w] from the JSON in [json] into the pack [file]: "" or why not. */
         fun build(w: MapCore.Window, json: File, file: File): String
@@ -140,6 +154,7 @@ class Windows(
     private class Of(private val core: MapCore) : Core {
         override fun wanted() = core.wantedWindows()
         override fun inView() = core.windowsInView()
+        override fun levels() = core.wantedLevels()
         override fun box(w: MapCore.Window) = w.box()
         override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
@@ -207,10 +222,40 @@ class Windows(
         return now - f.at > waitAfter(f.refused, f.times)
     }
 
-    /** Window [w] failed at [now]: [refused], the core refused its data; else its data did not come. */
-    private fun fail(w: MapCore.Window, now: Long, refused: Boolean) {
+    /**
+     * The frame cells' levels' tiles the core wants, before any window: from the tiles alone, a few a step in the core's
+     * order (one on the phone that the core still wants was not taken into its cell yet, or the map has not handed the
+     * packs again); offline, from a country's tiles the phone keeps alone, each asked once until the network is back.
+     * Whether a tile was written, or null where the core wants none.
+     */
+    private fun takeLevels(core: Core, now: Long, net: Boolean): Boolean? {
+        val levels = core.levels().filter { ready(it, now) && !builtLately(it, now) && (net || it !in missedOffline) }
+        if (levels.isEmpty()) return null
+        val t0 = clock()
+        var written = false
+        for (w in levels.take(LEVELS_PER_STEP)) {
+            val got = tiled(w, now)
+            if (got == null) {
+                fail(w, now, refused = false, quiet = true)
+                if (!net) missedOffline += w
+            }
+            written = written || got == true
+            if (clock() - t0 >= LEVELS_STEP_MS) break
+        }
+        return written
+    }
+
+    /**
+     * Window [w] failed at [now]: [refused], the core refused its data; else its data did not come. [quiet]: a level's
+     * tile, which no server was asked for, leaves the status as it is.
+     */
+    private fun fail(w: MapCore.Window, now: Long, refused: Boolean, quiet: Boolean = false) {
         val times = (failed[w]?.times ?: 0) + 1
         failed[w] = Failure(now, refused, times)
+        if (quiet) {
+            if (status is Status.Fetching) status = Status.Idle
+            return
+        }
         status = Status.Waiting(now + waitAfter(refused, times), refused)
     }
 
@@ -232,6 +277,7 @@ class Windows(
             val wanted = core.wanted()
             val net = online()
             if (net) missedOffline.clear()
+            takeLevels(core, now, net)?.let { return it }
             val next = wanted.firstOrNull { w ->
                 ready(w, now) && !builtLately(w, now) && (net || w !in missedOffline && !fileOf(w).exists() && !tiledOf(w).exists())
             }
@@ -315,7 +361,8 @@ class Windows(
         while (true) {
             val at = touched.poll() ?: break
             for (f in dir.listFiles().orEmpty().sortedBy { it.name }) {
-                val w = windowOf(f) ?: continue
+                // a window, not a frame cell's level's tile: those come from the country's tiles alone, never built here
+                val w = windowOf(f)?.takeIf { it.z == WINDOW_LEVEL } ?: continue
                 if (w in toEdit || (!dataOf(w).exists() && !tiledOf(w).exists())) continue
                 val b = runCatching { core.box(w) }.getOrNull() ?: continue
                 if (at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3]) toEdit.addLast(w)
@@ -648,6 +695,16 @@ class Windows(
         /** How old a window's data may grow before it is built again: a week. */
         const val REFRESH_MS = 7 * 24 * 3600 * 1000L
 
+        /**
+         * The most levels' tiles a step takes ([step]: twice a second), and how long it goes on taking them, ms: a far
+         * view's few dozen come in a few seconds, each a range of its own, and the windows wait at most that long.
+         */
+        const val LEVELS_PER_STEP = 8
+        const val LEVELS_STEP_MS = 1_500L
+
+        /** The level of the places' windows (load::window_level); a frame cell's levels' tiles are coarser. */
+        const val WINDOW_LEVEL = 14
+
         /** How long ago a window's data may have been fetched whole before it is fetched whole again: four weeks. */
         const val WHOLE_MS = 28 * 24 * 3600 * 1000L
 
@@ -677,8 +734,10 @@ class Windows(
                     if (lat < box[0] || lon < box[1] || lat > box[2] || lon > box[3]) continue
                 }
                 val base = "${w.z}-${w.x}-${w.y}"
-                if (File(dir, "$base.tiles").exists()) tiled++ else built++
                 bytes += f.length() + File(dir, "$base.json.gz").length()
+                // a frame cell's level's tile: its bytes, not a place
+                if (w.z != WINDOW_LEVEL) continue
+                if (File(dir, "$base.tiles").exists()) tiled++ else built++
             }
             return Kept(tiled, built, bytes)
         }

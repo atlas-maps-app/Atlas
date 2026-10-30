@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 24
+    const val ABI = 25
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -263,6 +263,12 @@ object Native {
 
     /** The places in view the map draws from windows, nearest first, each its tile's key packed as [wantedWindows]'. */
     @JvmStatic external fun windowsInView(handle: Long): LongArray
+
+    /**
+     * The frame cells' levels' tiles the map wants (L12, then L13: ENGINE.md one pack per country, step 7), in its
+     * order, each its tile's key packed as [wantedWindows]'.
+     */
+    @JvmStatic external fun wantedLevels(handle: Long): LongArray
 
     /**
      * Window ([z], [x], [y])'s kept data (Overpass's JSON of its query, in the file at [kept], which the core maps)

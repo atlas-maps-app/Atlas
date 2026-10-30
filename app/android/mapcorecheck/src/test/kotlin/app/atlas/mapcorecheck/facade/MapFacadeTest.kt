@@ -239,9 +239,10 @@ class MapFacadeTest {
                 assertEquals("", Native.map(handle, 1))
                 val said = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), LongArray(1), LongArray(1))
                 assertEquals("$id opened\n", said)
-                // no frame drawn yet: no window wanted, none in view
+                // no frame drawn yet: no window wanted, none in view, no level's tile wanted
                 assertEquals(0, Native.wantedWindows(handle).size)
                 assertEquals(0, Native.windowsInView(handle).size)
+                assertEquals(0, Native.wantedLevels(handle).size)
             } finally {
                 Native.close(handle)
             }

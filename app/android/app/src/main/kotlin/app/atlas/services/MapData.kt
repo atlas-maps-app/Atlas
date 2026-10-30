@@ -197,10 +197,13 @@ class MapData(private val services: Services) {
             while (true) {
                 val list = runCatching { windowCatalog.packs() }.getOrNull()
                 if (list != null) {
-                    MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { CountryTiles(it.id, it.name, it.bbox) }
-                    MapEngine.invalidate()
-                    // which tiles this phone takes: none of its core's version means every window is built here
+                    // which tiles this phone takes: none of its core's version means every window is built here, and
+                    // no frame cell's levels are drawn (they come from those tiles alone)
                     val version = MapEngine.windowVersion()
+                    MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { p ->
+                        CountryTiles(p.id, p.name, p.bbox, levels = version != null && p.tilesOf(version) != null)
+                    }
+                    MapEngine.invalidate()
                     val sets = list.flatMap { p -> p.tileSets.map { "${p.id} ${it.index.coreVersion}" } }
                     val own = list.filter { p -> version != null && p.tilesOf(version) != null }.map { it.id }
                     android.util.Log.i(

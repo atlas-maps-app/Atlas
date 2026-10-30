@@ -40,9 +40,19 @@
 // pack is its windows built so (`packer country`). Once all are built, a line on stdout a window in the list's order:
 // `x y <features> <bytes> <ms>`, or `x y failed <why>`. The exit code: 0 every window built; 1 any failed; 2 a usage
 // error.
+//
+//   atlas_stagep levels <list> <out-dir> [threads]
+//
+// derives the levels (load/Levels.hpp: a frame cell's L13 and L12 tiles, ENGINE.md one pack per country, step 7) of the
+// frame cells of the windows <list> names, a line each (`x y path`: an L14 window's column and row, and its pack as
+// `windows` built it), each level's tile into <out-dir>/<z>-<x>-<y>.atlas, a frame cell on each of [threads] threads.
+// Once all are built, a line on stdout a level's tile, cell by cell in order of x, then y: `z x y <features> <bytes>
+// <raw bytes> <buildings> <trees>`, then the cell's `cell x y <tiles> <ms>`; or `cell x y failed <why>`. The exit code:
+// 0 every cell built; 1 any failed; 2 a usage error.
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
+#include "load/Levels.hpp"
 #include "load/PackHead.hpp"
 #include "load/Regions.hpp"
 #include "load/Scene.hpp"
@@ -69,6 +79,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -373,6 +384,111 @@ struct ListedWindow {
     return all;
 }
 
+/// The levels of the frame cells of the windows `list` names, into `out_dir`, a cell on each of `threads` threads (0:
+/// one a core), their lines on stdout.
+[[nodiscard]] std::expected<bool, Failure> levels(const std::string& list, const std::string& out_dir,
+                                                  std::uint32_t threads) {
+    std::ifstream in(list);
+    if (!in) return std::unexpected(input(std::format("{} does not open", list)));
+    struct Cell {
+        tl::TileKey key;
+        std::vector<std::string> paths;
+        std::vector<std::string> lines;
+        bool built = false;
+    };
+    std::map<std::uint64_t, Cell> by_cell;
+    std::string text;
+    while (std::getline(in, text)) {
+        if (text.empty()) continue;
+        std::uint32_t x = 0;
+        std::uint32_t y = 0;
+        const char* end = text.data() + text.size();
+        auto r = std::from_chars(text.data(), end, x);
+        if (r.ec != std::errc{} || r.ptr == end || *r.ptr != ' ') {
+            return std::unexpected(input(std::format("'{}' is no line `x y path`", text)));
+        }
+        r = std::from_chars(r.ptr + 1, end, y);
+        if (r.ec != std::errc{} || r.ptr == end || *r.ptr != ' ' || r.ptr + 1 == end) {
+            return std::unexpected(input(std::format("'{}' is no line `x y path`", text)));
+        }
+        const std::uint32_t n = std::uint32_t{1} << load::window_level;
+        if (x >= n || y >= n) return std::unexpected(input(std::format("'{}' names no tile of L14", text)));
+        // the cells in order of x, then y
+        const tl::TileKey cell(load::frame_cell_level, x >> 4U, y >> 4U);
+        Cell& c = by_cell[(std::uint64_t{cell.x} << 32U) | cell.y];
+        c.key = cell;
+        c.paths.emplace_back(r.ptr + 1, end);
+    }
+    std::error_code e;
+    std::filesystem::create_directories(out_dir, e);
+    if (e) return std::unexpected(Failure{.why = std::format("{} could not be made: {}", out_dir, e.message())});
+    std::vector<Cell*> cells;
+    cells.reserve(by_cell.size());
+    for (auto& [k, c] : by_cell) cells.push_back(&c);
+    std::atomic<std::size_t> next{0};
+    const auto work = [&] {
+        using clock = std::chrono::steady_clock;
+        for (std::size_t i = next++; i < cells.size(); i = next++) {
+            Cell& c = *cells[i];
+            const auto t0 = clock::now();
+            const std::string name = std::format("cell {} {}", c.key.x, c.key.y);
+            std::vector<std::unique_ptr<tl::MappedSource>> sources;
+            std::vector<std::span<const std::byte>> packs;
+            bool read = true;
+            for (const std::string& path : c.paths) {
+                auto source = mapped(path);
+                if (!source) {
+                    c.lines.push_back(std::format("{} failed {}", name, source.error().why));
+                    read = false;
+                    break;
+                }
+                packs.push_back((*source)->view(0, (*source)->size()));
+                sources.push_back(std::move(*source));
+            }
+            if (!read) continue;
+            const auto built = load::build_levels(packs);
+            if (!built) {
+                c.lines.push_back(std::format("{} failed {}", name, built.error().what));
+                continue;
+            }
+            const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+            bool written = true;
+            for (const load::BuiltLevel& b : *built) {
+                const std::string file = std::format("{}/{}-{}-{}.atlas", out_dir, b.key.z, b.key.x, b.key.y);
+                const std::string bytes(reinterpret_cast<const char*>(b.pack.data()), // NOLINT: the pack's bytes
+                                        b.pack.size());
+                if (auto w = write_whole(file, bytes); !w) {
+                    c.lines.push_back(std::format("{} failed {}", name, w.error().why));
+                    written = false;
+                    break;
+                }
+                c.lines.push_back(std::format("{} {} {} {} {} {} {} {}", b.key.z, b.key.x, b.key.y, b.features,
+                                              b.pack.size(), b.raw, b.buildings, b.trees));
+            }
+            if (written) c.lines.push_back(std::format("{} {} {:.0f}", name, built->size(), ms));
+            c.built = written;
+        }
+    };
+    const std::uint32_t count =
+        std::max<std::uint32_t>(1, threads != 0 ? threads : std::max(1U, std::thread::hardware_concurrency()));
+    std::vector<std::thread> pool;
+    pool.reserve(count - 1);
+    for (std::uint32_t t = 1; t < count; ++t) pool.emplace_back(work);
+    work();
+    for (std::thread& t : pool) t.join();
+    bool all = true;
+    for (const Cell* c : cells) {
+        all = all && c->built;
+        for (const std::string& line : c->lines) {
+            if (std::fputs((line + "\n").c_str(), stdout) < 0) {
+                return std::unexpected(Failure{.why = "stdout could not be written"});
+            }
+        }
+    }
+    if (std::fflush(stdout) != 0) return std::unexpected(Failure{.why = "stdout could not be written"});
+    return all;
+}
+
 /// The tiles of the job, read, loaded and cut, and the pack's head and style. Returns the line it prints.
 [[nodiscard]] std::expected<std::string, Failure> tiles(const std::string& raw_path, const std::string& job_path,
                                                         const std::string& out_path) {
@@ -569,10 +685,28 @@ int main(int argc, char** argv) {
         }
         return *built ? 0 : 1;
     }
+    if ((args.size() == 4 || args.size() == 5) && std::string_view(args[1]) == "levels") {
+        std::uint32_t threads = 0;
+        if (args.size() == 5) {
+            const std::string_view t(args[4]);
+            const auto [at, error] = std::from_chars(t.data(), t.data() + t.size(), threads);
+            if (t.empty() || error != std::errc{} || at != t.data() + t.size()) {
+                (void)std::fprintf(stderr, "atlas_stagep: '%s' is no count of threads\n", args[4]);
+                return usage_error;
+            }
+        }
+        const auto built = levels(args[2], args[3], threads);
+        if (!built) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s\n", built.error().why.c_str());
+            return built.error().code;
+        }
+        return *built ? 0 : 1;
+    }
     if (args.size() != 5 || std::string_view(args[1]) != "tiles") {
         (void)std::fputs("usage: atlas_stagep tiles <raw.json> <job.json> <out>\n"
                          "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n"
-                         "       atlas_stagep windows <list> <out-dir> [threads]\n",
+                         "       atlas_stagep windows <list> <out-dir> [threads]\n"
+                         "       atlas_stagep levels <list> <out-dir> [threads]\n",
                          stderr);
         return usage_error;
     }

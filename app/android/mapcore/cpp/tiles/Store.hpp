@@ -70,11 +70,11 @@ public:
 
     /// Opens a pack and adds it (replacing one of the same id). A remote pack opens from its cached head when the cache
     /// has it, so it opens offline; else its head is fetched and cached. A window (PackKind::window: a pack of one L14
-    /// tile the core built, load/Window.hpp) joins the pack of its frame cell instead (cell_id), which holds every
-    /// window of the cell and replaces the cell's last one: composed, nothing copied (compose_pack), its head the
-    /// first window's under the cell's name, its style the first window's. A window whose frame or style version is not
-    /// its cell's is refused. A window without a tile (it holds nothing to draw) joins no cell, and an earlier build of
-    /// it leaves its cell.
+    /// tile the core built, load/Window.hpp, or of one tile of one of the cell's levels, load/Levels.hpp) joins the
+    /// pack of its frame cell instead (cell_id), which holds every window of the cell and replaces the cell's last one:
+    /// composed, nothing copied (compose_pack), its head the first window's under the cell's name with the levels its
+    /// windows hold, its style the first window's. A window whose frame or style version is not its cell's is refused.
+    /// A window without a tile (it holds nothing to draw) joins no cell, and an earlier build of it leaves its cell.
     [[nodiscard]] Result<void> add(const PackRef& ref);
 
     /// Removes the pack `id` (a window: from its cell's pack); returns whether there was one. Readers holding it keep
@@ -107,8 +107,17 @@ public:
     [[nodiscard]] Result<Tile> decode(const StoreHit& hit, Zstd& zstd, TileDecoder& decoder, Arena& arena,
                                       std::vector<std::byte>& raw) const;
 
-    /// The level of the frame cells windows are grouped by (load/Window.hpp's frame_cell_level).
+    /// The level of the frame cells windows are grouped by (load/Window.hpp's frame_cell_level), a window's (its
+    /// window_level) and the cell's coarse and far levels' (load/Levels.hpp's coarse_level and far_level).
     static constexpr std::uint8_t cell_level = 10;
+    static constexpr std::uint8_t window_level = 14;
+    static constexpr std::uint8_t coarse_level = 13;
+    static constexpr std::uint8_t far_level = 12;
+
+    /// Whether `level` is one of a cell's levels derived from its windows (drawn beyond the windows' reach).
+    [[nodiscard]] static constexpr bool derived(std::uint8_t level) noexcept {
+        return level == coarse_level || level == far_level;
+    }
 
 private:
     /// A window in its cell: its id, its tile and chunk, its bytes, its head's and style's.
