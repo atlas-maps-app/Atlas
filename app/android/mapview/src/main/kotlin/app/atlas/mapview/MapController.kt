@@ -1127,7 +1127,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
             else if (s.bytes > 0) "Downloading map data · %.1f of %.1f MB".format(Locale.getDefault(), s.done / 1e6, s.bytes / 1e6)
             else "Downloading map data…"
-            is MapStatus.NoData -> if (shown == null) "No map data here" else return
+            is MapStatus.NoData -> if (shown == null) state.camera.target.let { noDataLine(it.lat, it.lon) } else return
         }
         statusText.textSize = 13f * density
         val w = statusText.measureText(text) + 24f * density
@@ -1591,6 +1591,15 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     }
 
     companion object {
+        /**
+         * What the map says where today's map has no data for [lat], [lon]: in a country whose tiles the core draws,
+         * where today's map is asked only beyond the core's reach and takes no region (LiveRegions' engineCountry), the
+         * way to the core's map; elsewhere, that there is none (the user, 30 October, of the reason only the debug
+         * overlay showed: "Nowhere its shows zoom in?").
+         */
+        internal fun noDataLine(lat: Double, lon: Double): String =
+            if (MapEngine.countryAt(lat, lon) != null) "Zoom in to see the map" else "No map data here"
+
         const val DAY_EARTH = 0xFFE4E0D8.toInt()
         const val NIGHT_EARTH = 0xFF0B0F1A.toInt()
 

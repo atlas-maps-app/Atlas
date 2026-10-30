@@ -2,6 +2,7 @@ package app.atlas.mapview.vk
 
 import app.atlas.geo.BBox
 import app.atlas.mapview.CountryTiles
+import app.atlas.mapview.MapController
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.vk.Transition.Path
 import org.junit.After
@@ -88,10 +89,14 @@ class EdgeTest {
         // zoomed out past the cover's reach, the core has nothing to draw there: today's map
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.CORE_REACH + 1))
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        // where it has nothing to draw there (it takes no region in such a country), the map says to zoom in
+        assertEquals("Zoom in to see the map", MapController.noDataLine(52.37, 4.88))
         // Lille, south of the Netherlands' box (CI's transitional script): no window, no country's tiles
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, 430.0))
+        assertEquals("No map data here", MapController.noDataLine(50.6292, 3.0573))
         // before the published list is read, no country is known: the windows alone decide, as until now
         MapEngine.countries = emptyList()
+        assertEquals("No map data here", MapController.noDataLine(52.37, 4.88))
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, 650.0))
         assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, 650.0))
         // with nothing listed, the camera names no pack
