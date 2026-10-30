@@ -1,6 +1,7 @@
 package app.atlas.ui.home
 
 import android.os.Looper
+import androidx.compose.ui.geometry.Rect
 import app.atlas.Services
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
@@ -8,6 +9,7 @@ import app.atlas.mapview.HomeView
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
 import app.atlas.model.Fix
+import app.atlas.model.Place
 import app.atlas.providers.Http
 import app.atlas.providers.Weather
 import app.atlas.services.GnssInfo
@@ -158,6 +160,23 @@ class HomeViewModelTest {
         assertTrue(r.places.isNotEmpty() && r.places.size <= HomeViewModel.MAX_RESULTS)
         vm.selectCategory("groceries")
         assertNull(vm.results.value)
+    }
+
+    @Test
+    fun aPlaceOpensOverTheMapAndTheViewStays() {
+        val vm = HomeViewModel(testServices(), LatLon(52.3600, 4.8852), 18.0)
+        val view = vm.map.camera
+        val place = Place(null, LatLon(52.3610, 4.8860), mapOf("name" to "Café"))
+        vm.open(place)
+        assertEquals(place, vm.opened)
+        // Before the map's first frame nothing says where its ground is: the view stays as it was.
+        vm.reveal(place.location, Rect(64f, 312f, 760f, 848f))
+        idle()
+        assertEquals(view, vm.map.camera)
+        assertEquals(Follow.NONE, vm.map.follow)
+        vm.open(null)
+        assertNull(vm.opened)
+        assertEquals(view, vm.map.camera)
     }
 
     /** A GPS that never finds a fix and counts who is listening. */

@@ -1,6 +1,7 @@
 package app.atlas.ui.search
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.graphics.Color
 import app.atlas.ui.kit.CssCorners
 import app.atlas.ui.kit.CssShadow
@@ -30,6 +31,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,6 +44,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
@@ -93,9 +96,35 @@ fun PlaceScreen(args: Dest.Place, nav: Navigator) {
     PlaceView(place, state, vm, nav, lang)
 }
 
+/**
+ * A place opened from the Map home's own map, as the Place board shows it but over that map, whose view stays as the
+ * user left it (the user, 30 October: "When you click a place it shouldnt take you away from your view and in that
+ * overhead camera"): its sheet, level and buttons, whose back (and the system's) closes it through [onBack]. Its model
+ * lives in [models], which the home clears when the place closes. Nothing shows until the place is read: a place the map
+ * hands over is in the screens' cache, so at once.
+ */
+@Composable
+fun PlaceOverMap(args: Dest.Place, nav: Navigator, models: ViewModelStoreOwner, onBack: () -> Unit) {
+    val services = LocalServices.current
+    val lang = remember { Locale.getDefault().language }
+    val vm = viewModel(viewModelStoreOwner = models, key = "place:" + args.route) { PlaceViewModel(services, args.key, args.osmId, args.at, args.name, lang) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    BackHandler(onBack = onBack)
+    val place = state.place ?: return
+    key(args.route) { PlaceView(place, state, vm, nav, lang, onBack, ownMap = false) }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: Navigator, lang: String) {
+private fun PlaceView(
+    place: Place,
+    state: PlaceState,
+    vm: PlaceViewModel,
+    nav: Navigator,
+    lang: String,
+    onBack: () -> Unit = { nav.back() },
+    ownMap: Boolean = true,
+) {
     val services = LocalServices.current
     val context = LocalContext.current
     val here = rememberHere()
@@ -104,13 +133,14 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
     val saved = remember(lists, place.key) { lists.any { l -> l.places.any { it.place.key == place.key } } }
     var saveTo by remember { mutableStateOf(false) }
     val (symbol, colour) = remember(place) { symbolOf(place) }
-    val map = remember(place.key) { MapState(CameraPosition(place.location, HERO_ZOOM, 0.0, HERO_PITCH)) }
+    // its own map at the board's view of it, unless it is over the Map home's, which keeps the user's view
+    val map = if (ownMap) remember(place.key) { MapState(CameraPosition(place.location, HERO_ZOOM, 0.0, HERO_PITCH)) } else null
     val shareText = shareTextOf(place, lang)
     val shareLabel = stringResource(R.string.place_share)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val halfDp = maxHeight * SHEET_HALF
-        StageMap(
+        val halfDp = maxHeight * PLACE_SHEET_HALF
+        if (map != null) StageMap(
             state = map,
             modifier = Modifier.fillMaxSize(),
             background = Color(SHEET_PAPER),
@@ -152,7 +182,7 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
             Modifier.fillMaxWidth().padding(top = boardShift()).padding(start = 16.dp, end = 16.dp, top = 44.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BoardRoundButton("ui.back", stringResource(R.string.kit_back), { nav.back() }, side = 48f, glyph = 22f, bg = 0xDBFFFFFF, shadows = glass, blur = 20f)
+            BoardRoundButton("ui.back", stringResource(R.string.kit_back), onBack, side = 48f, glyph = 22f, bg = 0xDBFFFFFF, shadows = glass, blur = 20f)
             Spacer(Modifier.weight(1f))
             BoardRoundButton("ui.share", shareLabel, {
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareText)
@@ -174,7 +204,7 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
             }
         }
 
-        app.atlas.ui.kit.Sheet(sheet, peekHeight = 200.dp, halfFraction = SHEET_HALF, fullTopGap = 96.dp, look = PLACE_SHEET) {
+        app.atlas.ui.kit.Sheet(sheet, peekHeight = 200.dp, halfFraction = PLACE_SHEET_HALF, fullTopGap = 96.dp, look = PLACE_SHEET) {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -209,7 +239,7 @@ private fun shareTextOf(place: Place, lang: String): String = remember(place, la
 private const val HERO_ZOOM = 17.6
 private const val HERO_PITCH = 48.0
 /** The share of the screen the Place board's sheet takes: from 440 to the foot of 915 px. */
-private const val SHEET_HALF = 475f / 915f
+internal const val PLACE_SHEET_HALF = 475f / 915f
 
 /** The Place board's sheet paper. */
 internal const val SHEET_PAPER = 0xFFFBFAF7

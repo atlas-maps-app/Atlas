@@ -1,7 +1,14 @@
 package app.atlas.ui.home
 
 import android.os.SystemClock
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewModelScope
 import app.atlas.Services
 import app.atlas.geo.Geo
@@ -318,6 +325,44 @@ class HomeViewModel(
         }
     }
 
+    /**
+     * The place opened from the map or the results, shown over the map (PlaceOverMap): the view stays as the user left
+     * it (the user, 30 October: "When you click a place it shouldnt take you away from your view and in that overhead
+     * camera"). Null while none is.
+     */
+    var opened: Place? by mutableStateOf(null)
+        private set
+
+    /** The opened place's model: kept while it stays open (across the screens it opens) and cleared when it closes. */
+    val placeModels: ViewModelStoreOwner = object : ViewModelStoreOwner {
+        override val viewModelStore = ViewModelStore()
+    }
+
+    /** Opens [place] over the map, in place of the one open; null closes it. */
+    fun open(place: Place?) {
+        if (place?.key == opened?.key) return
+        placeModels.viewModelStore.clear()
+        opened = place
+    }
+
+    /**
+     * Brings [place] into [band] (screen px) with the least pan, the zoom, bearing and tilt kept, so an opened place
+     * shows above its sheet: nothing moves when it is there already.
+     */
+    fun reveal(place: LatLon, band: Rect) {
+        val to = revealTarget(
+            map.camera.target, place, band,
+            toScreen = { p -> map.latLonToScreen(p)?.let { (x, y) -> Offset(x, y) } },
+            toGround = { o -> map.screenToLatLon(o.x, o.y) },
+        ) ?: return
+        map.follow = Follow.NONE
+        viewModelScope.launch { map.animateTo(map.camera.copy(target = to), REVEAL_MS) }
+    }
+
+    override fun onCleared() {
+        placeModels.viewModelStore.clear()
+    }
+
     /** Shows the places of [categoryId] around the view; the same again clears them. */
     fun selectCategory(categoryId: String?) {
         resultsJob?.cancel()
@@ -371,6 +416,9 @@ class HomeViewModel(
 
     companion object {
         const val DEFAULT_PITCH = 50.0
+
+        /** The glide that brings an opened place out from under its sheet. */
+        private const val REVEAL_MS = 450
         private const val HIGHLIGHT_MOVE_M = 150.0
         private const val LABEL_MOVE_M = 200.0
 
@@ -396,6 +444,20 @@ class HomeViewModel(
         private const val SCRIPT_WAIT_MS = 180_000L
         private const val SCRIPT_SETTLE_MS = 2_000L
     }
+}
+
+/**
+ * Where the camera's target goes for the ground at [place] to show inside [band] (screen px), nothing else of the view
+ * changed: null when it shows there already, or when the view cannot say where its ground is (before its first frame).
+ * The least move: the place lands on the band's nearest point, or on its middle when the view does not show it. A pan
+ * moves all the ground alike, so the target moves by what lies between the ground under that point and the place.
+ */
+internal fun revealTarget(target: LatLon, place: LatLon, band: Rect, toScreen: (LatLon) -> Offset?, toGround: (Offset) -> LatLon?): LatLon? {
+    val at = toScreen(place)
+    if (at != null && band.contains(at)) return null
+    val to = at?.let { Offset(it.x.coerceIn(band.left, band.right), it.y.coerceIn(band.top, band.bottom)) } ?: band.center
+    val under = toGround(to) ?: return null
+    return LatLon(target.lat + place.lat - under.lat, target.lon + place.lon - under.lon)
 }
 
 /**

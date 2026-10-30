@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -71,6 +72,10 @@ import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.backdropSource
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.rememberSpeechInput
+import app.atlas.ui.search.PLACE_SHEET_HALF
+import app.atlas.ui.search.PlaceOverMap
+import app.atlas.ui.search.boardShift
+import app.atlas.ui.search.symbolOf
 import java.time.Instant
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -79,7 +84,7 @@ import kotlinx.coroutines.launch
  * The Map home, as on the Main board: the map full screen with the location puck; the weather and offline chip, the
  * moments and the quick needs at the top left; the control column on the right; the category row and "Search or ask"
  * above the bottom bar. A category shows its places nearby as pins with a results sheet; a long press asks what is
- * there; a pin opens its place.
+ * there; a pin opens its place over the map, which keeps the view.
  */
 @Composable
 fun HomeScreen(args: Dest.Home, nav: Navigator) {
@@ -114,10 +119,12 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val sheet = rememberSheetState(SheetStop.PEEK, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
     val lang = remember { java.util.Locale.getDefault().language }
 
-    // The results sheet takes the bottom of the screen: the bar steps aside while it is up.
+    // The results sheet, or a place opened over the map, takes the bottom of the screen: the bar steps aside while
+    // either is up.
     val showingResults = results != null
+    val opened = vm.opened
+    LaunchedEffect(showingResults, opened != null) { chrome.barHidden = showingResults || opened != null }
     LaunchedEffect(showingResults) {
-        chrome.barHidden = showingResults
         if (showingResults) sheet.snapTo(SheetStop.PEEK)
     }
     DisposableEffect(Unit) { onDispose { chrome.barHidden = false } }
@@ -128,14 +135,10 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     }
     BackHandler(enabled = showingResults) { vm.selectCategory(null) }
 
-    val openPlace: (Place) -> Unit = { p ->
-        services.remember(p)
-        nav.go(Dest.Place.of(p))
-    }
     // Spoken words go to Search; a phone that cannot recognise speech opens Search with the keyboard instead.
     val mic = rememberSpeechInput(onText = { nav.go(Dest.Search(it)) }, onUnavailable = { nav.go(Dest.Search()) })
 
-    val markers = remember(results, highlights, args.focus) {
+    val markers = remember(results, highlights, args.focus, opened) {
         buildList {
             // A chosen category's places replace the area's highlights.
             if (results == null) addAll(HomeHighlights.markers(highlights))
@@ -146,6 +149,12 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 }
             }
             args.focus?.let { add(Marker("focus", it, "maki-marker", 0xFF2E5BFF, MarkerStyle.PIN, priority = 1_000)) }
+            // An opened place's pin, chosen, as the Place board draws it: in place of its marker among the others.
+            opened?.let { p ->
+                removeAll { it.place?.key == p.key }
+                val (symbol, colour) = symbolOf(p)
+                add(Marker(p.key, p.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = p))
+            }
         }
     }
     val overlays = MapOverlays(
@@ -179,6 +188,16 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     CompositionLocalProvider(LocalFrostedGlass provides glass) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val screenHeight = maxHeight
+      // A place opened from the map or the results comes up over this map, which keeps the user's view: it moves only
+      // when the place would be under the place's sheet or buttons, by the least pan (the zoom, bearing and tilt kept).
+      val placeBand = with(LocalDensity.current) {
+          Rect(PLACE_SIDE.toPx(), (boardShift() + PLACE_TOP).toPx(), (maxWidth - PLACE_SIDE).toPx(), (maxHeight * (1f - PLACE_SHEET_HALF) - PLACE_FOOT).toPx())
+      }
+      val openPlace: (Place) -> Unit = { p ->
+          services.remember(p)
+          vm.open(p)
+          vm.reveal(p.location, placeBand)
+      }
       // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
         StageMap(
             state = vm.map,
@@ -191,7 +210,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 when (hit) {
                     is MapHit.OnMarker -> hit.marker.place?.let(openPlace)
                     is MapHit.OnFeature -> openPlace(hit.place)
-                    is MapHit.Empty -> Unit
+                    // a tap beside the places closes the one open
+                    is MapHit.Empty -> vm.open(null)
                 }
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
@@ -213,8 +233,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             },
         )
 
-        // Top left: the weather and offline state, what is coming up, the quick needs.
-        Column(Modifier.padding(start = 16.dp, top = top).keepsLabelsOff("top")) {
+        // Top left: the weather and offline state, what is coming up, the quick needs. The home's chrome steps aside for
+        // an opened place (its boxes stay, so the map's labels keep their places).
+        if (opened == null) Column(Modifier.padding(start = 16.dp, top = top).keepsLabelsOff("top")) {
             WeatherChip(weather, offline, onClick = { nav.go(Dest.Weather()) })
             if (moments.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -231,7 +252,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
         }
 
         // Right: the controls.
-        ControlColumn(
+        if (opened == null) ControlColumn(
             bearing = bearing,
             is3d = MapLayer.BUILDINGS_3D in style.layers,
             follow = vm.map.follow,
@@ -252,7 +273,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
         // Bottom: attribution, the category row and the search bar, 90 dp up on the board (which steps aside for
         // results).
         val rowAlpha = if (showingResults && sheet.stop == SheetStop.FULL) 0f else 1f
-        Column(
+        if (opened == null) Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -291,7 +312,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             }
         }
 
-        results?.let { r ->
+        if (opened == null) results?.let { r ->
             ResultsSheet(
                 results = r,
                 state = sheet,
@@ -302,9 +323,21 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 onClose = { scope.launch { vm.selectCategory(null) } },
             )
         }
+
+        // A place opened from the map or the results, over this map: its back closes it, back to the home as it was.
+        opened?.let { p -> PlaceOverMap(Dest.Place.of(p), nav, vm.placeModels, onBack = { vm.open(null) }) }
     }
     }
 }
+
+/** How far in from the sides an opened place shows: its chosen pin's 44 px disc and a margin. */
+private val PLACE_SIDE = 32.dp
+
+/** How far down an opened place shows: under the Place board's buttons (44 px down, 48 tall) and its chosen pin (56 tall). */
+private val PLACE_TOP = 156.dp
+
+/** How far above the place's sheet (at its half stop) an opened place shows. */
+private val PLACE_FOOT = 16.dp
 
 /** The board's wash over the top of the map: [paper] at 90 % fading to nothing. */
 private fun scrim(paper: Color) = Brush.verticalGradient(listOf(paper.copy(alpha = 0.9f), paper.copy(alpha = 0f)))

@@ -79,15 +79,20 @@ class HomeScreenshotTest {
         compose.settle()
         waitForWeather()
         capture("home_eat")
-        // A row opens its place.
+        // A row opens its place over the home's own map, on no other screen: the Place board's sheet and buttons.
         val first = compose.onAllNodes(hasClickAction() and hasText("′", substring = true)).fetchSemanticsNodes().first()
         compose.onNode(androidx.compose.ui.test.SemanticsMatcher("first row") { it.id == first.id }).performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Share")).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue("now on ${nav.current}", nav.current is Dest.Home)
+        compose.onAllNodes(hasContentDescription("Close the list")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
+        compose.settle()
+        capture("home_place")
+        // Its back closes it, and the category's list is there again.
+        compose.onNodeWithContentDescription("Back").performClick()
         compose.waitForIdle()
-        assertTrue("now on ${nav.current}", nav.current is Dest.Place)
-        // Back closes the place, and back again clears the category.
-        compose.runOnUiThread { nav.back() }
-        compose.waitForIdle()
-        assertTrue(nav.current is Dest.Home)
+        compose.onAllNodes(hasContentDescription("Share")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
+        compose.onNodeWithContentDescription("Close the list").assertExists()
+        assertEquals(listOf<Dest>(Dest.Home()), nav.stack.toList())
     }
 
     @Test
