@@ -97,7 +97,7 @@ class Windows(
      */
     private val fetchDiff: ((DoubleArray, String, String) -> ByteArray)? = null,
     private val clock: () -> Long = System::currentTimeMillis,
-    /** The user's edits to draw: pending or sent, oldest first; the app's EditQueue. */
+    /** The user's edits to draw, those OpenStreetMap accepted, oldest first; the app's EditQueue's mapped edits. */
     private val edits: () -> List<UserEdit> = { emptyList() },
     /**
      * A window's data from Atlas's own packs, newer than the date given where one is ([Packed]); null where no pack

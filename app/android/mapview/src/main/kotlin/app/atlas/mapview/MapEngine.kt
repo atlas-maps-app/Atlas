@@ -320,8 +320,9 @@ object MapEngine {
     fun countryAt(lat: Double, lon: Double): CountryTiles? = countries.firstOrNull { it.holds(lat, lon) }
 
     /**
-     * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),
-     * pending or sent, oldest first; the app sets it with its EditQueue. Read on the windows' background thread.
+     * The user's own edits that OpenStreetMap accepted, which the windows draw until the map's data carries them
+     * (ENGINE.md step 6), oldest first; the app sets it with its EditQueue's mapped edits. One still waiting, or
+     * refused, is not drawn. Read on the windows' background thread.
      */
     @Volatile
     var windowEdits: () -> List<UserEdit> = { emptyList() }

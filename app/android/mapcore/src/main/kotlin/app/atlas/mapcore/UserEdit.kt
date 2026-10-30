@@ -1,10 +1,10 @@
 package app.atlas.mapcore
 
 /**
- * One of the user's own edits to OpenStreetMap waiting on the phone (the app's EditQueue, pending or sent), which the
- * windows draw until the map's data carries it (ENGINE.md step 6; osm/Edits.hpp): its element ([type] "node", "way"
- * or "relation", [id]), the values it sets (null takes a tag away) and those the user saw (null: no such tag), key
- * by key.
+ * One of the user's own edits that OpenStreetMap accepted, kept on the phone (the app's EditQueue.mapped, 90 days),
+ * which the windows draw until the map's data carries it (ENGINE.md step 6; osm/Edits.hpp): its element ([type]
+ * "node", "way" or "relation", [id]), the values it sets (null takes a tag away) and those the user saw (null: no such
+ * tag), key by key.
  */
 data class UserEdit(val type: String, val id: Long, val set: Map<String, String?>, val seen: Map<String, String?>) {
     companion object {
