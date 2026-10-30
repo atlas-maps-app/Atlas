@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
@@ -17,6 +18,8 @@ import app.atlas.mapview.svg.TurbulenceCache
 import app.atlas.render.JpegEncoder
 import app.atlas.render.Relief
 import app.atlas.render.RenderOptions
+import app.atlas.render.data.Countries
+import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.LiveRegions
 import app.atlas.render.live.WxHour
 import java.io.ByteArrayOutputStream
@@ -26,6 +29,15 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** The forecast the live moment is lit by, for a place: what is to hand now, without waiting for the network. */
 fun interface MapWeather {
     fun hours(at: LatLon): List<WxHour>?
+}
+
+/**
+ * A country whose published tiles the core draws: its pack's [id] and [name] ("Netherlands"), and its pack's [box]. A
+ * place is the country's where the box holds it: its windows come from the tiles, and a window the tiles do not list
+ * (a border town over the line, which the box reaches) is built on the phone from its data, as everywhere.
+ */
+data class CountryTiles(val id: String, val name: String, val box: BBox) {
+    fun holds(lat: Double, lon: Double): Boolean = lat in box.south..box.north && lon in box.west..box.east
 }
 
 /** What draws the maps (plan-vector K11, T2): the app's Vulkan core where it has tiles, today's map alone, or neither. */
@@ -67,6 +79,25 @@ object MapEngine {
      */
     @Volatile
     var options: RenderOptions = RenderOptions(haze = false, vignette = false, grain = false, cloudShadows = false)
+
+    /**
+     * The options today's map draws [region] with ([opts], [options] by default): where it still draws in a country whose
+     * tiles the core draws ([countryAt]: beyond the core's reach), the core's light for that country, which in the
+     * Netherlands is the living map's (RenderOptions.tone off), as the core lights every pack there (frame/MapFrame.hpp's
+     * with_pack, by the country of the pack's frame), so a region is not lit warmer than the core's map around it (the
+     * user, 30 October: "Its colors are slightly warmer"). Elsewhere, and before the published list is read, the
+     * renders' own light.
+     */
+    fun optionsFor(region: LiveRegion, opts: RenderOptions = options): RenderOptions =
+        if (livingLight(region.frame.lat0, region.frame.lon0)) opts.copy(tone = false) else opts
+
+    /**
+     * Whether today's map lights a region framed at [lat], [lon] as the living map ([optionsFor]): a country's whose
+     * tiles the core draws, and the Netherlands (the core's load::draws_new_looks).
+     */
+    internal fun livingLight(lat: Double, lon: Double): Boolean = countryAt(lat, lon) != null && Countries.of(LatLon(lat, lon)) == NETHERLANDS
+
+    private const val NETHERLANDS = "NL"
 
     /**
      * Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. The frames are drawn
@@ -290,6 +321,19 @@ object MapEngine {
      */
     @Volatile
     var windowTiles: ((app.atlas.mapcore.MapCore.Window) -> app.atlas.mapview.vk.Windows.Tiled?)? = null
+
+    /**
+     * The countries whose published tiles the core draws (ENGINE.md step 3, one pack per country), from Atlas's published
+     * list as last read (packs-latest's, its copy kept for offline); the app sets it once the list is read. Within one
+     * of them the map never hands a place to today's map while its window comes: the core draws its own cover there and
+     * the windows say what they are doing ([countryAt]; the user, 30 October, on today's map at the edge: "looks
+     * different then the engine"). Empty until the list is read.
+     */
+    @Volatile
+    var countries: List<CountryTiles> = emptyList()
+
+    /** The country whose tiles the core draws at [lat], [lon] ([countries]), or null. */
+    fun countryAt(lat: Double, lon: Double): CountryTiles? = countries.firstOrNull { it.holds(lat, lon) }
 
     /**
      * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),

@@ -73,6 +73,13 @@ data class RenderOptions(
      */
     val rain: Boolean = true,
     val wash: Boolean = true,
+    /**
+     * The light's soft shoulder ([Amsterdam.TONE]) where the app sets it, over what the region's load set (in
+     * LiveEngine.render): null keeps the profile's own, on for the regions' rules and off for the living map's, as the
+     * renders draw; false lights a region as the living map, as the core lights every pack in the Netherlands
+     * (frame/MapFrame.hpp's with_pack), where today's map still draws there (MapEngine.optionsFor).
+     */
+    val tone: Boolean? = null,
 )
 
 /** The living map of render/amsterdam.py. Buildings, roads, nodes and the scene `S` are Python-like dicts, as Generic and Closeup read them. */

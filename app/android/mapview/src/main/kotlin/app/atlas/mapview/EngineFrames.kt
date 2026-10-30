@@ -312,7 +312,7 @@ internal class EngineFrames(
         // closed meanwhile: not even the engine's lock is waited for
         if (closed) return
         val res = LiveEngine.render(
-            region, r.view, r.moment, r.opts,
+            region, r.view, r.moment, MapEngine.optionsFor(region, r.opts),
             progress = { p ->
                 if (p.stage == LiveProgress.Stage.LOADING) setStatus(MapStatus.Loading(p.region))
                 setStage(p.stage.name.lowercase(), p.region)

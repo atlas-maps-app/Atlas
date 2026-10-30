@@ -81,6 +81,17 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private val engineChanged: () -> Unit = {
         frames.invalidate()
         main.post(repack)
+        // the countries whose tiles the core draws came to be known (or changed): the rule places the camera again, at
+        // rest too, so a place of theirs leaves today's map at once rather than at the next touch
+        if (MapEngine.countries !== placedCountries) main.post(placeAgain)
+    }
+
+    /** The countries the rule last placed the camera with ([update]); written on the main thread. */
+    @Volatile
+    private var placedCountries: List<CountryTiles> = emptyList()
+
+    private val placeAgain = Runnable {
+        if (!closed && MapEngine.countries !== placedCountries) update()
     }
 
     /** Bumped on the main thread whenever there is something new to draw; the view's draw reads it. */
@@ -203,6 +214,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
     private var coreLocation = false
     private var coreWanted: Transition.Path? = null
+
+    /**
+     * The core draws its own cover for a place whose window has not come (the place a country's whose tiles it draws,
+     * no window of it on the phone yet: Transition.pathOf): today's map's frame is not drawn, and the windows' line says
+     * what they are doing.
+     */
+    private var coreWaits = false
     private var wantRevision = 0L
     private var canvasFrameAtWant = 0L
     private var transitionJob: Job? = null
@@ -325,13 +343,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         if (frame != want) frame = want
     }
 
-    /** The pack the core draws at the camera now (PackList's choice), or null. */
+    /** The pack the core draws at the camera now (the one the camera names, PackList.named), or null. */
     private fun drawnPack(): PackList.Pack? {
         val c = core ?: return null
         val v = viewport()
         if (v.isEmpty) return null
         val lv = liveView(state.camera, v)
-        return c.packs.choose(lv.lat, lv.lon)
+        return c.packs.named(lv.lat, lv.lon)
     }
 
     /** What the map says of its picture: the core's (complete and shown) where it draws, else today's map's. */
@@ -341,13 +359,29 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val c = core
         val coreDraws = (c == null && coreExpected) || (c != null && coreWanted != Transition.Path.CANVAS)
         val status = if (coreDraws) {
-            if (c != null && c.complete && c.transition.canvas == 0f) MapStatus.Ready else MapStatus.Loading(null)
+            windowStatus() ?: if (c != null && c.complete && c.transition.canvas == 0f) MapStatus.Ready else MapStatus.Loading(null)
         } else {
             frames.status
         }
         if (state.status != status) state.status = status
         val loading = if (coreDraws) status !is MapStatus.Ready else status !is MapStatus.Ready && status !is MapStatus.NoData || frames.busy
         if (state.loading != loading) state.loading = loading
+    }
+
+    /**
+     * What the map is where the core draws a place whose window has not come yet ([coreWaits]): not on the phone, offline;
+     * on its way while the windows take it from its country's tiles, fetch its data or build it; null otherwise.
+     */
+    private fun windowStatus(): MapStatus? {
+        if (!coreWaits) return null
+        if (!MapEngine.online()) return MapStatus.NoData("offline, and this area is not on the phone yet")
+        val target = state.camera.target
+        val where = MapEngine.countryAt(target.lat, target.lon)?.name ?: "this area"
+        return when (val s = MapEngine.windowsNow?.status) {
+            is Windows.Status.Fetching -> MapStatus.Downloading(where, -1, -1, building = !s.tiles)
+            is Windows.Status.Building -> MapStatus.Downloading(where, -1, -1, building = true)
+            else -> null
+        }
     }
 
     /** The view as the camera sees it: its size, density, the principal point the padding and look ahead move, the region's frame. */
@@ -534,8 +568,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
         val lv = liveView(cam, v)
         val n = if (next != null && nextNs > nowNs) liveView(next, v) else null
-        // the window whose box holds the target, whatever the distance: zooming hands nothing over
-        val pack = c.packs.choose(lv.lat, lv.lon)
+        // the window whose box holds the target, whatever the distance: zooming hands nothing over; where none does yet,
+        // the nearest, so the core draws the windows it has around the place
+        val pack = c.packs.named(lv.lat, lv.lon)
         c.source.publish(
             MapCameraSource.Samples(
                 revision = ++cameraRevision,
@@ -842,8 +877,18 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val moment = momentOf(s, state.time, cam.target)
         val c = core
         if (c != null && c.packs.loaded) {
-            // The transitional rule's place: the core where it has tiles for this camera, today's map elsewhere.
-            val wanted = if (c.packs.covers(view.lat, view.lon, view.distance)) Transition.Path.CORE else Transition.Path.CANVAS
+            // The transitional rule's place: the core where it has tiles for this camera, or where the place is a
+            // country's whose tiles it draws (its window on its way), today's map elsewhere.
+            placedCountries = MapEngine.countries
+            val wanted = Transition.pathOf(c.packs, { lat, lon -> MapEngine.countryAt(lat, lon) != null }, view.lat, view.lon, view.distance)
+            // Where the core's own cover stands in for the place's window on its way, today's map's last frame is not
+            // drawn either (the paper and the windows' line meanwhile): none of its other look shows in the country.
+            val waits = wanted == Transition.Path.CORE && !c.packs.covers(view.lat, view.lon, view.distance)
+            if (waits != coreWaits) {
+                coreWaits = waits
+                canvasTick.intValue++
+                noteStatus()
+            }
             if (wanted != coreWanted) {
                 coreWanted = wanted
                 canvasTick.intValue++
@@ -863,6 +908,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                         if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
                     }
                 }
+                // what the windows do now is what the map is, where the place's window has not come yet
+                if (coreWaits) noteStatus()
             }
         }
         if (c != null) {
@@ -961,7 +1008,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         return CanvasWork.idle(
             debug = debug, tape = tape != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
             cover = c.transition.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
-            coreMarkers = coreMarkers, coreLocation = coreLocation,
+            coreMarkers = coreMarkers, coreLocation = coreLocation, waits = coreWaits,
         )
     }
 
@@ -985,7 +1032,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     fun draw(canvas: Canvas) {
         val t0 = System.nanoTime()
         val v = viewport()
-        val f = shown
+        // where the core's own cover stands in for a window on its way, the paper alone under it, never today's map
+        val f = shown?.takeUnless { coreWaits }
         val c = core
         val cover = c?.transition?.canvas ?: 1f
         if (cover > 0f) {
@@ -1044,11 +1092,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /**
      * The map's honest state, when it is not simply the picture: loading, downloading with its size, no data here.
-     * Where the core draws, none: its tiles are on the phone (no "Loading").
+     * Where the core draws, none (its tiles are on the phone: no "Loading"), but where the place's window has not come
+     * yet ([coreWaits]): what the windows are doing.
      */
     private fun drawStatus(canvas: Canvas) {
-        if ((core == null && coreExpected) || (core != null && coreWanted != Transition.Path.CANVAS)) return
-        val text = windowsText() ?: when (val s = frames.status) {
+        val coreDraws = (core == null && coreExpected) || (core != null && coreWanted != Transition.Path.CANVAS)
+        if (coreDraws && !coreWaits) return
+        val text = windowsText() ?: if (coreDraws) return else when (val s = frames.status) {
             is MapStatus.Ready -> return
             is MapStatus.Loading -> if (shown == null) loadingText() else return
             is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
@@ -1067,12 +1117,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     }
 
     /**
-     * Where the core has no tiles yet, what its windows are doing (ENGINE.md step 3), which says why the place is empty:
-     * today's map builds no area of its own there any more. Null where the windows rest.
+     * Where the core has no tiles yet, what its windows are doing (ENGINE.md step 3, Windows.line), which says why the
+     * place is empty: today's map builds no area of its own there any more. Null where the windows rest.
      */
     private fun windowsText(): String? {
         if (core == null) return null
-        if (!MapEngine.online()) return "Offline · this area is not on the phone yet"
+        if (!MapEngine.online()) return Windows.line(online = false, status = null, remainingMs = 0L, country = null)
         val w = MapEngine.windowsNow ?: return null
         val s = w.status
         // while the windows work or wait, the canvas draws again now and then: the status stays true, and the windows'
@@ -1084,18 +1134,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 canvasTick.intValue++
             }, if (s is Windows.Status.Waiting) WINDOWS_WAIT_TICK_MS else WINDOWS_WORK_TICK_MS)
         }
-        return when (s) {
-            Windows.Status.Idle -> null
-            is Windows.Status.Fetching -> "Getting this area from OpenStreetMap…"
-            is Windows.Status.Building -> "Building the map here…"
-            is Windows.Status.Waiting ->
-                if (s.refused) {
-                    "This area's data could not be built"
-                } else {
-                    val minutes = ((w.remaining(s) + 59_999L) / 60_000L).coerceAtLeast(1L)
-                    "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), minutes)
-                }
-        }
+        val target = state.camera.target
+        return Windows.line(true, s, (s as? Windows.Status.Waiting)?.let(w::remaining) ?: 0L, MapEngine.countryAt(target.lat, target.lon)?.name)
     }
 
     private var windowsTickPosted = false

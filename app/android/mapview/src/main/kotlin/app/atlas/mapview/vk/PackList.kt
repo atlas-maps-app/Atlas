@@ -166,6 +166,13 @@ class PackList(
     }
 
     /**
+     * The pack the camera names for a target at [lat], [lon]: [choose]'s, else the listed pack nearest the target (its
+     * box's nearest point), which the core draws with its frame cell's pack. So where the target's own window has not
+     * come yet, the core draws the windows it has around it, its own cover, instead of nothing. Null where none is listed.
+     */
+    fun named(lat: Double, lon: Double): Pack? = choose(lat, lon) ?: packs.minByOrNull { gap(it.box, lat, lon) }
+
+    /**
      * Whether the core has tiles for a camera on [lat], [lon], [distance] metres from it (the transitional rule's
      * place): a pack holds the target, and the target is within the cover's reach ([CORE_REACH]).
      */
@@ -243,5 +250,12 @@ class PackList(
         }
 
         private fun area(b: BBox): Double = b.width.coerceAtLeast(0.0) * b.height.coerceAtLeast(0.0)
+
+        /** How far [lat], [lon] lies from box [b] (0 inside it), in degrees of latitude. */
+        private fun gap(b: BBox, lat: Double, lon: Double): Double {
+            val dLat = maxOf(0.0, b.south - lat, lat - b.north)
+            val dLon = maxOf(0.0, b.west - lon, lon - b.east) * kotlin.math.cos(Math.toRadians(lat))
+            return kotlin.math.hypot(dLat, dLon)
+        }
     }
 }

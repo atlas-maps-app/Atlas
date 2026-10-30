@@ -268,8 +268,8 @@ class WindowsTest {
         assertTrue(fetched.isEmpty())
         assertTrue(packsAsked.isEmpty())
         assertTrue(core.built.isEmpty())
-        // the map's status showed the range fetch as fetching, and the windows rest after it
-        assertTrue(statusAsked.single() is Windows.Status.Fetching)
+        // the map's status showed the range fetch as fetching from the country's tiles, and the windows rest after it
+        assertTrue((statusAsked.single() as Windows.Status.Fetching).tiles)
         assertEquals(Windows.Status.Idle, withTiles.status)
         // not asked for again while the core still wants its place, nor refreshed within the week
         core.wanted = listOf(w)

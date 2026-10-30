@@ -112,5 +112,17 @@ internal class Transition(private val log: (String) -> Unit) {
     companion object {
         /** The cross-fade's length, ms (§0.1). */
         const val FADE_MS = 300L
+
+        /**
+         * The path the place of a camera on [lat], [lon], [distance] metres from it wants: the core where a pack on the
+         * phone holds the target within its cover's reach ([PackList.covers]), and where the target lies within that
+         * reach in a country whose tiles the core draws ([inCountry]): its window on its way (from the country's tiles,
+         * or built on the phone), the core draws its own cover and the windows say what they are doing, never today's
+         * map's other look in between (one look within a country, ENGINE.md step 3; the user, 30 October, on today's map
+         * where a window had not come: "looks different then the engine"). Today's map elsewhere: beyond the core's
+         * reach, and outside those countries where no window is on the phone.
+         */
+        fun pathOf(packs: PackList, inCountry: (Double, Double) -> Boolean, lat: Double, lon: Double, distance: Double): Path =
+            if (packs.covers(lat, lon, distance) || (distance <= PackList.CORE_REACH && inCountry(lat, lon))) Path.CORE else Path.CANVAS
     }
 }

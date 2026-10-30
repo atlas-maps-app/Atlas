@@ -6,6 +6,7 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
+import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
@@ -21,6 +22,8 @@ import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -165,6 +168,20 @@ class MapData(private val services: Services) {
         MapEngine.windowTiles = { w ->
             windowTiles.window(w.z, w.x, w.y, MapCore.Window.version())?.let { app.atlas.mapview.vk.Windows.Tiled(it.bytes, it.date, it.pack) }
         }
+        // the countries whose tiles the core draws, from the published list (its copy kept, offline), read off the main
+        // thread: within them the map never hands a place to today's map while its window comes (MapEngine.countries);
+        // asked again a minute on while no list is to be had
+        services.scope.launch(Dispatchers.IO) {
+            while (true) {
+                val list = runCatching { windowCatalog.packs() }.getOrNull()
+                if (list != null) {
+                    MapEngine.countries = list.filter { it.tiles != null }.map { CountryTiles(it.id, it.name, it.bbox) }
+                    MapEngine.invalidate()
+                    break
+                }
+                delay(COUNTRIES_RETRY_MS)
+            }
+        }
         MapEngine.windowsAllowed = { !services.ciRun }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent
         MapEngine.windowEdits = {
@@ -238,5 +255,8 @@ class MapData(private val services: Services) {
         private const val NEAR_M = 25_000.0
         private const val FRESH_MS = 3_600_000L
         private const val ASK_MS = 300_000L
+
+        /** How long the map waits to ask for the published list again where none was to be had (ms). */
+        private const val COUNTRIES_RETRY_MS = 60_000L
     }
 }

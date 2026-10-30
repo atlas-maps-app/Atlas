@@ -7,6 +7,7 @@ import app.atlas.mapview.EngineFrames
 import java.io.File
 import java.nio.ByteBuffer
 import java.time.Instant
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
@@ -146,7 +147,8 @@ class Windows(
     sealed interface Status {
         data object Idle : Status
 
-        data class Fetching(val since: Long) : Status
+        /** Fetching since [since]: a window's pack from its country's tiles ([tiles]), else its data. */
+        data class Fetching(val since: Long, val tiles: Boolean = false) : Status
 
         data class Building(val since: Long) : Status
 
@@ -343,7 +345,7 @@ class Windows(
     private fun tiled(w: MapCore.Window, now: Long): Boolean? {
         val source = tiles ?: return null
         val t0 = clock()
-        status = Status.Fetching(t0)
+        status = Status.Fetching(t0, tiles = true)
         val got = try {
             source(w) ?: return null
         } catch (e: Exception) {
@@ -581,6 +583,31 @@ class Windows(
          */
         fun waitAfter(refused: Boolean, times: Int): Long =
             if (refused) REFUSED_MS else minOf(RETRY_MS shl (times - 1).coerceIn(0, 10), RETRY_CAP_MS)
+
+        /**
+         * What the map says where the core has no window of the place yet ([status]: what the windows do now; null when
+         * there are none): offline, that the place is not on the phone; taking its pack from [country]'s tiles (its name,
+         * where the place is a country's whose tiles the core draws), or its data from OpenStreetMap's servers (or
+         * Atlas's own packs of them); building it; or waiting [remainingMs] for the servers, or after the core refused its
+         * data. Null where the windows rest.
+         */
+        fun line(online: Boolean, status: Status?, remainingMs: Long, country: String?): String? {
+            if (!online) return "Offline · this area is not on the phone yet"
+            return when (status) {
+                null, Status.Idle -> null
+                is Status.Fetching -> when {
+                    !status.tiles -> "Getting this area from OpenStreetMap…"
+                    country != null -> "Getting this area from the $country map…"
+                    else -> "Getting this area's map…"
+                }
+                is Status.Building -> "Building the map here…"
+                is Status.Waiting -> if (status.refused) {
+                    "This area's data could not be built"
+                } else {
+                    "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L))
+                }
+            }
+        }
 
         /** How old a window's data may grow before it is built again: a week. */
         const val REFRESH_MS = 7 * 24 * 3600 * 1000L

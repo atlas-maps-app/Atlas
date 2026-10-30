@@ -374,8 +374,12 @@ class HomeViewModel(
         /** CI's script of the core's transitional rule (MainActivity's `atlas.vk.script transition`). */
         const val TRANSITION_SCRIPT = "transition"
 
-        /** Where the script goes: Utrecht's centre, which no pack of the core holds. */
-        val AWAY = LatLon(52.0907, 5.1214)
+        /**
+         * Where the script goes: Lille's centre, which no pack of the core holds and no country's tiles the core draws
+         * (within the Netherlands' the core keeps the place while its window comes: Transition.pathOf), so today's map
+         * takes it over (its honest state there: no region covers it).
+         */
+        val AWAY = LatLon(50.6292, 3.0573)
         private const val SCRIPT_WAIT_MS = 180_000L
         private const val SCRIPT_SETTLE_MS = 2_000L
     }

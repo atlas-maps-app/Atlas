@@ -102,6 +102,8 @@ object LiveEngine {
         val loadMillis = (System.nanoTime() - t0) / 1_000_000
         if (cancelled()) return null
         scene.state.restore()
+        // the app's light over the profile's (RenderOptions.tone): TONE is read as the frame is drawn, never in the load
+        opts.tone?.let { Amsterdam.TONE = it }
         setRoots(region)
         // the ground under the target: terrain regions stand the camera on it (a region's own views carry it)
         if (placed.view == null) {
@@ -166,8 +168,9 @@ object LiveEngine {
             placed.view != null -> placed.view
             else -> Lod.bandView(region.id, tolerance)
         }
+        // a scene serves every frame whose options differ only in what the frame's drawing reads (AO, the light's TONE)
         val i = scenes.indexOfFirst { s ->
-            s.region === region && s.loadView == loadView && s.opts.copy(ao = false) == opts.copy(ao = false) &&
+            s.region === region && s.loadView == loadView && s.opts.copy(ao = false, tone = null) == opts.copy(ao = false, tone = null) &&
                 (!region.viewDependent || hypot(s.anchorX - tx, s.anchorZ - tz) <= s.radius / 2)
         }
         if (i >= 0) {
