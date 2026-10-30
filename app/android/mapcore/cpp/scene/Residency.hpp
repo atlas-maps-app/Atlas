@@ -339,6 +339,8 @@ private:
     [[nodiscard]] bool urgent_locked() const noexcept;
     /// Tells the hints whether the frame waits on the workers, when that changed (outside mutex_).
     void hint();
+    /// Tells the hints `urgent` when it differs from what they were told last (under hint_mutex_).
+    void tell(bool urgent);
     [[nodiscard]] static std::uint64_t key_of(tiles::TileKey key, std::string_view pack) noexcept;
 
     const tiles::Store& store_;

@@ -23,7 +23,8 @@ public:
     virtual void joined() = 0;
     /// Whether the frame waits on the workers from now on (a tile it wants in view is queued or under way) or no
     /// longer: their priority and their session follow. Called on the thread that saw the change (the render thread's
-    /// wants, a worker's tile done), once per change, one call at a time.
+    /// wants, a worker's tile done), once per change, one call at a time; the wants' before a worker can take their
+    /// tiles, under the residency's lock, so it calls nothing of the residency.
     virtual void urgent(bool on) = 0;
     /// A piece of the work the frame waits on, done on a worker (a tile's decoding or a pass's stage T): when it began
     /// (the steady clock's nanoseconds, CLOCK_MONOTONIC on Android) and how long it took. On the worker, while others
