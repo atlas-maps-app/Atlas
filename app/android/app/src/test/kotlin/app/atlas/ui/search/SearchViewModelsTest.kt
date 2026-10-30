@@ -5,11 +5,15 @@ import app.atlas.Services
 import app.atlas.model.OsmId
 import app.atlas.places.FactKind
 import app.atlas.providers.Wikidata
+import app.atlas.search.MemoryPlaces
+import app.atlas.search.OfflineEvaluator
+import app.atlas.search.OnlineAnswer
 import app.atlas.search.SearchItem
 import app.atlas.testing.testServices
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -147,6 +151,62 @@ class SearchViewModelsTest {
         assertTrue(vm.state.value.result!!.total <= before)
         assertTrue(vm.state.value.result!!.hits.all { it.near.single().distance <= 50.0 + 1e-6 })
         assertTrue(vm.ql()!!.contains("50"))
+    }
+
+    /**
+     * Without a region on the phone the builder asks Overpass once the typing has rested a second (the user, 30 October:
+     * "are all sources reliable and respond fast?"), where it asked at each pause of 220 ms, a query a word typed.
+     */
+    @Test
+    fun withNothingOnThePhoneOverpassIsAskedOnceTheTypingRests() {
+        val s = testServices()
+        val asked = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val vm = QueryViewModel(
+            s, "", { Services.WESTERKERK }, "en", connected = { true },
+            askOnline = { q, _, ctx ->
+                asked += android.os.SystemClock.uptimeMillis()
+                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList())).run(q, ctx))
+            },
+        )
+        until { !vm.state.value.running }
+        // a word at a time, 400 ms apart on the test's clock: the phone answers each, Overpass none
+        var typedAt = 0L
+        for (t in listOf("cafe", "cafe near", "cafe near bicycle rental")) {
+            vm.onText(t)
+            typedAt = android.os.SystemClock.uptimeMillis()
+            repeat(4) { idle(100); Thread.sleep(30) }
+        }
+        assertTrue(asked.toString(), asked.isEmpty())
+        until { asked.isNotEmpty() && !vm.state.value.running }
+        assertEquals(1, asked.size)
+        assertTrue("${asked[0] - typedAt} ms", asked[0] - typedAt >= QueryViewModel.ONLINE_PAUSE_MS)
+        assertTrue(vm.state.value.online)
+    }
+
+    /** The connection gone while the builder waited for the typing to rest: the phone's answer stands, nothing asked. */
+    @Test
+    fun aConnectionLostWhileTheTypingRestsLeavesThePhonesAnswer() {
+        val s = testServices()
+        var up = true
+        val asked = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val vm = QueryViewModel(
+            s, "", { Services.WESTERKERK }, "en", connected = { up },
+            askOnline = { q, _, ctx ->
+                asked += android.os.SystemClock.uptimeMillis()
+                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList())).run(q, ctx))
+            },
+        )
+        until { !vm.state.value.running }
+        vm.onText("cafe near bicycle rental")
+        // the phone's answer, the builder still looking: Overpass is due once the typing has rested
+        until { vm.state.value.result != null }
+        assertTrue(vm.state.value.running)
+        up = false
+        repeat(12) { idle(100); Thread.sleep(20) }
+        assertTrue(asked.toString(), asked.isEmpty())
+        assertFalse(vm.state.value.running)
+        assertFalse(vm.state.value.online)
+        assertNotNull(vm.state.value.result)
     }
 
     @Test

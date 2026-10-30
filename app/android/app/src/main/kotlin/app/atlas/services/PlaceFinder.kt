@@ -14,8 +14,11 @@ import app.atlas.search.PlaceSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 
 /** Where a list of places came from: a downloaded region's place store, Atlas's own map packs, or Overpass online. */
@@ -30,7 +33,30 @@ data class NearbyPlaces(val places: List<Place>, val source: PlaceOrigin, val er
  */
 fun interface PlaceFinder {
     fun nearby(categoryId: String, centre: LatLon, radiusM: Double, limit: Int): Flow<NearbyPlaces>
+
+    /**
+     * Each of [categoryIds]' first answer as [nearby] gives it, by id; none where nothing answers. Here one category
+     * after another; [LayeredPlaceFinder] asks all those the phone cannot answer in one Overpass query, waited for no
+     * longer than [onlineMs].
+     */
+    suspend fun nearbyMany(categoryIds: List<String>, centre: LatLon, radiusM: Double, limit: Int, onlineMs: Long = NEARBY_ONLINE_MS): Map<String, NearbyPlaces> {
+        val out = LinkedHashMap<String, NearbyPlaces>()
+        for (id in categoryIds.distinct()) {
+            val first = try {
+                withTimeoutOrNull(onlineMs) { nearby(id, centre, radiusM, limit).firstOrNull() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (first != null) out[id] = first
+        }
+        return out
+    }
 }
+
+/** How long [PlaceFinder.nearbyMany] waits for Overpass's one answer: three times what the Where wheel gave each of its eleven. */
+const val NEARBY_ONLINE_MS = 15_000L
 
 /**
  * Places by category in layers: the downloaded regions' place stores first (offline, every tag); where they have
@@ -46,24 +72,13 @@ class LayeredPlaceFinder(
     override fun nearby(categoryId: String, centre: LatLon, radiusM: Double, limit: Int): Flow<NearbyPlaces> = flow {
         val category = Categories.byId(categoryId) ?: throw IllegalArgumentException("no category $categoryId")
         val filter = filterOf(category)
-        store()?.takeIf { it.size > 0 }?.let { s ->
-            val ids = if (category.isGroup) Categories.children(category.id).map { it.id } else listOf(category.id)
-            val found = s.byCategory(ids, BBox.around(centre, radiusM))
-                .map { it.place }
-                .filter { Geo.distance(centre, it.location) <= radiusM }
-            // A region on the phone answers fully: no need for the packs or the network.
-            if (found.isNotEmpty()) {
-                emit(NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE))
-                return@flow
-            }
+        // A region on the phone answers fully: no need for the packs or the network.
+        val found = inStore(category, centre, radiusM)
+        if (found != null) {
+            emit(NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE))
+            return@flow
         }
-        val packed = try {
-            local()?.inPacks(centre, radiusM, filter, limit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            null
-        }
+        val packed = inPacks(centre, radiusM, filter, limit)
         if (packed != null) {
             emit(NearbyPlaces(packed.value, PlaceOrigin.PACK))
             // Packs around the whole circle answer fully, with every tag: nothing more to ask.
@@ -89,6 +104,72 @@ class LayeredPlaceFinder(
             }
         }
     }.flowOn(Dispatchers.Default)
+
+    /**
+     * Each category's first answer, as [nearby] gives it: a region's store, else the map's packs, else Overpass, where
+     * every category the phone cannot answer is asked in one query, its answer sorted into them by their rules on the
+     * phone. The Where wheel asks its eleven so, where it asked Overpass for one category after another, each cut at 5 s
+     * (the user, 30 October: "are all sources reliable and respond fast?").
+     */
+    override suspend fun nearbyMany(categoryIds: List<String>, centre: LatLon, radiusM: Double, limit: Int, onlineMs: Long): Map<String, NearbyPlaces> =
+        withContext(Dispatchers.Default) {
+            val out = LinkedHashMap<String, NearbyPlaces>()
+            val ask = LinkedHashMap<String, Pair<TagFilter, List<String>>>()
+            for (id in categoryIds.distinct()) {
+                val category = Categories.byId(id) ?: continue
+                val filter = filterOf(category)
+                val found = inStore(category, centre, radiusM)
+                if (found != null) {
+                    out[id] = NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE)
+                    continue
+                }
+                val packed = inPacks(centre, radiusM, filter, limit)
+                if (packed != null) {
+                    out[id] = NearbyPlaces(packed.value, PlaceOrigin.PACK)
+                    continue
+                }
+                val selectors = OverpassSelectors.of(filter) ?: continue
+                ask[id] = filter to selectors
+            }
+            val op = overpass()
+            if (ask.isEmpty() || op == null || !online()) return@withContext out
+            val answer = try {
+                val ql = OverpassQl.places(ask.values.flatMap { it.second }.distinct(), OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
+                withTimeoutOrNull(onlineMs) { Result.success(op.places(ql).filter { Categories.isPlace(it.tags) }) }
+                    ?: Result.failure(IOException("Overpass did not answer in ${onlineMs / 1000} s"))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // a failure of the network, or an answer that does not parse (a captive portal's page): said, not thrown
+                Result.failure(e)
+            }
+            for ((id, f) in ask) {
+                out[id] = answer.fold(
+                    { all -> NearbyPlaces(nearest(all.filter { f.first.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
+                    { e -> NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, e.message ?: if (e is IOException) "offline" else e.toString()) },
+                )
+            }
+            out
+        }
+
+    /** What a region's store holds of [category] within [radiusM] of [centre]; null where it holds none, or there is none. */
+    private fun inStore(category: Category, centre: LatLon, radiusM: Double): List<Place>? {
+        val s = store()?.takeIf { it.size > 0 } ?: return null
+        val ids = if (category.isGroup) Categories.children(category.id).map { it.id } else listOf(category.id)
+        return s.byCategory(ids, BBox.around(centre, radiusM))
+            .map { it.place }
+            .filter { Geo.distance(centre, it.location) <= radiusM }
+            .takeIf { it.isNotEmpty() }
+    }
+
+    /** What the map's packs on the phone hold of [filter] within [radiusM] of [centre]; null where none holds the centre. */
+    private fun inPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int): LocalAnswer<List<Place>>? = try {
+        local()?.inPacks(centre, radiusM, filter, limit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
 
     companion object {
         /** A category's rule; a group's is the union of its leaves' rules. */
