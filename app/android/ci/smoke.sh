@@ -64,6 +64,12 @@
 # bits' hash the host build computes), ATLAS_GROUND_HASH (the ground's stage T hash the host build computes),
 # ATLAS_TWIN_HASH (the twin check's hash the host build computes): each as ci/hashes.env holds it, unless the
 # environment sets another.
+# A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
+# of "screens vk pills map truth" (the default, all of them: the debug loop over the screens; VK facts, bench and the
+# crash guard; the frosted pills; the map drawn by the core; the truth phase, which ATLAS_BENCH=0 skips too);
+# ATLAS_SCREENS_SKIP, screens another part opens; ATLAS_SCREENS_PART=<k>/<n>, every n-th of the screens left from the
+# k-th, in the app's order. The part writes the app's whole list (screens-all.txt), its own screens (screens.txt) and
+# its phases (phases.txt), which android.yml's emulator-coverage holds the parts to: each screen and phase once.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 # The hashes the emulator must reproduce, each the host build's: ci/hashes.env's (outside the workflows, so a change of
@@ -80,6 +86,9 @@ IDLE=${ATLAS_IDLE:-20}
 # `timeout` is coreutils (the CI runner has it); a Mac may not.
 LIMIT=""; command -v timeout >/dev/null 2>&1 && LIMIT="timeout 900"
 FAIL=0
+PHASES=${ATLAS_PHASES:-screens vk pills map truth}
+# Whether this part runs phase $1 (ATLAS_PHASES).
+has_phase() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # The device's watchdog. An emulator that dies leaves every later adb call waiting for it ("- waiting for device -") until
 # the job's own timeout: on 28 Oct (7f28e5d) it went offline at the walk screen and the job waited 110 minutes. Gone for
@@ -297,13 +306,29 @@ adb logcat -G 16M >/dev/null 2>&1
 install_apk "$APK" || exit 1
 adb logcat -c
 CLK_TCK=$(adb shell getconf CLK_TCK 2>/dev/null | tr -d '\r'); [[ $CLK_TCK =~ ^[0-9]+$ ]] || CLK_TCK=100
-SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
+APP_SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
 # The list run leaves its process behind (it finishes during the splash screen); a first launch starts a fresh one.
 adb shell am force-stop $PKG
-[ -n "$SCREENS" ] || SCREENS="home"
-# A run by hand may name its own screens.
+[ -n "$APP_SCREENS" ] || APP_SCREENS="home"
+# shellcheck disable=SC2086
+printf '%s\n' $APP_SCREENS > "$OUT/screens-all.txt"
+SCREENS=$APP_SCREENS
+# A run by hand may name its own screens; a part leaves out those another opens, and takes its share of the rest.
 [ -n "${ATLAS_SCREENS:-}" ] && SCREENS="$ATLAS_SCREENS"
-echo "Screens: $SCREENS"
+if [ -n "${ATLAS_SCREENS_SKIP:-}" ]; then
+  # shellcheck disable=SC2086
+  SCREENS=$(printf '%s\n' $SCREENS | grep -v -x -F -f <(printf '%s\n' $ATLAS_SCREENS_SKIP) | tr '\n' ' ')
+fi
+if [ -n "${ATLAS_SCREENS_PART:-}" ]; then
+  # shellcheck disable=SC2086
+  SCREENS=$(printf '%s\n' $SCREENS | awk -v k="${ATLAS_SCREENS_PART%/*}" -v n="${ATLAS_SCREENS_PART#*/}" '(NR - k) % n == 0' | tr '\n' ' ')
+fi
+has_phase screens || SCREENS=""
+# shellcheck disable=SC2086
+printf '%s\n' $SCREENS > "$OUT/screens.txt"
+printf '%s\n' $PHASES > "$OUT/phases.txt"
+echo "Phases: $PHASES"
+echo "Screens: $SCREENS ($(grep -c . "$OUT/screens.txt") of the app's $(grep -c . "$OUT/screens-all.txt"))"
 
 for s in $SCREENS; do
   measure "$s" debug-first
@@ -592,8 +617,10 @@ vk_phase() {
   vk_crashes vkguard3
   fresh_state
 }
-vk_phase
-adb logcat -d > "$OUT/logcat.vk.txt"
+if has_phase vk; then
+  vk_phase
+  adb logcat -d > "$OUT/logcat.vk.txt"
+fi
 
 # --- the frosted pills (plan-vector D5.1, K11b) -----------------------------------------------------------------------
 
@@ -701,7 +728,7 @@ pills_phase() {
   sed 's/^/  core against HWUI: /' "$OUT/pills-home-mad.txt"
   [ $rc_mad -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills are further than MAD 2 from HWUI's"; FAIL=1; }
 }
-pills_phase
+has_phase pills && pills_phase
 
 # --- the map's core (plan-vector K11, Appendix C): the home drawn by the core -----------------------------------------
 
@@ -775,8 +802,10 @@ map_phase() {
   adb exec-out screencap -p > "$OUT/map-off.png"
   vk_crashes mapoff; vk_anr mapoff
 }
-map_phase
-adb logcat -d > "$OUT/logcat.map.txt"
+if has_phase map; then
+  map_phase
+  adb logcat -d > "$OUT/logcat.map.txt"
+fi
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 
@@ -892,7 +921,7 @@ compose() {
   mv "$OUT/$s.atlasmap.new" "$OUT/$s.atlasmap.txt"
 }
 
-if [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
+if has_phase truth && [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
   echo "Truth phase: $APK, then $BENCH_APK"
   truth_runs debug "$APK"
   truth_runs bench "$BENCH_APK"
@@ -905,6 +934,8 @@ if [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
   echo; grep -E '^(device\.(model|soc|cores|cpu|heap|thermal)|app\.|gl\.(version|renderer|highp\.fragment|EXT_multisampled_render_to_texture|KHR_blend_equation_advanced|EXT_shader_framebuffer_fetch|max\.samples):|gl:)' "$OUT/glcaps.txt"
   [ -f "$OUT/home.simpleperf.txt" ] && { echo; sed -n '/^RASTER split/,/^$/p' "$OUT/home.simpleperf.txt"; sed -n '1,3p' "$OUT/home.simpleperf.txt"; }
 else
+  # No truth phase here: phases.txt says so, for emulator-coverage.
+  grep -v -x truth "$OUT/phases.txt" > "$OUT/phases.new"; mv "$OUT/phases.new" "$OUT/phases.txt"
   RUNS="debug-first"
   for s in home filters; do [ -f "$OUT/$s.debug-first.atlasmap.txt" ] && compose "$s"; done
 fi

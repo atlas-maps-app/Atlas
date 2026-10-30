@@ -1,0 +1,5 @@
+# Each ctest entry's measured seconds in each of core.yml's host jobs (Vulkan's run and the one without added
+# up), from the JUnit files of a push run's shards: tools/ctest/shards.py splits a job's entries into shards by
+# them. Refreshed from a run's ctest-costs artifact (ENGINE.md, Checks); an entry missing here counts as its
+# job's median.
+entry

@@ -29,6 +29,9 @@ option(ATLAS_TESTS "Build the unit tests" ${ATLAS_HOST})
 option(ATLAS_BENCH "Build the microbenchmarks" OFF)
 option(ATLAS_FUZZ "Build the fuzz targets" OFF)
 set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into atlas_tests (CI's planted failures)")
+# CI's planted failure of pymath's check (core.yml's canaries): the platform's sin in pymath's place, defined for
+# base/pymath/fdlibm/Trig.cpp alone, so the rest of the canary's build is the host build's own, and ccache's.
+option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
 endif()
@@ -183,6 +186,9 @@ endforeach()
 
 add_library(atlas_stage_p OBJECT ${_stage_p_sources})
 target_link_libraries(atlas_stage_p PUBLIC atlas_stage_p_requirements)
+if(ATLAS_PLANTED_PLATFORM_SIN)
+    set_source_files_properties(base/pymath/fdlibm/Trig.cpp PROPERTIES COMPILE_DEFINITIONS ATLAS_PLANTED_PLATFORM_SIN)
+endif()
 atlas_tidy(atlas_stage_p)
 
 # The packer's tool (stagep/main.cpp): a region's or the living map's render tiles from Overpass's JSON, as the packer
@@ -284,7 +290,38 @@ if(ATLAS_TESTS)
         target_sources(atlas_tests PRIVATE $<TARGET_OBJECTS:atlas_tests_vulkan>)
     endif()
     atlas_tidy(atlas_tests)
-    add_test(NAME atlas_tests COMMAND atlas_tests)
+    # One ctest entry per test file, tests/<area>/<name>.cpp as <area>/<name>, each a process of its own, so ctest -j
+    # runs them side by side and picks a part by label: the area (ctest -L <area>), vk (every *_vk_test.cpp) or
+    # atlas_tests (all of them). doctest's --source-file takes the cases a file defines by their __FILE__, which ends in
+    # tests/<area>/<name>.cpp however the build names the source (-fmacro-prefix-map makes it relative to the
+    # repository, ccache's base_dir relative to the build folder). atlas_tests_rest runs every case none of them takes
+    # (one a header defines, say), so the split loses none, and atlas_tests_split proves it (cmake/TestSplit.cmake).
+    set(_test_patterns "")
+    set(_test_entries "")
+    foreach(source IN LISTS _test_sources _test_vulkan_sources)
+        file(RELATIVE_PATH _test_file "${CMAKE_CURRENT_SOURCE_DIR}/tests" "${source}")
+        if(_test_file STREQUAL "main.cpp")
+            continue()
+        endif()
+        string(REGEX REPLACE "\\.cpp$" "" _test_name "${_test_file}")
+        string(REGEX MATCH "^[^/]+/" _test_area "${_test_file}")
+        string(REGEX REPLACE "/$" "" _test_area "${_test_area}")
+        set(_test_labels atlas_tests ${_test_area})
+        if(_test_file MATCHES "_vk_test\\.cpp$")
+            list(APPEND _test_labels vk)
+        endif()
+        add_test(NAME "${_test_name}" COMMAND atlas_tests "--source-file=*tests/${_test_file}")
+        set_tests_properties("${_test_name}" PROPERTIES LABELS "${_test_labels}")
+        list(APPEND _test_patterns "*tests/${_test_file}")
+        string(APPEND _test_entries "${_test_name}\t--source-file=*tests/${_test_file}\n")
+    endforeach()
+    list(JOIN _test_patterns "," _test_excluded)
+    add_test(NAME atlas_tests_rest COMMAND atlas_tests "--source-file-exclude=${_test_excluded}")
+    string(APPEND _test_entries "atlas_tests_rest\t--source-file-exclude=${_test_excluded}\n")
+    file(WRITE "${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" "${_test_entries}")
+    add_test(NAME atlas_tests_split COMMAND "${CMAKE_COMMAND}" "-DATLAS_TESTS_EXE=$<TARGET_FILE:atlas_tests>"
+        "-DATLAS_TESTS_SPLIT=${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestSplit.cmake")
+    set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
 endif()
 if(ATLAS_BENCH)
     add_subdirectory(bench)
