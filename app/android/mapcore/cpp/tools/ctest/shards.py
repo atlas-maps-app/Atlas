@@ -2,11 +2,13 @@
 """The core's ctest entries split into shards, balanced by their measured cost (core.yml's host jobs).
 
   shards.py plan --tests <ctest --show-only=json-v1> --job <job> --shards <n> --shard <k> --out <file>
-                 [--costs <costs.tsv>] [--cost-data <CTestCostData.txt>] [--every <file>]
+                 [--slots <j>] [--costs <costs.tsv>] [--cost-data <CTestCostData.txt>] [--every <file>]
       The entries of shard k (1..n) of job <job> (a column of costs.tsv, host-debug-x86_64 say), one name a line, for
-      ctest --tests-from-file. The split is the longest-processing-time rule over the measured seconds: the costliest
-      entry first, each to the shard with the least so far (the lowest on a tie), so every shard of the job, computing
-      it from the same build and table, gets the same split. An entry the table lacks counts as the column's median.
+      ctest --tests-from-file. The split is the longest-processing-time rule over the measured seconds and the shards'
+      ctest slots (n times j, ctest -j <j>): the costliest entry first, each to the slot with the least so far (the
+      lowest on a tie), as ctest -j runs a shard's entries the costliest first, so a shard that holds one long entry
+      takes less beside it. Every shard of the job, computing it from the same build and table, gets the same split.
+      An entry the table lacks counts as the column's median.
       It checks that the shards take every entry once, prints each shard's share, and with --cost-data writes ctest's
       own cost file, so ctest -j starts the shard's longest entries first; with --every, every entry's name (the
       plan the costs command holds the shards' runs to).
@@ -84,15 +86,17 @@ def read_tests(path):
     return names
 
 
-def split(names, seconds, shards):
-    """The longest-processing-time rule: [(load, [names])] per shard."""
-    loads = [0.0] * shards
+def split(names, seconds, shards, slots=1):
+    """The longest-processing-time rule over shards * slots slots: [(load, wall, [names])] per shard, its wall the
+    longest of its slots."""
+    loads = [0.0] * (shards * slots)
     parts = [[] for _ in range(shards)]
     for name in sorted(names, key=lambda n: (-seconds[n], n)):
-        k = min(range(shards), key=lambda i: (loads[i], i))
-        parts[k].append(name)
-        loads[k] += seconds[name]
-    return list(zip(loads, parts))
+        i = min(range(len(loads)), key=lambda j: (loads[j], j))
+        parts[i // slots].append(name)
+        loads[i] += seconds[name]
+    return [(sum(seconds[n] for n in part), max(loads[k * slots:(k + 1) * slots]), part)
+            for k, part in enumerate(parts)]
 
 
 def plan(args):
@@ -104,19 +108,20 @@ def plan(args):
     unknown = [name for name in names if name not in measured]
     if not 1 <= args.shard <= args.shards:
         sys.exit(f"shards.py: shard {args.shard} of {args.shards}?")
-    parts = split(names, seconds, args.shards)
-    taken = [name for _, part in parts for name in part]
+    parts = split(names, seconds, args.shards, args.slots)
+    taken = [name for _, _, part in parts for name in part]
     if sorted(taken) != sorted(names):
         sys.exit("shards.py: the shards do not take every entry exactly once")
-    print(f"{args.job}: {len(names)} entries in {args.shards} shards by the measured seconds"
+    print(f"{args.job}: {len(names)} entries in {args.shards} shards of {args.slots} slots by the measured seconds"
           f" ({len(unknown)} not measured, counted as {default:.1f} s each)")
-    for k, (load, part) in enumerate(parts, start=1):
+    for k, (load, wall, part) in enumerate(parts, start=1):
         longest = max((seconds[n] for n in part), default=0.0)
         mark = " <- this one" if k == args.shard else ""
-        print(f"  shard {k}/{args.shards}: {len(part)} entries, {load:.0f} s in all, the longest {longest:.0f} s{mark}")
+        print(f"  shard {k}/{args.shards}: {len(part)} entries, {load:.0f} s in all, about {wall:.0f} s in its slots,"
+              f" the longest {longest:.0f} s{mark}")
     if unknown and len(unknown) <= 20:
         print("  not measured yet: " + ", ".join(unknown))
-    mine = parts[args.shard - 1][1]
+    mine = parts[args.shard - 1][2]
     Path(args.out).write_text("".join(f"{name}\n" for name in mine), encoding="utf-8")
     if args.every:
         Path(args.every).parent.mkdir(parents=True, exist_ok=True)
@@ -205,6 +210,7 @@ def main():
     p.add_argument("--job", required=True)
     p.add_argument("--shards", type=int, required=True)
     p.add_argument("--shard", type=int, required=True)
+    p.add_argument("--slots", type=int, default=1)
     p.add_argument("--out", required=True)
     p.add_argument("--cost-data")
     p.add_argument("--every")
