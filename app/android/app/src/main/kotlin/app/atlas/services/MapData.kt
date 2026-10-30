@@ -186,7 +186,7 @@ class MapData(private val services: Services) {
             while (true) {
                 val list = runCatching { windowCatalog.packs() }.getOrNull()
                 if (list != null) {
-                    MapEngine.countries = list.filter { it.tiles != null }.map { CountryTiles(it.id, it.name, it.bbox) }
+                    MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { CountryTiles(it.id, it.name, it.bbox) }
                     MapEngine.invalidate()
                     break
                 }

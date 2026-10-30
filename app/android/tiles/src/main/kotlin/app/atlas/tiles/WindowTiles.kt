@@ -14,7 +14,8 @@ import java.time.Instant
  *
  * Another core's tiles are never taken: a window's pack is what the core of [TilesIndex.version] builds, and another
  * stage P or style builds other tiles. packs.json names each index's version ([PackFile.coreVersion]), so an index of
- * another core is not even downloaded. Each index is downloaded whole once, held to packs.json's SHA-256, and kept in
+ * another core is not even downloaded, and where a country publishes the tiles of two cores (the new one's and the one
+ * before's, [Pack.tileSets]) the phone takes its own core's. Each index is downloaded whole once, held to packs.json's SHA-256, and kept in
  * [dir] beside the windows' data indexes ([WindowPacks]; one per pack, the one of an older release removed), so a
  * window costs one range of its own bytes. One instance per app; its calls block, on the windows' own thread.
  */
@@ -49,13 +50,13 @@ class WindowTiles(
     fun window(z: Int, x: Int, y: Int, version: String): Tiled? {
         if (z != LEVEL) return null
         val list = reads.list() ?: return null
-        val holding = list.filter { it.tiles != null && it.tilesIndex?.coreVersion == version && PackReads.holds(it, x, y) }
-        for (pack in holding.sortedByDescending { it.osmTime ?: Instant.EPOCH }) {
-            val index = indexOf(pack)
+        val holding = list.filter { PackReads.holds(it, x, y) }.mapNotNull { p -> p.tilesOf(version)?.let { p to it } }
+        for ((pack, set) in holding.sortedByDescending { it.first.osmTime ?: Instant.EPOCH }) {
+            val index = indexOf(pack, set)
             if (index.level != LEVEL || index.version != version) continue
             val e = index.find(x, y) ?: continue
             if (!e.drawn) return Tiled(ByteArray(0), index.date, pack.id)
-            val bytes = reads.range(pack.tiles!!, e.offset, e.length)
+            val bytes = reads.range(set.tiles, e.offset, e.length)
             if (!PackReads.sha256(bytes).contentEquals(e.sha256)) {
                 throw IOException("window $z/$x/$y of pack ${pack.id}: not the tiles its index names")
             }
@@ -69,10 +70,10 @@ class WindowTiles(
         return null
     }
 
-    /** [pack]'s tiles index, from memory, from the folder, else downloaded. */
+    /** [pack]'s tiles index of [set], from memory, from the folder, else downloaded. */
     @Synchronized
-    private fun indexOf(pack: Pack): TilesIndex {
-        val file = pack.tilesIndex!!
+    private fun indexOf(pack: Pack, set: TileSet): TilesIndex {
+        val file = set.index
         val sha = file.sha256?.lowercase() ?: throw IOException("pack ${pack.id}: its tiles' index names no SHA-256")
         indexes[pack.id]?.takeIf { it.first == sha }?.let { return it.second }
         val read = try {
@@ -81,7 +82,7 @@ class WindowTiles(
             throw IOException("pack ${pack.id}: its tiles' index does not read: ${e.message}", e)
         }
         // an index of other tiles than the file packs.json publishes beside it would name other bytes
-        val tiles = pack.tiles!!.bytes
+        val tiles = set.tiles.bytes
         if (read.tilesBytes != tiles) throw IOException("pack ${pack.id}: its tiles' index is of ${read.tilesBytes} bytes of tiles, its tiles are $tiles")
         indexes[pack.id] = sha to read
         return read

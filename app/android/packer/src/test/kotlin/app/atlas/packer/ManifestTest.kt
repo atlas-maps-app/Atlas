@@ -273,6 +273,8 @@ class ManifestTest {
         )
         assertEquals(listOf(TilesIndex.VERSION, 14, 3), listOf("format", "level", "windows").map { index[it]!!.jsonPrimitive.int })
         assertEquals(version, index["core_version"]!!.jsonPrimitive.content)
+        // and the tiles name it too, which pairs them with their index
+        assertEquals(version, data["core_version"]!!.jsonPrimitive.content)
         // run again on the parts: the entry already written stands
         assertEquals(e, packs(Manifest.build(dir, base, null)).single())
         // a run with neither keeps the earlier entries
@@ -281,11 +283,102 @@ class ManifestTest {
         val kept = packs(Manifest.build(later, base, null, previous = Manifest.build(dir, base, null))).single()
         assertEquals(files.drop(1), kept["files"]!!.jsonArray.map { it.jsonObject }.drop(1))
         // and the app sees both, with the version its core must have
-        val pack = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single()
-        assertTrue(pack.tiles!!.isSplit)
-        assertEquals(2500L, pack.tiles!!.bytes)
-        assertEquals("$base/netherlands.tiles.idx", pack.tilesIndex!!.url)
-        assertEquals(version, pack.tilesIndex!!.coreVersion)
+        val set = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single().tilesOf(version)!!
+        assertTrue(set.tiles.isSplit)
+        assertEquals(2500L, set.tiles.bytes)
+        assertEquals("$base/netherlands.tiles.idx", set.index.url)
+        assertEquals(version, set.index.coreVersion)
+    }
+
+    /** A country's tiles of core [version] in [dir], as `packer country` writes them: [bytes] of tiles, two windows. */
+    private fun countryTiles(dir: File, version: String, bytes: Int = 300) {
+        File(dir, "netherlands.tiles").writeBytes(ByteArray(bytes) { (it * 7 + version.length).toByte() })
+        val entries = listOf(TilesIndex.Entry(8414, 5384, 0, 200, ByteArray(32) { 1 }), TilesIndex.Entry(8414, 5385, 200, bytes - 200, ByteArray(32) { 2 }))
+        File(dir, "netherlands.tiles.idx").outputStream().use {
+            TilesIndex.of(14, Instant.parse("2026-10-30T20:21:24Z"), bytes.toLong(), version, "the country's style".toByteArray(), entries).write(it)
+        }
+    }
+
+    private var runs = 0
+
+    /**
+     * A build job's run for the Netherlands at core [version] into release [tag], then the publishing job's on
+     * [previous] (packs-latest's list): the list it publishes, and the build's entry (`netherlands.pack.json`).
+     */
+    private fun republish(tag: String, version: String, previous: JsonObject, bytes: Int = 300): Pair<JsonObject, File> {
+        val run = ++runs
+        val built = tmp.newFolder("build-$run")
+        placesFiles(built, "netherlands")
+        countryTiles(built, version, bytes)
+        val release = "https://github.com/atlas-maps-app/Atlas/releases/download/$tag"
+        Manifest.build(built, release, null)
+        val entry = File(built, "netherlands.pack.json")
+        val entries = tmp.newFolder("publish-$run").also { entry.copyTo(File(it, entry.name)) }
+        return Manifest.build(entries, release, null, previous) to entry
+    }
+
+    @Test
+    fun aRepublishKeepsTheTilesOfTheCoreVersionBeforeForThePhonesNotUpdatedYet() {
+        // packs-latest's list as packs-20261029 published it: alpha 22's core-p9 tiles, their index of format 1
+        val p9 = "core-p9 s1.1-49f47f3df1d91a4f"
+        val p11 = "core-p11 s1.1-49f47f3df1d91a4f"
+        val old = "https://github.com/atlas-maps-app/Atlas/releases/download/packs-20261029"
+        val published = Json.parseToJsonElement(
+            """{"format": 1, "generated": "2026-10-29T22:40:19Z", "packs": [{"id": "netherlands", "name": "Netherlands", "country": "NL",
+                "bbox": [3.3, 50.7, 7.2, 53.6], "osm_timestamp": "2026-10-28T21:21:02Z", "release": "packs-20261029", "files": [
+                {"kind": "places", "name": "netherlands.places.db.gz", "bytes": 387060870, "sha256": "aa", "url": "$old/netherlands.places.db.gz"},
+                {"kind": "tiles", "name": "netherlands.tiles", "bytes": 824584237, "sha256": "bb", "url": "$old/netherlands.tiles"},
+                {"kind": "tiles-index", "name": "netherlands.tiles.idx", "bytes": 1209995, "sha256": "cc", "url": "$old/netherlands.tiles.idx",
+                 "format": 1, "level": 14, "windows": 23268, "core_version": "$p9"}]}]}""",
+        ).jsonObject
+        val oldSet = packs(published).single()["files"]!!.jsonArray.drop(1)
+        fun kinds(o: JsonObject) = packs(o).single()["files"]!!.jsonArray.map { it.jsonObject["kind"]!!.jsonPrimitive.content }
+        fun versions(o: JsonObject) = packs(o).single()["files"]!!.jsonArray.map { it.jsonObject }
+            .filter { it["kind"]!!.jsonPrimitive.content == "tiles-index" }.map { it["core_version"]!!.jsonPrimitive.content }
+
+        // the republish at core-p11: its own tiles, and alpha 22's kept ahead of them, as they were published
+        val (first, built) = republish("packs-20261102", p11, published)
+        assertEquals(listOf("places", "tiles", "tiles-index", "tiles", "tiles-index"), kinds(first))
+        assertEquals(oldSet, packs(first).single()["files"]!!.jsonArray.drop(1).take(2))
+        assertEquals(listOf(p9, p11), versions(first))
+        val pack = PackCatalog.parse(Manifest.pretty(first)).packs.single()
+        assertEquals("packs-20261102", pack.release)
+        // each phone finds its own core's: alpha 22's (which reads the first tiles and index alone) and the new one's
+        assertEquals("$old/netherlands.tiles", pack.tilesOf(p9)!!.tiles.url)
+        assertEquals(p9, pack.files.first { it.kind == PackFile.TILES_INDEX }.coreVersion)
+        assertEquals("$old/netherlands.tiles", pack.files.first { it.kind == PackFile.TILES }.url)
+        val new = pack.tilesOf(p11)!!
+        assertEquals("https://github.com/atlas-maps-app/Atlas/releases/download/packs-20261102/netherlands.tiles", new.tiles.url)
+        assertEquals(p11, new.tiles.coreVersion)
+        assertEquals(listOf(p9, p11), pack.tileSets.map { it.index.coreVersion })
+        // the pack's size is the new core's: the tiles kept for the phones before it are not counted
+        assertEquals(pack.places!!.bytes + new.tiles.bytes + new.index.bytes, pack.downloadBytes)
+        // the publishing job run again: the same list
+        val again = tmp.newFolder("again").also { built.copyTo(File(it, built.name)) }
+        assertEquals(packs(first), packs(Manifest.build(again, "https://github.com/atlas-maps-app/Atlas/releases/download/packs-20261102", null, first)))
+
+        // a month on at the same core: its new tiles replace the old ones of their version, alpha 22's stay
+        val month = republish("packs-20261202", p11, first, bytes = 320).first
+        assertEquals(listOf(p9, p11), versions(month))
+        assertEquals(oldSet, packs(month).single()["files"]!!.jsonArray.drop(1).take(2))
+        assertEquals(320L, PackCatalog.parse(Manifest.pretty(month)).packs.single().tilesOf(p11)!!.tiles.bytes)
+        // the next core: the one before it stays, alpha 22's goes; one set kept, never more
+        val p12 = "core-p12 s1.1-49f47f3df1d91a4f"
+        val next = republish("packs-20261203", p12, month).first
+        assertEquals(listOf(p11, p12), versions(next))
+        assertEquals(listOf("places", "tiles", "tiles-index", "tiles", "tiles-index"), kinds(next))
+        assertTrue(packs(next).single()["files"].toString().contains("packs-20261202/netherlands.tiles"))
+        // a second run the same day at another core replaces the day's core-p12 tiles in their release: those are not
+        // kept (their files are the new ones now), and the newest still published, core-p11's, stays
+        val p13 = "core-p13 s1.1-49f47f3df1d91a4f"
+        val sameDay = republish("packs-20261203", p13, next).first
+        assertEquals(listOf(p11, p13), versions(sameDay))
+        // and with none other published, none
+        val alone = JsonObject(next + ("packs" to JsonArray(listOf(packs(next).single().let { e ->
+            JsonObject(e + ("files" to JsonArray(e["files"]!!.jsonArray.filterIndexed { i, _ -> i == 0 || i >= 3 })))
+        }))))
+        assertEquals(listOf(p12), versions(alone))
+        assertEquals(listOf(p13), versions(republish("packs-20261203", p13, alone).first))
     }
 
     @Test

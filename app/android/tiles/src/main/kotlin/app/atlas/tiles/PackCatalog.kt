@@ -34,7 +34,10 @@ data class PackFile(
     val rawBytes: Long? = null,
     /** The store's schema version. */
     val schema: String? = null,
-    /** A tiles index's core version (TilesIndex.version: the windows' stage P and style), read before it is downloaded. */
+    /**
+     * A tiles index's core version (TilesIndex.version: the windows' stage P and style), read before it is downloaded;
+     * on the tiles beside it too, since lists of 30 October on.
+     */
     val coreVersion: String? = null,
 ) {
     /** The URL of a file published whole. */
@@ -83,22 +86,37 @@ data class Pack(
     /** Where each window's data lies in [windows]. */
     val windowsIndex: PackFile? get() = files.firstOrNull { it.kind == PackFile.WINDOWS_INDEX }
 
-    /** The country's tiles, when the pack has them with their index. */
-    val tiles: PackFile? get() = files.firstOrNull { it.kind == PackFile.TILES }?.takeIf { tilesIndex != null }
+    /**
+     * The country's tiles with their index, a set for each core version the list publishes: the k-th tiles file with the
+     * k-th index, the newest last. Since a republish keeps the core version before beside the new one (`packer
+     * manifest`), so that a phone whose core is a version behind still finds tiles it builds, a list may hold two; a
+     * phone takes the set its own core built ([tilesOf]). A tiles file that names a core version other than its index's
+     * pairs with none.
+     */
+    val tileSets: List<TileSet>
+        get() = files.filter { it.kind == PackFile.TILES }.zip(files.filter { it.kind == PackFile.TILES_INDEX }, ::TileSet)
+            .filter { it.tiles.coreVersion == null || it.tiles.coreVersion == it.index.coreVersion }
 
-    /** Where each window's pack lies in [tiles]. */
-    val tilesIndex: PackFile? get() = files.firstOrNull { it.kind == PackFile.TILES_INDEX }
+    /** The tiles the core of window version [version] builds (MapCore.Window.version), if the pack has them. */
+    fun tilesOf(version: String): TileSet? = tileSets.firstOrNull { it.index.coreVersion == version }
+
+    /** The files a phone of the newest core takes: all but the tiles kept for a core before it. */
+    private val current: List<PackFile>
+        get() = tileSets.dropLast(1).flatMap { listOf(it.tiles, it.index) }.let { older -> files.filter { f -> older.none { it === f } } }
 
     /** Bytes to download for the whole pack. */
-    val downloadBytes: Long get() = files.sumOf { it.bytes }
+    val downloadBytes: Long get() = current.sumOf { it.bytes }
 
     /** Bytes the pack takes on the phone once unpacked. */
-    val diskBytes: Long get() = files.sumOf { it.diskBytes }
+    val diskBytes: Long get() = current.sumOf { it.diskBytes }
 
     val osmTime: Instant? get() = osmTimestamp?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
     fun covers(p: LatLon): Boolean = p in bbox
 }
+
+/** A country's tiles ([tiles]: each window's pack as the core builds it) and where each window lies in them ([index], with its core version). */
+data class TileSet(val tiles: PackFile, val index: PackFile)
 
 /** The published list: when it was made, the attribution its data needs, and the packs. */
 data class PackList(val generated: String?, val attribution: String?, val packs: List<Pack>)

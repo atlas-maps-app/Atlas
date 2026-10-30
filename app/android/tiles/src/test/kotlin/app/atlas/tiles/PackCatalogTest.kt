@@ -153,7 +153,7 @@ class PackCatalogTest {
         assertTrue(big.isSplit)
         assertEquals(listOf(400L, 400L, 200L), big.parts.map { it.bytes })
         assertNull(list.packs[1].places)
-        assertNull(lux.tiles)
+        assertTrue(lux.tileSets.isEmpty())
     }
 
     @Test
@@ -166,13 +166,48 @@ class PackCatalogTest {
             {"id":"lone","name":"Tiles without their index","bbox":[0,0,1,1],
             "files":[{"kind":"tiles","name":"lone.tiles","bytes":10,"url":"https://example.org/lone.tiles"}]}]}"""
         val list = PackCatalog.parse(text)
-        val nl = list.packs[0]
-        assertEquals(3000L, nl.tiles!!.bytes)
-        assertTrue(nl.tiles!!.isSplit)
-        assertEquals("core-p8 s1.1-0123456789abcdef", nl.tilesIndex!!.coreVersion)
-        assertNull(nl.windows)
+        val nl = list.packs[0].tilesOf("core-p8 s1.1-0123456789abcdef")!!
+        assertEquals(3000L, nl.tiles.bytes)
+        assertTrue(nl.tiles.isSplit)
+        assertEquals("https://example.org/netherlands.tiles.idx", nl.index.url)
+        assertNull(list.packs[0].tilesOf("core-p9 s1.1-0123456789abcdef"))
+        assertNull(list.packs[0].windows)
         // tiles are taken only with their index
-        assertNull(list.packs[1].tiles)
+        assertTrue(list.packs[1].tileSets.isEmpty())
+    }
+
+    @Test
+    fun aCountryWithTwoCoresTilesGivesEachCoreItsOwnAndCountsTheNewestAlone() {
+        val p9 = "core-p9 s1.1-49f47f3df1d91a4f"
+        val p11 = "core-p11 s1.1-49f47f3df1d91a4f"
+        // a republish keeps the tiles of the core before beside the new ones, ahead of them (packer's
+        // Manifest.keepingTiles); tiles kept from a list before 30 October name no version, the new ones their index's
+        fun tiles(release: String, bytes: Long, core: String?): String =
+            "{\"kind\":\"tiles\",\"name\":\"netherlands.tiles\",\"bytes\":$bytes,\"url\":\"https://example.org/$release/netherlands.tiles\"" +
+                (if (core != null) ",\"core_version\":\"$core\"" else "") + "}"
+        fun index(release: String, core: String): String =
+            "{\"kind\":\"tiles-index\",\"name\":\"netherlands.tiles.idx\",\"bytes\":10," +
+                "\"url\":\"https://example.org/$release/netherlands.tiles.idx\",\"core_version\":\"$core\"}"
+        fun pack(vararg files: String): Pack = PackCatalog.parse(
+            "{\"format\":1,\"packs\":[{\"id\":\"netherlands\",\"name\":\"Netherlands\",\"country\":\"NL\",\"bbox\":[3.3,50.7,7.2,53.6]," +
+                "\"files\":[" + files.joinToString(",") + "]}]}",
+        ).packs.single()
+        val places = "{\"kind\":\"places\",\"name\":\"netherlands.places.db.gz\",\"bytes\":100,\"url\":\"https://example.org/packs-20261102/netherlands.places.db.gz\"}"
+        val nl = pack(places, tiles("packs-20261029", 3000, null), index("packs-20261029", p9), tiles("packs-20261102", 2000, p11), index("packs-20261102", p11))
+        assertEquals(listOf(p9, p11), nl.tileSets.map { it.index.coreVersion })
+        assertEquals("https://example.org/packs-20261029/netherlands.tiles", nl.tilesOf(p9)!!.tiles.url)
+        assertEquals("https://example.org/packs-20261102/netherlands.tiles", nl.tilesOf(p11)!!.tiles.url)
+        assertNull(nl.tilesOf("core-p10 s1.1-49f47f3df1d91a4f"))
+        // a phone of the core before reads the first tiles and index alone: the ones kept for it
+        assertEquals(p9, nl.files.first { it.kind == PackFile.TILES_INDEX }.coreVersion)
+        assertEquals("https://example.org/packs-20261029/netherlands.tiles", nl.files.first { it.kind == PackFile.TILES }.url)
+        // the pack's size is the newest core's: the places, its tiles and their index
+        assertEquals(100L + 2000L + 10L, nl.downloadBytes)
+        assertEquals(100L + 2000L + 10L, nl.diskBytes)
+        // tiles that name another core than their index pair with none
+        val crossed = pack(places, tiles("packs-20261029", 3000, null), index("packs-20261029", p9), tiles("packs-20261102", 2000, "core-p12 s1.1-49f47f3df1d91a4f"), index("packs-20261102", p11))
+        assertNull(crossed.tilesOf(p11))
+        assertEquals(listOf(p9), crossed.tileSets.map { it.index.coreVersion })
     }
 
     @Test

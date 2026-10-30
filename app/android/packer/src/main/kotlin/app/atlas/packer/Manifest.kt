@@ -34,7 +34,7 @@ import java.time.Instant
  * index (`packer windows`), and the country's tiles with their index (`packer country`: each window's pack as the core
  * builds it, the index naming the core's version). The data and the tiles are cut into parts over the split size, the
  * indexes stay whole. A build job writes one `<id>.pack.json` per region it built; the publishing job merges those
- * with the previous list.
+ * with the previous list, keeping the tiles of the core version before a region's new ones beside them ([keepingTiles]).
  */
 object Manifest {
     /** Bumped when a reader would misread the file. */
@@ -75,8 +75,8 @@ object Manifest {
      * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, places `<id>.places.db.gz`
      * with its `<id>.places.json` sidecar, windows' data `<id>.windows` with its index `<id>.windows.idx`, tiles
      * `<id>.tiles` with their index `<id>.tiles.idx`), their URLs under [urlBase], and returns the merged list: the [previous]
-     * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before. With
-     * [regions], only listed regions stay, in their order.
+     * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before but for the
+     * tiles of the core version before its own ([keepingTiles]). With [regions], only listed regions stay, in their order.
      */
     fun build(
         dir: File,
@@ -94,7 +94,8 @@ object Manifest {
         val names = dir.listFiles()?.map { it.name }.orEmpty().sorted()
         for (n in names) if (n.endsWith(PACK_SUFFIX)) {
             val o = Json.parseToJsonElement(File(dir, n).readText()).jsonObject
-            entries[o.str("id") ?: n.removeSuffix(PACK_SUFFIX)] = o
+            val id = o.str("id") ?: n.removeSuffix(PACK_SUFFIX)
+            entries[id] = keepingTiles(o, entries[id])
         }
         val fresh = names.mapNotNull { n ->
             when {
@@ -111,7 +112,7 @@ object Manifest {
         for (id in fresh) {
             val entry = entry(dir, id, base, byId?.get(id), entries[id], splitBytes)
             File(dir, id + PACK_SUFFIX).writeText(pretty(entry) + "\n")
-            entries[id] = entry
+            entries[id] = keepingTiles(entry, entries[id])
         }
         val ordered = if (regions != null) regions.mapNotNull { entries[it.id] } else entries.keys.sorted().map { entries.getValue(it) }
         return buildJsonObject {
@@ -137,7 +138,9 @@ object Manifest {
         val tilesIndex = File(dir, id + TILES_INDEX_SUFFIX).takeIf { it.isFile }
         val tilesHead = tilesIndex?.let { TilesIndex.read(it.readBytes()) }
         val earlier = before?.get("files")?.let { it as? JsonArray }?.mapNotNull { it as? JsonObject }.orEmpty()
-        fun earlier(kind: String) = earlier.firstOrNull { it.str("kind") == kind }
+        // of the tiles, the newest set (listed last, after the core version's before it)
+        fun earlier(kind: String) =
+            if (kind == PackFile.TILES || kind == PackFile.TILES_INDEX) earlier.lastOrNull { it.str("kind") == kind } else earlier.firstOrNull { it.str("kind") == kind }
         require(places != null || atlas != null || windows != null || windowsIndex != null || tiles != null || tilesIndex != null || earlier.isNotEmpty()) {
             "no files for region $id in $dir"
         }
@@ -176,9 +179,11 @@ object Manifest {
             put("query", indexHead.query)
             put("windows", indexHead.size)
         } else earlier(PackFile.WINDOWS_INDEX)
+        // the tiles name their core's version too, which pairs them with their index where a list keeps two cores' tiles
         val tilesEntry = if (tiles != null) buildJsonObject {
             put("kind", PackFile.TILES)
             file(tiles, base, splitBytes)
+            tilesHead?.let { put("core_version", it.version) }
         } else earlier(PackFile.TILES)
         // whole, as the windows' index; the core's version, so the phone takes the tiles only where its core builds them
         val tilesIndexEntry = if (tilesIndex != null && tilesHead != null) buildJsonObject {
@@ -222,6 +227,39 @@ object Manifest {
             }
         }
     }
+
+    /**
+     * [entry], a region's new entry, with the tiles of the core version before its own from [before] (the entry it
+     * replaces) kept ahead of its own: a phone takes only the tiles its own core builds (WindowTiles), so a phone whose
+     * core is a version behind (the app not updated yet) still finds its own instead of building every window from
+     * Overpass. Of [before]'s tile sets (the k-th tiles with the k-th index, as the app pairs them: Pack.tileSets) of a
+     * core version other than [entry]'s, the newest (the last listed) stays, and only one; one whose files [entry]'s
+     * replaced in the same release (the same URL) does not. The kept set comes first, as a phone before 30 October takes
+     * the first tiles and index alone. An entry without tiles of a named version, or already with two sets, stands.
+     */
+    fun keepingTiles(entry: JsonObject, before: JsonObject?): JsonObject {
+        val files = entry.files()
+        val own = tileSets(files)
+        if (before == null || own.size != 1) return entry
+        val version = own.single().second.str("core_version") ?: return entry
+        val urls = own.single().toList().flatMap { urlsOf(it) }.toSet()
+        val kept = tileSets(before.files()).lastOrNull { (t, i) ->
+            i.str("core_version").let { it != null && it != version } && (urlsOf(t) + urlsOf(i)).none { it in urls }
+        } ?: return entry
+        val at = files.indexOf(own.single().first)
+        val out = files.subList(0, at) + kept.toList() + files.subList(at, files.size)
+        return JsonObject(entry + ("files" to JsonArray(out)))
+    }
+
+    private fun JsonObject.files(): List<JsonObject> = (this["files"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+
+    /** A list's tile sets: the k-th tiles with the k-th index, as the app pairs them. */
+    private fun tileSets(files: List<JsonObject>): List<Pair<JsonObject, JsonObject>> =
+        files.filter { it.str("kind") == PackFile.TILES }.zip(files.filter { it.str("kind") == PackFile.TILES_INDEX })
+
+    /** Where a file of a list is fetched from: its URL, or its parts'. */
+    private fun urlsOf(file: JsonObject): List<String> =
+        file.str("url")?.let(::listOf) ?: (file["parts"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.str("url") }.orEmpty()
 
     /** The release tag in a `…/releases/download/<tag>` URL. */
     fun releaseOf(base: String): String? = Regex("/releases/download/([^/]+)$").find(base)?.groupValues?.get(1)

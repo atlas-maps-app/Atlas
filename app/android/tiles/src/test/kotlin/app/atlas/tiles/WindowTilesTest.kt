@@ -18,8 +18,8 @@ import java.time.Instant
  * A window's pack from its country's tiles, on GitHub releases faked by MockWebServer: the index downloaded once and
  * kept beside the windows' data indexes, each window by a range of its own bytes (two where it spans two parts), held
  * to the index, its style written back whole from the country's; a window with nothing to draw answered without
- * bytes; the newest country that holds a window; and no answer where no country holds it, or where another core built
- * the tiles.
+ * bytes; the newest country that holds a window; each phone its own core's tiles where a country publishes two cores';
+ * and no answer where no country holds it, or where another core built the tiles.
  */
 class WindowTilesTest {
     private val gh = FakeGitHub()
@@ -173,6 +173,32 @@ class WindowTilesTest {
         // the phone's own core's tiles
         val own = listOf(publish("netherlands", country(), date))
         assertArrayEquals(country().packs[westerkerk], WindowTiles({ own }, tempDir("own")).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+    }
+
+    @Test
+    fun aCountryPublishingTwoCoresTilesGivesEachPhoneItsOwn() {
+        // a republish keeps the tiles of the core before ahead of the new ones (packer's Manifest.keepingTiles), for
+        // the phones not updated yet
+        val before = "core-p7 s1.1-fedcba9876543210"
+        val old = country(date.minusSeconds(86_400L), core = before)
+        val new = country()
+        val kept = publish("netherlands-before", old, date, core = before)
+        val own = publish("netherlands", new, date)
+        val list = listOf(own.copy(files = kept.files + own.files))
+        fun asked() = gh.storageRequests.map { it.url.encodedPath.substringAfterLast('/') }
+        // the phone of this core: its own tiles; the other core's index is not even downloaded
+        val got = WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!
+        assertArrayEquals(new.packs[westerkerk], got.bytes)
+        assertEquals(date, got.date)
+        assertEquals(listOf("netherlands.tiles.idx", "netherlands.tiles"), asked())
+        // a phone of the core before: the tiles kept for it, and nothing of the new ones
+        gh.storageRequests.clear()
+        val older = WindowTiles({ list }, tempDir("before")).window(14, westerkerk.first, westerkerk.second, before)!!
+        assertArrayEquals(old.packs[westerkerk], older.bytes)
+        assertEquals(date.minusSeconds(86_400L), older.date)
+        assertEquals(listOf("netherlands-before.tiles.idx", "netherlands-before.tiles"), asked())
+        // and a core of neither: none
+        assertNull(WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, "core-p6 s1.1-fedcba9876543210"))
     }
 
     @Test
