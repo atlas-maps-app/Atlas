@@ -79,9 +79,14 @@ env:
   LAVAPIPE_IMAGE_X86_64: 'ghcr.io/atlas-maps-app/atlas-lavapipe@sha256:36dc038c992ba7261fc06831e34f952f4d3ea11ca16c24f5544a859eb2ae5413' # mesa-26.2.5-x86_64, run 39011793433
   # TSan's suppressions, by library: lavapipe, its LLVM and the validation layer are not instrumented, and their threads
   # synchronise through atomics, futexes and reference counts that TSan cannot see, so it reports races between them
-  # that are none (17 in the first run, every access in their code). A report is dropped when any of its stacks passes
-  # through one of them; a race between the core's own threads still fails, as the canaries prove.
-  ATLAS_TSAN_SUPPRESSIONS: race:libvulkan_lvp race:libLLVM race:libVkLayer_khronos_validation
+  # that are none (17 in the first run, every access in their code); and an order of their own locks that one of their
+  # threads takes both ways is theirs to mend (on 30 October the validation layer's, both locks taken in its code on a
+  # thread of the queue's submit, in one of the 150 processes of a run). A report is dropped when any of its stacks
+  # passes through one of them; a race between the core's own threads still fails, as the canaries prove, and so does
+  # an order of the core's own locks taken both ways.
+  ATLAS_TSAN_SUPPRESSIONS: >-
+    race:libvulkan_lvp race:libLLVM race:libVkLayer_khronos_validation
+    deadlock:libvulkan_lvp deadlock:libLLVM deadlock:libVkLayer_khronos_validation
 
 jobs:
   # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above, less
