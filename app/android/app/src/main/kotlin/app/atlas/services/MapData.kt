@@ -105,8 +105,8 @@ class MapData(private val services: Services) {
         if (Overpass.INFO.id in services.sourcesOff()) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
     }
 
-    /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use. */
-    private val packsIndexDir: File by lazy { File(services.dirs.cache, "engine/windows/index") }
+    /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use: in the app's files. */
+    private val packsIndexDir: File by lazy { File(services.dirs.engine, "windows/index") }
 
     /** Atlas's published packs, as the windows read them: packs-latest's list, the last good copy kept. */
     private val windowCatalog: PackCatalog by lazy {
@@ -165,6 +165,8 @@ class MapData(private val services: Services) {
         // the CPU filters' noise, kept across frames and launches and warmed up for the screen now (in the app's own
         // cache, not in a test's folder)
         if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
+        // the windows the phone took or built, which the map draws offline: in the app's files, never cleared by Android
+        if (services.config.root == null) MapEngine.useKeptDir(services.dirs.engine)
         MapEngine.weather = weather
         MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data

@@ -161,7 +161,7 @@ object MineFixtures {
     /** Keeps a real Open-Meteo answer for five models (fetched for the Westerkerk) on the test phone, as if fetched now. */
     fun keepModels(services: Services) {
         val text = MineFixtures::class.java.getResourceAsStream("/mine/models_amsterdam.json")!!.bufferedReader().use { it.readText() }
-        val dir = File(services.dirs.cache, "providers").apply { mkdirs() }
+        val dir = services.dirs.providers.apply { mkdirs() }
         File(dir, "models_52.37_4.88.json").writeText("${services.clock.instant().epochSecond}\n$text")
     }
 

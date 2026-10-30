@@ -219,6 +219,22 @@ class MineStateTest {
     }
 
     @Test
+    fun whatOfflineUseDependsOnIsKeptInTheAppsFilesNotItsCache() {
+        // Android may clear the cache to free space: the forecasts, the charger registers, the places' pictures and the
+        // map's windows are kept in the files, which it never clears
+        val s = testServices()
+        for (kept in listOf(s.dirs.providers, s.dirs.images, s.dirs.engine)) {
+            assertTrue("$kept", kept.startsWith(s.dirs.files))
+            assertFalse("$kept", kept.startsWith(s.dirs.cache))
+        }
+        // the code names the cache only for what comes again by itself: today's map's work and the map's noise
+        val android = File(System.getProperty("atlas.repo")!!, "app/android")
+        val uses = listOf("app", "mapview").flatMap { m -> File(android, "$m/src/main").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() }
+            .flatMap { f -> f.readLines().map { it.trim() }.filter { "dirs.cache" in it && !it.startsWith("*") && !it.startsWith("//") }.map { "${f.name}: $it" } }
+        assertTrue(uses.toString(), uses.isNotEmpty() && uses.all { "LiveEngine.workDir" in it || "useCacheDir" in it })
+    }
+
+    @Test
     fun withNoSignalTheLastAnswerNearbyIsShownAsKeptUntilItIsThreeDaysOld() {
         val dir = File(RuntimeEnvironment.getApplication().cacheDir, "kept-test").apply { deleteRecursively() }
         val now = Instant.parse("2026-10-14T12:00:00Z")

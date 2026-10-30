@@ -95,8 +95,17 @@ data class ServicesConfig(
     val mapEngine: Boolean = true,
 )
 
-/** The folders Atlas keeps its data in. */
+/**
+ * The folders Atlas keeps its data in. What offline use depends on lives in [files], which Android never clears to free
+ * space as it may [cache]: the kept forecasts and charger registers ([providers]), the places' pictures ([images]) and
+ * the map's windows with the packs' list and indexes ([engine]). Until 30 October they lived in the cache, and a phone
+ * short of space could lose its offline map and forecasts to Android. The cache keeps only what comes again by itself:
+ * the HTTP cache, the map's noise and today's map's work.
+ */
 class Dirs(val files: File, val cache: File) {
+    val providers = File(files, "providers")
+    val images = File(files, "search/images")
+    val engine = File(files, "engine")
     val settings = File(files, "settings/settings.preferences_pb")
     val keys = File(files, "settings/keys.preferences_pb")
     val regions = File(files, "regions")
@@ -220,7 +229,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     // ---- Providers -----------------------------------------------------------------------------------------------
 
     val overpass: Overpass by lazy { Overpass(http) }
-    val weather: Weather by lazy { Weather(http, File(dirs.cache, "providers"), keys, clock = { clock.instant() }) }
+    val weather: Weather by lazy { Weather(http, dirs.providers, keys, clock = { clock.instant() }) }
     /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer (each unless switched off). */
     val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http), Nominatim(http)) }
     val mangrove: Mangrove by lazy { Mangrove(http) }
@@ -236,7 +245,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      * on Wi-Fi in the background, kept on the phone and refreshed weekly as they are used.
      */
     val chargers: List<ChargerProvider> by lazy {
-        val kept = File(dirs.cache, "providers")
+        val kept = dirs.providers
         val onWifi = { !config.offline && connectivity.online.value && !connectivity.metered.value }
         listOf(
             OsmChargers(overpass), OpenChargeMap(http, keys),

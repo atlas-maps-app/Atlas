@@ -69,7 +69,7 @@ fun ForecastScreen(args: Dest.Forecast, nav: Navigator) {
     var models by remember(here) { mutableStateOf<ModelsForecast?>(null) }
     var done by remember(here) { mutableStateOf(false) }
     var askedOnline by remember(here) { mutableStateOf(false) }
-    val fetcher = remember { ModelsFetcher(services.http, File(services.dirs.cache, "providers"), { services.clock.instant() }) }
+    val fetcher = remember { ModelsFetcher(services.http, services.dirs.providers, { services.clock.instant() }) }
     LaunchedEffect(here) {
         askedOnline = !services.config.offline && services.connectivity.online.value
         models = if (!askedOnline) fetcher.kept(here) else fetcher.get(here)
