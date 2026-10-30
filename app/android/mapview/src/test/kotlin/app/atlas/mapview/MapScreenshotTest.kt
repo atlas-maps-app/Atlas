@@ -41,7 +41,8 @@ import java.io.FileOutputStream
  * The map as the app shows it: [AtlasMap] drawing the 1:1 engine's frames from Atlas's own region packs, captured to PNG
  * with Roborazzi at the boards' size (412 × 915 dp at density 2). The Westerkerk (the app's bundled pack) and the Main
  * board (the canal ring's pack, on the owner's machine) are compared pixel for pixel with the engine's own SVG drawn by
- * `SvgCanvas`; then the warp, night, markers, a route with the location puck, the tape, the debug overlay and no data.
+ * `SvgCanvas`; then the warp, night, markers, a route with the location puck, the tape, the tilt readout by day and by
+ * night, the debug overlay and no data.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -276,6 +277,51 @@ class MapScreenshotTest {
             up(0)
             up(1)
         }
+    }
+
+    @Test
+    fun tiltReadout() {
+        westerkerk()
+        val state = stateAt(HomeView.westerkerk)
+        show(state, controls = true)
+        tiltDownWithTwoFingers()
+        val readout = state.controller!!.readout
+        assertNotNull("the readout shows while the fingers tilt", readout)
+        assertTrue("above the fingers: ${readout!!.y}", readout.y < 1160f)
+        capture("map_tilt_readout")
+        compose.onRoot().performTouchInput {
+            up(0)
+            up(1)
+        }
+    }
+
+    @Test
+    fun tiltReadoutAtNight() {
+        westerkerk()
+        val state = stateAt(HomeView.westerkerk)
+        show(state, style = MapStyle(theme = Theme.NIGHT), controls = true)
+        tiltDownWithTwoFingers()
+        assertNotNull(state.controller!!.readout)
+        capture("map_tilt_readout_night")
+        compose.onRoot().performTouchInput {
+            up(0)
+            up(1)
+        }
+    }
+
+    /** Two fingers right of the middle dragged down 80 px (40 dp, 6.4°) and held there: the readout shows above them. */
+    private fun tiltDownWithTwoFingers() {
+        compose.onRoot().performTouchInput {
+            down(0, Offset(470f, 1100f))
+            down(1, Offset(690f, 1080f))
+            for (i in 1..20) {
+                updatePointerTo(0, Offset(470f, 1100f + 4f * i))
+                updatePointerTo(1, Offset(690f, 1080f + 4f * i))
+                move()
+            }
+        }
+        compose.mainClock.advanceTimeBy(100)
+        compose.waitForIdle()
     }
 
     @Test

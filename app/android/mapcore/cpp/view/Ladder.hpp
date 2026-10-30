@@ -187,4 +187,10 @@ private:
 /// engine frame (width and height dp) and the principal point's y.
 [[nodiscard]] LiveView live_view(const style::CameraState& c) noexcept;
 
+/// The radius a live frame's canal names are placed within over a pack without views (a window's bare ladder sets
+/// none): the canal ring's views' radius at `dist` (places.py's grachten: 1,400 m at 1,600, 1,500 m at 2,300 and
+/// 2,700), scaled beyond them and interpolated between them as ViewLadder takes a view's radius, so every place names
+/// its canals near the view's target as the canal ring did (ENGINE.md, one pack per country: one ladder).
+[[nodiscard]] double live_names_radius(double dist) noexcept;
+
 } // namespace atlas::view

@@ -13,6 +13,7 @@
 #include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "passes/Labels.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "standin/Session.hpp"
@@ -233,6 +234,20 @@ int draw_until_complete(standin::Session& session, frame::MapFrame& map, const s
         map.world()->residency().wait_idle();
     }
     return -1;
+}
+
+/// Draws `camera` until the last frame leaves nothing mid-transition (MapFrame::animating: the world's fades, the
+/// frame's blend and the passes' own, a label's among them), at most `seconds`; whether it came to rest. A complete
+/// picture may still hold a label fading where the camera left it (250 ms of the steady clock), which a fast build
+/// draws inside its fade.
+bool draw_until_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
+                      double seconds = 10.0) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+    while (map.animating()) {
+        if (std::chrono::steady_clock::now() >= until) return false;
+        if (session.draw(camera, {}).stale) session.remake();
+    }
+    return true;
 }
 
 /// The theme the last frame drew with.
@@ -670,6 +685,70 @@ const std::vector<Part>& every_part() {
 
 } // namespace
 
+TEST_CASE("a label's fade keeps the map's frames due at the same camera until it ends, from its first frame on, and a "
+          "frame that leaves the labels out ends it: none stops part-faded when a gesture ends on its first frame") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("label-fade");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    map.set_theme(sunny());
+    const style::CameraState at_home = home(1);
+    const auto labelled =
+        labels::LabelSet::make({label_at(31, 13, at_home.latitude, at_home.longitude)}, 1, 0.0F, 0.0F);
+    ATLAS_REQUIRE(labelled.has_value(), labels::describe(labelled.error()));
+    map.set_labels(*labelled);
+    // the labels' pass of the frames (the canal names may fade beside it: its own fade is what is held here)
+    const auto labels_pass = [&]() -> const passes::Labels& {
+        const auto all = map.builder()->passes();
+        const auto it = std::ranges::find(all, std::string_view("labels"), [](const auto& p) { return p->name(); });
+        REQUIRE(it != all.end());
+        return static_cast<const passes::Labels&>(**it); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
+    };
+    const auto mid_fade = [&] {
+        return std::ranges::count_if(labels_pass().drawn(),
+                                     [](const labels::Drawn& d) { return d.alpha > 0.0F && d.alpha < 1.0F; });
+    };
+
+    // At rest at the home: the label placed whole, nothing due.
+    ATLAS_REQUIRE(draw_until_complete(session, map, at_home) > 0, "the home never completed");
+    ATLAS_REQUIRE(draw_until_still(session, map, at_home), "the home never came to rest");
+    CHECK_FALSE(labels_pass().fading());
+    CHECK(mid_fade() == 0);
+    // Looking away (the parts case's row of doors): the label fades out over 250 ms where it stood, and from that first
+    // frame on the frames stay due, whatever the tiles do; at rest it is gone whole.
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    const style::CameraState away = camera_at(52.3746 - (-192.11612399270084 / 110540.0),
+                                              4.8840 + (82.21656426574002 / kx), 119.50786615381202, 60.0, 50.0);
+    CHECK(session.draw(away, {}).drawn);
+    CHECK(labels_pass().fading());
+    CHECK(map.animating());
+    ATLAS_REQUIRE(draw_until_still(session, map, away), "the row of doors never came to rest");
+    CHECK_FALSE(labels_pass().fading());
+    CHECK(mid_fade() == 0);
+    // Home again: the label comes back in from none, due from its first frame on; and a frame that leaves the labels
+    // out ends their fade at once (no frames are due for labels nobody sees).
+    CHECK(session.draw(at_home, {}).drawn);
+    CHECK(labels_pass().fading());
+    CHECK(map.animating());
+    style::CameraState without = at_home;
+    without.parts |= part::labels;
+    CHECK(session.draw(without, {}).drawn);
+    CHECK_FALSE(labels_pass().fading());
+}
+
 TEST_CASE("the map leaves out each part its camera's parts name, every layer and effect, and draws them again: each "
           "part's work there by default and none with its switch, the rest drawn; and a group's switch") {
     const std::string tiles_dir = environment("ATLAS_TILES_DIR");
@@ -791,6 +870,8 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         style::CameraState c = scene.camera;
         c.parts = scene.base;
         ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, std::format("{} never completed", scene.name));
+        // at rest before the reference frame: the scene before may have left a label fading out where it stood
+        ATLAS_REQUIRE(draw_until_still(session, map, c), std::format("{} never came to rest", scene.name));
         CHECK(draw(scene, 0));
         std::vector<Work> on;
         on.reserve(parts.size());

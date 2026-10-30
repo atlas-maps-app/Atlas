@@ -51,13 +51,14 @@ import kotlin.coroutines.resume
 class MineHub(private val services: Services) {
     val files = RegionFiles(services.dirs.regions, services.dirs.places, services.dirs.segments)
 
-    /** Atlas's published packs, from both lists, the last good copy kept for offline use. */
+    /**
+     * Atlas's published packs (packs-latest's list), the last good copy kept for offline use. The renders' list
+     * (packs-renders: the regions the boards were drawn from, with their render packs) is not offered: the map is one
+     * pack per country (ENGINE.md step 3), and draws no region's render pack.
+     */
     val packs: PackLists by lazy {
         PackLists(
-            listOf(
-                PackCatalog(PackLists.RENDERS_URL, services.http.client, File(services.dirs.regions, "packs-renders.json")),
-                PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(services.dirs.regions, "packs-latest.json")),
-            ),
+            PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(services.dirs.regions, "packs-latest.json")),
             offline = services.config.offline,
         )
     }
@@ -185,25 +186,12 @@ class MineHub(private val services: Services) {
     var mapBuilder: (suspend (id: String, name: String, bbox: app.atlas.geo.BBox, target: File, report: (Float) -> Unit) -> Long)? = null
 }
 
-/** Both lists of packs (the renders' and the latest), merged by id with the Atlas region packs of the renders first. */
-class PackLists(private val catalogs: List<PackCatalog>, private val offline: Boolean) {
-    /** Every pack either list offers, or what was kept from the last time; empty when neither can be had. */
+/** The packs the offline regions are taken from: the published list, offline none. */
+class PackLists(private val catalog: PackCatalog, private val offline: Boolean) {
+    /** Every pack the list offers, or what was kept from the last time; empty when neither can be had. */
     suspend fun all(refresh: Boolean = false): List<Pack> {
         if (offline) return emptyList()
-        val byId = LinkedHashMap<String, Pack>()
-        for (c in catalogs) {
-            val list = runCatching { c.packs(refresh) }.getOrDefault(emptyList())
-            for (p in list) {
-                val have = byId[p.id]
-                // The renders' list carries the region packs; the latest list carries places and the windows' data: keep the richer one.
-                if (have == null || p.files.size > have.files.size) byId[p.id] = p
-            }
-        }
-        return byId.values.toList()
-    }
-
-    companion object {
-        const val RENDERS_URL = "https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/packs.json"
+        return runCatching { catalog.packs(refresh) }.getOrDefault(emptyList())
     }
 }
 

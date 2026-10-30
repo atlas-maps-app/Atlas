@@ -80,6 +80,7 @@ class OsmNotes(private val http: Http, private val base: String = "https://api.o
         val INFO = ProviderInfo(
             id = ID, name = "OpenStreetMap notes", licence = "ODbL", attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org", note = "Notes are public and anonymous; mappers nearby read them.",
+            hosts = listOf("api.openstreetmap.org"), switchable = false,
         )
 
         private fun c(v: Double) = String.format(Locale.ROOT, "%.7f", v).trimEnd('0').trimEnd('.')

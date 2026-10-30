@@ -102,8 +102,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             Native.load()?.let { "pymath unavailable: the core did not load ($it)" } ?: Native.numericsLine()
 
         /**
-         * The core's sun line ([Native.sunLine]) over the APK's bundled Westerkerk (kept for these lines: the map draws the
-         * canal ring there); off the main thread, about 0.1 s.
+         * The core's sun line ([Native.sunLine]) over the APK's bundled Westerkerk (kept for these lines alone: no map
+         * lists it); off the main thread, about 0.1 s.
          */
         fun sunLine(assets: AssetManager): String =
             Native.load()?.let { "sun unavailable: the core did not load ($it)" }

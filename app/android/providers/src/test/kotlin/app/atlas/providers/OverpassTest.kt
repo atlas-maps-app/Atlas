@@ -268,6 +268,42 @@ class OverpassTest {
     }
 
     @Test
+    fun aServerThatKeepsFailingRestsLongerAndWhileAllRestOnlyOneIsAsked() = runBlocking {
+        Mock().use { a ->
+            Mock().use { b ->
+                a.dispatch { response("<html><body>502: the server is at capacity</body></html>", 502) }
+                b.dispatch { response("<html><body>504 Gateway Timeout</body></html>", 504) }
+                var now = 0L
+                val o = Overpass(testHttp(), listOf(a.url("/i"), b.url("/i")), clock = { now })
+                suspend fun ask() = runCatching { o.query("node(1); out;") }.exceptionOrNull()
+                fun counts() = a.count to b.count
+                assertTrue(ask() is ProviderException)
+                assertEquals(1 to 1, counts())
+                // both rest (a 30 s after its 502, b 15 s after its 504): only the one whose rest ends first is asked
+                ask()
+                assertEquals(1 to 2, counts())
+                // b failed twice in a row and rests 30 s: at 30 s both are asked again, and rest a minute
+                now = 30_000
+                ask()
+                assertEquals(2 to 3, counts())
+                // still resting at 60 s: one server is asked, not both
+                now = 60_000
+                ask()
+                assertEquals(3 to 3, counts())
+                // b answers at 90 s (a rests two minutes now): b's next failure rests it 15 s again, not two minutes
+                now = 90_000
+                b.dispatch { response(Fixtures.text("overpass_cafes.json")) }
+                assertEquals(19, o.query("node(1); out;").places().size)
+                b.dispatch { response("<html><body>504 Gateway Timeout</body></html>", 504) }
+                ask()
+                now = 105_000
+                ask()
+                assertEquals(3 to 6, counts())
+            }
+        }
+    }
+
+    @Test
     fun restrictionsAlongARouteAskForWaysWithGeometry() = runBlocking {
         Mock().use { m ->
             m.fixture("overpass_geom.json")

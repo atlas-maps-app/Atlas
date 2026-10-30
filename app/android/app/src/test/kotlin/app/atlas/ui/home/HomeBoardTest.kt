@@ -12,6 +12,7 @@ import app.atlas.nav.AtlasRoot
 import app.atlas.nav.BackStackNavigator
 import app.atlas.nav.Dest
 import app.atlas.places.Categories
+import app.atlas.services.SettingsKeys
 import app.atlas.testing.keepFixtureForecast
 import app.atlas.testing.shotsDir
 import app.atlas.testing.testServices
@@ -24,6 +25,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.time.Clock
 import java.time.Instant
@@ -33,8 +35,10 @@ import kotlin.math.abs
 /**
  * The whole Map home at the Main board's size (412 × 915 dp at density 2) on real data: the fixture tiles, the
  * Amsterdam place store, the kept Open-Meteo forecast, the demo location at the Westerkerk, on Thursday 15 October
- * 2026 at 16:00 (the board's "Thursday at 16:00"). Its overlays must sit where `Main.dc.html` puts them, to a dp; the
- * screenshot is then compared with the board's picture when it is on this machine.
+ * 2026 at 16:00 (the board's "Thursday at 16:00"), with the boards' frosted glass on (the app's is off by default).
+ * Its overlays must sit where `Main.dc.html` puts them, to a dp (but the category buttons, which keep their 44 dp and
+ * scroll where the board narrows them to fit); the screenshot is then compared with the board's picture when it is on
+ * this machine.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -51,6 +55,7 @@ class HomeBoardTest {
             keepFixtureForecast()
             keepFixtureRegion()
         }
+        runBlocking { services.settings.set(SettingsKeys.FROSTED_GLASS, true) }
         compose.setContent { AtlasRoot(services, BackStackNavigator(listOf(Dest.Home())), dark = false) }
         compose.waitUntil(20_000) { compose.onAllNodes(hasContentDescription("°", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.settleScreen()
@@ -76,17 +81,18 @@ class HomeBoardTest {
         val globe = dp(compose.onNodeWithContentDescription("Zoom out to the globe"))
         near("rail bottom", globe.bottom, 48f + 52f + 4 * 47f)
         // The bottom: the search bar 12 dp in from each side, 58 high, its foot 90 dp above the screen's; the category
-        // row 10 dp above it, eight 44 dp high buttons 8 dp apart.
+        // row 10 dp above it, eight 44 dp buttons 8 dp apart from 12 dp in, the last past the screen's edge (the board
+        // narrows them to 41.5 dp to fit; the user, 30 October: "they shouldnt be squeezed on smaller phones").
         val mic = dp(compose.onNodeWithContentDescription("Search by voice"))
         near("mic right", mic.right, 412f - 12f - 7f)
         near("mic centre", mic.center.y, 915f - 90f - 29f)
-        val eat = dp(compose.onNodeWithContentDescription(Categories.byId("eat")!!.name("en")))
-        val water2 = dp(compose.onNodeWithContentDescription(Categories.byId("water")!!.name("en")))
+        val eat = whole(compose.onNodeWithContentDescription(Categories.byId("eat")!!.name("en")))
+        val water2 = whole(compose.onNodeWithContentDescription(Categories.byId("water")!!.name("en")))
         near("row left", eat.left, 12f)
-        near("row right", water2.right, 400f)
+        near("row right", water2.right, 12f + 8 * 44f + 7 * 8f)
         near("row top", eat.top, 915f - 90f - 58f - 10f - 44f)
         near("row height", eat.height, 44f)
-        near("row button", eat.width, (388f - 7 * 8f) / 8)
+        near("row button", eat.width, 44f)
         compose.onNodeWithText("Search or ask").assertExistsCompat()
 
         val shot = File(out, "home_board.png")
@@ -101,6 +107,13 @@ class HomeBoardTest {
         val b = node.fetchSemanticsNode().boundsInRoot
         val d = compose.density.density
         return Rect(b.left / d, b.top / d, b.right / d, b.bottom / d)
+    }
+
+    /** [node]'s whole box in dp, past the screen's edge too (its semantics bounds stop at the edge). */
+    private fun whole(node: SemanticsNodeInteraction): Rect {
+        val n = node.fetchSemanticsNode()
+        val d = compose.density.density
+        return Rect(n.positionInRoot.x / d, n.positionInRoot.y / d, (n.positionInRoot.x + n.size.width) / d, (n.positionInRoot.y + n.size.height) / d)
     }
 
     private fun near(what: String, actual: Float, board: Float, tolerance: Float = 1f) =

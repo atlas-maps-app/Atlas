@@ -89,8 +89,8 @@ class HomeViewModel(
     val map = MapState(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
-            // CI's demo (and the bench shortcut) opens on the Westerkerk, which the bundled canal ring draws at once without
-            // the network, whatever view was saved: the same frame on the emulator and on a phone
+            // CI's demo (and the bench shortcut) opens on the Westerkerk, whatever view was saved: the same frame on the
+            // emulator (the canal ring CI puts there) and on a phone (the windows of the Netherlands' tiles)
             services.ciDemo -> HomeView.westerkerk
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
             else -> FirstLook.around(services.location.last.value?.location, ::coveredByMap)
@@ -98,14 +98,14 @@ class HomeViewModel(
     ).apply { time = clock() }
 
     /**
-     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a pack of its
-     * holds the place (else the first look is the Main board's view of the canal ring the APK carries); today's map
-     * alone counts every place, as it always has (it fetches what it needs). The list is read as the core starts
-     * (MapEngine.warmPacks); only if that has not finished is it read here.
+     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a window on the
+     * phone holds the place (else the first look is the Main board's view of the canal ring, whose windows the
+     * Netherlands' tiles give); today's map alone counts every place, as it always has (it fetches what it needs). The
+     * list is read as the core starts (MapEngine.warmPacks); only if that has not finished is it read here.
      */
     private fun coveredByMap(p: LatLon): Boolean {
         if (MapEngine.core is CoreState.Canvas) return true
-        val list = runCatching { MapEngine.packs(services.context.assets) }.getOrNull() ?: return true
+        val list = runCatching { MapEngine.packs() }.getOrNull() ?: return true
         if (!list.loaded) runCatching { list.load() }
         return list.packs.any { p in it.box }
     }
@@ -205,13 +205,23 @@ class HomeViewModel(
     private var gotFresh = false
     private var wasOnline = false
 
+    /** The fingers' last tilt as the settings keep it ([SettingsKeys.MAP_TILT]). */
+    private var savedTilt: Double? = null
+
     init {
         // Save the view a moment after it stops moving, for the next launch; but not the stand-in view of a first
         // launch without a fix, which would keep the next launch there instead of going to where the phone is.
         viewModelScope.launch {
             cameraMoves.debounce(800).collect { c ->
                 if (!cameraUnset) runCatching { services.settings.saveCamera(SavedCamera(c.target, c.zoom, c.bearing, c.pitch)) }
+                // the tilt last set with the fingers (a tilt ends in a move), which the 3D button brings back next time too
+                map.chosenTilt?.let { t -> if (t != savedTilt) runCatching { services.settings.set(SettingsKeys.MAP_TILT, t) }.onSuccess { savedTilt = t } }
             }
+        }
+        viewModelScope.launch {
+            val kept = services.settings.flow(SettingsKeys.MAP_TILT).first()
+            savedTilt = kept
+            if (kept != null && map.chosenTilt == null) map.chosenTilt = kept
         }
         // The first fix moves a camera that had nowhere better to be. It waits on the last fix (which the screen's own
         // watching updates) so that, indoors with no fix, it does not keep the GPS on after the map has gone.
@@ -291,7 +301,10 @@ class HomeViewModel(
         }
     }
 
-    /** The 3D button: tilts the view and raises the buildings, or flattens both. */
+    /**
+     * The 3D button: tilts the view (to the tilt last set with the fingers, [DEFAULT_PITCH] until then) and raises the
+     * buildings, or flattens both.
+     */
     fun toggle3d() {
         val on = MapLayer.BUILDINGS_3D !in style.value.layers
         viewModelScope.launch {
@@ -301,7 +314,7 @@ class HomeViewModel(
                 // A full or read-only disk: the look is a setting, and it could not change. Nothing else is wrong.
                 return@launch
             }
-            map.animateTo(map.camera.copy(pitch = if (on) DEFAULT_PITCH else 0.0))
+            map.animateTo(map.camera.copy(pitch = if (on) map.chosenTilt ?: DEFAULT_PITCH else 0.0))
         }
     }
 

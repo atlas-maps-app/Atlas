@@ -69,6 +69,14 @@ class Backdrop internal constructor(internal val layer: GraphicsLayer) {
 
 val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
+/**
+ * Whether the [frosted] surfaces here are glass (the boards' look, as every screen draws it) or solid: their tint
+ * fully opaque, nothing blurred, and their shapes only kept clear of the core's labels, with no glass from the core.
+ * The Map home's chrome and the bottom bar take the app's "Frosted glass" setting (off: solid; the user, 30 October:
+ * "For now turn the frosted glass off by default. It costs performance isnt done right").
+ */
+val LocalFrostedGlass = staticCompositionLocalOf { true }
+
 @Composable
 fun rememberBackdrop(): Backdrop {
     val layer = rememberGraphicsLayer()
@@ -104,11 +112,19 @@ fun Modifier.backdropSource(backdrop: Backdrop?): Modifier = if (backdrop == nul
  * behind (the [LocalBackdrop]) blurred by a Gaussian of σ = [blur] and saturated, inside [shape], under [tint]. The shape
  * is one of the chrome's ([ChromeShapes]): where the map's core draws on a SurfaceView, the core draws the glass under
  * it and this draws the tint alone over it. Without a backdrop on screen, or before Android 12 (no RenderEffect), the
- * tint alone.
+ * tint alone. Where the glass is off ([LocalFrostedGlass]), the tint fully opaque: no blur here or in the core, the
+ * shape kept clear of the core's labels.
  */
 fun Modifier.frosted(shape: Shape, tint: Color, blur: Dp, saturate: Float = 1f): Modifier = composed {
     val backdrop = LocalBackdrop.current
     val chrome = LocalChromeShapes.current ?: backdrop?.shapes
+    if (!LocalFrostedGlass.current) {
+        val solid = tint.copy(alpha = 1f)
+        return@composed chromeShape(chrome, shape, blur, saturate, frosted = false).drawWithCache {
+            val path = Path().apply { addOutline(shape.createOutline(size, layoutDirection, this@drawWithCache)) }
+            onDrawBehind { drawPath(path, solid) }
+        }
+    }
     val placed = chromeShape(chrome, shape, blur, saturate)
     if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S || chrome?.coreDraws == true) {
         return@composed placed.drawWithCache {

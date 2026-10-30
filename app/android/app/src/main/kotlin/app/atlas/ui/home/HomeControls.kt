@@ -3,9 +3,12 @@ package app.atlas.ui.home
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,12 +21,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -32,6 +37,8 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -43,6 +50,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.mapview.Follow
@@ -413,38 +421,66 @@ internal val HOME_CATEGORY_LOOK: Map<String, HomeCategory> = listOf(
 ).associateBy { it.id }
 
 /**
- * The row of category buttons above the search bar, as the board lays it out: eight 44 dp buttons 8 dp apart, which
- * narrow evenly (to 41.5 dp on a 412 dp phone) when the row is too short for them, as the board's flex row does; the
- * chosen one fills with its colour.
+ * The row of category buttons above the search bar: the board's eight 44 dp buttons 8 dp apart, each at its own size
+ * whatever the phone (never narrowed to fit), in one row that scrolls sideways under the screen's edges, the first
+ * lined up with the chrome [margin] in from the side; the chosen one fills with its colour and, if it lies past an
+ * edge, scrolls into view. Each button's shape follows it as the row scrolls (`frosted`: the core's keep-out, and its
+ * glass when the glass is on).
  */
 @Composable
-fun CategoryRow(selected: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier, lang: String? = null) {
+fun CategoryRow(selected: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier, lang: String? = null, margin: Dp = 12.dp) {
     val look = homeLook()
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val gap = 8.dp
-        val width = ((maxWidth - gap * (HOME_CATEGORIES.size - 1)) / HOME_CATEGORIES.size).coerceIn(32.dp, 44.dp)
-        val shape = RoundedCornerShape(percent = 50)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            for (id in HOME_CATEGORIES) {
-                val cat = Categories.byId(id) ?: continue
-                val board = HOME_CATEGORY_LOOK.getValue(id)
-                val on = id == selected
-                val name = cat.name(lang)
-                Box(
-                    Modifier
-                        .size(width, 44.dp)
-                        .cssShadow(shape, y = 4.dp, blur = 14.dp, colour = look.shadow.copy(alpha = look.shadow.alpha * 0.1f / 0.12f))
-                        .then(if (on) Modifier.background(board.colour, shape) else Modifier.frosted(shape, look.frostStrong, blur = 20.dp))
-                        .clip(shape)
-                        .toggleable(on, role = Role.Switch) { onSelect(id) }
-                        .semantics { contentDescription = name },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Symbol(board.symbol, tint = if (on) Color.White else board.colour, size = board.size, weight = MainSymbols.Width.PILL)
-                }
+    val shape = RoundedCornerShape(percent = 50)
+    val density = LocalDensity.current
+    val ids = remember { HOME_CATEGORIES.filter { Categories.byId(it) != null } }
+    val reveal = remember(ids) { ids.associateWith { BringIntoViewRequester() } }
+    LaunchedEffect(selected) {
+        val r = selected?.let { reveal[it] } ?: return@LaunchedEffect
+        // the button and the margin beside it, so it does not end against the screen's edge
+        val side = with(density) { PILL.toPx() }
+        val pad = with(density) { margin.toPx() }
+        r.bringIntoView(Rect(-pad, 0f, side + pad, side))
+    }
+    Row(
+        modifier
+            .bleed(margin)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = margin),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (id in ids) {
+            val cat = Categories.byId(id) ?: continue
+            val board = HOME_CATEGORY_LOOK.getValue(id)
+            val on = id == selected
+            val name = cat.name(lang)
+            Box(
+                Modifier
+                    .bringIntoViewRequester(reveal.getValue(id))
+                    .size(PILL)
+                    .cssShadow(shape, y = 4.dp, blur = 14.dp, colour = look.shadow.copy(alpha = look.shadow.alpha * 0.1f / 0.12f))
+                    .then(if (on) Modifier.background(board.colour, shape) else Modifier.frosted(shape, look.frostStrong, blur = 20.dp))
+                    .clip(shape)
+                    .toggleable(on, role = Role.Switch) { onSelect(id) }
+                    .semantics { contentDescription = name },
+                contentAlignment = Alignment.Center,
+            ) {
+                Symbol(board.symbol, tint = if (on) Color.White else board.colour, size = board.size, weight = MainSymbols.Width.PILL)
             }
         }
     }
+}
+
+/** A category button's side: the board's 44 dp. */
+private val PILL = 44.dp
+
+/**
+ * Lays this out [horizontal] wider on each side than its parent allows, reaching over the parent's padding: a row that
+ * scrolls under the screen's edges inside a padded column.
+ */
+private fun Modifier.bleed(horizontal: Dp): Modifier = layout { m, c ->
+    val pad = horizontal.roundToPx()
+    val p = m.measure(c.offset(horizontal = 2 * pad))
+    layout(maxOf(0, p.width - 2 * pad), p.height) { p.place(-pad, 0) }
 }
 
 /** "Search or ask", 58 dp high, with the A-near-B rings and the dark mic. The field itself opens the search screen. */

@@ -107,6 +107,28 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun threeDBringsBackTheTiltLastSetWithTheFingers() {
+        val s = testServices()
+        val vm = HomeViewModel(s, null, null)
+        // until the fingers have set one, the 3D button's own
+        vm.toggle3d()
+        until { vm.map.camera.pitch == 0.0 && MapLayer.BUILDINGS_3D !in vm.style.value.layers }
+        vm.toggle3d()
+        until { vm.map.camera.pitch == HomeViewModel.DEFAULT_PITCH && MapLayer.BUILDINGS_3D in vm.style.value.layers }
+        // the user tilts to 33° with their fingers: flat, then 3D again brings back 33°
+        vm.map.chosenTilt = 33.0
+        vm.toggle3d()
+        until { vm.map.camera.pitch == 0.0 && MapLayer.BUILDINGS_3D !in vm.style.value.layers }
+        vm.toggle3d()
+        until { vm.map.camera.pitch == 33.0 }
+        // kept once the camera rests, and the next launch's button has it too
+        vm.onCameraMove(vm.map.camera, byUser = true)
+        until { runBlocking { s.settings.flow(SettingsKeys.MAP_TILT).first() } == 33.0 }
+        val again = HomeViewModel(s, null, null)
+        until { again.map.chosenTilt == 33.0 }
+    }
+
+    @Test
     fun theSkyNowComesFromTheKeptForecast() {
         // Offline, at the fixed evening of the tests: the forecast kept on the phone gives the chip its sky.
         val s = testServices().apply { assertTrue(keepFixtureForecast()) }

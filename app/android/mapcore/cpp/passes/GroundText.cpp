@@ -17,11 +17,13 @@
 #include "tiles/Sections.hpp"
 #include "tiles/layers/Labels.hpp"
 #include "twin/Twin.hpp"
+#include "view/Ladder.hpp"
 
 #include <algorithm>
 #include <bit>
 #include <cstring>
 #include <format>
+#include <optional>
 
 namespace atlas::passes {
 
@@ -44,6 +46,11 @@ static_assert(static_cast<int>(text::Anchor::start) == static_cast<int>(twin::Te
               static_cast<int>(text::Anchor::end) == static_cast<int>(twin::TextAnchor::end));
 
 } // namespace
+
+double canal_names_radius(std::optional<double> view_radius, double dist, bool engine_mode) noexcept {
+    if (view_radius && *view_radius > 0) return *view_radius;
+    return engine_mode ? 1e9 : view::live_names_radius(dist);
+}
 
 GroundText::~GroundText() { GroundText::release(); }
 
@@ -219,14 +226,14 @@ void GroundText::update(const frame::FrameState& state) {
     draws_.clear();
     placed_.clear();
     designators_.clear();
+    fading_ = false; // a frame that places no names leaves none fading
     // (the names on the ground: unless the map leaves them out)
     if (!state.view.has_value() || state.camera.leaves_out(style::camera_part::ground_text)) return;
     gather(state);
     const view::Camera& cam = state.view->camera();
-    double radius = 1e9;
-    if (state.placed) {
-        if (const auto r = state.placed->number("radius"); r && *r > 0) radius = *r;
-    }
+    const double radius = state.placed ? canal_names_radius(state.placed->number("radius"), state.placed->dist(),
+                                                            state.camera.has(style::camera_flag::engine_mode))
+                                       : 1e9;
     const text::CanalView view{.camera = &cam,
                                .target_x = cam.spec().target.x,
                                .target_z = cam.spec().target.z,
@@ -239,6 +246,7 @@ void GroundText::update(const frame::FrameState& state) {
                                .rest = state.rest,
                                .seconds = state.seconds};
     const auto names = names_.update(view);
+    fading_ = names_.fading();
     placed_.assign(names.begin(), names.end());
     for (const text::PlacedName& p : placed_) draw_run(state, p.drawn, first_ground_slot(), p.alpha);
     const auto named = static_cast<std::uint32_t>(draws_.size());

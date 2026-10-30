@@ -45,12 +45,18 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        // Debug and bench builds: the map lists the render packs CI puts on its emulator (the canal ring its runs draw at
+        // the Westerkerk home), as no APK carries a map
+        if (BuildConfig.TIMINGS) app.atlas.mapview.MapEngine.benchPacks = ::benchPacks
         if (intent.getBooleanExtra(EXTRA_CI, false)) {
             services.ciDemo = true
+            services.ciRun = true
             services.useDemoLocation(Services.WESTERKERK)
         }
         intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
-        // The bench shortcut: CI's home frame (the Westerkerk, from the bundled canal ring) on the phone, with the phone's own location
+        if (intent.getBooleanExtra(EXTRA_CI_GLASS, false)) services.ciGlass = true
+        // The bench shortcut: CI's home frame (the Westerkerk) on the phone, with the phone's own location and the windows
+        // the phone takes from the Netherlands' tiles
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
         // CI's debug screen: the SVG filter probes through the GPU's AGSL path (the map view's FilterProbesScreen)
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
@@ -93,9 +99,11 @@ class MainActivity : ComponentActivity() {
         }
         if (intent.getBooleanExtra(EXTRA_CI, false)) {
             services.ciDemo = true
+            services.ciRun = true
             services.useDemoLocation(Services.WESTERKERK)
         }
         intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
+        if (intent.getBooleanExtra(EXTRA_CI_GLASS, false)) services.ciGlass = true
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
             setContent { app.atlas.mapview.FilterProbesScreen() }
@@ -201,6 +209,9 @@ class MainActivity : ComponentActivity() {
 
         /** CI: the home's map in this theme (a [app.atlas.mapview.Theme] name, `DAY`), whatever the live forecast says. */
         const val EXTRA_CI_THEME = "atlas.ci.theme"
+
+        /** CI: true frosts the Map home's chrome and the bottom bar whatever the settings say (CI's pill check). */
+        const val EXTRA_CI_GLASS = "atlas.ci.glass"
         const val SCREEN_LIST = "list"
 
         /** CI: the map view's SVG filter probes through AGSL, the GPU path, against the CPU's. */
@@ -269,11 +280,23 @@ class MainActivity : ComponentActivity() {
             }
             val off = if (BuildConfig.TIMINGS && intent.getBooleanExtra(EXTRA_VK_OFF, false)) "the debug switch atlas.vk.off is on" else null
             engine.startCore(config, off, context.applicationContext.assets)
-            if (off == null) engine.warmPacks(context.applicationContext.assets)
+            if (off == null) engine.warmPacks()
         }
 
         /** The bench shortcut: true opens the home on CI's demo camera (the Westerkerk) but keeps the phone's location. */
         const val EXTRA_BENCH = "atlas.bench"
+
+        /**
+         * Debug and bench builds: where CI puts render packs for the map to list beside the windows (ci/smoke.sh pushes
+         * the canal ring there, :app:benchTiles, which CI's runs draw at the Westerkerk home: no APK carries a map, and
+         * CI's run builds no windows). Outside the app's data, so neither a reinstall nor `pm clear` empties it; a phone
+         * has none.
+         */
+        const val BENCH_PACKS = "/data/local/tmp/atlas"
+
+        /** The render packs in [BENCH_PACKS], by name; none where there is no such folder. */
+        fun benchPacks(): List<File> =
+            File(BENCH_PACKS).listFiles { f -> f.isFile && f.name.endsWith(".atlas") }.orEmpty().sortedBy { it.name }
         private const val SHORTCUT_TIMINGS = "bench-timings"
         private const val SHORTCUT_GLCAPS = "bench-glcaps"
         const val CI_SCREENS_FILE = "ci_screens.txt"

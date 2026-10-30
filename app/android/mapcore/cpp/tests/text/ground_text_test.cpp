@@ -5,12 +5,14 @@
 // the bundled packs' candidates at their boards' views, and a pan across the canal ring on which no name changes its
 // way more than once in 5 s. The port's own SVG holds the rule at both home views in :mapcorecheck's TextParityTest.
 #include "base/pymath/PyMath.hpp"
+#include "passes/GroundText.hpp"
 #include "tests/base/require.hpp"
 #include "tests/text/text_support.hpp"
 #include "tests/tiles/support.hpp"
 #include "text/CanalNames.hpp"
 #include "text/GroundText.hpp"
 #include "tiles/Chunks.hpp"
+#include "view/Ladder.hpp"
 
 #include <doctest/doctest.h>
 
@@ -18,6 +20,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -155,6 +158,62 @@ TEST_CASE("the canal rule: each name's first way in source order within the radi
     CHECK(text::canal_rule(candidates, night).empty());
     const view::Camera low = camera(0.0, 20.0);
     CHECK(text::canal_rule(candidates, view_of(low)).empty());
+}
+
+TEST_CASE("over a pack without views a live frame's names take the canal ring's radius: a far first way gives way") {
+    // The windows' bare ladder sets no radius, so the rule took each name's first way anywhere in the frame cell (here
+    // 2 km east, off the screen) and drew none by the view; a live frame takes the canal ring's radius at its distance.
+    const view::Camera cam = camera();
+    const std::vector<CanalCandidate> candidates{candidate(0, "Prinsengracht", 2000, 0, 1, 0),
+                                                 candidate(1, "Prinsengracht", 50, -40, 1, 0)};
+    CanalView engine = view_of(cam);
+    engine.radius = passes::canal_names_radius(std::nullopt, 400, true); // engine mode: none, as the renders draw it
+    CHECK(engine.radius == 1e9);
+    const auto far = text::canal_rule(candidates, engine);
+    ATLAS_REQUIRE(far.size() == 1);
+    CHECK(far[0].candidate == 0);
+    CanalView live = view_of(cam);
+    live.radius = passes::canal_names_radius(std::nullopt, 400, false);
+    CHECK(live.radius == 350); // the canal ring's 1,400 m at 1,600, scaled
+    const auto near = text::canal_rule(candidates, live);
+    ATLAS_REQUIRE(near.size() == 1);
+    CHECK(near[0].candidate == 1);
+    // A pack with views keeps its own radius in either mode; a radius of 0 is none.
+    CHECK(passes::canal_names_radius(1400.0, 1600, false) == 1400);
+    CHECK(passes::canal_names_radius(1400.0, 1600, true) == 1400);
+    CHECK(passes::canal_names_radius(0.0, 400, false) == 350);
+    CHECK(passes::canal_names_radius(0.0, 400, true) == 1e9);
+}
+
+TEST_CASE("the canal ring's own ladder gives the live names' radius at every distance between and beyond its views") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the canal ring's views are not checked here");
+        return;
+    }
+    auto pack = test::open_pack((std::filesystem::path(dir) / "grachten.atlas").string());
+    ATLAS_REQUIRE(pack.has_value(), tiles::describe(pack.error()));
+    const auto ladder = view::Ladder::of(*pack->head());
+    ATLAS_REQUIRE(ladder.has_value());
+    std::size_t checked = 0;
+    // nearer than the nearest view, about each view, between them and beyond the farthest
+    for (const double dist : {120.0,  200.0,  333.3,  400.0,  760.0,  1100.0, 1599.9, 1600.0, 1600.1, 1777.0, 1950.0,
+                              2299.9, 2300.0, 2300.1, 2512.5, 2699.9, 2700.0, 2700.1, 3500.0, 5000.0, 8000.0}) {
+        // by the Westerkerk, turned off every view, so that none snaps
+        const view::LiveView v{.latitude = 52.3749,
+                               .longitude = 4.8839,
+                               .distance = dist,
+                               .bearing = 31,
+                               .pitch = 47,
+                               .width_dp = 412,
+                               .height_dp = 915,
+                               .cy_dp = 440};
+        const view::Placed placed = ladder->place(v);
+        ATLAS_REQUIRE(!placed.view().has_value());
+        CHECK(placed.number("radius") == view::live_names_radius(dist));
+        ++checked;
+    }
+    MESSAGE("the canal ring's radius matched at " << checked << " distances");
 }
 
 TEST_CASE("moving, a name keeps its way while the rule could draw it there, else takes the nearest well inside the "

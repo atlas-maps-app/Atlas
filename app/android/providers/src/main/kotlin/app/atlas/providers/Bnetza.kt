@@ -3,6 +3,7 @@ package app.atlas.providers
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import kotlinx.coroutines.CoroutineScope
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.BufferedReader
 import java.io.File
@@ -27,8 +28,14 @@ class BnetzaChargers(
     maxAge: Duration = 30.days,
     autoDownload: Boolean = false,
     region: BBox? = null,
+    /** Whether a download may start now (the app: on Wi-Fi). */
+    mayDownload: () -> Boolean = { true },
+    /** The box asked for: Germany ([COUNTRY]) in the app, anywhere when null. */
+    covers: BBox? = null,
+    /** Where a stale register is refreshed while the kept copy answers (the app's scope); null: before answering. */
+    background: CoroutineScope? = null,
     clock: () -> Instant = Instant::now,
-) : DownloadedChargers(http, cacheDir, maxAge, autoDownload, region, clock) {
+) : DownloadedChargers(http, cacheDir, maxAge, autoDownload, region, clock, mayDownload, covers, background) {
     override val info = INFO
     override val cacheName = ID
 
@@ -42,6 +49,9 @@ class BnetzaChargers(
 
     companion object {
         const val ID = "bnetza"
+        /** Germany: where the register is asked. */
+        val COUNTRY = BBox(5.86, 47.27, 15.05, 55.06)
+
         const val PAGE = "https://www.bundesnetzagentur.de/DE/Fachthemen/ElektrizitaetundGas/E-Mobilitaet/Ladesaeulenkarte/start.html"
 
         val INFO = ProviderInfo(
@@ -50,7 +60,9 @@ class BnetzaChargers(
             licence = "CC BY 4.0",
             attribution = "Ladesäulenregister: Bundesnetzagentur.de, CC BY 4.0",
             url = "https://www.bundesnetzagentur.de/ladesaeulenkarte",
-            note = "Germany's official register, monthly and without live status. About 55 MB; Atlas fetches it on Wi-Fi.",
+            note = "Germany's official register, monthly and without live status: about 56 MB, fetched on Wi-Fi where you look " +
+                "for chargers in Germany, asked again weekly and fetched again when a new month's file is out.",
+            hosts = listOf("www.bundesnetzagentur.de", "data.bundesnetzagentur.de"),
         )
 
         /** The newest register CSV linked from the page [html] at [base]. */

@@ -15,6 +15,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.time.Instant
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 
 class DownloadedChargersTest {
@@ -58,8 +59,57 @@ class DownloadedChargersTest {
         assertEquals(ProviderState.READY, offline.state())
         val near = offline.near(westerkerk, 500.0)
         assertTrue(near.isNotEmpty())
+        // a week on, the kept copy gives the chargers but not their status: what was free then is not free now
         val ids = near.take(3).map { it.extra["charger:id"]!! }
-        assertEquals(ids.toSet(), offline.status(ids).keys)
+        assertTrue(offline.status(ids).isEmpty())
+        assertTrue(near.none { p -> p.extra.keys.any { it == "status" || it.startsWith("status:") } })
+    }
+
+    @Test
+    fun aRegisterIsAskedOnlyInItsCountryAndDownloadsOnWifiInTheBackground() = runBlocking {
+        Mock().use { m ->
+            m.enqueueBytes(Fixtures.bytes("ndw_sample.json.gz"))
+            var wifi = false
+            val ndw = NdwChargers(
+                testHttp(), tmp.newFolder("country"), url = m.url("/f.json.gz"), maxAge = 7.days, autoDownload = true,
+                mayDownload = { wifi }, covers = NdwChargers.COUNTRY, background = this,
+            )
+            // far from the Netherlands: nothing asked, nothing downloaded
+            assertTrue(ndw.near(LatLon(40.4168, -3.7038), 25_000.0).isEmpty())
+            // on mobile data: nothing downloaded yet, and nothing asked
+            assertTrue(runCatching { ndw.near(westerkerk, 500.0) }.exceptionOrNull() is ProviderException)
+            assertEquals(0, m.count)
+            // on Wi-Fi: the download runs in the background while the screen gets what is kept (nothing yet)
+            wifi = true
+            assertTrue(runCatching { ndw.near(westerkerk, 500.0) }.exceptionOrNull() is ProviderException)
+            ndw.settled()
+            assertEquals(1, m.count)
+            assertTrue(ndw.near(westerkerk, 500.0).isNotEmpty())
+            // a search by the border that reaches into the country asks the kept register, not the server again
+            assertTrue(ndw.near(LatLon(51.32, 6.80), 30_000.0).isEmpty())
+            assertEquals(1, m.count)
+        }
+    }
+
+    @Test
+    fun aChargersStatusCountsAsLiveForThreeHoursAfterTheDataCame() = runBlocking {
+        Mock().use { m ->
+            m.enqueueBytes(Fixtures.bytes("ndw_sample.json.gz"))
+            var now = Instant.parse("2026-10-30T08:00:00Z")
+            val ndw = NdwChargers(testHttp(), tmp.newFolder("live"), url = m.url("/f.json.gz"), maxAge = 7.days, autoDownload = true) { now }
+            val fresh = ndw.near(westerkerk, 500.0)
+            assertTrue("the sample's live status", fresh.any { it.extra["status:available"] != null })
+            val ids = fresh.map { it.extra["charger:id"]!! }
+            assertTrue(ndw.status(ids).isNotEmpty())
+            now = now.plusSeconds(3 * 3600)
+            assertTrue("three hours on, still live", ndw.near(westerkerk, 500.0).any { it.extra["status:available"] != null })
+            now = now.plusSeconds(60)
+            val later = ndw.near(westerkerk, 500.0)
+            assertEquals(fresh.size, later.size)
+            assertTrue(later.none { p -> p.extra.keys.any { it == "status" || it.startsWith("status:") } })
+            assertTrue(ndw.status(ids).isEmpty())
+            assertEquals("not downloaded again within the week", 1, m.count)
+        }
     }
 
     @Test
@@ -183,8 +233,31 @@ class DownloadedChargersTest {
         val near = index.nearNow(westerkerk, 1_000.0)
         val out = java.io.ByteArrayOutputStream()
         index.write(out)
-        println("NDW full file: ${index.size} chargers in $ms ms; index ≈ ${(after - before) / 1_048_576} MB in memory, ${out.size() / 1_048_576} MB on disk; ${near.size} within 1 km of the Westerkerk")
+        println("NDW full file: ${index.size} chargers in $ms ms; index ≈ ${mb(after - before)} MB in memory, ${mb(out.size().toLong())} MB on disk; ${near.size} within 1 km of the Westerkerk")
         assertTrue(index.size > 50_000)
         assertTrue(near.isNotEmpty())
     }
+
+    /** The same for Germany's register: -Datlas.bnetza.file=/path/to/Ladesaeulenregister_BNetzA_<date>.csv */
+    @Test
+    fun theWholeGermanRegisterParsesInFlatMemory() {
+        val path = System.getProperty("atlas.bnetza.file")
+        Assume.assumeTrue(path != null && File(path).exists())
+        val rt = Runtime.getRuntime()
+        System.gc()
+        val before = rt.totalMemory() - rt.freeMemory()
+        val start = System.nanoTime()
+        val index = File(path!!).inputStream().use { BnetzaChargers(testHttp(), null).importFrom(it) }
+        val ms = (System.nanoTime() - start) / 1_000_000
+        System.gc()
+        val after = rt.totalMemory() - rt.freeMemory()
+        val near = index.nearNow(LatLon(52.5163, 13.3777), 1_000.0)
+        val out = java.io.ByteArrayOutputStream()
+        index.write(out)
+        println("Bundesnetzagentur full file: ${index.size} chargers in $ms ms; index ≈ ${mb(after - before)} MB in memory, ${mb(out.size().toLong())} MB on disk; ${near.size} within 1 km of the Brandenburg Gate")
+        assertTrue(index.size > 50_000)
+        assertTrue(near.isNotEmpty())
+    }
+
+    private fun mb(bytes: Long) = String.format(java.util.Locale.ROOT, "%.1f", bytes / 1_048_576.0)
 }

@@ -1,6 +1,7 @@
 package app.atlas.ui.local
 
 import app.atlas.geo.LatLon
+import app.atlas.ui.local.astro.OrbitSource
 import app.atlas.ui.local.astro.Planet
 import app.atlas.ui.local.astro.TleStore
 import app.atlas.ui.local.astro.Tonight
@@ -114,6 +115,33 @@ class LocalReviewTest {
         clock.at = clock.at.plus(Duration.ofHours(3))
         store.orbit(online = true)
         assertEquals("and again when two hours are up", 2, asked)
+    }
+
+    @Test
+    fun whereCelesTrakGivesNothingThatReadsArissGivesTheOrbitData() = runBlocking {
+        val clock = MovableClock(Instant.parse("2026-10-16T10:00:00Z"))
+        val set = resource("iss_2026-10-15.tle")
+        var celestrak = 0
+        var ariss = 0
+        val file = folder.newFile("iss.tle").also { it.delete() }
+        val store = TleStore(
+            file = file,
+            bundled = { null },
+            fetch = { celestrak++; "<html>403: GP data has not updated since your last successful download</html>" },
+            clock = clock,
+            second = { ariss++; set },
+        )
+        val got = store.orbit(online = true)!!
+        assertEquals(OrbitSource.FRESH, got.source)
+        assertEquals(set, file.readText())
+        assertEquals(1 to 1, celestrak to ariss)
+        file.setLastModified(clock.at.toEpochMilli())
+        // neither is asked again within two hours; where CelesTrak answers, ARISS is not asked
+        store.orbit(online = true)
+        assertEquals(1 to 1, celestrak to ariss)
+        clock.at = clock.at.plus(Duration.ofHours(3))
+        TleStore(file, { null }, { celestrak++; set }, clock, second = { ariss++; set }).orbit(online = true)
+        assertEquals(2 to 1, celestrak to ariss)
     }
 
     @Test

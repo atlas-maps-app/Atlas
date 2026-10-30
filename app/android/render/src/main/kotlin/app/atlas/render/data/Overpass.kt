@@ -52,6 +52,12 @@ class OverpassResult(val header: JsonObject, val elements: List<OsmElement>) {
  * Fetches a box from Overpass with the query of `fetch/regions.py` (every tagged node, every way, multipolygon
  * relations, national parks and protected areas, `out geom`), tries the same hosts in turn, and splits a box Overpass
  * cannot answer whole into halves merged by id: what the grachten extract needed, done by hand then.
+ *
+ * The phone's windows ([window], [windowDiff]) share what the hosts did lately: the host that answered last is asked
+ * first, one whose data was behind after the others, and one that failed rests ([REST_MS], twice as long after each
+ * failure in a row, [REST_CAP_MS] at most), so the next window does not ask it again; where every host rests, a window
+ * fails at once without asking any. On 27 October 2026 every public server failed for an hour, and each window the
+ * phone wanted asked each of them in turn.
  */
 class OverpassClient(
     private val http: HttpPost = HttpUrlPost(),
@@ -63,7 +69,54 @@ class OverpassClient(
     private val maxArea: Double = MAX_AREA,
     /** Seconds to wait after a failed attempt, times the attempt number. */
     private val backoffSeconds: Long = 15,
+    /** Monotonic milliseconds, for the hosts' rests; tests pass their own. */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
+    /** A host that failed a window lately: until when it rests ([clock]'s time), and how often it failed in a row. */
+    private class Rest(val until: Long, val times: Int)
+
+    private val rests = HashMap<String, Rest>()
+
+    /** The host whose answer a window took last: asked first. */
+    private var lastGood: String? = null
+
+    /** The hosts whose data was behind lately: asked after the others. */
+    private val behind = HashSet<String>()
+
+    /**
+     * The hosts a window asks, in turn: the one that answered last first, then the others in their order, those whose
+     * data was behind lately last; none that rests. Throws where every host rests.
+     */
+    private fun windowHosts(): List<String> = synchronized(rests) {
+        val now = clock()
+        val all = hosts.distinct()
+        val awake = all.filter { (rests[it]?.until ?: Long.MIN_VALUE) <= now }
+        if (awake.isEmpty()) {
+            val next = all.minOf { rests.getValue(it).until }
+            throw IOException("every Overpass server failed lately; the first is asked again in ${(next - now + 999) / 1000} s")
+        }
+        awake.sortedBy { h -> if (h == lastGood) 0 else if (h in behind) 2 else 1 }
+    }
+
+    /** [host] failed a window's request: it rests, longer after each failure in a row. */
+    private fun failed(host: String) = synchronized(rests) {
+        val times = (rests[host]?.times ?: 0) + 1
+        rests[host] = Rest(clock() + minOf(REST_MS shl (times - 1).coerceAtMost(10), REST_CAP_MS), times)
+        if (lastGood == host) lastGood = null
+    }
+
+    /** [host] answered a window whole: it rests no more, and is asked first where its data was [fresh], else last. */
+    private fun answered(host: String, fresh: Boolean) = synchronized(rests) {
+        rests.remove(host)
+        if (fresh) {
+            behind.remove(host)
+            lastGood = host
+        } else {
+            behind.add(host)
+            if (lastGood == host) lastGood = null
+        }
+    }
+
     /** The Overpass QL of `fetch/regions.py overpass()` for a box. */
     fun query(b: BBox): String =
         "[out:json][timeout:240][bbox:${num(b.south)},${num(b.west)},${num(b.north)},${num(b.east)}];" +
@@ -95,39 +148,44 @@ class OverpassClient(
     /**
      * Overpass's JSON for a window's box ([windowQuery]), streamed into [into] as it comes (a dense window's answer is
      * tens of MB, which never pass through the app's heap), from the first host that answers whole with data from
-     * [freshAfter] on, each tried in turn (a query that timed out part-way answers 200 with a remark, and is tried again
-     * elsewhere). A host whose data is older is passed over while another may answer (on 22 October 2026 one of them
-     * answered with data from June); where none does, the newest answer that came is taken. Throws where none came.
+     * [freshAfter] on, each host not resting tried once in turn, without a pause (a query that timed out part-way
+     * answers 200 with a remark, and is tried again elsewhere; an answer without the data's date is not Overpass's
+     * JSON). A host whose data is older is passed over while another may answer (on 22 October 2026 one of them answered
+     * with data from June); where none does, the newest answer that came is taken. Throws where none came.
      */
     fun window(b: BBox, into: File, freshAfter: Instant? = null) {
         var lastError: Exception? = null
+        val failures = ArrayList<String>()
         val older = File(into.path + ".older")
         var olderDate: Instant? = null
         older.delete()
         try {
-            for ((attempt, host) in hosts.withIndex()) {
-                try {
+            for (host in windowHosts()) {
+                val date = try {
                     http.post("$host/api/interpreter", mapOf("data" to windowQuery(b)), userAgent).use { input ->
                         into.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
                     }
                     val tail = String(tailOf(into, 4096), Charsets.UTF_8)
                     if (tail.contains("\"remark\"") && tail.contains("runtime error", ignoreCase = true)) throw IOException("Overpass ran out of time or memory")
-                    val date = dataDate(headOf(into, 2048))
-                    if (freshAfter == null || (date != null && !date.isBefore(freshAfter))) return
-                    log("$host's data is from $date, before $freshAfter")
-                    if (date != null && (olderDate == null || date.isAfter(olderDate))) {
-                        if (!into.renameTo(older)) throw IOException("$into could not be set aside")
-                        olderDate = date
-                    }
-                    continue
+                    dataDate(headOf(into, 2048)) ?: throw IOException("an answer without the data's date: ${String(headOf(into, 120), Charsets.UTF_8).trim()}")
                 } catch (e: IOException) {
                     lastError = e
+                    failures += "$host: ${e.message ?: e.javaClass.simpleName}"
+                    failed(host)
                     log("retry after $host: ${e.message}")
+                    continue
                 }
-                pause(backoffSeconds * 1000 * (attempt + 1))
+                val fresh = freshAfter == null || !date.isBefore(freshAfter)
+                answered(host, fresh)
+                if (fresh) return
+                log("$host's data is from $date, before $freshAfter")
+                if (olderDate == null || date.isAfter(olderDate)) {
+                    if (!into.renameTo(older)) throw IOException("$into could not be set aside")
+                    olderDate = date
+                }
             }
             if (olderDate != null && older.renameTo(into)) return
-            throw IOException("Overpass failed for the window $b: ${lastError?.message}", lastError)
+            throw IOException("Overpass failed for the window $b: ${failures.joinToString("; ")}", lastError)
         } finally {
             older.delete()
         }
@@ -136,30 +194,41 @@ class OverpassClient(
     /**
      * Overpass's changes to a window's data since [since] ([windowDiffQuery]), its XML as it came, from the first host
      * that answers whole with data not older than [notBefore] (the kept data's own date: a host behind it knows nothing
-     * newer), each tried in turn. A remark (the query failed or ran out of time, or the host keeps no history of the
-     * data) is tried again elsewhere.
+     * newer), each host not resting tried once in turn, as [window] asks them. A remark (the query failed or ran out of
+     * time, or the host keeps no history of the data) is tried again elsewhere, without resting the host: its whole
+     * windows may still come.
      */
     fun windowDiff(b: BBox, since: String, notBefore: Instant): ByteArray {
         var lastError: Exception? = null
-        for ((attempt, host) in hosts.withIndex()) {
-            try {
-                val bytes = http.post("$host/api/interpreter", mapOf("data" to windowDiffQuery(b, since)), userAgent).use { it.readBytes() }
-                val head = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
-                val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
-                val remark = sequenceOf(head, tail).firstNotNullOfOrNull { t ->
-                    t.substringAfter("<remark>", "").takeIf { it.isNotEmpty() }?.substringBefore("</remark>")?.trim()
-                }
-                if (remark != null) throw IOException("Overpass remark: ${remark.take(200)}")
-                val date = dataDate(bytes) ?: throw IOException("$host's answer has no date")
-                if (!date.isBefore(notBefore)) return bytes
-                log("$host's data is from $date, behind the window's $notBefore")
-                lastError = IOException("$host's data is from $date, behind the window's $notBefore")
-                continue
+        for (host in windowHosts()) {
+            val bytes = try {
+                http.post("$host/api/interpreter", mapOf("data" to windowDiffQuery(b, since)), userAgent).use { it.readBytes() }
             } catch (e: IOException) {
                 lastError = e
+                failed(host)
                 log("retry after $host: ${e.message}")
+                continue
             }
-            pause(backoffSeconds * 1000 * (attempt + 1))
+            val head = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
+            val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
+            val remark = sequenceOf(head, tail).firstNotNullOfOrNull { t ->
+                t.substringAfter("<remark>", "").takeIf { it.isNotEmpty() }?.substringBefore("</remark>")?.trim()
+            }
+            val date = dataDate(bytes)
+            lastError = when {
+                remark != null -> IOException("Overpass remark: ${remark.take(200)}")
+                // neither a remark nor the data's date: not Overpass's answer (an error page), so the host rests
+                date == null -> IOException("$host's answer has no date: ${head.take(120).trim()}").also { failed(host) }
+                !date.isBefore(notBefore) -> {
+                    answered(host, fresh = true)
+                    return bytes
+                }
+                else -> {
+                    answered(host, fresh = false)
+                    IOException("$host's data is from $date, behind the window's $notBefore")
+                }
+            }
+            log("retry after $host: ${lastError.message}")
         }
         throw IOException("Overpass gave no changes for the window $b: ${lastError?.message}", lastError)
     }
@@ -246,6 +315,12 @@ class OverpassClient(
         /** The date of an answer's data: its JSON's `osm3s.timestamp_osm_base`, its XML's `meta osm_base`; null for none. */
         fun dataDate(answer: ByteArray): Instant? =
             DATE.find(String(answer, 0, minOf(answer.size, 2048), Charsets.UTF_8))?.let { runCatching { Instant.parse(it.groupValues[1]) }.getOrNull() }
+
+        /** How long a host rests after it failed a window, the first time in a row: a minute. */
+        const val REST_MS = 60_000L
+
+        /** The longest a host rests, however often it failed in a row: half an hour. */
+        const val REST_CAP_MS = 30 * 60_000L
 
         /** 0.001 square degrees: the ring of the canal district (0.0009) answered whole, the whole box (0.0017) did not. */
         const val MAX_AREA = 0.001

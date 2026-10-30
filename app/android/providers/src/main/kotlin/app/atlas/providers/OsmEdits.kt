@@ -252,6 +252,7 @@ class OsmEdits(
             id = ID, name = "OpenStreetMap edits", licence = "ODbL", attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org",
             note = "Edits are sent with your own OpenStreetMap account, only after you review them; they are public and show your user name.",
+            hosts = listOf("api.openstreetmap.org", "www.openstreetmap.org"), switchable = false,
         )
 
         /** An element of the API's JSON (`elements[]`). */

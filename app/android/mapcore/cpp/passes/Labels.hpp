@@ -48,6 +48,8 @@ public:
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
     void update(const frame::FrameState& state) override;
+    /// Whether the last frame placed the labels mid-fade (labels::Placement::fading); a frame without them ends it.
+    [[nodiscard]] bool fading() const noexcept override { return fading_; }
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     /// Set 1's sprites (SpriteGlobals, below).
     [[nodiscard]] std::vector<std::shared_ptr<frame::GlobalProvider>>
@@ -65,6 +67,7 @@ private:
         frame::Phase{.slot = frame::Slot::labels, .order = 0, .id = 0}};
 
     labels::Placement placement_; // by the labels' ids, which hold across the app's sets
+    bool fading_ = false;         // the last frame's placement left a fade under way
     std::vector<labels::Candidate> candidates_;
     std::vector<std::vector<labels::Point>> points_;
     std::vector<labels::Box> keep_out_;

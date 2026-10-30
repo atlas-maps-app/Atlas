@@ -46,10 +46,11 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "${native[@]}" > /dev/null
       - name: "The packer's tool: the core's stage P"
-        # The APK's bundled tiles are cut by the core's stage P (mapcore/cpp/stagep), as android.yml's build job cuts
-        # them: built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++ at
-        # core.yml's pin and the SDK's CMake and Ninja; :app's generateBundledTiles reads ATLAS_STAGEP. A tag from
-        # before the tool has no stagep folder, and its packer cuts them as it did.
+        # The APK's tiles (the Westerkerk's living pack, for VK facts' hash lines alone: it carries no map) are cut by
+        # the core's stage P (mapcore/cpp/stagep), as android.yml's build job cuts them: built alone (the host-stagep
+        # preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++ at core.yml's pin and the SDK's CMake and
+        # Ninja; :app's generateFactsTiles reads ATLAS_STAGEP. A tag from before the tool has no stagep folder, and its
+        # packer cuts them as it did.
         run: |
           [ -d mapcore/cpp/stagep ] || exit 0
           LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # NDK r30's major

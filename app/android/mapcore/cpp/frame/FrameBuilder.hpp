@@ -277,6 +277,9 @@ public:
     [[nodiscard]] const StageFParts& stage_f_parts() const noexcept { return stage_f_parts_; }
     /// The passes, in the registry's order.
     [[nodiscard]] std::span<const std::unique_ptr<Pass>> passes() const noexcept { return passes_; }
+    /// Whether a pass the frames record left a fade of its own under way in the last frame (Pass::fading: a label's,
+    /// a canal name's): another frame is due at the same camera.
+    [[nodiscard]] bool fading() const noexcept;
     /// The last frame's ranks (the rows it drew) and the kinds' names (tests: what a frame drew, kind by kind).
     [[nodiscard]] const Ranks& ranks() const noexcept { return ranks_; }
     [[nodiscard]] const Selectors& selectors() const noexcept { return selectors_; }

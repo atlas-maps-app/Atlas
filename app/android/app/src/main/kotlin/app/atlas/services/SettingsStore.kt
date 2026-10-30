@@ -84,6 +84,9 @@ object SettingsKeys {
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
 
+    /** The tilt the user last left the map at with their fingers (degrees, `MapState.chosenTilt`): the 3D button's. */
+    val MAP_TILT = doublePreferencesKey("map.tilt")
+
     /**
      * The screen's haze, vignette and grain over the map: off when unset, as each costs frame time (the user, 27 October:
      * "disabled by default if they add performance overhead"); on, the renders' look.
@@ -91,6 +94,13 @@ object SettingsKeys {
     val MAP_HAZE = booleanPreferencesKey("map.haze")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
+
+    /**
+     * The frosted glass of the Map home's chrome and the bottom bar: off when unset, so they are solid and the map's core
+     * blurs nothing under them (the user, 30 October: "For now turn the frosted glass off by default. It costs
+     * performance isnt done right"); on, the boards' glass. Other screens keep their glass.
+     */
+    val FROSTED_GLASS = booleanPreferencesKey("ui.frostedGlass")
 
     /**
      * Whether what stands up is drawn at its true depth (on when unset, the engine's own) or in the renderer's painter's

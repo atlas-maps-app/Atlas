@@ -123,6 +123,7 @@ class Mangrove(private val http: Http, private val base: String = "https://api.m
             attribution = "Reviews from Mangrove.reviews, CC BY 4.0",
             url = "https://mangrove.reviews",
             note = "Reviews read and written in one open pool, signed by their writers; no account.",
+            hosts = listOf("api.mangrove.reviews"),
         )
 
         /** Mangrove's 0–100 as 1–5 stars (0, 25, 50, 75, 100 are 1 to 5 stars). */

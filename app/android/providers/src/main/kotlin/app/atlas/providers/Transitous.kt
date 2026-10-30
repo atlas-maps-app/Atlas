@@ -85,6 +85,7 @@ class Transitous(private val http: Http, private val base: String = "https://api
             attribution = "Public transport by Transitous · transitous.org/sources", url = "https://transitous.org",
             onByDefault = false,
             note = "Community-run and free for open-source apps; Atlas should tell Transitous before turning it on for everyone.",
+            hosts = listOf("api.transitous.org"),
         )
 
         private fun c(v: Double) = String.format(Locale.ROOT, "%.6f", v)

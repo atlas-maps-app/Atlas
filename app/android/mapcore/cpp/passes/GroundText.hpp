@@ -30,6 +30,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -42,6 +43,12 @@ namespace atlas::passes {
 inline constexpr std::int32_t canal_names_order = 650;
 /// The designators' (ground_order::designators): right after the ground's over lines, whose slots theirs lie among.
 inline constexpr std::int32_t designators_order = 510;
+
+/// The radius a frame's canal names are placed within: the view's own (`view_radius`, its ladder's, where the pack has
+/// views); else in a live frame the canal ring's at `dist` (view::live_names_radius: a pack without views, the
+/// windows', sets none, and their names took each canal's first way anywhere in the frame cell); else none (engine mode
+/// over a pack without views, as the renders draw it).
+[[nodiscard]] double canal_names_radius(std::optional<double> view_radius, double dist, bool engine_mode) noexcept;
 
 /// What stage T keeps of a tile for the canal names.
 struct CanalTile {
@@ -71,6 +78,8 @@ public:
     void release() noexcept override;
     [[nodiscard]] std::uint32_t ground_slots(const frame::FrameState& state) const override;
     void update(const frame::FrameState& state) override;
+    /// Whether the last frame placed the canal names mid-fade (text::CanalNames::fading); a frame without them ends it.
+    [[nodiscard]] bool fading() const noexcept override { return fading_; }
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
     /// The pack-level stage T: the pack's canal names whole (text::pack_canals), which the renders' rule reads once the
@@ -125,6 +134,7 @@ private:
     void draw_run(const frame::FrameState& state, const text::TextRun& run, std::uint32_t slot, float alpha);
 
     text::CanalNames names_;
+    bool fading_ = false; // the last frame's names left a fade under way
     std::vector<text::PlacedName> placed_;
     std::vector<frame::GroundRun> designators_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted

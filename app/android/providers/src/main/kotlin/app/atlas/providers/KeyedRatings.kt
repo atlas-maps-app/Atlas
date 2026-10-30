@@ -80,6 +80,7 @@ class FoursquareRatings(http: Http, keys: Keys, private val base: String = "http
             id = ID, name = "Foursquare", licence = "Foursquare terms", attribution = "Ratings by Foursquare", url = "https://foursquare.com",
             keyNeed = KeyNeed.REQUIRED,
             note = "Your own Service API key. Ratings are a paid Premium field, billed by Foursquare from the first call.",
+            hosts = listOf("places-api.foursquare.com"),
         )
     }
 }
@@ -134,6 +135,7 @@ class YelpRatings(http: Http, keys: Keys, private val base: String = "https://ap
             id = ID, name = "Yelp", licence = "Yelp API terms", attribution = "Ratings by Yelp", url = "https://www.yelp.com",
             keyNeed = KeyNeed.REQUIRED,
             note = "Your own key. Yelp's terms forbid mixing its ratings with others and keeping them over 24 hours: shown apart, never offline.",
+            hosts = listOf("api.yelp.com"),
         )
     }
 }
@@ -190,6 +192,7 @@ class TripAdvisorRatings(http: Http, keys: Keys, private val base: String = "htt
             id = ID, name = "Tripadvisor", licence = "Tripadvisor terms", attribution = "Ratings by Tripadvisor", url = "https://www.tripadvisor.com",
             keyNeed = KeyNeed.REQUIRED,
             note = "Your own Terra key. Billed per location after the first 1,000; nothing kept offline.",
+            hosts = listOf("terra.tripadvisor.com"),
         )
     }
 }

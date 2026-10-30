@@ -31,7 +31,7 @@ class ServicesTest {
         assertNotNull(s.overpass)
         assertNotNull(s.weather)
         assertNotNull(s.ratings)
-        assertEquals(2, s.chargers.size)
+        assertEquals(listOf("osm-chargers", "ocm", "ndw", "bnetza"), s.chargers.map { it.id })
         assertNotNull(s.geocoder)
         assertNotNull(s.segments)
         assertNotNull(s.router)

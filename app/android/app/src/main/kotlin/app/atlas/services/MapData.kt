@@ -4,11 +4,14 @@ import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
 import app.atlas.providers.Forecast
+import app.atlas.providers.Overpass
+import app.atlas.providers.SwitchedOffException
 import app.atlas.render.data.HttpPost
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.RegionBuilder
@@ -19,6 +22,7 @@ import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowPacks
+import app.atlas.tiles.WindowTiles
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -66,17 +70,16 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * The packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the regions
-     * keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]). The bundled pack
-     * is installed on first use (a copy of 627 KB, once), on whichever background thread asks first, before anything is
-     * chosen. The render packs the APK carries ([BundledRenders]) are never downloaded again: the canal ring's first
-     * visit fetches its element pack only.
+     * The element packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the
+     * regions keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]): today's
+     * map's and the features' data. The bundled pack is installed on first use (a copy of 627 KB, once), on whichever
+     * background thread asks first, before anything is chosen. No region's render pack is fetched beside its element
+     * pack (`renders` off): the core draws the windows alone (ENGINE.md step 3, one pack per country).
      */
     val packs: PackLibrary by lazy {
-        val bundledRenders = BundledRenders.read { open(BundledRenders.ASSET) }
         val regionPacks = File(services.dirs.regions, "atlas")
         PackLibrary(
-            File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, bundledRenders = bundledRenders,
+            File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, renders = false,
             elsewhere = { regionPacks.listFiles { f -> f.isFile && f.name.endsWith(PackLibrary.EXT) }.orEmpty().toList() },
         ).also { lib ->
             try {
@@ -93,14 +96,30 @@ class MapData(private val services: Services) {
 
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
-    /**
-     * The windows' data in Atlas's own packs (packs-latest's packs.json, kept for offline beside their indexes), read on
-     * the windows' own thread.
-     */
+    /** Throws where the user switched Overpass off (Settings · Data): the windows ask none of its servers then. */
+    private fun overpassAllowed() {
+        if (Overpass.INFO.id in services.sourcesOff()) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
+    }
+
+    /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use. */
+    private val packsIndexDir: File by lazy { File(services.dirs.cache, "engine/windows/index") }
+
+    /** Atlas's published packs, as the windows read them: packs-latest's list, the last good copy kept. */
+    private val windowCatalog: PackCatalog by lazy {
+        PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(packsIndexDir, "packs-latest.json"))
+    }
+
+    /** The windows' data in Atlas's own packs, read on the windows' own thread. */
     private val windowPacks: WindowPacks by lazy {
-        val dir = File(services.dirs.cache, "engine/windows/index")
-        val catalog = PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(dir, "packs-latest.json"))
-        WindowPacks({ runBlocking { catalog.packs() } }, dir, services.http.client)
+        WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
+    }
+
+    /**
+     * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
+     * thread.
+     */
+    private val windowTiles: WindowTiles by lazy {
+        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
     }
 
     /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
@@ -137,18 +156,27 @@ class MapData(private val services: Services) {
         MapEngine.weather = weather
         MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
-        // is of the last day where one answers; built again after a week from the changes since
+        // is of the last day where one answers; built again after a week from the changes since. Where the user switched
+        // Overpass off, none is asked (and none rested for it), and the map says so.
         MapEngine.windowData = { b, file ->
+            overpassAllowed()
             overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), file, freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
         }
         MapEngine.windowDiff = { b, since, notBefore ->
+            overpassAllowed()
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
         }
+        MapEngine.overpassOff = { Overpass.INFO.id in services.sourcesOff() }
         // and before them, Atlas's own packs, built on GitHub from Geofabrik's extracts, where one holds the window
         MapEngine.windowPacks = { w, after ->
             windowPacks.window(w.z, w.x, w.y, after)?.let { app.atlas.mapview.vk.Windows.Packed(it.gz, it.date, it.pack) }
         }
-        MapEngine.windowsAllowed = { !services.ciDemo }
+        // and before any data, a window the phone has none of from its country's tiles (ENGINE.md step 3, one pack per
+        // country), where the phone's own core built them
+        MapEngine.windowTiles = { w ->
+            windowTiles.window(w.z, w.x, w.y, MapCore.Window.version())?.let { app.atlas.mapview.vk.Windows.Tiled(it.bytes, it.date, it.pack) }
+        }
+        MapEngine.windowsAllowed = { !services.ciRun }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent
         MapEngine.windowEdits = {
             services.edits.all.value.filter { it.state != EditQueue.State.CONFLICT }
