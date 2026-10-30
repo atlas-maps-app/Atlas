@@ -133,4 +133,22 @@ class SourcesTruthTest {
         val overpass = SourcesModel.rows(emptySet(), emptyMap()).first { it.info.id == "overpass" }
         assertEquals("overpass-api.de, maps.mail.ru +1", overpass.host)
     }
+
+    @Test
+    fun theChargersAndFuelPricesSayTheyAreSentWhereTheUserLooks() {
+        // the charger sources said "the area you look at, nothing about you", and Tankerkönig "the area you look at",
+        // though each is sent the spot the user looks around (Open Charge Map's and Tankerkönig's to about 100 m) or
+        // the route planned
+        val privacy = File(android, "app/src/main/kotlin/app/atlas/ui/mine/PrivacyScreen.kt").readText()
+        assertTrue(privacy.contains("\"osm-chargers\", \"ocm\", \"afdc\" -> R.string.mine_sent_chargers"))
+        assertTrue(privacy.contains("\"tankerkoenig\" -> R.string.mine_sent_fuel"))
+        for (lang in listOf("", "-de", "-fr", "-nl")) {
+            val xml = File(android, "app/src/main/res/values$lang/strings_mine.xml").readText()
+            fun line(name: String) = Regex("<string name=\"$name\">([^<]+)</string>").find(xml)?.groupValues?.get(1)
+            val chargers = line("mine_sent_chargers")
+            val fuel = line("mine_sent_fuel")
+            assertTrue("values$lang: $chargers", chargers != null && chargers != line("mine_sent_area"))
+            assertTrue("values$lang: $fuel", fuel != null && "100 m" in fuel)
+        }
+    }
 }

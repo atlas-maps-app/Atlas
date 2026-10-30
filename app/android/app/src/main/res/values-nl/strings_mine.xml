@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">de Wikidata-id van een plek, of de naam van een straat</string>
     <string name="mine_sent_notes">een notitie en haar plek, alleen als je er een achterlaat</string>
     <string name="mine_sent_transit">je halte en de tijd, als je een dienstregeling opent</string>
-    <string name="mine_sent_fuel">het gebied waar je naar kijkt, met je sleutel</string>
+    <string name="mine_sent_fuel">waar je tankstations zoekt, tot 100 m, met je sleutel</string>
+    <string name="mine_sent_chargers">waar je laadpunten zoekt, of de route die je plant</string>
     <string name="mine_sent_reverse">de plek waar je naar vraagt, als Photon geen antwoord heeft</string>
     <string name="mine_sent_edits">de plek die je aanvult; je bewerkingen en gebruikersnaam, alleen als je ze verstuurt</string>
     <string name="mine_sent_windows">welke delen van de kaart je bekijkt: bytes van een pakket</string>

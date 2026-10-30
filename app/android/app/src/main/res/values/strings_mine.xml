@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">the Wikidata id of a place, or a street\'s name</string>
     <string name="mine_sent_notes">a note and its spot, only when you leave one</string>
     <string name="mine_sent_transit">your stop and the time, when you open a timetable</string>
-    <string name="mine_sent_fuel">the area you look at, with your key</string>
+    <string name="mine_sent_fuel">where you look for fuel stations, to about 100 m, with your key</string>
+    <string name="mine_sent_chargers">where you look for charging sites, or the route you plan</string>
     <string name="mine_sent_reverse">the spot you ask about, when Photon cannot answer</string>
     <string name="mine_sent_edits">the place you fill in; your edits and user name, only when you send them</string>
     <string name="mine_sent_windows">which parts of the map you look at: a pack\'s bytes</string>

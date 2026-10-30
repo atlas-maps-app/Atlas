@@ -176,7 +176,8 @@
     <string name="mine_sent_wikidata">l\'identifiant Wikidata d\'un lieu, ou le nom d\'une rue</string>
     <string name="mine_sent_notes">une note et son emplacement, seulement si vous en laissez une</string>
     <string name="mine_sent_transit">votre arrêt et l\'heure, quand vous ouvrez un horaire</string>
-    <string name="mine_sent_fuel">la zone que vous regardez, avec votre clé</string>
+    <string name="mine_sent_fuel">là où vous cherchez des stations, à 100 m près, avec votre clé</string>
+    <string name="mine_sent_chargers">là où vous cherchez des bornes, ou l\'itinéraire que vous préparez</string>
     <string name="mine_sent_reverse">le point sur lequel vous interrogez, quand Photon ne répond pas</string>
     <string name="mine_sent_edits">le lieu que vous complétez ; vos modifications et votre nom d\'utilisateur, seulement à l\'envoi</string>
     <string name="mine_sent_windows">les parties de la carte que vous regardez : des octets d\'un paquet</string>
