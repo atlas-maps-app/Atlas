@@ -88,6 +88,10 @@ inline constexpr std::uint32_t canopy = 0x10;
 inline constexpr std::uint32_t water_w0 = 0x40;
 } // namespace ground_stencil
 
+/// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
+/// polygon grown by its stroke and a pixel, a fan of up to three triangles; a circle's or a streak's box, two).
+inline constexpr std::uint32_t face_vertices = 9;
+
 /// A draw's flags (shaders/ground/ground.slang's GROUND_ flags).
 namespace ground_flag {
 inline constexpr std::uint32_t night = 1;       ///< the night colours
@@ -232,10 +236,71 @@ struct GroundFrame;
 /// plane.
 [[nodiscard]] double water_level(const GroundFrame& f) noexcept;
 
-/// A face of a reflection: its corners in the frame's metres (a gable's three, else four).
+/// A face of a reflection: its corners in the frame's metres (a gable's three, else four), and the box of its
+/// Camera.poly's points (CSS px: min x, min y, max x, max y), which the ripple's layer covers.
 struct ReflectionFace {
     std::array<view::Vec3, 4> q{};
     std::uint32_t n = 4;
+    std::array<double, 4> box{};
+};
+
+/// Amsterdam.reflections' mirrors of a ground tile whatever the camera, as the tile is built (into its mirror heads and
+/// walls: each mirrored building's and part's centroid and box, its walls' heights mirrored in the water's plane, its
+/// walls of 0.3 m or more with their normals, their samples' places, their gables and window rows), so a frame takes
+/// only the radius cut, the depth, the mirror's box against the frame, the facing test and face() of each.
+void prepare_reflections(geometry::GroundTile& g);
+
+/// The reflections' work that does not move with the camera, kept from frame to frame (Reflections.cpp): for the drawn
+/// tiles (their grounds in the frame's order) their mirrors, trees, street lamps and lit roads each in its scene's
+/// order across them, the trees within 9 m of their quay edges and the lit roads' points within 12 m; for each drawn
+/// tile its walls' colours in the moment's light, each made as the wall is first drawn in it, its reflected trees'
+/// draws, and from its first night its water rings with their sides by bands.
+struct ReflectionsKept {
+    /// A mirror, tree, street lamp or lit road of a drawn tile: its place in the frame's tiles, its index there.
+    struct Ref {
+        std::uint32_t tile = 0;
+        std::uint32_t index = 0;
+    };
+    /// A water ring of a drawn tile (a water fill that is no island) with its sides filed by bands of z, so the night
+    /// streaks' test of a point on the water reads only the sides of the point's band: its fill, its bands (from z0,
+    /// `step` metres each, [at, at + bands] of the tile's band_at, each band's first side there and the next band's
+    /// after it), the sides by their place i in the ring (its other end the one before).
+    struct WaterRing {
+        std::uint32_t fill = 0;
+        double z0 = 0;
+        double step = 1;
+        std::uint32_t bands = 1;
+        std::uint32_t at = 0;
+    };
+    /// A drawn tile's own: its ground (held while it is drawn); each wall's colour lit and unlit (0xRRGGBB, made in the
+    /// moment's generation `made`, 0: not yet); whether each of its lit roads' points lies within 12 m of a quay edge;
+    /// each tree's five circles' fifteen draws from random.Random(its id) (its first in `draws`, -1: not drawn yet);
+    /// its water rings by bands (made the first night it is drawn).
+    struct Tile {
+        std::shared_ptr<const void> ground;
+        std::vector<std::uint32_t> lit;
+        std::vector<std::uint32_t> unlit;
+        std::vector<std::uint32_t> made;
+        std::vector<std::uint8_t> road_near;
+        std::vector<std::int32_t> draws_at;
+        std::vector<double> draws;
+        bool banded = false;
+        std::vector<WaterRing> rings;
+        std::vector<std::uint32_t> band_at;
+        std::vector<std::uint32_t> sides;
+        bool used = false;
+    };
+    std::vector<const void*> grounds; ///< the drawn tiles' grounds the lists were laid for, in the frame's order
+    std::vector<Tile*> drawn;         ///< each drawn tile's own, in the frame's order
+    std::vector<std::unique_ptr<Tile>> tiles;
+    std::vector<Ref> mirrors; ///< S['buildings'] + S['parts'], each in its source order (a tile's mirror heads)
+    std::vector<Ref> trees;   ///< S['trees'] in its source order, those within 9 m of a quay edge
+    std::vector<Ref> lamps;   ///< S['nodes']'s street lamps in their order
+    std::vector<Ref> roads;   ///< S['roads']'s lit roads in their order
+    /// The moment the walls' colours are made in (its theme block, its sun, night and overcast, as bytes), and its
+    /// generation.
+    std::vector<std::uint8_t> moment;
+    std::uint32_t generation = 0;
 };
 
 /// A circle of a tree's reflection, CSS px (as the SVG prints them at rest).
@@ -496,9 +561,9 @@ private:
 /// face()'s test (amsterdam.py:610) of a face's corners: Camera.poly (camera coordinates clipped at the near plane,
 /// each edge as the port clips it) keeps three points or more, their box within `margin` of the frame, their shoelace
 /// area over `least` (`strictly` over it, else at least it). `cs` is scratch (the clipped camera coordinates stay in
-/// it).
+/// it); `box`, where given, takes the points' box (CSS px: min x, min y, max x, max y) of a face it keeps.
 [[nodiscard]] bool face_kept(const view::Camera& cam, std::span<const view::Vec3> q, double margin, double least,
-                             bool strictly, std::vector<view::Vec3>& cs);
+                             bool strictly, std::vector<view::Vec3>& cs, std::array<double, 4>* box = nullptr);
 
 /// Whether sample `i` of a drawn tile's bits is lit now (none before its bits come).
 [[nodiscard]] bool sun_bit(const DrawnTile& t, std::uint32_t i) noexcept;
@@ -785,9 +850,12 @@ private:
     /// rows, and the trees beside the water, as face() keeps them, far to near; then at night the streaks of the street
     /// lamps and the lit roads (frame_.reflections).
     void decide_reflections(const view::Camera& cam, const frame::FrameState& state);
-    /// The reflections' night streaks, after the sorted elements: the street lamps' and the lit roads' where the eye
-    /// sees their reflection through the water and on the picture; `near_water` tests the drawn tiles' quay edges.
-    void decide_streaks(const view::Camera& cam, const std::function<bool(double, double, double)>& near_water);
+    /// The reflections' lists for the drawn tiles (reflections_kept_), laid again where the tiles are not those they
+    /// were laid for; each tile's own kept while it is drawn.
+    void lay_reflections();
+    /// The reflections' night streaks, after the sorted elements: the street lamps' and the lit roads' points within
+    /// 12 m of a quay edge, where the eye sees their reflection through the water and on the picture.
+    void decide_streaks(const view::Camera& cam);
     /// The reflections' records into the frame's words (each face its own, a tree's circles each), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
     void write_reflections(std::vector<std::uint32_t>& words);
@@ -909,6 +977,8 @@ private:
     /// come with them).
     std::vector<std::pair<const void*, std::uint64_t>> last_tiles_;
     std::vector<const void*> last_suns_;
+    /// The reflections' work that does not move with the camera (Reflections.cpp).
+    ReflectionsKept reflections_kept_;
     std::unique_ptr<Pipelines> pipelines_;
     std::unique_ptr<Words> words_;
     // scratch, reused frame to frame

@@ -915,7 +915,8 @@ std::size_t GroundTile::bytes() const noexcept {
            (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
            (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
-           (lit_lines.capacity() * sizeof(P2));
+           (lit_lines.capacity() * sizeof(P2)) + (mirror_heads.capacity() * sizeof(MirrorHead)) +
+           (mirror_walls.capacity() * sizeof(MirrorWall));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {

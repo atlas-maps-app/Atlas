@@ -39,7 +39,7 @@ bool beyond_radius(double x, double z, double tx, double tz, double radius) noex
 }
 
 bool face_kept(const view::Camera& cam, std::span<const view::Vec3> q, double margin, double least, bool strictly,
-               std::vector<view::Vec3>& cs) {
+               std::vector<view::Vec3>& cs, std::array<double, 4>* box) {
     cs.clear();
     const double near = cam.near();
     const view::Vec3 first = cam.cam(q[0]);
@@ -51,33 +51,33 @@ bool face_kept(const view::Camera& cam, std::span<const view::Vec3> q, double ma
     }
     ProjectedPoly::clip_edge(a, first, near, cs);
     if (cs.size() < 3) return false;
-    double min_x = 0;
-    double max_x = 0;
-    double min_y = 0;
-    double max_y = 0;
+    // the screen points one after another (each projected once, none kept): their box, and the shoelace sum of each
+    // with the next, the last with the first
+    const view::Vec2 p0 = cam.pc(cs[0]);
+    double min_x = p0.x;
+    double max_x = p0.x;
+    double min_y = p0.y;
+    double max_y = p0.y;
     double sum = 0;
-    std::vector<view::Vec2> sp;
-    sp.reserve(cs.size());
-    for (const view::Vec3& k : cs) sp.push_back(cam.pc(k));
-    for (std::size_t i = 0; i < sp.size(); ++i) {
-        const view::Vec2& p = sp[i];
-        if (i == 0) {
-            min_x = max_x = p.x;
-            min_y = max_y = p.y;
-        } else {
-            min_x = pm::min(min_x, p.x);
-            max_x = pm::max(max_x, p.x);
-            min_y = pm::min(min_y, p.y);
-            max_y = pm::max(max_y, p.y);
+    view::Vec2 p = p0;
+    for (std::size_t i = 1; i <= cs.size(); ++i) {
+        const view::Vec2 r = i < cs.size() ? cam.pc(cs[i]) : p0;
+        if (i < cs.size()) {
+            min_x = pm::min(min_x, r.x);
+            max_x = pm::max(max_x, r.x);
+            min_y = pm::min(min_y, r.y);
+            max_y = pm::max(max_y, r.y);
         }
-        const view::Vec2& r = sp[(i + 1) % sp.size()];
         sum += (p.x * r.y) - (r.x * p.y);
+        p = r;
     }
     if (max_x < -margin || min_x > cam.width() + margin || max_y < -margin || min_y > cam.height() + margin) {
         return false;
     }
     const double area = std::abs(sum) / 2;
-    return strictly ? area > least : area >= least;
+    const bool kept = strictly ? area > least : area >= least;
+    if (kept && box != nullptr) *box = {min_x, min_y, max_x, max_y};
+    return kept;
 }
 
 bool sun_bit(const DrawnTile& t, std::uint32_t i) noexcept {
@@ -346,8 +346,8 @@ void Ground::record_quays(const frame::Recording& r) {
     const auto samples = static_cast<std::uint32_t>(r.frame.pass.spec().config.samples());
     pc.mode = {frame_.night ? ground_flag::night : 0U, 0U, w.quays, samples};
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
-    cmd.draw(6, w.quay_count, 0, 0);
-    r.counters.draw("ground quays", std::uint64_t{w.quay_count} * 2, w.quay_count);
+    cmd.draw(face_vertices, w.quay_count, 0, 0);
+    r.counters.draw("ground quays", std::uint64_t{w.quay_count} * (face_vertices / 3), w.quay_count);
 }
 
 void Ground::emit_quays(const frame::FrameState& state, twin::Stream& out) const {

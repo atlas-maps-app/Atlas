@@ -501,6 +501,8 @@ std::uint32_t Ground::slot(std::uint16_t group, std::uint32_t order, std::uint32
 gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     auto ground = std::make_shared<geo::GroundTile>(
         geo::build_ground(b.tile(), b.head(), b.style(), b.level(), {.x = b.origin().x, .z = b.origin().z}));
+    // the reflections' mirrors whatever the camera, here rather than on the render thread
+    prepare_reflections(*ground);
     const geo::GroundGpu gpu = geo::pack(*ground);
     ground->polyline_words.resize(ground->polylines.size());
     std::uint32_t words = 0;
