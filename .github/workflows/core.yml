@@ -743,13 +743,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prefix="tidy-core-$TASK-$SHARD-"
-          key="$prefix${{ github.run_id }}-${{ github.run_attempt }}"
-          # A deletion that fails leaves an older entry to GitHub's own eviction: a warning, not a failed check.
-          ids=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" --limit 100 --json id,key \
-            --jq ".[] | select(.key != \"$key\") | .id") || { echo "::warning::the caches could not be listed"; exit 0; }
-          while read -r id; do
-            [ -z "$id" ] || gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || echo "::warning::the entry $id was not deleted"
-          done <<< "$ids"
+          key="${prefix}${{ github.run_id }}-${{ github.run_attempt }}"
+          # A deletion that fails leaves an older entry to GitHub's own eviction: a warning, not a failed check. Nothing
+          # is deleted unless the entry just kept is listed, so a key that does not name it cannot take it too.
+          listed=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" --limit 100 --json id,key) ||
+            { echo "::warning::the caches could not be listed"; exit 0; }
+          jq -e --arg key "$key" 'any(.[]; .key == $key)' <<< "$listed" > /dev/null ||
+            { echo "::warning::$key is not listed yet: no older entry deleted"; exit 0; }
+          jq -r --arg key "$key" '.[] | select(.key != $key) | .id' <<< "$listed" | while read -r id; do
+            gh cache delete "$id" --repo "$GITHUB_REPOSITORY" && echo "deleted the older entry $id" ||
+              echo "::warning::the entry $id was not deleted"
+          done
 
       # ---- canaries: each guard must catch its planted failure (tests/planted/, never in a normal build). The builds
       # are host-debug's and host-tsan's, in their own folders (build/<preset>), with one planted test more, so their
@@ -907,13 +911,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prefix="ccache-core-$JOB-"
-          key="$prefix${{ github.run_id }}-${{ github.run_attempt }}"
-          # A deletion that fails leaves an older entry to GitHub's own eviction: a warning, not a failed check.
-          ids=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" --limit 100 --json id,key \
-            --jq ".[] | select(.key != \"$key\") | .id") || { echo "::warning::the caches could not be listed"; exit 0; }
-          while read -r id; do
-            [ -z "$id" ] || gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || echo "::warning::the entry $id was not deleted"
-          done <<< "$ids"
+          key="${prefix}${{ github.run_id }}-${{ github.run_attempt }}"
+          # A deletion that fails leaves an older entry to GitHub's own eviction: a warning, not a failed check. Nothing
+          # is deleted unless the entry just kept is listed, so a key that does not name it cannot take it too.
+          listed=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" --limit 100 --json id,key) ||
+            { echo "::warning::the caches could not be listed"; exit 0; }
+          jq -e --arg key "$key" 'any(.[]; .key == $key)' <<< "$listed" > /dev/null ||
+            { echo "::warning::$key is not listed yet: no older entry deleted"; exit 0; }
+          jq -r --arg key "$key" '.[] | select(.key != $key) | .id' <<< "$listed" | while read -r id; do
+            gh cache delete "$id" --repo "$GITHUB_REPOSITORY" && echo "deleted the older entry $id" ||
+              echo "::warning::the entry $id was not deleted"
+          done
 
   # Every host job's shards ran each of its ctest entries exactly once, in each of its runs (the plan each shard kept
   # against their JUnit files), and the cost table measured again from their times: the artifact ctest-costs holds it
