@@ -388,9 +388,18 @@ object MapEngine {
         return windowsBuilder ?: synchronized(this) {
             windowsBuilder ?: app.atlas.mapview.vk.Windows(
                 dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles, online = { online() },
+                budget = app.atlas.mapview.vk.WindowsBudget(dir, keptPacks = { windowsKept() }),
             ).also { windowsBuilder = it }
         }
     }
+
+    /**
+     * The packs whose country's tiles the phone keeps whole and the windows read, by id (the Maps board's download of a
+     * country): a window taken from them comes back from the phone at once, so the windows' budget lets those go first.
+     * The app sets it.
+     */
+    @Volatile
+    var windowsKept: () -> Set<String> = { emptySet() }
 
     @Volatile
     private var version: String? = null

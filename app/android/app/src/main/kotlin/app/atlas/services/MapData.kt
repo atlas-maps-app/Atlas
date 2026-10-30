@@ -200,6 +200,8 @@ class MapData(private val services: Services) {
         }
         // a country downloaded whole (the Maps board): its windows come from it offline too
         MapEngine.tilesKept = { regionFiles.keepsTiles() }
+        // and the windows taken from it are the first the windows' budget lets go: they come back from the phone at once
+        MapEngine.windowsKept = { windowTiles.keptPacks(MapCore.Window.version()) }
         // the countries whose tiles the core draws, from the published list (its copy kept, offline), read off the main
         // thread: within them the map never hands a place to today's map while its window comes (MapEngine.countries);
         // asked again a minute on while no list is to be had

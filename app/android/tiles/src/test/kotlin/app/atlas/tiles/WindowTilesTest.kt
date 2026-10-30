@@ -170,6 +170,20 @@ class WindowTilesTest {
     }
 
     @Test
+    fun theCountriesKeptOnThePhoneAreTheOnesItsWindowsComeBackFromWithoutTheNetwork() {
+        // the windows' budget lets the windows taken from them go first: they are read there again at once
+        val list = listOf(publish("netherlands", country(), date), publish("belgium", country(), date))
+        val kept = WindowTiles.Local(java.io.File(dir, "netherlands.tiles"), java.io.File(dir, "netherlands.tiles.idx"))
+        val tiles = WindowTiles({ list }, dir, local = { p, _ -> kept.takeIf { p.id == "netherlands" } })
+        assertEquals(setOf("netherlands"), tiles.keptPacks(version))
+        // another core's tiles are not the ones this phone's windows take
+        assertEquals(emptySet<String>(), tiles.keptPacks("core-p9 s1.2-fedcba9876543210"))
+        // no list of packs to be had: none
+        assertEquals(emptySet<String>(), WindowTiles({ throw IOException("offline") }, dir).keptPacks(version))
+        assertTrue(gh.storageRequests.isEmpty())
+    }
+
+    @Test
     fun aWindowWithNothingToDrawIsAnsweredWithNoBytesAndNoRange() {
         val list = listOf(publish("netherlands", country(), date))
         val got = WindowTiles({ list }, dir).window(14, water.first, water.second, version)!!

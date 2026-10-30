@@ -78,6 +78,11 @@ import java.util.zip.GZIPOutputStream
  * is the data as it came, so a window's next diff is asked from its own date. Where the user edits what stands at a
  * place ([edited]), the windows whose data reaches it are built again from their kept data with the edits, before
  * anything else and with no server asked.
+ *
+ * The folder is held to a budget ([budget]: the smallest of 2 GiB, a tenth of the volume and half of what the windows
+ * and the space left free make up), as the app's files are never cleared by Android: after a window's work, where the
+ * folder holds more, windows are evicted, those taken from a country's tiles the phone keeps whole first (they come back
+ * from the phone at once), then the least recently drawn or taken; never one the core wants or has in view.
  */
 class Windows(
     private val dir: File,
@@ -109,6 +114,11 @@ class Windows(
      * whole (an offline region's map): no data is fetched, and no window refreshed.
      */
     private val online: () -> Boolean = { true },
+    /**
+     * How much the folder may hold ([WindowsBudget]): looked at whole at the first step and after each window's work,
+     * windows evicted where it holds more (never one the core wants or has in view). Null: no budget.
+     */
+    private val budget: WindowsBudget? = null,
 ) {
     /** What the windows' folder holds ([kept]): places taken from a country's tiles, places built here, their bytes. */
     data class Kept(val tiled: Int, val built: Int, val bytes: Long) {
@@ -266,11 +276,20 @@ class Windows(
     fun step(core: MapCore): Boolean = step(Of(core))
 
     fun step(core: Core): Boolean {
-        if (!busy.compareAndSet(false, true)) return tilesStep(core)
-        return inBackground {
+        val wrote = if (!busy.compareAndSet(false, true)) tilesStep(core) else inBackground {
             try {
                 val now = clock()
-                nextEdited(core)?.let { return@inBackground rebuild(core, it, now) }
+                nextEdited(core)?.let { e ->
+                    if (!claimed.add(e)) {
+                        toEdit.addFirst(e)
+                        return@inBackground false
+                    }
+                    try {
+                        return@inBackground rebuild(core, e, now)
+                    } finally {
+                        release(e)
+                    }
+                }
                 val wanted = core.wanted()
                 val net = online()
                 if (net) missedOffline.clear()
@@ -283,17 +302,49 @@ class Windows(
                     try {
                         return@inBackground nextOf(core, next, now, net)
                     } finally {
-                        claimed.remove(next)
+                        release(next)
                     }
                 }
                 // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
                 if (wanted.none { !builtLately(it, now) }) dataStatus = Status.Idle
                 if (!net) return@inBackground false
                 val aged = core.inView().firstOrNull { it !in claimed && ready(it, now) && aged(it, now) } ?: return@inBackground false
-                refresh(core, aged, now)
+                if (!claimed.add(aged)) return@inBackground false
+                try {
+                    refresh(core, aged, now)
+                } finally {
+                    release(aged)
+                }
             } finally {
                 busy.set(false)
             }
+        }
+        return trimmed(core) || wrote
+    }
+
+    /** Window [w]'s work is over: the other lane and the budget may take it, and the budget looks at its files again. */
+    private fun release(w: MapCore.Window) {
+        claimed.remove(w)
+        budget?.wrote(w)
+    }
+
+    /**
+     * Holds the folder to its [budget] after a step: the windows in view noted as drawn, and where the folder holds more
+     * (and at the first step, where it is looked at whole) windows evicted, never one the core wants or has in view, nor
+     * one a step works on. True when one was (the packs are to be handed again).
+     */
+    private fun trimmed(core: Core): Boolean {
+        val b = budget ?: return false
+        val view = runCatching { core.inView() }.getOrDefault(emptyList())
+        b.seen(view)
+        if (!b.over()) return false
+        return inBackground {
+            val keep = HashSet(view).apply { addAll(runCatching { core.wanted() }.getOrDefault(emptyList())) }
+            val gone = b.trim(keep, claim = { claimed.add(it) }, release = { claimed.remove(it) })
+            if (gone.isNotEmpty()) {
+                Log.i(EngineFrames.TAG, "vk windows: ${gone.size} evicted, least lately drawn first; the folder holds ${b.bytes shr 20} MB")
+            }
+            gone.isNotEmpty()
         }
     }
 
@@ -335,7 +386,7 @@ class Windows(
                     got == true
                 } finally {
                     tilesStatus = Status.Idle
-                    claimed.remove(w)
+                    release(w)
                 }
             } finally {
                 tilesBusy.set(false)
