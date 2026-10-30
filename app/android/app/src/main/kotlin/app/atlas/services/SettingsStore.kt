@@ -84,7 +84,7 @@ object SettingsKeys {
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
 
-    /** The tilt the user last left the map at with the tilt dial (degrees, `MapState.chosenTilt`): the 3D button's. */
+    /** The tilt the user last left the map at with their fingers (degrees, `MapState.chosenTilt`): the 3D button's. */
     val MAP_TILT = doublePreferencesKey("map.tilt")
 
     /**

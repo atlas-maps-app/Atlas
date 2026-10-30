@@ -41,7 +41,7 @@ import java.io.FileOutputStream
  * The map as the app shows it: [AtlasMap] drawing the 1:1 engine's frames from Atlas's own region packs, captured to PNG
  * with Roborazzi at the boards' size (412 × 915 dp at density 2). The Westerkerk (the app's bundled pack) and the Main
  * board (the canal ring's pack, on the owner's machine) are compared pixel for pixel with the engine's own SVG drawn by
- * `SvgCanvas`; then the warp, night, markers, a route with the location puck, the tape, the tilt dial by day and by
+ * `SvgCanvas`; then the warp, night, markers, a route with the location puck, the tape, the tilt readout by day and by
  * night, the debug overlay and no data.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -280,15 +280,15 @@ class MapScreenshotTest {
     }
 
     @Test
-    fun tiltDial() {
+    fun tiltReadout() {
         westerkerk()
         val state = stateAt(HomeView.westerkerk)
         show(state, controls = true)
         tiltDownWithTwoFingers()
-        val dial = state.controller!!.dial
-        assertNotNull("the dial shows while the fingers tilt", dial)
-        assertTrue("away from the fingers, on the left: ${dial!!.left}", dial.left < 824f / 2)
-        capture("map_tilt_dial")
+        val readout = state.controller!!.readout
+        assertNotNull("the readout shows while the fingers tilt", readout)
+        assertTrue("above the fingers: ${readout!!.y}", readout.y < 1160f)
+        capture("map_tilt_readout")
         compose.onRoot().performTouchInput {
             up(0)
             up(1)
@@ -296,20 +296,20 @@ class MapScreenshotTest {
     }
 
     @Test
-    fun tiltDialAtNight() {
+    fun tiltReadoutAtNight() {
         westerkerk()
         val state = stateAt(HomeView.westerkerk)
         show(state, style = MapStyle(theme = Theme.NIGHT), controls = true)
         tiltDownWithTwoFingers()
-        assertNotNull(state.controller!!.dial)
-        capture("map_tilt_dial_night")
+        assertNotNull(state.controller!!.readout)
+        capture("map_tilt_readout_night")
         compose.onRoot().performTouchInput {
             up(0)
             up(1)
         }
     }
 
-    /** Two fingers right of the middle dragged down 80 px at 125 dp a second, held there: the dial shows on the left. */
+    /** Two fingers right of the middle dragged down 80 px (40 dp, 6.4°) and held there: the readout shows above them. */
     private fun tiltDownWithTwoFingers() {
         compose.onRoot().performTouchInput {
             down(0, Offset(470f, 1100f))

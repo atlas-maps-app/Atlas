@@ -48,15 +48,14 @@ class MapState(initial: CameraPosition) {
         internal set
 
     /**
-     * The tilt the user last left the map at with the tilt dial (two or three fingers dragged up or down), from
-     * [MapController.MIN_CHOSEN_TILT]° up; null until they have. The 3D button brings it back ([tiltTo]); the app may
-     * keep it for the next launch and set it again.
+     * The tilt the user last left the map at with their fingers (two or three dragged up or down), from
+     * [MapController.MIN_CHOSEN_TILT]° up; null until they have. The 3D button brings it back; the app may keep it for
+     * the next launch and set it again.
      */
     var chosenTilt: Double? by mutableStateOf(null)
 
     internal var animator: (suspend (CameraPosition, Int) -> Unit)? = null
     internal var fitter: (suspend (BBox, Int) -> Unit)? = null
-    internal var tilter: (suspend (Double, Int) -> Unit)? = null
     internal var projector: Projector? = null
 
     /** The view drawing this state, while it is on screen. */
@@ -64,11 +63,6 @@ class MapState(initial: CameraPosition) {
 
     suspend fun animateTo(target: CameraPosition, durationMs: Int = 600) {
         animator?.invoke(target, durationMs) ?: run { camera = target }
-    }
-
-    /** Glides the pitch to [pitch] (within the zoom's limit) with the tilt dial showing it, as the 3D button does. */
-    suspend fun tiltTo(pitch: Double, durationMs: Int = 600) {
-        tilter?.invoke(pitch, durationMs) ?: run { camera = CameraOps.clamp(camera.copy(pitch = pitch)) }
     }
 
     /** Moves the camera so [box] fills the view inside its content padding, plus [paddingPx]. */

@@ -197,7 +197,7 @@ class MapGestureTest {
     }
 
     @Test
-    fun twoFingersDraggedUpSlowlyTiltByAFewExactDegrees() {
+    fun twoFingersDraggedUpTiltByTheirMoveAtAnySpeed() {
         val state = stateAt(CameraPosition(Fixtures.westermarkt, 16.0))
         show(state)
         val c = state.controller!!
@@ -206,7 +206,7 @@ class MapGestureTest {
         compose.onRoot().performTouchInput {
             down(0, Offset(300f, 1200f))
             down(1, Offset(520f, 1190f))
-            // 1 px a 16 ms frame (31 dp a second) for 80 px: 40 dp
+            // slowly: 1 px a 16 ms frame (31 dp a second) for 80 px, 40 dp
             for (i in 1..80) {
                 updatePointerTo(0, Offset(300f, 1200f - i))
                 updatePointerTo(1, Offset(520f, 1190f - i))
@@ -214,43 +214,68 @@ class MapGestureTest {
             }
         }
         compose.waitForIdle()
-        assertTrue("the dial shows while the fingers tilt", c.dial != null)
-        // fine: 40 dp at 0.08° a dp
-        assertEquals(40 * TiltGain.FINE, state.camera.pitch, 0.05)
+        // 40 dp at 0.16° a dp
+        assertEquals(40 * MapController.TILT_PER_DP, state.camera.pitch, 1e-6)
         assertEquals(16.0, state.camera.zoom, 1e-9)
         assertEquals(0.0, state.camera.bearing, 1e-9)
-        assertEquals("a tick at each of 1°, 2° and 3°", listOf(TiltDial.DEGREE_FEEL, TiltDial.DEGREE_FEEL, TiltDial.DEGREE_FEEL), feels)
+        // the readout above the fingers, centred on them, while they tilt
+        val r = c.readout!!
+        assertEquals(android.graphics.Paint.Align.CENTER, r.align)
+        assertEquals(410f, r.x, 1f)
+        assertEquals(1110f - TiltReadout.ABOVE_DP * 2f, r.y, 1f)
+        compose.onRoot().performTouchInput {
+            // quickly: 20 px each 8 ms (1250 dp a second) for 80 px, the same 40 dp, the same 6.4°
+            for (i in 1..4) {
+                updatePointerTo(0, Offset(300f, 1120f - 20f * i))
+                updatePointerTo(1, Offset(520f, 1110f - 20f * i))
+                move(8)
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(80 * MapController.TILT_PER_DP, state.camera.pitch, 1e-6)
+        assertTrue("no tick between the stops: $feels", feels.isEmpty())
+        // and back down to flat, which ticks once, softly
+        compose.onRoot().performTouchInput {
+            for (i in 1..12) {
+                updatePointerTo(0, Offset(300f, 1040f + 20f * i))
+                updatePointerTo(1, Offset(520f, 1030f + 20f * i))
+                move()
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(0.0, state.camera.pitch, 1e-9)
+        assertEquals(listOf(TiltReadout.STOP_FEEL), feels)
         compose.onRoot().performTouchInput { up(0); up(1) }
-        pass(500)
-        assertTrue("it lingers", c.dial != null)
-        pass(1000)
-        assertEquals(null, c.dial)
-        assertEquals("a tilt this small is no 3D view to bring back", null, state.chosenTilt)
+        pass(400)
+        assertTrue("it lingers a moment", c.readout != null)
+        pass(800)
+        assertEquals(null, c.readout)
+        assertEquals("flat is no 3D view to bring back", null, state.chosenTilt)
     }
 
     @Test
-    fun aQuickTwoFingerSweepCrossesTheRange() {
+    fun halfTheMapsHeightCrossesTheRange() {
         val state = stateAt(CameraPosition(Fixtures.westermarkt, 16.0))
         show(state)
         val c = state.controller!!
         val feels = ArrayList<Int>()
         c.haptic = { feels += it }
         compose.onRoot().performTouchInput {
-            down(0, Offset(300f, 1500f))
-            down(1, Offset(520f, 1480f))
-            // 20 px each 8 ms (1250 dp a second) for 400 px: 200 dp, more than the range takes
-            for (i in 1..20) {
-                updatePointerTo(0, Offset(300f, 1500f - 20f * i))
-                updatePointerTo(1, Offset(520f, 1480f - 20f * i))
-                move(8)
+            down(0, Offset(300f, 1760f))
+            down(1, Offset(520f, 1740f))
+            // 900 px up (450 dp, a little under half the 915 dp map): flat to the steepest, and on against the stop
+            for (i in 1..45) {
+                updatePointerTo(0, Offset(300f, 1760f - 20f * i))
+                updatePointerTo(1, Offset(520f, 1740f - 20f * i))
+                move()
             }
-            up(0)
-            up(1)
         }
-        pass()
+        compose.waitForIdle()
         assertEquals(CameraOps.maxPitch(16.0), state.camera.pitch, 1e-9)
-        assertEquals(16.0, state.camera.zoom, 1e-9)
-        assertTrue("a click at the limit: $feels", feels.last() == TiltDial.LIMIT_FEEL)
+        assertEquals("one soft tick at the stop", listOf(TiltReadout.STOP_FEEL), feels)
+        assertEquals(TiltReadout.Stop.MAX, TiltReadout.stop(state.camera.pitch, CameraOps.maxPitch(state.camera.zoom)))
+        compose.onRoot().performTouchInput { up(0); up(1) }
+        pass()
         assertEquals("the 3D button's tilt from now on", CameraOps.maxPitch(16.0), state.chosenTilt!!, 1e-9)
     }
 
@@ -276,7 +301,7 @@ class MapGestureTest {
     }
 
     @Test
-    fun threeFingersTiltAtOnceAndTheDialGoesAfter() {
+    fun threeFingersTiltAtOnceAndTheReadoutGoesAfter() {
         val state = stateAt(CameraPosition(Fixtures.westermarkt, 16.0))
         show(state)
         val c = state.controller!!
@@ -286,7 +311,7 @@ class MapGestureTest {
             down(2, Offset(574f, 1195f))
         }
         compose.waitForIdle()
-        assertTrue("three fingers show the dial at once", c.dial != null)
+        assertTrue("three fingers show the readout at once", c.readout != null)
         compose.onRoot().performTouchInput {
             for (i in 1..20) {
                 updatePointerTo(0, Offset(250f, 1200f - 3f * i))
@@ -299,11 +324,12 @@ class MapGestureTest {
             up(2)
         }
         compose.waitForIdle()
-        assertTrue("pitch ${state.camera.pitch}", state.camera.pitch in 2.0..20.0)
+        // 60 px is 30 dp
+        assertEquals(30 * MapController.TILT_PER_DP, state.camera.pitch, 1e-6)
         assertEquals(16.0, state.camera.zoom, 1e-9)
         assertEquals(0.0, state.camera.bearing, 1e-9)
         pass(2000)
-        assertEquals(null, c.dial)
+        assertEquals(null, c.readout)
         assertTrue(c.gestures.isIdle)
     }
 
@@ -331,36 +357,11 @@ class MapGestureTest {
         assertEquals(start, state.camera)
         val c = state.controller!!
         assertTrue(c.gestures.isIdle)
-        assertEquals(null, c.dial)
+        assertEquals(null, c.readout)
         // and the map takes the next gesture as ever
         compose.onRoot().performTouchInput { doubleClick(Offset(300f, 900f)) }
         pass()
         assertEquals(17.0, state.camera.zoom, 1e-6)
-    }
-
-    @Test
-    fun theThreeDButtonsTiltShowsOnTheDial() {
-        val state = stateAt(CameraPosition(Fixtures.westermarkt, 16.0))
-        show(state)
-        val c = state.controller!!
-        compose.mainClock.autoAdvance = false
-        compose.runOnIdle { scope.launch { state.tiltTo(38.0) } }
-        compose.mainClock.advanceTimeBy(300)
-        val shown = compose.runOnIdle { c.dial }
-        assertTrue("the dial shows the glide", shown != null)
-        assertTrue("on the right, by the map's controls: ${shown!!.left}", shown.left > 824f / 2)
-        val mid = compose.runOnIdle { state.camera.pitch }
-        assertTrue("mid-glide $mid", mid > 0.0 && mid < 38.0)
-        compose.mainClock.advanceTimeBy(500)
-        compose.mainClock.autoAdvance = true
-        compose.waitForIdle()
-        assertEquals(38.0, state.camera.pitch, 1e-9)
-        pass(2000)
-        assertEquals(null, c.dial)
-        compose.runOnIdle { scope.launch { state.tiltTo(0.0) } }
-        pass(2000)
-        assertEquals(0.0, state.camera.pitch, 1e-9)
-        assertEquals(null, c.dial)
     }
 
     @Test

@@ -25,7 +25,6 @@ class GestureMachineTest {
         var tilt = 0f
         var tiltStarts = 0
         var tiltFingers = 0
-        var tiltFrom = -1L
         var tiltEnd: Boolean? = null
         var dragZoom = 0f
         var fling: Pair<Float, Float>? = null
@@ -41,8 +40,8 @@ class GestureMachineTest {
         override fun onTransform(x0: Float, y0: Float, x1: Float, y1: Float, scale: Float, rotationDeg: Float) {
             panX += x1 - x0; panY += y1 - y0; this.scale *= scale; rotation += rotationDeg; events += "transform"
         }
-        override fun onTiltStart(x: Float, y: Float, fingers: Int, time: Long) { tiltStarts++; tiltFingers = fingers; tiltFrom = time; events += "tiltStart" }
-        override fun onTilt(dy: Float, time: Long) { tilt += dy; events += "tilt" }
+        override fun onTiltStart(fingers: Int) { tiltStarts++; tiltFingers = fingers; events += "tiltStart" }
+        override fun onTilt(dy: Float) { tilt += dy; events += "tilt" }
         override fun onTiltEnd(cancelled: Boolean) { tiltEnd = cancelled; events += "tiltEnd" }
         override fun onZoomStep(x: Float, y: Float, zoomIn: Boolean) { zoomStep = Triple(x, y, zoomIn); events += "zoomStep" }
         override fun onDragZoom(x: Float, y: Float, dy: Float) { dragZoom += dy; events += "dragZoom" }
@@ -260,11 +259,14 @@ class GestureMachineTest {
             g.move(2, 520f, 1010f - 10f * i, t)
             g.frame(t)
         }
-        assertEquals(-100f, r.tilt, 0.01f)
+        assertEquals("their whole move since the second finger's landing", -100f, r.tilt, 0.01f)
         assertFalse(r.transformed)
         assertEquals(2, r.tiltFingers)
-        assertEquals("their move counts from the second finger's landing", 10L, r.tiltFrom)
         assertTrue(g.isTilting)
+        // where they are, for the readout
+        val at = FloatArray(6)
+        assertEquals(2, g.fingers(at))
+        assertEquals(listOf(300f, 900f, 520f, 910f), at.take(4))
         g.up(1, 300f, 900f, t + 5)
         assertEquals(false, r.tiltEnd)
         // The finger left behind pans on.
@@ -506,8 +508,8 @@ class GestureMachineTest {
             val rec = played(trace)
             assertTrue("$trace: ${rec.events.distinct()}", rec.tilted && !rec.transformed && rec.tiltFingers == 3)
             val third = trace.fingers.maxOf { it.down }
-            assertEquals(third, rec.tiltFrom)
-            // the three fingers' mean move until the first lifts, the two's after it until the next does
+            // the three fingers' mean move from the third's landing until the first lifts, the two's after it until the
+            // next does
             val ups = trace.fingers.map { it.up }.sorted()
             val three = trace.meanDy(third, ups[0])
             assertTrue("$trace: tilted ${rec.tilt} of $three", abs(rec.tilt - three) <= 6f + 0.03f * abs(three))

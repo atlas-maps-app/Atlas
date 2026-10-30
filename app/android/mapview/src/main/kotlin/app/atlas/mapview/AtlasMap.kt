@@ -45,7 +45,7 @@ import java.util.Locale
 
 /**
  * The map: Atlas's engine, the 1:1 port of the renderer the screens were drawn with (`app.atlas.render`), from the
- * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two- and three-finger tilt with its dial,
+ * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two- and three-finger tilt with its readout,
  * double tap, long press, two-finger measure) and the overlays on top.
  *
  * Exact frames are rendered, parsed and rasterised off the main thread; while the next one is made, the last is drawn
@@ -108,7 +108,7 @@ fun AtlasMap(
         controller.onLongPress = { longPress(it) }
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
-        // the tilt dial's detents, on the view under the fingers (Android's touch feedback setting applies)
+        // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }
         if (controller.fonts == null) controller.fonts = MapEngine.fonts(assets)
     }

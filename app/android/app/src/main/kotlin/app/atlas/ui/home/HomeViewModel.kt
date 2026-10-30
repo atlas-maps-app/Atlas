@@ -205,7 +205,7 @@ class HomeViewModel(
     private var gotFresh = false
     private var wasOnline = false
 
-    /** The dial's tilt as the settings keep it ([SettingsKeys.MAP_TILT]). */
+    /** The fingers' last tilt as the settings keep it ([SettingsKeys.MAP_TILT]). */
     private var savedTilt: Double? = null
 
     init {
@@ -214,7 +214,7 @@ class HomeViewModel(
         viewModelScope.launch {
             cameraMoves.debounce(800).collect { c ->
                 if (!cameraUnset) runCatching { services.settings.saveCamera(SavedCamera(c.target, c.zoom, c.bearing, c.pitch)) }
-                // the tilt last set with the dial (a tilt ends in a move), which the 3D button brings back next time too
+                // the tilt last set with the fingers (a tilt ends in a move), which the 3D button brings back next time too
                 map.chosenTilt?.let { t -> if (t != savedTilt) runCatching { services.settings.set(SettingsKeys.MAP_TILT, t) }.onSuccess { savedTilt = t } }
             }
         }
@@ -302,8 +302,8 @@ class HomeViewModel(
     }
 
     /**
-     * The 3D button: tilts the view (to the tilt last set with the dial, [DEFAULT_PITCH] until then) and raises the
-     * buildings, or flattens both; the dial shows the tilt as it goes.
+     * The 3D button: tilts the view (to the tilt last set with the fingers, [DEFAULT_PITCH] until then) and raises the
+     * buildings, or flattens both.
      */
     fun toggle3d() {
         val on = MapLayer.BUILDINGS_3D !in style.value.layers
@@ -314,7 +314,7 @@ class HomeViewModel(
                 // A full or read-only disk: the look is a setting, and it could not change. Nothing else is wrong.
                 return@launch
             }
-            map.tiltTo(if (on) map.chosenTilt ?: DEFAULT_PITCH else 0.0)
+            map.animateTo(map.camera.copy(pitch = if (on) map.chosenTilt ?: DEFAULT_PITCH else 0.0))
         }
     }
 

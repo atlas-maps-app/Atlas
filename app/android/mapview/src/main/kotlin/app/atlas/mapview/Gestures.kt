@@ -19,13 +19,13 @@ interface GestureListener {
     fun onTransform(x0: Float, y0: Float, x1: Float, y1: Float, scale: Float, rotationDeg: Float) {}
 
     /**
-     * Fingers began to tilt the map: two dragged up or down together, or three on it ([fingers]), their middle at
-     * ([x], [y]). Their move is counted from [time] (the first [onTilt] carries all of it since then).
+     * Fingers began to tilt the map: two dragged up or down together, or three on it ([fingers]); where they are,
+     * [GestureMachine.fingers] says. The first [onTilt] carries all their move since the second landed.
      */
-    fun onTiltStart(x: Float, y: Float, fingers: Int, time: Long) {}
+    fun onTiltStart(fingers: Int) {}
 
-    /** The tilting fingers moved [dy] pixels down on average (up is negative), by [time]. */
-    fun onTilt(dy: Float, time: Long) {}
+    /** The tilting fingers moved [dy] pixels down on average (up is negative). */
+    fun onTilt(dy: Float) {}
 
     /** The tilt is over: fewer than two fingers are left, or [cancelled] (the system took the touches away). */
     fun onTiltEnd(cancelled: Boolean) {}
@@ -189,7 +189,7 @@ class GestureMachine(var config: GestureConfig, private val listener: GestureLis
                 // A third finger: whatever the two were doing, the three tilt, from their first pixel on.
                 if (state == State.MEASURE) listener.onMeasureEnd()
                 deadline = null
-                startTilt(time)
+                startTilt()
             }
             // A third finger joins the two tilting: it tilts with them from where it landed.
             State.TILT -> rebase()
@@ -236,7 +236,7 @@ class GestureMachine(var config: GestureConfig, private val listener: GestureLis
             State.DRAG_ZOOM -> dragZoom()
             State.TWO_PENDING -> classifyTwo(time)
             State.TRANSFORM -> transform()
-            State.TILT -> tilt(time)
+            State.TILT -> tilt()
             State.MEASURE -> measure(time)
             else -> {}
         }
@@ -393,8 +393,8 @@ class GestureMachine(var config: GestureConfig, private val listener: GestureLis
         }
         when (two(time)) {
             Two.TILT -> {
-                startTilt(secondDownTime)
-                tilt(time)
+                startTilt()
+                tilt()
             }
             Two.TRANSFORM -> {
                 state = State.TRANSFORM
@@ -455,20 +455,17 @@ class GestureMachine(var config: GestureConfig, private val listener: GestureLis
         val my = ((curY[0] - startY[0]) + (curY[1] - startY[1])) / 2
         if (abs(my) >= MEASURE_TILT_SLOPS * config.touchSlop && two(time) == Two.TILT) {
             listener.onMeasureEnd()
-            startTilt(secondDownTime)
-            tilt(time)
+            startTilt()
+            tilt()
             return
         }
         listener.onMeasure(curX[0], curY[0], curX[1], curY[1])
     }
 
-    /** The fingers down tilt from now on, their move counted from [from]. */
-    private fun startTilt(from: Long) {
+    /** The fingers down tilt from now on. */
+    private fun startTilt() {
         state = State.TILT
-        var x = 0f
-        var y = 0f
-        for (k in 0 until count) { x += curX[k]; y += curY[k] }
-        listener.onTiltStart(x / count, y / count, count, from)
+        listener.onTiltStart(count)
         // Three fingers tilt from where they are; two that said tilt take their whole move since they landed.
         if (count > 2) rebase()
     }
@@ -502,12 +499,21 @@ class GestureMachine(var config: GestureConfig, private val listener: GestureLis
     }
 
     /** The tilting fingers' mean move down since the last frame. */
-    private fun tilt(time: Long) {
+    private fun tilt() {
         var dy = 0f
         for (k in 0 until count) dy += curY[k] - lastY[k]
         dy /= count
-        if (dy != 0f) listener.onTilt(dy, time)
+        if (dy != 0f) listener.onTilt(dy)
         rebase()
+    }
+
+    /** The fingers down now, x and y in turn into [out] (six floats hold three); how many there are. */
+    fun fingers(out: FloatArray): Int {
+        for (k in 0 until count) {
+            out[2 * k] = curX[k]
+            out[2 * k + 1] = curY[k]
+        }
+        return count
     }
 
     /** Every finger applied where it is now. */
