@@ -77,9 +77,12 @@ class LocalHub(private val services: Services) {
     @Volatile
     var marineOverride: (suspend (app.atlas.geo.LatLon) -> app.atlas.providers.MarineForecast?)? = null
 
-    /** The marine forecast at [at]: water temperature and sea level by the hour, or null inland, offline and when the model has none. */
+    /**
+     * The marine forecast at [at]: water temperature and sea level by the hour; offline, or with no answer, the one kept
+     * nearest (marked kept); null inland and when there is none.
+     */
     suspend fun marine(at: app.atlas.geo.LatLon): app.atlas.providers.MarineForecast? =
-        marineOverride?.invoke(at) ?: if (online()) runCatching { services.weather.marine(at) }.getOrNull() else null
+        marineOverride?.invoke(at) ?: runCatching { if (online()) services.weather.marine(at) else services.weather.keptMarine(at) }.getOrNull()
 
     /** Wikidata for "named after"; tests replace the way it reads a URL. */
     var etymology: Etymology = Etymology { url -> services.http.text(url) }
