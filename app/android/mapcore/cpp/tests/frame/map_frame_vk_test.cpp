@@ -243,9 +243,10 @@ int draw_until_complete(standin::Session& session, frame::MapFrame& map, const s
 /// Draws `camera` until the last frame leaves nothing mid-transition (MapFrame::animating: the world's fades, the
 /// frame's blend and the passes' own, a label's among them), at most `seconds`; whether it came to rest. A complete
 /// picture may still hold a label fading where the camera left it (250 ms of the steady clock), which a fast build
-/// draws inside its fade.
+/// draws inside its fade. The bound catches a map that never comes to rest, as draw_until_complete's does: a frame
+/// under TSan beside other tests on CI's runners takes seconds, and a fade's end may wait for the frame after it.
 bool draw_until_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
-                      double seconds = 10.0) {
+                      double seconds = 240.0) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
     while (map.animating()) {
         if (std::chrono::steady_clock::now() >= until) return false;
