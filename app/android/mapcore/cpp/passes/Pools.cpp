@@ -55,7 +55,7 @@ constexpr double pool_reach = 10.0;
 
 } // namespace
 
-void Ground::decide_pools(const view::Camera& cam) {
+void Ground::decide_pools() {
     GroundFrame& f = frame_;
     f.lamp_pools.clear();
     if (!f.night || no_pools_ || only_setts_ || f.tiles.empty() || f.out(style::camera_part::lamp_pools)) return;
@@ -74,6 +74,7 @@ void Ground::decide_pools(const view::Camera& cam) {
     std::ranges::stable_sort(lamps, {}, &Source::order);
     for (const Source& l : lamps) {
         const geo::P2& at = f.tiles[l.tile].ground->lamps[l.k].at;
+        const view::Camera& cam = *f.tiles[l.tile].cam; // in the tile's own frame
         if (f.engine && beyond_radius(at.x, at.z, f.target_x, f.target_z, f.radius)) continue;
         const view::Vec3 c = cam.cam({at.x, 0.0, at.z});
         if (c.z < 2) continue;

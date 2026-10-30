@@ -106,7 +106,7 @@ constexpr float core_opacity = 0.22F;
 
 } // namespace
 
-void Ground::decide_lit(const view::Camera& cam) {
+void Ground::decide_lit(const view::Camera& view_cam) {
     GroundFrame& f = frame_;
     f.lit_runs.clear();
     f.lit_run_points.clear();
@@ -115,7 +115,7 @@ void Ground::decide_lit(const view::Camera& cam) {
     // neither the glow nor (on a wet night) the cores, where the map leaves them out
     if (f.out(style::camera_part::lit_streets) && (!f.wet || f.out(style::camera_part::wet_cores))) return;
     // `eye = th.get('wx') and cfg.get('pitch', 90) < 10`
-    if (f.weather && cam.spec().pitch < 10) return;
+    if (f.weather && view_cam.spec().pitch < 10) return;
     // the lit roads in S['roads']'s order across the drawn tiles
     struct Source {
         std::uint32_t order;
@@ -132,6 +132,7 @@ void Ground::decide_lit(const view::Camera& cam) {
     const double widen = f.weather ? 1.0 : 3.0;
     for (const Source& s : roads) {
         const geo::GroundTile& g = *f.tiles[s.tile].ground;
+        const view::Camera& cam = *f.tiles[s.tile].cam; // in the tile's own frame
         const geo::LitRoad& road = g.lit_roads[s.k];
         // for pt in r['pts'] + [None]: a point ahead (c[2] > 2) within the radius joins the run; anything else ends it,
         // and a run of two points or more is a path

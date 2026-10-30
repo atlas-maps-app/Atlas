@@ -461,7 +461,7 @@ void Ground::lay_reflections() {
     for (const Source& s : roads) k.roads.push_back(s.ref);
 }
 
-void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState& state) {
+void Ground::decide_reflections(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.reflections.clear();
     f.reflection_faces.clear();
@@ -480,7 +480,6 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     if (!f.water) return;
     const shaders::Theme& theme = state.block.theme;
     const geo::V3 light{f.light[0], f.light[1], f.light[2]};
-    const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
     const bool overcast = state.theme.has(style::theme_flag::overcast) && state.theme.sky_k != 0.0;
     lay_reflections();
     ReflectionsKept& k = reflections_kept_;
@@ -506,6 +505,8 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     for (std::size_t mi = 0; mirroring && mi < k.mirrors.size(); ++mi) {
         const ReflectionsKept::Ref& mm = k.mirrors[mi];
         const DrawnTile& t = f.tiles[mm.tile];
+        const view::Camera& cam = *t.cam; // in the tile's own frame
+        const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
         const geo::GroundTile& g = *t.ground;
         const geo::MirrorHead& hd = g.mirror_heads[mm.index];
         const sun::Mirror& m = g.casters->mirrors[hd.mirror];
@@ -604,6 +605,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
         const ReflectionsKept::Ref& tr = k.trees[ti];
         const geo::GroundTile& g = *f.tiles[tr.tile].ground;
         const sun::TileTrees& tt = g.casters->trees;
+        const view::Camera& cam = *f.tiles[tr.tile].cam;
         const double x = tt.x[tr.index];
         const double z = tt.z[tr.index];
         if (f.engine && beyond_radius(x, z, f.target_x, f.target_z, f.radius)) continue;
@@ -664,10 +666,10 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     });
     f.reflections.reserve(ranked.size());
     for (const Ranked& r : ranked) f.reflections.push_back(elements[r.element]);
-    if (streaks) decide_streaks(cam);
+    if (streaks) decide_streaks();
 }
 
-void Ground::decide_streaks(const view::Camera& cam) {
+void Ground::decide_streaks() {
     GroundFrame& f = frame_;
     ReflectionsKept& kept = reflections_kept_;
     const ReflectionsKept& k = kept;
@@ -678,10 +680,11 @@ void Ground::decide_streaks(const view::Camera& cam) {
         if (!kept.drawn[ti]->banded) band_water(*f.tiles[ti].ground, *kept.drawn[ti]);
     }
     pm::PyRandom rnd(5);
-    const view::Vec3 eye = cam.eye();
     // streak(x, yl, z, k): where the eye's ray to the mirrored light meets the water, ahead, on the picture and on the
     // water (the tests are the port's, the dearest last: none draws from the random numbers before all have passed)
     const auto streak = [&](std::uint32_t tile, double x, double yl, double z, double k) {
+        const view::Camera& cam = *f.tiles[tile].cam; // in the lamp's or the road's tile's own frame
+        const view::Vec3 eye = cam.eye();
         const double wy = f.tiles[tile].ground->water_y;
         const double my = (2 * wy) - yl;
         const double dy = my - eye.y;

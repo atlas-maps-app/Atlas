@@ -171,7 +171,7 @@ void Ground::decide_woods(const view::Camera& cam, const DrawnTile& t, TileDecis
     }
 }
 
-void Ground::decide_tracks(const view::Camera& cam) {
+void Ground::decide_tracks() {
     GroundFrame& f = frame_;
     f.track_shadows.clear();
     if (!f.park_sun) return;
@@ -196,6 +196,7 @@ void Ground::decide_tracks(const view::Camera& cam) {
     CoasterWalk walk;
     for (const Track& tr : tracks) {
         const geo::GroundTile& g = *f.tiles[tr.tile].ground;
+        const view::Camera& cam = *f.tiles[tr.tile].cam; // in the tile's own frame
         const geo::ShadowTrack& st = g.tracks[tr.track];
         // `if all(far(*p) for p in tr['pts'][::4] + [tr['pts'][-1]]): continue`
         if (f.engine && std::ranges::all_of(st.cut, [&](const std::array<double, 2>& p) {
