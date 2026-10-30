@@ -210,13 +210,21 @@ class Weather(
             currentCoroutineContext().ensureActive()
             return second(at) ?: kept(at, keptWithinM) ?: throw e
         }
-        // A 400 is our mistake (Open-Meteo says why); other failures are the server's: MET Norway answers instead, and
-        // failing that the kept forecast stands in.
-        if (res.code == 400) throw ProviderException(ID, "Open-Meteo refused the request: " + (runCatching { res.json().asObject()?.str("reason") }.getOrNull() ?: res.text.take(200)))
-        if (!res.ok) return second(at) ?: kept(at, keptWithinM) ?: throw HttpException(res.code, res.url, res.text.take(300))
+        // A 400 is our mistake (Open-Meteo says why), other failures the server's; either way MET Norway answers instead,
+        // failing that the kept forecast stands in, and only where neither does is the failure shown, a 400's reason with
+        // it. Until 30 October a 400 (a key Open-Meteo no longer takes, for one) showed no forecast at all.
+        if (!res.ok) {
+            val why = if (res.code == 400) {
+                ProviderException(ID, "Open-Meteo refused the request: " + (runCatching { res.json().asObject()?.str("reason") }.getOrNull() ?: res.text.take(200)))
+            } else {
+                HttpException(res.code, res.url, res.text.take(300))
+            }
+            return second(at) ?: kept(at, keptWithinM) ?: throw why
+        }
         val now = clock()
-        val json = res.json().asObject() ?: throw ProviderException(ID, "Open-Meteo answered something unexpected")
-        val forecast = parseForecast(json, now)
+        // an answer that is not Open-Meteo's forecast (a Wi-Fi's sign-in page answers 200 too) fails as the server would
+        val forecast = runCatching { res.json().asObject()?.let { parseForecast(it, now) } }.getOrNull()
+            ?: return second(at) ?: kept(at, keptWithinM) ?: throw ProviderException(ID, "Open-Meteo answered something unexpected: ${res.text.take(120)}")
         // A full or read-only disk loses only the offline copy, never the forecast that came.
         try {
             keep(at, res.text, now)

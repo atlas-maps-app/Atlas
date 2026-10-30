@@ -284,6 +284,7 @@
     <string name="mine_weather_means">Wat het voor jou betekent</string>
     <string name="mine_weather_none">Geen voorspelling</string>
     <string name="mine_weather_none_text">Geen verbinding, en geen bewaarde voor hier. Open het weer één keer met verbinding en het blijft bewaard.</string>
+    <string name="mine_weather_unanswered_text">De weerdiensten gaven geen antwoord, en er is niets bewaard voor hier. Probeer het straks opnieuw.</string>
     <string name="mine_weather_footer">Weergegevens van Open-Meteo.com (CC BY 4.0) · offline: de bewaarde voorspelling en de barometer van de telefoon</string>
     <string name="mine_weather_raining">het regent</string>
     <string name="mine_weather_rain_at">regen om %1$s</string>

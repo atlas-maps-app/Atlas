@@ -68,9 +68,11 @@ fun ForecastScreen(args: Dest.Forecast, nav: Navigator) {
     val here = rememberHere()
     var models by remember(here) { mutableStateOf<ModelsForecast?>(null) }
     var done by remember(here) { mutableStateOf(false) }
+    var askedOnline by remember(here) { mutableStateOf(false) }
     val fetcher = remember { ModelsFetcher(services.http, File(services.dirs.cache, "providers"), { services.clock.instant() }) }
     LaunchedEffect(here) {
-        models = if (services.config.offline || !services.connectivity.online.value) fetcher.kept(here) else fetcher.get(here)
+        askedOnline = !services.config.offline && services.connectivity.online.value
+        models = if (!askedOnline) fetcher.kept(here) else fetcher.get(here)
         done = true
     }
     val m = models
@@ -91,7 +93,7 @@ fun ForecastScreen(args: Dest.Forecast, nav: Navigator) {
             ChartCard(m, zone)
             Sources(m)
         } else if (done) {
-            MineState("ui.no-signal", stringResource(R.string.mine_forecast_none), text = stringResource(R.string.mine_forecast_none_text), tint = Color(F_SOFT))
+            MineState("ui.no-signal", stringResource(R.string.mine_forecast_none), text = stringResource(noForecastText(askedOnline, R.string.mine_forecast_none_text)), tint = Color(F_SOFT))
         } else BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), F_SOFT)
         // the board's foot: 10 on 15, centred, 36 px under the last card
         BText(stringResource(R.string.mine_forecast_footer), bt(10f, 400, 15f, align = TextAlign.Center), 0xFF6A7A98, Modifier.fillMaxWidth().padding(start = 1.dp, end = 1.dp, top = 25.dp), lines = 4)

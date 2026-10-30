@@ -284,6 +284,7 @@
     <string name="mine_weather_means">Ce que cela signifie pour vous</string>
     <string name="mine_weather_none">Pas de prévision</string>
     <string name="mine_weather_none_text">Pas de connexion, et rien de gardé ici. Ouvrez la météo une fois avec une connexion et elle reste.</string>
+    <string name="mine_weather_unanswered_text">Les services météo n\'ont pas répondu, et rien n\'est gardé pour ici. Réessayez dans un moment.</string>
     <string name="mine_weather_footer">Données météo d\'Open-Meteo.com (CC BY 4.0) · hors ligne : la prévision gardée et le baromètre du téléphone</string>
     <string name="mine_weather_raining">il pleut</string>
     <string name="mine_weather_rain_at">pluie à %1$s</string>

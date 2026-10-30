@@ -194,6 +194,7 @@ class MineStateTest {
         assertTrue(f.count < 5)
         assertNull(ModelsForecast.parse("{\"hourly\":{}}", at, Instant.now()))
         assertNull(ModelsForecast.parse("{}", at, Instant.now()))
+        assertNull("a Wi-Fi's sign-in page is no forecast", ModelsForecast.parse("<html><body>Sign in</body></html>", at, Instant.now()))
     }
 
     @Test
@@ -207,6 +208,14 @@ class MineStateTest {
     private fun keep(dir: File, p: LatLon, fetched: Instant) {
         dir.mkdirs()
         File(dir, "models_${"%.2f_%.2f".format(java.util.Locale.ROOT, p.lat, p.lon)}.json").writeText("${fetched.epochSecond}\n${models()}")
+    }
+
+    @Test
+    fun aForecastThatFailedWithAConnectionSaysTheServicesDidNotAnswerNotThatThereIsNone() {
+        val ctx = RuntimeEnvironment.getApplication()
+        assertTrue(ctx.getString(noForecastText(askedOnline = true, app.atlas.R.string.mine_weather_none_text)).startsWith("The weather services did not answer"))
+        assertTrue(ctx.getString(noForecastText(askedOnline = false, app.atlas.R.string.mine_weather_none_text)).startsWith("No connection"))
+        assertTrue(ctx.getString(noForecastText(askedOnline = false, app.atlas.R.string.mine_forecast_none_text)).startsWith("No connection"))
     }
 
     @Test

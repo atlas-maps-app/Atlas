@@ -284,6 +284,7 @@
     <string name="mine_weather_means">Was es für dich bedeutet</string>
     <string name="mine_weather_none">Keine Vorhersage</string>
     <string name="mine_weather_none_text">Keine Verbindung und keine gespeicherte für hier. Öffne das Wetter einmal mit Verbindung, dann bleibt es.</string>
+    <string name="mine_weather_unanswered_text">Die Wetterdienste haben nicht geantwortet, und für hier ist nichts gespeichert. Versuche es später noch einmal.</string>
     <string name="mine_weather_footer">Wetterdaten von Open-Meteo.com (CC BY 4.0) · offline: die gespeicherte Vorhersage und das Barometer des Telefons</string>
     <string name="mine_weather_raining">es regnet</string>
     <string name="mine_weather_rain_at">Regen um %1$s</string>

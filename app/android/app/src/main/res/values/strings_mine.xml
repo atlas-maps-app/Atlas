@@ -284,6 +284,7 @@
     <string name="mine_weather_means">What it means for you</string>
     <string name="mine_weather_none">No forecast</string>
     <string name="mine_weather_none_text">No connection, and none kept on the phone for here. Open the weather once with a connection and it stays.</string>
+    <string name="mine_weather_unanswered_text">The weather services did not answer, and nothing is kept on the phone for here. Try again in a while.</string>
     <string name="mine_weather_footer">Weather data by Open-Meteo.com (CC BY 4.0) · offline: the forecast kept on the phone and its barometer</string>
     <string name="mine_weather_raining">raining</string>
     <string name="mine_weather_rain_at">rain at %1$s</string>
