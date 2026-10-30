@@ -1,5 +1,6 @@
 package app.atlas.mapview.vk
 
+import app.atlas.mapview.CountryTiles
 import kotlin.math.max
 import kotlin.math.min
 
@@ -119,10 +120,15 @@ internal class Transition(private val log: (String) -> Unit) {
          * reach in a country whose tiles the core draws ([inCountry]): its window on its way (from the country's tiles,
          * or built on the phone), the core draws its own cover and the windows say what they are doing, never today's
          * map's other look in between (one look within a country, ENGINE.md step 3; the user, 30 October, on today's map
-         * where a window had not come: "looks different then the engine"). Today's map elsewhere: beyond the core's
-         * reach, and outside those countries where no window is on the phone.
+         * where a window had not come: "looks different then the engine"). Within such a country whose tiles of this
+         * phone's core are published the core's reach is its levels' ([PackList.LEVELS_REACH]: step 7, its frame cells'
+         * L13 and L12 tiles, which come from those tiles alone), else its windows' ([PackList.CORE_REACH]). Today's map
+         * elsewhere: beyond the core's reach, and outside those countries where no window is on the phone.
          */
-        fun pathOf(packs: PackList, inCountry: (Double, Double) -> Boolean, lat: Double, lon: Double, distance: Double): Path =
-            if (packs.covers(lat, lon, distance) || (distance <= PackList.CORE_REACH && inCountry(lat, lon))) Path.CORE else Path.CANVAS
+        fun pathOf(packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double): Path {
+            if (packs.covers(lat, lon, distance)) return Path.CORE
+            val country = countryAt(lat, lon) ?: return Path.CANVAS
+            return if (distance <= (if (country.levels) PackList.LEVELS_REACH else PackList.CORE_REACH)) Path.CORE else Path.CANVAS
+        }
     }
 }

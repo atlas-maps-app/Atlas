@@ -22,6 +22,12 @@
 // Every value the port prints is snapped to its tenth at rest (camera.slang's snap_tenth), from the unrounded value
 // the port prints: c0[0] - w0, p[0] - rr * 0.2, rr * 0.72.
 //
+// A frame cell's level's tree (L13, L12: ENGINE.md one pack per country, step 7) is TREE_LEAN_VECTORS uint4, its
+// header and its blobs: what a small crown and the generic tree read. Its job is a small crown's wherever it is drawn
+// (TREE_JOB_LEAN): at a level's distances every crown is one already (r · focal / d < 6.5 to r = 21 m at 4.7 km on a
+// phone 916 dp tall, focal 1,410 dp), and as a stand-in nearer, until the finer tile comes, it is drawn as one too. The
+// clumps were three quarters of a far view's heaps for trees: 38.6 of the Westerkerk's 107 MB of L12 from 20 km.
+//
 // It writes the tree's parts as records (TREE_RECORD_VECTORS uint4: a circle, a quad, a capsule; their colour and
 // depth), drawn by one opaque pipeline in the objects slot and its trunk's sunlit side (opacity .55) translucent. At
 // true depth every part of a tree lies on one plane facing the eye, at its crown's centre's depth (a small crown's
@@ -41,6 +47,7 @@ static const uint TREE_HEADER_VECTORS = 2u;
 static const uint TREE_CLUMPS = 36u;
 static const uint TREE_BLOBS = 9u;
 static const uint TREE_VECTORS = 47u;
+static const uint TREE_LEAN_VECTORS = 11u; // a level's tree: its header and blobs
 
 /// A tree's header flags: its leaves stay green (autumn's tint 0: an evergreen or needleleaved tree).
 static const uint TREE_EVERGREEN = 1u;
@@ -53,6 +60,7 @@ static const uint TREE_JOB_LIMBS = 8u;     // its limbs (s > 2.5)
 static const uint TREE_JOB_RIGHT = 16u;    // the sunlit side on the trunk's right (sx = 1)
 static const uint TREE_JOB_GENERIC = 32u;  // without weather: the generic tree
 static const uint TREE_JOB_NIGHT = 64u;    // the moment is night
+static const uint TREE_JOB_LEAN = 128u;    // a level's lean record: its blobs right after its header, no clumps
 static const uint TREE_JOB_NB_SHIFT = 8u;
 static const uint TREE_JOB_VECTORS = 5u;
 

@@ -34,9 +34,12 @@ fun interface MapWeather {
 /**
  * A country whose published tiles the core draws: its pack's [id] and [name] ("Netherlands"), and its pack's [box]. A
  * place is the country's where the box holds it: its windows come from the tiles, and a window the tiles do not list
- * (a border town over the line, which the box reaches) is built on the phone from its data, as everywhere.
+ * (a border town over the line, which the box reaches) is built on the phone from its data, as everywhere. [levels]:
+ * tiles of this phone's core are published, which hold each frame cell's levels (ENGINE.md one pack per country, step
+ * 7), so the core draws the country to the levels' reach ([app.atlas.mapview.vk.PackList.LEVELS_REACH]); else only its
+ * windows, to theirs.
  */
-data class CountryTiles(val id: String, val name: String, val box: BBox) {
+data class CountryTiles(val id: String, val name: String, val box: BBox, val levels: Boolean = false) {
     fun holds(lat: Double, lon: Double): Boolean = lat in box.south..box.north && lon in box.west..box.east
 }
 

@@ -109,15 +109,29 @@ void World::set_wake(std::function<void()> wake) {
     residency_->set_published(std::move(wake));
 }
 
+namespace {
+
+/// The levels whose tiles say where a pack's data lies: a render pack's finest; every level of a frame cell's, whose
+/// coarse tiles reach where none of its places' own tiles are on the phone yet.
+[[nodiscard]] std::span<const std::uint8_t> data_levels(const tiles::StorePack& p) {
+    const tiles::RenderHead& head = *p.pack.head();
+    return p.kind == tiles::PackKind::window ? std::span<const std::uint8_t>(head.levels)
+                                             : std::span<const std::uint8_t>(head.levels).first(1);
+}
+
+} // namespace
+
 void World::choose(const style::CameraState& camera) {
     const tiles::GridPoint target{tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude)};
     auto holds = [&target](const tiles::StorePack& p) {
         const tiles::RenderHead* head = p.pack.head();
         if (!p.pack.is_render() || head == nullptr || head->levels.empty()) return false;
-        for (const tiles::ChunkRef& c : p.pack.chunks().level(head->levels[0])) {
-            const tiles::GridBox& b = c.reach.box;
-            if (b.south <= target.lat && target.lat <= b.north && b.west <= target.lon && target.lon <= b.east) {
-                return true;
+        for (const std::uint8_t z : data_levels(p)) {
+            for (const tiles::ChunkRef& c : p.pack.chunks().level(z)) {
+                const tiles::GridBox& b = c.reach.box;
+                if (b.south <= target.lat && target.lat <= b.north && b.west <= target.lon && target.lon <= b.east) {
+                    return true;
+                }
             }
         }
         return false;
@@ -173,20 +187,23 @@ void World::set_coarser(std::string id, std::optional<tiles::GridBox> mask) {
 
 namespace {
 
-/// A render pack's box: its finest level's reach (none for a pack without one).
+/// A render pack's box: its data levels' reach (data_levels: a render pack's finest level, a frame cell's every level;
+/// none for a pack without one).
 [[nodiscard]] std::optional<tiles::GridBox> box_of(const tiles::StorePack& pack) {
     const tiles::RenderHead* head = pack.pack.head();
     if (!pack.pack.is_render() || head == nullptr || head->levels.empty()) return std::nullopt;
     std::optional<tiles::GridBox> box;
-    for (const tiles::ChunkRef& c : pack.pack.chunks().level(head->levels[0])) {
-        const tiles::GridBox& b = c.reach.box;
-        if (!box) {
-            box = b;
-        } else {
-            box->south = std::min(box->south, b.south);
-            box->west = std::min(box->west, b.west);
-            box->north = std::max(box->north, b.north);
-            box->east = std::max(box->east, b.east);
+    for (const std::uint8_t z : data_levels(pack)) {
+        for (const tiles::ChunkRef& c : pack.pack.chunks().level(z)) {
+            const tiles::GridBox& b = c.reach.box;
+            if (!box) {
+                box = b;
+            } else {
+                box->south = std::min(box->south, b.south);
+                box->west = std::min(box->west, b.west);
+                box->north = std::max(box->north, b.north);
+                box->east = std::max(box->east, b.east);
+            }
         }
     }
     return box;
@@ -292,7 +309,7 @@ void World::choose_neighbours(const style::CameraState& camera) {
         const std::optional<tiles::GridBox> b = box_of(*p);
         if (!b) continue;
         const double d = distance(*b);
-        if (d > options_.far) continue;
+        if (d > far_) continue;
         near.push_back({.pack = p, .rank = p->kind == tiles::PackKind::window ? 1 : 0, .distance = d});
     }
     // stable: packs at one distance keep the store's order
@@ -424,10 +441,62 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
     const std::size_t taken = std::min(next.size(), window_ahead_max);
     wanted.insert(wanted.end(), next.begin(), next.begin() + static_cast<std::ptrdiff_t>(taken));
     std::vector<tiles::TileKey> in_view = nearest(drawn);
+    std::vector<tiles::TileKey> levels = want_levels(view, camera, frame);
     const std::scoped_lock lock(wanted_mutex_);
     wanted_ = std::move(wanted);
     ahead_ = taken;
     in_view_ = std::move(in_view);
+    levels_ = std::move(levels);
+}
+
+std::vector<tiles::TileKey> World::want_levels(const view::View& view, const style::CameraState& camera,
+                                               const view::GroundFrame& frame) const {
+    const Frustum frustum(view.camera(), 40.0, far_);
+    const std::int32_t lat = tiles::grid_round(camera.latitude);
+    const std::int32_t lon = tiles::grid_round(camera.longitude);
+    std::vector<tiles::TileKey> keys;
+    // The far level's tiles in view first (the whole view drawn soon: its ground and its large buildings, and the
+    // coarse level's stand-in), then the coarse level's within its reach with a place beyond the finest level's.
+    for (const std::uint8_t z : {tiles::Store::far_level, tiles::Store::coarse_level}) {
+        const tiles::TileKey centre = tiles::tile_of(z, lat, lon);
+        // an L13 tile is 40,075 km · cos(lat) / 2^13 wide, an L12 tile twice that
+        const double width =
+            40'075'016.686 * pymath::cos(pymath::radians(camera.latitude)) / static_cast<double>(1U << z);
+        const auto reach = static_cast<std::int64_t>(std::ceil(far_ / std::max(width, 1.0))) + 1;
+        const std::int64_t last = (std::int64_t{1} << z) - 1;
+        struct Seen {
+            double share = 0;
+            double distance = 0;
+            tiles::TileKey key;
+        };
+        std::vector<Seen> seen;
+        for (std::int64_t y = centre.y - reach; y <= centre.y + reach; ++y) {
+            for (std::int64_t x = centre.x - reach; x <= centre.x + reach; ++x) {
+                if (x < 0 || y < 0 || x > last || y > last) continue;
+                const tiles::TileKey key(z, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+                const std::array<std::int32_t, 4> b = tiles::tile_box(key);
+                const Box box = box_of({.south = b[0], .west = b[1], .north = b[2], .east = b[3]}, 3000, frame);
+                if (!frustum.sees(box) || !store_.find(key).empty()) continue;
+                const double d = frustum.distance(box);
+                if (z == tiles::Store::coarse_level &&
+                    (d > options_.coarse_reach || d + (width * 1.4143) <= options_.fine_reach)) {
+                    continue;
+                }
+                seen.push_back({.share = frustum.share(box), .distance = d, .key = key});
+            }
+        }
+        // by their share of the screen, then nearest first (stable: the scan's order on a tie, on every libc++)
+        std::ranges::stable_sort(seen, [](const Seen& a, const Seen& b) {
+            return a.share != b.share ? a.share > b.share : a.distance < b.distance;
+        });
+        for (const Seen& s : seen) keys.push_back(s.key);
+    }
+    return keys;
+}
+
+std::vector<tiles::TileKey> World::wanted_levels() const {
+    const std::scoped_lock lock(wanted_mutex_);
+    return levels_;
 }
 
 void World::place_items(const ResidentTile& tile) {
@@ -536,6 +605,7 @@ void World::update(const frame::FrameState& state) {
         take_neighbour_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         // without a pack the view looks at its target from a frame centred on it: the windows wanted there
+        far_ = far_of(state.camera.distance);
         if (state.view) {
             const double lat0 = state.camera.latitude;
             const tiles::Frame centred{.lat0 = lat0,
@@ -552,6 +622,7 @@ void World::update(const frame::FrameState& state) {
     }
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
+    far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
     choose_coarser();
@@ -575,21 +646,24 @@ void World::update(const frame::FrameState& state) {
             neighbour_tolerances.at(i) = n->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0});
         }
     }
-    const CoverInputs in{.pack = active_.get(),
-                         .pinned = snapped.has_value(),
-                         .tolerance = head.tolerance_of(snapped, dist).value_or(0),
-                         .fine_reach = options_.fine_reach,
-                         .far = options_.far,
-                         .margin_px = 40.0,
-                         .fade_seconds = 0.18,
-                         .coarser = coarser_.get(),
-                         .coarser_tolerance =
-                             coarser_
+    const CoverInputs in{
+        .pack = active_.get(),
+        .pinned = snapped.has_value(),
+        .tolerance = head.tolerance_of(snapped, dist).value_or(0),
+        .fine_reach = options_.fine_reach,
+        .coarse_reach = options_.coarse_reach,
+        .far = far_,
+        .fine_far = options_.far,
+        .margin_px = 40.0,
+        .fade_seconds = 0.18,
+        .coarser = coarser_.get(),
+        .coarser_tolerance = coarser_
                                  ? coarser_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
                                  : std::uint8_t{0},
-                         .mask = mask_,
-                         .neighbours = neighbours(),
-                         .neighbour_tolerances = neighbour_tolerances};
+        .mask = mask_,
+        .neighbours = neighbours(),
+        .neighbour_tolerances = neighbour_tolerances,
+        .budget = static_cast<std::uint64_t>(options_.plan_fraction * static_cast<double>(options_.heaps.total))};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
     // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
@@ -608,7 +682,9 @@ void World::update(const frame::FrameState& state) {
                                           .tolerance =
                                               incoming_head->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0}),
                                           .fine_reach = options_.fine_reach,
-                                          .far = options_.far,
+                                          .coarse_reach = options_.coarse_reach,
+                                          .far = far_,
+                                          .fine_far = options_.far,
                                           .margin_px = in.margin_px,
                                           .fade_seconds = in.fade_seconds};
             incoming_cover_.update(*state.view, frames_, incoming_in, *residency_, seconds);
@@ -652,9 +728,9 @@ void World::update(const frame::FrameState& state) {
         }
     }
     residency_->want(asked_);
-    // the tiles drawn, and a waiting switch's resident ones, are not idle
-    const auto touch = [this, seconds](const CoverTile& t) {
-        const std::uint32_t handle = t.drawn->handle;
+    // the tiles drawn, those kept under the places in view (each place's coarsest), and a waiting switch's resident
+    // ones, are not idle
+    const auto touch = [this, seconds](std::uint32_t handle) {
         const auto it = std::ranges::find_if(last_drawn_, [handle](const auto& p) { return p.first == handle; });
         if (it != last_drawn_.end()) {
             it->second = seconds;
@@ -662,9 +738,10 @@ void World::update(const frame::FrameState& state) {
             last_drawn_.emplace_back(handle, seconds);
         }
     };
-    for (const CoverTile& t : cover_.tiles()) touch(t);
+    for (const CoverTile& t : cover_.tiles()) touch(t.drawn->handle);
+    for (const std::uint32_t handle : cover_.kept()) touch(handle);
     if (incoming_) {
-        for (const CoverTile& t : incoming_cover_.tiles()) touch(t);
+        for (const CoverTile& t : incoming_cover_.tiles()) touch(t.drawn->handle);
     }
     release_idle(seconds, state.number);
     // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds)
@@ -674,10 +751,13 @@ void World::update(const frame::FrameState& state) {
 std::string World::tiles_line() const {
     const ResidencyStats r = residency_->stats();
     const HeapStats h = heaps_->stats();
-    // the heaps' bytes in use (MB) of their budget, and the tiles that found no room and wait for some to go
-    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {}", r.resident,
-                       static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
-                       r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting);
+    // the heaps' bytes in use (MB) of their budget, the tiles that found no room and wait for some to go, what the
+    // tiles the cover asks for are planned to take (MB; the plan's budget is plan_fraction of the heaps') and the
+    // places it gave a coarser level than their distance asks for
+    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {} planned {:.1f} coarser {}",
+                       r.resident, static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
+                       r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting,
+                       static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened());
 }
 
 } // namespace atlas::scene

@@ -68,6 +68,9 @@ struct MapOptions {
     /// The heaps' budget in bytes instead of the device's (scene::heap_budget): a test's, to compare budgets; 0 for the
     /// device's.
     std::uint64_t heaps_total = 0;
+    /// How far the cover reaches at most, metres, instead of the world's (scene::WorldOptions::levels_far): a test's,
+    /// to draw as before a frame cell's levels (12 km, the cover's reach until step 7); 0 for the world's.
+    double levels_far = 0;
 };
 
 /// The app's map.
@@ -130,6 +133,8 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
     /// The places in view its world draws from windows, nearest first (scene::World::windows_in_view).
     [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
+    /// The frame cells' levels' tiles its world wants, in its order (scene::World::wanted_levels).
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() const;
     /// The building under the view's device point (`x`, `y`) as the last frame drew it (scene/Pick.hpp: the ray from
     /// the last frame's eye through that point, among the buildings of the packs its resident tiles came from), or
     /// none.

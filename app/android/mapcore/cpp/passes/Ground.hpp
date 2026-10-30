@@ -37,6 +37,7 @@
 #include "twin/Emit.hpp"
 #include "twin/Twin.hpp"
 #include "view/Camera.hpp"
+#include "view/Ladder.hpp"
 
 #include <array>
 #include <atomic>
@@ -153,6 +154,10 @@ struct DrawnTile {
     std::optional<sun::TileView> sun;
     std::uint32_t sun_base = 0xFFFF'FFFFU;
     float sun_weight = 1.0F;
+    /// The camera in its own frame, whose metres its points are (GroundFrame::cams): the frame drawn's camera, or for a
+    /// tile of another frame (a neighbouring frame cell's, whose origin lies kilometres off) the same camera about its
+    /// target taken into that frame. Every decision on its points is made with it.
+    const view::Camera* cam = nullptr;
 };
 
 /// One element of the quay walls (water_layer's quay walls, in water_edges' order, a piece's in turn), each its own
@@ -404,6 +409,10 @@ struct GroundFrame {
     double ground_r = 1500;
     bool plate = false; ///< the plate is drawn
     std::vector<DrawnTile> tiles;
+    /// The cameras of the drawn tiles' other frames (DrawnTile::cam), this frame's: the frames are plate carrée about
+    /// their origins, so the camera keeps its bearing and pitch and only its target moves (view::convert's degrees);
+    /// across a frame cell the frames' x scales differ by under 1 %, which no decision tells.
+    std::vector<std::pair<view::GroundFrame, std::shared_ptr<const view::Camera>>> cams;
     std::vector<std::uint8_t> drawn;        ///< per fill of the drawn tiles (DrawnTile::decisions): drawn_bit
     std::vector<std::uint8_t> stroke_drawn; ///< per stroke of the drawn tiles (DrawnTile::strokes)
     std::vector<double> stroke_width;       ///< per stroke: its width this frame, CSS px (as printed at rest)
@@ -846,14 +855,14 @@ private:
     void decide_woods(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const;
     /// coasters.draw's shadows: each track's walk (passes/CoasterWalk.hpp) for its posts', and its points' shadows by
     /// runs, in S['coasters']'s order (frame_.track_shadows).
-    void decide_tracks(const view::Camera& cam);
+    void decide_tracks();
     /// The woods' shadows' union at their slot, composited at shadow_op, within the over lines' draw.
     void record_woods(const frame::Recording& r);
     void emit_park_shadows(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const;
     // Quays.cpp
     /// water_layer's quay walls at the frame: each piece facing the camera within the radius cut, its wall lit by its
     /// sample, its bands, its waterline and its coping, as face() keeps them (frame_.quays).
-    void decide_quays(const view::Camera& cam, const frame::FrameState& state);
+    void decide_quays(const frame::FrameState& state);
     void emit_quays(const frame::FrameState& state, twin::Stream& out) const;
     /// The quay walls' faces' records into the frame's words (each band of a bands' path its own), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
@@ -863,13 +872,13 @@ private:
     /// Amsterdam.reflections at the frame: each mirrored building's walls facing the camera, their gables and window
     /// rows, and the trees beside the water, as face() keeps them, far to near; then at night the streaks of the street
     /// lamps and the lit roads (frame_.reflections).
-    void decide_reflections(const view::Camera& cam, const frame::FrameState& state);
+    void decide_reflections(const frame::FrameState& state);
     /// The reflections' lists for the drawn tiles (reflections_kept_), laid again where the tiles are not those they
     /// were laid for; each tile's own kept while it is drawn.
     void lay_reflections();
     /// The reflections' night streaks, after the sorted elements: the street lamps' and the lit roads' points within
     /// 12 m of a quay edge, where the eye sees their reflection through the water and on the picture.
-    void decide_streaks(const view::Camera& cam);
+    void decide_streaks();
     /// The reflections' records into the frame's words (each face its own, a tree's circles each), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
     void write_reflections(std::vector<std::uint32_t>& words);
@@ -929,7 +938,7 @@ private:
     void record_lit(const frame::Recording& r);
     void emit_lit(twin::Stream& out) const;
     // Pools.cpp
-    void decide_pools(const view::Camera& cam);
+    void decide_pools();
     void write_pools(std::vector<std::uint32_t>& words);
     void record_pools(const frame::Recording& r);
     void emit_pools(twin::Stream& out) const;

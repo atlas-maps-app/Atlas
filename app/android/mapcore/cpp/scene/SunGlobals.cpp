@@ -96,19 +96,22 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         std::uint8_t level = 0;
         LaneOf role = LaneOf::neighbour;
     };
-    std::array<Want, 2 + max_neighbours> wants{};
+    std::array<Want, 2 + sun_neighbours> wants{};
     wants[0] = {.pack = pack, .level = level, .role = LaneOf::active};
     wants[1] = {.pack = coarser, .level = coarser_level, .role = LaneOf::coarser};
-    for (std::size_t i = 0; i < max_neighbours && i < neighbours.size(); ++i) {
+    for (std::size_t i = 0; i < sun_neighbours && i < neighbours.size(); ++i) {
         wants.at(2 + i) = {.pack = neighbours[i],
                            .level = i < neighbour_levels.size() ? neighbour_levels[i] : std::uint8_t{0},
                            .role = LaneOf::neighbour};
     }
+    // a frame cell holding its levels alone (a far cell, none of its places' own tiles on the phone) has no lane: its
+    // levels' tiles are lit by their facing alone (geometry::build_buildings)
     const auto usable = [](const std::shared_ptr<const tiles::StorePack>& p) {
-        return p && p->pack.is_render() && p->pack.head() != nullptr && !p->pack.head()->levels.empty();
+        return p && p->pack.is_render() && p->pack.head() != nullptr && !p->pack.head()->levels.empty() &&
+               !tiles::Store::derived(p->pack.head()->levels[0]);
     };
-    std::array<std::optional<std::size_t>, 2 + max_neighbours> lane_of{}; // per want
-    std::array<bool, 2 + max_neighbours> held{};                          // per lane
+    std::array<std::optional<std::size_t>, 2 + sun_neighbours> lane_of{}; // per want
+    std::array<bool, 2 + sun_neighbours> held{};                          // per lane
     for (std::size_t w = 0; w < wants.size(); ++w) {
         if (!usable(wants.at(w).pack)) continue;
         for (std::size_t k = 0; k < lanes_.size(); ++k) {
@@ -133,7 +136,7 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     if (lane_of[0]) active_lane_.store(*lane_of[0]);
     // Each lane's pack, role and level this frame, and its resident tiles at the pack's finest zoom (one look over the
     // residency for every lane).
-    std::array<LaneInputs, 2 + max_neighbours> in{};
+    std::array<LaneInputs, 2 + sun_neighbours> in{};
     for (std::size_t w = 0; w < wants.size(); ++w) {
         if (!lane_of.at(w)) continue;
         LaneInputs& li = in.at(*lane_of.at(w));

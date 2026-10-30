@@ -56,7 +56,9 @@ inline constexpr double window_margin = 200.0;
 /// about a zoo or a theme park (RegionConfig::zoo_woods), as the renders plant a zoo's and a park's region, which
 /// core-p9 left as outlines; core-p11 the New looks' bitumen and gravel on about half and one in ten of the homes' flat
 /// roofs whose colour is guessed, which core-p10 drew all mid grey; core-p12 the New looks' red tiles a step warmer
-/// (red_tiles_colour), which core-p11 drew in tiles_red's.
+/// (red_tiles_colour), which core-p11 drew in tiles_red's, and each frame cell's levels beside its windows
+/// (load/Levels.hpp: its L13 and L12 tiles, which the core draws beyond the windows' reach), where core-p11's country
+/// tiles held the windows alone and today's map drew beyond 9 km.
 inline constexpr std::string_view stage_p_version = "core-p12";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and every pack there

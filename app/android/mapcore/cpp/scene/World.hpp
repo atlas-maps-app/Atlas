@@ -28,6 +28,7 @@
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -53,12 +54,21 @@ inline constexpr std::size_t window_ahead_max = 4;
 
 /// The world's choices.
 struct WorldOptions {
-    unsigned workers = 2;         ///< T8: 2-3 by core count
-    double fine_reach = 4700.0;   ///< how far the finest level serves (D3)
-    double far = 12'000.0;        ///< how far the cover reaches
+    unsigned workers = 2;       ///< T8: 2-3 by core count
+    double fine_reach = 4700.0; ///< how far the finest level serves (D3)
+    /// How far a frame cell's coarse level serves (L13, every building), its far level (L12) beyond (ENGINE.md one pack
+    /// per country, step 7).
+    double coarse_reach = 9400.0;
+    double far = 12'000.0; ///< how far the cover reaches at least
+    /// How far it reaches at most: twice the camera's distance between the two (step 7: a frame cell's levels drawn out
+    /// to 30 km of the eye, where the engine's reach ends).
+    double levels_far = 30'000.0;
     double idle_seconds = 2.0;    ///< a tile not drawn this long may go when the heaps fill
     double forget_seconds = 30.0; ///< and goes after this long whatever they hold
     double keep_fraction = 0.75;  ///< of the heaps' budget, and of the native one
+    /// Of the heaps' budget, what the tiles the cover asks for may take (Cover's plan): below keep_fraction, so a tile
+    /// planned has room while the ones no longer drawn wait to go, and the heaps' free ranges need not be one.
+    double plan_fraction = 0.7;
     HeapBudget heaps;
     /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
     /// data), §3's decoded tiles.
@@ -148,6 +158,17 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
     /// How many of wanted_windows' last places are the ones ahead of the camera's motion.
     [[nodiscard]] std::size_t windows_ahead() const;
+    /// The frame cells' levels' tiles in view the phone may take from the country's tiles (ENGINE.md one pack per
+    /// country, step 7) where no pack of the store has them: each L12 tile the frustum sees within the cover's reach,
+    /// then each L13 tile within the coarse level's reach that holds a place beyond the finest level's, each level's by
+    /// its share of the screen, then nearest first (the app asks for those its country lists). Made with
+    /// wanted_windows; read from any thread.
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() const;
+    /// How far the cover reaches for a camera `distance` metres from its target: twice that, within the options' far
+    /// and levels_far.
+    [[nodiscard]] double far_of(double distance) const noexcept {
+        return std::clamp(2.0 * distance, options_.far, std::max(options_.far, options_.levels_far));
+    }
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -206,6 +227,9 @@ private:
     /// the view's ground frame (the frame drawn, or without a pack one centred on the target, as the view then is).
     void want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
                       double seconds);
+    /// The levels' tiles wanted in `view` (wanted_levels), with the windows.
+    [[nodiscard]] std::vector<tiles::TileKey> want_levels(const view::View& view, const style::CameraState& camera,
+                                                          const view::GroundFrame& frame) const;
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.
     void place_items(const ResidentTile& tile);
@@ -251,6 +275,8 @@ private:
     std::vector<tiles::TileKey> wanted_;                     ///< under wanted_mutex_
     std::optional<std::array<std::int32_t, 2>> last_target_; ///< the camera's target at the last look (render thread)
     std::vector<tiles::TileKey> in_view_;                    ///< under wanted_mutex_
+    std::vector<tiles::TileKey> levels_;                     ///< under wanted_mutex_
+    double far_ = 12'000.0;                                  ///< the cover's reach this frame (far_of)
     std::size_t ahead_ = 0;                                  ///< under wanted_mutex_
     double wanted_at_ = -1.0;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.

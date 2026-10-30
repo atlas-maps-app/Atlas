@@ -10,6 +10,9 @@
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
+#include "tests/load/corner.hpp"
+#include "twin/Twin.hpp"
+#include "view/Frames.hpp"
 
 #include <doctest/doctest.h>
 
@@ -19,7 +22,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <format>
 #include <span>
 #include <string>
 #include <vector>
@@ -156,6 +161,95 @@ TEST_CASE("ground: the boards' views draw on the host's Vulkan, the validation l
         }
         for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, c.name << ": " << m);
     }
+}
+
+TEST_CASE("ground: a neighbouring frame cell's tiles are decided in their own frame, at their own depths") {
+    // A primary road (its asphalt, edge and lane lines) 100 m north of a corner of four frame cells, in the north-east
+    // cell's window (tests/load/corner.hpp), the camera's target a metre inside the south-east one, looking north from
+    // 400 m. The north-east tile's points are its own frame's metres, about an origin 24 km off the frame drawn's: each
+    // drawn line's width is regions.py's px at its point's depth from the eye (max(0.25, w · focal / depth)), the point
+    // taken into the frame drawn. Decided with the frame drawn's camera, the lines were judged from 24 km off: a far
+    // view's big roads 253 px wide from a point behind the eye, 0.7 G fragments a frame at Alkmaar.
+    const auto made = test::corner_windows(
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / "ground-corner",
+        [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+            if (window != 1) return {};
+            const std::array<std::array<double, 2>, 3> road{{{20.0, 100.0}, {210.0, 100.0}, {400.0, 100.0}}};
+            const double x = 120.0;
+            const double z = 220.0;
+            return test::made_way(id, R"("highway":"primary","lanes":"2")", road, c) + "," +
+                   test::made_building(id, R"("building":"yes","building:levels":"4")", x - 15.0, z - 15.0, x + 15.0,
+                                       z + 15.0, c);
+        });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    constexpr std::array<std::string_view, 3> ground_only{"composite", "frosted", "ground"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
+    passes::Ground* g = test::ground_of(passes);
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0});
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, file] : m.windows) {
+        const auto joined = w.store().add({.id = name, .kind = tiles::PackKind::window, .path = file.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    w.set_coarser_enclosing(true);
+    w.set_active(m.windows.back().first);
+    style::CameraState c = test::s1_camera(m.at(1.0, -1.0)[0], m.at(1.0, -1.0)[1], 0.0, 60.0, 400.0);
+    std::uint64_t n = 0;
+    twin::Stream stream;
+    const auto frames = [&](int count) {
+        for (int k = 0; k < count; ++k) {
+            now += 0.016;
+            (*builder)->set_inputs({.camera = c, .theme = test::sunny(), .seconds = now, .scene = &w});
+            ATLAS_REQUIRE((*builder)->derive(++n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+        }
+        now += 1.0; // past every fade
+        (*builder)->set_inputs({.camera = c, .theme = test::sunny(), .seconds = now, .scene = &w});
+        (*builder)->emit(stream, ++n);
+    };
+    const auto check = [&](bool rest) {
+        c.flags = (rest ? style::camera_flag::rest : 0U) | style::camera_flag::engine_mode;
+        frames(30);
+        const frame::FrameState& state = (*builder)->state();
+        ATLAS_REQUIRE(state.ground_frame.has_value());
+        const passes::GroundFrame& f = g->decided();
+        const view::Camera& cam = state.view->camera();
+        std::size_t lines = 0;
+        for (const passes::DrawnTile& t : f.tiles) {
+            ATLAS_REQUIRE(t.cam != nullptr);
+            if (t.tile->frame == *state.ground_frame) continue;
+            for (std::uint32_t i = 0; i < t.ground->strokes.size(); ++i) {
+                const geometry::Stroke& s = t.ground->strokes[i];
+                if (s.kind != geometry::StrokeKind::edges || f.stroke_drawn[t.strokes + i] == 0) continue;
+                ++lines;
+                const view::Vec3 at =
+                    view::convert(t.tile->frame, *state.ground_frame, {s.width.at.x, 0.0, s.width.at.z});
+                const double depth = cam.cam(at).z;
+                const double px = std::max(0.25, s.width.metres * cam.focal() / std::max(depth, 1.0));
+                const double width = f.stroke_width[t.strokes + i];
+                CHECK_MESSAGE(std::abs(width - px) <= 0.01 + (0.01 * px),
+                              std::format("{} the road's lines {:.3f} px wide, {:.3f} at {:.0f} m",
+                                          rest ? "at rest" : "moving", width, px, depth));
+            }
+        }
+        // the road's lines drawn, from the north-east cell's tile
+        CHECK(lines > 0);
+    };
+    check(true);
+    check(false);
+    for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);
 }
 
 #endif

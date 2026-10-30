@@ -294,6 +294,11 @@ public:
         return on_session([this] { return map_->windows_in_view(); });
     }
 
+    /// The frame cells' levels' tiles the map's world wants, in its order (scene::World::wanted_levels).
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() {
+        return on_session([this] { return map_->wanted_levels(); });
+    }
+
     /// The moment's theme for the map from now on.
     void moment(const style::ThemeBlock& theme) {
         on_session([this, &theme] {
@@ -956,6 +961,12 @@ jlongArray native_windows_in_view(JNIEnv* env, jclass /*cls*/, jlong handle) {
     return packed_keys(env, core != nullptr ? core->windows_in_view() : std::vector<tiles::TileKey>{});
 }
 
+/// The frame cells' levels' tiles the map wants, in its order, their keys packed.
+jlongArray native_wanted_levels(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->wanted_levels() : std::vector<tiles::TileKey>{});
+}
+
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
 jdoubleArray native_window_box(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y) {
     const std::array<double, 4> box = load::window_box(
@@ -1352,8 +1363,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 48>& methods() {
-    static const std::array<JNINativeMethod, 48> table{{
+const std::array<JNINativeMethod, 49>& methods() {
+    static const std::array<JNINativeMethod, 49> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1414,6 +1425,7 @@ const std::array<JNINativeMethod, 48>& methods() {
         method("windowVersion", "()Ljava/lang/String;", fn(&native_window_version)),
         method("buildWindow", "(IIILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_build_window)),
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
+        method("wantedLevels", "(J)[J", fn(&native_wanted_levels)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
         method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",

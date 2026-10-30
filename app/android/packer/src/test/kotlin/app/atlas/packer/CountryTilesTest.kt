@@ -45,7 +45,8 @@ import java.util.zip.GZIPOutputStream
  * written back whole as the phone writes it: the same manifest, reach and head byte for byte, the same tiles and style
  * once decompressed (read here by the container's own rules, the tiles decoded by Format3Reader), the head naming the
  * window, its answer's SHA-256 and the index's version. The index's ranges tile the file, each held to its SHA-256; an
- * empty window is listed with no bytes; a window the tool cannot build fails the run, named.
+ * empty window is listed with no bytes; a window the tool cannot build fails the run, named. The frame cell's levels
+ * follow its windows, each the core's own pack of its L13 or L12 tile held the same way.
  */
 class CountryTilesTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -82,7 +83,8 @@ class CountryTilesTest {
         assertEquals(14, index.level)
         assertEquals(d.windows.date, index.date)
         assertEquals(tiles.size.toLong(), index.tilesBytes)
-        assertEquals(4, index.size)
+        // the four windows, and their frame cell's two L13 tiles and two L12 tiles (A's and C's, B's and D's)
+        assertEquals(8, index.size)
 
         // the core's own packs of the same answers, as the phone builds them
         val core = coresPacks(d, listOf(A, B, C, D))
@@ -142,7 +144,42 @@ class CountryTilesTest {
             assertEquals("14/$x/$y", Json.parseToJsonElement(String(ours.manifest)).jsonObject["window"]!!.jsonPrimitive.content)
             StyleTables.fromBytes(ours.raw(Format.SECTION_STYLE))
         }
+        // then the cell's levels (ENGINE.md one pack per country, step 7), the core's own packs of their tiles as its
+        // tool derives them from the windows' packs, stored as a window's is: its L13 tiles, then its L12
+        assertEquals(said.joinToString("\n"), 1, said.count { it.startsWith("  the levels: 4 tiles of the frame cells' L13 and L12") })
+        val levels = coresLevels(core)
+        val keys = listOf(Triple(13, A.first / 2, A.second / 2), Triple(13, B.first / 2, B.second / 2), Triple(12, A.first / 4, A.second / 4), Triple(12, B.first / 4, B.second / 4))
+        assertEquals(keys.toSet(), levels.keys)
+        val features = HashMap<Triple<Int, Int, Int>, Int>()
+        for (k in keys) {
+            val (z, x, y) = k
+            val e = index.find(z, x, y)!!
+            assertTrue("$z/$x/$y", e.drawn)
+            assertEquals("$z/$x/$y", z, e.z)
+            assertEquals("$z/$x/$y", end, e.offset)
+            end = e.offset + e.length
+            val stored = tiles.copyOfRange(e.offset.toInt(), end.toInt())
+            assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(stored), e.sha256)
+            val theirs = Read(levels.getValue(k))
+            val ours = Read(CountryStyle.unpack(stored, index.style))
+            assertTrue("$z/$x/$y: ${stored.size} bytes stored, ${theirs.bytes.size} as the core wrote them", stored.size < theirs.bytes.size)
+            assertEquals(String(theirs.manifest), String(ours.manifest))
+            for (s in listOf(Format.SECTION_REACH, Format.SECTION_HEAD)) assertArrayEquals(s, theirs.stored(s), ours.stored(s))
+            val (c, o) = theirs.chunks.single() to ours.chunks.single()
+            assertEquals(listOf(z, x, y, c.raw, c.count), listOf(o.z, o.x, o.y, o.raw, o.count))
+            assertArrayEquals(theirs.tile(c), ours.tile(o))
+            assertArrayEquals(theirs.raw(Format.SECTION_STYLE), ours.raw(Format.SECTION_STYLE))
+            val t = Format3Reader.decodeTile(ours.tile(o))
+            assertEquals(listOf(z, x, y), listOf(t.level, t.x, t.y))
+            features[k] = t.featureCount
+            val head = RenderHead.fromBytes(ours.stored(Format.SECTION_HEAD))
+            assertEquals("$z/$x/$y", head.region)
+            assertEquals(index.version, "${head.engineVersion} ${head.styleVersion}")
+            assertEquals("$z/$x/$y", Json.parseToJsonElement(String(ours.manifest)).jsonObject["window"]!!.jsonPrimitive.content)
+        }
         assertEquals(tiles.size.toLong(), end)
+        // A's twenty houses at L13, none at L12 (which keeps the large buildings alone), its street and trees at both
+        assertTrue(features.toString(), features.getValue(keys[0]) > features.getValue(keys[2]) && features.getValue(keys[2]) > 0)
         // the houses of A are many more features than B's benches
         assertTrue(index.find(A.first, A.second)!!.length > index.find(B.first, B.second)!!.length)
 
@@ -184,14 +221,15 @@ class CountryTilesTest {
         assertTrue(said.joinToString("\n"), said.any { it.contains("1 not built, left out") })
         // the other three as without it, the broken one not listed: the phone builds it from its data
         val index = TilesIndex.read(File(out, "test.tiles.idx").readBytes())
-        assertEquals(3, index.size)
+        // the three windows and the cell's levels' four tiles (C held nothing to draw)
+        assertEquals(7, index.size)
         assertNull(index.find(C.first, C.second))
         val whole = tmp.newFolder("whole")
         assertEquals(0, run(listOf("country", d.data.path, d.index.path, whole.path, "--core", tool.path, "--id", "test", "--threads", "2"), {}))
         val all = TilesIndex.read(File(whole, "test.tiles.idx").readBytes())
         for (i in 0 until index.size) {
             val e = index[i]
-            val f = all.find(e.x, e.y)!!
+            val f = all.find(e.z, e.x, e.y)!!
             assertEquals(f.length, e.length)
             assertArrayEquals(f.sha256, e.sha256)
         }
@@ -283,6 +321,18 @@ class CountryTilesTest {
         val said = p.inputStream.bufferedReader().readText()
         assertEquals(said, 0, p.waitFor())
         return windows.associateWith { (x, y) -> File(dir, "14-$x-$y.atlas").readBytes() }
+    }
+
+    /** The levels' tiles the core's tool derives from the windows' packs [windows] (coresPacks'), by tile. */
+    private fun coresLevels(windows: Map<Pair<Int, Int>, ByteArray>): Map<Triple<Int, Int, Int>, ByteArray> {
+        val dir = tmp.newFolder()
+        val list = File(dir, "list.txt")
+        list.writeText(windows.entries.joinToString("") { (w, b) -> "${w.first} ${w.second} ${File(dir, "14-${w.first}-${w.second}.atlas").apply { writeBytes(b) }.path}\n" })
+        val out = File(dir, "levels")
+        val p = ProcessBuilder(tool!!.path, "levels", list.path, out.path, "1").redirectErrorStream(true).start()
+        val said = p.inputStream.bufferedReader().readText()
+        assertEquals(said, 0, p.waitFor())
+        return out.listFiles()!!.associate { f -> f.name.removeSuffix(".atlas").split('-').map(String::toInt).let { Triple(it[0], it[1], it[2]) } to f.readBytes() }
     }
 
     /**

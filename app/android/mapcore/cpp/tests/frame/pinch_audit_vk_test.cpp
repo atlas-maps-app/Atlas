@@ -9,8 +9,12 @@
 // from a region's raw.json (ATLAS_REGIONS_DIR, ATLAS_PINCH_REGION: grachten) into <out>/windows (kept there and used
 // again), and, with ATLAS_TILES_DIR, the bundled Westerkerk and canal ring before them, as the APK lists them (a window
 // only where no bundled pack listed holds its place whole, as the phone builds them).
+// ATLAS_PINCH_TILES names folders of packs taken from a country's tiles instead (`<z>-<x>-<y>.atlas`: places' windows
+// and frame cells' levels' tiles, ENGINE.md one pack per country, step 7), listed as windows within ATLAS_PINCH_RADIUS
+// km of the target (40), with ATLAS_PINCH_BLOCK=0 and ATLAS_PINCH_PACKS=none for them alone.
 // ATLAS_PINCH_PLACE: "lat,lon,bearing,pitch" (52.3735,4.8755,22,48: west of the Westerkerk); ATLAS_PINCH_HEAPS: the
-// heaps' budget in MB instead of the device's; ATLAS_PINCH_OUTWARD: the pinch back out to the start after.
+// heaps' budget in MB instead of the device's; ATLAS_PINCH_FAR: the cover's farthest reach in km instead of the
+// world's (12: as before a frame cell's levels); ATLAS_PINCH_OUTWARD: the pinch back out to the start after.
 //
 // To compare the packs' cuts (each alone at the same cameras): ATLAS_PINCH_PACKS names the bundled packs listed
 // ("amsterdam,grachten" by default, "none" for none), ATLAS_PINCH_BLOCK=0 lists no windows, ATLAS_PINCH_KIT builds the
@@ -26,7 +30,9 @@
 // as water_surface). ATLAS_PINCH_MOMENT: "night" (the live map's night with the hour's weather: its lit streets and
 // their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's streaks, the streets' wet
 // cores, the drizzle's rings on the water) instead of the sunny moment. ATLAS_PINCH_HASH: each frame's decisions of the
-// water's reflections hashed, to hold two builds to the same ones.
+// water's reflections hashed, to hold two builds to the same ones. ATLAS_PINCH_STILL: at each rest, that many frames
+// more, each one logged (stage F's spread at the view). At each rest the frame cells' levels' tiles drawn are logged,
+// and the heaps' bytes the resident tiles hold by level and pass.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -34,7 +40,9 @@
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "passes/Ground.hpp"
+#include "scene/Cover.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/Residency.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
@@ -48,6 +56,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -59,6 +68,9 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -468,6 +480,56 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
         }
     }
+    // ATLAS_PINCH_TILES: folders of packs as the phone keeps what it took from a country's tiles (each
+    // `<z>-<x>-<y>.atlas`: a place's window, L14, or a frame cell's level's tile, L13 or L12), listed as the app lists
+    // them (windows, named by their tiles) where they lie within ATLAS_PINCH_RADIUS km of the target (40 by default)
+    if (const std::string dirs = environment("ATLAS_PINCH_TILES"); !dirs.empty()) {
+        const double radius =
+            1000.0 * (environment("ATLAS_PINCH_RADIUS").empty() ? 40.0 : std::stod(environment("ATLAS_PINCH_RADIUS")));
+        const double cos_lat = pymath::cos(pymath::radians(lat));
+        std::stringstream folders(dirs);
+        std::string folder;
+        std::vector<std::pair<std::string, tiles::TileKey>> found;
+        while (std::getline(folders, folder, ',')) {
+            for (const fs::directory_entry& e : fs::directory_iterator(folder)) {
+                const std::string name = e.path().filename().string();
+                // `<z>-<x>-<y>.atlas`, three numbers and nothing else
+                std::array<std::uint32_t, 3> zxy{};
+                const char* at = name.data();
+                const char* const end = name.data() + name.size();
+                bool read = name.ends_with(".atlas");
+                for (std::size_t i = 0; read && i < zxy.size(); ++i) {
+                    const auto [next, ec] = std::from_chars(at, end, zxy.at(i));
+                    read = ec == std::errc{} && next < end && *next == (i < 2 ? '-' : '.');
+                    at = next + 1;
+                }
+                if (!read || std::string_view(at - 1, end) != ".atlas") continue;
+                const auto [z, x, y] = zxy;
+                const tiles::TileKey k(static_cast<std::uint8_t>(z), x, y);
+                const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+                const double dlat = std::max({0.0, b[0] / 1e7 - lat, lat - b[2] / 1e7}) * 110540.0;
+                const double dlon = std::max({0.0, b[1] / 1e7 - lon, lon - b[3] / 1e7}) * 111320.0 * cos_lat;
+                if (pymath::hypot(dlat, dlon) <= radius) found.emplace_back(e.path().string(), k);
+            }
+        }
+        // in a fixed order: the far level's tiles, the coarse level's, then the windows, each by row and column
+        std::ranges::sort(found, [](const auto& a, const auto& b) {
+            return std::tuple{a.second.z, a.second.y, a.second.x} < std::tuple{b.second.z, b.second.y, b.second.x};
+        });
+        for (const auto& [path, k] : found) {
+            const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+            Listed l;
+            l.pack.number = ++number;
+            l.pack.ref.id = std::format("window/{}/{}/{}", k.z, k.x, k.y);
+            l.pack.ref.kind = tiles::PackKind::window;
+            l.pack.ref.path = path;
+            l.id = l.pack.ref.id;
+            l.box = {b[0] / 1e7, b[1] / 1e7, b[2] / 1e7, b[3] / 1e7};
+            l.distances = {430.0};
+            listed.push_back(std::move(l));
+        }
+        MESSAGE(std::format("{} packs listed from {}", found.size(), dirs));
+    }
     REQUIRE(!listed.empty());
     std::vector<frame::MapPack> packs;
     packs.reserve(listed.size());
@@ -490,8 +552,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
     REQUIRE_MESSAGE(started.has_value(), started.error().reason);
     {
         const std::string heaps_mb = environment("ATLAS_PINCH_HEAPS");
+        const std::string far_km = environment("ATLAS_PINCH_FAR");
         frame::MapFrame map(2, [] {},
-                            {.cache_dir = guard, .heaps_total = heaps_mb.empty() ? 0U : std::stoull(heaps_mb) << 20U});
+                            {.cache_dir = guard,
+                             .heaps_total = heaps_mb.empty() ? 0U : std::stoull(heaps_mb) << 20U,
+                             .levels_far = far_km.empty() ? 0.0 : 1000.0 * std::stod(far_km)});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
         MESSAGE(map.set_packs(packs));
         CHECK(session.map(&map).empty());
@@ -599,8 +664,36 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             for (int k = 0; k < 3; ++k) (void)draw("rest", d, true, k == 2);
         };
+        // the heaps' bytes the resident tiles hold, by level and pass (MB), and the places' plan
+        const auto heaps_by_level = [&](double d) {
+            const frame::FrameBuilder* b = map.builder();
+            if (b == nullptr || map.world() == nullptr) return;
+            std::map<std::pair<std::uint8_t, std::string>, std::uint64_t> bytes;
+            std::map<std::uint8_t, std::pair<std::size_t, std::uint64_t>> tiles;
+            for (const std::shared_ptr<const scene::ResidentTile>& t : map.world()->residency().resident()) {
+                ++tiles[t->key.z].first;
+                for (std::size_t i = 0; i < t->passes.size() && i < b->passes().size(); ++i) {
+                    for (const scene::HeapRange& r : t->passes[i].ranges) {
+                        if (!r) continue;
+                        bytes[{t->key.z, std::string(b->passes()[i]->name())}] += r.size;
+                        tiles[t->key.z].second += r.size;
+                    }
+                }
+            }
+            std::string lines;
+            for (const auto& [z, n] : tiles) {
+                lines += std::format("\n  L{}: {} tiles, {:.1f}:", z, n.first, static_cast<double>(n.second) / 1.0e6);
+                for (const auto& [k, v] : bytes) {
+                    if (k.first == z && v >= 50'000U) {
+                        lines += std::format(" {} {:.1f}", k.second, static_cast<double>(v) / 1.0e6);
+                    }
+                }
+            }
+            MESSAGE(std::format("heaps at {:.0f} m by level and pass (MB): {}{}", d, map.tiles_line(), lines));
+        };
         settle(from);
         said(std::format("at {:.0f} m", from));
+        heaps_by_level(from);
         for (int i = 0; i <= steps; ++i) {
             const double t = static_cast<double>(i) / steps;
             const double d = from * pymath::strict::pow(to / from, t);
@@ -621,6 +714,26 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             said(std::format("at rest at {:.0f} m", d));
             if (const frame::FrameBuilder* b = map.builder(); b != nullptr) {
                 MESSAGE(std::format("passes at {:.0f} m (rest, complete {}):\n{}", d, map.complete(), pass_counts(*b)));
+            }
+            // the frame cells' levels' tiles drawn (what a phone takes from the country's tiles for this view)
+            if (map.world() != nullptr && map.world()->cover() != nullptr) {
+                std::map<std::tuple<std::uint8_t, std::uint32_t, std::uint32_t>, std::size_t> levels;
+                for (const scene::CoverTile& t : map.world()->cover()->tiles()) {
+                    const tiles::TileKey& k = t.drawn->key;
+                    if (k.z == 12 || k.z == 13) ++levels[{k.z, k.x, k.y}];
+                }
+                std::string keys;
+                for (const auto& [k, n] : levels) {
+                    keys += std::format(" {}-{}-{}", std::get<0>(k), std::get<1>(k), std::get<2>(k));
+                }
+                MESSAGE(std::format("levels drawn at {:.0f} m: {} tiles:{}", d, levels.size(), keys));
+            }
+            heaps_by_level(d);
+            // ATLAS_PINCH_STILL: that many frames more at rest, each one logged (stage F's spread at the view)
+            if (const std::string still = environment("ATLAS_PINCH_STILL"); !still.empty()) {
+                int count = 0;
+                std::from_chars(still.data(), still.data() + still.size(), count);
+                for (int k = 0; k < count; ++k) (void)draw(std::format("still {:3d}", k), d, true, true);
             }
             if (!environment("ATLAS_PINCH_COST").empty()) {
                 const frame::FrameBuilder* b = map.builder();

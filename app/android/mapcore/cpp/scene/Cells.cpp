@@ -112,10 +112,24 @@ std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t
     const std::uint32_t n = per_side;
     if (n == 0 || n > 8) return 0;
     const std::uint64_t all = n * n == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << (n * n)) - 1;
-    if (gap >= 32 || (std::uint32_t{1} << gap) != n) return all;
-    const std::uint32_t cx = x & (n - 1);
-    const std::uint32_t cy = y & (n - 1);
-    return std::uint64_t{1} << (cy * n + cx);
+    if (gap >= 32) return all;
+    const std::uint32_t side = std::uint32_t{1} << gap; // descendants a side
+    if (side >= n) {
+        // each cell over (side / n)² descendants: the one holding (x, y)
+        const std::uint32_t per = side / n;
+        const std::uint32_t cx = (x & (side - 1)) / per;
+        const std::uint32_t cy = (y & (side - 1)) / per;
+        return std::uint64_t{1} << (cy * n + cx);
+    }
+    // each descendant under k × k cells
+    const std::uint32_t k = n / side;
+    const std::uint32_t cx = (x & (side - 1)) * k;
+    const std::uint32_t cy = (y & (side - 1)) * k;
+    std::uint64_t bits = 0;
+    for (std::uint32_t r = 0; r < k; ++r) {
+        for (std::uint32_t c = 0; c < k; ++c) bits |= std::uint64_t{1} << ((cy + r) * n + cx + c);
+    }
+    return bits;
 }
 
 } // namespace atlas::scene

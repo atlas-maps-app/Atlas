@@ -46,6 +46,15 @@ class WindowsBudgetTest {
 
     private fun held(w: MapCore.Window) = dir.list()!!.any { it.startsWith("${w.z}-${w.x}-${w.y}.") }
 
+    /** A frame cell's L12 tile ([x], 1346) as the windows keep it, of time [at]: a pack of [pack] blocks and its mark. */
+    private fun level(x: Int, at: Long, pack: Int = 20): MapCore.Window {
+        val base = "12-$x-1346"
+        File(dir, "$base.atlas").writeBytes(ByteArray(pack * block.toInt()))
+        File(dir, "$base.tiles").writeText("2026-10-26T20:21:24Z netherlands\n")
+        dir.listFiles()!!.filter { it.name.startsWith("$base.") }.forEach { it.setLastModified(at) }
+        return MapCore.Window(12, x, 1346)
+    }
+
     @Test
     fun theKeptCountrysWindowsGoFirstThenTheLeastLatelyDrawnOrTakenNeverOneInView() {
         val fromKept = window(8401, now - 3600_000L, from = "netherlands")
@@ -114,8 +123,12 @@ class WindowsBudgetTest {
     private class Core : Windows.Core {
         var wanted = listOf<MapCore.Window>()
         var inView = listOf<MapCore.Window>()
+        var levels = listOf<MapCore.Window>()
+        var levelsInView = listOf<MapCore.Window>()
         override fun wanted() = wanted
         override fun inView() = inView
+        override fun levels() = levels
+        override fun levelsInView() = levelsInView
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
         override fun build(w: MapCore.Window, json: File, file: File): String {
             file.writeBytes(ByteArray(10 * 4096))
@@ -152,5 +165,39 @@ class WindowsBudgetTest {
         assertTrue(windows.dataOf(wanted).isFile)
         assertFalse(held(old))
         assertTrue(held(inView))
+    }
+
+    @Test
+    fun aLevelsTileTheCoreDrawsOrWantsIsNeverEvictedThoughItCameLongAgo() {
+        // ENGINE.md one pack per country, step 7: a frame cell's levels' tiles share the folder with the windows
+        val drawn = level(2103, now - 50 * day)
+        val stale = level(2104, now - 45 * day)
+        val old = window(8401, now - 30 * day, data = 10)
+        val wanted = MapCore.Window(12, 2105, 1346)
+        val budget = WindowsBudget(dir, limit = { 60 * block }, clock = { now })
+        val windows = Windows(
+            dir, fetch = { _, _ -> error("no data is fetched") }, clock = { now },
+            tiles = { Windows.Tiled(ByteArray(20 * block.toInt()), Instant.parse("2026-10-26T20:21:24Z"), "netherlands") },
+            budget = budget,
+        )
+        val core = Core().apply {
+            levelsInView = listOf(drawn)
+            levels = listOf(wanted)
+        }
+        // the tile the core wants comes: 83 blocks, over 60; the oldest goes first, but the tile the core draws stays
+        // (drawn now), and the one just taken (the core wants it until the packs are handed again)
+        assertTrue(windows.step(core))
+        assertTrue(windows.fileOf(wanted).isFile)
+        assertTrue(held(drawn))
+        assertFalse(held(stale))
+        assertFalse(held(old))
+        assertEquals(42 * block, budget.bytes)
+        // handed: drawn now; the next tile the core wants is counted as it comes
+        val next = MapCore.Window(12, 2106, 1346)
+        core.levelsInView = listOf(drawn, wanted)
+        core.levels = listOf(next)
+        assertTrue(windows.step(core))
+        assertEquals(63 * block, budget.bytes)
+        for (w in listOf(drawn, wanted, next)) assertTrue(held(w))
     }
 }

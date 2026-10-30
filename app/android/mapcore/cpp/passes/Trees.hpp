@@ -40,17 +40,20 @@ struct TreeRecord;
 namespace atlas::passes {
 
 /// A tile's trees as the pass keeps them (PassTile::cpu): each tree's crown radius (its job's choices, in double),
-/// whether its leaves stay green, and its OSM node (the twin's items).
+/// whether its leaves stay green, and its OSM node (the twin's items); and whether its records are lean (a frame cell's
+/// level's tile: TREE_LEAN_VECTORS a tree, drawn as small crowns).
 struct TreeTile {
     std::uint32_t trees = 0;
+    bool lean = false;
     std::vector<double> r;
     std::vector<std::uint8_t> evergreen;
     std::vector<std::int64_t> ids;
 };
 
-/// The points heap's words of a tile's trees (TREE_VECTORS uint4 a tree), tile-local from its origin.
+/// The points heap's words of a tile's trees (TREE_VECTORS uint4 a tree), tile-local from its origin; `lean`, a frame
+/// cell's level's (TREE_LEAN_VECTORS a tree: its header and blobs).
 [[nodiscard]] std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double origin_x, double origin_y,
-                                                  double origin_z);
+                                                  double origin_z, bool lean = false);
 
 /// The first of a tile's items that are trees (the pass's items are consecutive, in its builder's order).
 [[nodiscard]] std::uint32_t first_tree(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
@@ -65,7 +68,10 @@ struct TreeChoice {
     float w1 = 0;
     float limb = 0;
 };
-[[nodiscard]] TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool night, bool right);
+/// A lean record's tree (`lean`: a level's) is a small crown whatever its size, as it holds no clumps; its job says so
+/// (TREE_JOB_LEAN).
+[[nodiscard]] TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool night, bool right,
+                                     bool lean = false);
 
 /// Whether the trunk's sunlit side lies on its right at `camera` (tree_close's sx = 1: L[0]·r[0] + L[2]·r[2] > 0).
 [[nodiscard]] bool tree_side_right(const shaders::Theme& theme, const view::Camera& camera) noexcept;

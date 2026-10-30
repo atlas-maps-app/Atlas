@@ -362,8 +362,11 @@ class PackLibrary(
         /** The renders' packs: the regions the boards were drawn from. */
         const val RENDERS = "https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/packs.json"
 
-        /** How far from the eye the engine draws a country's map, km (the core's cover's reach, PackList.CORE_REACH). */
-        const val ENGINE_REACH_KM = 9
+        /**
+         * How far from the eye the engine draws a country's map, km: its frame cells' levels' reach (PackList.LEVELS_REACH;
+         * the windows alone reach 9, PackList.CORE_REACH).
+         */
+        const val ENGINE_REACH_KM = 18
         const val EXT = ".atlas"
         private const val BUILT = ".built"
         private const val MANIFEST = "packs.json"

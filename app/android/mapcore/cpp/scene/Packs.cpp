@@ -4,6 +4,7 @@
 #include "base/arena.hpp"
 #include "base/log.hpp"
 #include "tiles/Error.hpp"
+#include "tiles/Store.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -20,6 +21,8 @@ gpu::Result<void> PackBuild::tiles(const std::function<void(const tiles::Tile&, 
     const tiles::RenderHead& h = head();
     if (h.levels.empty()) return {};
     const std::uint8_t level = z.value_or(h.levels[0]);
+    // a frame cell holding its levels alone: nothing of its places' own (the levels' tiles keep no labels)
+    if (!z && tiles::Store::derived(level)) return {};
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;
     Arena arena(std::size_t{4} << 20U, Growth::grows, "a pack's stage T");

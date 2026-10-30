@@ -29,8 +29,11 @@ class EdgeTest {
     private val dir: File = Files.createTempDirectory("edge").toFile()
     private val windows = File(dir, "windows").apply { mkdirs() }
 
-    /** The Netherlands as packs-latest lists its tiles (packs-20261029): its pack's box. */
-    private val netherlands = CountryTiles("netherlands", "Netherlands", BBox(2.9361, 50.7475, 7.2305, 54.0179))
+    /**
+     * The Netherlands as packs-latest lists its tiles (packs-20261029): its pack's box, its tiles this core's, so they
+     * hold its frame cells' levels.
+     */
+    private val netherlands = CountryTiles("netherlands", "Netherlands", BBox(2.9361, 50.7475, 7.2305, 54.0179), levels = true)
 
     @After
     fun clean() {
@@ -38,11 +41,21 @@ class EdgeTest {
         MapEngine.countries = emptyList()
     }
 
-    /** Window 14/[x]/5383 as the core writes it (PackListTest's): its box 0.02° wide from 4.87° east, no views. */
-    private fun window(x: Int) {
-        val west = 4.87 + (x - 8414) * 0.02
+    /**
+     * Window 14/[x]/5383 as the core writes it (PackListTest's): its box 0.02° wide from 4.87° east, no views; or a
+     * frame cell's level's tile [z]/[x]/[y] with the box given.
+     */
+    private fun window(
+        x: Int,
+        z: Int = 14,
+        y: Int = 5383,
+        west: Double = 4.87 + (x - 8414) * 0.02,
+        wide: Double = 0.02,
+        south: Double = 52.36,
+        north: Double = 52.38,
+    ) {
         val manifest = """{"format":"atlas-pack","version":3,"layout":"render-tiles","payload":1,"id":"window","profile":"region",
-            |"bbox":{"west":$west,"south":52.36,"east":${west + 0.02},"north":52.38},"origin":{"lat":52.3667,"lon":4.8516},
+            |"bbox":{"west":$west,"south":$south,"east":${west + wide},"north":$north},"origin":{"lat":52.3667,"lon":4.8516},
             |"tz":"Europe/Amsterdam","chunks":1,"config":{"views":{}}}""".trimMargin().toByteArray()
         val out = ByteArrayOutputStream()
         out.write("ATLASPCK".toByteArray(Charsets.US_ASCII))
@@ -50,7 +63,7 @@ class EdgeTest {
         out.write(ByteBuffer.allocate(8).putInt(manifest.size).putInt(0).array())
         out.write(manifest)
         out.write(ByteArray(48) { it.toByte() })
-        File(windows, "14-$x-5383.atlas").writeBytes(out.toByteArray())
+        File(windows, "$z-$x-$y.atlas").writeBytes(out.toByteArray())
     }
 
     /** The two windows of the canal ring's south (4.87° to 4.91° east), as on a phone that has taken nothing else yet. */
@@ -60,7 +73,7 @@ class EdgeTest {
         return PackList(windows = { windows }).also { it.load() }
     }
 
-    private fun inCountry(lat: Double, lon: Double) = MapEngine.countryAt(lat, lon) != null
+    private fun inCountry(lat: Double, lon: Double) = MapEngine.countryAt(lat, lon)
 
     @Test
     fun beyondTheLastWindowWithinTheCountryTheCoreKeepsThePlaceAndTodaysMapIsNotAsked() {
@@ -71,7 +84,7 @@ class EdgeTest {
         val lon = 4.9150
         assertNull(list.choose(lat, lon))
         assertFalse(list.covers(lat, lon, 650.0))
-        for (distance in listOf(100.0, 650.0, 2_300.0, PackList.CORE_REACH)) {
+        for (distance in listOf(100.0, 650.0, 2_300.0, PackList.CORE_REACH, PackList.LEVELS_REACH)) {
             // the core's path, so MapController asks today's map for no frame here and draws none of its last
             assertEquals("at $distance m", Path.CORE, Transition.pathOf(list, ::inCountry, lat, lon, distance))
         }
@@ -86,19 +99,35 @@ class EdgeTest {
     fun todaysMapStillDrawsBeyondTheCoresReachAndOutsideTheCountriesWhereNoWindowIs() {
         val list = twoWindows()
         MapEngine.countries = listOf(netherlands)
-        // zoomed out past the cover's reach, the core has nothing to draw there: today's map
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.CORE_REACH + 1))
+        // within the country the core draws its frame cells' levels beyond the windows' reach (ENGINE.md one pack per
+        // country, step 7); zoomed out past their reach, today's map
+        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.LEVELS_REACH + 1))
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
+        // the country's tiles of another core only (published before this core's): its windows are built on the phone
+        // and no level comes, so the core keeps the windows' reach and today's map draws beyond it
+        MapEngine.countries = listOf(netherlands.copy(levels = false))
+        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.CORE_REACH))
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        MapEngine.countries = listOf(netherlands)
         // where it has nothing to draw there (it takes no region in such a country), the map says to zoom in
         assertEquals("Zoom in to see the map", MapController.noDataLine(52.37, 4.88))
         // Lille, south of the Netherlands' box (CI's transitional script): no window, no country's tiles
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, 430.0))
         assertEquals("No map data here", MapController.noDataLine(50.6292, 3.0573))
-        // before the published list is read, no country is known: the windows alone decide, as until now
+        // before the published list is read, no country is known: the windows alone decide, as until now, and beyond
+        // their reach a level's tile on the phone that holds the target
         MapEngine.countries = emptyList()
         assertEquals("No map data here", MapController.noDataLine(52.37, 4.88))
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, 650.0))
         assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, 650.0))
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        // the L13 tile that holds the target, as the tiles give it (13/4207/2692: 4.878° to 4.922° east, 52.349° to
+        // 52.376° north)
+        window(4207, z = 13, y = 2692, west = 4.878, wide = 0.044, south = 52.349, north = 52.376)
+        list.load()
+        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
         // with nothing listed, the camera names no pack
         assertNull(PackList(windows = { File(dir, "none") }).also { it.load() }.named(52.37, 4.88))
     }

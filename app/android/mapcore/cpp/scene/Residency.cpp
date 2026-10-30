@@ -436,7 +436,8 @@ void Residency::publish(Underway& u) {
     // Every pass is done (or one failed and the others it was handed are): this worker alone sees the tile now.
     const auto started = std::chrono::steady_clock::now();
     if (u.failed) {
-        if (u.out) each_range(*u.out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+        // never drawn: back to the heaps at once, not as a free that would try the tile again
+        if (u.out) each_range(*u.out, [this](const HeapRange& r) { heaps_.give_back(r); });
     } else {
         const trace::Section traced("atlas tile publish");
         ResidentTile& out = *u.out;

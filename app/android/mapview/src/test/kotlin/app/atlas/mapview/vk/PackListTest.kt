@@ -112,10 +112,35 @@ class PackListTest {
         assertNull(list.choose(52.0907, 5.1214))
         assertFalse(list.covers(52.0907, 5.1214, 430.0))
         // beyond the cover's reach, the core has no tiles for the camera
-        assertFalse(list.covers(52.37, 4.88, PackList.CORE_REACH * 2))
+        assertFalse(list.covers(52.37, 4.88, PackList.CORE_REACH + 1))
+        assertFalse(list.covers(52.37, 4.88, PackList.LEVELS_REACH + 1))
         // whether the core has anything to show in a view: the ground seen meets a window's box
         assertTrue(list.meets(BBox(4.88, 52.37, 4.95, 52.40)))
         assertFalse(list.meets(BBox(5.10, 52.08, 5.14, 52.10)))
+    }
+
+    @Test
+    fun aFrameCellsLevelsTilesAreListedBesideTheWindowsAndCoverTheirBoxesToTheLevelsReach() {
+        window(8414)
+        // the cell's L13 tile over the window and its neighbours (ENGINE.md one pack per country, step 7), as the
+        // country's tiles give it: a window's pack of its level, in its frame cell's frame
+        File(windows, "13-4207-2691.atlas").writeBytes(renderPack("window", "region", 4.83, 52.34, 4.91, 52.40, chunks = 1, origin = cell))
+        val list = PackList(windows = { windows })
+        val packs = list.load()
+        assertEquals(listOf("window/13/4207/2691", "window/14/8414/5383"), packs.map { it.id })
+        assertEquals(listOf(13, 14), packs.map { it.level })
+        assertEquals(listOf(MapCore.PackRef.WINDOW, MapCore.PackRef.WINDOW), packs.map { it.kind })
+        assertEquals(RegionFrame.region(cell), packs[0].frame)
+        // the camera names the smallest pack that holds the target: the window where it has come, else the level's tile
+        assertEquals("window/14/8414/5383", list.choose(52.37, 4.88)?.id)
+        assertEquals("window/13/4207/2691", list.choose(52.35, 4.85)?.id)
+        // within the windows' reach a pack holds the target; beyond it, to the levels' reach, a level's tile does
+        assertTrue(list.covers(52.35, 4.85, PackList.CORE_REACH))
+        assertTrue(list.covers(52.37, 4.88, PackList.LEVELS_REACH))
+        assertFalse(list.covers(52.37, 4.88, PackList.LEVELS_REACH + 1))
+        assertFalse(list.covers(52.0907, 5.1214, PackList.CORE_REACH + 1))
+        // a render pack is no level's tile
+        assertNull(PackList.Pack("grachten", 1, MapCore.PackRef.RENDER, BBox(4.8, 52.3, 4.9, 52.4), CameraWriter.PROFILE_REGION, RegionFrame.region(cell), ZoneId.of("Europe/Amsterdam"), emptyMap(), File(dir, "grachten.atlas")).level)
     }
 
     @Test

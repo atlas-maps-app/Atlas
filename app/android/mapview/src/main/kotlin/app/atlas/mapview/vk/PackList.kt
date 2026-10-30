@@ -61,6 +61,9 @@ class PackList(
         val time: Long = file.lastModified(),
         val size: Long = file.length(),
     ) {
+        /** A window's level: 14 a place's, 13 or 12 a frame cell's level's tile; null for a render pack. */
+        val level: Int? = id.split('/').takeIf { kind == MapCore.PackRef.WINDOW && it.size == 4 && it[0] == "window" }?.get(1)?.toIntOrNull()
+
         override fun toString() = "Pack($id #$number)"
     }
 
@@ -174,9 +177,17 @@ class PackList(
 
     /**
      * Whether the core has tiles for a camera on [lat], [lon], [distance] metres from it (the transitional rule's
-     * place): a pack holds the target, and the target is within the cover's reach ([CORE_REACH]).
+     * place): a pack holds the target, and the target is within the cover's reach ([CORE_REACH]); or, where a frame
+     * cell's level's tile on the phone holds it, within the levels' reach ([LEVELS_REACH]).
      */
-    fun covers(lat: Double, lon: Double, distance: Double): Boolean = distance <= CORE_REACH && choose(lat, lon) != null
+    fun covers(lat: Double, lon: Double, distance: Double): Boolean = when {
+        distance <= CORE_REACH -> choose(lat, lon) != null
+        distance <= LEVELS_REACH -> packs.any { p ->
+            val b = p.box
+            p.level != null && p.level < Windows.WINDOW_LEVEL && lat >= b.south && lat <= b.north && lon >= b.west && lon <= b.east
+        }
+        else -> false
+    }
 
     /** Whether a pack's box meets [view] (the ground a camera sees): the core has something to show there. */
     fun meets(view: BBox): Boolean = packs.any { p ->
@@ -187,6 +198,13 @@ class PackList(
     companion object {
         /** How far from the eye the core's cover reaches its target, metres: three quarters of the world's far plane. */
         const val CORE_REACH = 9_000.0
+
+        /**
+         * How far it reaches within a country whose tiles hold its frame cells' levels (ENGINE.md one pack per country,
+         * step 7): the core draws to 30 km of the eye (scene::WorldOptions::levels_far), where the top of a view pitched
+         * 48° from a target 18 km away lies; beyond, today's map.
+         */
+        const val LEVELS_REACH = 18_000.0
 
         private const val AMSTERDAM = "Europe/Amsterdam"
 

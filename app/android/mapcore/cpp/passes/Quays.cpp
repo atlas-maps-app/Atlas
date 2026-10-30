@@ -127,7 +127,7 @@ namespace {
 
 } // namespace
 
-void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& state) {
+void Ground::decide_quays(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.quays.clear();
     // `if th.get('wx')`: without weather the water is flat and has no walls
@@ -195,10 +195,11 @@ void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& stat
     std::ranges::stable_sort(pieces, [](const Piece& a, const Piece& b) {
         return a.index != b.index ? a.index < b.index : a.order < b.order;
     });
-    const view::Vec3 eye = cam.eye();
     std::vector<view::Vec3> cs;
     for (const Piece& p : pieces) {
         const DrawnTile& t = f.tiles[p.tile];
+        const view::Camera& cam = *t.cam; // in the tile's own frame
+        const view::Vec3 eye = cam.eye();
         const geo::GroundTile& g = *t.ground;
         const geo::QuayEdge& q = g.quays[p.edge];
         // `if far(mx, mz): continue`, at the edge's midpoint

@@ -325,7 +325,10 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The fling is over: no landing. */
     fun noLanding() = core.call(Unit) { Native.landing(it, false, 0.0, 0.0, 0.0, 0.0, 0.0) }
 
-    /** A window of the map the phone builds (ENGINE.md step 3): one L14 tile, by its zoom, column and row. */
+    /**
+     * A window of the map the phone builds (ENGINE.md step 3): one L14 tile, by its zoom, column and row; or a frame
+     * cell's level's tile (L13 or L12, step 7's), which the phone takes from its country's tiles and never builds.
+     */
     data class Window(val z: Int, val x: Int, val y: Int) {
         /** Its pack's id among the map's packs. */
         val id: String get() = "window/$z/$x/$y"
@@ -388,6 +391,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun windowsInView(): List<Window> =
         core.call(emptyList()) { h -> Native.windowsInView(h).map { Window.of(it) } }
+
+    /**
+     * The frame cells' levels' tiles the map wants now (ENGINE.md one pack per country, step 7): the L12 tiles in view,
+     * then the L13 tiles within the coarse level's reach, each by its share of the screen, then nearest first, that no
+     * pack on the phone holds. The app takes them from the country's tiles alone (the core derives them from a cell's
+     * windows; the phone does not). Empty before the map is made. Off the main thread.
+     */
+    fun wantedLevels(): List<Window> =
+        core.call(emptyList()) { h -> Native.wantedLevels(h).map { Window.of(it) } }
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed

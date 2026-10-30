@@ -56,9 +56,9 @@ private:
 [[nodiscard]] std::uint64_t visible_cells(std::span<const tiles::CellInfo> cells, std::uint8_t per_side,
                                           const view::GroundFrame& frame, const Frustum& frustum) noexcept;
 
-/// The cells of an ancestor `gap` levels up that lie over a descendant tile (its n × n cells cover 2^gap × 2^gap
-/// descendants exactly when n = 2^gap): the bits of the ancestor's cells over descendant (x, y), or every cell when the
-/// grids do not line up.
+/// The cells of an ancestor `gap` levels up that lie over a descendant tile (x, y): the bits of the ancestor's n × n
+/// cells over it, n / 2^gap a side where its cells are finer than its descendants (an L13 tile's 2 × 2 over each of its
+/// four places), the one holding it where they are coarser, or every cell for a gap of 0.
 [[nodiscard]] std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t x,
                                        std::uint32_t y) noexcept;
 

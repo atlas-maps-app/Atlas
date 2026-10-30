@@ -69,7 +69,9 @@ TreeClump clump_at(TreeJob j, uint i) {
 }
 
 TreeClump blob_at(TreeJob j, uint i) {
-    return tree_clump(points_heap[j.tree + TREE_HEADER_VECTORS + TREE_CLUMPS + i]);
+    // a level's lean record holds no clumps: its blobs follow its header
+    uint clumps = (j.flags & TREE_JOB_LEAN) != 0u ? 0u : TREE_CLUMPS;
+    return tree_clump(points_heap[j.tree + TREE_HEADER_VECTORS + clumps + i]);
 }
 
 /// The crown's sun: how lit its tones draw, and whether it takes the highlight tone.

@@ -33,7 +33,8 @@ namespace atlas::jni {
 /// check). 23: the camera state's version 3, 552 bytes, with the parts of the picture the map leaves out (a switch for
 /// every layer and effect, style::camera_part). 24: Native.blurLine (VK facts' blur check, passes/BlurCheck.hpp). 25:
 /// Native.painter gone (the phone draws true depth alone since 30 October; the core keeps the painter's order for its
-/// own checks).
+/// own checks), and Native.wantedLevels (a frame cell's levels' tiles the map wants, ENGINE.md one pack per country,
+/// step 7).
 inline constexpr jint abi = 25;
 
 /// The Kotlin class whose static natives the library registers.

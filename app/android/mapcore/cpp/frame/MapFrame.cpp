@@ -141,13 +141,15 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     if (options_.heaps_total != 0) heaps.total = options_.heaps_total;
     log::info("vk heaps: {} MB budget (the device binds {} MB of a storage buffer)", heaps.total >> 20U,
               device.facts().limits.maxStorageBufferRange >> 20U);
-    auto world = scene::World::create(device, (*builder)->passes(),
-                                      {.workers = workers_,
-                                       .heaps = heaps,
-                                       .native_budget = static_cast<std::size_t>(heaps.total),
-                                       .resources = options_.resources,
-                                       .clock = std::move(clock),
-                                       .hints = options_.worker_hints ? options_.worker_hints() : nullptr});
+    auto world = scene::World::create(
+        device, (*builder)->passes(),
+        {.workers = workers_,
+         .levels_far = options_.levels_far != 0 ? options_.levels_far : scene::WorldOptions{}.levels_far,
+         .heaps = heaps,
+         .native_budget = static_cast<std::size_t>(heaps.total),
+         .resources = options_.resources,
+         .clock = std::move(clock),
+         .hints = options_.worker_hints ? options_.worker_hints() : nullptr});
     if (!world) {
         const gpu::Announced named =
             gpu::announce_release({.kind = "frame", .detail = "(the map's frame builder)"}, watch);
@@ -306,6 +308,10 @@ std::vector<tiles::TileKey> MapFrame::wanted_windows() const {
 
 std::vector<tiles::TileKey> MapFrame::windows_in_view() const {
     return world_ ? world_->windows_in_view() : std::vector<tiles::TileKey>{};
+}
+
+std::vector<tiles::TileKey> MapFrame::wanted_levels() const {
+    return world_ ? world_->wanted_levels() : std::vector<tiles::TileKey>{};
 }
 
 } // namespace atlas::frame

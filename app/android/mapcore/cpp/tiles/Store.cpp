@@ -9,6 +9,7 @@
 #include <array>
 #include <bit>
 #include <format>
+#include <functional>
 #include <utility>
 
 namespace atlas::tiles {
@@ -200,8 +201,8 @@ Result<void> Store::add_window(const PackRef& ref) {
     }
     const RenderHead& head = *pack->head();
     const std::span<const ChunkRef> chunks = pack->chunks().chunks();
-    if (head.levels.size() != 1 || head.levels[0] != 14 || chunks.size() > 1 ||
-        (!chunks.empty() && chunks[0].tile.z != 14)) {
+    if (head.levels.size() != 1 || (head.levels[0] != window_level && !derived(head.levels[0])) || chunks.size() > 1 ||
+        (!chunks.empty() && chunks[0].tile.z != head.levels[0])) {
         return std::unexpected(error(Fault::bad_value, Site::head, chunks.size()));
     }
     if (chunks.empty()) {
@@ -224,7 +225,8 @@ Result<void> Store::add_window(const PackRef& ref) {
         (section.name == section_head ? w.head : w.style) = std::move(*bytes);
     }
     const TileKey tile = w.chunk.tile;
-    const TileKey cell(cell_level, tile.x >> 4U, tile.y >> 4U);
+    const auto shift = static_cast<std::uint32_t>(tile.z - cell_level);
+    const TileKey cell(cell_level, tile.x >> shift, tile.y >> shift);
     const std::scoped_lock lock(cells_mutex_);
     auto it = std::ranges::find_if(cells_, [&](const Cell& c) { return c.key.packed() == cell.packed(); });
     if (it == cells_.end()) it = cells_.insert(cells_.end(), Cell{.key = cell, .windows = {}});
@@ -260,7 +262,12 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
                           .reach = w.chunk.reach,
                           .frame = {.source = w.source, .offset = w.chunk.offset, .length = w.chunk.stored}});
     }
-    // the cell's head: its first window's, under the cell's name
+    // the cell's head: its first window's, under the cell's name, with the levels its windows hold (finest first)
+    std::vector<std::uint8_t> levels;
+    for (const Window& w : cell.windows) {
+        if (std::ranges::find(levels, w.chunk.tile.z) == levels.end()) levels.push_back(w.chunk.tile.z);
+    }
+    std::ranges::sort(levels, std::ranges::greater{});
     const Window& first = cell.windows.front();
     auto head = read_head(first.head);
     if (!head) return std::unexpected(head.error());
@@ -269,7 +276,7 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
         views.push_back({.name = v.name, .camera = v.camera, .tolerance = v.tolerance});
     const std::string name = cell_id(cell.key);
     const auto head_bytes = encode_head({.profile = head->profile,
-                                         .levels = head->levels,
+                                         .levels = levels,
                                          .frame = head->frame,
                                          .region = name,
                                          .engine_version = head->engine_version,
@@ -282,7 +289,7 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
         std::format(R"({{"layout":"render-tiles","payload":{},"builder":"core cell","cell":"{}","windows":{}}})",
                     payload_version, name, cell.windows.size());
     auto source =
-        compose_pack(chunks, {.levels = head->levels, .manifest = manifest, .head = *head_bytes, .style = first.style});
+        compose_pack(chunks, {.levels = levels, .manifest = manifest, .head = *head_bytes, .style = first.style});
     if (!source) return std::unexpected(source.error());
     auto pack = Pack::open(std::move(*source));
     if (!pack) return std::unexpected(pack.error());

@@ -106,7 +106,8 @@ public:
     /// they changed, and every tile `cover` draws given its bits (CoverTile::sun, sun_base, sun_weight) in frame slot
     /// `state.slot`'s half of the buffer. `pack` is the active pack (null: none) and `level` its tiles' ladder level;
     /// `coarser` the coarser pack drawn around it (null: none) and `coarser_level` its tiles'; `neighbours` the packs
-    /// drawn beside them, nearest first (null: none; max_neighbours at most), and `neighbour_levels` their tiles'.
+    /// drawn beside them, nearest first (null: none; the first sun_neighbours have lanes), and `neighbour_levels` their
+    /// tiles'.
     void prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
                  std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser = nullptr,
                  std::uint8_t coarser_level = 0,
@@ -226,11 +227,11 @@ private:
 
     std::unique_ptr<sun::DiskCache> cache_;
     /// A lane for each pack drawn (the active one, the coarser one, the neighbours), each kept by its pack.
-    std::array<Lane, 2 + max_neighbours> lanes_;
+    std::array<Lane, 2 + sun_neighbours> lanes_;
     /// The active pack's lane (the render thread sets it; the builder asks it first, and stats() are its).
     std::atomic<std::size_t> active_lane_{0};
     /// What each lane's others (Lane::others) were last worked out from (the render thread's).
-    std::array<LaneInputs, 2 + max_neighbours> others_from_;
+    std::array<LaneInputs, 2 + sun_neighbours> others_from_;
 
     // The render thread's.
     std::vector<std::uint32_t> texels_;

@@ -42,6 +42,12 @@ import java.util.zip.GZIPInputStream
  * JSON). A batch's list gives the tool its biggest answers first, so its threads finish together. In the tiles
  * file the windows lie frame cell by frame cell (load::frame_cell_level's L10 tile, whose frame they are drawn in), each
  * cell's in order of x, then y, so a cell's packs are one range.
+ *
+ * Each frame cell's levels follow its windows once the cell's last window is built (ENGINE.md one pack per country,
+ * step 7): its L13 and L12 tiles, which the core derives from the cell's windows' packs as it wrote them (`atlas_stagep
+ * levels`, load::build_levels), each a pack of one tile stored as a window's is and listed in the index by its level
+ * ([TilesIndex]). A cell whose levels the tool cannot build is named on a line beginning "levels not built" and left
+ * without them: the phone draws its windows to their own reach there.
  */
 object CountryTiles {
     const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N]
@@ -49,7 +55,8 @@ object CountryTiles {
       as the phone builds it (atlas_stagep windows), each window's pack with its chunks compressed at zstd 19, its
       style as what differs from the country's (the first window's, held by the index) and every other byte the core's,
       checked to decode to the core's own tiles and style, back to back in <out-dir>/<id>.tiles, with their index
-      <id>.tiles.idx (TilesIndex); a window whose pack holds no tile is listed with no bytes. The answers are unzipped --batch windows at a time (400 unless given) into a folder in <out-dir>,
+      <id>.tiles.idx (TilesIndex); a window whose pack holds no tile is listed with no bytes. Each frame cell's levels
+      (its L13 and L12 tiles, atlas_stagep levels) follow its windows. The answers are unzipped --batch windows at a time (400 unless given) into a folder in <out-dir>,
       deleted once built. --id defaults to the data's name less .windows; --threads, the tool's and the compression's,
       to the machine's cores. Any window the tool cannot build fails the run, named, unless --allow-failed lets that
       many through: they are left out of the index (the phone builds them from their data, with the same core) and
@@ -97,6 +104,12 @@ object CountryTiles {
         val packMillis: Long,
         /** The windows the core's tool could not build, with why ("14/x/y: why"), left out of the index; --allow-failed's. */
         val failed: List<String> = emptyList(),
+        /** The frame cells' levels' tiles stored, their bytes in the tiles file, and the time their tool took. */
+        val levels: Int = 0,
+        val levelBytes: Long = 0,
+        val levelMillis: Long = 0,
+        /** The cells whose levels the tool could not build, with why ("10/x/y: why"), left without them. */
+        val levelsFailed: List<String> = emptyList(),
     ) {
         val empty: Int get() = windows - drawn - failed.size
     }
@@ -148,6 +161,10 @@ object CountryTiles {
             "  the chunks ${r.chunkBytes} bytes from ${r.chunkRaw} of tiles, the styles ${r.styleBytes} (${percent(r.styleBytes, r.tilesBytes)} of the file) " +
                 "from ${r.styleRaw}, the rest ${r.tilesBytes - r.chunkBytes - r.styleBytes}",
         )
+        out(
+            "  the levels: ${r.levels} tiles of the frame cells' L13 and L12, ${r.levelBytes} bytes (${percent(r.levelBytes, r.tilesBytes)} of the file), " +
+                "built in ${r.levelMillis / 1000} s" + if (r.levelsFailed.isEmpty()) "" else "; ${r.levelsFailed.size} cells without them",
+        )
         out("${r.index.name}: ${r.index.length()} bytes with the country's style, the core's windows of version ${r.version}")
         out(
             "time: ${r.millis / 1000} s (unzipping ${r.unzipMillis / 1000} s, building ${r.buildMillis / 1000} s, compressing ${r.packMillis / 1000} s); " +
@@ -182,6 +199,10 @@ object CountryTiles {
         if (windows.size == 0) throw IOException("${index.name} lists no window")
         val shift = LEVEL - CELL_LEVEL
         val order = (0 until windows.size).map { windows[it] }.sortedWith(compareBy({ it.x ushr shift }, { it.y ushr shift }, { it.x }, { it.y }))
+        // each frame cell's windows, so its levels follow its last one
+        fun cellOf(e: WindowsIndex.Entry) = key(e.x ushr shift, e.y ushr shift)
+        val cellTotals = order.groupingBy(::cellOf).eachCount()
+        val cellsDone = HashMap<Long, Int>()
         log("windows: ${windows.size}, data of ${windows.date}; ${(order.size + batch - 1) / batch} batches of up to $batch on $threads threads")
 
         outDir.mkdirs()
@@ -193,6 +214,9 @@ object CountryTiles {
         val answers = File(work, "answers")
         val packs = File(work, "packs")
         val list = File(work, "list.txt")
+        // the windows' packs as the core wrote them, by frame cell, until the cell's levels are built
+        val cells = File(work, "cells")
+        fun cellDir(cell: Long) = File(cells, "${cell ushr 32}-${cell and 0xFFFFFFFFL}")
         val pool = Executors.newFixedThreadPool(threads) { r -> Thread(r, "country").apply { isDaemon = true } }
         val entries = ArrayList<TilesIndex.Entry>(windows.size)
         val failed = ArrayList<String>()
@@ -212,16 +236,20 @@ object CountryTiles {
         var unzipMillis = 0L
         var buildMillis = 0L
         var packMillis = 0L
+        var levels = 0
+        var levelBytes = 0L
+        var levelMillis = 0L
+        val levelsFailed = ArrayList<String>()
         try {
             FileChannel.open(data.toPath(), StandardOpenOption.READ).use { channel ->
                 part.outputStream().buffered(1 shl 20).use { file ->
                     fun take(p: Packed) {
                         if (version == null) version = p.version
-                        if (p.version != version) throw IOException("window $LEVEL/${p.x}/${p.y} was built by the core's version ${p.version}, the windows before it by $version")
-                        features += p.features
+                        if (p.version != version) throw IOException("tile ${p.z}/${p.x}/${p.y} was built by the core's version ${p.version}, the windows before it by $version")
                         val pack = p.stored
                         if (pack == null) {
-                            entries += TilesIndex.Entry(p.x, p.y, 0, 0, ByteArray(32))
+                            features += p.features
+                            entries += TilesIndex.Entry(p.x, p.y, 0, 0, ByteArray(32), p.z)
                             return
                         }
                         val style = p.style!!
@@ -229,11 +257,17 @@ object CountryTiles {
                         val stored = try {
                             stored(pack, style, country)
                         } catch (x: Exception) {
-                            throw IOException("window $LEVEL/${p.x}/${p.y}: ${x.message ?: x}", x)
+                            throw IOException("tile ${p.z}/${p.x}/${p.y}: ${x.message ?: x}", x)
                         }
                         file.write(stored)
-                        entries += TilesIndex.Entry(p.x, p.y, offset, stored.size, MessageDigest.getInstance("SHA-256").digest(stored))
+                        entries += TilesIndex.Entry(p.x, p.y, offset, stored.size, MessageDigest.getInstance("SHA-256").digest(stored), p.z)
                         offset += stored.size
+                        if (p.z != LEVEL) {
+                            levels++
+                            levelBytes += stored.size
+                            return
+                        }
+                        features += p.features
                         drawn++
                         coreBytes += p.coreBytes
                         chunkRaw += p.chunkRaw
@@ -264,7 +298,8 @@ object CountryTiles {
                                 failed += "$LEVEL/${e.x}/${e.y}: ${built.failed}"
                                 continue
                             }
-                            ahead.addLast(pool.submit(Callable { pack(File(packs, "$LEVEL-${e.x}-${e.y}.atlas"), e, built) }))
+                            val keep = cellDir(cellOf(e))
+                            ahead.addLast(pool.submit(Callable { pack(File(packs, "$LEVEL-${e.x}-${e.y}.atlas"), e, built, keep) }))
                             if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
                         }
                         while (ahead.isNotEmpty()) take(result(ahead.removeFirst()))
@@ -273,6 +308,32 @@ object CountryTiles {
                         unzipMillis += t1 - t0
                         buildMillis += t2 - t1
                         packMillis += t3 - t2
+                        // each frame cell whose last window this batch built: its levels, after its windows
+                        for (e in b) cellsDone.merge(cellOf(e), 1, Int::plus)
+                        for (cell in b.map(::cellOf).distinct().filter { cellsDone[it] == cellTotals[it] }) {
+                            val dir = cellDir(cell)
+                            val kept = dir.listFiles { f -> f.name.endsWith(".atlas") }.orEmpty().sortedBy { it.name }
+                            val name = "$CELL_LEVEL/${cell ushr 32}/${cell and 0xFFFFFFFFL}"
+                            if (kept.isNotEmpty()) {
+                                val t4 = ms()
+                                val made = File(work, "levels")
+                                made.mkdirs()
+                                val tiles = buildLevels(core, kept, File(work, "levels.txt"), made, threads)
+                                levelMillis += ms() - t4
+                                if (tiles.failed != null) {
+                                    levelsFailed += "$name: ${tiles.failed}"
+                                    log("levels not built: $name: ${tiles.failed}")
+                                } else {
+                                    for (t in tiles.tiles) {
+                                        ahead.addLast(pool.submit(Callable { packLevel(File(made, "${t.z}-${t.x}-${t.y}.atlas"), t) }))
+                                        if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
+                                    }
+                                    while (ahead.isNotEmpty()) take(result(ahead.removeFirst()))
+                                }
+                                made.deleteRecursively()
+                            }
+                            dir.deleteRecursively()
+                        }
                         val bad = b.count { said.getValue(key(it.x, it.y)).failed != null }
                         log("  ${entries.size + failed.size} of ${windows.size} windows, ${offset shr 20} MiB of tiles (${ms() / 1000} s)" + if (bad == 0) "" else "; $bad not built")
                     }
@@ -304,6 +365,7 @@ object CountryTiles {
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
             jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis, failed.toList(),
+            levels, levelBytes, levelMillis, levelsFailed.toList(),
         )
     }
 
@@ -361,7 +423,7 @@ object CountryTiles {
         return said
     }
 
-    /** One window's pack with its chunks compressed, its style as the core wrote it, and what the core wrote. */
+    /** One tile's pack (a window's, or a level's: [z]) with its chunks compressed, its style as the core wrote it, and what the core wrote. */
     private class Packed(
         val x: Int,
         val y: Int,
@@ -376,6 +438,7 @@ object CountryTiles {
         val chunkBytes: Long,
         /** The style's bytes compressed, as [stored] holds it. */
         val styleBytes: Long,
+        val z: Int = LEVEL,
     )
 
     /**
@@ -396,28 +459,87 @@ object CountryTiles {
         return stored
     }
 
-    /** Window [e]'s pack in [file], as the core's tool wrote it ([built]), read, checked and recompressed; the file goes once read. */
-    private fun pack(file: File, e: WindowsIndex.Entry, built: Built): Packed = try {
+    /**
+     * Window [e]'s pack in [file], as the core's tool wrote it ([built]), read, checked and recompressed; the file goes
+     * once read, into [keep] (its frame cell's, for the cell's levels).
+     */
+    private fun pack(file: File, e: WindowsIndex.Entry, built: Built, keep: File): Packed = try {
         val bytes = file.readBytes()
-        file.delete()
+        keep.mkdirs()
+        if (!file.renameTo(File(keep, file.name))) throw IOException("its pack could not be kept for its cell's levels")
         if (bytes.size.toLong() != built.bytes) throw IOException("the tool said ${built.bytes} bytes and wrote ${bytes.size}")
         val core = WindowPack.read(bytes)
         if (core.window != "$LEVEL/${e.x}/${e.y}") throw IOException("its pack is window ${core.window}'s")
         if (core.features != built.features) throw IOException("the tool said ${built.features} features, its pack holds ${core.features}")
-        if (core.chunks.isEmpty()) {
-            Packed(e.x, e.y, core.version, 0, bytes.size, null, null, 0, 0, 0)
-        } else {
-            // the frames say their sizes and carry no checksum (each tile's SHA-256 is in the chunk table)
-            val stored = ZstdCompressCtx().use { zstd -> core.recompressed(zstd.setLevel(ZSTD_LEVEL).setContentSize(true).setChecksum(false)) }
-            val again = WindowPack.read(stored)
-            Packed(
-                e.x, e.y, core.version, core.features, bytes.size, stored, core.style(),
-                core.chunks.sumOf { it.raw.toLong() }, again.section(Format.SECTION_CHUNKS).stored.toLong(),
-                again.section(Format.SECTION_STYLE).stored.toLong(),
-            )
-        }
+        recompressed(core, e.x, e.y, LEVEL, bytes.size)
     } catch (x: Exception) {
         throw IOException("window $LEVEL/${e.x}/${e.y}: ${x.message ?: x}", x)
+    }
+
+    /** [core]'s pack (tile [z]/[x]/[y], [size] bytes as the core wrote it) with its chunks compressed. */
+    private fun recompressed(core: WindowPack, x: Int, y: Int, z: Int, size: Int): Packed = if (core.chunks.isEmpty()) {
+        Packed(x, y, core.version, 0, size, null, null, 0, 0, 0, z)
+    } else {
+        // the frames say their sizes and carry no checksum (each tile's SHA-256 is in the chunk table)
+        val stored = ZstdCompressCtx().use { zstd -> core.recompressed(zstd.setLevel(ZSTD_LEVEL).setContentSize(true).setChecksum(false)) }
+        val again = WindowPack.read(stored)
+        Packed(
+            x, y, core.version, core.features, size, stored, core.style(),
+            core.chunks.sumOf { it.raw.toLong() }, again.section(Format.SECTION_CHUNKS).stored.toLong(),
+            again.section(Format.SECTION_STYLE).stored.toLong(), z,
+        )
+    }
+
+    /** A level's tile the core's tool said it built: its key, its features and its pack's bytes. */
+    private class LevelTile(val z: Int, val x: Int, val y: Int, val features: Long, val bytes: Long)
+
+    /** What the core's tool said of a frame cell's levels: the tiles it built, or why it could not. */
+    private class Levels(val tiles: List<LevelTile>, val failed: String?)
+
+    /**
+     * The levels of the frame cell whose windows' packs (as the core wrote them) are [packs], built by the core's tool
+     * into [out] on [threads] threads through the list [list]: what it said (`z x y <features> <bytes> <raw> <buildings>
+     * <trees>` a tile, then `cell x y <tiles> <ms>` or `cell x y failed <why>`). Throws where it failed otherwise.
+     */
+    private fun buildLevels(core: File, packs: List<File>, list: File, out: File, threads: Int): Levels {
+        list.writeText(packs.joinToString("") { f -> f.name.removeSuffix(".atlas").split('-').let { "${it[1]} ${it[2]} ${f.path}\n" } })
+        val p = ProcessBuilder(core.path, "levels", list.path, out.path, "$threads").redirectError(ProcessBuilder.Redirect.INHERIT).start()
+        p.outputStream.close()
+        val lines = p.inputStream.bufferedReader().readLines()
+        val code = p.waitFor()
+        if (code != 0 && code != 1) throw IOException("${core.name} levels failed (exit $code)")
+        val tiles = ArrayList<LevelTile>()
+        var failed: String? = null
+        var ended = false
+        for (line in lines) {
+            val v = line.split(' ')
+            if (v.firstOrNull() == "cell") {
+                ended = true
+                if (v.getOrNull(3) == "failed") failed = line.split(' ', limit = 5).getOrElse(4) { "" }
+                continue
+            }
+            val n = v.map { it.toLongOrNull() }
+            if (v.size != 8 || n.any { it == null } || n[0]!! !in TilesIndex.LEVELS.map { it.toLong() }) {
+                throw IOException("${core.name} levels printed '$line', not z x y features bytes raw buildings trees")
+            }
+            tiles += LevelTile(n[0]!!.toInt(), n[1]!!.toInt(), n[2]!!.toInt(), n[3]!!, n[4]!!)
+        }
+        if (!ended) throw IOException("${core.name} levels (exit $code) said nothing of its cell")
+        if ((code == 0) != (failed == null)) throw IOException("${core.name} levels exited $code for a cell that " + if (code == 0) "failed" else "was built")
+        return Levels(if (failed == null) tiles else emptyList(), failed)
+    }
+
+    /** Level tile [t]'s pack in [file], as the core's tool wrote it, read, checked and recompressed; the file goes once read. */
+    private fun packLevel(file: File, t: LevelTile): Packed = try {
+        val bytes = file.readBytes()
+        file.delete()
+        if (bytes.size.toLong() != t.bytes) throw IOException("the tool said ${t.bytes} bytes and wrote ${bytes.size}")
+        val core = WindowPack.read(bytes)
+        if (core.window != "${t.z}/${t.x}/${t.y}") throw IOException("its pack is tile ${core.window}'s")
+        if (core.features != t.features) throw IOException("the tool said ${t.features} features, its pack holds ${core.features}")
+        recompressed(core, t.x, t.y, t.z, bytes.size)
+    } catch (x: Exception) {
+        throw IOException("tile ${t.z}/${t.x}/${t.y}: ${x.message ?: x}", x)
     }
 
     private fun key(x: Int, y: Int): Long = (x.toLong() shl 32) or (y.toLong() and 0xFFFFFFFFL)

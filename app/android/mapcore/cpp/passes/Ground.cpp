@@ -14,6 +14,7 @@
 #include "scene/Residency.hpp"
 #include "sun/Buckets.hpp"
 #include "text/GroundText.hpp"
+#include "view/Frames.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,6 +24,7 @@
 #include <ctime>
 #include <format>
 #include <limits>
+#include <memory>
 #include <tuple>
 
 namespace atlas::passes {
@@ -663,6 +665,24 @@ bool Ground::decide(const frame::FrameState& state) {
         const double z = static_cast<double>(t.place.offset.z) + cam.eye().z;
         f.ground_r = pymath::max(f.ground_r, pymath::max(std::abs(x), std::abs(z)) + window_side);
     }
+    // Each tile's camera in its own frame: a neighbouring frame cell's tiles hold their frame's metres, about an origin
+    // 24 km off the frame drawn's, and decided with the frame drawn's camera they were judged from far off (a far
+    // view's big roads' lines 253 px wide from a point behind the eye, 0.7 G fragments a frame at Alkmaar).
+    f.cams.clear();
+    for (DrawnTile& t : f.tiles) {
+        if (!state.ground_frame || t.tile->frame == *state.ground_frame) {
+            t.cam = &cam;
+            continue;
+        }
+        const auto it = std::ranges::find(f.cams, t.tile->frame, [](const auto& c) { return c.first; });
+        if (it != f.cams.end()) {
+            t.cam = it->second.get();
+            continue;
+        }
+        view::CameraSpec spec = cam.spec();
+        spec.target = view::convert(*state.ground_frame, t.tile->frame, spec.target);
+        t.cam = f.cams.emplace_back(t.tile->frame, std::make_shared<const view::Camera>(spec)).second.get();
+    }
     std::uint32_t fills = 0;
     std::uint32_t strokes = 0;
     std::uint32_t shadows = 0;
@@ -729,7 +749,7 @@ bool Ground::decide(const frame::FrameState& state) {
         d.used = true;
         d.ground = f.exact ? t->pass->cpu : nullptr;
         d.cells = t->cells;
-        decide_tile(cam, *t, d);
+        decide_tile(*t->cam, *t, d);
         t->decided = &d;
     }
     // what no drawn tile uses lets its ground go
@@ -754,8 +774,8 @@ bool Ground::decide(const frame::FrameState& state) {
         f.shadows = f.shadows || std::ranges::find(bits.first(casters), std::uint8_t{1}) != bits.first(casters).end();
         f.woods = f.woods || std::ranges::find(bits.subspan(casters), std::uint8_t{1}) != bits.subspan(casters).end();
     }
-    decide_tracks(cam);
-    decide_quays(cam, state);
+    decide_tracks();
+    decide_quays(state);
     // the land kinds in the order of their first drawn ring in S['land'] (draw_under's OrderedDict), across the
     // scenes drawn by their elements' order (regions.py's sort: the draw order, then the area, then data order); the
     // canopy
@@ -793,13 +813,13 @@ bool Ground::decide(const frame::FrameState& state) {
               [&](std::uint32_t a, std::uint32_t b) { return first_ring[a] < first_ring[b]; });
     for (std::uint32_t r = 0; r < nk; ++r) f.kind_rank[kinds[r]] = static_cast<std::int32_t>(r);
     decide_water(cam);
-    decide_reflections(cam, state);
+    decide_reflections(state);
     decide_glitter(cam, state);
     decide_rings(cam, state);
     decide_wind_glints(cam, state);
     decide_sky(cam, state);
     decide_lit(cam);
-    decide_pools(cam);
+    decide_pools();
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
     const std::array<geo::P2, 4> rect{
