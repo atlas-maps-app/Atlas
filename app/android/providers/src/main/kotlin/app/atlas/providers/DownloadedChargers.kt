@@ -78,6 +78,9 @@ abstract class DownloadedChargers(
     override fun state(): ProviderState =
         if (loaded != null || dataFile?.exists() == true || autoDownload) ProviderState.READY else ProviderState.NEEDS_DOWNLOAD
 
+    /** Whether a copy of the register is on the phone (in memory or kept): it answers offline, however old. */
+    override fun answersOffline(): Boolean = loaded != null || dataFile?.exists() == true
+
     override suspend fun near(center: LatLon, radiusM: Double, filters: ChargerFilters): List<Place> {
         if (!reaches(center, radiusM)) return emptyList()
         val found = index().nearNow(center, radiusM, filters)

@@ -82,6 +82,9 @@ interface ChargerProvider : Provider {
     /** Live status for chargers by their `charger:id`; ids this source does not know are left out. */
     suspend fun status(ids: List<String>): Map<String, ChargerStatus>
 
+    /** Whether it answers with no network: its chargers are on the phone (a national register downloaded whole). */
+    fun answersOffline(): Boolean = false
+
     /**
      * Every charger within [corridorM] of the line through [points] that passes [filters], in order along it. Its
      * [ChargerFilters.maxResults] caps only what a source's server is asked for in one request (Open Charge Map, AFDC),
