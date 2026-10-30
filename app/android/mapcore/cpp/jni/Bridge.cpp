@@ -31,6 +31,7 @@
 #include "markers/Markers.hpp"
 #include "osm/Diff.hpp"
 #include "osm/Edits.hpp"
+#include "passes/BlurCheck.hpp"
 #include "routes/Routes.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
@@ -398,6 +399,15 @@ public:
         return on_session([this] {
             return session_->check("composite.check",
                                    [](const gpu::Started& s) { return frame::composite_line(*s.device, *s.cache); });
+        });
+    }
+
+    /// VK facts' blur check (passes/BlurCheck.hpp) on the session's device, behind the guard's checks stage: the soft
+    /// shadows' blur of a known pattern against the CPU's, block by block.
+    [[nodiscard]] std::string blur_line() {
+        return on_session([this] {
+            return session_->check("shadow.blur",
+                                   [](const gpu::Started& s) { return passes::blur_line(*s.device, *s.cache); });
         });
     }
 
@@ -1279,6 +1289,14 @@ jstring native_composite_line(JNIEnv* env, jclass /*cls*/, jlong handle) {
     return java(env, core->composite_line());
 }
 
+/// VK facts' blur check (passes/BlurCheck.hpp: the soft shadows' blur of a known pattern three ways, held to the CPU's
+/// block by block): `shadow.blur: exact (…)`, `shadow.blur: differs (…)` or `shadow.blur: unavailable (…)`.
+jstring native_blur_line(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "shadow.blur: not run (no core)");
+    return java(env, core->blur_line());
+}
+
 /// The twin's check over the bundled Westerkerk, an asset's descriptor, offset and length (frame/TwinCheck.hpp: about
 /// a second of two cores on a phone, on the render thread): `twin <hash> ok` or `twin <hash> FAIL expected <hash>`.
 jstring native_twin_line(JNIEnv* env, jclass /*cls*/, jlong handle, jint fd, jlong offset, jlong length) {
@@ -1348,8 +1366,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 48>& methods() {
-    static const std::array<JNINativeMethod, 48> table{{
+const std::array<JNINativeMethod, 49>& methods() {
+    static const std::array<JNINativeMethod, 49> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1382,6 +1400,7 @@ const std::array<JNINativeMethod, 48>& methods() {
         // ---- end of K9's natives ----
         method("twinLine", "(JIJJ)Ljava/lang/String;", fn(&native_twin_line)),
         method("compositeLine", "(J)Ljava/lang/String;", fn(&native_composite_line)),
+        method("blurLine", "(J)Ljava/lang/String;", fn(&native_blur_line)),
         method("coreFieldsLine", "(J)Ljava/lang/String;", fn(&native_core_fields_line)),
         // ---- K13's natives ----
         method("textRounding", "(Ljava/lang/String;)Ljava/lang/String;", fn(&native_text_rounding)),

@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 23
+    const val ABI = 24
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -109,6 +109,14 @@ object Native {
      * the check off alone): `composite.check: …`. On the core's render thread: never on the main thread.
      */
     @JvmStatic external fun compositeLine(handle: Long): String
+
+    /**
+     * The core's blur check (`CP/passes/BlurCheck.hpp`) on the core's device: the soft shadows' blur of a known pattern,
+     * uploaded, drawn through the frame's mask pass and drawn with its mask cleared first, held to the CPU's block by
+     * block behind the crash guard's checks stage: `shadow.blur: …`. On the core's render thread: never on the main
+     * thread.
+     */
+    @JvmStatic external fun blurLine(handle: Long): String
 
     // ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 

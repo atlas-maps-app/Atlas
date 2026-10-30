@@ -280,6 +280,64 @@ gpu::Result<void> Ground::make_shadow_pipelines(const frame::PassContext& contex
     return {};
 }
 
+gpu::Result<vk::raii::RenderPass> soft_mask_pass(const vk::raii::Device& d, bool clear_resolve) {
+    const std::array<vk::AttachmentDescription, 2> attachments{{
+        {.format = vk::Format::eR8Unorm,
+         .samples = vk::SampleCountFlagBits::e4,
+         .loadOp = vk::AttachmentLoadOp::eClear,
+         .storeOp = vk::AttachmentStoreOp::eDontCare,
+         .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+         .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+         .initialLayout = vk::ImageLayout::eColorAttachmentOptimal,
+         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal},
+        {.format = vk::Format::eR8Unorm,
+         .samples = vk::SampleCountFlagBits::e1,
+         .loadOp = clear_resolve ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eDontCare,
+         .storeOp = vk::AttachmentStoreOp::eStore,
+         .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+         .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+         .initialLayout = vk::ImageLayout::eColorAttachmentOptimal,
+         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal},
+    }};
+    const vk::AttachmentReference colour{.attachment = 0, .layout = vk::ImageLayout::eColorAttachmentOptimal};
+    const vk::AttachmentReference resolve{.attachment = 1, .layout = vk::ImageLayout::eColorAttachmentOptimal};
+    const vk::SubpassDescription subpass{.pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
+                                         .colorAttachmentCount = 1,
+                                         .pColorAttachments = &colour,
+                                         .pResolveAttachments = &resolve};
+    const std::array<vk::SubpassDependency, 2> dependencies{{
+        {.srcSubpass = vk::SubpassExternal,
+         .dstSubpass = 0,
+         .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+         .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+         .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+         .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite},
+        {.srcSubpass = 0,
+         .dstSubpass = vk::SubpassExternal,
+         .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+         .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+         .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+         .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite},
+    }};
+    ATLAS_VK_LET(pass,
+                 d.createRenderPass({.attachmentCount = static_cast<std::uint32_t>(attachments.size()),
+                                     .pAttachments = attachments.data(),
+                                     .subpassCount = 1,
+                                     .pSubpasses = &subpass,
+                                     .dependencyCount = static_cast<std::uint32_t>(dependencies.size()),
+                                     .pDependencies = dependencies.data()}),
+                 "the soft shadows' mask's render pass");
+    return std::move(pass);
+}
+
+std::array<gpu::Binding, 4> soft_blur_bindings() noexcept {
+    constexpr auto in_compute = vk::ShaderStageFlagBits::eCompute;
+    return {gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute},
+            gpu::Binding{.slot = 1, .type = vk::DescriptorType::eSampledImage, .stages = in_compute},
+            gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute},
+            gpu::Binding{.slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute}};
+}
+
 gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, Pipelines& p) const {
     const gpu::Device& device = context.device;
     const vk::raii::Device& d = device.handle();
@@ -328,52 +386,7 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     s->samples_view = std::move(samples_view);
     // the mask's pass: the 4x samples cleared and drawn, resolved into the frame slot's mask; record moves both into
     // the colour layout before it and the mask out after it
-    const std::array<vk::AttachmentDescription, 2> attachments{{
-        {.format = vk::Format::eR8Unorm,
-         .samples = vk::SampleCountFlagBits::e4,
-         .loadOp = vk::AttachmentLoadOp::eClear,
-         .storeOp = vk::AttachmentStoreOp::eDontCare,
-         .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-         .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-         .initialLayout = vk::ImageLayout::eColorAttachmentOptimal,
-         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal},
-        {.format = vk::Format::eR8Unorm,
-         .samples = vk::SampleCountFlagBits::e1,
-         .loadOp = vk::AttachmentLoadOp::eDontCare,
-         .storeOp = vk::AttachmentStoreOp::eStore,
-         .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-         .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-         .initialLayout = vk::ImageLayout::eColorAttachmentOptimal,
-         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal},
-    }};
-    const vk::AttachmentReference colour{.attachment = 0, .layout = vk::ImageLayout::eColorAttachmentOptimal};
-    const vk::AttachmentReference resolve{.attachment = 1, .layout = vk::ImageLayout::eColorAttachmentOptimal};
-    const vk::SubpassDescription subpass{.pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
-                                         .colorAttachmentCount = 1,
-                                         .pColorAttachments = &colour,
-                                         .pResolveAttachments = &resolve};
-    const std::array<vk::SubpassDependency, 2> dependencies{{
-        {.srcSubpass = vk::SubpassExternal,
-         .dstSubpass = 0,
-         .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-         .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-         .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-         .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite},
-        {.srcSubpass = 0,
-         .dstSubpass = vk::SubpassExternal,
-         .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-         .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-         .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-         .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite},
-    }};
-    ATLAS_VK_LET(pass,
-                 d.createRenderPass({.attachmentCount = static_cast<std::uint32_t>(attachments.size()),
-                                     .pAttachments = attachments.data(),
-                                     .subpassCount = 1,
-                                     .pSubpasses = &subpass,
-                                     .dependencyCount = static_cast<std::uint32_t>(dependencies.size()),
-                                     .pDependencies = dependencies.data()}),
-                 "the soft shadows' mask's render pass");
+    ATLAS_GPU_LET(pass, soft_mask_pass(d, false));
     s->pass = std::move(pass);
     // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
     // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
@@ -454,11 +467,7 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     ATLAS_GPU_LET(blur_module, frame::make_module(context, "ground_shadow_blur", spirv::ground_shadow_blur));
     s->blur_module = std::move(blur_module);
     constexpr auto in_compute = vk::ShaderStageFlagBits::eCompute;
-    const std::array blur_bindings{
-        gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute},
-        gpu::Binding{.slot = 1, .type = vk::DescriptorType::eSampledImage, .stages = in_compute},
-        gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute},
-        gpu::Binding{.slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = in_compute}};
+    const std::array<gpu::Binding, 4> blur_bindings = soft_blur_bindings();
     ATLAS_GPU_LET(blur_set_layout, gpu::make_set_layout(d, blur_bindings));
     s->blur_set_layout = std::move(blur_set_layout);
     const std::array<std::span<const gpu::Binding>, 1> blur_kinds{blur_bindings};

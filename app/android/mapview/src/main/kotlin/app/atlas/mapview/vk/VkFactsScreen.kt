@@ -106,6 +106,9 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                     // The composite's resolve form against its direct form, a few small frames offscreen behind the
                     // crash guard's checks stage: a driver that clips the full-screen triangle shows on the diagonal.
                     add(c.compositeLine())
+                    // The soft shadows' blur of a known pattern against the CPU's, block by block: the squares every
+                    // 32 texels a PowerVR showed (ENGINE.md step 8) say here whether they are the blur or the mask.
+                    add(c.blurLine())
                 } else {
                     add("vulkan.state: $VK_HONEST")
                     add("vulkan.refused: $refused")

@@ -79,6 +79,18 @@ void blur_cs(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     uint span = TILE + 2u * half;
     uint t = local.x;
 
+#if defined(SHADOW_BLUR_POISON)
+    // the check's poison (shadow_blur_poison.slang): every word of the group's memory set before the tile's are loaded,
+    // so a read of a word the tile does not write shows
+    for (uint k = t; k < SPAN * SPAN / 4u; k += THREADS) {
+        held[k] = 0xA5C3E1F7u;
+    }
+    for (uint k = t; k < SPAN * TILE / 2u; k += THREADS) {
+        sums[k] = 0xA5C3E1F7u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+#endif
+
     // the tile's texels and the half box around them, the rectangle's edge repeated past it
     uint row_words = (span + 3u) / 4u;
     for (uint k = t; k < span * row_words; k += THREADS) {

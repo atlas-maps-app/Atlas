@@ -152,6 +152,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The core's composite check line ([Native.compositeLine]); off the main thread, a few small frames. */
     fun compositeLine(): String = core.call("composite.check: not run (the core is closed)") { Native.compositeLine(it) }
 
+    /** The core's blur check line ([Native.blurLine]); off the main thread, a few small blurs. */
+    fun blurLine(): String = core.call("shadow.blur: not run (the core is closed)") { Native.blurLine(it) }
+
     /** The core's noise fields line on its device ([Native.coreFieldsLine]); off the main thread, about a second. */
     fun fieldsLine(): String = core.call("fields unavailable: the core is closed") { Native.coreFieldsLine(it) }
 

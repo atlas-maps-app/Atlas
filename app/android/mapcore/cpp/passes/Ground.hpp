@@ -30,6 +30,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
 #include "geometry/Ground.hpp"
+#include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
 #include "style/Theme.hpp"
 #include "sun/BitTiles.hpp"
@@ -588,6 +589,13 @@ struct GlowPlan {
 };
 
 struct SoftShadows; // below
+
+/// The soft shadows' mask pass (passes/Shadows.cpp): the shadows' union drawn into 4x R8 samples cleared at its start
+/// and resolved into an R8 mask, which it leaves in the colour layout; `clear_resolve`: the mask cleared at the start
+/// too, VK facts' blur check's other way (passes/BlurCheck.hpp).
+[[nodiscard]] gpu::Result<vk::raii::RenderPass> soft_mask_pass(const vk::raii::Device& d, bool clear_resolve);
+/// The blur's set (shaders/ground/shadow_blur.slang): the grid, the mask, the last pass's texels and this pass's.
+[[nodiscard]] std::array<gpu::Binding, 4> soft_blur_bindings() noexcept;
 struct RippleLayer; // below
 struct GlowLayer;   // below
 
