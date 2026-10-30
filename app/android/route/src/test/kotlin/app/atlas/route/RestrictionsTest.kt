@@ -264,13 +264,14 @@ class RestrictionsTest {
     private class Refused : java.io.IOException("overpass is switched off: nothing was sent")
 
     @Test
-    fun offlineOrRefusedTheLimitsComeAtOnceAsAFailureAndAStuckCheckEndsAtItsDeadline() = runBlocking {
+    fun offlineOrRefusedTheLimitsComeAtOnceAsAFailureAndAStuckCheckEndsAtItsDeadline() = kotlinx.coroutines.test.runTest {
         val corridor = Corridor(listOf(LatLon(52.0, 4.0), LatLon(52.01, 4.0)))
         var calls = 0
-        fun failsWith(source: OverpassRestrictionSource): java.io.IOException? {
-            val t0 = System.nanoTime()
-            val e = runCatching { runBlocking { source.restrictionsAlong(corridor) } }.exceptionOrNull()
-            assertTrue("took ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 1_500_000_000L)
+        // how long each check waited, on the test's own clock, whatever the machine's speed: none where it fails at once
+        suspend fun failsWith(source: OverpassRestrictionSource, waited: Long = 0L): java.io.IOException? {
+            val t0 = testScheduler.currentTime
+            val e = runCatching { source.restrictionsAlong(corridor) }.exceptionOrNull()
+            assertEquals(waited, testScheduler.currentTime - t0)
             return e as? java.io.IOException
         }
         // offline: nothing asked, no waits between tries; the router marks the route unchecked
@@ -288,7 +289,7 @@ class RestrictionsTest {
         assertEquals(2, calls)
         // every server stuck: the whole check ends at its deadline, a failure, not the route's cancellation
         val stuck = OverpassRestrictionSource({ calls++; kotlinx.coroutines.delay(60_000); "{}" }, deadlineMillis = 300)
-        assertTrue(failsWith(stuck)!!.message!!.contains("did not come"))
+        assertTrue(failsWith(stuck, waited = 300)!!.message!!.contains("did not come"))
         assertEquals(3, calls)
     }
 

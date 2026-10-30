@@ -523,11 +523,13 @@ class ChargersTest {
         assertTrue(expected.size in 20..180)
         assertEquals(expected, inCorridor(route, 2_000.0, few))
         val many = scatter(5_000)
-        val start = System.nanoTime()
-        val kept = inCorridor(route, 2_000.0, many)
-        val ms = (System.nanoTime() - start) / 1_000_000
+        var measured = 0L
+        val kept = inCorridor(route, 2_000.0, many) { l, at, i -> measured++; l.snap(at, i, i) }
         assertTrue(kept.isNotEmpty())
-        assertTrue("5,000 chargers against 20,000 points took $ms ms", ms < 2_000)
+        // quick by the work it does, whatever the machine's speed (a limit of 2 s on the clock failed at 2,031 ms on a
+        // loaded Mac, and CI's runners vary as much): each charger measured only against the segments near it, a few
+        // hundred, where measuring every one would be 20,000 apiece
+        assertTrue("$measured measures for 5,000 chargers on 20,000 segments", measured < many.size * 500L)
     }
 
     @Test
@@ -592,9 +594,8 @@ class ChargersTest {
     }
 
     @Test
-    fun aSlowOrFailingChargerSourceNeitherHoldsNorFailsTheOthers() = runBlocking {
+    fun aSlowOrFailingChargerSourceNeitherHoldsNorFailsTheOthers() = kotlinx.coroutines.test.runTest {
         val ndw = listOf(Place(null, westerkerk, mapOf("amenity" to "charging_station"), source = "ndw"))
-        val t0 = System.nanoTime()
         // the OSM chargers behind a stuck Overpass server, a register whose answer does not parse, the Dutch register
         val got = ChargerMerge.gather(listOf("osm", "broken", "ndw"), 300.milliseconds) { id ->
             when (id) {
@@ -603,7 +604,8 @@ class ChargersTest {
                 else -> ndw
             }
         }
-        assertTrue("took ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 5_000_000_000L)
+        // on the test's own clock, whatever the machine's speed: the answers came at the deadline, not after the minute
+        assertEquals(300L, testScheduler.currentTime)
         assertEquals(listOf(emptyList(), emptyList(), ndw), got)
     }
 }

@@ -4,6 +4,7 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.geo.Polyline
 import app.atlas.geo.Shapes
+import app.atlas.geo.Snap
 import app.atlas.model.Place
 import java.time.Instant
 
@@ -121,9 +122,16 @@ internal fun chargerId(source: String, id: String) = "$source:$id"
 
 /**
  * The [places] within [corridorM] of the line through [points], each once (by `charger:id`), in order along the line:
- * what every [ChargerProvider.along] answers, however wide a net its source had to cast.
+ * what every [ChargerProvider.along] answers, however wide a net its source had to cast. A place is measured against a
+ * segment ([measure]: the line's snap to it) only where the segment's box, grown by the corridor, holds the place, so
+ * a long route's thousands of segments cost each place a comparison apiece, and a measure only near it.
  */
-internal fun inCorridor(points: List<LatLon>, corridorM: Double, places: Iterable<Place>): List<Place> {
+internal fun inCorridor(
+    points: List<LatLon>,
+    corridorM: Double,
+    places: Iterable<Place>,
+    measure: (Polyline, LatLon, Int) -> Snap? = { line, at, i -> line.snap(at, i, i) },
+): List<Place> {
     if (points.isEmpty()) return emptyList()
     val line = if (points.size >= 2) Polyline(points) else null
     // Each segment's box grown by the corridor: a route of thousands of points is measured only where a charger is near.
@@ -143,7 +151,7 @@ internal fun inCorridor(points: List<LatLon>, corridorM: Double, places: Iterabl
         for (i in 0 until points.size - 1) {
             val b = 4 * i
             if (at.lat < boxes[b] || at.lat > boxes[b + 1] || at.lon < boxes[b + 2] || at.lon > boxes[b + 3]) continue
-            val s = line.snap(at, i, i) ?: continue
+            val s = measure(line, at, i) ?: continue
             if (s.offset < best) {
                 best = s.offset
                 along = s.along
