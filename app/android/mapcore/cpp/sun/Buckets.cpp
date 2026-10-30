@@ -113,6 +113,13 @@ Scene::Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::S
     grid_ = std::move(b).build(scene_maxh);
 }
 
+std::uint64_t Scene::context(std::size_t t) const noexcept {
+    if (t >= chunks_.size()) return 0;
+    std::uint64_t c = 0;
+    for (std::size_t i = 0; i < 8; ++i) c |= std::uint64_t{std::to_integer<std::uint8_t>(chunks_[t][i])} << (8 * i);
+    return c;
+}
+
 std::optional<std::uint32_t> Scene::find(tiles::TileKey key) const noexcept {
     for (std::size_t t = 0; t < tiles_.size(); ++t) {
         if (tiles_[t].key == key) return static_cast<std::uint32_t>(t);
@@ -614,6 +621,7 @@ void Worker::loop(const std::stop_token& stop) {
                 if (auto b = cache_->load(*chunk, t.level, r.bucket, t.samples.size(), j.windows)) {
                     b->quays = t.quays;
                     b->reflections = t.reflections;
+                    b->context = r.scene->context(j.tile);
                     bits_.publish(t.key, std::move(*b), clock_());
                     ++from_disk;
                     continue;
@@ -628,6 +636,7 @@ void Worker::loop(const std::stop_token& stop) {
             }
             bits.quays = t.quays;
             bits.reflections = t.reflections;
+            bits.context = r.scene->context(tile);
             bits_.publish(t.key, std::move(bits), clock_());
         });
         lock.lock();

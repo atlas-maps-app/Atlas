@@ -10,6 +10,14 @@
 // tiles nearest the eye first (in the lane's own pack's frame), skipping a tile whose bits for the bucket are there,
 // and publishes each tile's bits as it completes (BitTiles, which cross-fades a swap over 300 ms).
 //
+// A building's shadow does not stop at its frame cell's edge: a lane's scene also holds the solids of the other packs
+// drawn (the active pack's and the neighbours', not the coarser pack's, which lies under the active one) within the
+// march's reach of the lane's resident tiles, made in the lane's own frame (Other: a point of the grid is a place in
+// every frame), at places its own pack has no tile; their bridges are among its decks. A tile's bits record what they
+// were made against (sun::Scene::context: its chunk and the chunks within the march's reach of it, hashed), so a
+// neighbouring cell's tile coming into the scene, or a window joining near it, makes them again; and the disk cache
+// keeps them under that context.
+//
 // Each frame (prepare, from World::update after the cover) every tile the cover draws gets its bits: CPU-side
 // (CoverTile::sun, for the twin and the passes' own choices) and on the GPU, where its texels (BitTiles::texels: per 32
 // samples the new bits and the old, R32G32_UINT) are written into the frame slot's half of one host-visible buffer,
@@ -57,14 +65,20 @@ struct SunOptions {
 
 /// What the sun has done, for logs and tests.
 struct SunStats {
-    std::uint64_t scenes = 0; ///< scenes built
-    double scene_ms = 0;      ///< the last scene's build
-    std::size_t tiles = 0;    ///< the last scene's tiles (the halo's among them)
-    std::size_t resident = 0; ///< of which its bits are asked for
-    std::uint64_t runs = 0;   ///< buckets run
-    std::uint64_t cached = 0; ///< tiles taken from the disk cache
-    std::size_t texels = 0;   ///< texels the last frame wrote
-    std::uint64_t failed = 0; ///< scenes that could not be built
+    std::uint64_t scenes = 0;     ///< scenes built
+    double scene_ms = 0;          ///< the last scene's build
+    std::size_t tiles = 0;        ///< the last scene's tiles (the halo's among them)
+    std::size_t resident = 0;     ///< of which its bits are asked for
+    std::uint64_t runs = 0;       ///< buckets run
+    std::uint64_t cached = 0;     ///< tiles taken from the disk cache
+    std::size_t texels = 0;       ///< texels the last frame wrote
+    std::uint64_t failed = 0;     ///< scenes that could not be built
+    std::size_t others = 0;       ///< the last scene's tiles of other packs (their solids alone)
+    std::size_t solids = 0;       ///< the last scene's solids, of which
+    std::size_t other_solids = 0; ///< the other packs'
+    /// The last working out of every lane's other packs' tiles (Lane::others), on the render thread: done where a
+    /// lane's pack, role, level or resident tiles changed, else nothing a frame.
+    double others_ms = 0;
 };
 
 /// The world's sun: a provider of set 1's sun_bits.
@@ -123,11 +137,25 @@ private:
     SunGlobals(const gpu::Device& device, const tiles::Store& store, const Residency& residency, SunOptions options,
                std::function<double()> clock);
 
-    /// A scene to build: the pack, its tiles (each at its ladder level), which of them want bits, the bucket and the
-    /// jobs' order (the camera's ground point, the visible tiles, the windows' reach).
+    /// A tile of another pack drawn whose solids alone a lane's scene holds, at its ladder level (its chunk: what it
+    /// holds).
+    struct Other {
+        std::shared_ptr<const tiles::StorePack> pack;
+        tiles::TileKey key;
+        std::uint8_t level = 0;
+        tiles::Sha256Digest chunk{};
+        friend bool operator==(const Other& a, const Other& b) noexcept {
+            return a.pack->id == b.pack->id && a.key == b.key && a.level == b.level && a.chunk == b.chunk;
+        }
+    };
+
+    /// A scene to build: the pack, its tiles (each at its ladder level), the other packs' tiles whose solids it holds,
+    /// which of its own want bits, the bucket and the jobs' order (the camera's ground point, the visible tiles, the
+    /// windows' reach).
     struct Build {
         std::shared_ptr<const tiles::StorePack> pack;
         std::vector<std::pair<tiles::TileKey, std::uint8_t>> tiles;
+        std::vector<Other> others;
         std::vector<tiles::TileKey> wanted;
         std::vector<tiles::TileKey> visible;
         sun::Bucket bucket;
@@ -147,6 +175,8 @@ private:
         std::uint8_t fine = 0;
         std::vector<std::pair<std::uint64_t, std::uint8_t>> asked; ///< the scene's tiles (packed key, level), sorted
         std::vector<std::uint64_t> wanted;                         ///< its resident tiles, sorted
+        std::vector<Other> others;                                 ///< the other packs' solids to hold, sorted
+        std::vector<Other> asked_others;                           ///< those its scene was last asked with
         std::uint8_t level = 0;
         std::uint64_t bucket = 0;
         bool have_bucket = false;
@@ -156,15 +186,29 @@ private:
         std::shared_ptr<const sun::Scene> scene;
         // The builder thread's own.
         std::vector<std::pair<std::uint64_t, std::uint8_t>> built;
+        std::vector<Other> built_others;
         std::string built_pack;
+    };
+
+    /// A lane's pack this frame, and what of it the other lanes' scenes read: its level and resident tiles.
+    struct LaneInputs {
+        std::shared_ptr<const tiles::StorePack> pack;
+        LaneOf role = LaneOf::neighbour;
+        std::uint8_t level = 0;
+        std::vector<std::uint64_t> wanted;                          ///< resident tiles, sorted
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> levels; ///< their levels, sorted
+        friend bool operator==(const LaneInputs&, const LaneInputs&) = default;
     };
 
     void work(const std::stop_token& stop);
     /// The lane's scene and bucket for the frame (the render thread): asked for where they changed. `eye_frame` is the
     /// frame the view's eye is in (the active pack's), from which the eye is taken into the lane's pack's own.
-    void prepare_lane(Lane& lane, const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
-                      std::uint8_t level, std::span<const CoverTile> drawn,
-                      const std::optional<view::GroundFrame>& eye_frame);
+    void prepare_lane(Lane& lane, const frame::FrameState& state, const LaneInputs& in,
+                      std::span<const CoverTile> drawn, const std::optional<view::GroundFrame>& eye_frame);
+    /// The other packs' tiles lane `k`'s scene holds the solids of (Other): each finest tile of the active pack or a
+    /// neighbour (not the coarser one) whose reach comes within the march's reach of a resident tile of lane `k`'s
+    /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.
+    [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
     [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
@@ -183,6 +227,8 @@ private:
     std::array<Lane, 2 + max_neighbours> lanes_;
     /// The active pack's lane (the render thread sets it; the builder asks it first, and stats() are its).
     std::atomic<std::size_t> active_lane_{0};
+    /// What each lane's others (Lane::others) were last worked out from (the render thread's).
+    std::array<LaneInputs, 2 + max_neighbours> others_from_;
 
     // The render thread's.
     std::vector<std::uint32_t> texels_;
@@ -191,6 +237,7 @@ private:
     std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; ///< old buffers and the last frame that read them
     bool fading_ = false;
     std::size_t last_texels_ = 0;
+    double others_ms_ = 0;
 
     // The builder thread's wakes (the lanes' requests and results are under mutex_).
     mutable std::mutex mutex_;

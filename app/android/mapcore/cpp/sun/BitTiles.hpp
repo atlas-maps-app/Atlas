@@ -49,7 +49,10 @@ struct TileBits {
     std::uint32_t crowns_from = 0;  ///< where its trees' crowns begin (tree i's sample is crowns_from + i)
     bool windows = false;           ///< whether the window group was tested (else its bits are 0)
     std::uint64_t bucket = 0;       ///< the bucket's key
-    Sun sun;                        ///< the bucket's sun
+    /// What its scene held within the march's reach of it (sun::Scene::context): bits made against other solids, a
+    /// neighbouring cell's tile come into the scene or a window joined near it, are made again.
+    std::uint64_t context = 0;
+    Sun sun; ///< the bucket's sun
     /// Its tile's quay walls' pieces, as its samples have them (null: none).
     std::shared_ptr<const std::vector<QuayPiece>> quays;
     /// Its tile's mirrored buildings' first reflection samples, one per mirror in the tile's order (TileCasters::
