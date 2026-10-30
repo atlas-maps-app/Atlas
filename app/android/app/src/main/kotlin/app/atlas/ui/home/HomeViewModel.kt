@@ -205,13 +205,23 @@ class HomeViewModel(
     private var gotFresh = false
     private var wasOnline = false
 
+    /** The dial's tilt as the settings keep it ([SettingsKeys.MAP_TILT]). */
+    private var savedTilt: Double? = null
+
     init {
         // Save the view a moment after it stops moving, for the next launch; but not the stand-in view of a first
         // launch without a fix, which would keep the next launch there instead of going to where the phone is.
         viewModelScope.launch {
             cameraMoves.debounce(800).collect { c ->
                 if (!cameraUnset) runCatching { services.settings.saveCamera(SavedCamera(c.target, c.zoom, c.bearing, c.pitch)) }
+                // the tilt last set with the dial (a tilt ends in a move), which the 3D button brings back next time too
+                map.chosenTilt?.let { t -> if (t != savedTilt) runCatching { services.settings.set(SettingsKeys.MAP_TILT, t) }.onSuccess { savedTilt = t } }
             }
+        }
+        viewModelScope.launch {
+            val kept = services.settings.flow(SettingsKeys.MAP_TILT).first()
+            savedTilt = kept
+            if (kept != null && map.chosenTilt == null) map.chosenTilt = kept
         }
         // The first fix moves a camera that had nowhere better to be. It waits on the last fix (which the screen's own
         // watching updates) so that, indoors with no fix, it does not keep the GPS on after the map has gone.
@@ -291,7 +301,10 @@ class HomeViewModel(
         }
     }
 
-    /** The 3D button: tilts the view and raises the buildings, or flattens both. */
+    /**
+     * The 3D button: tilts the view (to the tilt last set with the dial, [DEFAULT_PITCH] until then) and raises the
+     * buildings, or flattens both; the dial shows the tilt as it goes.
+     */
     fun toggle3d() {
         val on = MapLayer.BUILDINGS_3D !in style.value.layers
         viewModelScope.launch {
@@ -301,7 +314,7 @@ class HomeViewModel(
                 // A full or read-only disk: the look is a setting, and it could not change. Nothing else is wrong.
                 return@launch
             }
-            map.animateTo(map.camera.copy(pitch = if (on) DEFAULT_PITCH else 0.0))
+            map.tiltTo(if (on) map.chosenTilt ?: DEFAULT_PITCH else 0.0)
         }
     }
 

@@ -8,8 +8,8 @@ import org.junit.Test
 /**
  * The canvas draws nothing over the core's picture only where everything over the map is the core's (ENGINE.md gain
  * 12): idle with the core's routes, areas, labels, markers and puck; drawing again with today's map over the core's
- * picture, with routes, areas, labels, markers or a puck the canvas still draws, with the tape, the debug panel or the
- * honest state, and where today's map is the path wanted.
+ * picture, with routes, areas, labels, markers or a puck the canvas still draws, with the tape, the tilt dial, the
+ * debug panel or the honest state, and where today's map is the path wanted.
  */
 class CanvasWorkTest {
     private val at = LatLon(52.37, 4.88)
@@ -20,10 +20,10 @@ class CanvasWorkTest {
     )
 
     private fun idle(
-        overlays: MapOverlays = full, debug: Boolean = false, tape: Boolean = false, honest: Boolean = false,
+        overlays: MapOverlays = full, debug: Boolean = false, tape: Boolean = false, dial: Boolean = false, honest: Boolean = false,
         core: Boolean = true, cover: Float = 0f, routes: Boolean = false, labels: Boolean = true, markers: Boolean = true,
         location: Boolean = true,
-    ) = CanvasWork.idle(debug, tape, honest, core, cover, overlays, routes, labels, markers, location)
+    ) = CanvasWork.idle(debug, tape, dial, honest, core, cover, overlays, routes, labels, markers, location)
 
     @Test
     fun idleWhereEverythingOverTheMapIsTheCores() {
@@ -45,6 +45,8 @@ class CanvasWorkTest {
         assertFalse("the canvas's markers", idle(markers = false))
         assertFalse("the canvas's puck", idle(location = false))
         assertFalse("the tape", idle(tape = true))
+        assertFalse("the tilt dial", idle(dial = true))
+        assertFalse("the tilt dial over nothing else", idle(MapOverlays(), dial = true, labels = false, markers = false, location = false))
         assertFalse("the debug panel", idle(debug = true))
         assertFalse("the honest state", idle(honest = true))
     }

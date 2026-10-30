@@ -96,6 +96,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var overlays by mutableStateOf(MapOverlays())
     var debug by mutableStateOf(false)
     var tape by mutableStateOf<Tape?>(null)
+
+    /** The tilt dial while it shows ([TiltDial]): from a tilt's start to the end of its fade, the canvas draws it. */
+    var dial by mutableStateOf<TiltDialShown?>(null)
+        private set
     var size by mutableStateOf(0 to 0)
     var insets by mutableStateOf(Insets())
 
@@ -127,6 +131,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var onLongPressBuilding: ((MapPick) -> Unit)? = null
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
+    /** Plays one of Android's haptic feedback constants on the map's view (the view sets it): the tilt dial's ticks. */
+    var haptic: (Int) -> Unit = {}
+
     val gestures = GestureMachine(GestureConfig.forDensity(1f), this)
 
     /** The overlays' painter, made at the first draw (and again when the density changes). */
@@ -136,6 +143,21 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var lookAheadJob: Job? = null
     private var tapeJob: Job? = null
     private var fadeJob: Job? = null
+
+    // The tilt dial: its linger and fade, its painter, the 3D button's glide it shows, the fingers' gain.
+    private var dialJob: Job? = null
+    private var dialPainter: TiltDialPainter? = null
+    private var tiltGlide: Job? = null
+    private val tiltGain = TiltGain()
+
+    /** The pitch the fingers' tilt began at (a cancelled one goes back to it); null while no fingers tilt. */
+    private var tiltFrom: Double? = null
+
+    /** When the dial last ticked (the gesture's clock, ms). */
+    private var tickedAt = Long.MIN_VALUE / 2
+
+    /** The user tilted while the map followed the course: it keeps their tilt rather than navigation's. */
+    private var courseTilted = false
     private var touching = false
     private var lastPanX = 0f
     private var lastPanY = 0f
@@ -378,6 +400,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         // Callers may be on any dispatcher; the camera's animations start on the main thread.
         state.animator = { target, ms -> await(withContext(Dispatchers.Main.immediate) { flyTo(target, ms, byUser = false) }) }
         state.fitter = { box, pad -> await(withContext(Dispatchers.Main.immediate) { fit(box, pad) }) }
+        state.tilter = { pitch, ms -> await(withContext(Dispatchers.Main.immediate) { tiltTo(pitch, ms) }) }
         state.projector = object : MapState.Projector {
             override fun toLatLon(x: Float, y: Float): LatLon? {
                 val v = viewport()
@@ -400,6 +423,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             state.controller = null
             state.animator = null
             state.fitter = null
+            state.tilter = null
             state.projector = null
         }
         close()
@@ -962,6 +986,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** The markers' text in the boards' Geist, from the fonts the engine's frames use. */
     private val markerSans: (Int) -> Typeface = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
 
+    /** The tilt dial's painter, made at its first draw (and again when the density changes); its figures in Geist too. */
+    private fun tiltDialPainter(): TiltDialPainter =
+        dialPainter?.takeIf { it.density == density } ?: TiltDialPainter(density, markerSans).also { dialPainter = it }
+
     /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
     private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {
         val lv = liveView(state.camera, v)
@@ -974,13 +1002,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /**
      * Whether the canvas draws nothing over the core's picture now (ENGINE.md gain 12, [CanvasWork.idle]). It reads
-     * [debug], [tape] and [overlays], whose changes draw the canvas again; what else it reads says it changed through
-     * [canvasTick].
+     * [debug], [tape], [dial] and [overlays], whose changes draw the canvas again; what else it reads says it changed
+     * through [canvasTick].
      */
     fun canvasIdle(): Boolean {
         val c = core ?: return false
         return CanvasWork.idle(
-            debug = debug, tape = tape != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
+            debug = debug, tape = tape != null, dial = dial != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
             cover = c.transition.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
             coreMarkers = coreMarkers, coreLocation = coreLocation,
         )
@@ -1009,10 +1037,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val f = shown
         val c = core
         val cover = c?.transition?.canvas ?: 1f
+        val night = if (f != null) f.moment == "night" else c?.night == true
         if (cover > 0f) {
             val layered = cover < 1f && !v.isEmpty
             if (layered) canvas.saveLayerAlpha(0f, 0f, v.width.toFloat(), v.height.toFloat(), (cover * 255f).roundToInt())
-            val night = if (f != null) f.moment == "night" else c?.night == true
             canvas.drawColor(if (night) NIGHT_EARTH else DAY_EARTH)
             if (f != null && !v.isEmpty) {
                 val lv = liveView(state.camera, v)
@@ -1040,6 +1068,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
+            dial?.let { tiltDialPainter().draw(canvas, it, state.camera.pitch, CameraOps.maxPitch(state.camera.zoom), night) }
             drawStatus(canvas)
             // the timings show while the map is loading or working; a finished map is the board's, with nothing over it
             // (the core's line while the map moves and a few seconds after)
@@ -1227,6 +1256,22 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         return animate(durationMs.toLong(), byUser) { fly.at(it) }
     }
 
+    /**
+     * Glides the pitch to [pitch] (within the zoom's limit) over [durationMs], the tilt dial showing it by the map's
+     * controls (the 3D button's tilt is the dial's), and fading once it is there.
+     */
+    fun tiltTo(pitch: Double, durationMs: Int): Job {
+        // the right-hand side, by the controls: as if the fingers were on the left
+        showDial(0f)
+        val job = flyTo(state.camera.copy(pitch = pitch), durationMs, byUser = false)
+        tiltGlide = job
+        scope.launch {
+            job.join()
+            if (!closed) hideDial()
+        }
+        return job
+    }
+
     /** Fits [box] inside the content padding plus [paddingPx]. */
     fun fit(box: BBox, paddingPx: Int): Job {
         val v = viewport()
@@ -1321,6 +1366,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
      */
     fun followUpdate() {
         val mode = state.follow
+        if (mode != Follow.COURSE) courseTilted = false
         setLookAhead(mode == Follow.COURSE)
         val loc = overlays.location ?: return
         // The course is the way the phone moves: from fix to fix once it has gone further than the fixes wander (their
@@ -1339,9 +1385,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val target = when (mode) {
             Follow.POSITION -> cur.copy(target = loc.at)
             Follow.HEADING -> cur.copy(target = loc.at, bearing = loc.heading ?: cur.bearing)
+            // navigation's tilt, unless the user set their own with the dial while following
             Follow.COURSE -> cur.copy(
                 target = loc.at, bearing = course ?: loc.heading ?: cur.bearing,
-                pitch = max(cur.pitch, COURSE_PITCH), zoom = max(cur.zoom, COURSE_MIN_ZOOM),
+                pitch = if (courseTilted) cur.pitch else max(cur.pitch, COURSE_PITCH), zoom = max(cur.zoom, COURSE_MIN_ZOOM),
             )
             Follow.NONE -> return
         }
@@ -1403,8 +1450,87 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         lastPanY = y1
     }
 
-    override fun onTilt(dy: Float) {
-        write(CameraOps.tilt(state.camera, -dy / density * TILT_PER_DP), true)
+    override fun onTiltStart(x: Float, y: Float, fingers: Int, time: Long) {
+        // the tape gives way to the tilt at once
+        tapeJob?.cancel()
+        tape = null
+        tiltFrom = state.camera.pitch
+        tiltGain.reset(time)
+        if (state.follow == Follow.COURSE) courseTilted = true
+        showDial(x)
+    }
+
+    /** The fingers' move tilts by itself times the gain for their speed ([TiltGain]): at once, nothing smoothed. */
+    override fun onTilt(dy: Float, time: Long) {
+        val before = state.camera.pitch
+        write(CameraOps.tilt(state.camera, tiltGain.degrees(-dy / density, time)), true)
+        feel(before, state.camera.pitch, CameraOps.maxPitch(state.camera.zoom), time)
+    }
+
+    override fun onTiltEnd(cancelled: Boolean) {
+        val from = tiltFrom ?: return
+        tiltFrom = null
+        if (cancelled) {
+            // The system took the touches (an OEM's three-finger screenshot): the tilt was not meant for the map.
+            write(state.camera.copy(pitch = from), true)
+        } else if (state.camera.pitch >= MIN_CHOSEN_TILT) {
+            state.chosenTilt = state.camera.pitch
+        }
+        hideDial()
+    }
+
+    /**
+     * Shows the tilt dial at once, away from fingers at [fingersX] ([TiltDial.place]); one still showing (lingering,
+     * fading) stays where it is, opaque again.
+     */
+    private fun showDial(fingersX: Float) {
+        dialJob?.cancel()
+        val shown = dial
+        if (shown != null) {
+            if (shown.alpha < 1f) dial = TiltDialShown(shown.left, shown.top)
+            return
+        }
+        val (w, h) = size
+        val at = FloatArray(2)
+        TiltDial.place(w, h, density, insets, fingersX, overlays.labelKeepOut, at)
+        dialPainter?.reset()
+        dial = TiltDialShown(at[0], at[1])
+    }
+
+    /** Once no fingers tilt and no glide does, the dial lingers [TiltDial.LINGER_MS], then fades. */
+    private fun hideDial() {
+        if (tiltFrom != null || tiltGlide?.isActive == true) return
+        val d = dial ?: return
+        dialJob?.cancel()
+        dialJob = scope.launch {
+            delay(TiltDial.LINGER_MS)
+            var start = -1L
+            while (true) {
+                val now = withFrameNanos { it }
+                if (start < 0) start = now
+                val k = ((now - start) / 1e6 / TiltDial.FADE_MS).coerceIn(0.0, 1.0)
+                dial = TiltDialShown(d.left, d.top, (1 - k).toFloat())
+                if (k >= 1.0) break
+            }
+            dial = null
+        }
+    }
+
+    /**
+     * The dial's detents under the fingers: a soft tick at each whole degree a tilt passes, a firmer one at each tens,
+     * at most one each [TiltDial.TICK_GAP_MS] of the gesture's clock ([time]), and a click as it reaches 0° or the limit
+     * [max].
+     */
+    private fun feel(before: Double, after: Double, max: Double, time: Long) {
+        val feel = when (TiltDial.detent(before, after, max)) {
+            TiltDial.Detent.NONE -> return
+            TiltDial.Detent.LIMIT -> TiltDial.LIMIT_FEEL
+            TiltDial.Detent.TEN -> TiltDial.TEN_FEEL
+            TiltDial.Detent.DEGREE -> TiltDial.DEGREE_FEEL
+        }
+        if (feel != TiltDial.LIMIT_FEEL && time - tickedAt < TiltDial.TICK_GAP_MS) return
+        tickedAt = time
+        haptic(feel)
     }
 
     override fun onZoomStep(x: Float, y: Float, zoomIn: Boolean) = zoomStep(x, y, zoomIn)
@@ -1524,7 +1650,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         const val ZOOM_STEP_MS = 280L
         const val SNAP_MS = 220L
         const val SNAP_DEGREES = 7.0
-        const val TILT_PER_DP = 0.32
+
+        /** A tilt the fingers leave the map at, from this many degrees, is the one the 3D button brings back. */
+        const val MIN_CHOSEN_TILT = 10.0
         const val DRAG_ZOOM_DP = 110.0
         const val FLING_DECAY = 3.2
         const val FLING_STOP_DP = 18f
