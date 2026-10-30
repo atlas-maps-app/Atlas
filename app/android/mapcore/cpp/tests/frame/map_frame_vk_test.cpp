@@ -1,12 +1,13 @@
 // The app's map through the core's session on the host's Vulkan (plan-vector K11; frame/MapFrame.hpp,
 // standin/Session.hpp's map): the packs the app lists (the bundled render packs, ATLAS_TILES_DIR, as the scene's tests
 // take them) opened in the world when it is made and kept across a device's loss; the moment's theme; the pack the
-// camera state names drawn, with its profile's rules (TONE off for the living map, on for the regions'); the picture
-// complete once every tile the cover wants is resident and drawn and every fade is done, and nothing more due at the
-// same camera after that; the world's wake called as tiles land, and at rest a frame for each picture the workers
-// finish (a run of the sun's bits wakes it once), a pan ending in the rest picture; the map off and on again; VK bench
-// taking the window and giving it back; and after the close, no marker of the crash guard on disk. And the windows
-// alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with its own sun.
+// camera state names drawn, with its profile's rules (TONE off for the living map, on for the regions'; on for every
+// pack in the Netherlands); the picture complete once every tile the cover wants is resident and drawn and every fade
+// is done, and nothing more due at the same camera after that; the world's wake called as tiles land, and at rest a
+// frame for each picture the workers finish (a run of the sun's bits wakes it once), a pan ending in the rest picture;
+// the map off and on again; VK bench taking the window and giving it back; and after the close, no marker of the crash
+// guard on disk. And the windows alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with
+// its own sun.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -330,12 +331,13 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         map.set_theme(sunny());
         CHECK(session.drawing());
 
-        // The Westerkerk home, the living map named: complete once its tiles are built and faded in.
+        // The Westerkerk home, the living map named: complete once its tiles are built and faded in, lit with TONE as
+        // every pack in the Netherlands (frame::with_pack), though the living map's own profile has none.
         const int first = draw_until_complete(session, map, home(1));
         CHECK(first > 0);
         CHECK(session.renderer_made());
         CHECK(map.drawn_pack() == "amsterdam");
-        CHECK((drawn_flags(map) & flag::tone) == 0);
+        CHECK((drawn_flags(map) & flag::tone) != 0);
         CHECK(wakes.load() > 0);
         CHECK_FALSE(map.animating()); // the picture is final: nothing more at this camera
         // The world holds K17a's noise fields, kept under the app's cache once made for the frame's size.
@@ -353,12 +355,12 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         MESSAGE("the Westerkerk complete after " << first << " frames, " << wakes.load() << " wakes; "
                                                  << map.tiles_line());
 
-        // The canal ring named for the same camera: its tiles, lit as the living map around it (frame::with_pack: in
-        // the Netherlands, where the windows draw the New looks, no pack takes its profile's TONE).
+        // The canal ring named for the same camera: its tiles, lit as the Westerkerk around it (frame::with_pack: in
+        // the Netherlands, where the windows draw the New looks, every pack takes TONE).
         const int ring = draw_until_complete(session, map, home(2));
         CHECK(ring > 0);
         CHECK(map.drawn_pack() == "grachten");
-        CHECK((drawn_flags(map) & flag::tone) == 0);
+        CHECK((drawn_flags(map) & flag::tone) != 0);
 
         // Past the first 120 frames the frames stage is closed; nothing is named between calls.
         for (int i = 0; i < 130; ++i) (void)session.draw(home(2), {});

@@ -335,7 +335,7 @@ internal class PhoneCore(
             }
             val th = Amsterdam.THEMES.getValue(key)
             val keys = listOf("name", "sky_top", "sky_hor", "sun", "amb", "haze", "haze_max", "ground", "road", "water", "water_top", "water_bot", "shadow", "shadow_op", "sun_k", "amb_k", "sky_k", "cloud")
-            keys.filter { it in th }.joinToString(", ") { "$it=${th[it]}" } + "; TONE off (with_pack: the Netherlands)"
+            keys.filter { it in th }.joinToString(", ") { "$it=${th[it]}" } + "; TONE on (with_pack: the Netherlands)"
         } finally {
             saved.restore()
         }

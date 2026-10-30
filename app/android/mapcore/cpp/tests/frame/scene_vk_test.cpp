@@ -825,14 +825,13 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     CHECK(w.active()->kind == tiles::PackKind::window);
     ATLAS_REQUIRE(w.neighbour() != nullptr);
     CHECK(w.neighbour()->id == "amsterdam");
-    // The cell's windows, in the Netherlands, draw the New looks and light as the living map they stand around: no TONE
-    // (the Westerkerk's own pack has none either, a region's has it).
+    // The cell's windows, in the Netherlands, draw the New looks and light with TONE, and so does the living Westerkerk
+    // they stand around, whose own profile has none.
     {
-        style::ThemeBlock toned{};
-        toned.flags = style::theme_flag::tone;
-        CHECK((frame::with_pack(toned, *w.active()).flags & style::theme_flag::tone) == 0U);
-        CHECK((frame::with_pack(toned, *w.neighbour()).flags & style::theme_flag::tone) == 0U);
-        CHECK((frame::with_profile(toned, tiles::Profile::region).flags & style::theme_flag::tone) != 0U);
+        const style::ThemeBlock plain{};
+        CHECK((frame::with_pack(plain, *w.active()).flags & style::theme_flag::tone) != 0U);
+        CHECK((frame::with_pack(plain, *w.neighbour()).flags & style::theme_flag::tone) != 0U);
+        CHECK((frame::with_profile(plain, tiles::Profile::living).flags & style::theme_flag::tone) == 0U);
     }
     // Away from every pack (3 km east) nothing is drawn, but the places in view are the windows wanted, nearest first,
     // none where a pack has a tile.

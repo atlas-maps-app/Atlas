@@ -74,6 +74,10 @@ object Generic {
     /** New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (about one in four, 28 Oct 2026). */
     const val RED_TILES = 0.25
 
+    // render/generic.py RED_TILES_COL
+    /** New looks: those red tiles' colour, a step warmer than tiles_red's (the palette review's pick, 30 Oct 2026). */
+    const val RED_TILES_COL = "#AE573F"
+
     // render/generic.py FLAT_DARK, FLAT_LIGHT
     /** New looks: the shares of homes' guessed flat roofs in bitumen and in gravel (about half and one in ten, 30 Oct 2026). */
     const val FLAT_DARK = 0.55
@@ -656,7 +660,7 @@ object Generic {
                     }
                     b["look_why"] = "${kindLabel(kind)} · $why"
                     if (b["roof"] == "gabled" && truthy(g["roof:colour"]) && PyRandom(add(mul(b["id"], 31), 5)).random() < RED_TILES) {
-                        val rc = ROOF.getValue("tiles_red").second // the canal ring pack's red
+                        val rc = RED_TILES_COL // the canal ring pack's red, warmer
                         b["rcol"] = rc; b["rcol_draw"] = jitter(rc, add(b["id"], 7), 0.06)
                     } else if (b["roof"] == "flat" && truthy(g["roof:colour"])) {
                         val f = PyRandom(add(mul(b["id"], 37), 11)).random()
