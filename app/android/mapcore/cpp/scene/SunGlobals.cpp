@@ -46,8 +46,8 @@ SunGlobals::SunGlobals(const gpu::Device& device, const tiles::Store& store, con
     if (!options_.cache_dir.empty()) {
         cache_ = std::make_unique<sun::DiskCache>(options_.cache_dir, options_.cache_budget);
     }
-    // The active pack's lane on the sun's threads; the coarser pack's and the neighbour's, less urgent, on half as
-    // many.
+    // The active pack's lane on the sun's threads; the coarser pack's and the neighbours', less urgent, on half as many
+    // each.
     const unsigned threads = std::max(1U, options_.threads);
     lanes_[0].worker = std::make_unique<sun::Worker>(lanes_[0].bits, threads, cache_.get(), [this] { return now(); });
     for (std::size_t i = 1; i < lanes_.size(); ++i) {
@@ -71,8 +71,9 @@ double SunGlobals::now() const {
 
 void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
                          std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser,
-                         std::uint8_t coarser_level, const std::shared_ptr<const tiles::StorePack>& neighbour,
-                         std::uint8_t neighbour_level) {
+                         std::uint8_t coarser_level,
+                         std::span<const std::shared_ptr<const tiles::StorePack>> neighbours,
+                         std::span<const std::uint8_t> neighbour_levels) {
     // Old buffers go once the frames that read them have finished.
     std::erase_if(retired_, [&](const auto& r) { return state.number >= r.second + gpu::Frames::in_flight; });
     texels_.clear();
@@ -84,9 +85,41 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         c.sun_weight = 1.0F;
     }
     if (!state.view) return;
-    prepare_lane(lanes_[0], state, pack, level, drawn);
-    prepare_lane(lanes_[1], state, coarser, coarser_level, drawn);
-    prepare_lane(lanes_[2], state, neighbour, neighbour_level, drawn);
+    // The frame the view's eye is in: the active pack's, which the world draws in.
+    const std::optional<view::GroundFrame> eye_frame =
+        pack && pack->pack.head() != nullptr ? std::optional(view::frame_of(pack->pack.head()->frame)) : std::nullopt;
+    prepare_lane(lanes_[0], state, pack, level, drawn, eye_frame);
+    prepare_lane(lanes_[1], state, coarser, coarser_level, drawn, eye_frame);
+    // The neighbours: each in the lane that holds its pack already, so a change of their order (nearest first, as the
+    // camera moves) costs no lane its bits; one new to the frame in a lane no neighbour holds, an empty one first.
+    std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> held{};
+    std::array<std::uint8_t, max_neighbours> held_levels{};
+    std::array<bool, max_neighbours> placed{};
+    const std::size_t count = std::min({neighbours.size(), neighbour_levels.size(), max_neighbours});
+    for (std::size_t i = 0; i < count; ++i) {
+        for (std::size_t k = 0; neighbours[i] && k < max_neighbours; ++k) {
+            if (!held.at(k) && lanes_.at(2 + k).pack_id == neighbours[i]->id) {
+                held.at(k) = neighbours[i];
+                held_levels.at(k) = neighbour_levels[i];
+                placed.at(i) = true;
+                break;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!neighbours[i] || placed.at(i)) continue;
+        std::optional<std::size_t> spare;
+        for (std::size_t k = 0; k < max_neighbours; ++k) {
+            if (held.at(k)) continue;
+            if (!spare || (!lanes_.at(2 + *spare).pack_id.empty() && lanes_.at(2 + k).pack_id.empty())) spare = k;
+        }
+        if (!spare) break;
+        held.at(*spare) = neighbours[i];
+        held_levels.at(*spare) = neighbour_levels[i];
+    }
+    for (std::size_t k = 0; k < max_neighbours; ++k) {
+        prepare_lane(lanes_.at(2 + k), state, held.at(k), held_levels.at(k), drawn, eye_frame);
+    }
 
     // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
     // buffer.
@@ -135,7 +168,7 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
 
 void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state,
                               const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level,
-                              std::span<const CoverTile> drawn) {
+                              std::span<const CoverTile> drawn, const std::optional<view::GroundFrame>& eye_frame) {
     const bool usable =
         pack && pack->pack.is_render() && pack->pack.head() != nullptr && !pack->pack.head()->levels.empty();
     const std::string id = usable ? pack->id : std::string();
@@ -193,7 +226,12 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state,
             if (c.drawn->pack == pack->id) b.visible.push_back(c.drawn->key);
         }
         b.bucket = bucket;
-        const view::Vec3& eye = state.view->camera().eye();
+        // The eye in the lane's own pack's frame, its scene's metres (a neighbour's frame cell lies kilometres from
+        // the active one's): its nearest tiles first, and their windows tested within the windows' reach of it.
+        view::Vec3 eye = state.view->camera().eye();
+        if (const view::GroundFrame own = view::frame_of(pack->pack.head()->frame); eye_frame && *eye_frame != own) {
+            eye = view::convert(*eye_frame, own, eye);
+        }
         b.cx = eye.x;
         b.cz = eye.z;
         const double win_d =

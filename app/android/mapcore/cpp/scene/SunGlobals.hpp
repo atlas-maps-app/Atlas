@@ -1,11 +1,12 @@
 // The sun's bits in set 1 (plan-vector D8, K8's worker; frame/Globals.hpp's first provider that no pass owns): the
-// world's sun, in three lanes: the active pack's, the coarser pack's around it (the canal ring around the Westerkerk)
-// and the neighbour's beside them (a frame cell's windows), each with its own scene, bits and worker. A lane's scene is
-// its pack's resident tiles at their finest zoom and their 220 m halo (Residency::sun_tiles), each made at the ladder
-// level it is drawn at (a halo tile at the cover's), built on a thread of its own whenever that set changes; K8's
-// Worker runs the moment's bucket (sun::bucket_of the theme block: a named moment's own sun, a live one's 0.5° bucket)
-// over it, visible tiles nearest first, skipping a tile whose bits for the bucket are there, and publishes each tile's
-// bits as it completes (BitTiles, which cross-fades a swap over 300 ms).
+// world's sun, in lanes: the active pack's, the coarser pack's around it (the canal ring around the Westerkerk) and one
+// for each neighbour beside them (frame cells' windows, max_neighbours: a neighbour keeps its lane while it is one),
+// each with its own scene, bits and worker. A lane's scene is its pack's resident tiles at their finest zoom and their
+// 220 m halo (Residency::sun_tiles), each made at the ladder level it is drawn at (a halo tile at the cover's), built
+// on a thread of its own whenever that set changes; K8's Worker runs the moment's bucket (sun::bucket_of the theme
+// block: a named moment's own sun, a live one's 0.5° bucket) over it, visible tiles nearest the eye first (in the
+// lane's own pack's frame), skipping a tile whose bits for the bucket are there, and publishes each tile's bits as it
+// completes (BitTiles, which cross-fades a swap over 300 ms).
 //
 // Each frame (prepare, from World::update after the cover) every tile the cover draws gets its bits: CPU-side
 // (CoverTile::sun, for the twin and the passes' own choices) and on the GPU, where its texels (BitTiles::texels: per 32
@@ -86,11 +87,13 @@ public:
     /// The frame's sun, on the render thread after the cover's update: each lane's scene and bucket asked for where
     /// they changed, and every tile `cover` draws given its bits (CoverTile::sun, sun_base, sun_weight) in frame slot
     /// `state.slot`'s half of the buffer. `pack` is the active pack (null: none) and `level` its tiles' ladder level;
-    /// `coarser` the coarser pack drawn around it (null: none) and `coarser_level` its tiles'.
+    /// `coarser` the coarser pack drawn around it (null: none) and `coarser_level` its tiles'; `neighbours` the packs
+    /// drawn beside them, nearest first (null: none; max_neighbours at most), and `neighbour_levels` their tiles'.
     void prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
                  std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser = nullptr,
-                 std::uint8_t coarser_level = 0, const std::shared_ptr<const tiles::StorePack>& neighbour = nullptr,
-                 std::uint8_t neighbour_level = 0);
+                 std::uint8_t coarser_level = 0,
+                 std::span<const std::shared_ptr<const tiles::StorePack>> neighbours = {},
+                 std::span<const std::uint8_t> neighbour_levels = {});
 
     /// Called on a worker's thread as each tile's bits are published (cheap and never blocking: the frame loop's wake).
     void set_wake(const std::function<void()>& wake) {
@@ -98,7 +101,8 @@ public:
     }
     /// Whether a tile the cover drew last frame is still cross-fading its bits.
     [[nodiscard]] bool fading() const noexcept { return fading_; }
-    /// The lanes: the active pack's, the coarser pack's, the neighbour's.
+    /// The lanes: the active pack's, the coarser pack's, then the neighbours' (max_neighbours, each neighbour in the
+    /// one it took when it became one).
     enum class LaneOf : std::uint8_t { active = 0, coarser = 1, neighbour = 2 };
     /// The bits, as the workers publish them: a lane's.
     [[nodiscard]] const sun::BitTiles& bits(LaneOf lane = LaneOf::active) const noexcept {
@@ -111,7 +115,7 @@ public:
     void wait_idle();
     /// Stops the builder and the workers for good (the world's end: every thread stops before what they share goes).
     void stop();
-    /// The active pack's lane's (scenes and runs: both lanes').
+    /// The active pack's lane's (scenes and runs: every lane's).
     [[nodiscard]] SunStats stats() const;
 
 private:
@@ -153,9 +157,11 @@ private:
     };
 
     void work(const std::stop_token& stop);
-    /// The lane's scene and bucket for the frame (the render thread): asked for where they changed.
+    /// The lane's scene and bucket for the frame (the render thread): asked for where they changed. `eye_frame` is the
+    /// frame the view's eye is in (the active pack's), from which the eye is taken into the lane's pack's own.
     void prepare_lane(Lane& lane, const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
-                      std::uint8_t level, std::span<const CoverTile> drawn);
+                      std::uint8_t level, std::span<const CoverTile> drawn,
+                      const std::optional<view::GroundFrame>& eye_frame);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
     [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
@@ -170,8 +176,8 @@ private:
     static constexpr std::array<frame::Global, 1> binding{frame::Global::sun_bits};
 
     std::unique_ptr<sun::DiskCache> cache_;
-    /// The active pack's lane, then the coarser pack's, then the neighbour's.
-    std::array<Lane, 3> lanes_;
+    /// The active pack's lane, then the coarser pack's, then the neighbours'.
+    std::array<Lane, 2 + max_neighbours> lanes_;
 
     // The render thread's.
     std::vector<std::uint32_t> texels_;

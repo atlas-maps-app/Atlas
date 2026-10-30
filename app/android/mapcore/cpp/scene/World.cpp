@@ -239,27 +239,36 @@ void World::choose_coarser() {
     mask_ = box_of(*active_);
 }
 
-void World::choose_neighbour(const style::CameraState& camera) {
-    neighbour_.reset();
+std::array<const tiles::StorePack*, max_neighbours> World::neighbours() const noexcept {
+    std::array<const tiles::StorePack*, max_neighbours> out{};
+    for (std::size_t i = 0; i < max_neighbours; ++i) out.at(i) = neighbours_.at(i).get();
+    return out;
+}
+
+void World::choose_neighbours(const style::CameraState& camera) {
+    neighbours_ = {};
     if (!active_) return;
     const tiles::GridPoint target{tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude)};
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+    // Packs pair across kinds alone: a render pack is never drawn beside another (the canal ring around the Westerkerk
+    // is the coarser pack's, or nothing), so beside a render pack only cells' windows.
+    const bool around_render = active_->kind != tiles::PackKind::window;
     auto usable = [&](const std::shared_ptr<const tiles::StorePack>& p) {
-        return p != active_ && p != coarser_ && p->pack.is_render() && p->pack.head() != nullptr;
+        return p != active_ && p->id != active_->id && p != coarser_ && p->pack.is_render() &&
+               p->pack.head() != nullptr && (!around_render || p->kind == tiles::PackKind::window);
     };
-    if (active_->kind != tiles::PackKind::window) {
-        // around a render pack: the windows of the frame cell holding the target
+    // around a render pack, the windows of the frame cell holding the target come first, wherever they reach
+    std::string cell;
+    if (around_render) {
         const tiles::TileKey fine = tiles::tile_of(14, target.lat, target.lon);
-        const std::string cell =
+        cell =
             tiles::Store::cell_id(tiles::TileKey(tiles::Store::cell_level, fine.x >> (14U - tiles::Store::cell_level),
                                                  fine.y >> (14U - tiles::Store::cell_level)));
-        for (const std::shared_ptr<const tiles::StorePack>& p : open) {
-            if (p->id == cell && usable(p)) neighbour_ = p;
-        }
-        return;
     }
-    // around a cell's windows: the render pack nearest the target within the cover's reach, else the nearest other
-    // cell's windows (their boxes' distance from the target, metres along the meridian and the parallel)
+    // then the others within the cover's reach of the target, each nearest first (their boxes' distance from the
+    // target, metres along the meridian and the parallel): around a render pack the other cells' windows; around a
+    // cell's windows the render packs, then the other cells' windows. Where four frame cells meet, the three around
+    // the active one.
     const double cos_lat = pymath::cos(pymath::radians(camera.latitude));
     auto distance = [&](const tiles::GridBox& b) {
         const double dlat =
@@ -268,21 +277,29 @@ void World::choose_neighbour(const style::CameraState& camera) {
             std::max({0.0, static_cast<double>(b.west - target.lon), static_cast<double>(target.lon - b.east)});
         return pymath::hypot(dlat * 1e-7 * 110540.0, dlon * 1e-7 * 111320.0 * cos_lat);
     };
-    double best = options_.far;
-    bool render = false;
+    struct Near {
+        std::shared_ptr<const tiles::StorePack> pack;
+        int rank = 0; // 0: the target's cell's windows beside a render pack, or a render pack beside a cell's windows
+        double distance = 0;
+    };
+    std::vector<Near> near;
     for (const std::shared_ptr<const tiles::StorePack>& p : open) {
         if (!usable(p)) continue;
+        if (around_render && p->id == cell) {
+            near.push_back({.pack = p, .rank = 0, .distance = 0.0});
+            continue;
+        }
         const std::optional<tiles::GridBox> b = box_of(*p);
         if (!b) continue;
-        const bool is_render = p->kind != tiles::PackKind::window;
         const double d = distance(*b);
-        if (d > options_.far || (render && !is_render)) continue;
-        if ((is_render && !render) || d < best) {
-            neighbour_ = p;
-            best = d;
-            render = render || is_render;
-        }
+        if (d > options_.far) continue;
+        near.push_back({.pack = p, .rank = p->kind == tiles::PackKind::window ? 1 : 0, .distance = d});
     }
+    // stable: packs at one distance keep the store's order
+    std::ranges::stable_sort(near, [](const Near& a, const Near& b) {
+        return a.rank != b.rank ? a.rank < b.rank : a.distance < b.distance;
+    });
+    for (std::size_t i = 0; i < near.size() && i < max_neighbours; ++i) neighbours_.at(i) = std::move(near[i].pack);
 }
 
 std::vector<tiles::TileKey> World::wanted_windows() const {
@@ -484,15 +501,17 @@ void World::take_packs() {
     // longer holds (let go of, or added again) goes when the packs drawn change or a pack arrives.
     pack_stage_->want(active_);
     if (coarser_) pack_stage_->want(coarser_);
-    if (neighbour_) pack_stage_->want(neighbour_);
+    for (const std::shared_ptr<const tiles::StorePack>& n : neighbours_) {
+        if (n) pack_stage_->want(n);
+    }
     if (incoming_) pack_stage_->want(incoming_);
     pack_stage_->take(arrived_);
-    if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbour_ == last_neighbour_) {
+    if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbours_ == last_neighbours_) {
         return;
     }
     last_active_ = active_;
     last_coarser_ = coarser_;
-    last_neighbour_ = neighbour_;
+    last_neighbours_ = neighbours_;
     for (std::shared_ptr<const ResidentPack>& b : arrived_) packs_.push_back(std::move(b));
     arrived_.clear();
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
@@ -508,7 +527,7 @@ void World::update(const frame::FrameState& state) {
     if (!active_ || !state.view) {
         // nothing drawn: no coarser pack, and nothing kept of the packs' stage T but what the drawn ones would need
         choose_coarser();
-        neighbour_.reset();
+        neighbours_ = {};
         take_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         // without a pack the view looks at its target from a frame centred on it: the windows wanted there
@@ -531,7 +550,7 @@ void World::update(const frame::FrameState& state) {
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
     choose_coarser();
-    choose_neighbour(state.camera);
+    choose_neighbours(state.camera);
     take_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
     if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
@@ -544,29 +563,33 @@ void World::update(const frame::FrameState& state) {
     }
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
-    const CoverInputs in{
-        .pack = active_.get(),
-        .pinned = snapped.has_value(),
-        .tolerance = head.tolerance_of(snapped, dist).value_or(0),
-        .fine_reach = options_.fine_reach,
-        .far = options_.far,
-        .margin_px = 40.0,
-        .fade_seconds = 0.18,
-        .coarser = coarser_.get(),
-        .coarser_tolerance = coarser_
+    std::array<std::uint8_t, max_neighbours> neighbour_tolerances{};
+    for (std::size_t i = 0; i < max_neighbours; ++i) {
+        if (const std::shared_ptr<const tiles::StorePack>& n = neighbours_.at(i)) {
+            neighbour_tolerances.at(i) = n->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0});
+        }
+    }
+    const CoverInputs in{.pack = active_.get(),
+                         .pinned = snapped.has_value(),
+                         .tolerance = head.tolerance_of(snapped, dist).value_or(0),
+                         .fine_reach = options_.fine_reach,
+                         .far = options_.far,
+                         .margin_px = 40.0,
+                         .fade_seconds = 0.18,
+                         .coarser = coarser_.get(),
+                         .coarser_tolerance =
+                             coarser_
                                  ? coarser_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
                                  : std::uint8_t{0},
-        .mask = mask_,
-        .neighbour = neighbour_.get(),
-        .neighbour_tolerance = neighbour_
-                                   ? neighbour_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
-                                   : std::uint8_t{0}};
+                         .mask = mask_,
+                         .neighbours = neighbours(),
+                         .neighbour_tolerances = neighbour_tolerances};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
-    // The sun of the pack drawn, of the coarser pack around it and of the neighbour beside it, each in its own lane.
+    // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
     if (sun_) {
-        sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbour_,
-                      in.neighbour_tolerance);
+        sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbours_,
+                      in.neighbour_tolerances);
     }
     asked_.assign(cover_.requests().begin(), cover_.requests().end());
     // A switch waiting (choose): the named pack's tiles in view wanted after the frame's own; once they are resident
