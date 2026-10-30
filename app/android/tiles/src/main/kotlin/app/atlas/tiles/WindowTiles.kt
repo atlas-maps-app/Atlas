@@ -9,8 +9,8 @@ import java.time.Instant
  * A window's pack from its country's tiles (ENGINE.md step 3, one pack per country: the phone takes a place's tiles by
  * a range and builds only what the pack lacks): the published packs ([packs], packs.json's) that have tiles, whose box
  * holds the window and whose tiles the phone's own core built, newest first; from the first whose index lists the
- * window, its pack, read by HTTP range from the pack's tiles file and held to the index's SHA-256, or that it holds
- * nothing to draw.
+ * window, its pack, read by HTTP range from the pack's tiles file, held to the index's SHA-256 and with its style written
+ * back whole from the country's ([CountryStyle]), or that it holds nothing to draw.
  *
  * Another core's tiles are never taken: a window's pack is what the core of [TilesIndex.version] builds, and another
  * stage P or style builds other tiles. packs.json names each index's version ([PackFile.coreVersion]), so an index of
@@ -27,8 +27,8 @@ class WindowTiles(
     clock: () -> Long = System::currentTimeMillis,
 ) {
     /**
-     * A window's pack from a country's tiles: its [bytes], none where it holds nothing to draw (the open sea, a lake's
-     * middle), built from the windows' data of [date], from pack [pack].
+     * A window's pack from a country's tiles: its [bytes] as the core reads them, none where it holds nothing to draw
+     * (the open sea, a lake's middle), built from the windows' data of [date], from pack [pack].
      */
     class Tiled(val bytes: ByteArray, val date: Instant, val pack: String) {
         /** Whether the window holds anything to draw. */
@@ -59,7 +59,12 @@ class WindowTiles(
             if (!PackReads.sha256(bytes).contentEquals(e.sha256)) {
                 throw IOException("window $z/$x/$y of pack ${pack.id}: not the tiles its index names")
             }
-            return Tiled(bytes, index.date, pack.id)
+            val whole = try {
+                CountryStyle.unpack(bytes, index.style)
+            } catch (x: IllegalArgumentException) {
+                throw IOException("window $z/$x/$y of pack ${pack.id}: ${x.message}", x)
+            }
+            return Tiled(whole, index.date, pack.id)
         }
         return null
     }

@@ -251,8 +251,9 @@ class ManifestTest {
             TilesIndex.Entry(8414, 5384, 0, 1500, ByteArray(32) { 1 }), TilesIndex.Entry(8414, 5385, 1500, 1000, ByteArray(32) { 2 }),
             TilesIndex.Entry(8372, 5377, 0, 0, ByteArray(32)),
         )
+        val style = "the country's style".toByteArray()
         File(dir, "netherlands.tiles.idx").outputStream().use {
-            TilesIndex.of(14, Instant.parse("2026-10-26T21:24:46Z"), 2500, version, entries).write(it)
+            TilesIndex.of(14, Instant.parse("2026-10-26T21:24:46Z"), 2500, version, style, entries).write(it)
         }
         val whole = PackFiles.sha256(tiles)
         val e = packs(Manifest.build(dir, base, null, splitBytes = 1024)).single()
@@ -266,7 +267,10 @@ class ManifestTest {
         // the index whole, whatever its size, with what it says of itself and the core's version it was built by
         assertNull(index["parts"])
         assertEquals("$base/netherlands.tiles.idx", index["url"]!!.jsonPrimitive.content)
-        assertEquals(TilesIndex.HEAD_BYTES + version.length + 3L * TilesIndex.ENTRY_BYTES, index["bytes"]!!.jsonPrimitive.long)
+        assertEquals(
+            TilesIndex.HEAD_BYTES + version.length + TilesIndex.STYLE_BYTES + style.size + 3L * TilesIndex.ENTRY_BYTES,
+            index["bytes"]!!.jsonPrimitive.long,
+        )
         assertEquals(listOf(TilesIndex.VERSION, 14, 3), listOf("format", "level", "windows").map { index[it]!!.jsonPrimitive.int })
         assertEquals(version, index["core_version"]!!.jsonPrimitive.content)
         // run again on the parts: the entry already written stands
@@ -290,7 +294,9 @@ class ManifestTest {
         val dir = tmp.newFolder("index-only")
         File(dir, "netherlands.tiles").writeBytes(ByteArray(10))
         File(dir, "netherlands.tiles.idx").outputStream().use {
-            TilesIndex.of(14, Instant.parse("2026-10-26T21:24:46Z"), 10, "core-p7 s1.1-49f47f3df1d91a4f", listOf(TilesIndex.Entry(1, 1, 0, 10, ByteArray(32)))).write(it)
+            TilesIndex.of(
+                14, Instant.parse("2026-10-26T21:24:46Z"), 10, "core-p7 s1.1-49f47f3df1d91a4f", ByteArray(1), listOf(TilesIndex.Entry(1, 1, 0, 10, ByteArray(32))),
+            ).write(it)
         }
         assertEquals("2026-10-26T21:24:46Z", packs(Manifest.build(dir, base, null)).single()["osm_timestamp"]!!.jsonPrimitive.content)
     }

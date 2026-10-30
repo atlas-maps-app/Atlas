@@ -8,6 +8,7 @@ import app.atlas.rendertiles.Format3Reader
 import app.atlas.rendertiles.model.Format
 import app.atlas.rendertiles.model.RenderHead
 import app.atlas.rendertiles.model.StyleTables
+import app.atlas.tiles.CountryStyle
 import app.atlas.tiles.TilesIndex
 import app.atlas.tiles.WindowsIndex
 import com.github.luben.zstd.Zstd
@@ -40,8 +41,9 @@ import java.util.zip.GZIPOutputStream
  * boxes, four windows, two of them with houses, a street, benches and trees, two with nothing in them. Each window is
  * built by the core's stage P tool (-Datlas.stagep, the host-stagep preset's; the tests that need it are skipped without
  * it), and its pack in the tiles file is the core's own, built from the same answer as the phone builds it, but for its
- * chunks' and style's compression: the same manifest, reach and head byte for byte, the same tiles and style once
- * decompressed (read here by the container's own rules, the tiles decoded by Format3Reader), the head naming the
+ * chunks' compression and its style, held as what differs from the country's (the first window's, the index's) and
+ * written back whole as the phone writes it: the same manifest, reach and head byte for byte, the same tiles and style
+ * once decompressed (read here by the container's own rules, the tiles decoded by Format3Reader), the head naming the
  * window, its answer's SHA-256 and the index's version. The index's ranges tile the file, each held to its SHA-256; an
  * empty window is listed with no bytes; a window the tool cannot build fails the run, named.
  */
@@ -65,7 +67,7 @@ class CountryTilesTest {
     }
 
     @Test
-    fun eachWindowsPackIsTheCoresOwnWithItsChunksAndStyleCompressed() {
+    fun eachWindowsPackIsTheCoresOwnWithItsChunksCompressedAndItsStyleTheCountrys() {
         needTool()
         val d = windowsData(tool!!)
         assertEquals(listOf(A, C, B, D), (0 until d.windows.size).map { d.windows[it].x to d.windows[it].y })
@@ -107,8 +109,16 @@ class CountryTilesTest {
             end = e.offset + e.length
             val stored = tiles.copyOfRange(e.offset.toInt(), end.toInt())
             assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(stored), e.sha256)
-            val ours = Read(stored)
             assertTrue("14/$x/$y: ${stored.size} bytes stored, ${theirs.bytes.size} as the core wrote them", stored.size < theirs.bytes.size)
+            // as the tiles hold it: its style what differs from the country's, which is A's, the first window's in the file
+            val held = Read(stored)
+            assertEquals(CountryStyle.METHOD, held.sections.getValue(Format.SECTION_STYLE).method)
+            // its region record and two lengths: a twentieth of the style at most
+            assertTrue("${held.stored(Format.SECTION_STYLE).size} bytes", held.stored(Format.SECTION_STYLE).size < theirs.raw(Format.SECTION_STYLE).size / 20)
+            if (x to y == A) assertArrayEquals(theirs.raw(Format.SECTION_STYLE), index.style)
+            // as the phone hands it to the core: its style written back whole, stored
+            val ours = Read(CountryStyle.unpack(stored, index.style))
+            assertEquals(Format.METHOD_STORED, ours.sections.getValue(Format.SECTION_STYLE).method)
             // every byte the core wrote but the compressed ones
             assertEquals(String(theirs.manifest), String(ours.manifest))
             for (s in listOf(Format.SECTION_REACH, Format.SECTION_HEAD)) assertArrayEquals(s, theirs.stored(s), ours.stored(s))
@@ -395,7 +405,7 @@ class CountryTilesTest {
                 val length = varint().toInt()
                 val name = String(bytes, at, length, Charsets.UTF_8)
                 at += length
-                val s = Section(at + 24, b.getLong(at), b.getLong(at + 8), b.getLong(at + 16), bytes[at + 28].toInt())
+                val s = Section(at + 24, b.getLong(at), b.getLong(at + 8), b.getLong(at + 16), bytes[at + 28].toInt() and 0xFF)
                 val crc = CRC32().also { it.update(bytes, s.offset.toInt(), s.stored.toInt()) }.value
                 if (checkCrc) assertEquals(name, b.getInt(s.crcAt).toLong() and 0xFFFFFFFFL, crc)
                 sections[name] = s

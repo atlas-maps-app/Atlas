@@ -3,6 +3,7 @@ package app.atlas.packer
 import app.atlas.packer.country.WindowPack
 import app.atlas.rendertiles.codec.Format3Writer
 import app.atlas.rendertiles.model.Format
+import app.atlas.tiles.CountryStyle
 import app.atlas.tiles.TilesIndex
 import app.atlas.tiles.WindowsIndex
 import com.github.luben.zstd.ZstdCompressCtx
@@ -27,12 +28,14 @@ import java.util.zip.GZIPInputStream
  * `packer country`: a country's tiles, Atlas's own pack of its map (ENGINE.md step 3, one pack per country). Every
  * window of the country's windows' data (`packer windows`) is built by the core's stage P tool exactly as the phone
  * builds it from that data (`atlas_stagep windows`: load::build_window with load::place_of, the window's frame cell's
- * frame and its country's looks), and its format-3 pack is stored with its chunks and its style compressed at zstd's
- * level 19, where the core writes them as raw blocks (it vendors zstd's decompression alone), and every other byte as
- * the core wrote it ([WindowPack.recompressed]): its tiles are the phone's byte for byte. The packs lie back to back in
+ * frame and its country's looks), and its format-3 pack is stored with its chunks compressed at zstd's level 19, where
+ * the core writes them as raw blocks (it vendors zstd's decompression alone), its style as what differs from the
+ * country's ([CountryStyle]: the first window's in the file, which the index holds), and every other byte as the core
+ * wrote it ([WindowPack.recompressed]): its tiles are the phone's byte for byte. The packs lie back to back in
  * `<id>.tiles`, with their index `<id>.tiles.idx` ([TilesIndex]: each window's range and SHA-256, the windows' data's
- * date, the core's window version). The phone downloads the index whole and a window's pack by an HTTP range, and
- * builds only the windows the pack lacks; a window whose pack holds no tile (the open sea) is listed with no bytes.
+ * date, the core's window version, the country's style). The phone downloads the index whole and a window's pack by an
+ * HTTP range, writes its style back whole, and builds only the windows the pack lacks; a window whose pack holds no tile
+ * (the open sea) is listed with no bytes.
  *
  * The windows go to the tool in batches, their answers unzipped beside the output and deleted once built, the batch's
  * packs once stored (a country's answers are many times its windows' data: Noord-Holland's 0.6 GB gzipped are 4.6 GB of
@@ -43,10 +46,10 @@ import java.util.zip.GZIPInputStream
 object CountryTiles {
     const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N]
       A country's tiles from its windows' data (packer windows): every window built by the core's stage P tool (--core)
-      as the phone builds it (atlas_stagep windows), each window's pack with its chunks and its style compressed at
-      zstd 19 and every other byte the core's, checked to decode to the core's own tiles and style, back to back in
-      <out-dir>/<id>.tiles, with their index <id>.tiles.idx (TilesIndex); a window whose pack holds no tile is listed
-      with no bytes. The answers are unzipped --batch windows at a time (400 unless given) into a folder in <out-dir>,
+      as the phone builds it (atlas_stagep windows), each window's pack with its chunks compressed at zstd 19, its
+      style as what differs from the country's (the first window's, held by the index) and every other byte the core's,
+      checked to decode to the core's own tiles and style, back to back in <out-dir>/<id>.tiles, with their index
+      <id>.tiles.idx (TilesIndex); a window whose pack holds no tile is listed with no bytes. The answers are unzipped --batch windows at a time (400 unless given) into a folder in <out-dir>,
       deleted once built. --id defaults to the data's name less .windows; --threads, the tool's and the compression's,
       to the machine's cores. Any window the tool cannot build fails the run, named, unless --allow-failed lets that
       many through: they are left out of the index (the phone builds them from their data, with the same core) and
@@ -61,7 +64,7 @@ object CountryTiles {
     /** The windows unzipped and built at a time unless --batch says: 0.8 GB of Noord-Holland's answers on average, Amsterdam's 1.8 GB. */
     const val BATCH = 400
 
-    /** zstd's level for the chunks and the style: the packer's own render packs' (Format3Writer's). */
+    /** zstd's level for the chunks: the packer's own render packs' (Format3Writer's). */
     const val ZSTD_LEVEL = Format3Writer.ZSTD_LEVEL
 
     /** What [build] made, and what it measured. */
@@ -82,7 +85,7 @@ object CountryTiles {
         /** Their tiles' bytes, and their chunks' as stored. */
         val chunkRaw: Long,
         val chunkBytes: Long,
-        /** Their styles' bytes, and as stored. */
+        /** Their styles' bytes, and as stored: what differs from the country's, which the index holds. */
         val styleRaw: Long,
         val styleBytes: Long,
         /** The answers unzipped: all of them, and the most at a time (a batch's). */
@@ -145,7 +148,7 @@ object CountryTiles {
             "  the chunks ${r.chunkBytes} bytes from ${r.chunkRaw} of tiles, the styles ${r.styleBytes} (${percent(r.styleBytes, r.tilesBytes)} of the file) " +
                 "from ${r.styleRaw}, the rest ${r.tilesBytes - r.chunkBytes - r.styleBytes}",
         )
-        out("${r.index.name}: ${r.index.length()} bytes, the core's windows of version ${r.version}")
+        out("${r.index.name}: ${r.index.length()} bytes with the country's style, the core's windows of version ${r.version}")
         out(
             "time: ${r.millis / 1000} s (unzipping ${r.unzipMillis / 1000} s, building ${r.buildMillis / 1000} s, compressing ${r.packMillis / 1000} s); " +
                 "${r.jsonBytes shr 20} MiB of answers, at most ${r.batchJsonBytes shr 20} MiB at a time",
@@ -194,6 +197,8 @@ object CountryTiles {
         val entries = ArrayList<TilesIndex.Entry>(windows.size)
         val failed = ArrayList<String>()
         var version: String? = null
+        // the country's style: the first window's in the file
+        var template: ByteArray? = null
         var offset = 0L
         var drawn = 0
         var features = 0L
@@ -214,20 +219,28 @@ object CountryTiles {
                         if (version == null) version = p.version
                         if (p.version != version) throw IOException("window $LEVEL/${p.x}/${p.y} was built by the core's version ${p.version}, the windows before it by $version")
                         features += p.features
-                        val stored = p.stored
-                        if (stored == null) {
+                        val pack = p.stored
+                        if (pack == null) {
                             entries += TilesIndex.Entry(p.x, p.y, 0, 0, ByteArray(32))
                             return
                         }
+                        val style = p.style!!
+                        val country = template ?: style.also { template = it }
+                        val stored = try {
+                            stored(pack, style, country)
+                        } catch (x: Exception) {
+                            throw IOException("window $LEVEL/${p.x}/${p.y}: ${x.message ?: x}", x)
+                        }
                         file.write(stored)
-                        entries += TilesIndex.Entry(p.x, p.y, offset, stored.size, p.sha256!!)
+                        entries += TilesIndex.Entry(p.x, p.y, offset, stored.size, MessageDigest.getInstance("SHA-256").digest(stored))
                         offset += stored.size
                         drawn++
                         coreBytes += p.coreBytes
                         chunkRaw += p.chunkRaw
                         chunkBytes += p.chunkBytes
-                        styleRaw += p.styleRaw
-                        styleBytes += p.styleBytes
+                        styleRaw += style.size
+                        // the difference: the stored pack less what it shares with the compressed one (all but its style)
+                        styleBytes += stored.size - (pack.size - p.styleBytes)
                     }
                     for (b in order.chunked(batch)) {
                         val t0 = ms()
@@ -286,7 +299,7 @@ object CountryTiles {
         }
         move(part, tiles)
         val indexPart = File(tilesIndex.path + ".part")
-        indexPart.outputStream().buffered().use { TilesIndex.of(LEVEL, windows.date, offset, version!!, entries).write(it) }
+        indexPart.outputStream().buffered().use { TilesIndex.of(LEVEL, windows.date, offset, version!!, template ?: ByteArray(0), entries).write(it) }
         move(indexPart, tilesIndex)
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
@@ -348,7 +361,7 @@ object CountryTiles {
         return said
     }
 
-    /** One window's pack as the tiles file stores it, and what the core wrote. */
+    /** One window's pack with its chunks compressed, its style as the core wrote it, and what the core wrote. */
     private class Packed(
         val x: Int,
         val y: Int,
@@ -357,12 +370,31 @@ object CountryTiles {
         val coreBytes: Int,
         /** Null where the pack holds no tile. */
         val stored: ByteArray?,
-        val sha256: ByteArray?,
+        /** The style's raw bytes; null where the pack holds no tile. */
+        val style: ByteArray?,
         val chunkRaw: Long,
         val chunkBytes: Long,
-        val styleRaw: Long,
+        /** The style's bytes compressed, as [stored] holds it. */
         val styleBytes: Long,
     )
+
+    /**
+     * [pack] (its chunks and its style compressed, its style's raw bytes [style]) as the tiles file stores it, its style
+     * as what differs from the country's [country]; checked to be, once the phone writes its style back whole
+     * (CountryStyle.unpack), [pack] with its style stored: the same manifest, sections and style.
+     */
+    private fun stored(pack: ByteArray, style: ByteArray, country: ByteArray): ByteArray {
+        val stored = CountryStyle.store(pack, style, country)
+        val core = WindowPack.read(pack)
+        val phone = WindowPack.read(CountryStyle.unpack(stored, country), styleMethod = Format.METHOD_STORED)
+        check(phone.manifest.contentEquals(core.manifest)) { "the phone's pack's manifest is not the core's" }
+        check(phone.sections.map { it.name } == core.sections.map { it.name }) { "the phone's pack's sections are not the core's" }
+        for (s in core.sections) {
+            if (s.name != Format.SECTION_STYLE) check(phone.stored(s.name).contentEquals(core.stored(s.name))) { "the phone's pack's ${s.name} is not the core's" }
+        }
+        check(phone.style().contentEquals(style)) { "the phone's pack's style is not the core's" }
+        return stored
+    }
 
     /** Window [e]'s pack in [file], as the core's tool wrote it ([built]), read, checked and recompressed; the file goes once read. */
     private fun pack(file: File, e: WindowsIndex.Entry, built: Built): Packed = try {
@@ -373,15 +405,15 @@ object CountryTiles {
         if (core.window != "$LEVEL/${e.x}/${e.y}") throw IOException("its pack is window ${core.window}'s")
         if (core.features != built.features) throw IOException("the tool said ${built.features} features, its pack holds ${core.features}")
         if (core.chunks.isEmpty()) {
-            Packed(e.x, e.y, core.version, 0, bytes.size, null, null, 0, 0, 0, 0)
+            Packed(e.x, e.y, core.version, 0, bytes.size, null, null, 0, 0, 0)
         } else {
             // the frames say their sizes and carry no checksum (each tile's SHA-256 is in the chunk table)
             val stored = ZstdCompressCtx().use { zstd -> core.recompressed(zstd.setLevel(ZSTD_LEVEL).setContentSize(true).setChecksum(false)) }
             val again = WindowPack.read(stored)
             Packed(
-                e.x, e.y, core.version, core.features, bytes.size, stored, MessageDigest.getInstance("SHA-256").digest(stored),
+                e.x, e.y, core.version, core.features, bytes.size, stored, core.style(),
                 core.chunks.sumOf { it.raw.toLong() }, again.section(Format.SECTION_CHUNKS).stored.toLong(),
-                core.section(Format.SECTION_STYLE).raw, again.section(Format.SECTION_STYLE).stored.toLong(),
+                again.section(Format.SECTION_STYLE).stored.toLong(),
             )
         }
     } catch (x: Exception) {
