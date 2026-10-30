@@ -54,8 +54,13 @@ class TleStore(
                 text?.let { t -> Tle.parse(t)?.let { t to it } }
             }
             if (got != null) {
-                file.parentFile?.mkdirs()
-                file.writeText(got.first)
+                // A full or read-only disk loses only the kept copy, never the set that came: until 30 October the write's
+                // failure went up through the Globe's passes, which nothing caught, and closed the app.
+                try {
+                    file.parentFile?.mkdirs()
+                    file.writeText(got.first)
+                } catch (_: java.io.IOException) {
+                }
                 kept = got.second
                 source = OrbitSource.FRESH
             }

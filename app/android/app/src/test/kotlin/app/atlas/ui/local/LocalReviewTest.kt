@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -142,6 +143,15 @@ class LocalReviewTest {
         clock.at = clock.at.plus(Duration.ofHours(3))
         TleStore(file, { null }, { celestrak++; set }, clock, second = { ariss++; set }).orbit(online = true)
         assertEquals(2 to 1, celestrak to ariss)
+    }
+
+    @Test
+    fun aFreshOrbitSetThatCannotBeKeptIsStillUsed() = runBlocking {
+        // the kept copy's folder is a file (as good as a full disk): the write fails, and the set that came still answers
+        val blocker = folder.newFile("not-a-folder")
+        val set = resource("iss_2026-10-15.tle")
+        val store = TleStore(File(blocker, "iss.tle"), { null }, { set }, MovableClock(Instant.parse("2026-10-16T10:00:00Z")))
+        assertEquals(OrbitSource.FRESH, store.orbit(online = true)!!.source)
     }
 
     @Test
