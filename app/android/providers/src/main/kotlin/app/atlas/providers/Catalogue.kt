@@ -9,7 +9,7 @@ object Catalogue {
     val ALL: List<ProviderInfo> = listOf(
         Overpass.INFO, Nominatim.INFO, Photon.INFO,
         Mangrove.INFO, FoursquareRatings.INFO, YelpRatings.INFO, TripAdvisorRatings.INFO,
-        OpenChargeMap.INFO, OsmChargers.INFO,
+        OpenChargeMap.INFO, OsmChargers.INFO, NdwChargers.INFO, BnetzaChargers.INFO,
         Weather.INFO, MetNorway.INFO, Wikidata.INFO, Commons.INFO, OsmNotes.INFO, OsmEdits.INFO,
     )
 
@@ -17,7 +17,7 @@ object Catalogue {
      * Sources written but not asked by the app yet: no screen lists them until they are (the US register, Chargemap's
      * partner feed, public transport).
      */
-    val NOT_WIRED: List<ProviderInfo> = listOf(NdwChargers.INFO, BnetzaChargers.INFO, Afdc.INFO, Chargemap.INFO, Transitous.INFO)
+    val NOT_WIRED: List<ProviderInfo> = listOf(Afdc.INFO, Chargemap.INFO, Transitous.INFO)
 
     /** Data bundled in the app rather than asked online, with the credit each licence requires. */
     val BUNDLED: List<ProviderInfo> = listOf(

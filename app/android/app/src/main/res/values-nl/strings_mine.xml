@@ -235,7 +235,7 @@
     <string name="mine_feeds_mangrove">reviews, gelezen en geschreven, één open pool</string>
     <string name="mine_feeds_ocm">laders wereldwijd: vermogen, stekkers, exploitanten</string>
     <string name="mine_feeds_osm_chargers">laders in kaart gebracht door vrijwilligers</string>
-    <string name="mine_feeds_ndw">elke openbare lader in Nederland, live</string>
+    <string name="mine_feeds_ndw">elke openbare lader in Nederland, wekelijks via wifi</string>
     <string name="mine_feeds_bnetza">het Duitse laderregister</string>
     <string name="mine_feeds_afdc">laders in de Verenigde Staten</string>
     <string name="mine_feeds_weather">de lucht, regen, wind, het echte licht</string>

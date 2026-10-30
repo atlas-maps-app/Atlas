@@ -7,12 +7,14 @@ import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.providers.ChargerFilters
 import app.atlas.providers.ChargerMerge
+import app.atlas.providers.BnetzaChargers
 import app.atlas.providers.ChargerProvider
 import app.atlas.providers.FailoverGeocoder
 import app.atlas.providers.FoursquareRatings
 import app.atlas.providers.Geocoder
 import app.atlas.providers.Http
 import app.atlas.providers.Mangrove
+import app.atlas.providers.NdwChargers
 import app.atlas.providers.Nominatim
 import app.atlas.providers.OpenChargeMap
 import app.atlas.providers.OsmChargers
@@ -74,6 +76,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
 import java.time.Clock
+import kotlin.time.Duration.Companion.days
 
 /** How [Services] is set up: the real app uses the defaults; tests and CI point it elsewhere. */
 data class ServicesConfig(
@@ -226,8 +229,20 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         RatingsAggregator(listOf(mangrove, FoursquareRatings(http, keys), YelpRatings(http, keys), TripAdvisorRatings(http, keys)))
     }
 
-    /** Charger sources: OpenStreetMap through Overpass, and Open Charge Map when the user added a key. */
-    val chargers: List<ChargerProvider> by lazy { listOf(OsmChargers(overpass), OpenChargeMap(http, keys)) }
+    /**
+     * Charger sources: OpenStreetMap through Overpass; Open Charge Map when the user added a key; and the national
+     * registers where a search reaches their country (NDW in the Netherlands, the Bundesnetzagentur in Germany), downloaded
+     * on Wi-Fi in the background, kept on the phone and refreshed weekly as they are used.
+     */
+    val chargers: List<ChargerProvider> by lazy {
+        val kept = File(dirs.cache, "providers")
+        val onWifi = { !config.offline && connectivity.online.value && !connectivity.metered.value }
+        listOf(
+            OsmChargers(overpass), OpenChargeMap(http, keys),
+            NdwChargers(http, kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = NdwChargers.COUNTRY, background = scope),
+            BnetzaChargers(http, kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = BnetzaChargers.COUNTRY, background = scope),
+        )
+    }
 
     // ---- Search: saved places, Wikidata, Commons, notes (ui/search) ---------------------------------------------
 

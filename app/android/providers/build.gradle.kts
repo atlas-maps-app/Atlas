@@ -23,5 +23,6 @@ tasks.test {
     System.getProperty("atlas.online")?.let { systemProperty("atlas.online", it) }
     // A downloaded national file for a one-off full-size parse (see NdwTest), and an Open Charge Map key for its online test.
     System.getProperty("atlas.ndw.file")?.let { systemProperty("atlas.ndw.file", it) }
+    System.getProperty("atlas.bnetza.file")?.let { systemProperty("atlas.bnetza.file", it) }
     System.getProperty("atlas.ocm.key")?.let { systemProperty("atlas.ocm.key", it) }
 }

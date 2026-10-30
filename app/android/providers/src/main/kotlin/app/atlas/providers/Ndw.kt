@@ -2,6 +2,7 @@ package app.atlas.providers
 
 import app.atlas.geo.BBox
 import app.atlas.model.Place
+import kotlinx.coroutines.CoroutineScope
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
@@ -24,8 +25,14 @@ class NdwChargers(
     maxAge: Duration = DownloadedChargers.LIVE_MAX_AGE,
     autoDownload: Boolean = false,
     region: BBox? = null,
+    /** Whether a download may start now (the app: on Wi-Fi). */
+    mayDownload: () -> Boolean = { true },
+    /** The box asked for: the Netherlands ([COUNTRY]) in the app, anywhere when null. */
+    covers: BBox? = null,
+    /** Where a stale register is refreshed while the kept copy answers (the app's scope); null: before answering. */
+    background: CoroutineScope? = null,
     clock: () -> Instant = Instant::now,
-) : DownloadedChargers(http, cacheDir, maxAge, autoDownload, region, clock) {
+) : DownloadedChargers(http, cacheDir, maxAge, autoDownload, region, clock, mayDownload, covers, background) {
     override val info = INFO
     override val cacheName = ID
 
@@ -37,13 +44,17 @@ class NdwChargers(
         const val ID = "ndw"
         const val URL = "https://opendata.ndw.nu/charging_point_locations_ocpi.json.gz"
 
+        /** The Netherlands in Europe, the islands included: where the register is asked. */
+        val COUNTRY = BBox(3.31, 50.75, 7.23, 53.56)
+
         val INFO = ProviderInfo(
             id = ID,
             name = "NDW (Netherlands)",
             licence = "Open data, licence not stated by NDW",
             attribution = "Charging data: NDW, Nationaal Dataportaal Wegverkeer",
             url = "https://opendata.ndw.nu",
-            note = "Every public charger in the Netherlands with live status, published under the EU's AFIR. About 18 MB; Atlas fetches it on Wi-Fi.",
+            note = "Every public charger in the Netherlands, published under the EU's AFIR: about 18 MB, fetched on Wi-Fi once a week " +
+                "where you look for chargers in the Netherlands; its points free now count for three hours after it came.",
             hosts = listOf("opendata.ndw.nu"),
         )
 

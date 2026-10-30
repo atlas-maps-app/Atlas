@@ -235,7 +235,7 @@
     <string name="mine_feeds_mangrove">Bewertungen, gelesen und geschrieben, ein offener Pool</string>
     <string name="mine_feeds_ocm">Ladepunkte weltweit: Leistung, Stecker, Betreiber</string>
     <string name="mine_feeds_osm_chargers">von Freiwilligen kartierte Ladepunkte</string>
-    <string name="mine_feeds_ndw">jede öffentliche Ladesäule in den Niederlanden, live</string>
+    <string name="mine_feeds_ndw">jede öffentliche Ladesäule in den Niederlanden, wöchentlich im WLAN</string>
     <string name="mine_feeds_bnetza">das deutsche Ladesäulenregister</string>
     <string name="mine_feeds_afdc">Ladepunkte in den USA</string>
     <string name="mine_feeds_weather">Himmel, Regen, Wind, das echte Licht</string>

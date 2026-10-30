@@ -29,7 +29,8 @@ class SourcesTruthTest {
     private val askedBy = mapOf(
         "overpass" to "Overpass(http)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
         "foursquare" to "FoursquareRatings(http", "yelp" to "YelpRatings(http", "tripadvisor" to "TripAdvisorRatings(http",
-        "ocm" to "OpenChargeMap(http", "osm-chargers" to "OsmChargers(overpass)", "open-meteo" to "Weather(http",
+        "ocm" to "OpenChargeMap(http", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http",
+        "bnetza" to "BnetzaChargers(http", "open-meteo" to "Weather(http",
         "met-norway" to "Weather(http", "wikidata" to "Wikidata(http)", "commons" to "Commons(http)", "osm-notes" to "OsmNotes(http)",
         "osm-edits" to "OsmEdits(http", "atlas-packs" to "WindowPacks(", "brouter" to "SegmentStore(dirs.segments",
         "panoramax" to "PanoramaxSource(", "open-prices" to "OpenPrices(", "iss-orbit" to "TleStore.SECOND_URL",
@@ -38,7 +39,7 @@ class SourcesTruthTest {
 
     /** The written but unwired sources' clients, which the app must not build while no screen lists them. */
     private val unwiredClients = mapOf(
-        "ndw" to "NdwChargers(", "bnetza" to "BnetzaChargers(", "afdc" to "Afdc(", "chargemap" to "Chargemap(", "transitous" to "Transitous(",
+        "afdc" to "Afdc(", "chargemap" to "Chargemap(", "transitous" to "Transitous(",
     )
 
     private fun sources(modules: List<String>): List<File> = modules.flatMap { m ->
