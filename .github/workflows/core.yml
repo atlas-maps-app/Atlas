@@ -514,6 +514,8 @@ jobs:
               ctest --test-dir "build/$TASK" --output-on-failure -j "$at_once" --tests-from-file "$RUNNER_TEMP/shard.txt" \
               --output-junit "$kept/novk.xml" --test-output-size-passed 8000000 --test-output-truncation middle
           fi
+          # Mesa's own shader cache, which lavapipe's processes on this runner share, if lavapipe keeps one.
+          du -sh ~/.cache/mesa_shader_cache* 2> /dev/null || echo "no Mesa shader cache in ~/.cache"
           if [ "$SHARD" = 1 ]; then
             "build/$TASK/atlas_tests" --probe | tee "build/feature-probe-$TASK-${{ matrix.arch }}.txt"
             if [ "$TASK" = host-release ]; then

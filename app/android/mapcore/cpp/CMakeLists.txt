@@ -296,6 +296,7 @@ if(ATLAS_TESTS)
     # tests/<area>/<name>.cpp however the build names the source (-fmacro-prefix-map makes it relative to the
     # repository, ccache's base_dir relative to the build folder). atlas_tests_rest runs every case none of them takes
     # (one a header defines, say), so the split loses none, and atlas_tests_split proves it (cmake/TestSplit.cmake).
+    # Each entry prints its cases' seconds (--duration), where a file's cost lies.
     set(_test_patterns "")
     set(_test_entries "")
     foreach(source IN LISTS _test_sources _test_vulkan_sources)
@@ -310,13 +311,13 @@ if(ATLAS_TESTS)
         if(_test_file MATCHES "_vk_test\\.cpp$")
             list(APPEND _test_labels vk)
         endif()
-        add_test(NAME "${_test_name}" COMMAND atlas_tests "--source-file=*tests/${_test_file}")
+        add_test(NAME "${_test_name}" COMMAND atlas_tests "--source-file=*tests/${_test_file}" --duration=true)
         set_tests_properties("${_test_name}" PROPERTIES LABELS "${_test_labels}")
         list(APPEND _test_patterns "*tests/${_test_file}")
         string(APPEND _test_entries "${_test_name}\t--source-file=*tests/${_test_file}\n")
     endforeach()
     list(JOIN _test_patterns "," _test_excluded)
-    add_test(NAME atlas_tests_rest COMMAND atlas_tests "--source-file-exclude=${_test_excluded}")
+    add_test(NAME atlas_tests_rest COMMAND atlas_tests "--source-file-exclude=${_test_excluded}" --duration=true)
     string(APPEND _test_entries "atlas_tests_rest\t--source-file-exclude=${_test_excluded}\n")
     file(WRITE "${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" "${_test_entries}")
     add_test(NAME atlas_tests_split COMMAND "${CMAKE_COMMAND}" "-DATLAS_TESTS_EXE=$<TARGET_FILE:atlas_tests>"
