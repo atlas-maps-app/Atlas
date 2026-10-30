@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace atlas::sun {
@@ -84,14 +85,18 @@ public:
     /// bits that fade was heading to.
     void publish(tiles::TileKey key, TileBits bits, double t);
 
+    /// Publishes a run's bits together at time `t`, each tile's as the one above, and tells the callback once: the
+    /// frame loop at rest draws a run's tiles in one frame, however many there are and however slowly the run went.
+    void publish(std::vector<std::pair<tiles::TileKey, TileBits>> run, double t);
+
     /// What a frame at time `t` draws tile `key` with, or nothing before its first bits.
     [[nodiscard]] std::optional<TileView> view(tiles::TileKey key, double t) const;
 
     /// Forgets a tile (it left the scene).
     void forget(tiles::TileKey key);
 
-    /// Called on the publishing thread after each publish, outside the lock (null: nothing): cheap and never blocking,
-    /// such as the frame loop's wake (K7's scene/SunGlobals.hpp).
+    /// Called on the publishing thread after each publication (a run's bits are one), outside the lock (null:
+    /// nothing): cheap and never blocking, such as the frame loop's wake (K7's scene/SunGlobals.hpp).
     void on_publish(std::function<void()> callback);
 
     /// How many tiles have bits.

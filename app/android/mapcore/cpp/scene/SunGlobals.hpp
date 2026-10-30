@@ -4,8 +4,8 @@
 // its pack's resident tiles at their finest zoom and their 220 m halo (Residency::sun_tiles), each made at the ladder
 // level it is drawn at (a halo tile at the cover's), built on a thread of its own whenever that set changes; K8's
 // Worker runs the moment's bucket (sun::bucket_of the theme block: a named moment's own sun, a live one's 0.5° bucket)
-// over it, visible tiles nearest first, skipping a tile whose bits for the bucket are there, and publishes each tile's
-// bits as it completes (BitTiles, which cross-fades a swap over 300 ms).
+// over it, visible tiles nearest first, skipping a tile whose bits for the bucket are there, and publishes the run's
+// bits together once it completes (BitTiles, which cross-fades a swap over 300 ms), waking the frame loop once a run.
 //
 // Each frame (prepare, from World::update after the cover) every tile the cover draws gets its bits: CPU-side
 // (CoverTile::sun, for the twin and the passes' own choices) and on the GPU, where its texels (BitTiles::texels: per 32
@@ -92,7 +92,8 @@ public:
                  std::uint8_t coarser_level = 0, const std::shared_ptr<const tiles::StorePack>& neighbour = nullptr,
                  std::uint8_t neighbour_level = 0);
 
-    /// Called on a worker's thread as each tile's bits are published (cheap and never blocking: the frame loop's wake).
+    /// Called on a worker's thread as a run's bits are published, once a run (cheap and never blocking: the frame
+    /// loop's wake).
     void set_wake(const std::function<void()>& wake) {
         for (Lane& l : lanes_) l.bits.on_publish(wake);
     }

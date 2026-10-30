@@ -13,20 +13,29 @@ double fade_weight(double swapped, double t) noexcept {
 }
 
 void BitTiles::publish(tiles::TileKey key, TileBits bits, double t) {
-    auto fresh = std::make_shared<const TileBits>(std::move(bits));
+    std::vector<std::pair<tiles::TileKey, TileBits>> one;
+    one.emplace_back(key, std::move(bits));
+    publish(std::move(one), t);
+}
+
+void BitTiles::publish(std::vector<std::pair<tiles::TileKey, TileBits>> run, double t) {
+    if (run.empty()) return;
     std::function<void()> published;
     {
         const std::lock_guard lock(mutex_);
         published = on_publish_;
-        Entry& e = tiles_[key.packed()];
-        if (!e.now) {
-            e.before = fresh;
-            e.now = std::move(fresh);
-            e.swapped = -std::numeric_limits<double>::infinity(); // a tile's first bits show at once
-        } else {
-            e.before = std::move(e.now);
-            e.now = std::move(fresh);
-            e.swapped = t;
+        for (auto& [key, bits] : run) {
+            auto fresh = std::make_shared<const TileBits>(std::move(bits));
+            Entry& e = tiles_[key.packed()];
+            if (!e.now) {
+                e.before = fresh;
+                e.now = std::move(fresh);
+                e.swapped = -std::numeric_limits<double>::infinity(); // a tile's first bits show at once
+            } else {
+                e.before = std::move(e.now);
+                e.now = std::move(fresh);
+                e.swapped = t;
+            }
         }
     }
     if (published) published();

@@ -55,7 +55,8 @@
 # apart off the diagonal or not run, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it
 # with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
-# first, 1.5 s warm), a map frame from 4 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
+# first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
+# frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
 # switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
@@ -294,6 +295,28 @@ wait_line() {
   local i
   for i in $(seq 1 "$2"); do since_marker "$1" | grep -q -e "$3" && return 0; sleep 1; done
   return 1
+}
+
+# Whether the core's map rests since marker $1 (its `vk frame` lines, under atlas.vk.ci): no frame for $2 s, waiting at
+# most $3 s.
+vk_rest() {
+  local n m waited=0
+  n=$(since_marker "$1" | grep -c 'AtlasMap: vk frame ')
+  while [ "$waited" -lt "$3" ]; do
+    sleep "$2"
+    waited=$((waited + $2))
+    m=$(since_marker "$1" | grep -c 'AtlasMap: vk frame ')
+    [ "$m" -eq "$n" ] && return 0
+    n=$m
+  done
+  return 1
+}
+
+# The time of the core's last three frames since marker $1, the median, ms: each `vk frame` line's CPU or GPU time, the
+# longer (the emulator's frame is lavapipe's GPU time, on the CPU; the frames before a complete picture draw less).
+vk_frame_ms() {
+  since_marker "$1" | grep 'AtlasMap: vk frame ' | tail -3 | awk '{ c = $(NF - 2) + 0; g = $NF + 0; print (g > c ? g : c) }' |
+    sort -n | awk '{ v[NR] = $1 } END { printf "%d", NR ? v[int((NR + 1) / 2)] : 0 }'
 }
 
 # --- the debug loop: every screen, at the debug build's first launch ---------------------------------------------------
@@ -709,12 +732,17 @@ pills_phase() {
   home_capture() { # $1 label, $2 picture, then the activity's extras
     local l=$1 picture=$2 i; shift 2
     fresh_state
-    vk_launch "$l" --es atlas.screen home --ez atlas.ci true "$@"
+    vk_launch "$l" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true "$@"
     for i in $(seq 1 90); do
       since_marker "$l" | grep -q -e 'vk first frame' -e 'drawn in' && break
       sleep 2
     done
     sleep 8
+    # Still pills: the map at rest first (no frame for 5 s). Its first picture's late parts (the noise fields made on
+    # lavapipe in 10 to 14 s, the sun's bits) come after its first frame, each a frame of 2 s with the water's light on:
+    # on 30 October one came between the raw capture and the PNG, MAD 2.07 against HWUI's where the two PNGs were 0.05 to
+    # 0.48 apart in each pill.
+    vk_rest "$l" 5 60 || echo "PILLS: the home ($l) drew on for 60 s after its first frame: captured as it was"
     adb exec-out screencap > "$OUT/${picture%.png}.raw"
     adb exec-out screencap -p > "$OUT/$picture"
     since_marker "$l" > "$OUT/${picture%.png}.atlasmap.txt"
@@ -760,13 +788,15 @@ first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*'
 # since that afternoon, when both runs on 95856df drew it in 30.7 to 35.9 s against 16.1 to 17.1 s on the commit before,
 # on runners whose own work was slower alike (the ten tiles' build 2,599.9 ms against 1,019.3, VK bench's pipelines 2.5
 # to 3.5 times as long, the emulator's boot 36.1 s against 24.7), none of it the commit's; ENGINE.md's gain 7, stage T kept on disk, is what makes a warm
-# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), no frame from 4 s after a swipe (CI's `vk frame` lines:
-# the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25 October), the Java
+# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), the warm home at rest within
+# 60 s of its first frame, no frame from three of the emulator's frames after a swipe on it, 4 s at the least (CI's `vk
+# frame` lines: the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25
+# October; lavapipe's frames take about 2 s with the water's light on by default, 30 October), the Java
 # heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
 # back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
 # fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
 map_phase() {
-  local run line ms kind limit before after heap
+  local run line ms kind limit before after heap frame_ms tail
   for run in mapfirst mapwarm; do
     vk_launch "$run" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
     wait_line "$run" 60 "vk first frame" || echo "MAP FAILED: no 'vk first frame' within 60 s ($run)"
@@ -780,20 +810,26 @@ map_phase() {
     # is a warm one.
     [ "$run" = mapfirst ] && { adb shell input keyevent KEYCODE_HOME; sleep 3; }
   done
-  # A swipe on the warm home, then rest: frames while it moves, none from 4 s after (a map that does not rest draws on
-  # through the 6 s that follow).
-  sleep 3
+  # A swipe on the warm home once it rests (its first picture's late parts in: the sun's bits, one frame a run), then
+  # rest: frames while it moves, the rest picture and a fade's frame, none from three of the emulator's frames after it
+  # (4 s at the least), and none through the 6 s that follow (a map that does not rest draws on). With the water's light
+  # on by default lavapipe's frames take about 2 s: on 30 October the swipe's last came 4.0 s after it.
+  vk_rest mapwarm 4 60 || { echo "MAP FAILED: the home drew on for 60 s after its first frame (the map does not rest)"; FAIL=1; }
+  echo "map: the home drew $(since_marker mapwarm | sed -n '/AtlasMap: vk first frame /,$p' | grep -c 'AtlasMap: vk frame ') frames after its first complete one, then rested"
+  frame_ms=$(vk_frame_ms mapwarm)
+  tail=$(( (3 * frame_ms + 999) / 1000 ))
+  [ "$tail" -ge 4 ] || tail=4
   adb shell log -t AtlasMap "vk swipe: start"
   adb shell input swipe 540 1500 540 900 300
   adb shell log -t AtlasMap "vk swipe: done"
-  sleep 4
-  adb shell log -t AtlasMap "vk swipe: 4 s after"
+  sleep "$tail"
+  adb shell log -t AtlasMap "vk swipe: $tail s after"
   sleep 6
-  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: 4 s after$/p' | grep -c 'AtlasMap: vk frame ')
-  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: 4 s after$/,$p' | grep -c 'AtlasMap: vk frame ')
-  echo "map: the swipe drew $before frames, $after from 4 s after it"
+  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: [0-9]* s after$/p' | grep -c 'AtlasMap: vk frame ')
+  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: [0-9]* s after$/,$p' | grep -c 'AtlasMap: vk frame ')
+  echo "map: the swipe drew $before frames, $after from $tail s after it (the emulator's frames $frame_ms ms at the median)"
   [ "$before" -gt 0 ] || { echo "MAP FAILED: the swipe drew no frame (the map did not move)"; FAIL=1; }
-  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from 4 s after the swipe (the map does not rest)"; FAIL=1; }
+  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from $tail s after the swipe (the map does not rest)"; FAIL=1; }
   # The Java heap at the canal ring, after the swipe (dumpsys' Dalvik heap in use); the native heap and graphics reported.
   PEAK_ALLOC=0; PEAK_NATIVE=0; PEAK_GFX=0; mem_poll; heap=$((PEAK_ALLOC / 1024))
   echo "map: Java heap at the canal ring ${heap} MB (native heap $((PEAK_NATIVE / 1024)) MB, graphics $((PEAK_GFX / 1024)) MB)"
