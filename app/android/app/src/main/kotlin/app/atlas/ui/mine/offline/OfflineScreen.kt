@@ -87,7 +87,12 @@ import app.atlas.ui.mine.MineKeys
 import app.atlas.ui.mine.MineTone
 import app.atlas.ui.mine.mt
 import app.atlas.ui.mine.serifTitle
+import androidx.compose.ui.res.pluralStringResource
+import app.atlas.mapview.MapEngine
+import app.atlas.mapview.vk.Windows
+import app.atlas.tiles.Pack
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -140,6 +145,7 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
             )
         }
         StorageCard(details, capacity, age)
+        CountryCards(manager, details, nav)
         if (details.isEmpty()) {
             MineState("ui.offline", stringResource(R.string.mine_offline_none_title), text = stringResource(R.string.mine_offline_none_text), tint = Color(0xFF178A4E))
         } else {
@@ -168,6 +174,85 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
         )
     }
 }
+
+/**
+ * The countries whose map the engine draws from their tiles (ENGINE.md step 3, one pack per country): a card each with
+ * what the map took of it as it was looked at, and its download whole.
+ */
+@Composable
+private fun CountryCards(manager: AtlasRegionManager, details: List<RegionDetail>, nav: Navigator) {
+    var countries by remember { mutableStateOf(emptyList<Pack>()) }
+    LaunchedEffect(Unit) {
+        countries = withContext(Dispatchers.IO) { runCatching { manager.engine.packs() }.getOrDefault(emptyList()) }.filter { manager.engine.tilesOf(it) != null }
+    }
+    for (p in countries) CountryCard(p, manager.engine.countryBytes(p), details, nav)
+}
+
+/**
+ * One country's map as the phone has it (the user, 30 October: "Why not make the automatic map downloading part
+ * visible?"): the areas the map took of it as they were looked at (from the country's tiles, and any built on the phone
+ * from their data where the tiles did not give them) and what they take, what the map is getting now, why the tiles
+ * did not answer where they did not, and the country whole for offline use: its download, how far it has got, or that
+ * it is on the phone. The board's paper card (radius 22, 14 px in) as the storage's.
+ */
+@Composable
+private fun CountryCard(pack: Pack, bytes: Long, details: List<RegionDetail>, nav: Navigator) {
+    var kept by remember { mutableStateOf(Windows.Kept(0, 0, 0L)) }
+    var status by remember { mutableStateOf<Windows.Status?>(null) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pack.id) {
+        val box = doubleArrayOf(pack.bbox.south, pack.bbox.west, pack.bbox.north, pack.bbox.east)
+        // what the map takes changes as it is used: read again every two seconds while the board is open
+        while (true) {
+            kept = withContext(Dispatchers.IO) { runCatching { Windows.kept(MapEngine.windowsDir(), box) }.getOrDefault(kept) }
+            val w = MapEngine.windowsNow
+            status = w?.status
+            problem = w?.tilesProblem
+            delay(COUNTRY_READ_MS)
+        }
+    }
+    val name = pack.country?.let { java.util.Locale("", it).getDisplayCountry(java.util.Locale.getDefault()).takeIf { n -> n.isNotBlank() && n != it } } ?: pack.name
+    val id = RegionEngine.idFor(pack.name)
+    val region = details.firstOrNull { it.meta.packId == pack.id || it.id == id }
+    val whole = region?.takeIf { it.hasTiles && it.complete }
+    Column(
+        Modifier.fillMaxWidth().bbox(0xFFF6F2EA, cr(22f)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MSy("ui.map", 18f, INK)
+            BText(name, bt(22f, 400, 26f, SERIF), INK, Modifier.weight(1f), lines = 1)
+            Chip("ui.refresh", stringResource(R.string.mine_country_auto), 0xFFE7F4EC, 0xFF12663A)
+        }
+        BText(
+            if (kept.places == 0) stringResource(R.string.mine_country_none)
+            else pluralStringResource(R.plurals.mine_country_areas, kept.places, kept.places, RegionEngine.size(kept.bytes)),
+            bt(13f, 400, 17f, tnum = true), BODY, lines = 2,
+        )
+        if (kept.built > 0) BText(stringResource(R.string.mine_country_built, kept.built), bt(12f, 400, 15.5f, tnum = true), BODY, lines = 2)
+        val now = when (status) {
+            is Windows.Status.Fetching -> if ((status as Windows.Status.Fetching).tiles) stringResource(R.string.mine_country_getting) else stringResource(R.string.mine_country_building)
+            is Windows.Status.Building -> stringResource(R.string.mine_country_building)
+            is Windows.Status.Waiting -> stringResource(R.string.mine_country_waiting)
+            else -> null
+        }
+        if (now != null) BText(now, bt(12f, 600, 15.5f), 0xFF1F3FC7, lines = 1)
+        problem?.let { BText(stringResource(R.string.mine_country_problem, it.take(140)), bt(12f, 600, 15.5f), 0xFF9B2A24, lines = 3) }
+        Spacer(Modifier.height(2.dp))
+        val p = region?.progress
+        when {
+            whole != null -> Chip("ui.check", stringResource(R.string.mine_country_kept), 0xFFE7F4EC, 0xFF12663A)
+            p != null && !p.waiting -> Chip("ui.download", stringResource(R.string.mine_country_keeping, (p.fraction * 100).roundToInt()), 0xFFE4EAFF, 0xFF1F3FC7)
+            else -> TextPill(
+                stringResource(R.string.mine_country_keep, RegionEngine.size(bytes)), bt(13f, 700, 17f), INK, WHITE, h = 36f, padH = 14f,
+                symbol = "ui.download", symbolSize = 16f, gap = 6f, onClick = { nav.go(Dest.RegionPicker(mode = "country", pack = pack.id)) },
+            )
+        }
+    }
+}
+
+/** How often the country card reads again what the map took. */
+private const val COUNTRY_READ_MS = 2_000L
 
 /** The total, its age and the bar of what the phone keeps: map, routes, search, voices, and what is left of the storage. */
 @Composable

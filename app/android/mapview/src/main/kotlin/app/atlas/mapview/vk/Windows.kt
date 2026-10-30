@@ -97,7 +97,17 @@ class Windows(
      * tiles hold it (or another core built them); throws where they hold it but its bytes did not come whole. Null: none.
      */
     private val tiles: ((MapCore.Window) -> Tiled?)? = null,
+    /**
+     * Whether the phone may use the network now. Offline, a window comes only from a country's tiles the phone keeps
+     * whole (an offline region's map): no data is fetched, and no window refreshed.
+     */
+    private val online: () -> Boolean = { true },
 ) {
+    /** What the windows' folder holds ([kept]): places taken from a country's tiles, places built here, their bytes. */
+    data class Kept(val tiled: Int, val built: Int, val bytes: Long) {
+        val places: Int get() = tiled + built
+    }
+
     /** A window's data from one of Atlas's packs: Overpass's answer for its box as of [date], gzipped, from pack [from]. */
     class Packed(val gz: ByteArray, val date: Instant, val from: String)
 
@@ -163,8 +173,19 @@ class Windows(
     /** Milliseconds until [s]'s next try, 0 when it is due. */
     fun remaining(s: Status.Waiting): Long = (s.until - clock()).coerceAtLeast(0L)
 
+    /**
+     * Why the last window asked of its country's tiles did not come from them (their list, index or bytes did not
+     * come), so it was built from its data; null once one came. The Maps board says it.
+     */
+    @Volatile
+    var tilesProblem: String? = null
+        private set
+
     private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
+
+    /** The windows no tiles kept on the phone gave while it was offline: not asked again until the network is back. */
+    private val missedOffline = HashSet<MapCore.Window>()
 
     /** The places the user edited lately ([edited]): latitude and longitude, their windows not yet looked up. */
     private val touched = ConcurrentLinkedQueue<DoubleArray>()
@@ -209,13 +230,25 @@ class Windows(
             val now = clock()
             nextEdited(core)?.let { return rebuild(core, it, now) }
             val wanted = core.wanted()
-            wanted.firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { w ->
+            val net = online()
+            if (net) missedOffline.clear()
+            val next = wanted.firstOrNull { w ->
+                ready(w, now) && !builtLately(w, now) && (net || w !in missedOffline && !fileOf(w).exists() && !tiledOf(w).exists())
+            }
+            next?.let { w ->
                 // none on the phone: its country's pack, before any data
                 if (!fileOf(w).exists() && !tiledOf(w).exists()) tiled(w, now)?.let { return it }
+                // offline: no data to fetch; the window waits for the network, not asked of the kept tiles again
+                if (!net) {
+                    missedOffline += w
+                    status = Status.Idle
+                    return false
+                }
                 return whole(core, w, now, keptBase(w))
             }
             // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
             if (wanted.none { !builtLately(it, now) }) status = Status.Idle
+            if (!net) return false
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
         } finally {
@@ -350,6 +383,7 @@ class Windows(
             source(w) ?: return null
         } catch (e: Exception) {
             Log.w(EngineFrames.TAG, "vk window ${w.id}: no pack from the tiles: ${e.message}; fetching its data")
+            tilesProblem = e.message ?: e.toString()
             return null
         }
         try {
@@ -364,6 +398,7 @@ class Windows(
         }
         failed.remove(w)
         status = Status.Idle
+        tilesProblem = null
         val what = if (got.pack.isNotEmpty()) "${got.pack.size} bytes" else "nothing to draw"
         Log.i(EngineFrames.TAG, "vk window ${w.id}: $what from the tiles of ${got.from} (their data of ${got.date}) in ${clock() - t0} ms")
         return got.pack.isNotEmpty()
@@ -623,6 +658,30 @@ class Windows(
         const val MARGIN_MS = 30 * 60 * 1000L
 
         private val NAME = Regex("""(\d+)-(\d+)-(\d+)\.atlas""")
+
+        /**
+         * What the windows' folder [dir] holds of the places whose middle lies in [box] (south, west, north, east; all
+         * where null): the places taken from a country's tiles, those built here from their data, and the bytes they take
+         * with the data kept beside them. For the Maps board, which shows what the map took as it was looked at.
+         */
+        fun kept(dir: File?, box: DoubleArray? = null): Kept {
+            var tiled = 0
+            var built = 0
+            var bytes = 0L
+            for (f in dir?.listFiles().orEmpty()) {
+                val w = windowOf(f) ?: continue
+                if (box != null) {
+                    val n = (1 shl w.z).toDouble()
+                    val lon = (w.x + 0.5) / n * 360.0 - 180.0
+                    val lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1.0 - 2.0 * (w.y + 0.5) / n))))
+                    if (lat < box[0] || lon < box[1] || lat > box[2] || lon > box[3]) continue
+                }
+                val base = "${w.z}-${w.x}-${w.y}"
+                if (File(dir, "$base.tiles").exists()) tiled++ else built++
+                bytes += f.length() + File(dir, "$base.json.gz").length()
+            }
+            return Kept(tiled, built, bytes)
+        }
 
         /** The window a file of the windows' folder holds, by its name; null for another file. */
         fun windowOf(file: File): MapCore.Window? {

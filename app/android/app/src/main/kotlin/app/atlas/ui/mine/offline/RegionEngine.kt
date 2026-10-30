@@ -8,6 +8,7 @@ import app.atlas.services.RegionLayer
 import app.atlas.tiles.Pack
 import app.atlas.tiles.PackDownloader
 import app.atlas.tiles.PackFile
+import app.atlas.tiles.TileSet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -37,6 +38,11 @@ class RegionDeps(
     /** The voice languages to keep with a region. */
     val voices: () -> List<String> = { emptyList() },
     val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * The version of the windows this phone's core builds (MapCore.Window.version), whose country's tiles a region's map
+     * takes ([MapKind.TILES]); null where no core runs here, and a country's tiles are not taken.
+     */
+    val tilesVersion: () -> String? = { null },
 )
 
 /** What a region would take: the bytes of each layer (null when unknown) and the pack behind it, if one is used. */
@@ -56,8 +62,8 @@ data class AreaEstimate(val bytes: Map<RegionLayer, Long?>, val packed: Boolean,
 }
 
 /**
- * Takes regions offline, layer by layer: the map (an Atlas region pack: a published one, or one built on the phone from
- * Overpass),
+ * Takes regions offline, layer by layer: the map (its country's tiles of this phone's core, the map the engine draws,
+ * kept whole so it draws offline; else an Atlas region pack: a published one, or one built on the phone from Overpass),
  * the places (the pack's place store, or an Overpass import), the routing tiles, and the voice languages. Each layer is
  * recorded in the region's metadata when it is complete, so a download that stops (no signal, a full disk, the process
  * killed) picks up at the layer it was on; the pack files themselves resume by byte range. [onChanged] runs after each
@@ -136,7 +142,7 @@ class RegionEngine(
     /** The pack to take [bbox] from: the smallest one that holds it, unless the area is a small part of that pack. */
     fun choosePack(bbox: BBox, packs: List<Pack>): Pack? {
         val box = area(bbox)
-        return packs.filter { it.atlas != null || it.places != null }
+        return packs.filter { it.atlas != null || it.places != null || tilesOf(it) != null }
             .filter { contains(it.bbox, bbox) }
             .minByOrNull { area(it.bbox) }
             ?.takeIf { box >= area(it.bbox) * PACK_SHARE }
@@ -144,6 +150,17 @@ class RegionEngine(
 
     /** The published packs the engine knows (what estimates and downloads choose from); empty when none can be read. */
     suspend fun packs(): List<Pack> = deps.packs()
+
+    /** [pack]'s tiles of this phone's core ([RegionDeps.tilesVersion]), if it publishes them: a whole country's map. */
+    fun tilesOf(pack: Pack?): TileSet? = pack?.let { p -> deps.tilesVersion()?.let { p.tilesOf(it) } }
+
+    /**
+     * What a country's pack takes on the phone as the country list shows it: its map (the tiles of this phone's core, or
+     * its region pack) and its places. Not the windows' data the phone builds a window from where the tiles lack it,
+     * nor the tiles of another core: neither is downloaded.
+     */
+    fun countryBytes(pack: Pack): Long =
+        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes } ?: pack.atlas?.bytes ?: 0L) + (pack.places?.diskBytes ?: 0L)
 
     /** What taking [bbox] with [layers] would download, before it is asked for. */
     suspend fun estimate(bbox: BBox, layers: Set<RegionLayer>): RegionEstimate {
@@ -153,7 +170,9 @@ class RegionEngine(
         var kind = MapKind.NONE
         if (RegionLayer.MAP in layers) {
             val atlas = pack?.atlas
+            val tiles = tilesOf(pack)
             when {
+                tiles != null -> { kind = MapKind.TILES; out[RegionLayer.MAP] = tiles.tiles.bytes + tiles.index.bytes }
                 atlas != null -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = atlas.bytes }
                 deps.mapBuilder != null && buildable(bbox) -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = estimateBuilt(bbox) }
                 else -> out[RegionLayer.MAP] = null
@@ -249,7 +268,17 @@ class RegionEngine(
         when (layer) {
             RegionLayer.MAP -> {
                 val atlas = pack?.atlas
+                val tiles = tilesOf(pack)
                 val record = when {
+                    // the country's tiles whole, their index first (small): the map then draws them offline
+                    tiles != null -> {
+                        val total = (tiles.tiles.bytes + tiles.index.bytes).coerceAtLeast(1L).toDouble()
+                        deps.packDownloader.download(tiles.index, files.tilesIndex(meta.id)) { report((it.fraction * tiles.index.bytes / total).toFloat()) }
+                        deps.packDownloader.download(tiles.tiles, files.tiles(meta.id)) {
+                            report(((tiles.index.bytes + it.fraction * tiles.tiles.bytes) / total).toFloat())
+                        }
+                        LayerRecord(MapKind.TILES.id, files.tiles(meta.id).length() + files.tilesIndex(meta.id).length(), now, tiles.tiles.sha256, pack?.osmTimestamp)
+                    }
                     atlas != null -> {
                         val target = files.atlas(meta.id)
                         deps.packDownloader.download(atlas, target) { report(it.fraction.toFloat()) }
@@ -321,9 +350,16 @@ class RegionEngine(
             val stale = LinkedHashSet<RegionLayer>()
             val pack = m.packId?.let { id -> packs.firstOrNull { it.id == id } }
             if (pack != null) {
-                val mapSha = m.layers[RegionLayer.MAP]?.sha
+                val map = m.layers[RegionLayer.MAP]
+                val mapSha = map?.sha
                 val atlas = pack.atlas
-                if (atlas != null && mapSha != null && !mapSha.equals(atlas.sha256, true)) { stale += RegionLayer.MAP; bytes = bytes?.plus(atlas.bytes) }
+                val tiles = tilesOf(pack)
+                if (map?.kind == MapKind.TILES.id) {
+                    if (tiles != null && mapSha != null && !mapSha.equals(tiles.tiles.sha256, true)) {
+                        stale += RegionLayer.MAP
+                        bytes = bytes?.plus(tiles.tiles.bytes + tiles.index.bytes)
+                    }
+                } else if (atlas != null && mapSha != null && !mapSha.equals(atlas.sha256, true)) { stale += RegionLayer.MAP; bytes = bytes?.plus(atlas.bytes) }
                 val placesSha = m.layers[RegionLayer.PLACES]?.sha
                 val places = pack.places
                 if (places != null && placesSha != null && !placesSha.equals(places.sha256, true)) { stale += RegionLayer.PLACES; bytes = bytes?.plus(places.bytes) }
@@ -362,7 +398,11 @@ class RegionEngine(
         val out = LinkedHashMap<RegionLayer, Long>()
         for ((layer, rec) in m.layers) {
             out[layer] = when (layer) {
-                RegionLayer.MAP -> if (rec.kind == MapKind.ATLAS.id) files.atlas(m.id).takeIf { it.isFile }?.length() ?: rec.bytes else rec.bytes
+                RegionLayer.MAP -> when (rec.kind) {
+                    MapKind.ATLAS.id -> files.atlas(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
+                    MapKind.TILES.id -> files.tiles(m.id).takeIf { it.isFile }?.let { it.length() + files.tilesIndex(m.id).length() } ?: rec.bytes
+                    else -> rec.bytes
+                }
                 RegionLayer.PLACES -> files.places(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
                 RegionLayer.ROUTING -> deps.segments?.let { s -> m.segments.sumOf { s.file(it).length() } } ?: rec.bytes
                 RegionLayer.VOICE -> rec.bytes

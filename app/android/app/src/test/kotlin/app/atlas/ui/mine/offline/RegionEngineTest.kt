@@ -32,6 +32,9 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
 
+private const val CORE = "core-p11 s1.1-49f47f3df1d91a4f"
+private const val OLDER_CORE = "core-p9 s1.1-49f47f3df1d91a4f"
+
 /** The region engine over a real download from a local server: layers, resume, updates, estimates and deletion. */
 class RegionEngineTest {
     @get:Rule
@@ -41,6 +44,7 @@ class RegionEngineTest {
     private lateinit var files: RegionFiles
     private val served = HashMap<String, ByteArray>()
     private val hits = AtomicInteger()
+    private val requested = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private var changed = 0
     private var clock = 1_760_000_000_000L
 
@@ -54,6 +58,7 @@ class RegionEngineTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 hits.incrementAndGet()
+                requested += request.url.encodedPath
                 val body = served[request.url.encodedPath] ?: return MockResponse.Builder().code(404).build()
                 val range = request.headers["Range"]?.removePrefix("bytes=")?.substringBefore('-')?.toIntOrNull()
                 return if (range != null) MockResponse.Builder().code(206).addHeader("Content-Range", "bytes $range-${body.size - 1}/${body.size}").body(Buffer().write(body, range, body.size - range)).build()
@@ -82,6 +87,73 @@ class RegionEngineTest {
     )
 
     private fun engine(d: RegionDeps) = RegionEngine(files, d) { changed++ }
+
+    /**
+     * A country as packs-latest publishes it since one pack per country: its places, its windows' data (which the phone
+     * reads a window at a time and never downloads whole) and its tiles of two cores, the one before's kept first.
+     */
+    private fun theCountry(): Pack {
+        fun tiles(core: String, seed: Int, kb: Int) = listOf(
+            file(PackFile.TILES, "tiles-$seed", data(kb * 1000, seed)).copy(coreVersion = core),
+            file(PackFile.TILES_INDEX, "index-$seed", data(2_000, seed + 1)).copy(coreVersion = core),
+        )
+        return Pack(
+            "netherlands", "Netherlands", "NL", pack, "2026-10-28T21:21:02Z", "packs-20261030",
+            listOf(
+                file(PackFile.PLACES, "nl.places", data(90_000, 7)),
+                file(PackFile.WINDOWS, "nl.windows", data(900_000, 8)), file(PackFile.WINDOWS_INDEX, "nl.windows.idx", data(3_000, 9)),
+            ) + tiles(OLDER_CORE, 20, 200) + tiles(CORE, 30, 250),
+        )
+    }
+
+    @Test
+    fun aCountryTakesItsTilesOfThePhonesCoreAsItsMapAndNotItsWindowsData() {
+        val p = theCountry()
+        val e = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }))
+        // the country list's size: this core's tiles and their index, and the places; not the windows' data
+        assertEquals(250_000L + 2_000L + 90_000L, e.countryBytes(p))
+        val est = runBlocking { e.estimate(pack, setOf(RegionLayer.MAP, RegionLayer.PLACES)) }
+        assertEquals(MapKind.TILES, est.mapKind)
+        assertEquals(252_000L, est.bytes[RegionLayer.MAP])
+        assertEquals(90_000L, est.bytes[RegionLayer.PLACES])
+        val id = RegionEngine.idFor("Netherlands")
+        e.begin(id, "Netherlands", pack, setOf(RegionLayer.MAP, RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertTrue(data(250_000, 30).contentEquals(files.tiles(id).readBytes()))
+        assertTrue(data(2_000, 31).contentEquals(files.tilesIndex(id).readBytes()))
+        // neither the windows' data nor the older core's tiles came
+        assertEquals(0, hitsOf("nl.windows", "nl.windows.idx", "tiles-20", "index-20"))
+        val m = files.get(id)!!
+        assertEquals(MapKind.TILES.id, m.layers.getValue(RegionLayer.MAP).kind)
+        assertEquals(p.tilesOf(CORE)!!.tiles.sha256, m.layers.getValue(RegionLayer.MAP).sha)
+        val d = e.details.value.single()
+        assertTrue(d.complete)
+        assertTrue(d.hasTiles)
+        assertEquals(252_000L + 90_000L, d.bytes)
+        // the map finds them by the tiles' SHA-256, and the phone keeps a country whole
+        assertEquals(files.tiles(id) to files.tilesIndex(id), files.keptTiles(p.tilesOf(CORE)!!.tiles.sha256!!.uppercase()))
+        assertNull(files.keptTiles(p.tilesOf(OLDER_CORE)!!.tiles.sha256!!))
+        assertTrue(files.keepsTiles())
+        // republished: the map is stale, and its size is this core's tiles'
+        val newer = p.copy(files = p.files.map { f -> if (f.kind == PackFile.TILES && f.coreVersion == CORE) file(PackFile.TILES, "tiles-40", data(260_000, 40)).copy(coreVersion = CORE) else f })
+        val again = engine(deps({ listOf(newer) }).copyWith(tilesVersion = { CORE }))
+        val stale = runBlocking { again.checkUpdates() }.getValue(id)
+        assertEquals(setOf(RegionLayer.MAP), stale.layers)
+        assertEquals(262_000L, stale.bytes)
+        // deleted: its tiles go with it
+        again.delete(id)
+        assertFalse(files.tiles(id).exists() || files.tilesIndex(id).exists())
+        assertFalse(files.keepsTiles())
+        // a phone with no core (or whose core no tiles were published for) takes no tiles
+        assertNull(engine(deps({ listOf(p) })).tilesOf(p))
+        assertNull(engine(deps({ listOf(p) }).copyWith(tilesVersion = { "core-p1 s0" })).tilesOf(p))
+    }
+
+    private fun hitsOf(vararg names: String): Int = requested.count { path -> names.any { path.endsWith(it) } }
+
+    private fun RegionDeps.copyWith(tilesVersion: () -> String?) = RegionDeps(
+        packs, packDownloader, importPlaces, segments, segmentSizes, mapBuilder, voices, clock, tilesVersion,
+    )
 
     @Test
     fun aRegionInsideAPackTakesItsMapAndPlacesFromThePackAndKeepsEachLayerRecorded() {

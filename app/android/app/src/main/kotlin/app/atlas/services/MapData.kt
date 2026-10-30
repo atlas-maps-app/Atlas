@@ -24,6 +24,7 @@ import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
+import app.atlas.ui.mine.offline.RegionFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -122,8 +123,13 @@ class MapData(private val services: Services) {
      * thread.
      */
     private val windowTiles: WindowTiles by lazy {
-        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
+        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
+            set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
+        })
     }
+
+    /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
+    private val regionFiles by lazy { RegionFiles(services.dirs.regions, services.dirs.places, services.dirs.segments) }
 
     /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
     private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
@@ -134,7 +140,10 @@ class MapData(private val services: Services) {
      * asked the same busy servers twice and showed "building 0 of 0 KB" where it never came.
      */
     val regions: LiveRegions by lazy {
-        LiveRegions(packs, worker, online = ::online, overpass = null, onChange = { MapEngine.invalidate() })
+        LiveRegions(
+            packs, worker, online = ::online, overpass = null, onChange = { MapEngine.invalidate() },
+            engineCountry = { p -> MapEngine.countryAt(p.lat, p.lon) != null },
+        )
     }
 
     /**
@@ -179,6 +188,8 @@ class MapData(private val services: Services) {
         MapEngine.windowTiles = { w ->
             windowTiles.window(w.z, w.x, w.y, MapCore.Window.version())?.let { app.atlas.mapview.vk.Windows.Tiled(it.bytes, it.date, it.pack) }
         }
+        // a country downloaded whole (the Maps board): its windows come from it offline too
+        MapEngine.tilesKept = { regionFiles.keepsTiles() }
         // the countries whose tiles the core draws, from the published list (its copy kept, offline), read off the main
         // thread: within them the map never hands a place to today's map while its window comes (MapEngine.countries);
         // asked again a minute on while no list is to be had
@@ -188,6 +199,15 @@ class MapData(private val services: Services) {
                 if (list != null) {
                     MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { CountryTiles(it.id, it.name, it.bbox) }
                     MapEngine.invalidate()
+                    // which tiles this phone takes: none of its core's version means every window is built here
+                    val version = MapEngine.windowVersion()
+                    val sets = list.flatMap { p -> p.tileSets.map { "${p.id} ${it.index.coreVersion}" } }
+                    val own = list.filter { p -> version != null && p.tilesOf(version) != null }.map { it.id }
+                    android.util.Log.i(
+                        app.atlas.mapview.EngineFrames.TAG,
+                        "vk windows: this core builds ${version ?: "?"}; tiles published: ${sets.joinToString().ifEmpty { "none" }}; " +
+                            "its own: ${own.joinToString().ifEmpty { "none, so every window is built on the phone" }}",
+                    )
                     break
                 }
                 delay(COUNTRIES_RETRY_MS)

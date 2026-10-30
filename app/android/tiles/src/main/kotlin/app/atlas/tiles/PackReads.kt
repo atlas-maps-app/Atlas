@@ -131,15 +131,20 @@ internal class PackReads(
         /** The level of the phone's windows (load::window_level). */
         const val LEVEL = 14
 
-        /** How long no list of packs to be had keeps a window from asking for it again. */
-        const val LIST_RETRY_MS = 10 * 60 * 1000L
+        /**
+         * How long no list of packs to be had keeps a window from asking for it again: half a minute, so a phone whose
+         * network was not up yet as the map began takes its country's tiles as soon as it is, not ten minutes on (until
+         * 30 October), building every window from its data in between. The catalog keeps the list it has.
+         */
+        const val LIST_RETRY_MS = 30 * 1000L
 
         /** The largest index read: a region of the world's every L14 tile on land would stay under it. */
         private const val MAX_INDEX = 64L shl 20
 
         fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 
-        private fun hex(b: ByteArray): String = sha256(b).joinToString("") { "%02x".format(it) }
+        /** [b]'s SHA-256, lower-case hex. */
+        fun hex(b: ByteArray): String = sha256(b).joinToString("") { "%02x".format(it) }
 
         /** Whether [pack]'s box holds the middle of window ([x], [y]) of level [LEVEL]. */
         fun holds(pack: Pack, x: Int, y: Int): Boolean {

@@ -680,4 +680,20 @@
         <item quantity="one">%1$d model</item>
         <item quantity="other">%1$d models</item>
     </plurals>
+
+    <!-- The Maps board's country card: what the map took of a country as it was looked at, and its download whole. -->
+    <string name="mine_country_auto">Taken as you look</string>
+    <string name="mine_country_none">Nothing yet: the map takes each area as you open it</string>
+    <string name="mine_country_built">%1$d of them built on the phone from OpenStreetMap’s data</string>
+    <string name="mine_country_getting">Getting an area of this map…</string>
+    <string name="mine_country_building">Building an area on the phone…</string>
+    <string name="mine_country_waiting">Waiting to try again</string>
+    <string name="mine_country_problem">This map did not answer: %1$s</string>
+    <string name="mine_country_keep">Keep it all offline · %1$s</string>
+    <string name="mine_country_kept">All of it is on this phone</string>
+    <string name="mine_country_keeping">Downloading all of it · %1$d%%</string>
+    <plurals name="mine_country_areas">
+        <item quantity="one">%1$d area on this phone · %2$s</item>
+        <item quantity="other">%1$d areas on this phone · %2$s</item>
+    </plurals>
 </resources>

@@ -115,15 +115,15 @@ class WindowPacksTest {
         assertEquals(before, gh.storageRequests.size)
         // another level than the phone's windows, no list of packs to be had
         assertNull(packs.window(13, 4207, 2692, null))
-        // no list to be had: asked for again only ten minutes on
+        // no list to be had: asked for again only half a minute on
         var now = 0L
         var asked = 0
-        val offline = WindowPacks({ asked++; if (now < 600_000L) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
+        val offline = WindowPacks({ asked++; if (now < WindowPacks.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
         assertNull(offline.window(14, 8414, 5384, null))
-        now = 599_999L
+        now = WindowPacks.LIST_RETRY_MS - 1
         assertNull(offline.window(14, 8414, 5384, null))
         assertEquals(1, asked)
-        now = 600_000L
+        now = WindowPacks.LIST_RETRY_MS
         assertEquals("netherlands", offline.window(14, 8414, 5384, null)!!.pack)
         assertEquals(2, asked)
         // an index made for another window query is not used

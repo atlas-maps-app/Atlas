@@ -260,4 +260,29 @@ class PackLibraryTest {
         val empty = regions.stateFor(home.copy(lat = 52.3655, lon = 4.9010))
         assertTrue("$empty", empty is LiveRegions.State.Empty && (empty as LiveRegions.State.Empty).reason.contains("grachten"))
     }
+
+    @Test
+    fun `in a country whose tiles the engine draws no published region is fetched or offered, and a pack on the phone still draws`() {
+        LiveEngine.workDir = File(dir, "engine")
+        val lib = PackLibrary(File(dir, "packs"), listOf(server.url("/packs-renders/big.json").toString()))
+        // a heap that takes grachten's scene, so outside such a country it would be fetched here
+        val regions = LiveRegions(lib, Executor { it.run() }, online = { true }, overpass = null, onChange = {}, heapBudget = { 1_000_000_000L }, engineCountry = { true })
+        val f = RegionFrame.living()
+        val lat = f.lat(-10.0, -30.0)
+        val lon = f.lon(-10.0, -30.0)
+        // beyond the engine's reach, where today's map is asked
+        val far = LiveView(lat, lon, LiveCamera.zoom(lat, 12_000.0, 915.0), 52.0, 46.0, 412, 915, 440.0)
+        val empty = regions.stateFor(far)
+        assertTrue("$empty", empty is LiveRegions.State.Empty && (empty as LiveRegions.State.Empty).reason.contains("zoom in"))
+        assertTrue("the manifest was read: $requests", requests.any { it.endsWith("big.json") })
+        assertTrue("no region was fetched: $requests", requests.none { it.endsWith(".atlas") })
+        // the canal ring's message is not given there either
+        val ring = regions.stateFor(far.copy(lat = 52.3655, lon = 4.9010))
+        assertTrue("$ring", ring is LiveRegions.State.Empty && !(ring as LiveRegions.State.Empty).reason.contains("grachten"))
+        // a pack on the phone (an offline region) still draws
+        lib.install("amsterdam") { pack.inputStream() }
+        var state = regions.stateFor(far)
+        repeat(3) { if (state !is LiveRegions.State.Ready) state = regions.stateFor(far) }
+        assertEquals("amsterdam", (state as LiveRegions.State.Ready).region.id)
+    }
 }

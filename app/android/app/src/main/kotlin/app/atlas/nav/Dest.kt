@@ -533,8 +533,8 @@ sealed interface Dest {
     }
 
     /** Picking an area to take offline, around a point (null: here); [mode] opens "area", "route" or "country". */
-    data class RegionPicker(val lat: Double? = null, val lon: Double? = null, val mode: String? = null) : Dest {
-        override val route get() = Routes.build("regionpicker", "lat" to lat, "lon" to lon, "mode" to mode)
+    data class RegionPicker(val lat: Double? = null, val lon: Double? = null, val mode: String? = null, val pack: String? = null) : Dest {
+        override val route get() = Routes.build("regionpicker", "lat" to lat, "lon" to lon, "mode" to mode, "pack" to pack)
         override val tab get() = Tab.MINE
 
         @Composable
@@ -727,7 +727,7 @@ sealed interface Dest {
             "layers" to { _ -> Layers },
             "weather" to { a -> Weather(a.double("lat"), a.double("lon")) },
             "offline" to { _ -> Offline },
-            "regionpicker" to { a -> RegionPicker(a.double("lat"), a.double("lon"), a.str("mode")) },
+            "regionpicker" to { a -> RegionPicker(a.double("lat"), a.double("lon"), a.str("mode"), a.str("pack")) },
             "charge" to { a -> Charge(a.double("lat"), a.double("lon"), a.str("select")) },
             "power" to { _ -> Power },
             "pump" to { a -> Pump(a.double("lat"), a.double("lon")) },

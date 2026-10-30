@@ -370,16 +370,36 @@ object MapEngine {
     @Volatile
     var overpassOff: () -> Boolean = { false }
 
-    /** The windows the phone builds, online, once the app gave a cache and their data's source; else null. */
+    /**
+     * Whether the phone keeps a country's tiles whole (an offline region's map, the Maps board's download of the
+     * country): the windows then come from them offline too. The app sets it.
+     */
+    @Volatile
+    var tilesKept: () -> Boolean = { false }
+
+    /**
+     * The windows the phone builds, once the app gave a cache and their data's source: online, or offline where it keeps
+     * a country's tiles ([tilesKept], the only windows it then takes); else null.
+     */
     fun windows(): app.atlas.mapview.vk.Windows? {
-        if (!online() || !windowsAllowed()) return null
+        if (!windowsAllowed() || !online() && !tilesKept()) return null
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles)
-                .also { windowsBuilder = it }
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(
+                dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles, online = { online() },
+            ).also { windowsBuilder = it }
         }
     }
+
+    @Volatile
+    private var version: String? = null
+
+    /**
+     * The version of the windows this phone's core builds (MapCore.Window.version: its stage P's and its style's), whose
+     * country's tiles the windows and the offline regions take; null where no core loads (the JVM's tests).
+     */
+    fun windowVersion(): String? = version ?: runCatching { MapCore.Window.version() }.getOrNull()?.also { version = it }
 
     /**
      * Reads the packs' list ahead of the first map, off the main thread, so that the home's first look knows where the

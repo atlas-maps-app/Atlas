@@ -134,6 +134,30 @@ class WindowTilesTest {
     }
 
     @Test
+    fun aCountryKeptOnThePhoneIsReadThereWithoutTheNetwork() {
+        val c = country()
+        val list = listOf(publish("netherlands", c, date))
+        val kept = tempDir("kept")
+        val tilesFile = java.io.File(kept, "netherlands.tiles").apply { writeBytes(c.tiles) }
+        val indexFile = java.io.File(kept, "netherlands.tiles.idx").apply { writeBytes(c.index) }
+        val tiles = WindowTiles({ list }, dir, local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) })
+        assertArrayEquals(c.packs[westerkerk], tiles.window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        assertArrayEquals(c.packs[neighbour], tiles.window(14, neighbour.first, neighbour.second, version)!!.bytes)
+        assertFalse(tiles.window(14, water.first, water.second, version)!!.drawn)
+        // neither the index nor a window's bytes were asked of GitHub, nor the index kept in the windows' folder
+        assertTrue(gh.storageRequests.isEmpty())
+        assertTrue(dir.list().isNullOrEmpty())
+        // a copy whose bytes are not the published ones gives way to the published tiles, by a range
+        val spoilt = c.tiles.copyOf().also { b -> for (i in b.indices) b[i] = (b[i].toInt() xor 0x5A).toByte() }
+        tilesFile.writeBytes(spoilt)
+        val again = WindowTiles({ list }, tempDir("again"), local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) })
+        assertArrayEquals(c.packs[westerkerk], again.window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        val start = c.stored.getValue(neighbour).size
+        assertEquals(listOf("bytes=$start-${start + c.stored.getValue(westerkerk).size - 1}"), ranges())
+        kept.deleteRecursively()
+    }
+
+    @Test
     fun aWindowWithNothingToDrawIsAnsweredWithNoBytesAndNoRange() {
         val list = listOf(publish("netherlands", country(), date))
         val got = WindowTiles({ list }, dir).window(14, water.first, water.second, version)!!
@@ -216,15 +240,15 @@ class WindowTilesTest {
         // a pack with the windows' data alone
         val data = list.map { p -> p.copy(files = p.files.filter { it.kind != PackFile.TILES }) }
         assertNull(WindowTiles({ data }, tempDir("data")).window(14, westerkerk.first, westerkerk.second, version))
-        // no list to be had: asked for again only ten minutes on
+        // no list to be had: asked for again only half a minute on
         var now = 0L
         var asked = 0
-        val offline = WindowTiles({ asked++; if (now < 600_000L) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
+        val offline = WindowTiles({ asked++; if (now < PackReads.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
         assertNull(offline.window(14, westerkerk.first, westerkerk.second, version))
-        now = 599_999L
+        now = PackReads.LIST_RETRY_MS - 1
         assertNull(offline.window(14, westerkerk.first, westerkerk.second, version))
         assertEquals(1, asked)
-        now = 600_000L
+        now = PackReads.LIST_RETRY_MS
         assertEquals("netherlands", offline.window(14, westerkerk.first, westerkerk.second, version)!!.pack)
         assertEquals(2, asked)
     }

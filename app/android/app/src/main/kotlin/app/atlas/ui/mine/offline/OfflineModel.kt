@@ -65,7 +65,7 @@ object OfflineModel {
         if (RegionLayer.ROUTING in have) addAll(listOf("mode.car", "mode.truck", "mode.bike", "mode.walk"))
         if (RegionLayer.PLACES in have) add("ui.search")
         if (RegionLayer.VOICE in have && d.meta.voices.isNotEmpty()) add("ui.volume")
-        if (d.hasAtlas) add("ui.3d")
+        if (d.hasAtlas || d.hasTiles) add("ui.3d")
     }
 
     /**

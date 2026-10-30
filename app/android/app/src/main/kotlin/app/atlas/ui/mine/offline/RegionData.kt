@@ -20,8 +20,11 @@ import kotlinx.serialization.json.putJsonArray
 import java.io.File
 import java.io.IOException
 
-/** How a region's map layer is kept: as Atlas's own region pack (`.atlas`), or not at all. */
-enum class MapKind(val id: String) { ATLAS("atlas"), NONE("none");
+/**
+ * How a region's map layer is kept: as its country's tiles of this phone's core (`.tiles` and their index, the map the
+ * engine draws, ENGINE.md step 3: one pack per country), as Atlas's own region pack (`.atlas`), or not at all.
+ */
+enum class MapKind(val id: String) { TILES("tiles"), ATLAS("atlas"), NONE("none");
 
     companion object {
         fun of(id: String?): MapKind = entries.firstOrNull { it.id == id } ?: NONE
@@ -118,6 +121,22 @@ class RegionFiles(val regions: File, val places: File, val segments: File) {
     fun atlas(id: String) = File(atlasDir, "$id.atlas")
     fun places(id: String) = File(places, "$id.db")
 
+    /** A country's tiles of this phone's core, kept whole ([MapKind.TILES]), and their index. */
+    fun tiles(id: String) = File(atlasDir, "$id.tiles")
+    fun tilesIndex(id: String) = File(atlasDir, "$id.tiles.idx")
+
+    /**
+     * The country's tiles a region keeps whole and complete ([MapKind.TILES]: its map layer is recorded once both files
+     * came), by the tiles' SHA-256 as packs.json publishes it, with their index; null where none does. The map reads a
+     * window there instead of by a range of GitHub's copy.
+     */
+    fun keptTiles(sha: String): Pair<File, File>? = list().firstOrNull { m ->
+        m.layers[RegionLayer.MAP]?.let { it.kind == MapKind.TILES.id && it.sha.equals(sha, ignoreCase = true) } == true
+    }?.let { m -> tiles(m.id) to tilesIndex(m.id) }?.takeIf { (t, i) -> t.isFile && i.isFile }
+
+    /** Whether a region keeps a country's tiles whole and complete: the map then works offline where they reach. */
+    fun keepsTiles(): Boolean = list().any { it.layers[RegionLayer.MAP]?.kind == MapKind.TILES.id && tiles(it.id).isFile }
+
     /** Every region's metadata, by name. */
     fun list(): List<RegionMeta> = atlasDir.listFiles { f -> f.name.endsWith(".json") }.orEmpty()
         .mapNotNull { f -> runCatching { RegionMeta.fromJson(f.readText()) }.getOrNull() }
@@ -144,12 +163,12 @@ class RegionFiles(val regions: File, val places: File, val segments: File) {
         }
     }
 
-    /** Removes the files of [id] that only it uses (the atlas pack, the place store); returns bytes freed. */
+    /** Removes the files of [id] that only it uses (the map's tiles or atlas pack, the place store); returns bytes freed. */
     @Synchronized
     fun deleteOwn(id: String): Long {
         var freed = 0L
-        for (f in listOf(atlas(id), File(atlas(id).path + ".download"), File(atlas(id).path + ".download.id"), places(id), File(places(id).path + ".download"),
-            File(places(id).path + ".download.id"), File(places(id).path + "-wal"), File(places(id).path + "-shm"), meta(id))) {
+        val downloads = listOf(atlas(id), places(id), tiles(id), tilesIndex(id)).flatMap { listOf(File(it.path + ".download"), File(it.path + ".download.id")) }
+        for (f in listOf(atlas(id), places(id), tiles(id), tilesIndex(id), File(places(id).path + "-wal"), File(places(id).path + "-shm"), meta(id)) + downloads) {
             if (f.isFile) { freed += f.length(); f.delete() }
         }
         return freed
@@ -175,4 +194,7 @@ data class RegionDetail(
     val name: String get() = meta.name
     val bytes: Long get() = sizes.values.sum()
     val hasAtlas: Boolean get() = meta.layers[RegionLayer.MAP]?.kind == MapKind.ATLAS.id
+
+    /** Whether its map is its country's tiles ([MapKind.TILES]). */
+    val hasTiles: Boolean get() = meta.layers[RegionLayer.MAP]?.kind == MapKind.TILES.id
 }

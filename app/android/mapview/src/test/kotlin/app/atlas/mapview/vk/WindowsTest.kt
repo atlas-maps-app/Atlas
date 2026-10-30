@@ -6,6 +6,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -285,6 +286,68 @@ class WindowsTest {
     }
 
     @Test
+    fun offlineAWindowComesOnlyFromTheTilesThePhoneKeepsAndTheRestWaitForTheNetwork() {
+        var net = false
+        val offline = Windows(
+            dir,
+            fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
+            clock = { now },
+            packs = { w, after -> packsAsked += w to after; packed(w, after) },
+            tiles = { w -> tilesAsked += w; tiled(w) },
+            online = { net },
+        )
+        val core = Core()
+        val other = MapCore.Window(14, 8415, 5383)
+        // the kept country holds the first window: taken offline
+        tiled = { x -> if (x == w) Windows.Tiled(nlPack, nlDate, "netherlands") else null }
+        core.wanted = listOf(w, other)
+        assertTrue(offline.step(core))
+        assertArrayEquals(nlPack, offline.fileOf(w).readBytes())
+        // the other it does not hold: no data fetched, no failure counted, and not asked of the tiles again while offline
+        assertFalse(offline.step(core))
+        assertEquals(listOf(w, other), tilesAsked)
+        repeat(5) {
+            now += 500
+            assertFalse(offline.step(core))
+        }
+        assertEquals(2, tilesAsked.size)
+        assertTrue(fetched.isEmpty())
+        assertTrue(packsAsked.isEmpty())
+        assertEquals(Windows.Status.Idle, offline.status)
+        // nor is a window refreshed offline, however old
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 30 * day
+        assertFalse(offline.step(core))
+        assertTrue(fetched.isEmpty())
+        // the network back: the other is asked again at once, and built from its data as before
+        net = true
+        core.wanted = listOf(other)
+        assertTrue(offline.step(core))
+        assertEquals(3, tilesAsked.size)
+        assertEquals(1, fetched.size)
+    }
+
+    @Test
+    fun whatTheFolderHoldsIsCountedForTheMapsBoard() {
+        val core = Core()
+        takenFromTheTiles(core)
+        val built = MapCore.Window(14, 8415, 5383)
+        tiled = { null }
+        core.wanted = listOf(built)
+        assertTrue(withTiles.step(core))
+        val kept = Windows.kept(dir)
+        assertEquals(1, kept.tiled)
+        assertEquals(1, kept.built)
+        assertEquals(2, kept.places)
+        assertEquals(withTiles.fileOf(w).length() + withTiles.fileOf(built).length() + withTiles.dataOf(built).length(), kept.bytes)
+        // within a box: the Netherlands' holds both, Paris's neither
+        assertEquals(2, Windows.kept(dir, doubleArrayOf(50.7, 3.3, 53.6, 7.2)).places)
+        assertEquals(Windows.Kept(0, 0, 0L), Windows.kept(dir, doubleArrayOf(48.8, 2.2, 48.9, 2.5)))
+        assertEquals(Windows.Kept(0, 0, 0L), Windows.kept(null))
+    }
+
+    @Test
     fun aWindowTheTilesHoldWithNothingToDrawIsMarkedAndNotAskedForAgainUntilItIsDue() {
         tiled = { Windows.Tiled(ByteArray(0), nlDate, "netherlands") }
         packed = { _, _ -> Windows.Packed(gzip(nl), nlDate, "netherlands") }
@@ -324,13 +387,15 @@ class WindowsTest {
         assertEquals(1, fetched.size)
         assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
         assertFalse(withTiles.tiledOf(w).exists())
-        // a country holds it, but its bytes did not come whole
+        // a country holds it, but its bytes did not come whole: why, for the Maps board, until a window comes from them
+        assertNull(withTiles.tilesProblem)
         tiled = { throw IOException("window 14/8414/5383 of pack netherlands: not the tiles its index names") }
         dir.listFiles().orEmpty().forEach { it.delete() }
         assertTrue(withTiles.step(core))
         assertEquals(2, tilesAsked.size)
         assertEquals(2, fetched.size)
         assertFalse(withTiles.tiledOf(w).exists())
+        assertEquals("window 14/8414/5383 of pack netherlands: not the tiles its index names", withTiles.tilesProblem)
         // a window built from data is not taken from the tiles again, though they hold it: it goes on from its data
         tiled = { Windows.Tiled(nlPack, nlDate, "netherlands") }
         core.wanted = emptyList()

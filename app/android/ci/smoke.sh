@@ -852,6 +852,47 @@ map_phase() {
     { echo "MAP FAILED: no 'vk honest:' line with atlas.vk.off"; FAIL=1; }
   adb exec-out screencap -p > "$OUT/map-off.png"
   vk_crashes mapoff; vk_anr mapoff
+  map_tiles
+}
+
+# The phone's own way to its map (ENGINE.md step 3, one pack per country), which nothing above takes: CI's runs draw the
+# canal ring put on the device and build no windows (atlas.ci). Here the app opens the home as a phone does (atlas.bench,
+# the bench shortcut's: the Westerkerk, and no CI run, so the windows are taken), its data cleared and the canal ring
+# moved aside, and the Westerkerk's window must come from the Netherlands' tiles on GitHub (its `vk window <id>: <n>
+# bytes from the tiles of netherlands` line) and the core draw a complete frame, within MAP_TILES_WAIT seconds (180) each.
+# Alpha 22 was published without this, and on the user's phone the Westerkerk stayed with today's map (30 October). A
+# published list with no tiles of this core's version (its `vk windows:` line: "its own: none") fails at once: every
+# window would be built on the phone, so the Netherlands is republished at this core (packs.yml) and the job run again,
+# and the nightly tags no alpha before. The lines go to map-tiles.txt (the core's version and the tiles published, each
+# window and the first frame), the screen to map-tiles.png.
+map_tiles() {
+  local wait=${MAP_TILES_WAIT:-180} line
+  adb shell mv /data/local/tmp/atlas /data/local/tmp/atlas.aside 2>/dev/null
+  fresh_state
+  vk_launch maptiles --es atlas.screen home --ez atlas.bench true
+  wait_line maptiles "$wait" "vk windows: "
+  line=$(since_marker maptiles | grep -m1 -o 'vk windows: .*' | tr -d '\r')
+  if [ -z "$line" ]; then
+    echo "MAP FAILED: the published list of packs was not read within $wait s"; FAIL=1
+  elif [[ $line == *"its own: none"* ]]; then
+    echo "map: $line"
+    echo "MAP FAILED: packs-latest holds no tiles of this core: republish the Netherlands at this core (packs.yml), then run this job again"
+    FAIL=1
+  else
+    echo "map: $line"
+    if wait_line maptiles "$wait" "bytes from the tiles of netherlands"; then
+      echo "map: $(since_marker maptiles | grep -m1 -o 'vk window .* bytes from the tiles of netherlands.*')"
+    else
+      echo "MAP FAILED: no window from the Netherlands' tiles within $wait s"; FAIL=1
+    fi
+    wait_line maptiles "$wait" "vk first frame" && echo "map: tiles' $(since_marker maptiles | grep -m1 -o 'vk first frame .*')" ||
+      { echo "MAP FAILED: no frame of the Netherlands' tiles within $wait s"; FAIL=1; }
+  fi
+  since_marker maptiles | grep -E 'AtlasMap: vk (windows?|first frame|map)' | sed 's/.*AtlasMap: //' > "$OUT/map-tiles.txt"
+  adb exec-out screencap -p > "$OUT/map-tiles.png"
+  vk_crashes maptiles; vk_anr maptiles
+  adb shell am force-stop $PKG
+  adb shell mv /data/local/tmp/atlas.aside /data/local/tmp/atlas 2>/dev/null
 }
 if has_phase map; then
   map_phase

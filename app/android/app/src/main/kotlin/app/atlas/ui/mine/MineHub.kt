@@ -176,6 +176,8 @@ class MineHub(private val services: Services) {
         },
         voices = { runCatching { kotlinx.coroutines.runBlocking { services.settings.flow(MineKeys.VOICE_LANGS, emptySet()).first() } }.getOrDefault(emptySet()).sorted() },
         clock = { services.clock.millis() },
+        // the country's tiles of the core this phone runs (none in the JVM's tests, where no core loads)
+        tilesVersion = { app.atlas.mapview.MapEngine.windowVersion() },
     )
 
     /**

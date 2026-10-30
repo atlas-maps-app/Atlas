@@ -38,6 +38,12 @@ class LiveRegions(
     private val onChange: () -> Unit = {},
     /** The heap one scene may take: a share of what the runtime gives the app, leaving room for its render and frame. */
     private val heapBudget: () -> Long = { (Runtime.getRuntime().maxMemory() * SCENE_SHARE).toLong() },
+    /**
+     * Whether a country whose tiles the core draws holds a place (ENGINE.md step 3, one pack per country): there the map
+     * is the core's, and no published region is fetched or offered for it (the canal ring's scene, too big for a phone,
+     * was offered at the core's edge until 30 October: "the region grachten needs about 332 MB").
+     */
+    private val engineCountry: (LatLon) -> Boolean = { false },
 ) {
     /** What the map can draw for a view. */
     sealed interface State {
@@ -64,7 +70,9 @@ class LiveRegions(
     fun stateFor(view: LiveView): State {
         val p = view.target
         maybeRefresh()
-        val (allHere, allRemote) = library.at(p)
+        val inCountry = engineCountry(p)
+        val (allHere, published) = library.at(p)
+        val allRemote = if (inCountry) emptyList() else published
         val budget = heapBudget()
         val here = allHere.filter { sceneBytes(it.file.length()) <= budget }
         val remote = allRemote.filter { sceneBytes(it.bytes) <= budget }
@@ -77,6 +85,7 @@ class LiveRegions(
         }
         if (bestLocal == null) {
             if (pending != null) return pending
+            if (inCountry) return State.Empty("the engine draws this country from ${PackLibrary.ENGINE_REACH_KM} km away and closer: zoom in")
             // a region covers this place but its scene is too big for this phone: a build of the same streets would be too
             val big = allHere.map { it.id to it.file.length() } + allRemote.map { it.id to it.bytes }
             big.maxByOrNull { it.second }?.let { (id, bytes) ->

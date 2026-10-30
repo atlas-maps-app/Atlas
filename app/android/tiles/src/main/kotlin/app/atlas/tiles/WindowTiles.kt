@@ -3,6 +3,7 @@ package app.atlas.tiles
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.time.Instant
 
 /**
@@ -18,6 +19,11 @@ import java.time.Instant
  * before's, [Pack.tileSets]) the phone takes its own core's. Each index is downloaded whole once, held to packs.json's SHA-256, and kept in
  * [dir] beside the windows' data indexes ([WindowPacks]; one per pack, the one of an older release removed), so a
  * window costs one range of its own bytes. One instance per app; its calls block, on the windows' own thread.
+ *
+ * A country's tiles the phone keeps whole ([local]: an offline region's map, the user's download of the country) are
+ * read there instead, the index and each window's bytes from the files, held to the same SHA-256s, so the map needs no
+ * network where they reach; a file that does not read, or whose bytes are not the ones the index names, gives way to
+ * the published one.
  */
 class WindowTiles(
     /** The published packs: the catalog's list (kept for offline), or throws where there is none. */
@@ -26,7 +32,12 @@ class WindowTiles(
     dir: File,
     client: OkHttpClient = Http.client,
     clock: () -> Long = System::currentTimeMillis,
+    /** A country's tiles of a set kept whole on the phone ([Local]), or null where the phone keeps none of them. */
+    private val local: (Pack, TileSet) -> Local? = { _, _ -> null },
 ) {
+    /** A set of a country's tiles on the phone: its [tiles] and their [index], as packs.json publishes them. */
+    class Local(val tiles: File, val index: File)
+
     /**
      * A window's pack from a country's tiles: its [bytes] as the core reads them, none where it holds nothing to draw
      * (the open sea, a lake's middle), built from the windows' data of [date], from pack [pack].
@@ -52,11 +63,12 @@ class WindowTiles(
         val list = reads.list() ?: return null
         val holding = list.filter { PackReads.holds(it, x, y) }.mapNotNull { p -> p.tilesOf(version)?.let { p to it } }
         for ((pack, set) in holding.sortedByDescending { it.first.osmTime ?: Instant.EPOCH }) {
-            val index = indexOf(pack, set)
+            val kept = local(pack, set)
+            val index = indexOf(pack, set, kept)
             if (index.level != LEVEL || index.version != version) continue
             val e = index.find(x, y) ?: continue
             if (!e.drawn) return Tiled(ByteArray(0), index.date, pack.id)
-            val bytes = reads.range(set.tiles, e.offset, e.length)
+            val bytes = kept?.let { k -> readKept(k.tiles, set.tiles, e) } ?: reads.range(set.tiles, e.offset, e.length)
             if (!PackReads.sha256(bytes).contentEquals(e.sha256)) {
                 throw IOException("window $z/$x/$y of pack ${pack.id}: not the tiles its index names")
             }
@@ -70,14 +82,32 @@ class WindowTiles(
         return null
     }
 
-    /** [pack]'s tiles index of [set], from memory, from the folder, else downloaded. */
+    /**
+     * Window entry [e]'s bytes from the tiles kept on the phone ([file], a copy of [published]); null where the file is
+     * not the one published (its size) or does not read, or the bytes are not the ones the index names.
+     */
+    private fun readKept(file: File, published: PackFile, e: TilesIndex.Entry): ByteArray? = try {
+        RandomAccessFile(file, "r").use { f ->
+            if (f.length() != published.bytes) return null
+            val b = ByteArray(e.length)
+            f.seek(e.offset)
+            f.readFully(b)
+            b.takeIf { PackReads.sha256(it).contentEquals(e.sha256) }
+        }
+    } catch (_: IOException) {
+        null
+    }
+
+    /** [pack]'s tiles index of [set], from memory, from the phone's copy of the country ([kept]), the folder, else downloaded. */
     @Synchronized
-    private fun indexOf(pack: Pack, set: TileSet): TilesIndex {
+    private fun indexOf(pack: Pack, set: TileSet, kept: Local? = null): TilesIndex {
         val file = set.index
         val sha = file.sha256?.lowercase() ?: throw IOException("pack ${pack.id}: its tiles' index names no SHA-256")
         indexes[pack.id]?.takeIf { it.first == sha }?.let { return it.second }
         val read = try {
-            TilesIndex.read(reads.index(pack, file, INDEX_SUFFIX))
+            val own = kept?.index?.takeIf { it.isFile && it.length() == file.bytes }?.let { f -> runCatching { f.readBytes() }.getOrNull() }
+                ?.takeIf { PackReads.hex(it) == sha }
+            TilesIndex.read(own ?: reads.index(pack, file, INDEX_SUFFIX))
         } catch (e: IllegalArgumentException) {
             throw IOException("pack ${pack.id}: its tiles' index does not read: ${e.message}", e)
         }

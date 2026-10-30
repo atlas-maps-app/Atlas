@@ -680,4 +680,20 @@
         <item quantity="one">%1$d modèle</item>
         <item quantity="other">%1$d modèles</item>
     </plurals>
+
+    <!-- The Maps board's country card: what the map took of a country as it was looked at, and its download whole. -->
+    <string name="mine_country_auto">Pris en regardant la carte</string>
+    <string name="mine_country_none">Rien encore : la carte prend chaque zone quand vous l’ouvrez</string>
+    <string name="mine_country_built">dont %1$d construites sur le téléphone à partir des données d’OpenStreetMap</string>
+    <string name="mine_country_getting">Récupération d’une zone de cette carte…</string>
+    <string name="mine_country_building">Construction d’une zone sur le téléphone…</string>
+    <string name="mine_country_waiting">Nouvel essai bientôt</string>
+    <string name="mine_country_problem">Cette carte n’a pas répondu : %1$s</string>
+    <string name="mine_country_keep">Tout garder hors ligne · %1$s</string>
+    <string name="mine_country_kept">Entièrement sur ce téléphone</string>
+    <string name="mine_country_keeping">Téléchargement complet · %1$d %%</string>
+    <plurals name="mine_country_areas">
+        <item quantity="one">%1$d zone sur ce téléphone · %2$s</item>
+        <item quantity="other">%1$d zones sur ce téléphone · %2$s</item>
+    </plurals>
 </resources>

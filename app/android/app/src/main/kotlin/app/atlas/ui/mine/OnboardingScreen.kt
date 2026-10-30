@@ -268,7 +268,7 @@ private fun ColumnScope.RegionStep(args: Dest.Onboarding, onNext: () -> Unit) {
             } else {
                 val caption = when {
                     bytes == null -> ""
-                    kind == MapKind.ATLAS && packed -> stringResource(R.string.mine_picker_from_pack)
+                    kind == MapKind.TILES || kind == MapKind.ATLAS && packed -> stringResource(R.string.mine_picker_from_pack)
                     kind == MapKind.ATLAS -> stringResource(R.string.mine_picker_built)
                     else -> stringResource(R.string.mine_est_unknown)
                 }

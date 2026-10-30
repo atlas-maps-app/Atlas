@@ -83,6 +83,20 @@ class MineScreenshotTest {
     }
 
     @Test
+    fun offlineCountry() {
+        // the Maps board with the Netherlands' card: what the map took as it was looked at, and the country whole
+        val s = phone()
+        s.mine.useDeps(MineFixtures.countryDeps(s, s.clock.instant()))
+        s.mine.engine.refresh()
+        show(Dest.Offline, s)
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Keep it all offline", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        capture("mine_offline_country")
+        // its button opens the country list with the Netherlands picked, at the size it takes: tiles, index and places
+        compose.onNodeWithText("Keep it all offline", substring = true).performClick()
+        compose.waitForIdle()
+    }
+
+    @Test
     fun mine() {
         val s = phone()
         val at = s.clock.instant().minus(Duration.ofHours(2))

@@ -44,6 +44,31 @@ object MineFixtures {
         app.atlas.tiles.Pack("portugal", "Portugal", "PT", BBox(-9.6, 36.9, -6.1, 42.2), null, "packs-test", listOf(packFile("atlas", "portugal.atlas", 480), packFile("places", "portugal.places", 130))),
     )
 
+    /** The core version [countryDeps]' phone runs: the one the Netherlands' tiles of [country] were built by. */
+    const val CORE = "core-p11 s1.1-49f47f3df1d91a4f"
+
+    /**
+     * The Netherlands as packs-latest publishes it since one pack per country: its places, its windows' data and its
+     * tiles of [CORE] (test data: the sizes are the real pack's).
+     */
+    fun country(): app.atlas.tiles.Pack = app.atlas.tiles.Pack(
+        "netherlands", "Netherlands", "NL", BBox(3.3, 50.7, 7.2, 53.6), "2026-10-28T21:21:02Z", "packs-test",
+        listOf(
+            packFile("places", "netherlands.places.db.gz", 387), packFile("windows", "netherlands.windows", 5506), packFile("windows-index", "netherlands.windows.idx", 1),
+            packFile("tiles", "netherlands.tiles", 780).copy(coreVersion = CORE), packFile("tiles-index", "netherlands.tiles.idx", 1).copy(coreVersion = CORE),
+        ),
+    )
+
+    /** Like [offlineDeps], with the published list of [country] and a phone whose core is [CORE]. */
+    fun countryDeps(services: Services, now: Instant) = RegionDeps(
+        packs = { listOf(country()) },
+        packDownloader = PackDownloader(),
+        importPlaces = { _, _, _, _ -> error("offline") },
+        segments = services.segments,
+        clock = { now.toEpochMilli() },
+        tilesVersion = { CORE },
+    )
+
     /** Like [offlineDeps], with the published list of [packs] and a map builder that would build small areas on the phone. */
     fun packDeps(services: Services, now: Instant) = RegionDeps(
         packs = { packs() },

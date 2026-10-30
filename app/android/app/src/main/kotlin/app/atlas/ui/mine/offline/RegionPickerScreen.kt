@@ -117,7 +117,9 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
     }
     LaunchedEffect(mode) {
         if (mode == PickerModel.Mode.COUNTRY) packs = withContext(Dispatchers.IO) { runCatching { manager.engine.packs() }.getOrDefault(emptyList()) }
-            .filter { it.atlas != null || it.places != null }.sortedBy { it.name }
+            .filter { it.atlas != null || it.places != null || manager.engine.tilesOf(it) != null }.sortedBy { it.name }
+            // the Maps board's country card opens the list with its country picked
+            .also { list -> if (picked == null) picked = list.firstOrNull { it.id == args.pack } }
     }
     LaunchedEffect(centre) { town = withContext(Dispatchers.IO) { runCatching { PickerModel.townNear(services.placeStores, centre, "") }.getOrNull()?.takeIf { it.isNotBlank() } } }
     LaunchedEffect(boxes, layers) {
@@ -157,13 +159,13 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
                 PickerModel.lassoBox(loop)?.let { b -> if (drawn == null) frozen = (radius * 2.2f).coerceAtLeast(12f); drawn = b }
             }, onClear = { drawn = null }, boxes = boxes, pinLabel = town)
             PickerModel.Mode.ROUTE -> RouteBody(route, corridor, { corridor = it }, boxes)
-            PickerModel.Mode.COUNTRY -> CountryBody(packs, picked, details.filter { it.complete }.map { it.id }.toSet()) { picked = it }
+            PickerModel.Mode.COUNTRY -> CountryBody(packs, picked, details.filter { it.complete }.map { it.id }.toSet(), manager.engine::countryBytes) { picked = it }
         }
         if (boxes.isNotEmpty()) {
             LayerChips(routing, { routing = it }, places, { places = it })
             val caption = when {
                 q == null -> ""
-                q.kind == MapKind.ATLAS && q.packed -> stringResource(R.string.mine_picker_from_pack)
+                q.kind == MapKind.TILES || q.kind == MapKind.ATLAS && q.packed -> stringResource(R.string.mine_picker_from_pack)
                 q.kind == MapKind.ATLAS -> stringResource(R.string.mine_picker_built)
                 else -> stringResource(R.string.mine_est_unknown)
             } + if (boxes.size > 1) " · " + stringResource(R.string.mine_picker_parts, boxes.size) else ""
@@ -246,7 +248,7 @@ private fun RouteBody(route: List<LatLon>, corridor: Float, onCorridor: (Float) 
 }
 
 @Composable
-private fun CountryBody(packs: List<Pack>?, picked: Pack?, have: Set<String>, onPick: (Pack) -> Unit) {
+private fun CountryBody(packs: List<Pack>?, picked: Pack?, have: Set<String>, bytesOf: (Pack) -> Long, onPick: (Pack) -> Unit) {
     when {
         packs == null -> Text(stringResource(R.string.mine_picker_country_loading), style = mt(13f, 500), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
         packs.isEmpty() -> MineState("ui.web", stringResource(R.string.mine_picker_country_none), text = stringResource(R.string.mine_picker_country_none_text), tint = MineTone.greenDeep)
@@ -261,7 +263,7 @@ private fun CountryBody(packs: List<Pack>?, picked: Pack?, have: Set<String>, on
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (p in packs) {
                     val on = p.id == picked?.id
-                    val size = RegionEngine.size(p.diskBytes.takeIf { it > 0 } ?: p.downloadBytes)
+                    val size = RegionEngine.size(bytesOf(p))
                     Row(
                         Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(18.dp)).background(if (on) Color14 else MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).clickable { onPick(p) }.padding(horizontal = 14.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
