@@ -211,9 +211,13 @@ constexpr vk::Extent2D size{.width = 180, .height = 400};
 /// Draws `camera` until the map's picture is complete (tiles built by the workers, their fades done) and stays so, at
 /// most `seconds`; how many frames went out, or -1 when it never completed. A complete picture waits on the named
 /// pack's tiles alone, and the packs drawn under it or beside it may take theirs in after (on a slow build, as
-/// TSan's, a frame or more after): the workers finish, and the next frame draws the same tiles.
+/// TSan's, a frame or more after): the workers finish, and the next frame draws the same tiles. The bound catches a
+/// picture that never completes, not a slow one (timing gates hold only with ATLAS_TIMED=1, on a quiet machine): 240 s,
+/// as look_compare_vk_test's and pinch_audit_vk_test's own loops wait. 30 s was too short for a case in a process of
+/// its own on CI's runners, beside other tests (ci/flow, 30 October: the clouds' case under ASan, the Prinsengracht
+/// on a wet night under TSan).
 int draw_until_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
-                        double seconds = 30.0) {
+                        double seconds = 240.0) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
     int drawn = 0;
     std::optional<std::vector<std::uint64_t>> complete; // the tiles of the last frame, when it was complete
