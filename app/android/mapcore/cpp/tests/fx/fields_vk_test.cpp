@@ -307,11 +307,15 @@ TEST_CASE("the fields' provider binds them for the frame's size once made, in fu
     auto fields_on = [&] { return ((*builder)->state().block.info.x & shaders::FRAME_FIELDS) != 0U; };
     const frame::FrameLayout& layout = (*builder)->layout();
 
-    // The first frame asks for its size's fields: the tables are bound, the fields not yet.
+    // The first frame asks for its size's fields: the tables are bound, the fields not yet. The worker is held while
+    // the frame is drawn: made in a millisecond, the fields would otherwise be published within the frame's own update
+    // whenever the frame's thread is paused there (a busy machine), and taken at once.
+    fields.worker().hold(true);
     draw();
     CHECK(layout.bound_buffer(frame::Global::byte_tables) == fields.images().tables());
     CHECK(fields.wanted() == wide_size);
     CHECK_FALSE(fields_on());
+    fields.worker().hold(false);
     fields.worker().wait_idle();
     CHECK(wakes.load() == 1);
     CHECK(fs::exists(fx::FieldDisk(dir).path(wide_size)));
@@ -333,9 +337,11 @@ TEST_CASE("the fields' provider binds them for the frame's size once made, in fu
 
     // A resize: off until the new size's fields are made, then theirs, the old images kept until their frames finish.
     (*builder)->set_inputs({.camera = tall, .mode = frame::Mode::full, .scene = &scene});
+    fields.worker().hold(true);
     draw();
     CHECK(fields.wanted() == tall_size);
     CHECK_FALSE(fields_on());
+    fields.worker().hold(false);
     fields.worker().wait_idle();
     draw();
     CHECK(fields_on());

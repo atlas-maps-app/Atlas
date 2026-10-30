@@ -258,6 +258,12 @@ public:
     [[nodiscard]] double last_ms() const;
     [[nodiscard]] bool last_from_disk() const;
 
+    // ---- For tests.
+
+    /// While held, the worker begins no request (one under way finishes): a frame drawn meanwhile finds the fields it
+    /// asked for not yet published, however fast they are made. Let go before wait_idle.
+    void hold(bool held);
+
 private:
     void loop(const std::stop_token& stop);
 
@@ -269,6 +275,7 @@ private:
     std::optional<FieldSize> next_;
     std::optional<FieldSize> current_; ///< under way or published
     bool busy_ = false;
+    bool held_ = false;
     std::shared_ptr<const ScreenFields> latest_;
     std::shared_ptr<const ScreenFields> keeping_; ///< made elsewhere, to keep on disk
     std::function<void()> wake_on_publish_;

@@ -527,13 +527,21 @@ bool FieldWorker::last_from_disk() const {
     return last_from_disk_;
 }
 
+void FieldWorker::hold(bool held) {
+    {
+        const std::lock_guard lock(mutex_);
+        held_ = held;
+    }
+    wake_.notify_all();
+}
+
 void FieldWorker::loop(const std::stop_token& stop) {
     while (!stop.stop_requested()) {
         FieldSize size;
         std::shared_ptr<const ScreenFields> keeping;
         {
             std::unique_lock lock(mutex_);
-            wake_.wait(lock, stop, [this] { return next_.has_value() || keeping_ != nullptr; });
+            wake_.wait(lock, stop, [this] { return (next_.has_value() && !held_) || keeping_ != nullptr; });
             if (stop.stop_requested()) return;
             if (keeping_ != nullptr) {
                 keeping = std::move(keeping_);
