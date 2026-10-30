@@ -111,6 +111,9 @@ public:
     [[nodiscard]] std::size_t missing() const noexcept { return missing_; }
     /// Whether a tile drawn is still fading in (its fade below 1).
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+    /// The active pack and the coarser one drawn this frame (their store ids; empty: none).
+    [[nodiscard]] std::string_view active() const noexcept { return pack_id_; }
+    [[nodiscard]] std::string_view coarser() const noexcept { return coarser_id_; }
 
 private:
     /// The tiles of one pack, `id` (the active one; the coarser one outside `mask`; a neighbour where none of `above`

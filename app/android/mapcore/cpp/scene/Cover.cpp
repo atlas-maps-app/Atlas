@@ -57,6 +57,8 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     fading_ = false;
     fade_seconds_ = in.fade_seconds;
     for (Shown& s : shown_) s.drawn = false;
+    pack_id_.clear();
+    coarser_id_.clear();
     if (in.pack == nullptr || !in.pack->pack.is_render() || in.pack->pack.head() == nullptr) {
         shown_.clear();
         return;

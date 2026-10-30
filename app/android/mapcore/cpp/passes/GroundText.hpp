@@ -4,11 +4,15 @@
 // as the renders' are hazed.
 //   - Stage T (build, on the workers): each tile's canal name candidates (its label layer's, in source order) and the
 //     region's water level (the pack's style), kept with the tile (PassTile::cpu).
-//   - Stage F (update, on the render thread): the cover's tiles' candidates, each once; the names (text/CanalNames: the
-//     renders' rule at rest, kept on their ways while moving, fading, turned for reading); each name shaped once as
-//     Android shapes it (text/Shaper, the platform's kerning rule) in Geist 700, its glyphs' outlines added to the
-//     shared curve and band data on first use (text/SlugBands' GlyphAtlas); its glyphs laid out under its matrix, at
-//     rest the matrix as the SVG prints it (which the oracle draws), into the frame slot's draws.
+//   - Stage F (update, on the render thread): the candidates of every pack drawn but the coarser one, which lies under
+//     the active pack (the active pack's and the neighbours', frame cells' windows where four cells meet): each pack's
+//     whole once its own stage T has given them (build_pack), else its cover's tiles', each once, every point taken
+//     into the frame drawn; the names (text/CanalNames: the renders' rule at rest over them all, by group and index, so
+//     a name is placed once and on the same way whichever cell is active, kept on their ways while moving, fading,
+//     turned for reading); each name shaped once as Android shapes it (text/Shaper, the platform's kerning rule) in
+//     Geist 700, its glyphs' outlines added to the shared curve and band data on first use (text/SlugBands'
+//     GlyphAtlas); its glyphs laid out under its matrix, at rest the matrix as the SVG prints it (which the oracle
+//     draws), into the frame slot's draws.
 //   - Record: one instanced draw, six vertices a glyph, at the pass's ground slot (one: the canal names are the last of
 //     the ground's marks), after the ground's translucent phases up to the tram tracks (K9's ground_order:
 //     canal_names), depth test on and writes off; the designators' glyphs, each at its runway's slot, in a draw of
@@ -25,6 +29,7 @@
 #include "gpu/Memory.hpp"
 #include "text/CanalNames.hpp"
 #include "text/SlugBands.hpp"
+#include "view/Ladder.hpp"
 
 #include <array>
 #include <atomic>
@@ -82,8 +87,8 @@ public:
     [[nodiscard]] bool fading() const noexcept override { return fading_; }
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
-    /// The pack-level stage T: the pack's canal names whole (text::pack_canals), which the renders' rule reads once the
-    /// pack is drawn (FrameState::active_pack).
+    /// The pack-level stage T: the pack's canal names whole (text::pack_canals; a frame cell's windows each a source of
+    /// their own), which the renders' rule reads once the pack is drawn (FrameState::active_pack, neighbour_packs).
     [[nodiscard]] gpu::Result<void> build_pack(scene::PackBuild& build) const override;
     /// Set 1's glyphs (GlyphGlobals, below), and the fonts from `resources` where they hold them (the map's: the APK's
     /// assets, a host's repo; a face loaded already stays): the font source is the map's option, and without one the
@@ -137,10 +142,13 @@ private:
     bool fading_ = false; // the last frame's names left a fade under way
     std::vector<text::PlacedName> placed_;
     std::vector<frame::GroundRun> designators_;
-    std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted
-    std::shared_ptr<const text::PackCanals> pack_;      // the active pack's names whole (use_pack, or the frame's)
-    bool pack_from_frame_ = false;                      // pack_ is the frame's active pack's
-    std::shared_ptr<const text::PackCanals> pack_read_; // the pack data the names last read (held)
+    std::shared_ptr<const text::PackCanals> pack_; // the active pack's names whole (use_pack, or the frame's)
+    bool pack_from_frame_ = false;                 // pack_ is the frame's active pack's
+    // What the names last read: each pack's names whole (held, with its id), the cover's tiles (keys and handles) of
+    // the others, and the frame drawn.
+    std::vector<std::pair<std::shared_ptr<const text::PackCanals>, std::string>> read_packs_;
+    std::vector<std::uint64_t> read_tiles_;
+    std::optional<view::GroundFrame> read_frame_;
     double water_level_ = -1.5;
     tiles::CanalNamesStyle look_;
     std::unordered_map<std::string, Shaped> shaped_;

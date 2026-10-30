@@ -3,8 +3,9 @@
 // records cannot tell. When a pack becomes the active one, the coarser one or a neighbour (scene/World.hpp), a thread
 // of the world's, at background priority, runs every pass's build_pack over it once (frame::Pass::build_pack, reading
 // its tiles through PackBuild::tiles) and publishes what each kept (PackBuild::keep) as the pack's ResidentPack; the
-// render thread takes it between frames and the passes read it in frame::FrameState (active_pack, coarser_pack), like a
-// tile's PassTile::cpu: made on the worker, const once published, freed when the world lets the pack go.
+// render thread takes it between frames and the passes read it in frame::FrameState (active_pack, coarser_pack,
+// neighbour_packs), like a tile's PassTile::cpu: made on the worker, const once published, freed when the world lets
+// the pack go.
 #pragma once
 
 #include "frame/Pass.hpp"

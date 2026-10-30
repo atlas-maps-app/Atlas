@@ -505,6 +505,7 @@ void FrameBuilder::stage_f() {
     state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
     state_.active_pack = ours ? scene->active_pack() : nullptr;
     state_.coarser_pack = ours ? scene->coarser_pack() : nullptr;
+    state_.neighbour_packs = ours ? scene->neighbour_packs() : std::span<const scene::ResidentPack* const>();
     // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
     state_.block.strokes = strokes_of(state_.active_pack);
     state_.block.windows = windows_of(state_.active_pack);

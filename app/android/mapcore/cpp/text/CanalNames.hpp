@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::tiles {
@@ -35,8 +36,13 @@ class Pack; // tiles/Container.hpp
 namespace atlas::text {
 
 /// A canal name candidate (the tiles' label layer, source 0): its source order in S['labels'], its name, the way's
-/// middle vertex and the one before it in the region's metres, its vertex count, its slot among the marks.
+/// middle vertex and the one before it in the region's metres (the frame drawn's, once a frame reads it), its vertex
+/// count, its slot among the marks; and its source's group, which it is known by with its index: 0 within one pack's
+/// own source order (a region's S['labels']), a window's tile within a frame cell's windows (each window is a source of
+/// its own, its labels numbered from 0), a pack's own (canal_group) where a frame reads several packs' names. The
+/// renders' rule takes the candidates by group, then index.
 struct CanalCandidate {
+    std::uint64_t group = 0;
     std::uint32_t index = 0;
     std::string name;
     double mid_x = 0.0;
@@ -60,7 +66,12 @@ struct PackCanals {
 };
 
 /// `pack`'s canal names (a pack-level stage T: some milliseconds for the canal ring's 652), or the first tile's error.
-[[nodiscard]] tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack);
+/// `windows`: the pack is a frame cell's windows, each tile a source of its own (CanalCandidate::group its tile).
+[[nodiscard]] tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack, bool windows = false);
+
+/// The group of a pack's own candidates where a frame reads several packs' names (CanalCandidate::group): its id
+/// hashed (FNV-1a), below every window's tile key, so a render pack's names come before the windows'.
+[[nodiscard]] std::uint64_t canal_group(std::string_view pack) noexcept;
 
 /// What the canal names read of a frame.
 struct CanalView {

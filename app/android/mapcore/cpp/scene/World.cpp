@@ -520,6 +520,10 @@ void World::take_packs() {
     });
 }
 
+void World::take_neighbour_packs() noexcept {
+    for (std::size_t i = 0; i < max_neighbours; ++i) neighbour_packs_.at(i) = built(neighbours_.at(i));
+}
+
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
     taken_.clear();
@@ -529,6 +533,7 @@ void World::update(const frame::FrameState& state) {
         choose_coarser();
         neighbours_ = {};
         take_packs();
+        take_neighbour_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         // without a pack the view looks at its target from a frame centred on it: the windows wanted there
         if (state.view) {
@@ -552,6 +557,7 @@ void World::update(const frame::FrameState& state) {
     choose_coarser();
     choose_neighbours(state.camera);
     take_packs();
+    take_neighbour_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
     if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
         for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t);

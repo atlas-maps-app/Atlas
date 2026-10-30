@@ -160,6 +160,9 @@ public:
     [[nodiscard]] std::optional<view::GroundFrame> ground_frame() const noexcept override { return frames_.current(); }
     [[nodiscard]] const ResidentPack* active_pack() const noexcept override { return built(active_); }
     [[nodiscard]] const ResidentPack* coarser_pack() const noexcept override { return built(coarser_); }
+    [[nodiscard]] std::span<const ResidentPack* const> neighbour_packs() const noexcept override {
+        return neighbour_packs_;
+    }
     /// The packs' stage T (tests: wait_idle).
     [[nodiscard]] PackStage& pack_stage() noexcept { return *pack_stage_; }
 
@@ -208,6 +211,8 @@ private:
     void place_items(const ResidentTile& tile);
     /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
     void take_packs();
+    /// The neighbours' stage T, as built so far (neighbour_packs).
+    void take_neighbour_packs() noexcept;
     /// What was built of `pack`, or null.
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
 
@@ -241,6 +246,7 @@ private:
     std::optional<tiles::GridBox> mask_;
     std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> neighbours_;
     std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> last_neighbours_;
+    std::array<const ResidentPack*, max_neighbours> neighbour_packs_{}; ///< their stage T, once built (update)
     mutable std::mutex wanted_mutex_;
     std::vector<tiles::TileKey> wanted_;                     ///< under wanted_mutex_
     std::optional<std::array<std::int32_t, 2>> last_target_; ///< the camera's target at the last look (render thread)
