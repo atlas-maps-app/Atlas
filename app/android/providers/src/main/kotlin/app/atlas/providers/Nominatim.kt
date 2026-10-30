@@ -83,7 +83,8 @@ class Nominatim(private val http: Http, private val base: String = "https://nomi
             licence = "ODbL",
             attribution = "Search by Nominatim · © OpenStreetMap contributors",
             url = "https://nominatim.openstreetmap.org",
-            note = "One request a second at most, never while you type.",
+            note = "Asked only for the address at a place where Photon cannot answer: one request a second at most, never while you type.",
+            hosts = listOf("nominatim.openstreetmap.org"),
         )
 
         private fun coord(v: Double) = String.format(Locale.ROOT, "%.6f", v)

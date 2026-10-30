@@ -251,6 +251,7 @@ TEST_CASE("a placed label stays where it is on the map, growing and shrinking wi
     CHECK(fading->stand.x == p1[1].x);
     CHECK(fading->alpha == 1.0F);
     CHECK(placement.placed() == 1);
+    CHECK(placement.fading()); // from its first frame on, whole as it turns hidden
     drawn = placement.update(c, covered, at * 1.25, 0.425);
     fading = entry(drawn, 1);
     ATLAS_REQUIRE(fading != nullptr);
@@ -267,10 +268,12 @@ TEST_CASE("a placed label stays where it is on the map, growing and shrinking wi
     ATLAS_REQUIRE(back != nullptr);
     CHECK(back->stand.x == p1[1].x);
     CHECK(back->alpha == 0.0F);
+    CHECK(placement.fading()); // from its first frame on, unseen as it comes back
     drawn = placement.update(c, frame, at * 1.25, 1.2);
     back = entry(drawn, 1);
     ATLAS_REQUIRE(back != nullptr);
     CHECK(back->alpha == 1.0F);
+    CHECK(!placement.fading());
 
     // A label the frame brings in is placed around the kept ones, at the set's size, and fades in.
     std::array<Point, 2> p2{{zoom({.x = 190, .y = 150}, 1.25F), {.x = 330, .y = 60}}};

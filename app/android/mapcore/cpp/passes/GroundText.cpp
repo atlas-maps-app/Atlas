@@ -226,6 +226,7 @@ void GroundText::update(const frame::FrameState& state) {
     draws_.clear();
     placed_.clear();
     designators_.clear();
+    fading_ = false; // a frame that places no names leaves none fading
     // (the names on the ground: unless the map leaves them out)
     if (!state.view.has_value() || state.camera.leaves_out(style::camera_part::ground_text)) return;
     gather(state);
@@ -245,6 +246,7 @@ void GroundText::update(const frame::FrameState& state) {
                                .rest = state.rest,
                                .seconds = state.seconds};
     const auto names = names_.update(view);
+    fading_ = names_.fading();
     placed_.assign(names.begin(), names.end());
     for (const text::PlacedName& p : placed_) draw_run(state, p.drawn, first_ground_slot(), p.alpha);
     const auto named = static_cast<std::uint32_t>(draws_.size());

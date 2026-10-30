@@ -147,6 +147,7 @@ class Wikidata(private val http: Http, private val base: String = "https://www.w
         val INFO = ProviderInfo(
             id = ID, name = "Wikidata", licence = "CC0", attribution = "Facts from Wikidata", url = "https://www.wikidata.org",
             note = "Logos, colours, images, dates and architects; images and logos carry their own Commons licences.",
+            hosts = listOf("www.wikidata.org"),
         )
 
         private fun texts(o: JsonObject?): Map<String, String> =
@@ -257,6 +258,12 @@ class Commons(private val http: Http, private val base: String = "https://common
     }
 
     companion object {
+        val INFO = ProviderInfo(
+            id = "commons", name = "Wikimedia Commons", licence = "Per picture", attribution = "Pictures from Wikimedia Commons, each with its licence",
+            url = "https://commons.wikimedia.org", note = "The pictures of places, logos and namesakes, each shown with its own licence.",
+            hosts = listOf("commons.wikimedia.org", "upload.wikimedia.org"),
+        )
+
         /** "Albert_Heijn Logo.svg" and "File:Albert Heijn Logo.svg" are the same file. */
         fun normaliseName(name: String): String = name.trim().removePrefix("File:").replace('_', ' ')
 

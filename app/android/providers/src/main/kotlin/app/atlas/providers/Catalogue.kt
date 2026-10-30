@@ -1,16 +1,23 @@
 package app.atlas.providers
 
 /**
- * Every online source Atlas knows, for the Settings · Data screen and the credits: what each is, its licence and
- * credit line, whether it needs a key, and whether it is on by default.
+ * Every online source the app asks, for the Settings · Data screen, the privacy board and the credits: what each is,
+ * its licence and credit line, whether it needs a key, whether it is on by default, and the hosts it is asked at. The app
+ * adds the sources its own screens ask (SourcesModel); a test holds the lists to the code's clients.
  */
 object Catalogue {
     val ALL: List<ProviderInfo> = listOf(
         Overpass.INFO, Nominatim.INFO, Photon.INFO,
         Mangrove.INFO, FoursquareRatings.INFO, YelpRatings.INFO, TripAdvisorRatings.INFO,
-        OpenChargeMap.INFO, OsmChargers.INFO, NdwChargers.INFO, BnetzaChargers.INFO, Afdc.INFO, Chargemap.INFO,
-        Weather.INFO, MetNorway.INFO, Wikidata.INFO, OsmNotes.INFO, Transitous.INFO,
+        OpenChargeMap.INFO, OsmChargers.INFO, NdwChargers.INFO, BnetzaChargers.INFO,
+        Weather.INFO, MetNorway.INFO, Wikidata.INFO, Commons.INFO, OsmNotes.INFO, OsmEdits.INFO,
     )
+
+    /**
+     * Sources written but not asked by the app yet: no screen lists them until they are (the US register, Chargemap's
+     * partner feed, public transport).
+     */
+    val NOT_WIRED: List<ProviderInfo> = listOf(Afdc.INFO, Chargemap.INFO, Transitous.INFO)
 
     /** Data bundled in the app rather than asked online, with the credit each licence requires. */
     val BUNDLED: List<ProviderInfo> = listOf(
@@ -24,5 +31,5 @@ object Catalogue {
         ),
     )
 
-    fun byId(id: String): ProviderInfo? = (ALL + BUNDLED).firstOrNull { it.id == id }
+    fun byId(id: String): ProviderInfo? = (ALL + BUNDLED + NOT_WIRED).firstOrNull { it.id == id }
 }

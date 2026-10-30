@@ -26,6 +26,7 @@ object MetNorway {
         id = ID, name = "MET Norway", licence = "CC BY 4.0", attribution = "Data from MET Norway",
         url = "https://api.met.no", onByDefault = true,
         note = "The weather's second source, asked when Open-Meteo cannot answer.",
+        hosts = listOf("api.met.no"),
     )
 
     /** The complete forecast for [at] from [base]. */

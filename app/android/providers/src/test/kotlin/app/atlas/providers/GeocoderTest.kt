@@ -82,6 +82,41 @@ class GeocoderTest {
     }
 
     @Test
+    fun photonDownGivesTheAddressHereFromNominatimButNeverASearch() = runBlocking {
+        Mock().use { photon ->
+            Mock().use { nominatim ->
+                photon.dispatch { response("<html><body>502 Bad Gateway</body></html>", 502) }
+                nominatim.fixture("nominatim_reverse.json")
+                var on = true
+                val g = FailoverGeocoder(Photon(testHttp(), photon.base), Nominatim(testHttp(), nominatim.base)) { on }
+                assertTrue("the search box may still ask per keystroke", g.typeahead)
+                assertEquals("Westermarkt", g.reverse(LatLon(52.374547, 4.883986), "en")!!["addr:street"])
+                assertEquals(1, nominatim.count)
+                // a search goes to Photon alone: its failure stands, and Nominatim is not asked
+                val failed = runCatching { g.search("Westerkerk", westerkerk) }.exceptionOrNull()
+                assertTrue("$failed", failed is HttpException && failed.code == 502)
+                // switched off, Nominatim is not asked either: Photon's failure stands
+                on = false
+                assertTrue(runCatching { g.reverse(westerkerk, "en") }.exceptionOrNull() is HttpException)
+                assertEquals(1, nominatim.count)
+                assertEquals(3, photon.count)
+            }
+        }
+    }
+
+    @Test
+    fun photonAnsweringLeavesNominatimUnasked() = runBlocking {
+        Mock().use { photon ->
+            Mock().use { nominatim ->
+                photon.fixture("photon_reverse.json")
+                val g = FailoverGeocoder(Photon(testHttp(), photon.base), Nominatim(testHttp(), nominatim.base))
+                assertEquals("1016 DL", g.reverse(LatLon(52.374436, 4.883981), "en")!!.name())
+                assertEquals(0, nominatim.count)
+            }
+        }
+    }
+
+    @Test
     fun nominatimIsHeldToOneRequestASecond() = runBlocking {
         Mock().use { m ->
             repeat(2) { m.fixture("nominatim_search.json") }

@@ -96,6 +96,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var overlays by mutableStateOf(MapOverlays())
     var debug by mutableStateOf(false)
     var tape by mutableStateOf<Tape?>(null)
+
+    /** The tilt readout while it shows ([TiltReadout]): from a tilt's start to the end of its fade, the canvas draws it. */
+    var readout by mutableStateOf<TiltReadoutShown?>(null)
+        private set
     var size by mutableStateOf(0 to 0)
     var insets by mutableStateOf(Insets())
 
@@ -127,6 +131,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var onLongPressBuilding: ((MapPick) -> Unit)? = null
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
+    /** Plays one of Android's haptic feedback constants on the map's view (the view sets it): the tilt's stops. */
+    var haptic: (Int) -> Unit = {}
+
     val gestures = GestureMachine(GestureConfig.forDensity(1f), this)
 
     /** The overlays' painter, made at the first draw (and again when the density changes). */
@@ -136,6 +143,17 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var lookAheadJob: Job? = null
     private var tapeJob: Job? = null
     private var fadeJob: Job? = null
+
+    // The tilt readout: its linger and fade, its painter, where the tilting fingers are.
+    private var readoutJob: Job? = null
+    private var readoutPainter: TiltReadoutPainter? = null
+    private val tiltFingers = FloatArray(6)
+
+    /** The pitch the fingers' tilt began at (a cancelled one goes back to it); null while no fingers tilt. */
+    private var tiltFrom: Double? = null
+
+    /** The user tilted while the map followed the course: it keeps their tilt rather than navigation's. */
+    private var courseTilted = false
     private var touching = false
     private var lastPanX = 0f
     private var lastPanY = 0f
@@ -941,6 +959,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** The markers' text in the boards' Geist, from the fonts the engine's frames use. */
     private val markerSans: (Int) -> Typeface = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
 
+    /** The tilt readout's painter, made at its first draw (and again when the density changes); its figures in Geist too. */
+    private fun tiltReadoutPainter(): TiltReadoutPainter =
+        readoutPainter?.takeIf { it.density == density } ?: TiltReadoutPainter(density, markerSans).also { readoutPainter = it }
+
     /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
     private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {
         val lv = liveView(state.camera, v)
@@ -953,13 +975,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /**
      * Whether the canvas draws nothing over the core's picture now (ENGINE.md gain 12, [CanvasWork.idle]). It reads
-     * [debug], [tape] and [overlays], whose changes draw the canvas again; what else it reads says it changed through
-     * [canvasTick].
+     * [debug], [tape], [readout] and [overlays], whose changes draw the canvas again; what else it reads says it changed
+     * through [canvasTick].
      */
     fun canvasIdle(): Boolean {
         val c = core ?: return false
         return CanvasWork.idle(
-            debug = debug, tape = tape != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
+            debug = debug, tape = tape != null, readout = readout != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
             cover = c.transition.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
             coreMarkers = coreMarkers, coreLocation = coreLocation,
         )
@@ -988,10 +1010,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val f = shown
         val c = core
         val cover = c?.transition?.canvas ?: 1f
+        val night = if (f != null) f.moment == "night" else c?.night == true
         if (cover > 0f) {
             val layered = cover < 1f && !v.isEmpty
             if (layered) canvas.saveLayerAlpha(0f, 0f, v.width.toFloat(), v.height.toFloat(), (cover * 255f).roundToInt())
-            val night = if (f != null) f.moment == "night" else c?.night == true
             canvas.drawColor(if (night) NIGHT_EARTH else DAY_EARTH)
             if (f != null && !v.isEmpty) {
                 val lv = liveView(state.camera, v)
@@ -1019,6 +1041,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
+            readout?.let { tiltReadoutPainter().draw(canvas, it, state.camera.pitch, CameraOps.maxPitch(state.camera.zoom), night) }
             drawStatus(canvas)
             // the timings show while the map is loading or working; a finished map is the board's, with nothing over it
             // (the core's line while the map moves and a few seconds after)
@@ -1091,6 +1114,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             is Windows.Status.Waiting ->
                 if (s.refused) {
                     "This area's data could not be built"
+                } else if (MapEngine.overpassOff()) {
+                    "No pack holds this area, and Overpass is switched off"
                 } else {
                     val minutes = ((w.remaining(s) + 59_999L) / 60_000L).coerceAtLeast(1L)
                     "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), minutes)
@@ -1300,6 +1325,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
      */
     fun followUpdate() {
         val mode = state.follow
+        if (mode != Follow.COURSE) courseTilted = false
         setLookAhead(mode == Follow.COURSE)
         val loc = overlays.location ?: return
         // The course is the way the phone moves: from fix to fix once it has gone further than the fixes wander (their
@@ -1318,9 +1344,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val target = when (mode) {
             Follow.POSITION -> cur.copy(target = loc.at)
             Follow.HEADING -> cur.copy(target = loc.at, bearing = loc.heading ?: cur.bearing)
+            // navigation's tilt, unless the user set their own with their fingers while following
             Follow.COURSE -> cur.copy(
                 target = loc.at, bearing = course ?: loc.heading ?: cur.bearing,
-                pitch = max(cur.pitch, COURSE_PITCH), zoom = max(cur.zoom, COURSE_MIN_ZOOM),
+                pitch = if (courseTilted) cur.pitch else max(cur.pitch, COURSE_PITCH), zoom = max(cur.zoom, COURSE_MIN_ZOOM),
             )
             Follow.NONE -> return
         }
@@ -1382,8 +1409,66 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         lastPanY = y1
     }
 
+    override fun onTiltStart(fingers: Int) {
+        // the tape gives way to the tilt at once
+        tapeJob?.cancel()
+        tape = null
+        tiltFrom = state.camera.pitch
+        if (state.follow == Follow.COURSE) courseTilted = true
+        readoutJob?.cancel()
+        if (readout == null) readoutPainter?.reset()
+        showReadout(Paint.Align.CENTER)
+    }
+
+    /**
+     * The fingers' move tilts by [TILT_PER_DP] a dp, straight and at once, nothing smoothed; reaching a stop (flat, or the
+     * zoom's steepest) ticks softly under them.
+     */
     override fun onTilt(dy: Float) {
+        val before = state.camera.pitch
         write(CameraOps.tilt(state.camera, -dy / density * TILT_PER_DP), true)
+        if (TiltReadout.reached(before, state.camera.pitch, CameraOps.maxPitch(state.camera.zoom))) haptic(TiltReadout.STOP_FEEL)
+        showReadout(readout?.align ?: Paint.Align.CENTER)
+    }
+
+    override fun onTiltEnd(cancelled: Boolean) {
+        val from = tiltFrom ?: return
+        tiltFrom = null
+        if (cancelled) {
+            // The system took the touches (an OEM's three-finger screenshot): the tilt was not meant for the map.
+            write(state.camera.copy(pitch = from), true)
+        } else if (state.camera.pitch >= MIN_CHOSEN_TILT) {
+            state.chosenTilt = state.camera.pitch
+        }
+        hideReadout()
+    }
+
+    /** The readout where the tilting fingers are now ([TiltReadout.place]), standing as [prefer] says if it can. */
+    private fun showReadout(prefer: Paint.Align) {
+        val (w, h) = size
+        val n = gestures.fingers(tiltFingers)
+        if (n == 0) return
+        val at = FloatArray(2)
+        val align = TiltReadout.place(tiltFingers, n, w, h, density, insets, prefer, at)
+        readout = TiltReadoutShown(at[0], at[1], align)
+    }
+
+    /** Once the fingers lift, the readout stays [TiltReadout.LINGER_MS] where it was, then fades. */
+    private fun hideReadout() {
+        val r = readout ?: return
+        readoutJob?.cancel()
+        readoutJob = scope.launch {
+            delay(TiltReadout.LINGER_MS)
+            var start = -1L
+            while (true) {
+                val now = withFrameNanos { it }
+                if (start < 0) start = now
+                val k = ((now - start) / 1e6 / TiltReadout.FADE_MS).coerceIn(0.0, 1.0)
+                readout = TiltReadoutShown(r.x, r.y, r.align, (1 - k).toFloat())
+                if (k >= 1.0) break
+            }
+            readout = null
+        }
     }
 
     override fun onZoomStep(x: Float, y: Float, zoomIn: Boolean) = zoomStep(x, y, zoomIn)
@@ -1503,7 +1588,16 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         const val ZOOM_STEP_MS = 280L
         const val SNAP_MS = 220L
         const val SNAP_DEGREES = 7.0
-        const val TILT_PER_DP = 0.32
+
+        /**
+         * Degrees of tilt a dp the fingers move, the same at every speed: flat to 70° in 437 dp, about half a phone's
+         * map (923 dp tall on the Pixel, 915 on the boards), one deliberate drag; a degree about every millimetre (6 dp).
+         * Half the 0.32 before it, which crossed the range in a quarter of the screen.
+         */
+        const val TILT_PER_DP = 0.16
+
+        /** A tilt the fingers leave the map at, from this many degrees, is the one the 3D button brings back. */
+        const val MIN_CHOSEN_TILT = 10.0
         const val DRAG_ZOOM_DP = 110.0
         const val FLING_DECAY = 3.2
         const val FLING_STOP_DP = 18f

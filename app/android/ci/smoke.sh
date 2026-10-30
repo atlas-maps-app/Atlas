@@ -722,7 +722,8 @@ pills_phase() {
   }
   # Both in the sunny moment: in the live one each launch drew the light the forecast gave it by then (28 October,
   # 7ed9a86: the SurfaceView's capture came before the forecast, sunny, the TextureView's after it, grey, MAD 2.4).
-  home_capture homesurface pills-home.png --es atlas.ci.theme DAY
+  # The glass is off by default on the home (the user, 30 October): these launches turn it on, so the check sees it.
+  home_capture homesurface pills-home.png --es atlas.ci.theme DAY --ez atlas.ci.glass true
   if ! grep -q 'AtlasMap: vk frosted [1-9]' "$OUT/pills-home.atlasmap.txt"; then
     echo "PILLS: the home is not drawn by the map's core yet (no 'vk frosted' line): its pills against HWUI's wait for it"
     rm -f "$OUT"/pills-home*.raw
@@ -731,7 +732,7 @@ pills_phase() {
   python3 -I "$HERE/pillcheck.py" check "$OUT/pills-home.raw" --shapes "$OUT/pills-home.atlasmap.txt" > "$OUT/pills-home.txt" 2>&1; rc_home=$?
   sed 's/^/  home: /' "$OUT/pills-home.txt"
   [ $rc_home -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills did not pass the pill check"; FAIL=1; }
-  home_capture hometexture pills-home-texture.png --es atlas.ci.theme DAY --es atlas.vk.host texture
+  home_capture hometexture pills-home-texture.png --es atlas.ci.theme DAY --ez atlas.ci.glass true --es atlas.vk.host texture
   if ! grep -q 'AtlasMap: vk window: texture' "$OUT/pills-home-texture.atlasmap.txt"; then
     echo "PILLS: the home took no TextureView (no 'vk window: texture' line): its pills against HWUI's wait for atlas.vk.host"
     rm -f "$OUT"/pills-home*.raw

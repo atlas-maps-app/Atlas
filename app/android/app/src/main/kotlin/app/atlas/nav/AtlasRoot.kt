@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,7 @@ import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
 import app.atlas.ui.kit.BoardScale
 import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.LocalFrostedGlass
 import app.atlas.ui.kit.rememberBackdrop
 
 /** The app's services, for any screen: `LocalServices.current.weather`. */
@@ -122,11 +124,15 @@ private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolea
                 )
             }
             if (showBar) {
-                BottomBar(
-                    selected = navigator.current.tab,
-                    onSelect = { navigator.tab(it) },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
+                // solid unless the Look settings' frosted glass is on (the map's core then blurs nothing under the bar)
+                val glass by services.frostedGlass.collectAsState(initial = false)
+                CompositionLocalProvider(LocalFrostedGlass provides glass) {
+                    BottomBar(
+                        selected = navigator.current.tab,
+                        onSelect = { navigator.tab(it) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
             }
         }
     }

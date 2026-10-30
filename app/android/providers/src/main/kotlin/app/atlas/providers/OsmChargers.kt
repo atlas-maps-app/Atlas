@@ -39,6 +39,7 @@ class OsmChargers(private val overpass: Overpass) : ChargerProvider {
             id = "osm-chargers", name = "OpenStreetMap chargers", licence = "ODbL", attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org/copyright",
             note = "Chargers mapped by OSM volunteers; live through Overpass where you have no download.",
+            hosts = Overpass.INFO.hosts, via = Overpass.INFO.id,
         )
 
         private val ALL_SOCKETS = listOf(

@@ -53,12 +53,16 @@ data class LookupsCheck(val local: LookupVersion?, val remote: LookupVersion) {
  */
 class SegmentStore(
     val dir: File,
-    private val client: OkHttpClient = defaultClient(),
+    client: OkHttpClient = defaultClient(),
     val baseUrl: String = SEGMENTS_URL,
     val profilesUrl: String = PROFILES_URL,
     /** Download speed cap in bytes per second; the default stays under 16 Mbit/s. */
     val maxBytesPerSecond: Long = 1_900_000,
 ) {
+    // a segment file takes minutes (E0_N50 is 80 MB, 42 s at the cap and longer on most lines): no limit on the whole
+    // call, which the app's shared client sets at 60 s, only on each wait for bytes
+    private val client = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+
     fun file(tile: String): File = File(dir, normalise(tile))
 
     fun has(tile: String): Boolean = file(tile).isFile

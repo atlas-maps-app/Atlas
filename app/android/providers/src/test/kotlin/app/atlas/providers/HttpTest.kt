@@ -182,6 +182,27 @@ class HttpTest {
     }
 
     @Test
+    fun aSwitchedOffSourcesHostIsNeverAskedNorByAClientBuiltOnTheShared() = runBlocking {
+        Mock().use { m ->
+            repeat(2) { m.enqueue("""{"ok":true}""") }
+            var off = setOf("photon")
+            // the app's gate: the server here is "localhost", photon's host for this test
+            val http = Http(policies = emptyMap(), gate = { host -> if (host == "localhost" && "photon" in off) "photon" else null })
+            val refused = runCatching { http.text(m.url("/api")) }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "photon" && refused.host == "localhost")
+            // a client built on the shared one, as the map's are, holds it back too
+            val derived = http.client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+            val viaDerived = runCatching { derived.newCall(okhttp3.Request.Builder().url(m.url("/api")).build()).execute().close() }.exceptionOrNull()
+            assertTrue("$viaDerived", viaDerived is SwitchedOffException)
+            assertEquals("nothing was sent", 0, m.count)
+            // switched on again: it goes
+            off = emptySet()
+            assertEquals("""{"ok":true}""", http.text(m.url("/api")))
+            assertEquals(1, m.count)
+        }
+    }
+
+    @Test
     fun keysOfIgnoresBlankKeys() {
         val keys = Keys.of("ocm" to "abc", "yelp" to " ")
         assertEquals("abc", keys.key("ocm"))
