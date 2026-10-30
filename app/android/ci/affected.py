@@ -91,11 +91,11 @@ def ninja_deps(build):
             if entry:
                 deps.setdefault(entry, set())
         elif entry and line.strip():
-            path = (build / line.strip()).resolve()
-            try:
-                deps[entry].add(str(path.relative_to(ROOT)))
-            except ValueError:
-                pass
+            # a path in the repository, whichever checkout the build folder belongs to
+            path = str((build / line.strip()).resolve())
+            at = path.find("/app/android/")
+            if at >= 0:
+                deps[entry].add(path[at + 1:])
     return deps
 
 
@@ -117,6 +117,15 @@ def main():
     build = Path(args.build) if Path(args.build).is_absolute() else ROOT / args.build
     deps = ninja_deps(build)
 
+    def users(header):
+        """The test entries whose file includes the header (a repository path): by the build's dependency records where
+        there is a build, else the test files that name it."""
+        if deps is not None:
+            return {e for e, d in deps.items() if header in d}
+        include = str(Path(header).relative_to(CORE))
+        return {str(t.relative_to(tests_dir).with_suffix("")) for t in tests_dir.glob("*/*.cpp")
+                if f'"{include}"' in t.read_text(encoding="utf-8", errors="replace")}
+
     labels, names, packages = set(), set(), set()
     everything = spirv = check_all = fuzz = bench = False
     gradle_changed, other = set(), []
@@ -131,8 +140,7 @@ def main():
                 elif rel.parts[1] in areas:
                     labels.add(rel.parts[1])
                 if rel.suffix in (".hpp", ".h"):
-                    header_users = [e for e, d in (deps or {}).items() if path in d]
-                    names.update(header_users)
+                    names.update(users(path))
                 continue
             if top in ("CMakeLists.txt", "CMakePresets.json", "cmake", "third_party") or top.startswith("."):
                 everything = True
@@ -157,14 +165,7 @@ def main():
             # a core area's source or header
             if top in areas:
                 labels.add(top)
-            header = path if rel.suffix in (".hpp", ".h") else str(p.with_suffix(".hpp"))
-            if deps is not None:
-                names.update(e for e, d in deps.items() if header in d)
-            else:
-                include = str(Path(header).relative_to(CORE))
-                for test in tests_dir.glob("*/*.cpp"):
-                    if f'"{include}"' in test.read_text(encoding="utf-8", errors="replace"):
-                        names.add(str(test.relative_to(tests_dir).with_suffix("")))
+            names.update(users(path if rel.suffix in (".hpp", ".h") else str(p.with_suffix(".hpp"))))
             if top in CHECK_PACKAGES:
                 packages.update(CHECK_PACKAGES[top])
             else:
@@ -195,8 +196,9 @@ def main():
             if labels:
                 print(f"  ctest --preset host-debug -j2 -L '^({'|'.join(sorted(labels))})$'   # the areas changed")
             if names:
+                # a file's entry, or its parts (<area>/<name>:<k>, CMakeLists.txt's _test_parts)
                 pattern = "|".join(re.escape(n) for n in sorted(names))
-                print(f"  ctest --preset host-debug -j2 -R '^({pattern})$'   # the test files changed, or including a changed header")
+                print(f"  ctest --preset host-debug -j2 -R '^({pattern})(:[0-9]+)?$'   # the test files changed, or including a changed header")
             if deps is None and (labels or names):
                 print(f"  (no dependency records in {build}: the headers' users are the test files that name them)")
         if spirv or everything:
