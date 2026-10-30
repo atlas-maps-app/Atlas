@@ -7,9 +7,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.atlas.providers.OsmAuth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -44,6 +47,9 @@ class OsmAccount(
         suspend fun exchange(code: String, verifier: String): String
 
         suspend fun userName(token: String): String
+
+        /** Asks OpenStreetMap to withdraw [token]; true when it confirmed. */
+        suspend fun revoke(token: String): Boolean = false
     }
 
     /** OsmAuth with the app's client id, as a [SignIn]. */
@@ -53,13 +59,26 @@ class OsmAccount(
         override suspend fun exchange(code: String, verifier: String) = auth.exchange(code, verifier)
 
         override suspend fun userName(token: String) = auth.userName(token)
+
+        override suspend fun revoke(token: String) = auth.revoke(token)
     }
+
+    /** Why a sign-in did not finish: the user [declined] on openstreetmap.org, or it failed, [why] where it is known. */
+    data class Failure(val declined: Boolean, val why: String? = null)
+
+    private val failures = MutableStateFlow<Failure?>(null)
 
     /** Whether the app can sign in at all. */
     val available: Boolean get() = signIn != null
 
     /** The signed-in user's name, null while signed out (or before the file was read). */
     val user: StateFlow<String?> = store.data.map { it[USER] }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Whether a sign-in begun in the browser has not come back yet. */
+    val waiting: StateFlow<Boolean> = store.data.map { it[VERIFIER] != null }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    /** Why the last sign-in did not finish, until another begins; null when none failed. */
+    val failure: StateFlow<Failure?> = failures.asStateFlow()
 
     /**
      * Starts a sign-in: the page to open in the browser, its verifier and state kept until the redirect comes back.
@@ -73,12 +92,22 @@ class OsmAccount(
             it[VERIFIER] = verifier
             it[STATE] = state
         }
+        failures.value = null
         return s.page(OsmAuth.challenge(verifier), state)
+    }
+
+    /** Whether the redirect [uri] answers this account's sign-in under way: its redirect, with the state [begin] kept. */
+    suspend fun awaits(uri: String): Boolean {
+        val s = signIn ?: return false
+        if (uri != s.redirectUri && !uri.startsWith(s.redirectUri + "?")) return false
+        val state = store.data.first()[STATE] ?: return false
+        return query(uri)["state"] == state
     }
 
     /**
      * Finishes the sign-in that the redirect [uri] answers. False where the redirect is not this app's, its state is not
-     * the one [begin] kept, or the user declined (no code); a declined or foreign answer ends the pending sign-in.
+     * the one [begin] kept, the user declined (no code), or OpenStreetMap did not give the token or the name ([failure]
+     * says why); each but a foreign redirect ends the pending sign-in.
      */
     suspend fun finish(uri: String): Boolean {
         val s = signIn ?: return false
@@ -87,23 +116,30 @@ class OsmAccount(
         val kept = store.data.first()
         val verifier = kept[VERIFIER] ?: return false
         val code = query["code"]
-        if (query["state"] != kept[STATE] || code == null) {
-            store.edit {
-                it.remove(VERIFIER)
-                it.remove(STATE)
+        val signedIn = if (query["state"] != kept[STATE] || code == null) {
+            failures.value = Failure(declined = query["error"] == "access_denied", why = query["error_description"] ?: query["error"])
+            null
+        } else {
+            try {
+                val token = s.exchange(code, verifier)
+                token to s.userName(token)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures.value = Failure(declined = false, why = e.message)
+                null
             }
-            return false
         }
-        val token = s.exchange(code, verifier)
-        val name = s.userName(token)
-        val sealed = Base64.getEncoder().encodeToString(sealer.seal(token.toByteArray(Charsets.UTF_8)))
+        val sealed = signedIn?.let { (token, _) -> Base64.getEncoder().encodeToString(sealer.seal(token.toByteArray(Charsets.UTF_8))) }
         store.edit {
             it.remove(VERIFIER)
             it.remove(STATE)
-            it[TOKEN] = sealed
-            it[USER] = name
+            if (signedIn != null && sealed != null) {
+                it[TOKEN] = sealed
+                it[USER] = signedIn.second
+            }
         }
-        return true
+        return signedIn != null
     }
 
     /** The token edits are sent with, or null while signed out (or where the platform's key is gone). */
@@ -112,11 +148,24 @@ class OsmAccount(
         return runCatching { String(sealer.open(Base64.getDecoder().decode(sealed)), Charsets.UTF_8) }.getOrNull()
     }
 
-    /** Signs out on this phone: the token and the name are forgotten. */
-    suspend fun signOut() {
+    /**
+     * Signs out on this phone: the token and the name are forgotten at once. With [withdraw], OpenStreetMap is then asked
+     * to withdraw the token too, so it no longer edits and Atlas leaves the user's authorised applications; out of
+     * reach, the token is forgotten here all the same.
+     */
+    suspend fun signOut(withdraw: Boolean = true) {
+        val token = if (withdraw) token() else null
         store.edit {
             it.remove(TOKEN)
             it.remove(USER)
+        }
+        if (token != null) {
+            try {
+                signIn?.revoke(token)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
         }
     }
 

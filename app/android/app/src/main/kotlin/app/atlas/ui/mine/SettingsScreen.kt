@@ -54,6 +54,7 @@ import app.atlas.geo.LatLon
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.EditQueue
 import app.atlas.services.SettingsKeys
 import app.atlas.services.Units
 import app.atlas.ui.go.SavedPlace
@@ -94,6 +95,8 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
     val ears by services.go.ears.collectAsStateWithLifecycle()
     val car by settings.flow(MineKeys.EV_MODEL).collectAsStateWithLifecycle(null)
     val off by settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).collectAsStateWithLifecycle(emptySet())
+    val osmUser by services.osmAccount.user.collectAsStateWithLifecycle()
+    val osmEdits by services.edits.all.collectAsStateWithLifecycle()
     val keys by services.keys.keys.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<Boolean?>(null) }
     var namesOpen by remember { mutableStateOf(false) }
@@ -175,6 +178,13 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
         // What is kept and where it comes from.
         BoardCard {
             SettingRow(stringResource(R.string.mine_settings_privacy), symbol = "ui.privacy.2", tile = Color(0xFF0F3D2A), value = stringResource(R.string.mine_settings_privacy_value), onClick = { nav.go(Dest.Privacy) })
+            // the board's account row: who is signed in, else the edits waiting for it
+            val waiting = osmEdits.count { it.state == EditQueue.State.PENDING }
+            SettingRow(
+                stringResource(R.string.osm_account_title), symbol = "ui.account", tile = MineTone.purple,
+                value = osmUser ?: if (waiting > 0) pluralStringResource(R.plurals.osm_settings_waiting, waiting, waiting) else stringResource(R.string.osm_settings_signed_out),
+                onClick = { nav.go(Dest.OsmAccount) },
+            )
             SettingRow(stringResource(R.string.mine_settings_data), symbol = "ui.key", tile = MineTone.purple, value = stringResource(R.string.mine_settings_data_value, sourcesOn), onClick = { nav.go(Dest.DataSources()) })
             SettingRow(stringResource(R.string.mine_settings_new_phone), symbol = "ui.smartphone", tile = MineTone.blue, value = stringResource(R.string.mine_settings_new_phone_value), onClick = { nav.go(Dest.NewPhone) })
             SettingRow(stringResource(R.string.mine_settings_about), symbol = "ui.info", tile = MineTone.steel, onClick = { nav.go(Dest.About) })

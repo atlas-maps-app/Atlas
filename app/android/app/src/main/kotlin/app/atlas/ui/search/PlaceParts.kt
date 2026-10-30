@@ -89,6 +89,7 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
         Ratings(state.ratings, Modifier.weight(1f), onWrite = { review = true })
     }
     QuestStrip(state, onAnswer = { q, yes -> confirmQuest = q to yes }, onTags = { tags = true })
+    YourEditCard(place, onOpen = { nav.go(Dest.OsmAccount) })
     InfoCard(place, state, here)
     state.wiki?.let { WikiCard(it, state.image, lang) }
     state.brand?.let { BrandCard(it, state.brandWiki, lang) { nav.go(Dest.Brand(it.id)) } }

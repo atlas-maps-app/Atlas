@@ -75,13 +75,15 @@ class MainActivity : ComponentActivity() {
         // the crash guard; it draws the maps where it has tiles, today's map elsewhere (the transitional rule until A5),
         // and a phone that cannot run it shows T2's honest state in the map's place.
         startCore(this, intent)
-        finishOsmSignIn(intent)
+        // back from signing in to OpenStreetMap after Android stopped the app meanwhile: on the account's screen, as left
+        val signingIn = finishOsmSignIn(intent)
+        if (!signingIn) resumeOsmEdits()
         app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
 
         val camera = services.startCamera
         splash.setKeepOnScreenCondition { !camera.isCompleted }
         enableEdgeToEdge()
-        val start = if (savedInstanceState == null) stackFor(intent) else null
+        val start = if (savedInstanceState != null) null else if (signingIn) listOf(Dest.Home(), Dest.OsmAccount) else stackFor(intent)
         setContent {
             val nav = rememberSaveable(saver = BackStackNavigator.Saver) { BackStackNavigator(start ?: listOf(Dest.Home())) }
             SideEffect { navigator = nav }
@@ -121,17 +123,34 @@ class MainActivity : ComponentActivity() {
 
     /**
      * The browser's redirect back from signing in to OpenStreetMap ([app.atlas.services.OsmAccount.REDIRECT]): its code is
-     * exchanged for the token off the main thread, and the user stays where they were. True when the intent was one.
+     * exchanged for the token off the main thread, by the account whose sign-in it answers (the user's, or the test
+     * server's round trip), and the user stays where they were. Signed in, the edits that waited for it go. True when the
+     * intent was one.
      */
     private fun finishOsmSignIn(intent: Intent): Boolean {
         val uri = intent.dataString ?: return false
         if (intent.action != Intent.ACTION_VIEW || !uri.startsWith(app.atlas.services.OsmAccount.REDIRECT)) return false
         val services = services
+        val context = applicationContext
         services.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { services.osmAccount.finish(uri) }
-                .onFailure { android.util.Log.w("Atlas", "OpenStreetMap sign-in: ${it.message}") }
+            val dev = services.osmDev?.account
+            val account = if (dev != null && dev.awaits(uri)) dev else services.osmAccount
+            if (!account.finish(uri)) {
+                android.util.Log.w("Atlas", "OpenStreetMap sign-in did not finish: ${account.failure.value}")
+            } else if (account === services.osmAccount) {
+                app.atlas.services.EditSender.schedule(context)
+            }
         }
         return true
+    }
+
+    /** Edits that wait while the user is signed in (the app stopped before their send was asked for) go now. */
+    private fun resumeOsmEdits() {
+        val services = services
+        val context = applicationContext
+        services.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (services.edits.pending.isNotEmpty() && services.osmAccount.token() != null) app.atlas.services.EditSender.schedule(context)
+        }
     }
 
     override fun onTrimMemory(level: Int) {

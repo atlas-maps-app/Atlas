@@ -22,6 +22,10 @@ android {
         // -Patlas.osmClientId=... or ATLAS_OSM_CLIENT_ID. Empty, signing in to OpenStreetMap is switched off.
         val osmClientId = providers.gradleProperty("atlas.osmClientId").orElse(providers.environmentVariable("ATLAS_OSM_CLIENT_ID")).getOrElse("")
         buildConfigField("String", "OSM_CLIENT_ID", "\"" + osmClientId.filter { it.isLetterOrDigit() || it == '-' || it == '_' } + "\"")
+        // The same client registered on OpenStreetMap's test server, master.apis.dev.openstreetmap.org, for debug and bench
+        // builds' round trip there: -Patlas.osmDevClientId=... or ATLAS_OSM_DEV_CLIENT_ID. Empty, the round trip is hidden.
+        val osmDevClientId = providers.gradleProperty("atlas.osmDevClientId").orElse(providers.environmentVariable("ATLAS_OSM_DEV_CLIENT_ID")).getOrElse("")
+        buildConfigField("String", "OSM_DEV_CLIENT_ID", "\"" + osmDevClientId.filter { it.isLetterOrDigit() || it == '-' || it == '_' } + "\"")
     }
 
     // Packs (.atlas) are compressed inside already, chunk by chunk: stored as they are, the core maps VK facts' Westerkerk

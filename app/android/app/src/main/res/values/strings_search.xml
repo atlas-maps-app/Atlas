@@ -367,7 +367,7 @@
     <string name="fillin_change">change</string>
     <string name="fillin_nothing">nothing to add yet</string>
     <string name="fillin_still_guessed">Still guessed after this: %1$s</string>
-    <string name="fillin_send_note">Sent with your OpenStreetMap account next time you are on Wi-Fi. Edits are public and show your user name.</string>
+    <string name="fillin_send_note">Sent with your OpenStreetMap account as soon as you are online. Edits are public and show your user name.</string>
     <string name="fillin_send_note_local">Kept on this phone until you sign in to OpenStreetMap. Edits are public and show your user name.</string>
     <plurals name="fillin_send">
         <item quantity="one">Send %d tag</item>
@@ -376,7 +376,7 @@
     <string name="fillin_leave">Leave it for someone else</string>
     <string name="fillin_done_sent">Queued · thank you</string>
     <string name="fillin_done_skipped">Skipped, no problem</string>
-    <string name="fillin_done_sent_sub">Goes to OpenStreetMap on Wi-Fi: %1$s</string>
+    <string name="fillin_done_sent_sub">Goes to OpenStreetMap once you are online: %1$s</string>
     <string name="fillin_done_local_sub">Kept on this phone until you sign in: %1$s</string>
     <string name="fillin_done_skipped_sub">It stays a question for the next person who passes</string>
     <string name="fillin_done_note">After the next map update everyone’s living map draws it this way.</string>

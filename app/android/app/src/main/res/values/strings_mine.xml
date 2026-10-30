@@ -155,7 +155,7 @@
     <string name="mine_privacy_exported">Saved as %1$s</string>
     <string name="mine_privacy_clear">Clear</string>
     <string name="mine_privacy_delete_title">Delete everything on this phone?</string>
-    <string name="mine_privacy_delete_text">Settings, keys, lists and saved places, searches, where you have been and kept forecasts are removed. Offline regions stay; delete them in Offline.</string>
+    <string name="mine_privacy_delete_text">Settings, keys, lists and saved places, searches, where you have been, your OpenStreetMap sign-in and the edits kept here, and kept forecasts are removed. Offline regions stay; delete them in Offline.</string>
     <string name="mine_kept_trail">Where you have been</string>
     <string name="mine_kept_trail_off">off · never recorded</string>
     <string name="mine_kept_trail_on">on · %1$s · %2$s, only on this phone</string>
@@ -178,7 +178,7 @@
     <string name="mine_sent_transit">your stop and the time, when you open a timetable</string>
     <string name="mine_sent_fuel">the area you look at, with your key</string>
     <string name="mine_sent_reverse">the spot you ask about, when Photon cannot answer</string>
-    <string name="mine_sent_edits">the place you fill in; your edits and user name, only when you send them</string>
+    <string name="mine_sent_edits">the buildings you fill in; your edits, public under your OpenStreetMap user name, only once you are signed in</string>
     <string name="mine_sent_windows">which parts of the map you look at: a pack\'s bytes</string>
     <string name="mine_sent_brouter">the 5° tile you plan a route in, to size its routing data</string>
     <string name="mine_sent_images">the names of a place\'s pictures</string>

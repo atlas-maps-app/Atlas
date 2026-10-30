@@ -68,6 +68,7 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
     val keys by services.keys.keys.collectAsStateWithLifecycle()
     val home by services.go.store.home.collectAsStateWithLifecycle(null)
     val work by services.go.store.work.collectAsStateWithLifecycle(null)
+    val osmUser by services.osmAccount.user.collectAsStateWithLifecycle()
     var tick by remember { mutableStateOf(0) }
     val trail = remember(trailOn, tick) { services.mine.trail.let { it.count() to it.bytes() } }
     val pressure = remember(pressureOn, tick) { services.mine.pressure.readings().size }
@@ -142,6 +143,11 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                 "place.home", stringResource(R.string.mine_kept_homework),
                 listOfNotNull(home?.let { stringResource(R.string.mine_settings_home) }, work?.let { stringResource(R.string.mine_settings_work) }).joinToString(" · ").ifEmpty { stringResource(R.string.mine_settings_not_set) },
                 clear = if (home != null || work != null) ({ scope.launch { services.go.store.setHome(null); services.go.store.setWork(null) } }) else null,
+            )
+            KeptRow(
+                "ui.account", stringResource(R.string.osm_account_title),
+                osmUser?.let { stringResource(R.string.osm_privacy_signed_in, it) } ?: stringResource(R.string.osm_privacy_signed_out),
+                onOpen = { nav.go(Dest.OsmAccount) },
             )
         }
         // What goes online: the label, then one line a source the app asks now (a blue dot, the name, what it is sent and

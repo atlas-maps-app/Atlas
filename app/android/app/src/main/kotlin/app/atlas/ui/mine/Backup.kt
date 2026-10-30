@@ -135,8 +135,8 @@ object Backup {
 
     /**
      * Forgets everything personal: settings (home and work, vehicles, the car, the look), keys, every list, searches, kept
-     * layers, hidden brands, the trail, the barometer's log, kept forecasts and the HTTP cache. Offline regions stay
-     * (they hold no personal data); delete them in Offline.
+     * layers, hidden brands, the trail, the barometer's log, the OpenStreetMap sign-in and edits, kept forecasts and the
+     * HTTP cache. Offline regions stay (they hold no personal data); delete them in Offline.
      */
     suspend fun wipe(services: Services) {
         services.settings.edit { it.clear() }
@@ -148,6 +148,10 @@ object Backup {
         for (b in saved.hiddenBrands.value) saved.hideBrand(b, false)
         services.mine.trail.clear()
         services.mine.pressure.clear()
+        // signed out of OpenStreetMap, its sign-in withdrawn there, and the edits forgotten, those waiting too
+        services.osmAccount.signOut()
+        services.osmDev?.account?.signOut()
+        services.edits.clear()
         File(services.dirs.cache, "providers").deleteRecursively()
         services.dirs.http.deleteRecursively()
     }

@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.mapview.CameraPosition
-import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
 import app.atlas.mapview.StageMap
@@ -150,15 +149,16 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
                         val label = listOfNotNull(FillInState.address(e.tags), edit.set.keys.joinToString(", ")).joinToString(" · ")
                         val signedIn = user != null
                         scope.launch(Dispatchers.IO) {
-                            services.edits.add(edit, label)
-                            // drawn at once: the windows that hold the building built again with it (ENGINE.md step 6)
-                            MapEngine.edited(args.lat, args.lon)
-                            if (signedIn) EditSender.schedule(context, comment(edit.set.keys))
+                            // waiting until OpenStreetMap takes it (the home map's chip, the place's card), then drawn
+                            // as mapped (EditSender)
+                            services.edits.add(edit, label, args.lat, args.lon)
+                            if (signedIn) EditSender.schedule(context.applicationContext)
                         }
                     }
                     state = state.send()
                 },
                 onMore = { nav.go(Dest.Quests(args.lat, args.lon)) },
+                onSignIn = { nav.go(Dest.OsmAccount) },
             )
         }
     }
@@ -180,15 +180,6 @@ internal sealed interface FillInLoad {
     data object Gone : FillInLoad
 
     data object Offline : FillInLoad
-}
-
-/** The changeset's comment for the keys an edit sets. */
-internal fun comment(keys: Set<String>): String {
-    val what = buildList {
-        if ("building:colour" in keys) add("building colour")
-        if ("roof:shape" in keys) add("roof shape")
-    }.ifEmpty { listOf("building details") }
-    return what.joinToString(" and ").replaceFirstChar { it.uppercase() } + " as seen from the street"
 }
 
 private fun stateSaver(asks: List<FillIn.Ask>) = listSaver<FillInState, Any?>(
@@ -256,6 +247,7 @@ internal fun FillInView(
     onRestart: () -> Unit,
     onSend: () -> Unit,
     onMore: () -> Unit,
+    onSignIn: () -> Unit = {},
 ) {
     Box(Modifier.requiredSize(412.dp, 915.dp)) {
         // the top's shade, the back button, the title and the building's line
@@ -280,8 +272,8 @@ internal fun FillInView(
             when {
                 message != null -> Text(message, style = style(14f, 600, INK, 19.6f))
                 state.asks.isEmpty() -> Unit
-                state.done -> Done(state, signedIn, onBack, onMore)
-                state.reviewing -> Review(state, elementLine, tags, signedIn, onRestart, onSend)
+                state.done -> Done(state, signedIn, onBack, onMore, onSignIn)
+                state.reviewing -> Review(state, elementLine, tags, signedIn, onRestart, onSend, onSignIn)
                 state.ask == FillIn.Ask.COLOUR -> ColourQuestion(state, onColour, onNext, onSkip)
                 else -> RoofQuestion(state, onRoof, onNext, onSkip, onRestart)
             }
@@ -467,7 +459,7 @@ private fun ColumnScope.RoofQuestion(state: FillInState, onRoof: (FillIn.Roof) -
 
 /** The board's review: the element's tags as OpenStreetMap has them and the ones the answers add, then Send. */
 @Composable
-private fun ColumnScope.Review(state: FillInState, elementLine: String, tags: Map<String, String>, signedIn: Boolean, onRestart: () -> Unit, onSend: () -> Unit) {
+private fun ColumnScope.Review(state: FillInState, elementLine: String, tags: Map<String, String>, signedIn: Boolean, onRestart: () -> Unit, onSend: () -> Unit, onSignIn: () -> Unit) {
     SheetHead(stringResource(R.string.fillin_edit_head), stringResource(R.string.fillin_change), LINK, onRestart)
     Spacer(Modifier.height(10.dp))
     Column(
@@ -491,12 +483,16 @@ private fun ColumnScope.Review(state: FillInState, elementLine: String, tags: Ma
     }
     Text(stringResource(if (signedIn) R.string.fillin_send_note else R.string.fillin_send_note_local), style = style(12f, 400, MUTED, 16.8f))
     val n = state.adds.size
-    Buttons(if (n > 0) pluralStringResource(R.plurals.fillin_send, n, n) else stringResource(R.string.fillin_leave), true, onSend, null) {}
+    // signed out, the way to sign in beside Send: the sheet has no room for another line
+    Buttons(
+        if (n > 0) pluralStringResource(R.plurals.fillin_send, n, n) else stringResource(R.string.fillin_leave), true, onSend,
+        if (signedIn) null else stringResource(R.string.osm_fillin_sign_in_short), onSignIn,
+    )
 }
 
 /** The board's done: the green check, what came of it, the note, and the way back. */
 @Composable
-private fun ColumnScope.Done(state: FillInState, signedIn: Boolean, onBack: () -> Unit, onMore: () -> Unit) {
+private fun ColumnScope.Done(state: FillInState, signedIn: Boolean, onBack: () -> Unit, onMore: () -> Unit, onSignIn: () -> Unit) {
     val what = listOfNotNull(
         state.colour?.let { colourName(it).lowercase() },
         state.roof?.let { stringResource(R.string.fillin_roof_word, roofName(it).lowercase()) },
@@ -518,8 +514,19 @@ private fun ColumnScope.Done(state: FillInState, signedIn: Boolean, onBack: () -
     if (state.sent) {
         Spacer(Modifier.height(12.dp))
         Text(stringResource(R.string.fillin_done_note), style = style(12f, 400, MUTED, 16.8f))
+        if (!signedIn) SignInLink(onSignIn)
     }
     Buttons(stringResource(R.string.fillin_back_map), true, onBack, stringResource(R.string.fillin_more), onMore)
+}
+
+/** The way to the OpenStreetMap account, while the user is signed out and their edit waits on the phone. */
+@Composable
+private fun SignInLink(onSignIn: () -> Unit) {
+    Text(
+        stringResource(R.string.osm_fillin_sign_in),
+        Modifier.padding(top = 6.dp).clickable(role = Role.Button, onClick = onSignIn).padding(vertical = 4.dp),
+        style = style(13f, 700, LINK, 17f),
+    )
 }
 
 /** The board's roofs, its icons' paths (24 × 24, stroked). */

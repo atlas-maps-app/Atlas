@@ -275,12 +275,31 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      * while the app has no client id (BuildConfig.OSM_CLIENT_ID, the Gradle property atlas.osmClientId).
      */
     val osmAccount: app.atlas.services.OsmAccount by lazy {
-        val id = BuildConfig.OSM_CLIENT_ID
+        osmAccountOn(app.atlas.providers.OsmServer.LIVE, BuildConfig.OSM_CLIENT_ID, dirs.osmAccount, "atlas-osm-token")
+    }
+
+    /**
+     * The test server's round trip (OsmDevCheck) in debug and bench builds that carry its client id
+     * (BuildConfig.OSM_DEV_CLIENT_ID, the Gradle property atlas.osmDevClientId): an account of its own on
+     * master.apis.dev.openstreetmap.org, so nothing tried there reaches the live map. Null elsewhere.
+     */
+    val osmDev: app.atlas.services.OsmDevCheck? by lazy {
+        val id = BuildConfig.OSM_DEV_CLIENT_ID
+        val dev = app.atlas.providers.OsmServer.DEV
+        if (!BuildConfig.TIMINGS || id.isBlank()) null
+        else app.atlas.services.OsmDevCheck(
+            osmAccountOn(dev, id, File(dirs.files, "settings/osm-dev.preferences_pb"), "atlas-osm-dev-token"),
+            app.atlas.providers.OsmEdits(http, dev.api, createdBy = "Atlas ${BuildConfig.VERSION_NAME}"),
+        )
+    }
+
+    /** An OpenStreetMap account on [server] with client [id] (blank: switched off), kept in [file], sealed by [key]. */
+    private fun osmAccountOn(server: app.atlas.providers.OsmServer, id: String, file: File, key: String): app.atlas.services.OsmAccount {
         val redirect = app.atlas.services.OsmAccount.REDIRECT
-        app.atlas.services.OsmAccount(
-            PreferenceDataStoreFactory.create(scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO)) { dirs.osmAccount },
-            app.atlas.services.KeystoreSealer(),
-            if (id.isBlank()) null else app.atlas.services.OsmAccount.Osm(app.atlas.providers.OsmAuth(http, id, redirect), redirect),
+        return app.atlas.services.OsmAccount(
+            PreferenceDataStoreFactory.create(scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO)) { file },
+            app.atlas.services.KeystoreSealer(key),
+            if (id.isBlank()) null else app.atlas.services.OsmAccount.Osm(app.atlas.providers.OsmAuth(http, id, redirect, server.web, server.api), redirect),
             scope,
         )
     }
