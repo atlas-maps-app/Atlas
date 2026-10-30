@@ -214,8 +214,10 @@ jobs:
           - { task: host-release, arch: arm64, shard: 1, shards: 2 }
           - { task: host-release, arch: arm64, shard: 2, shards: 2 }
           - { task: fuzz, arch: x86_64 }
-          - { task: tidy, arch: x86_64 }
-          - { task: tidy-android, arch: x86_64 }
+          - { task: tidy, arch: x86_64, shard: 1, shards: 2 }
+          - { task: tidy, arch: x86_64, shard: 2, shards: 2 }
+          - { task: tidy-android, arch: x86_64, shard: 1, shards: 2 }
+          - { task: tidy-android, arch: x86_64, shard: 2, shards: 2 }
           - { task: canaries, arch: x86_64 }
           - { task: android, arch: x86_64 }
     env:
@@ -225,10 +227,10 @@ jobs:
       JOB: ${{ matrix.task }}-${{ matrix.arch }}
       SHARD: ${{ matrix.shard || 1 }}
       SHARDS: ${{ matrix.shards || 1 }}
-      # The caches are kept by a push to app and by the nightly, once a job (shard 1 of a sharded one); every other run
-      # only restores them (GitHub lets a branch's runs read the default branch's caches), unless a run by hand asks to
-      # keep its own (keep_caches), for its branch alone.
-      KEEP_CACHES: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches)) && (matrix.shard || 1) == 1 }}
+      # The caches are kept by a push to app and by the nightly (ccache's by shard 1 of a job, whose shards build alike;
+      # tidy's by each shard, whose units differ); every other run only restores them (GitHub lets a branch's runs read
+      # the default branch's caches), unless a run by hand asks to keep its own (keep_caches), for its branch alone.
+      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -641,7 +643,9 @@ jobs:
       # source neither build compiles), tidy-android checks with the Android build's. A unit is checked again only when
       # its key changed (tools/tidy/cached.py: its preprocessed text with every header and comment, its flags,
       # .clang-tidy and the clang-tidy), against the clean units' keys a push to app keeps; the nightly checks every
-      # unit without them, and keeps its own.
+      # unit without them, and keeps its own. Each job is two shards, each with half the units (by a hash of the path,
+      # so a unit stays in its shard) and its own keys: every unit checked, as after a change to the checks or to a
+      # header every unit includes, took one job 35 to 39 minutes on 30 October.
       - name: NDK r30 and the SDK's CMake
         if: matrix.task == 'tidy' || matrix.task == 'tidy-android' || matrix.task == 'android' || matrix.task == 'canaries'
         run: |
@@ -654,8 +658,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/atlas-tidy
-          key: tidy-core-${{ matrix.task }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: tidy-core-${{ matrix.task }}-
+          key: tidy-core-${{ matrix.task }}-${{ env.SHARD }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: tidy-core-${{ matrix.task }}-${{ env.SHARD }}-
       - name: clang-tidy and clang-format
         id: tidy
         if: matrix.task == 'tidy' || matrix.task == 'tidy-android'
@@ -664,7 +668,10 @@ jobs:
           # The core's own C and C++ files: not third-party code, the planted failures or the MODS probe (import std).
           all=$(git ls-files -- . | grep -E '\.(c|cpp|h|hpp)$' | grep -v -E '^(third_party|tests/planted|tools/mods)/' || true)
           echo "files: $(wc -w <<< "$all")"
-          if [ "$TASK" = tidy ]; then printf '%s\n' "$all" | xargs -n 64 "$NDK_BIN/clang-format" --dry-run --Werror; fi
+          # clang-format, every file, in the tidy job's first shard
+          if [ "$TASK" = tidy ] && [ "$SHARD" = 1 ]; then
+            printf '%s\n' "$all" | xargs -n 64 "$NDK_BIN/clang-format" --dry-run --Werror
+          fi
 
           # The compile databases, without precompiled headers (clang-tidy parses every unit from its sources), with the
           # generated headers the units include: the tidy job's the host build's (and the Android build's list of
@@ -697,7 +704,7 @@ jobs:
             in_android=no
             if grep -q -x -F "$f" <<< "$host"; then host_sources+=("$f"); in_host=yes; fi
             if grep -q -x -F "$f" <<< "$android"; then android_sources+=("$f"); in_android=yes; fi
-            if [ "$TASK" = tidy ] && [ "$in_host" = no ] && [ "$in_android" = no ]; then
+            if [ "$TASK" = tidy ] && [ "$SHARD" = 1 ] && [ "$in_host" = no ] && [ "$in_android" = no ]; then
               echo "::error file=$CP/$f::compiled by neither the host build nor the Android build, so clang-tidy cannot check it"
               status=1
             fi
@@ -706,10 +713,10 @@ jobs:
           rm -rf "$keep"
           if [ "$TASK" = tidy ]; then
             python3 -I tools/tidy/cached.py --database build/tidy --clang-tidy "$NDK_BIN/clang-tidy" --cache ~/.cache/atlas-tidy \
-              --keep "$keep" --extra-arg-before="--target=$host_triple" "${host_sources[@]}" || status=1
+              --keep "$keep" --part "$SHARD/$SHARDS" --extra-arg-before="--target=$host_triple" "${host_sources[@]}" || status=1
           else
             python3 -I tools/tidy/cached.py --database build/tidy-android --clang-tidy "$NDK_BIN/clang-tidy" \
-              --cache ~/.cache/atlas-tidy --keep "$keep" "${android_sources[@]}" || status=1
+              --cache ~/.cache/atlas-tidy --keep "$keep" --part "$SHARD/$SHARDS" "${android_sources[@]}" || status=1
           fi
           # The clean units' keys of this run, and no others, are what a push to app keeps.
           rm -rf ~/.cache/atlas-tidy && mkdir -p ~/.cache && mv "$keep" ~/.cache/atlas-tidy
@@ -720,13 +727,13 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/atlas-tidy
-          key: tidy-core-${{ matrix.task }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: tidy-core-${{ matrix.task }}-${{ env.SHARD }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Delete the older keys' entries
         if: ${{ !cancelled() && steps.tidy.outputs.kept > 0 && env.KEEP_CACHES == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prefix="tidy-core-$TASK-"
+          prefix="tidy-core-$TASK-$SHARD-"
           key="$prefix${{ github.run_id }}-${{ github.run_attempt }}"
           # A deletion that fails leaves an older entry to GitHub's own eviction: a warning, not a failed check.
           ids=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" --limit 100 --json id,key \
@@ -874,7 +881,7 @@ jobs:
       - name: Keep ccache's entry
         id: ccache_keep
         if: >-
-          ${{ !cancelled() && env.KEEP_CACHES == 'true' && (steps.build.outcome == 'success' ||
+          ${{ !cancelled() && env.KEEP_CACHES == 'true' && env.SHARD == '1' && (steps.build.outcome == 'success' ||
           steps.fuzz_build.outcome == 'success' || steps.ndk.outcome == 'success') }}
         run: |
           since=$(cat "$RUNNER_TEMP/ccache-since")

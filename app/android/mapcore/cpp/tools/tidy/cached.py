@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """clang-tidy over a compile database's units, each checked only when its key is not among the clean ones kept.
 
-  cached.py --database <dir> --clang-tidy <exe> --keep <dir> [--cache <dir>] [--jobs <n>]
+  cached.py --database <dir> --clang-tidy <exe> --keep <dir> [--cache <dir>] [--jobs <n>] [--part <k>/<n>]
             [--extra-arg-before <arg>]... <source>...
 
 A unit's key is the SHA-256 of what decides clang-tidy's word on it: the clang-tidy's --version, every .clang-tidy from
@@ -11,7 +11,9 @@ name them, and every NOLINT). A unit whose key is in --cache was clean with exac
 others are checked (clang-tidy -p <database> --quiet, the options before), and each clean unit's key, whether from the
 cache or checked now, goes into --keep, the cache for the next run (core.yml's tidy jobs keep it between runs). The
 core's .clang-tidy makes every warning an error, so clean is clang-tidy's exit 0. Exits 1 when a unit is not clean,
-with clang-tidy's report; a unit that does not preprocess is checked, so clang-tidy reports why.
+with clang-tidy's report; a unit that does not preprocess is checked, so clang-tidy reports why. With --part k/n only
+the sources whose path's CRC-32 is k - 1 modulo n are this run's: the n parts take every source once, and a source
+stays in its part however the others come and go, so each part's cache keeps its own.
 
 Python 3's standard library only.
 """
@@ -20,6 +22,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import zlib
 import os
 import shlex
 import subprocess
@@ -76,8 +79,13 @@ def main():
     parser.add_argument("--keep", required=True)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--extra-arg-before", action="append", default=[])
+    parser.add_argument("--part", default="1/1")
     parser.add_argument("sources", nargs="*")
     args = parser.parse_args()
+    k, n = (int(v) for v in args.part.split("/"))
+    if not 1 <= k <= n:
+        sys.exit(f"cached.py: part {args.part}?")
+    sources = [src for src in args.sources if zlib.crc32(src.encode()) % n == k - 1]
 
     database = Path(args.database)
     entries = {}  # a source's every command (clang-tidy checks it with each)
@@ -129,14 +137,14 @@ def main():
     counts = {"cached": 0, "checked": 0, "failed": 0}
     failed = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        for source, outcome, report in pool.map(one, args.sources):
+        for source, outcome, report in pool.map(one, sources):
             counts[outcome] += 1
             if outcome == "failed":
                 failed.append(source)
                 sys.stdout.write(report)
                 print(f"::error::clang-tidy: {source} is not clean (its report above)")
-    print(f"clang-tidy: {len(args.sources)} units, {counts['cached']} clean before with the same key, "
-          f"{counts['checked']} checked and clean, {counts['failed']} not clean")
+    print(f"clang-tidy: {len(sources)} units (part {args.part} of {len(args.sources)}), {counts['cached']} clean before "
+          f"with the same key, {counts['checked']} checked and clean, {counts['failed']} not clean")
     sys.exit(1 if failed else 0)
 
 
