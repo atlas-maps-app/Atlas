@@ -226,10 +226,10 @@ class MapData(private val services: Services) {
             }
         }
         MapEngine.windowsAllowed = { !services.ciRun }
-        // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent
+        // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): those OpenStreetMap
+        // took; one still waiting shows as waiting (EditMarkers)
         MapEngine.windowEdits = {
-            services.edits.all.value.filter { it.state != EditQueue.State.CONFLICT }
-                .map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
+            services.edits.mapped.map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
         }
         // the screen's haze, vignette and grain as the Look settings have them (off when unset), handed to the maps as they
         // change

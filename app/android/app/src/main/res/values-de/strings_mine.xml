@@ -155,7 +155,7 @@
     <string name="mine_privacy_exported">Gespeichert als %1$s</string>
     <string name="mine_privacy_clear">Leeren</string>
     <string name="mine_privacy_delete_title">Alles auf diesem Telefon löschen?</string>
-    <string name="mine_privacy_delete_text">Einstellungen, Schlüssel, Listen und gespeicherte Orte, Suchen, wo du warst und gespeicherte Vorhersagen werden entfernt. Offline-Gebiete bleiben; lösche sie unter Offline.</string>
+    <string name="mine_privacy_delete_text">Einstellungen, Schlüssel, Listen und gespeicherte Orte, Suchen, wo du warst, deine OpenStreetMap-Anmeldung und die hier gespeicherten Änderungen sowie gespeicherte Vorhersagen werden entfernt. Offline-Gebiete bleiben; lösche sie unter Offline.</string>
     <string name="mine_kept_trail">Wo du gewesen bist</string>
     <string name="mine_kept_trail_off">aus · nie aufgezeichnet</string>
     <string name="mine_kept_trail_on">an · %1$s · %2$s, nur auf diesem Telefon</string>
@@ -179,7 +179,7 @@
     <string name="mine_sent_fuel">wo du Tankstellen suchst, auf 100 m genau, mit deinem Schlüssel</string>
     <string name="mine_sent_chargers">wo du Ladepunkte suchst, oder die Route, die du planst</string>
     <string name="mine_sent_reverse">der Ort, nach dem du fragst, wenn Photon nicht antwortet</string>
-    <string name="mine_sent_edits">der Ort, den du ergänzt; deine Änderungen und dein Benutzername, nur wenn du sie sendest</string>
+    <string name="mine_sent_edits">die Gebäude, die du ergänzt; deine Änderungen, öffentlich unter deinem OpenStreetMap-Benutzernamen, nur wenn du angemeldet bist</string>
     <string name="mine_sent_windows">welche Teile der Karte du ansiehst: Bytes eines Pakets</string>
     <string name="mine_sent_brouter">die 5°-Kachel, in der du eine Route planst, um ihre Routendaten zu messen</string>
     <string name="mine_sent_images">die Namen der Bilder eines Ortes</string>

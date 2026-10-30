@@ -155,7 +155,7 @@
     <string name="mine_privacy_exported">Enregistré sous %1$s</string>
     <string name="mine_privacy_clear">Effacer</string>
     <string name="mine_privacy_delete_title">Tout supprimer sur ce téléphone ?</string>
-    <string name="mine_privacy_delete_text">Réglages, clés, listes et lieux enregistrés, recherches, trajets et prévisions gardées sont effacés. Les régions hors ligne restent ; supprimez-les dans Hors ligne.</string>
+    <string name="mine_privacy_delete_text">Réglages, clés, listes et lieux enregistrés, recherches, trajets, votre connexion OpenStreetMap et les modifications gardées ici, et prévisions gardées sont effacés. Les régions hors ligne restent ; supprimez-les dans Hors ligne.</string>
     <string name="mine_kept_trail">Où vous êtes allé</string>
     <string name="mine_kept_trail_off">désactivé · jamais enregistré</string>
     <string name="mine_kept_trail_on">activé · %1$s · %2$s, seulement sur ce téléphone</string>
@@ -179,7 +179,7 @@
     <string name="mine_sent_fuel">là où vous cherchez des stations, à 100 m près, avec votre clé</string>
     <string name="mine_sent_chargers">là où vous cherchez des bornes, ou l\'itinéraire que vous préparez</string>
     <string name="mine_sent_reverse">le point sur lequel vous interrogez, quand Photon ne répond pas</string>
-    <string name="mine_sent_edits">le lieu que vous complétez ; vos modifications et votre nom d\'utilisateur, seulement à l\'envoi</string>
+    <string name="mine_sent_edits">les bâtiments que vous complétez ; vos modifications, publiques sous votre nom d\'utilisateur OpenStreetMap, seulement une fois connecté</string>
     <string name="mine_sent_windows">les parties de la carte que vous regardez : des octets d\'un paquet</string>
     <string name="mine_sent_brouter">la tuile de 5° où vous planifiez, pour mesurer ses données d\'itinéraire</string>
     <string name="mine_sent_images">les noms des images d\'un lieu</string>

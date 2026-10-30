@@ -64,6 +64,7 @@ class MineAccessibilityTest {
     @Test fun desk() = check("Mine", Dest.Mine)
     @Test fun settings() = check("Settings", Dest.Settings())
     @Test fun privacy() = check("Privacy", Dest.Privacy)
+    @Test fun osmAccount() = check("OpenStreetMap account", Dest.OsmAccount)
     @Test fun about() = check("About", Dest.About)
     @Test fun newPhone() = check("New phone", Dest.NewPhone)
     @Test fun watch() = check("Watch", Dest.Watch)

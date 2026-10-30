@@ -42,7 +42,7 @@ class FillInScreenTest {
     private val brown = FillIn.COLOURS.first { it.id == "brown" }
     private val gabled = FillIn.ROOFS.first { it.shape == "gabled" }
 
-    private fun show(state: FillInState, signedIn: Boolean = true, picked: MutableList<Any> = mutableListOf()) {
+    private fun show(state: FillInState, signedIn: Boolean = true, picked: MutableList<Any> = mutableListOf(), onSignIn: () -> Unit = {}) {
         compose.setContent {
             Box(Modifier.fillMaxSize().background(Color(0xFF0B0D14))) {
                 BoardScale {
@@ -62,6 +62,7 @@ class FillInScreenTest {
                         onRestart = {},
                         onSend = {},
                         onMore = {},
+                        onSignIn = onSignIn,
                     )
                 }
             }
@@ -114,16 +115,37 @@ class FillInScreenTest {
 
     @Test
     fun signedOutTheEditStaysOnThePhone() {
-        show(FillInState(asks, step = 2, colour = brown, roof = gabled), signedIn = false)
+        var signIn = 0
+        show(FillInState(asks, step = 2, colour = brown, roof = gabled), signedIn = false, onSignIn = { signIn++ })
         compose.onNodeWithText("Kept on this phone until you sign in to OpenStreetMap. Edits are public and show your user name.").assertExists()
+        compose.onNodeWithText("Send 3 tags").assertExists()
+        compose.onNodeWithText("Sign in").performClick()
+        assertEquals(1, signIn)
+        shot("review_signed_out")
+    }
+
+    @Test
+    fun signedInNothingAsksToSignIn() {
+        show(FillInState(asks, step = 2, colour = brown, roof = gabled))
+        compose.onNodeWithText("Sent with your OpenStreetMap account as soon as you are online. Edits are public and show your user name.").assertExists()
+        compose.onNodeWithText("Sign in").assertDoesNotExist()
     }
 
     @Test
     fun done() {
         show(FillInState(asks, step = 3, colour = brown, roof = gabled, sent = true))
         compose.onNodeWithText("Queued · thank you").assertExists()
-        compose.onNodeWithText("Goes to OpenStreetMap on Wi-Fi: brown brick, gable to the street roof").assertExists()
+        compose.onNodeWithText("Goes to OpenStreetMap once you are online: brown brick, gable to the street roof").assertExists()
         compose.onNodeWithText("Back to the living map").assertExists()
         shot("done")
+    }
+
+    @Test
+    fun doneSignedOutOffersTheSignIn() {
+        var signIn = 0
+        show(FillInState(asks, step = 3, colour = brown, roof = gabled, sent = true), signedIn = false, onSignIn = { signIn++ })
+        compose.onNodeWithText("Kept on this phone until you sign in: brown brick, gable to the street roof").assertExists()
+        compose.onNodeWithText("Sign in to OpenStreetMap").performClick()
+        assertEquals(1, signIn)
     }
 }

@@ -138,10 +138,15 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     // Spoken words go to Search; a phone that cannot recognise speech opens Search with the keyboard instead.
     val mic = rememberSpeechInput(onText = { nav.go(Dest.Search(it)) }, onUnavailable = { nav.go(Dest.Search()) })
 
-    val markers = remember(results, highlights, args.focus, opened) {
+    val edits by services.edits.all.collectAsStateWithLifecycle()
+    val editWaiting = stringResource(R.string.osm_chip_waiting)
+    val editNotSent = stringResource(R.string.osm_chip_not_sent)
+    val markers = remember(results, highlights, args.focus, opened, edits) {
         buildList {
             // A chosen category's places replace the area's highlights.
             if (results == null) addAll(HomeHighlights.markers(highlights))
+            // The user's edits waiting to go or not sent, at their buildings: drawn as mapped once OpenStreetMap took them.
+            addAll(EditMarkers.of(edits, editWaiting, editNotSent))
             results?.let { r ->
                 val colour = categoryColour(r.categoryId).toArgb().toLong() and 0xFFFFFFFFL
                 r.places.forEachIndexed { i, p ->
@@ -208,7 +213,10 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             contentPadding = HomeView.padding(screenHeight.value),
             onTap = { hit ->
                 when (hit) {
-                    is MapHit.OnMarker -> hit.marker.place?.let(openPlace)
+                    is MapHit.OnMarker -> {
+                        val p = hit.marker.place
+                        if (p != null) openPlace(p) else if (EditMarkers.isEdit(hit.marker)) nav.go(Dest.OsmAccount)
+                    }
                     is MapHit.OnFeature -> openPlace(hit.place)
                     // a tap beside the places closes the one open
                     is MapHit.Empty -> vm.open(null)

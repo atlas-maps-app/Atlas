@@ -160,6 +160,110 @@ class OsmEditsTest {
     }
 
     @Test
+    fun aSecondConflictIsShownAsAConflictAndTheChangesetClosed() = runBlocking {
+        Mock().use { m ->
+            val paths = Collections.synchronizedList(ArrayList<String>())
+            m.dispatch { req ->
+                paths += "${req.method} ${req.url.encodedPath}"
+                when (req.url.encodedPath) {
+                    "/api/0.6/way/266616341.json" -> response(leliegracht)
+                    "/api/0.6/changeset/create" -> response("125")
+                    // someone else's edits land between each read and upload
+                    "/api/0.6/changeset/125/upload" -> response("Version mismatch: Provided 7, server had: 8 of Way 266616341", 409)
+                    "/api/0.6/changeset/125/close" -> response("")
+                    else -> response("", 404)
+                }
+            }
+            val sent = OsmEdits(testHttp(), m.base).send("tok-1", listOf(colour), "Building colour")
+            assertNull(sent.changeset)
+            assertTrue(sent.applied.isEmpty())
+            assertEquals(listOf(colour), sent.conflicts)
+            assertEquals(
+                listOf(
+                    "GET /api/0.6/way/266616341.json",
+                    "PUT /api/0.6/changeset/create",
+                    "POST /api/0.6/changeset/125/upload",
+                    "GET /api/0.6/way/266616341.json",
+                    "POST /api/0.6/changeset/125/upload",
+                    "PUT /api/0.6/changeset/125/close",
+                ),
+                paths,
+            )
+        }
+    }
+
+    @Test
+    fun aRefusalSaysWhyAndSendsNothingMore() = runBlocking {
+        Mock().use { m ->
+            m.enqueue(leliegracht)
+            m.enqueue("", 403, "Error" to "You must agree to the contributor terms before editing")
+            m.enqueue("")
+            val refused = runCatching { OsmEdits(testHttp(), m.base).send("tok-1", listOf(colour), "Building colour") }.exceptionOrNull()
+            assertTrue(refused is OsmRefusedException)
+            refused as OsmRefusedException
+            assertEquals(403, refused.code)
+            assertEquals("You must agree to the contributor terms before editing", refused.reason)
+            // the read and the refused changeset, nothing uploaded
+            assertEquals(2, m.count)
+        }
+    }
+
+    @Test
+    fun aSignInNoLongerAcceptedSignsOutAndABusyServerIsTriedAgain() = runBlocking {
+        Mock().use { m ->
+            m.enqueue(leliegracht)
+            m.enqueue("Couldn't authenticate you", 401)
+            val signedOut = runCatching { OsmEdits(testHttp(), m.base).send("tok-1", listOf(colour), "c") }.exceptionOrNull()
+            assertTrue(signedOut is OsmSignedOutException)
+            m.enqueue(leliegracht)
+            m.enqueue("Too many requests", 429)
+            val busy = runCatching { OsmEdits(testHttp(), m.base).send("tok-1", listOf(colour), "c") }.exceptionOrNull()
+            // a plain IOException, which the sender tries again later, not a refusal
+            assertTrue(busy is HttpException)
+            m.enqueue("Service unavailable", 503)
+            val down = runCatching { OsmEdits(testHttp(), m.base).send("tok-1", listOf(colour), "c") }.exceptionOrNull()
+            assertTrue(down is HttpException)
+        }
+    }
+
+    @Test
+    fun signingOutWithdrawsTheToken() = runBlocking {
+        Mock().use { m ->
+            m.enqueue("{}")
+            assertTrue(OsmAuth(testHttp(), "client-1", "app.atlas:/osm-signin", web = m.base, api = m.base).revoke("tok-1"))
+            val req = m.take()
+            assertEquals("POST", req.method)
+            assertEquals("/oauth2/revoke", req.url.encodedPath)
+            val f = form(req.text)
+            assertEquals("tok-1", f["token"])
+            assertEquals("client-1", f["client_id"])
+        }
+    }
+
+    @Test
+    fun aNodeIsCreatedOnTheDevelopmentServerAlone() = runBlocking {
+        Mock().use { m ->
+            m.enqueue("126")
+            m.enqueue("""<diffResult version="0.6"><node old_id="-1" new_id="4321" new_version="1"/></diffResult>""")
+            m.enqueue("")
+            val id = OsmEdits(testHttp(), m.base, createdBy = "Atlas 0.1").createNode("tok-1", 52.37452, 4.88377, mapOf("note" to "Atlas"), "Atlas round trip")
+            assertEquals(4321L, id)
+            assertEquals("/api/0.6/changeset/create", m.take().url.encodedPath)
+            val upload = m.take()
+            assertEquals("/api/0.6/changeset/126/upload", upload.url.encodedPath)
+            assertEquals(
+                """<osmChange version="0.6" generator="Atlas 0.1"><create><node id="-1" changeset="126" lat="52.37452" lon="4.88377">""" +
+                    """<tag k="note" v="Atlas"/></node></create></osmChange>""",
+                upload.text,
+            )
+            assertEquals("/api/0.6/changeset/126/close", m.take().url.encodedPath)
+        }
+        // the live map is never asked
+        val live = runCatching { OsmEdits(testHttp(), OsmServer.LIVE.api).createNode("tok-1", 0.0, 0.0, emptyMap(), "c") }.exceptionOrNull()
+        assertTrue(live is IllegalArgumentException)
+    }
+
+    @Test
     fun aNodeKeepsItsPlaceAndValuesAreEscaped() {
         val node = OsmElement(OsmType.NODE, 5, 3, mapOf("name" to "Café \"De Kat\" & co"), lat = 52.3745123, lon = 4.8838)
         val edits = OsmEdits(testHttp(), "http://127.0.0.1:9")

@@ -92,6 +92,7 @@ object CiScreens {
         "ask" to Dest.Ask("quiet café with an outlet, then dinner"),
         "quests" to Dest.Quests(LAT, LON),
         "where" to Dest.Where,
+        "osmaccount" to Dest.OsmAccount,
         "eatcarte" to Dest.Eat("carte"),
         "eatorder" to Dest.Eat("order"),
         "eatbar" to Dest.Eat("bar"),

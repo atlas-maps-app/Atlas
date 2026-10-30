@@ -675,6 +675,15 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = app.atlas.ui.search.WhereScreen(this, nav)
     }
 
+    /** The OpenStreetMap account (Settings' row): signing in and out, and the user's edits, waiting, sent or not sent. */
+    data object OsmAccount : Dest {
+        override val route get() = "osmaccount"
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.mine.OsmAccountScreen(this, nav)
+    }
+
     companion object {
         /** Reads a destination's arguments back, by route name. Append a line per new destination. */
         private val PARSERS: Map<String, (RouteArgs) -> Dest?> = mapOf(
@@ -748,6 +757,7 @@ sealed interface Dest {
                 if (type == null || id == null || lat == null || lon == null) null else FillIn(type, id, lat, lon)
             },
             "where" to { _ -> Where },
+            "osmaccount" to { _ -> OsmAccount },
         )
 
         /** The destination [route] names, or null when it is unknown, malformed or its arguments are incomplete. */

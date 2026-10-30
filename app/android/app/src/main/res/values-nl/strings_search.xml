@@ -367,7 +367,7 @@
     <string name="fillin_change">wijzig</string>
     <string name="fillin_nothing">nog niets toe te voegen</string>
     <string name="fillin_still_guessed">Hierna nog gegokt: %1$s</string>
-    <string name="fillin_send_note">Verstuurd met je OpenStreetMap-account zodra je op wifi bent. Wijzigingen zijn openbaar en tonen je gebruikersnaam.</string>
+    <string name="fillin_send_note">Verstuurd met je OpenStreetMap-account zodra je online bent. Wijzigingen zijn openbaar en tonen je gebruikersnaam.</string>
     <string name="fillin_send_note_local">Blijft op deze telefoon tot je inlogt bij OpenStreetMap. Wijzigingen zijn openbaar en tonen je gebruikersnaam.</string>
     <plurals name="fillin_send">
         <item quantity="one">Verstuur %d tag</item>
@@ -376,7 +376,7 @@
     <string name="fillin_leave">Laat het voor een ander</string>
     <string name="fillin_done_sent">In de wachtrij · bedankt</string>
     <string name="fillin_done_skipped">Overgeslagen, geen probleem</string>
-    <string name="fillin_done_sent_sub">Gaat op wifi naar OpenStreetMap: %1$s</string>
+    <string name="fillin_done_sent_sub">Gaat naar OpenStreetMap zodra je online bent: %1$s</string>
     <string name="fillin_done_local_sub">Blijft op deze telefoon tot je inlogt: %1$s</string>
     <string name="fillin_done_skipped_sub">Het blijft een vraag voor de volgende voorbijganger</string>
     <string name="fillin_done_note">Na de volgende kaartupdate tekent ieders levende kaart het zo.</string>

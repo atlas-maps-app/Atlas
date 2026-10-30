@@ -48,6 +48,26 @@ data class TagEdit(val type: OsmType, val id: Long, val set: Map<String, String?
 data class EditsSent(val changeset: Long?, val applied: List<TagEdit>, val conflicts: List<TagEdit>)
 
 /**
+ * An OpenStreetMap server: its website, where the user signs in, and its API. [DEV] is the development server, a sandbox
+ * with accounts and data of its own, where uploads are tried without touching the map everyone uses.
+ */
+enum class OsmServer(val web: String, val api: String) {
+    LIVE("https://www.openstreetmap.org", "https://api.openstreetmap.org"),
+    DEV("https://master.apis.dev.openstreetmap.org", "https://master.apis.dev.openstreetmap.org"),
+}
+
+/** OpenStreetMap no longer accepts the user's sign-in (HTTP 401): nothing was sent, and the edits wait for a new one. */
+class OsmSignedOutException : ProviderException(OsmEdits.ID, "OpenStreetMap no longer accepts this sign-in")
+
+/**
+ * OpenStreetMap refused the edits (HTTP [code], a 4xx other than 401, 409 and 429), saying why in [reason]: an account
+ * blocked or without the contributor terms, a request it cannot read. Sending the same again would meet the same answer,
+ * so they are not sent again by themselves. A busy server (429, 5xx) or no connection is a plain [java.io.IOException].
+ */
+class OsmRefusedException(val code: Int, val reason: String) :
+    ProviderException(OsmEdits.ID, "OpenStreetMap refused the edits (HTTP $code)" + if (reason.isEmpty()) "" else ": $reason")
+
+/**
  * Signing in to OpenStreetMap with OAuth 2.0 and PKCE (RFC 7636). The app opens [authorizeUrl] in the browser, the user
  * signs in on openstreetmap.org, and the redirect to [redirectUri] brings a code back, which [exchange] turns into a
  * token. The app's client id is registered on openstreetmap.org by the user; the token belongs in the phone's keystore.
@@ -93,6 +113,15 @@ class OsmAuth(
             ?: throw ProviderException(ID, "OpenStreetMap's answer has no user name")
     }
 
+    /**
+     * Withdraws the [token] on openstreetmap.org (RFC 7009), so it no longer edits even where a copy of it survived; the
+     * app is no longer listed among the user's authorised applications. True when OpenStreetMap confirmed it.
+     */
+    suspend fun revoke(token: String): Boolean {
+        val form = FormBody.Builder().add("token", token).add("token_type_hint", "access_token").add("client_id", clientId).build()
+        return http.execute(http.request("$web/oauth2/revoke").post(form).build()).ok
+    }
+
     companion object {
         const val ID = "osm-auth"
         val SCOPES = listOf("read_prefs", "write_api")
@@ -127,7 +156,7 @@ class OsmEdits(
     suspend fun element(type: OsmType, id: Long): OsmElement? {
         val res = http.execute(http.request("$base/api/0.6/${type.api}/$id.json").build())
         if (res.code == 404 || res.code == 410) return null
-        val o = res.requireOk().json().asObject() ?: throw ProviderException(ID, "OpenStreetMap answered something unexpected")
+        val o = res.answered().json().asObject() ?: throw ProviderException(ID, "OpenStreetMap answered something unexpected")
         return o.arr("elements").firstOrNull()?.asObject()?.let(::parse)
             ?: throw ProviderException(ID, "OpenStreetMap's answer has no ${type.api} $id")
     }
@@ -175,24 +204,49 @@ class OsmEdits(
     /**
      * Sends [edits] in one changeset with the user's [token] and [comment]. Edits of one element apply in their order;
      * an edit whose element changed what the user saw is left out and returned as a conflict. When nothing applies, no
-     * changeset is opened. Where the upload finds an element changed between the read and the upload, the elements are
-     * read again and the upload tried once more.
+     * changeset is opened. Where the upload finds an element changed between the read and the upload (HTTP 409), the
+     * elements are read again and the upload tried once more; a second 409 returns every edit as a conflict. The
+     * changeset is closed whatever came of it. Throws [OsmSignedOutException], [OsmRefusedException], or an IOException
+     * where the server was busy or out of reach.
      */
     suspend fun send(token: String, edits: List<TagEdit>, comment: String): EditsSent {
         var plan = plan(edits)
         if (plan.elements.isEmpty()) return EditsSent(null, emptyList(), plan.conflicts)
         val changeset = open(token, comment)
         try {
-            if (!upload(token, changeset, plan.elements)) {
-                plan = plan(edits)
-                if (plan.elements.isNotEmpty() && !upload(token, changeset, plan.elements)) {
-                    throw ProviderException(ID, "The map changed under these edits twice; try again later")
-                }
-            }
+            if (upload(token, changeset, plan.elements)) return EditsSent(changeset, plan.applied, plan.conflicts)
+            plan = plan(edits)
+            if (plan.elements.isEmpty()) return EditsSent(null, emptyList(), plan.conflicts)
+            if (upload(token, changeset, plan.elements)) return EditsSent(changeset, plan.applied, plan.conflicts)
+            // changed under the edits again: a conflict, not tried a third time
+            return EditsSent(null, emptyList(), edits)
         } finally {
             close(token, changeset)
         }
-        return EditsSent(changeset, plan.applied, plan.conflicts)
+    }
+
+    /**
+     * Creates a node at [lat] [lon] with [tags] in a changeset of its own, closed after, and returns its id. For the
+     * development server's round trip alone ([OsmServer.DEV]): it refuses the live API.
+     */
+    suspend fun createNode(token: String, lat: Double, lon: Double, tags: Map<String, String>, comment: String): Long {
+        require(base != OsmServer.LIVE.api) { "Atlas creates nodes on the development server alone" }
+        val changeset = open(token, comment)
+        try {
+            val body = buildString {
+                append("<osmChange version=\"0.6\" generator=\"").append(escape(createdBy)).append("\"><create>")
+                append("<node id=\"-1\" changeset=\"").append(changeset).append("\" lat=\"").append(coordinate(lat))
+                append("\" lon=\"").append(coordinate(lon)).append("\">")
+                for ((k, v) in tags) tag(k, v)
+                append("</node></create></osmChange>")
+            }
+            val res = http.execute(authed(token, "$base/api/0.6/changeset/$changeset/upload").post(body.toRequestBody(XML)).build()).answered()
+            val node = Regex("<node\\b[^>]*\\bold_id=\"-1\"[^>]*>").find(res.text)?.value
+            return node?.let { Regex("\\bnew_id=\"(\\d+)\"").find(it) }?.groupValues?.get(1)?.toLong()
+                ?: throw ProviderException(ID, "OpenStreetMap's answer names no new node")
+        } finally {
+            close(token, changeset)
+        }
     }
 
     private class Plan(val elements: List<OsmElement>, val applied: List<TagEdit>, val conflicts: List<TagEdit>)
@@ -219,9 +273,7 @@ class OsmEdits(
 
     private suspend fun open(token: String, comment: String): Long {
         val req = authed(token, "$base/api/0.6/changeset/create").put(changesetXml(comment).toRequestBody(XML)).build()
-        val res = http.execute(req)
-        if (res.code == 401) throw ProviderException(ID, "OpenStreetMap no longer accepts this sign-in")
-        return res.requireOk().text.trim().toLongOrNull() ?: throw ProviderException(ID, "OpenStreetMap opened no changeset")
+        return http.execute(req).answered().text.trim().toLongOrNull() ?: throw ProviderException(ID, "OpenStreetMap opened no changeset")
     }
 
     /** True when the upload went in; false where an element changed between the read and the upload (HTTP 409). */
@@ -229,8 +281,19 @@ class OsmEdits(
         val body = osmChangeXml(changeset, elements).toRequestBody(XML)
         val res = http.execute(authed(token, "$base/api/0.6/changeset/$changeset/upload").post(body).build())
         if (res.code == 409) return false
-        res.requireOk()
+        res.answered()
         return true
+    }
+
+    /**
+     * This answer where it is 2xx; else what it means for the edits: a sign-in OpenStreetMap no longer accepts (401), a
+     * busy server (429, 5xx: an [HttpException], tried again later), or a refusal with OpenStreetMap's reason.
+     */
+    private fun HttpResponse.answered(): HttpResponse = when {
+        ok -> this
+        code == 401 -> throw OsmSignedOutException()
+        code == 429 || code >= 500 -> throw HttpException(code, url, text.take(Http.MAX_ERROR_BODY))
+        else -> throw OsmRefusedException(code, (headers["Error"] ?: text).replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim().take(300))
     }
 
     private suspend fun close(token: String, changeset: Long) {
@@ -252,7 +315,8 @@ class OsmEdits(
             id = ID, name = "OpenStreetMap edits", licence = "ODbL", attribution = "© OpenStreetMap contributors",
             url = "https://www.openstreetmap.org",
             note = "Edits are sent with your own OpenStreetMap account, only after you review them; they are public and show your user name.",
-            hosts = listOf("api.openstreetmap.org", "www.openstreetmap.org"), switchable = false,
+            // the test server is asked only by debug and bench builds' round trip there (the account's test server card)
+            hosts = listOf("api.openstreetmap.org", "www.openstreetmap.org", "master.apis.dev.openstreetmap.org"), switchable = false,
         )
 
         /** An element of the API's JSON (`elements[]`). */

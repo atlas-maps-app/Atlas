@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The OpenStreetMap account: signing in and out, the user's edits and what came of them (OsmAccountScreen, the
+     place sheet's card, the map's chips, Settings and Privacy). -->
+<resources>
+    <string name="osm_account_title">OpenStreetMap account</string>
+    <string name="osm_account_not_signed_in">Not signed in</string>
+    <string name="osm_account_signed_in_sub">Signed in on openstreetmap.org</string>
+    <string name="osm_account_signed_out_sub">Sign in to send the edits you make</string>
+    <string name="osm_account_sign_in">Sign in with OpenStreetMap</string>
+    <string name="osm_account_sign_out">Sign out</string>
+    <string name="osm_account_public">Edits you send are public on OpenStreetMap under your user name, for anyone to see and reuse. Atlas keeps your sign-in sealed on this phone and sends it to openstreetmap.org alone.</string>
+    <string name="osm_account_waiting">Finish signing in in your browser: Atlas comes back by itself.</string>
+    <string name="osm_account_declined">You did not let Atlas edit with your account.</string>
+    <string name="osm_account_failed">Signing in did not finish: %1$s</string>
+    <string name="osm_account_failed_unknown">Signing in did not finish. Try again.</string>
+    <string name="osm_account_unavailable">This build cannot sign in: it carries no OpenStreetMap client id.</string>
+    <string name="osm_account_no_browser">No browser on this phone opens the sign-in page.</string>
+    <string name="osm_edits_label">YOUR EDITS</string>
+    <string name="osm_edits_none">No edits yet. Fill in a building’s gaps from What’s here: your edits wait here until they are sent.</string>
+    <string name="osm_edits_send_now">Send now</string>
+    <string name="osm_edit_cancel">Cancel</string>
+    <string name="osm_edit_remove">Remove</string>
+    <string name="osm_edit_retry">Try again</string>
+    <string name="osm_edit_look_again">Look again</string>
+    <string name="osm_edit_mapped">On OpenStreetMap · changeset %1$d</string>
+    <string name="osm_edit_on_osm">On OpenStreetMap</string>
+    <string name="osm_edit_signed_out">Waiting · sign in to send it</string>
+    <string name="osm_edit_offline">Waiting · sent once you are online</string>
+    <string name="osm_edit_unreachable">Waiting · OpenStreetMap could not be reached, trying again</string>
+    <string name="osm_edit_busy">Waiting · OpenStreetMap is busy, trying again</string>
+    <string name="osm_edit_sending">Waiting · on its way to OpenStreetMap</string>
+    <string name="osm_edit_conflict">Not sent · the building changed on OpenStreetMap since you looked</string>
+    <string name="osm_edit_refused">Not sent · OpenStreetMap refused it: %1$s</string>
+    <string name="osm_settings_signed_out">not signed in</string>
+    <plurals name="osm_settings_waiting">
+        <item quantity="one">%d edit waiting</item>
+        <item quantity="other">%d edits waiting</item>
+    </plurals>
+    <string name="osm_dev_label">TEST SERVER</string>
+    <string name="osm_dev_text">Try signing in and sending on OpenStreetMap’s test server, master.apis.dev.openstreetmap.org, with an account of its own there. Nothing reaches the live map.</string>
+    <string name="osm_dev_round_trip">Try a round trip</string>
+    <string name="osm_dev_running">Creating a node there and editing it…</string>
+    <string name="osm_dev_done">Done: node %1$d created, then edited in changeset %2$d</string>
+    <string name="osm_dev_failed">The round trip failed: %1$s</string>
+    <string name="osm_place_edit">Your edit to OpenStreetMap</string>
+    <string name="osm_chip_waiting">waiting</string>
+    <string name="osm_chip_not_sent">not sent</string>
+    <string name="osm_fillin_sign_in">Sign in to OpenStreetMap</string>
+    <string name="osm_fillin_sign_in_short">Sign in</string>
+    <string name="osm_privacy_signed_in">signed in as %1$s · sealed on this phone</string>
+    <string name="osm_privacy_signed_out">not signed in · your edits wait on this phone</string>
+</resources>

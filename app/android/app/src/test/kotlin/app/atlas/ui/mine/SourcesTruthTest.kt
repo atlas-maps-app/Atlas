@@ -22,8 +22,11 @@ class SourcesTruthTest {
     /** The modules the APK carries: the packer runs on GitHub's runners, mapcorecheck and likeness are tests. */
     private val shipped = listOf("app", "mapview", "providers", "tiles", "route", "search", "places", "render", "core", "guide", "anchor", "rendertiles", "mapcore")
 
-    /** Hosts the code names but never asks: links the user opens, and XML namespaces. */
-    private val links = setOf("afdc.energy.gov", "chargemap.com", "map.openchargemap.io", "www.topografix.com", "www.w3.org")
+    /**
+     * Hosts the code names but never asks: links the user opens, XML namespaces, and the page that finds the phone's
+     * browsers for signing in to OpenStreetMap (openInBrowser).
+     */
+    private val links = setOf("afdc.energy.gov", "chargemap.com", "example.org", "map.openchargemap.io", "www.topografix.com", "www.w3.org")
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
