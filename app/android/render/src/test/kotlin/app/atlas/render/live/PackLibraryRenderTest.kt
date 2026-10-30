@@ -96,8 +96,8 @@ class PackLibraryRenderTest {
         }
     }
 
-    private fun library(renders: Boolean = true, payloads: (Int) -> Boolean = { it == PackLibrary.RENDER_PAYLOAD }, bundled: Map<String, String> = emptyMap()) =
-        PackLibrary(File(dir, "packs"), listOf(server.url("/r/packs.json").toString()), renders = renders, readsPayload = payloads, bundledRenders = bundled)
+    private fun library(renders: Boolean = true, payloads: (Int) -> Boolean = { it == PackLibrary.RENDER_PAYLOAD }) =
+        PackLibrary(File(dir, "packs"), listOf(server.url("/r/packs.json").toString()), renders = renders, readsPayload = payloads)
 
     @Test
     fun `a region's render pack comes with its element pack on the first visit and is kept apart`() {
@@ -233,15 +233,10 @@ class PackLibraryRenderTest {
     }
 
     @Test
-    fun `the bundled render pack is not fetched, a newer one replaces the one here, and renders off fetches none`() {
+    fun `renders off fetches none, and a newer one replaces the one here`() {
         val render = renderPack()
         serve(manifest(render), render)
-        val bundled = library(bundled = mapOf("amsterdam" to sha(render)))
-        val e = bundled.refresh().single()
-        assertNull(bundled.renderToFetch(e))
-        bundled.download(e)
-        assertTrue(requests.none { it.contains("render") })
-        File(dir, "packs").deleteRecursively()
+        // the app's library: the map draws no render pack (ENGINE.md step 3, one pack per country)
         val off = library(renders = false)
         off.download(off.refresh().single())
         assertTrue(requests.none { it.contains("render") })

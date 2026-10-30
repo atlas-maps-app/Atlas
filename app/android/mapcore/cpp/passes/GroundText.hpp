@@ -30,6 +30,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -42,6 +43,12 @@ namespace atlas::passes {
 inline constexpr std::int32_t canal_names_order = 650;
 /// The designators' (ground_order::designators): right after the ground's over lines, whose slots theirs lie among.
 inline constexpr std::int32_t designators_order = 510;
+
+/// The radius a frame's canal names are placed within: the view's own (`view_radius`, its ladder's, where the pack has
+/// views); else in a live frame the canal ring's at `dist` (view::live_names_radius: a pack without views, the
+/// windows', sets none, and their names took each canal's first way anywhere in the frame cell); else none (engine mode
+/// over a pack without views, as the renders draw it).
+[[nodiscard]] double canal_names_radius(std::optional<double> view_radius, double dist, bool engine_mode) noexcept;
 
 /// What stage T keeps of a tile for the canal names.
 struct CanalTile {

@@ -24,7 +24,7 @@ android {
         buildConfigField("String", "OSM_CLIENT_ID", "\"" + osmClientId.filter { it.isLetterOrDigit() || it == '-' || it == '_' } + "\"")
     }
 
-    // Packs (.atlas) are compressed inside already, chunk by chunk: stored as they are, the core maps the bundled render
+    // Packs (.atlas) are compressed inside already, chunk by chunk: stored as they are, the core maps VK facts' Westerkerk
     // tiles straight from the APK (and the element pack reads in ranges).
     androidResources { noCompress += "atlas" }
 
@@ -57,7 +57,8 @@ android {
         // The bench build: what a user's phone runs (not debuggable, so ART compiles and runs it as a release app does,
         // and the numbers are the phone's) with the timings overlay kept. Same key as the others, so it installs over them.
         // Profileable, so simpleperf (and Android Studio's profilers) can sample it on a phone without root.
-        // CI builds and runs it next to the debug APK (ci/smoke.sh); releases do not carry it.
+        // CI builds and runs it next to the debug APK (ci/smoke.sh), and every alpha is one (release.yml): it carries no
+        // map, as no APK does.
         create("bench") {
             initWith(getByName("release"))
             isDebuggable = false
@@ -200,15 +201,20 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// The bundled render tiles (plan-vector K2): the vector engine's first look on a first launch. The Westerkerk's living map
-// (from the app's bundled pack) and the canal ring (from packs-renders' grachten.atlas, fetched once into the repo's
-// cache and checked against its published SHA-256) as format-3 render packs, made at build time by the packer through the
-// same engine port the renders come from, into the assets' tiles/ folder with their index bundled.json, which lists the
-// canal ring alone: it draws the Westerkerk's place in the cut and looks of the windows around it, so zooming in there
-// switches nothing (ENGINE.md step 3, one Netherlands); the Westerkerk's pack stays for VK facts' hash lines. They are built,
-// not committed: the task runs again when the Westerkerk's pack or the packer's classpath (the engine port, the
-// render-tile compiler, the packer and their libraries; the canal ring's published hash is in the packer) changes, and
-// is up to date, or taken from the build cache, otherwise.
+// The APK's only tiles: the Westerkerk's living render pack (plan-vector K2), for VK facts' hash lines alone (the sun's,
+// the ground's and the twin's over it, which ci/hashes.env holds to the host build's), listed for no map. The APK
+// carries no map (ENGINE.md step 3, one pack per country: the phone takes each place's pack from its country's tiles,
+// or builds it). Made at build time by the packer through the same engine port the renders come from, from the app's
+// bundled element pack (`packer render-tiles --renders`), into the assets' tiles/ folder; with the core's stage P tool
+// (-Patlas.stagep or ATLAS_STAGEP) its tiles are the core's cut, the same bytes.
+//
+// The map CI's emulator runs draw at the Westerkerk home (VK bench's map, the home's first frames, the truth phase) is
+// the canal ring, made apart from every APK (benchTiles: `packer render-tiles --bundled --draw grachten`, with the core's
+// tool in the New looks, as the windows around it draw) and put on the emulator by ci/smoke.sh, where debug and bench
+// builds list it (MainActivity.BENCH_PACKS). Neither is committed: each task runs again when its packs' sources or the
+// packer's classpath (the engine port, the render-tile compiler, the packer and their libraries; the canal ring's
+// published hash is in the packer) change, and is up to date, or taken from the build cache, otherwise. The pack tests'
+// own set, both packs in the port's cut with their index, is :mapcorecheck's bundledTiles.
 val packerTool: Configuration = configurations.create("packerTool") {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -222,9 +228,11 @@ val packerTool: Configuration = configurations.create("packerTool") {
 }
 dependencies { packerTool(project(":packer")) }
 
-/** Runs `packer render-tiles --bundled` into [outputDir]`/tiles`. */
-@CacheableTask
-abstract class BundledTiles @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+/** Runs `packer render-tiles` with [arguments] into [outputDir]. */
+abstract class RenderTilesTask : DefaultTask() {
+    @get:Inject
+    abstract val exec: ExecOperations
+
     /** The packer and everything it runs: the engine port, the render-tile compiler and their libraries. */
     @get:Classpath
     abstract val tool: ConfigurableFileCollection
@@ -250,17 +258,22 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val core: RegularFileProperty
 
-    /** An asset root: the render packs land in its tiles/ folder. */
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
+
+    /** The packer's arguments, writing into [out] and working in [work]. */
+    protected abstract fun arguments(out: File, work: File): List<String>
+
+    /** What is left of [out] once the packer is done. */
+    protected open fun keep(out: File) {}
 
     @TaskAction
     fun generate() {
         val out = outputDir.get().asFile
         out.deleteRecursively()
+        out.mkdirs()
         val work = File(temporaryDir, "work")
         work.deleteRecursively()
-        val root = repo.get().asFile
         try {
             exec.javaexec {
                 classpath = tool
@@ -268,29 +281,63 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
                 executable = launcher.get().executablePath.asFile.absolutePath
                 // the canal ring's scene, whole, and one other load at a time for its tolerances
                 maxHeapSize = "2g"
-                args(
-                    "--bundled", File(out, "tiles").absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
-                    "--work", work.absolutePath, "--draw", "grachten", "--quiet",
-                )
-                // with the core's tool, the canal ring in the renders' New looks, as the windows the phone builds around
-                // it in the Netherlands draw (the user, 28 October: "that orange buildings look when zoomed out")
-                core.orNull?.let { args("--core", it.asFile.absolutePath, "--new-looks") }
+                args(arguments(out, work))
             }
         } finally {
             work.deleteRecursively()
         }
+        keep(out)
     }
 }
 
-val generateBundledTiles = tasks.register<BundledTiles>("generateBundledTiles") {
-    description = "Builds the bundled render tiles (plan-vector K2) into the app's assets."
+/** The APK's tiles: the Westerkerk's living render pack alone, into [outputDir]`/tiles/amsterdam.atlas`. */
+@CacheableTask
+abstract class FactsTiles : RenderTilesTask() {
+    override fun arguments(out: File, work: File): List<String> {
+        val pack = File(out, "tiles/amsterdam.atlas").also { it.parentFile.mkdirs() }
+        return listOf("--renders", westerkerk.get().asFile.absolutePath, pack.absolutePath, "--work", work.absolutePath, "--quiet") +
+            (core.orNull?.let { listOf("--core", it.asFile.absolutePath) } ?: emptyList())
+    }
+}
+
+/**
+ * The canal ring CI's emulator runs draw, into [outputDir]`/grachten.atlas`: the bundled set's (`--bundled --draw
+ * grachten`), with the core's tool in the renders' New looks, as the windows the phone builds around it draw (the user,
+ * 28 October: "that orange buildings look when zoomed out"); the Westerkerk and the index it writes beside it go.
+ */
+@CacheableTask
+abstract class BenchTiles : RenderTilesTask() {
+    override fun arguments(out: File, work: File): List<String> {
+        val root = repo.get().asFile
+        return listOf(
+            "--bundled", out.absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
+            "--work", work.absolutePath, "--draw", "grachten", "--quiet",
+        ) + (core.orNull?.let { listOf("--core", it.asFile.absolutePath, "--new-looks") } ?: emptyList())
+    }
+
+    override fun keep(out: File) {
+        out.listFiles { f -> f.name != "grachten.atlas" }.orEmpty().forEach { it.deleteRecursively() }
+    }
+}
+
+fun RenderTilesTask.packer() {
     tool.from(packerTool)
     westerkerk.set(layout.projectDirectory.file("src/main/assets/packs/amsterdam.atlas"))
     repo.set(rootProject.layout.projectDirectory.dir("../.."))
     launcher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
     providers.gradleProperty("atlas.stagep").orElse(providers.environmentVariable("ATLAS_STAGEP")).orNull?.let { core.set(file(it)) }
+}
+
+val generateFactsTiles = tasks.register<FactsTiles>("generateFactsTiles") {
+    description = "Builds the Westerkerk's living render pack into the app's assets, for VK facts' hash lines alone (no map lists it)."
+    packer()
     outputDir.set(layout.buildDirectory.dir("generated/tiles"))
 }
+tasks.register<BenchTiles>("benchTiles") {
+    description = "Builds the canal ring CI's emulator runs draw (ci/smoke.sh puts it on the device; no APK carries it)."
+    packer()
+    outputDir.set(layout.buildDirectory.dir("generated/bench-tiles"))
+}
 androidComponents {
-    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(generateBundledTiles, BundledTiles::outputDir) }
+    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(generateFactsTiles, FactsTiles::outputDir) }
 }

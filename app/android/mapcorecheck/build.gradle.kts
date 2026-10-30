@@ -145,8 +145,10 @@ val coreHost = tasks.register<CoreHostBuild>("coreHost") {
     if (rootProject.findProject(":mapcore") != null) dependsOn(":mapcore:fetchSlang")
 }
 
-// The bundled render packs (K2): the Westerkerk and the canal ring, made by the packer as :app's generateBundledTiles
-// makes them, for L0 (b).
+// The pack tests' render packs (K2): the Westerkerk's living map and the canal ring, in the port's cut (the reference the
+// parity tests hold the core to), with their index, made by the packer (`render-tiles --bundled`) for L0 (b) and every
+// test here that draws or reads them, and for the core's host tests (core.yml's tiles job, ATLAS_TILES_DIR). No APK
+// carries them for a map (ENGINE.md step 3, one pack per country).
 val packerTool: Configuration = configurations.create("packerTool") {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -161,7 +163,7 @@ val packerTool: Configuration = configurations.create("packerTool") {
 
 val bundledTilesDir = layout.buildDirectory.dir("bundled-tiles")
 val bundledTiles = tasks.register<JavaExec>("bundledTiles") {
-    description = "Builds the bundled render packs with the packer, for the tile reader's L0 test."
+    description = "Builds the pack tests' render packs with the packer (the Westerkerk and the canal ring, the port's cut)."
     classpath = packerTool
     mainClass.set("app.atlas.packer.RenderTiles")
     javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })

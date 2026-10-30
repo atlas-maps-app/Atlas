@@ -451,4 +451,20 @@ LiveView live_view(const style::CameraState& c) noexcept {
             .cy_dp = c.principal_y};
 }
 
+double live_names_radius(double dist) noexcept {
+    // ViewLadder.scaled and between over the canal ring's views: (dist, radius), nearest first
+    constexpr std::array<std::array<double, 2>, 3> knots{{{1600.0, 1400.0}, {2300.0, 1500.0}, {2700.0, 1500.0}}};
+    if (dist <= knots.front()[0]) return knots.front()[1] * dist / knots.front()[0];
+    if (dist >= knots.back()[0]) return knots.back()[1] * dist / knots.back()[0];
+    for (std::size_t i = 1; i < knots.size(); ++i) {
+        const std::array<double, 2>& a = knots[i - 1];
+        const std::array<double, 2>& b = knots[i];
+        if (dist <= b[0]) {
+            const double t = (dist - a[0]) / (b[0] - a[0]);
+            return a[1] + ((b[1] - a[1]) * t);
+        }
+    }
+    return knots.back()[1];
+}
+
 } // namespace atlas::view

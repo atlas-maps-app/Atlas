@@ -89,8 +89,8 @@ import kotlin.math.roundToInt
 
 /**
  * VK bench (plan-vector K1, A0; `atlas.screen=vkbench`, or the debug and bench builds' "VK bench" shortcut): the
- * stand-in, a city-sized frame drawn through the real Vulkan core, and the app's own map over the APK's bundled packs,
- * measured on the phone's GPU. In order, at the frame's 8 bits a channel:
+ * stand-in, a city-sized frame drawn through the real Vulkan core, and the app's own map over the packs it lists (the
+ * canal ring CI puts on the device), measured on the phone's GPU. In order, at the frame's 8 bits a channel:
  *  1. every frame configuration (A, B, C, and 1x for MSAA's own cost) by both forms (the composite, and one subpass with
  *     the effects per fragment), both routes (dynamic rendering with local reads, a render pass with two subpasses)
  *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°;
@@ -455,7 +455,7 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
         if (map != null) VkBench.mapCameraAt(path, map, t, periodSeconds, cam) else VkBench.cameraAt(path, view, t, periodSeconds, cam)
         state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
         if (map != null) {
-            val pack = packs?.choose(cam.latitude, cam.longitude, cam.distance)
+            val pack = packs?.choose(cam.latitude, cam.longitude)
             CameraWriter.pack(out, pack?.number ?: 0L, pack?.profile ?: 0)
         }
         // The pills as Compose last placed them (none while they are off), carried on to this vsync while they move.
@@ -909,7 +909,7 @@ private class BenchRun(
     }
 
     /**
-     * The app's map (ENGINE.md step 2: VK bench runs the real paths): the core's map over the APK's bundled packs, drawn as
+     * The app's map (ENGINE.md step 2: VK bench runs the real paths): the core's map over the packs the map lists, drawn as
      * the app draws it (the facts' own configuration, the sunny moment, the haze and the vignette as the Look settings
      * have them, the painter's order as VK facts left it; no labels) under scripted paths at its real views
      * ([VkBench.mapViews]): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main
@@ -924,25 +924,20 @@ private class BenchRun(
             emit("vkbench map: the SurfaceView did not attach (${surface.error})")
             return
         }
-        val packs = MapEngine.packs(context.assets)
+        val packs = MapEngine.packs()
         withContext(Dispatchers.IO) { runCatching { packs.load() } }
-        // the canal ring draws the Westerkerk home too (the APK lists it alone): the app's home, in the living map's frame
-        // (HomeView.westerkerk)
+        // the canal ring, which CI puts on the device (MapEngine.benchPacks: no APK carries a map), draws the Westerkerk
+        // home too: the app's home, in the living map's frame (HomeView.westerkerk)
         val canal = packs.packs.firstOrNull { it.id == VkBench.BOARD_PACK }
         val views = VkBench.mapViews(canal?.let { RegionFrame.living() }, canal?.frame, canal?.views?.get(VkBench.BOARD_VIEW))
         if (views.isEmpty()) {
-            emit("vkbench map: unavailable (no bundled packs in this build)")
+            emit("vkbench map: unavailable (no canal ring on the device: CI puts it in /data/local/tmp/atlas)")
             return
         }
         awaitApp("the map", VkHost.SURFACE)
         val moment = "sunny"
         val (said, lit) = withContext(Dispatchers.Default) {
-            val (refs, open) = packs.refs()
-            val opened = try {
-                core.packs(refs)
-            } finally {
-                for (r in open) runCatching { r.close() }
-            }
+            val opened = core.packs(packs.refs())
             val theme = ThemeBlock.allocate()
             val lit = runCatching {
                 CoreMoment.write(theme, Moment.Named(moment), canal?.zone ?: ZoneId.of("Europe/Amsterdam"), MapEngine.options.daylight)

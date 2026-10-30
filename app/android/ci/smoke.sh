@@ -63,7 +63,8 @@
 # (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute), ATLAS_SUN_HASH (the sun
 # bits' hash the host build computes), ATLAS_GROUND_HASH (the ground's stage T hash the host build computes),
 # ATLAS_TWIN_HASH (the twin check's hash the host build computes): each as ci/hashes.env holds it, unless the
-# environment sets another.
+# environment sets another; ATLAS_PACKS (a folder of render packs put on the device for the debug and bench builds to
+# draw: the canal ring, android.yml's apk job's :app:benchTiles, as no APK carries a map).
 # A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
 # of "screens vk pills map truth" (the default, all of them: the debug loop over the screens; VK facts, bench and the
 # crash guard; the frosted pills; the map drawn by the core; the truth phase, which ATLAS_BENCH=0 skips too);
@@ -205,9 +206,9 @@ rest_check() {
 
 # Opens screen $1 as run $2 (such as "bench-speed"), waits for it, and keeps its logcat lines, screenshot and memory: files
 # <screen>.<run>.atlasmap.txt, .png, .gfxinfo.txt and (home, filters) .mem.txt. $3 = "fresh" starts from the installed
-# state. The home's map is the engine's exact frame of the bundled Westerkerk, and the filters screen runs the SVG filter
-# probes through AGSL: those two wait until the frame is drawn or the last probe is done. The logcat marker is
-# "<run>-<screen>", which must be unique to this call.
+# state. The home's map is the Westerkerk, drawn from the canal ring put on the device (ATLAS_PACKS), and the filters
+# screen runs the SVG filter probes through AGSL: those two wait until the frame is drawn or the last probe is done. The
+# logcat marker is "<run>-<screen>", which must be unique to this call.
 measure() {
   local s=$1 run=$2 label="$2-$1" pid drawn
   adb shell am force-stop $PKG
@@ -304,6 +305,18 @@ adb shell settings put global anr_show_background 0 >/dev/null 2>&1
 # A long run writes more than the default log buffer holds.
 adb logcat -G 16M >/dev/null 2>&1
 install_apk "$APK" || exit 1
+# The map the runs draw at the Westerkerk home (the home's frames, VK bench's map): the APK carries none (ENGINE.md
+# step 3, one pack per country) and CI's run builds no windows, so the canal ring goes where the debug and bench builds
+# list render packs for the map (MainActivity.BENCH_PACKS), which neither a reinstall nor `pm clear` empties.
+if [ -n "${ATLAS_PACKS:-}" ] && ls "$ATLAS_PACKS"/*.atlas > /dev/null 2>&1; then
+  adb shell mkdir -p /data/local/tmp/atlas
+  adb push "$ATLAS_PACKS"/*.atlas /data/local/tmp/atlas/ > /dev/null
+  adb shell chmod 755 /data/local/tmp/atlas
+  adb shell chmod 644 '/data/local/tmp/atlas/*.atlas'
+  echo "Packs for the map: $(adb shell ls -l /data/local/tmp/atlas | tr -d '\r' | awk 'NF > 4 { printf "%s (%s bytes) ", $NF, $5 }')"
+else
+  echo "WARNING: no packs for the map (ATLAS_PACKS): the home and VK bench's map have nothing to draw"
+fi
 adb logcat -c
 CLK_TCK=$(adb shell getconf CLK_TCK 2>/dev/null | tr -d '\r'); [[ $CLK_TCK =~ ^[0-9]+$ ]] || CLK_TCK=100
 APP_SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')

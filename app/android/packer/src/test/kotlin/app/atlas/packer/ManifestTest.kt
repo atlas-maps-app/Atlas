@@ -2,6 +2,7 @@ package app.atlas.packer
 
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.PackFile
+import app.atlas.tiles.TilesIndex
 import app.atlas.tiles.WindowsIndex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -237,6 +238,61 @@ class ManifestTest {
         assertTrue(pack.windows!!.isSplit)
         assertEquals(3000L, pack.windows!!.bytes)
         assertEquals("$base/luxembourg.windows.idx", pack.windowsIndex!!.url)
+    }
+
+    @Test
+    fun aCountrysTilesGoUpInPartsBesideTheirIndexWholeWithTheCoresVersion() {
+        val dir = tmp.newFolder("tiles")
+        placesFiles(dir, "netherlands")
+        // two windows' packs and a window with nothing to draw, and their index as `packer country` writes it
+        val tiles = File(dir, "netherlands.tiles").apply { writeBytes(ByteArray(2500) { (it * 11).toByte() }) }
+        val version = "core-p7 s1.1-49f47f3df1d91a4f"
+        val entries = listOf(
+            TilesIndex.Entry(8414, 5384, 0, 1500, ByteArray(32) { 1 }), TilesIndex.Entry(8414, 5385, 1500, 1000, ByteArray(32) { 2 }),
+            TilesIndex.Entry(8372, 5377, 0, 0, ByteArray(32)),
+        )
+        File(dir, "netherlands.tiles.idx").outputStream().use {
+            TilesIndex.of(14, Instant.parse("2026-10-26T21:24:46Z"), 2500, version, entries).write(it)
+        }
+        val whole = PackFiles.sha256(tiles)
+        val e = packs(Manifest.build(dir, base, null, splitBytes = 1024)).single()
+        val files = e["files"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("places", "tiles", "tiles-index"), files.map { it["kind"]!!.jsonPrimitive.content })
+        val (_, data, index) = files
+        assertEquals(whole, data["sha256"]!!.jsonPrimitive.content)
+        assertEquals(2500L, data["bytes"]!!.jsonPrimitive.long)
+        assertNull(data["url"])
+        assertEquals(listOf(1024L, 1024L, 452L), data["parts"]!!.jsonArray.map { it.jsonObject["bytes"]!!.jsonPrimitive.long })
+        // the index whole, whatever its size, with what it says of itself and the core's version it was built by
+        assertNull(index["parts"])
+        assertEquals("$base/netherlands.tiles.idx", index["url"]!!.jsonPrimitive.content)
+        assertEquals(TilesIndex.HEAD_BYTES + version.length + 3L * TilesIndex.ENTRY_BYTES, index["bytes"]!!.jsonPrimitive.long)
+        assertEquals(listOf(TilesIndex.VERSION, 14, 3), listOf("format", "level", "windows").map { index[it]!!.jsonPrimitive.int })
+        assertEquals(version, index["core_version"]!!.jsonPrimitive.content)
+        // run again on the parts: the entry already written stands
+        assertEquals(e, packs(Manifest.build(dir, base, null)).single())
+        // a run with neither keeps the earlier entries
+        val later = tmp.newFolder("later")
+        placesFiles(later, "netherlands")
+        val kept = packs(Manifest.build(later, base, null, previous = Manifest.build(dir, base, null))).single()
+        assertEquals(files.drop(1), kept["files"]!!.jsonArray.map { it.jsonObject }.drop(1))
+        // and the app sees both, with the version its core must have
+        val pack = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single()
+        assertTrue(pack.tiles!!.isSplit)
+        assertEquals(2500L, pack.tiles!!.bytes)
+        assertEquals("$base/netherlands.tiles.idx", pack.tilesIndex!!.url)
+        assertEquals(version, pack.tilesIndex!!.coreVersion)
+    }
+
+    @Test
+    fun theTilesIndexAloneDatesThePack() {
+        // a region with its tiles only: the index's date is its data's
+        val dir = tmp.newFolder("index-only")
+        File(dir, "netherlands.tiles").writeBytes(ByteArray(10))
+        File(dir, "netherlands.tiles.idx").outputStream().use {
+            TilesIndex.of(14, Instant.parse("2026-10-26T21:24:46Z"), 10, "core-p7 s1.1-49f47f3df1d91a4f", listOf(TilesIndex.Entry(1, 1, 0, 10, ByteArray(32)))).write(it)
+        }
+        assertEquals("2026-10-26T21:24:46Z", packs(Manifest.build(dir, base, null)).single()["osm_timestamp"]!!.jsonPrimitive.content)
     }
 
     @Test

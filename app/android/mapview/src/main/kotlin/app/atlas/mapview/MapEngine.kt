@@ -189,7 +189,7 @@ object MapEngine {
     var coreConfig: CoreConfig? = null
         private set
 
-    /** Whether the maps may use the network now (a first visit's render pack, K20a). */
+    /** Whether the maps may use the network now (the windows' tiles and data). */
     @Volatile
     var online: () -> Boolean = { false }
 
@@ -242,14 +242,24 @@ object MapEngine {
         core = s
     }
 
-    /** The packs the core draws from: the APK's bundled render packs and the regions' library's (made once). */
-    fun packs(assets: AssetManager): PackList = packList ?: synchronized(this) {
+    /**
+     * The packs the core draws from: the windows on the phone, and in CI's runs the canal ring it puts there (made
+     * once).
+     */
+    fun packs(): PackList = packList ?: synchronized(this) {
         packList ?: PackList(
-            AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker, windows = { windowsDir() },
-            windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() },
+            windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
         )
             .also { packList = it }
     }
+
+    /**
+     * Debug and bench builds: render packs the map lists beside the windows, which CI puts on its emulator (the canal ring
+     * its runs draw at the Westerkerk home: no APK carries a map, and CI's run builds no windows); the app sets it. None
+     * on a phone.
+     */
+    @Volatile
+    var benchPacks: () -> List<File> = { emptyList() }
 
     /**
      * Overpass's JSON for a window's box (south, west, north, east), with the window's query (ENGINE.md step 3),
@@ -272,6 +282,14 @@ object MapEngine {
      */
     @Volatile
     var windowPacks: ((app.atlas.mapcore.MapCore.Window, java.time.Instant?) -> app.atlas.mapview.vk.Windows.Packed?)? = null
+
+    /**
+     * A window's pack from its country's tiles, as the phone's own core builds it (ENGINE.md step 3, one pack per
+     * country: taken before any data, where the phone has none of the window); the app sets it with the published
+     * packs. Null: every window is built from its data.
+     */
+    @Volatile
+    var windowTiles: ((app.atlas.mapcore.MapCore.Window) -> app.atlas.mapview.vk.Windows.Tiled?)? = null
 
     /**
      * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),
@@ -307,7 +325,7 @@ object MapEngine {
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks)
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles)
                 .also { windowsBuilder = it }
         }
     }
@@ -316,28 +334,12 @@ object MapEngine {
      * Reads the packs' list ahead of the first map, off the main thread, so that the home's first look knows where the
      * core has tiles without reading them itself (the app calls it as it starts the core).
      */
-    fun warmPacks(assets: AssetManager) {
-        val list = packs(assets)
+    fun warmPacks() {
+        val list = packs()
         if (!list.loaded) packWorker.execute { runCatching { list.load() } }
     }
 
     private val packWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "atlas-core-packs").apply { isDaemon = true } }
-
-    /** The APK's `tiles/` assets, stored uncompressed: read, and mapped by the core where they lie. */
-    private class AssetPacks(private val assets: AssetManager) : PackList.BundledSource {
-        override fun open(name: String): java.io.InputStream? = try {
-            assets.open("tiles/$name")
-        } catch (_: java.io.IOException) {
-            null
-        }
-
-        override fun range(name: String): PackList.Range? = try {
-            val fd = assets.openFd("tiles/$name")
-            PackList.Range(fd.parcelFileDescriptor.fd, fd.startOffset, fd.length, fd)
-        } catch (_: java.io.IOException) {
-            null
-        }
-    }
 
     @Volatile
     private var fonts: SvgFonts? = null

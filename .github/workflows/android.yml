@@ -146,12 +146,14 @@ jobs:
             echo "ATLAS_HOST_LDFLAGS=-stdlib=libc++"
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | head -1
-      # The packer's tool (ENGINE.md step 3: the core's stage P, mapcore/cpp/stagep), which cuts the APK's bundled tiles
-      # (:app's generateBundledTiles reads ATLAS_STAGEP), so the APK's packs come from the code the phone builds its
-      # windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++
-      # (above) and the SDK's CMake and Ninja, through a ccache folder and entry of its own (unit-app restores it), the
-      # compiler known by its file's time and size. The tiles are the port's cut's byte for byte: :mapcorecheck's bundled
-      # tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold the core to, as do core.yml's.
+      # The packer's tool (ENGINE.md step 3: the core's stage P, mapcore/cpp/stagep), which cuts the APK's tiles (the
+      # Westerkerk's living pack, for VK facts' hash lines alone: :app's generateFactsTiles) and the canal ring the
+      # emulator's runs draw (:app's benchTiles, in the New looks), both reading ATLAS_STAGEP, so they come from the code
+      # the phone builds its windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's
+      # clang and libc++ (above) and the SDK's CMake and Ninja, through a ccache folder and entry of its own (unit-app
+      # restores it), the compiler known by its file's time and size. The Westerkerk's tiles are the port's cut's byte
+      # for byte: :mapcorecheck's bundled tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold
+      # the core to, as do core.yml's.
       - uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ccache-stagep
@@ -168,11 +170,13 @@ jobs:
           "$cmake_bin/cmake" --build --preset host-stagep
           ccache --show-stats
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
-      - name: The APKs
+      # benchTiles makes the canal ring the emulator's runs draw: no APK carries a map (ENGINE.md step 3, one pack per
+      # country).
+      - name: The APKs and the emulator's map
         id: apk
         run: |
           ccache --zero-stats > /dev/null
-          ./gradlew assembleDebug assembleBench --stacktrace
+          ./gradlew assembleDebug assembleBench :app:benchTiles --stacktrace
           ccache --show-stats
       # The caches' entries, once the build is done: what this run's compilations used (the hits and the new units),
       # and nothing older, so each entry is one build's size however many runs came before. ccache marks a unit used
@@ -225,9 +229,16 @@ jobs:
           name: atlas-bench-apk
           path: app/android/app/build/outputs/apk/bench/*.apk
           if-no-files-found: ignore
+      - name: Keep the emulator's map
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atlas-bench-packs
+          path: app/android/app/build/generated/bench-tiles/*.atlas
+          if-no-files-found: ignore
 
-  # The app's unit tests (Robolectric's screenshots among them), with the bundled tiles the APK carries: the core's
-  # stage P cuts them, as in apk (whose ccache entry for the tool this job takes).
+  # The app's unit tests (Robolectric's screenshots among them), with the tiles the APK carries (the Westerkerk's living
+  # pack, for VK facts): the core's stage P cuts them, as in apk (whose ccache entry for the tool this job takes).
   unit-app:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
     runs-on: ubuntu-latest
@@ -284,8 +295,8 @@ jobs:
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
       # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
-      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
-      # APK's tiles; each test job takes it itself.
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch of it (the
+      # APK's tiles, then the emulator's map); each test job takes it itself.
       - name: The canal ring's pack
         uses: actions/cache@v6
         with:
@@ -338,8 +349,8 @@ jobs:
             "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
       # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
       # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
-      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
-      # APK's tiles; each test job takes it itself.
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch of it (the
+      # APK's tiles, then the emulator's map); each test job takes it itself.
       - name: The canal ring's pack
         uses: actions/cache@v6
         with:
@@ -460,8 +471,8 @@ jobs:
           fi
       # The canal ring's element pack (packs-renders' grachten.atlas, by its SHA-256), which the modules' tests read
       # where it lies, cache/packs/regions (AnchorCases.grachten, the packer): without it they leave the canal ring's
-      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch for the
-      # APK's tiles; each test job takes it itself.
+      # cases out, and TextShapingTest fails. When one job ran every test it came with the packer's own fetch of it (the
+      # APK's tiles, then the emulator's map); each test job takes it itself.
       - name: The canal ring's pack
         uses: actions/cache@v6
         with:
@@ -673,6 +684,13 @@ jobs:
         with:
           name: atlas-bench-apk
           path: apk-bench
+      # The map the runs draw at the Westerkerk home (VK bench's map, the home's frames): the canal ring, which smoke.sh
+      # puts on the device for the debug and bench builds to list (MainActivity.BENCH_PACKS), as no APK carries a map.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: atlas-bench-packs
+          path: bench-packs
       - name: The part's switches
         env:
           PART: ${{ matrix.part }}
@@ -683,6 +701,7 @@ jobs:
           {
             echo "ATLAS_MAP_WAIT=$WAIT"
             echo "ATLAS_BENCH=$BENCH"
+            echo "ATLAS_PACKS=bench-packs"
             case "$PART" in
               all) echo "ATLAS_SCREENS=$SCREENS" ;;
               bench) echo "ATLAS_SCREENS=home filters"; echo "ATLAS_PHASES=screens truth" ;;

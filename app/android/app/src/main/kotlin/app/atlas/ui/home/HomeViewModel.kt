@@ -89,8 +89,8 @@ class HomeViewModel(
     val map = MapState(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
-            // CI's demo (and the bench shortcut) opens on the Westerkerk, which the bundled canal ring draws at once without
-            // the network, whatever view was saved: the same frame on the emulator and on a phone
+            // CI's demo (and the bench shortcut) opens on the Westerkerk, whatever view was saved: the same frame on the
+            // emulator (the canal ring CI puts there) and on a phone (the windows of the Netherlands' tiles)
             services.ciDemo -> HomeView.westerkerk
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
             else -> FirstLook.around(services.location.last.value?.location, ::coveredByMap)
@@ -98,14 +98,14 @@ class HomeViewModel(
     ).apply { time = clock() }
 
     /**
-     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a pack of its
-     * holds the place (else the first look is the Main board's view of the canal ring the APK carries); today's map
-     * alone counts every place, as it always has (it fetches what it needs). The list is read as the core starts
-     * (MapEngine.warmPacks); only if that has not finished is it read here.
+     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a window on the
+     * phone holds the place (else the first look is the Main board's view of the canal ring, whose windows the
+     * Netherlands' tiles give); today's map alone counts every place, as it always has (it fetches what it needs). The
+     * list is read as the core starts (MapEngine.warmPacks); only if that has not finished is it read here.
      */
     private fun coveredByMap(p: LatLon): Boolean {
         if (MapEngine.core is CoreState.Canvas) return true
-        val list = runCatching { MapEngine.packs(services.context.assets) }.getOrNull() ?: return true
+        val list = runCatching { MapEngine.packs() }.getOrNull() ?: return true
         if (!list.loaded) runCatching { list.load() }
         return list.packs.any { p in it.box }
     }
