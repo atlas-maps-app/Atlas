@@ -83,19 +83,19 @@ object MapEngine {
     /**
      * The options today's map draws [region] with ([opts], [options] by default): where it still draws in a country whose
      * tiles the core draws ([countryAt]: beyond the core's reach), the core's light for that country, which in the
-     * Netherlands is the living map's (RenderOptions.tone off), as the core lights every pack there (frame/MapFrame.hpp's
-     * with_pack, by the country of the pack's frame), so a region is not lit warmer than the core's map around it (the
-     * user, 30 October: "Its colors are slightly warmer"). Elsewhere, and before the published list is read, the
-     * renders' own light.
+     * Netherlands is TONE's whatever the region's profile (RenderOptions.tone on), as the core lights every pack there
+     * (frame/MapFrame.hpp's with_pack, by the country of the pack's frame), so a region is lit as the core's map around
+     * it (the user, 30 October: "Its colors are slightly warmer", then of the renders' light: "I think it was tone what I
+     * liked"). Elsewhere, and before the published list is read, the renders' own light.
      */
     fun optionsFor(region: LiveRegion, opts: RenderOptions = options): RenderOptions =
-        if (livingLight(region.frame.lat0, region.frame.lon0)) opts.copy(tone = false) else opts
+        if (coreLight(region.frame.lat0, region.frame.lon0)) opts.copy(tone = true) else opts
 
     /**
-     * Whether today's map lights a region framed at [lat], [lon] as the living map ([optionsFor]): a country's whose
-     * tiles the core draws, and the Netherlands (the core's load::draws_new_looks).
+     * Whether today's map lights a region framed at [lat], [lon] as the core lights the Netherlands ([optionsFor]): a
+     * country's whose tiles the core draws, and the Netherlands (the core's load::draws_new_looks).
      */
-    internal fun livingLight(lat: Double, lon: Double): Boolean = countryAt(lat, lon) != null && Countries.of(LatLon(lat, lon)) == NETHERLANDS
+    internal fun coreLight(lat: Double, lon: Double): Boolean = countryAt(lat, lon) != null && Countries.of(LatLon(lat, lon)) == NETHERLANDS
 
     private const val NETHERLANDS = "NL"
 

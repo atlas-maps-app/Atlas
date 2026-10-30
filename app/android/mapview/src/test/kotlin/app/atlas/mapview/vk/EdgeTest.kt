@@ -114,14 +114,14 @@ class EdgeTest {
 
     @Test
     fun whereTodaysMapStillDrawsInTheCountryItTakesTheCoresLight() {
-        // beyond the core's reach in the Netherlands: the living map's light, as the core lights every pack there
+        // beyond the core's reach in the Netherlands: TONE whatever the region's profile, as the core lights every pack there
         MapEngine.countries = listOf(netherlands)
-        assertTrue(MapEngine.livingLight(52.366, 4.917)) // Artis's region
-        assertTrue(MapEngine.livingLight(52.3746, 4.8840)) // the Westerkerk's
+        assertTrue(MapEngine.coreLight(52.366, 4.917)) // Artis's region
+        assertTrue(MapEngine.coreLight(52.3746, 4.8840)) // the Westerkerk's, the living map's
         // outside it, and before the published list is read, the renders' own light
-        assertFalse(MapEngine.livingLight(48.858, 2.343)) // Paris's region
+        assertFalse(MapEngine.coreLight(48.858, 2.343)) // Paris's region
         MapEngine.countries = emptyList()
-        assertFalse(MapEngine.livingLight(52.366, 4.917))
+        assertFalse(MapEngine.coreLight(52.366, 4.917))
     }
 
     @Test
