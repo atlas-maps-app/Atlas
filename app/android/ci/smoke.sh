@@ -325,8 +325,9 @@ if [ -n "${ATLAS_SCREENS_PART:-}" ]; then
 fi
 has_phase screens || SCREENS=""
 # shellcheck disable=SC2086
-printf '%s\n' $SCREENS > "$OUT/screens.txt"
-printf '%s\n' $PHASES > "$OUT/phases.txt"
+printf '%s\n' $SCREENS | grep . > "$OUT/screens.txt"
+# shellcheck disable=SC2086
+printf '%s\n' $PHASES | grep . > "$OUT/phases.txt"
 echo "Phases: $PHASES"
 echo "Screens: $SCREENS ($(grep -c . "$OUT/screens.txt") of the app's $(grep -c . "$OUT/screens-all.txt"))"
 

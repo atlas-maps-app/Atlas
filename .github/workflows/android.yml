@@ -760,18 +760,18 @@ jobs:
           for part in parts/*/; do
             [ -s "$part/screens-all.txt" ] || { echo "::error::$(basename "$part") kept no list of the app's screens"; status=1; }
           done
-          all=$(cat parts/*/screens-all.txt | sort | uniq -c | awk '{ print $2 }')
-          if [ "$(cat parts/*/screens-all.txt | sort | uniq -c | awk '{ print $1 }' | sort -u | wc -l)" != 1 ]; then
+          all=$(cat parts/*/screens-all.txt | grep . | sort -u || true)
+          if [ "$(cat parts/*/screens-all.txt | grep . | sort | uniq -c | awk '{ print $1 }' | sort -u | wc -l)" != 1 ]; then
             echo "::error::the parts' emulators listed different screens"; status=1
           fi
-          opened=$(cat parts/*/screens.txt | sort)
+          opened=$(cat parts/*/screens.txt | grep . | sort || true)
           missing=$(comm -23 <(sort -u <<< "$all") <(sort -u <<< "$opened"))
           twice=$(uniq -d <<< "$opened")
           extra=$(comm -13 <(sort -u <<< "$all") <(sort -u <<< "$opened"))
           [ -z "$missing" ] || { echo "::error::screens no part opened: $(tr '\n' ' ' <<< "$missing")"; status=1; }
           [ -z "$twice" ] || { echo "::error::screens more than one part opened: $(tr '\n' ' ' <<< "$twice")"; status=1; }
           [ -z "$extra" ] || { echo "::error::screens the app does not list: $(tr '\n' ' ' <<< "$extra")"; status=1; }
-          phases=$(cat parts/*/phases.txt | grep -v -x screens | sort)
+          phases=$(cat parts/*/phases.txt | grep . | grep -v -x screens | sort || true)
           want="map pills vk"
           if [ "$BENCH" = 1 ]; then want="map pills truth vk"; fi
           if [ "$(tr '\n' ' ' <<< "$phases" | sed 's/ $//')" != "$want" ]; then
