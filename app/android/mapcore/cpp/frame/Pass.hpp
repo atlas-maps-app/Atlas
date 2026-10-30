@@ -199,6 +199,10 @@ public:
     /// Stage F of the pass, on the render thread, before the frame records: its draw lists for the frame's cover and
     /// ranks, written into its own per-frame buffers.
     virtual void update(const FrameState& state) { (void)state; }
+    /// Whether the pass's last stage F left a fade of its own under way (a label coming in, or going out where it
+    /// stood): frames are due at the same camera until it ends, as for the world's fades (MapFrame::animating). A
+    /// frame that leaves the pass's work out ends it. None by default.
+    [[nodiscard]] virtual bool fading() const noexcept { return false; }
     /// Whether the pass can draw the moment `next` (the shaders' Theme of a moment the frame's inputs bring) without
     /// long work in its stage F. Asked on the render thread before a frame drawn into an output derives its state, of
     /// every pass, while a moment is asked about that the frames do not show yet; the frames show the moment they show

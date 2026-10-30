@@ -78,6 +78,8 @@ public:
     void release() noexcept override;
     [[nodiscard]] std::uint32_t ground_slots(const frame::FrameState& state) const override;
     void update(const frame::FrameState& state) override;
+    /// Whether the last frame placed the canal names mid-fade (text::CanalNames::fading); a frame without them ends it.
+    [[nodiscard]] bool fading() const noexcept override { return fading_; }
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
     /// The pack-level stage T: the pack's canal names whole (text::pack_canals), which the renders' rule reads once the
@@ -132,6 +134,7 @@ private:
     void draw_run(const frame::FrameState& state, const text::TextRun& run, std::uint32_t slot, float alpha);
 
     text::CanalNames names_;
+    bool fading_ = false; // the last frame's names left a fade under way
     std::vector<text::PlacedName> placed_;
     std::vector<frame::GroundRun> designators_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted

@@ -190,7 +190,9 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
                                   .alpha = alpha,
                                   .scale = size_});
             }
-            fading_ = fading_ || (alpha > 0.0F && alpha < 1.0F);
+            // fading from its first frame: coming in from 0 until 1, turning hidden from 1 until 0 (a frame at rest
+            // with either ends is still due, or the label would stop unseen, or whole where it should go)
+            fading_ = fading_ || (st.shown ? alpha < 1.0F : alpha > 0.0F);
         }
         if (st.leaving) {
             const float alpha = 1.0F - ramp(seconds - st.left_at);

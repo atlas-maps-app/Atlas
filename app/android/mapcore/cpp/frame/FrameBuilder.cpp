@@ -464,6 +464,14 @@ void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
     }
 }
 
+bool FrameBuilder::fading() const noexcept {
+    for (std::size_t p = 0; p < passes_.size(); ++p) {
+        if (p < 64 && ((options_.passes >> p) & 1U) == 0) continue; // left out (FrameOptions::passes): not drawn
+        if (passes_[p]->fading()) return true;
+    }
+    return false;
+}
+
 bool FrameBuilder::built_by(std::span<const std::string_view> names) {
     if (names.empty()) return true; // the scene does not say
     const bool same =
