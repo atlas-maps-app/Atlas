@@ -563,10 +563,14 @@ Worker::~Worker() {
     // the jthread's destruction (first of the members, being the last) joins it before anything it uses goes
 }
 
-void Worker::request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs) {
+void Worker::request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs,
+                     unsigned threads) {
     {
         const std::lock_guard lock(mutex_);
-        next_ = Request{.scene = std::move(scene), .bucket = bucket, .jobs = std::move(jobs)};
+        next_ = Request{.scene = std::move(scene),
+                        .bucket = bucket,
+                        .jobs = std::move(jobs),
+                        .threads = threads == 0 ? threads_ : std::min(threads, threads_)};
     }
     wake_.notify_one();
 }
@@ -617,7 +621,7 @@ void Worker::loop(const std::stop_token& stop) {
             }
             jobs.push_back(j);
         }
-        run(*r.scene, r.bucket, jobs, threads_, [&](std::uint32_t tile, TileBits bits) {
+        run(*r.scene, r.bucket, jobs, r.threads, [&](std::uint32_t tile, TileBits bits) {
             const SunTile& t = r.scene->tiles()[tile];
             if (r.bucket.named && cache_ != nullptr) {
                 if (const tiles::Sha256Digest* chunk = r.scene->chunk(tile)) (void)cache_->store(*chunk, t.level, bits);

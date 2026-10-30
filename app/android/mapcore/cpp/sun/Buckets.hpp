@@ -188,8 +188,10 @@ public:
     Worker(Worker&&) = delete;
     Worker& operator=(Worker&&) = delete;
 
-    /// Asks for `bucket` over `scene`'s tiles in `jobs`' order; it replaces a request not yet begun.
-    void request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs);
+    /// Asks for `bucket` over `scene`'s tiles in `jobs`' order, on `threads` threads (0: the worker's own count, at
+    /// most that); it replaces a request not yet begun.
+    void request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs,
+                 unsigned threads = 0);
 
     /// Waits until every request made so far is done.
     void wait_idle();
@@ -203,6 +205,7 @@ private:
         std::shared_ptr<const Scene> scene;
         Bucket bucket;
         std::vector<TileJob> jobs;
+        unsigned threads = 0;
     };
 
     void loop(const std::stop_token& stop);

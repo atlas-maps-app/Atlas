@@ -995,10 +995,12 @@ TEST_CASE("every cell in view is drawn: where four frame cells meet, the three a
     CHECK(lit() == w.cover()->tiles().size());
     // The neighbours' order changes as the target moves (nearest first), but each keeps its sun's lane: no scene is
     // built again and no bucket run again, every tile's bits still there.
-    const auto move = [&](double south, double east) {
+    // the target `south` and `east` metres of the corner, the window under it named (as the app names it) where given
+    const auto move = [&](double south, double east, std::string_view named = {}) {
         c.latitude = m.lat0 - (south / 110540.0);
         c.longitude = m.lon0 + (east / m.kx);
         (*builder)->set_inputs({.camera = c, .scene = &w});
+        if (!named.empty()) w.set_active(std::string(named));
         frames(10);
         w.sun()->wait_idle();
         frames(1);
@@ -1016,10 +1018,34 @@ TEST_CASE("every cell in view is drawn: where four frame cells meet, the three a
     CHECK(after.scenes == before.scenes);
     CHECK(after.runs == before.runs);
     CHECK(lit() == w.cover()->tiles().size());
+    // Crossing the cell's edge: the target 60 m into the north-east window, named, so that cell's windows are the
+    // active pack and the south-east cell's a neighbour. Each pack keeps its lane and only the active role moves: no
+    // scene is built and no bucket run again, every tile's bits still there, and the active role's bits the north-east
+    // cell's.
+    move(-60.0, 60.0, m.windows[1].first);
+    REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->id == m.cells[1]);
+    std::vector<std::string> crossed = beside();
+    std::ranges::sort(crossed);
+    std::vector<std::string> others_now{m.cells[0], m.cells[2], m.cells[3]};
+    std::ranges::sort(others_now);
+    CHECK(crossed == others_now);
+    const scene::SunStats across = w.sun()->stats();
+    CHECK(across.scenes == before.scenes);
+    CHECK(across.runs == before.runs);
+    CHECK(lit() == w.cover()->tiles().size());
+    CHECK(w.sun()->bits().view(m.places[1], now.load()).has_value());
+    // and back
+    move(1.0, 1.0, m.windows.back().first);
+    CHECK(w.active()->id == m.cells.back());
+    CHECK(w.sun()->stats().scenes == before.scenes);
+    CHECK(w.sun()->stats().runs == before.runs);
+    CHECK(lit() == w.cover()->tiles().size());
     MESSAGE(w.cover()->tiles().size() << " tiles drawn from " << drawn.size()
                                       << " cells' windows at the corner, each lit by its cell's sun; "
-                                      << w.residency().resident().size() << " resident, " << after.scenes << " scenes, "
-                                      << after.runs << " runs; " << w.tiles_line());
+                                      << w.residency().resident().size() << " resident, " << across.scenes
+                                      << " scenes, " << across.runs << " runs, after the neighbours' order changed and "
+                                      << "the target crossed into the north-east cell and back; " << w.tiles_line());
     (void)session->take_messages();
 }
 

@@ -46,13 +46,11 @@ SunGlobals::SunGlobals(const gpu::Device& device, const tiles::Store& store, con
     if (!options_.cache_dir.empty()) {
         cache_ = std::make_unique<sun::DiskCache>(options_.cache_dir, options_.cache_budget);
     }
-    // The active pack's lane on the sun's threads; the coarser pack's and the neighbours', less urgent, on half as many
-    // each.
+    // Every lane's worker may run on the sun's threads: the active pack's lane asks for all of them, the others, less
+    // urgent, for half as many (ask), so the threads follow the role as it moves between the lanes.
     const unsigned threads = std::max(1U, options_.threads);
-    lanes_[0].worker = std::make_unique<sun::Worker>(lanes_[0].bits, threads, cache_.get(), [this] { return now(); });
-    for (std::size_t i = 1; i < lanes_.size(); ++i) {
-        lanes_[i].worker = std::make_unique<sun::Worker>(lanes_[i].bits, std::max(1U, threads / 2), cache_.get(),
-                                                         [this] { return now(); });
+    for (Lane& lane : lanes_) {
+        lane.worker = std::make_unique<sun::Worker>(lane.bits, threads, cache_.get(), [this] { return now(); });
     }
     thread_ = std::jthread([this](const std::stop_token& stop) { work(stop); });
 }
@@ -88,37 +86,59 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     // The frame the view's eye is in: the active pack's, which the world draws in.
     const std::optional<view::GroundFrame> eye_frame =
         pack && pack->pack.head() != nullptr ? std::optional(view::frame_of(pack->pack.head()->frame)) : std::nullopt;
-    prepare_lane(lanes_[0], state, pack, level, drawn, eye_frame);
-    prepare_lane(lanes_[1], state, coarser, coarser_level, drawn, eye_frame);
-    // The neighbours: each in the lane that holds its pack already, so a change of their order (nearest first, as the
-    // camera moves) costs no lane its bits; one new to the frame in a lane no neighbour holds, an empty one first.
-    std::array<std::shared_ptr<const tiles::StorePack>, max_neighbours> held{};
-    std::array<std::uint8_t, max_neighbours> held_levels{};
-    std::array<bool, max_neighbours> placed{};
-    const std::size_t count = std::min({neighbours.size(), neighbour_levels.size(), max_neighbours});
-    for (std::size_t i = 0; i < count; ++i) {
-        for (std::size_t k = 0; neighbours[i] && k < max_neighbours; ++k) {
-            if (!held.at(k) && lanes_.at(2 + k).pack_id == neighbours[i]->id) {
-                held.at(k) = neighbours[i];
-                held_levels.at(k) = neighbour_levels[i];
-                placed.at(i) = true;
+    // The packs drawn, each in the lane that holds it already: the neighbours' order changes as the camera moves, and
+    // the active pack and a neighbour swap roles as it crosses a frame cell's edge, and neither costs a lane its bits
+    // (the role moves, not the bits). A pack new to the frame takes a lane no pack drawn holds, an empty one first.
+    struct Want {
+        std::shared_ptr<const tiles::StorePack> pack;
+        std::uint8_t level = 0;
+        LaneOf role = LaneOf::neighbour;
+    };
+    std::array<Want, 2 + max_neighbours> wants{};
+    wants[0] = {.pack = pack, .level = level, .role = LaneOf::active};
+    wants[1] = {.pack = coarser, .level = coarser_level, .role = LaneOf::coarser};
+    for (std::size_t i = 0; i < max_neighbours && i < neighbours.size(); ++i) {
+        wants.at(2 + i) = {.pack = neighbours[i],
+                           .level = i < neighbour_levels.size() ? neighbour_levels[i] : std::uint8_t{0},
+                           .role = LaneOf::neighbour};
+    }
+    const auto usable = [](const std::shared_ptr<const tiles::StorePack>& p) {
+        return p && p->pack.is_render() && p->pack.head() != nullptr && !p->pack.head()->levels.empty();
+    };
+    std::array<std::optional<std::size_t>, 2 + max_neighbours> lane_of{}; // per want
+    std::array<bool, 2 + max_neighbours> held{};                          // per lane
+    for (std::size_t w = 0; w < wants.size(); ++w) {
+        if (!usable(wants.at(w).pack)) continue;
+        for (std::size_t k = 0; k < lanes_.size(); ++k) {
+            if (!held.at(k) && lanes_.at(k).pack_id == wants.at(w).pack->id) {
+                lane_of.at(w) = k;
+                held.at(k) = true;
                 break;
             }
         }
     }
-    for (std::size_t i = 0; i < count; ++i) {
-        if (!neighbours[i] || placed.at(i)) continue;
+    for (std::size_t w = 0; w < wants.size(); ++w) {
+        if (!usable(wants.at(w).pack) || lane_of.at(w)) continue;
         std::optional<std::size_t> spare;
-        for (std::size_t k = 0; k < max_neighbours; ++k) {
+        for (std::size_t k = 0; k < lanes_.size(); ++k) {
             if (held.at(k)) continue;
-            if (!spare || (!lanes_.at(2 + *spare).pack_id.empty() && lanes_.at(2 + k).pack_id.empty())) spare = k;
+            if (!spare || (!lanes_.at(*spare).pack_id.empty() && lanes_.at(k).pack_id.empty())) spare = k;
         }
         if (!spare) break;
-        held.at(*spare) = neighbours[i];
-        held_levels.at(*spare) = neighbour_levels[i];
+        lane_of.at(w) = spare;
+        held.at(*spare) = true;
     }
-    for (std::size_t k = 0; k < max_neighbours; ++k) {
-        prepare_lane(lanes_.at(2 + k), state, held.at(k), held_levels.at(k), drawn, eye_frame);
+    if (lane_of[0]) active_lane_.store(*lane_of[0]);
+    std::array<const Want*, 2 + max_neighbours> in_lane{}; // per lane
+    for (std::size_t w = 0; w < wants.size(); ++w) {
+        if (lane_of.at(w)) in_lane.at(*lane_of.at(w)) = &wants.at(w);
+    }
+    const std::shared_ptr<const tiles::StorePack> none;
+    for (std::size_t k = 0; k < lanes_.size(); ++k) {
+        const Want* w = in_lane.at(k);
+        if (w != nullptr) lanes_.at(k).role = w->role;
+        prepare_lane(lanes_.at(k), state, w != nullptr ? w->pack : none, w != nullptr ? w->level : std::uint8_t{0},
+                     drawn, eye_frame);
     }
 
     // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
@@ -237,6 +257,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state,
         const double win_d =
             state.placed ? state.placed->number("win_d").value_or(view::default_win_d) : view::default_win_d;
         b.window_reach = win_d * 1.35;
+        b.active = lane.role == LaneOf::active;
         {
             const std::scoped_lock lock(mutex_);
             lane.next = std::move(b);
@@ -268,6 +289,7 @@ void SunGlobals::work(const std::stop_token& stop) {
             };
             if (!wake_.wait(lock, stop, asked)) return;
             // The active pack's lane first.
+            if (Lane& first = lanes_.at(active_lane_.load()); first.next) lane = &first;
             for (Lane& l : lanes_) {
                 if (lane == nullptr && l.next) lane = &l;
             }
@@ -294,7 +316,7 @@ void SunGlobals::work(const std::stop_token& stop) {
             const std::scoped_lock lock(mutex_);
             if (scene) {
                 ++stats_.scenes;
-                if (lane == lanes_.data()) {
+                if (lane == &lanes_.at(active_lane_.load())) {
                     stats_.scene_ms = ms;
                     stats_.tiles = scene->tiles().size();
                     stats_.resident = b.wanted.size();
@@ -401,7 +423,10 @@ void SunGlobals::ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene,
         const auto v = lane.bits.view(key, t);
         return v && v->now->bucket == b.bucket.key && (!j.windows || v->now->windows);
     });
-    if (!jobs.empty()) lane.worker->request(scene, b.bucket, std::move(jobs));
+    // the active pack's on all the sun's threads, the others on half as many
+    const unsigned threads = std::max(1U, options_.threads);
+    if (!jobs.empty())
+        lane.worker->request(scene, b.bucket, std::move(jobs), b.active ? threads : std::max(1U, threads / 2));
 }
 
 void SunGlobals::wait_idle() {
@@ -412,6 +437,14 @@ void SunGlobals::wait_idle() {
         });
     }
     for (Lane& l : lanes_) l.worker->wait_idle();
+}
+
+const sun::BitTiles& SunGlobals::bits(LaneOf lane) const noexcept {
+    if (lane == LaneOf::active) return lanes_.at(active_lane_.load()).bits;
+    for (const Lane& l : lanes_) {
+        if (!l.pack_id.empty() && l.role == lane) return l.bits;
+    }
+    return lanes_[0].bits;
 }
 
 SunStats SunGlobals::stats() const {
