@@ -166,7 +166,7 @@ public:
 
     /// Wakes the frame loop at rest: called on a worker thread as each tile is published (cheap and never blocking:
     /// post a frame request), so the next frame takes the tile and fades it in.
-    /// The sun's workers call it too, as each tile's bits are published. It must stay valid until the world is gone.
+    /// The sun's workers call it too, once a run's bits are published. It must stay valid until the world is gone.
     void set_wake(std::function<void()> wake);
     /// Whether the last update left the frame mid-transition: a tile drawn still fading in, a change of the frame
     /// drawn still blending, or a tile's sun bits still cross-fading. The frame loop draws another frame while it is

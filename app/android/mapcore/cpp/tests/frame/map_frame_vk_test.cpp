@@ -3,8 +3,9 @@
 // take them) opened in the world when it is made and kept across a device's loss; the moment's theme; the pack the
 // camera state names drawn, with its profile's rules (TONE off for the living map, on for the regions'); the picture
 // complete once every tile the cover wants is resident and drawn and every fade is done, and nothing more due at the
-// same camera after that; the world's wake called as tiles land; the map off and on again; VK bench taking the window
-// and giving it back; and after the close, no marker of the crash guard on disk.
+// same camera after that; the world's wake called as tiles land, and at rest a frame for each picture the workers
+// finish (a run of the sun's bits wakes it once), a pan ending in the rest picture; the map off and on again; VK bench
+// taking the window and giving it back; and after the close, no marker of the crash guard on disk.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -16,7 +17,9 @@
 #include "passes/Labels.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
 #include "standin/Session.hpp"
+#include "sun/Buckets.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
 #include "text/Fonts.hpp"
@@ -38,6 +41,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -747,6 +751,159 @@ TEST_CASE("a label's fade keeps the map's frames due at the same camera until it
     without.parts |= part::labels;
     CHECK(session.draw(without, {}).drawn);
     CHECK_FALSE(labels_pass().fading());
+}
+
+namespace {
+
+/// The sunny moment as the live map writes its hour (MomentName::other), its sun at `azimuth`: a live bucket (0.5°
+/// steps, sun/Buckets.hpp), whose bits the sun's workers make and never read from disk. The light's vector stays
+/// sunny()'s and the frame's theme holds no azimuth, so the moment's light stays as it was: only the bucket moves.
+[[nodiscard]] style::ThemeBlock live(double azimuth) {
+    style::ThemeBlock b = sunny();
+    b.moment = style::MomentName::other;
+    b.sun_azimuth = azimuth;
+    return b;
+}
+
+/// What the frame loop drew at rest (draw_at_rest): the frames a wake asked for, the frames due after them
+/// (MapFrame::animating: fades), and whether it came to rest.
+struct AtRest {
+    int woken = 0;
+    int due = 0;
+    bool rested = false;
+};
+
+/// The frame loop at rest as a slow phone runs it, where each wake comes between two frames and costs a frame of its
+/// own (the GPU's frames starve the workers between them, as on CI's emulator: a frame of 2 s on lavapipe with the
+/// water's light on): a frame for each wake as it comes and every frame due, until nothing has come for half a second
+/// and the workers are idle with nothing more, at most `seconds`.
+AtRest draw_at_rest(standin::Session& session, frame::MapFrame& map, std::atomic<int>& wakes,
+                    const style::CameraState& camera, double seconds = 30.0) {
+    using clock = std::chrono::steady_clock;
+    const auto until = clock::now() + std::chrono::duration<double>(seconds);
+    auto quiet_since = clock::now();
+    AtRest r;
+    while (clock::now() < until) {
+        bool draw = false;
+        if (wakes.load() > 0) {
+            wakes.fetch_sub(1);
+            ++r.woken;
+            draw = true;
+        } else if (map.animating()) {
+            ++r.due;
+            draw = true;
+        }
+        if (draw) {
+            if (session.draw(camera, {}).stale) session.remake();
+            quiet_since = clock::now();
+            continue;
+        }
+        if (clock::now() - quiet_since < std::chrono::milliseconds(500)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        // Half a second with nothing: the workers finish what they were asked for (they wake the loop as they
+        // publish), and if nothing more comes the map rests.
+        if (map.world() != nullptr) {
+            map.world()->residency().wait_idle();
+            if (scene::SunGlobals* sun = map.world()->sun()) sun->wait_idle();
+        }
+        if (wakes.load() == 0 && !map.animating()) {
+            r.rested = true;
+            break;
+        }
+    }
+    return r;
+}
+
+/// The bucket of the sun's bits each tile of the last frame drew with (0: none).
+[[nodiscard]] std::vector<std::uint64_t> drawn_buckets(frame::MapFrame& map) {
+    std::vector<std::uint64_t> out;
+    for (const scene::CoverTile& t : map.world()->cover()->tiles()) out.push_back(t.sun ? t.sun->now->bucket : 0U);
+    return out;
+}
+
+/// `c` moved `metres` ahead along its bearing.
+[[nodiscard]] style::CameraState ahead(style::CameraState c, double metres) {
+    const double kx = 111320 * pymath::cos(pymath::radians(c.latitude));
+    c.latitude += metres * pymath::cos(pymath::radians(c.bearing)) / 110540.0;
+    c.longitude += metres * pymath::sin(pymath::radians(c.bearing)) / kx;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("the map at rest draws once for each picture its workers finish, every part on: a run of the sun's bits "
+          "wakes it once however many tiles it lights, and a pan ends in the rest picture and its fades") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("rest");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    std::atomic<int> wakes{0};
+    frame::MapFrame map(2, [&wakes] { wakes.fetch_add(1); }, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    // Every part on, as the app's defaults leave them (the camera leaves none out), in the live moment's sun.
+    map.set_theme(live(213.5));
+    const style::CameraState at_home = home(1);
+    CHECK(at_home.parts == 0);
+    ATLAS_REQUIRE(draw_until_complete(session, map, at_home) > 0, "the home never completed");
+    // The first picture's late parts (the sun's bits, the noise fields) come, and the map rests. (The wakes before the
+    // complete picture were its frames'.)
+    wakes.store(0);
+    const AtRest first = draw_at_rest(session, map, wakes, at_home);
+    CHECK(first.rested);
+    scene::SunGlobals* sun = map.world()->sun();
+    ATLAS_REQUIRE(sun != nullptr, "the map's world has no sun");
+    const std::size_t lit = sun->stats().resident;
+    MESSAGE(std::format("the sun lights {} resident tiles; the first picture's late parts woke {} frames, {} due", lit,
+                        first.woken, first.due));
+    ATLAS_REQUIRE(lit >= 2, "the sun lights fewer than two tiles here, so a frame a tile would be one frame too");
+
+    // The sun's azimuth 1° on, a new live bucket: every resident tile's bits made again, a run for each pack drawn (the
+    // Westerkerk's and the canal ring's around it), each waking the frame loop once, and their swaps' fades drawn on
+    // from there. A tile at a time, a slow phone drew a frame a tile.
+    map.set_theme(live(214.5));
+    const std::uint64_t bucket = sun::bucket_of(live(214.5)).key;
+    CHECK(bucket != sun::bucket_of(live(213.5)).key);
+    const std::uint64_t runs = sun->stats().runs;
+    wakes.store(0);
+    CHECK(session.draw(at_home, {}).drawn); // the frame that asks for the new bucket's bits
+    const AtRest moved = draw_at_rest(session, map, wakes, at_home);
+    const std::uint64_t ran = sun->stats().runs - runs;
+    MESSAGE(std::format("the sun 1° on: {} runs, {} frames woken, {} due", ran, moved.woken, moved.due));
+    CHECK(moved.rested);
+    CHECK(ran >= 1);
+    CHECK(ran < lit + 1); // fewer runs than the tiles they lit: the Westerkerk's pack alone lights `lit`
+    CHECK(static_cast<std::uint64_t>(moved.woken) == ran);
+    const std::vector<std::uint64_t> buckets = drawn_buckets(map);
+    CHECK(std::ranges::count(buckets, bucket) > 0);
+    CHECK(std::ranges::all_of(buckets, [bucket](std::uint64_t b) { return b == 0 || b == bucket; }));
+
+    // A pan along the view, as CI's swipe on the home: moving frames, the frame at rest, then the rest picture's fades
+    // (a label's) and nothing woken: nothing deferred comes after it (one picture at most, one frame).
+    for (int i = 1; i <= 20; ++i) {
+        style::CameraState moving = ahead(at_home, 3.0 * i);
+        moving.flags = 0;
+        CHECK(session.draw(moving, {}).drawn);
+    }
+    const style::CameraState still = ahead(at_home, 60.0);
+    wakes.store(0);
+    CHECK(session.draw(still, {}).drawn);
+    const AtRest panned = draw_at_rest(session, map, wakes, still);
+    MESSAGE(std::format("after the pan: {} frames woken, {} due", panned.woken, panned.due));
+    CHECK(panned.rested);
+    CHECK(panned.woken <= 1);
 }
 
 TEST_CASE("the map leaves out each part its camera's parts name, every layer and effect, and draws them again: each "

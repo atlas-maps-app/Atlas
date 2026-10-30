@@ -1,8 +1,8 @@
 // The sun worker (plan-vector D8, K8): stage S. Per sun bucket it tests every sample of the tiles it holds, visible
-// tiles nearest first, on its threads, and publishes each tile's bits as soon as they are complete; the frame keeps a
-// tile's old bits until then and cross-fades the swap (BitTiles). A live moment's bucket is its sun at 0.5° steps of
-// azimuth and elevation (a new one about every two minutes), a named moment's its own sun exactly; named moments'
-// buckets are kept per tile on disk.
+// tiles nearest first, on its threads, and publishes the run's bits together once they are all complete, so a run wakes
+// the frame loop once; the frame keeps a tile's old bits until then and cross-fades the swap (BitTiles). A live
+// moment's bucket is its sun at 0.5° steps of azimuth and elevation (a new one about every two minutes), a named
+// moment's its own sun exactly; named moments' buckets are kept per tile on disk.
 //
 // The scene is the resident tiles plus a 220 m halo, as the march reaches: their solids in one grid (built once while
 // the tiles stay; it does not depend on the sun), each tile's samples tested only for the tiles asked. Windows are
