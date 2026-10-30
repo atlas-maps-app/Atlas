@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <unordered_set>
+#include <utility>
 
 namespace atlas::text {
 
@@ -58,7 +59,14 @@ void canal_candidates(const tiles::Layer& labels, const tiles::Frame& frame, std
     }
 }
 
-tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack) {
+std::uint64_t canal_group(std::string_view pack) noexcept {
+    std::uint64_t h = 0xCBF2'9CE4'8422'2325ULL;
+    for (const char c : pack) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100'0000'01B3ULL;
+    // below every window's tile key (a z-14 tile's packed key is 14 << 48 and more)
+    return h & ((std::uint64_t{1} << 47U) - 1);
+}
+
+tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack, bool windows) {
     PackCanals out;
     const tiles::RenderHead* head = pack.head();
     if (head == nullptr || head->levels.empty()) return out;
@@ -77,11 +85,16 @@ tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack) {
         auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
         if (!tile) return std::unexpected(tile.error());
         if (const tiles::Layer* labels = tile->layer(tiles::LayerId::label)) {
+            const std::size_t from = out.candidates.size();
             canal_candidates(*labels, head->frame, out.candidates);
+            if (windows) {
+                for (std::size_t i = from; i < out.candidates.size(); ++i) out.candidates[i].group = c.tile.packed();
+            }
         }
     }
-    std::ranges::sort(out.candidates, {}, &CanalCandidate::index);
-    const auto [first, last] = std::ranges::unique(out.candidates, {}, &CanalCandidate::index);
+    const auto key = [](const CanalCandidate& k) { return std::pair{k.group, k.index}; };
+    std::ranges::sort(out.candidates, {}, key);
+    const auto [first, last] = std::ranges::unique(out.candidates, {}, key);
     out.candidates.erase(first, last);
     return out;
 }
@@ -108,14 +121,16 @@ bool beyond(const std::array<double, 6>& matrix, double cosine) noexcept {
 }
 
 void CanalNames::set_candidates(std::vector<CanalCandidate> candidates) {
-    std::ranges::sort(candidates, {}, &CanalCandidate::index);
-    const auto [first, last] = std::ranges::unique(candidates, {}, &CanalCandidate::index);
+    const auto key = [](const CanalCandidate& k) { return std::pair{k.group, k.index}; };
+    std::ranges::sort(candidates, {}, key);
+    const auto [first, last] = std::ranges::unique(candidates, {}, key);
     candidates.erase(first, last);
-    // The states name candidates by position: keep each name's way where it still is.
+    // The states name candidates by position: keep each name's way where it still is (its group and index: the same
+    // way whichever frame its points are now in).
     std::vector<std::uint32_t> moved(candidates_.size(), UINT32_MAX);
     for (std::uint32_t i = 0; i < candidates_.size(); ++i) {
-        const auto at = std::ranges::lower_bound(candidates, candidates_[i].index, {}, &CanalCandidate::index);
-        if (at != candidates.end() && at->index == candidates_[i].index) {
+        const auto at = std::ranges::lower_bound(candidates, key(candidates_[i]), {}, key);
+        if (at != candidates.end() && key(*at) == key(candidates_[i])) {
             moved[i] = static_cast<std::uint32_t>(at - candidates.begin());
         }
     }

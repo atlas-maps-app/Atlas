@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <span>
 
 namespace atlas::scene {
 
@@ -55,6 +57,8 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     fading_ = false;
     fade_seconds_ = in.fade_seconds;
     for (Shown& s : shown_) s.drawn = false;
+    pack_id_.clear();
+    coarser_id_.clear();
     if (in.pack == nullptr || !in.pack->pack.is_render() || in.pack->pack.head() == nullptr) {
         shown_.clear();
         return;
@@ -67,12 +71,19 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         coarser_id_ = in.coarser->id;
         cover(*in.coarser, coarser_id_, false, view, frames, in, in.coarser_tolerance, in.mask, {}, residency, seconds);
     }
-    if (in.neighbour != nullptr && in.neighbour != in.pack && in.neighbour != in.coarser &&
-        in.neighbour->pack.is_render() && in.neighbour->pack.head() != nullptr) {
-        neighbour_id_ = in.neighbour->id;
-        const std::array<const tiles::StorePack*, 2> above = {in.pack, coarser ? in.coarser : nullptr};
-        cover(*in.neighbour, neighbour_id_, false, view, frames, in, in.neighbour_tolerance, std::nullopt, above,
+    // The neighbours, in the world's order, each where neither the active nor the coarser pack nor a neighbour before
+    // it has a tile of its finest level.
+    std::array<const tiles::StorePack*, 2 + max_neighbours> above{in.pack, coarser ? in.coarser : nullptr};
+    std::size_t above_count = 2;
+    for (std::size_t i = 0; i < max_neighbours; ++i) {
+        const tiles::StorePack* n = in.neighbours.at(i);
+        if (n == nullptr || !n->pack.is_render() || n->pack.head() == nullptr) continue;
+        const std::span<const tiles::StorePack* const> nearer = std::span(above).first(above_count);
+        if (std::ranges::find(nearer, n) != nearer.end()) continue; // drawn already
+        neighbour_ids_.at(i) = n->id;
+        cover(*n, neighbour_ids_.at(i), false, view, frames, in, in.neighbour_tolerances.at(i), std::nullopt, nearer,
               residency, seconds);
+        above.at(above_count++) = n;
     }
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
     // stable: tiles at one distance keep the cover's order, on every libc++

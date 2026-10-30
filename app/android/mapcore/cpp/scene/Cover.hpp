@@ -13,8 +13,9 @@
 // Every place is composed in double relative to the eye (view::View::tile_place) through the frame drawn
 // (view/Frames.hpp), so a tile of another pack's frame is placed by its affine. A coarser pack may be drawn around the
 // active one (D3): its tiles the same way, but those wholly inside the active pack's box (the mask), whose ground lies
-// under the active pack's; the world masks the coarser pack's items whose reference points lie inside it. A neighbour
-// may be drawn beside them (a frame cell's windows, ENGINE.md step 3): its tiles where neither has a tile.
+// under the active pack's; the world masks the coarser pack's items whose reference points lie inside it. Neighbours
+// may be drawn beside them (frame cells' windows, ENGINE.md step 3; up to three, as four cells meet at a corner): each
+// one's tiles where neither of those nor a neighbour before it has a tile.
 #pragma once
 
 #include "scene/Cells.hpp"
@@ -22,6 +23,8 @@
 #include "sun/BitTiles.hpp"
 #include "view/Frames.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -33,6 +36,10 @@ namespace atlas::scene {
 
 /// No sun bits (CoverTile::sun_base): a tile drawn before its first bits, or a stand-in the sun's scene does not hold.
 inline constexpr std::uint32_t no_sun = 0xFFFF'FFFFU;
+
+/// The packs drawn beside the active one at most: the other three frame cells' windows where four cells meet (ENGINE.md
+/// one pack per country, step 4: every cell in view drawn).
+inline constexpr std::size_t max_neighbours = 3;
 
 /// One tile the frame draws: the tile wanted, the resident tile that draws it (itself, or its nearest resident
 /// ancestor, whose cells over it are drawn), the drawn tile's cells that are visible (bit r · n + c), its fade (0 to
@@ -77,12 +84,13 @@ struct CoverInputs {
     const tiles::StorePack* coarser = nullptr;
     std::uint8_t coarser_tolerance = 0;
     std::optional<tiles::GridBox> mask;
-    /// A pack drawn beside the active one (a frame cell's windows beside a render pack, or a render pack beside a
-    /// cell's windows; null: none) and the ladder index its tiles are built at. It is never masked, but its tiles at a
-    /// place where the active or the coarser pack has a tile of its finest level are left out: windows are built where
-    /// no pack has a tile, and a pack's tile there is the one drawn.
-    const tiles::StorePack* neighbour = nullptr;
-    std::uint8_t neighbour_tolerance = 0;
+    /// The packs drawn beside the active one, in the world's order (World::neighbours: frame cells' windows beside a
+    /// render pack or beside a cell's windows, render packs beside a cell's windows; null: none), and the ladder index
+    /// each one's tiles are built at. None is masked, but a neighbour's tiles at a place where the active pack, the
+    /// coarser one or a neighbour before it has a tile of its finest level are left out: windows are built where no
+    /// pack has a tile, and a pack's tile there is the one drawn.
+    std::array<const tiles::StorePack*, max_neighbours> neighbours{};
+    std::array<std::uint8_t, max_neighbours> neighbour_tolerances{};
 };
 
 /// The frame's cover.
@@ -103,10 +111,13 @@ public:
     [[nodiscard]] std::size_t missing() const noexcept { return missing_; }
     /// Whether a tile drawn is still fading in (its fade below 1).
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+    /// The active pack and the coarser one drawn this frame (their store ids; empty: none).
+    [[nodiscard]] std::string_view active() const noexcept { return pack_id_; }
+    [[nodiscard]] std::string_view coarser() const noexcept { return coarser_id_; }
 
 private:
-    /// The tiles of one pack, `id` (the active one; the coarser one outside `mask`; the neighbour where none of
-    /// `above` has a tile of its finest level).
+    /// The tiles of one pack, `id` (the active one; the coarser one outside `mask`; a neighbour where none of `above`
+    /// has a tile of its finest level).
     void cover(const tiles::StorePack& pack, std::string_view id, bool active, const view::View& view,
                const view::Frames& frames, const CoverInputs& in, std::uint8_t tolerance,
                const std::optional<tiles::GridBox>& mask, std::span<const tiles::StorePack* const> above,
@@ -131,9 +142,9 @@ private:
     std::vector<Request> requests_;
     std::vector<Shown> shown_;
     std::vector<Pending> pending_;
-    std::string pack_id_;      // the active pack's
-    std::string coarser_id_;   // the coarser pack's
-    std::string neighbour_id_; // the neighbour's
+    std::string pack_id_;                                   // the active pack's
+    std::string coarser_id_;                                // the coarser pack's
+    std::array<std::string, max_neighbours> neighbour_ids_; // the neighbours'
     std::size_t missing_ = 0;
     double fade_seconds_ = 0.18;
     bool fading_ = false;

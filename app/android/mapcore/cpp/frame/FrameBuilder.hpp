@@ -114,9 +114,11 @@ struct FrameState {
     /// The frame drawn (the world's: view::Frames::current), the one its metres are in; none without a pack.
     std::optional<view::GroundFrame> ground_frame;
     /// The packs' own stage T (scene/Packs.hpp): what each pass kept of the active pack and of the coarser one (null
-    /// until built, or without such a pack).
+    /// until built, or without such a pack), and of each pack drawn beside them (the world's neighbours, in its order:
+    /// null where not built yet).
     const scene::ResidentPack* active_pack = nullptr;
     const scene::ResidentPack* coarser_pack = nullptr;
+    std::span<const scene::ResidentPack* const> neighbour_packs;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
@@ -195,9 +197,11 @@ public:
     [[nodiscard]] virtual std::span<const std::string_view> pass_names() const noexcept { return {}; }
     /// The frame drawn after update (view::Frames::current), or none.
     [[nodiscard]] virtual std::optional<view::GroundFrame> ground_frame() const noexcept { return std::nullopt; }
-    /// The packs' stage T of the active pack and of the coarser one, once built (null otherwise).
+    /// The packs' stage T of the active pack and of the coarser one, once built (null otherwise), and of the packs
+    /// drawn beside them (each null until built; valid until the next update).
     [[nodiscard]] virtual const scene::ResidentPack* active_pack() const noexcept { return nullptr; }
     [[nodiscard]] virtual const scene::ResidentPack* coarser_pack() const noexcept { return nullptr; }
+    [[nodiscard]] virtual std::span<const scene::ResidentPack* const> neighbour_packs() const noexcept { return {}; }
     /// The providers of set 1's globals that no pass owns (frame/Globals.hpp), asked in this order each frame after
     /// update: the geometry heaps', the sun's, those added to the world.
     [[nodiscard]] virtual std::span<GlobalProvider* const> globals() noexcept { return {}; }

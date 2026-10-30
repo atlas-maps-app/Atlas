@@ -5,7 +5,8 @@
 // complete once every tile the cover wants is resident and drawn and every fade is done, and nothing more due at the
 // same camera after that; the world's wake called as tiles land, and at rest a frame for each picture the workers
 // finish (a run of the sun's bits wakes it once), a pan ending in the rest picture; the map off and on again; VK bench
-// taking the window and giving it back; and after the close, no marker of the crash guard on disk.
+// taking the window and giving it back; and after the close, no marker of the crash guard on disk. And the windows
+// alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with its own sun.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -18,10 +19,12 @@
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
+#include "scene/World.hpp"
 #include "standin/Session.hpp"
 #include "sun/Buckets.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tests/load/corner.hpp"
 #include "text/Fonts.hpp"
 #include "view/Camera.hpp"
 
@@ -1288,6 +1291,71 @@ TEST_CASE("the clouds' shadows of the app's map keep their places on the ground 
     CHECK(compared > 400);
     CHECK(shaded > compared / 20); // the clouds do shade the home
     CHECK(kept_place >= compared * 9 / 10);
+    session.close();
+}
+
+TEST_CASE("the app's map draws every cell in view: at a corner where four frame cells meet, each cell's windows with "
+          "their own sun") {
+    // The four windows around a corner of four frame cells (tests/load/corner.hpp), listed as alpha 22's PackList lists
+    // them (each a pack of its own, numbered; the core takes each into its cell's pack), and the camera 1.6 km from a
+    // target a metre inside the south-east one, naming it (PackList.choose: the window whose box holds the target).
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("corner");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    const auto made = test::corner_windows(dir / "windows");
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    std::vector<frame::MapPack> packs;
+    std::string listed;
+    for (const auto& [id, file] : made->windows) {
+        frame::MapPack p;
+        p.number = packs.size() + 1;
+        p.ref.id = id;
+        p.ref.kind = tiles::PackKind::window;
+        p.ref.path = file.string();
+        packs.push_back(std::move(p));
+        listed += id + " listed\n";
+    }
+    CHECK(map.set_packs(std::move(packs)) == listed);
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    map.set_theme(sunny());
+    style::CameraState c = home(made->windows.size()); // the south-east window, listed last
+    c.latitude = made->lat0 - (1.0 / 110540.0);
+    c.longitude = made->lon0 + (1.0 / made->kx);
+    c.distance = 1600.0;
+    ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, "the corner never completed");
+    CHECK(map.drawn_pack() == made->cells.back());
+    // The packs beside the one named take their tiles and their sun after it (a complete picture waits on its own):
+    // drawn until every cell's tile is drawn with its bits, at most 40 frames.
+    scene::World& w = *map.world();
+    REQUIRE(w.sun() != nullptr);
+    std::vector<std::string> drawn;
+    std::size_t lit = 0;
+    for (int k = 0; k < 40 && (drawn.size() < made->cells.size() || lit < w.cover()->tiles().size()); ++k) {
+        w.residency().wait_idle();
+        w.sun()->wait_idle();
+        if (session.draw(c, {}).stale) session.remake();
+        drawn.clear();
+        lit = 0;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (std::ranges::find(drawn, t.drawn->pack) == drawn.end()) drawn.push_back(t.drawn->pack);
+            if (t.sun && t.sun_base != scene::no_sun) ++lit;
+        }
+    }
+    std::ranges::sort(drawn);
+    std::vector<std::string> cells = made->cells;
+    std::ranges::sort(cells);
+    CHECK(drawn == cells);
+    CHECK(lit == w.cover()->tiles().size());
+    CHECK(map.drawn_pack() == made->cells.back());
+    MESSAGE(w.cover()->tiles().size() << " tiles drawn from " << drawn.size() << " cells, " << lit
+                                      << " with their sun; " << map.tiles_line());
     session.close();
 }
 
