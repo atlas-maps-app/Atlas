@@ -42,8 +42,8 @@ frame/map_frame_vk_test:2	0.1	0.1	0.1	0.0	0.0	0.1	0.1
 frame/map_frame_vk_test:3	0.2	168.8	0.1	0.0	93.7	0.3	195.4
 frame/map_frame_vk_test:4	0.2	20.9	0.1	0.0	14.3	0.2	29.6
 frame/map_frame_vk_test:5	0.2	16.4	0.1	0.1	5.8	0.2	32.2
-frame/map_frame_vk_test:6	0.2	371.5	0.0	0.0	369.9	0.2	531.6
-frame/map_frame_vk_test:7	0.2	26.9	0.1	0.0	23.8	0.2	27.9
+frame/map_frame_vk_test:7	0.2	371.5	0.0	0.0	369.9	0.2	531.6
+frame/map_frame_vk_test:8	0.2	26.9	0.1	0.0	23.8	0.2	27.9
 frame/moment_vk_test	0.2	0.6	0.1	0.1	0.2	0.6	0.5
 frame/pacing_test	0.0	0.1	0.1	0.0	0.0	0.1	0.1
 frame/packs_vk_test	0.2	0.2	0.1	0.0	0.1	0.2	0.4

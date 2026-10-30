@@ -317,7 +317,7 @@ if(ATLAS_TESTS)
     # building/buildings_vk_test took 17 of a shard's 18 minutes of tests on 30 October (30 under TSan),
     # ground/ripple_vk_test and frame/map_frame_vk_test 11 each, frame/composite_vk_test 9 under TSan: their cases one a
     # part (each opens its own session, so a process apiece costs little).
-    set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1" "frame/map_frame_vk_test=1,1,1,1,1,1"
+    set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1" "frame/map_frame_vk_test=1,1,1,1,1,1,1,1"
         "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1")
     set(_test_patterns "")
     set(_test_entries "")
