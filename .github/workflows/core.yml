@@ -900,13 +900,13 @@ jobs:
           since=$(cat "$RUNNER_TEMP/ccache-since")
           ccache --evict-older-than "$(( $(date +%s) - since + 60 ))s"
           ccache --show-stats
-      - if: steps.ccache_keep.outcome == 'success'
+      - if: ${{ !cancelled() && steps.ccache_keep.outcome == 'success' }}
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/ccache
           key: ccache-core-${{ matrix.task }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Delete the job's older ccache entries
-        if: steps.ccache_keep.outcome == 'success'
+        if: ${{ !cancelled() && steps.ccache_keep.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
