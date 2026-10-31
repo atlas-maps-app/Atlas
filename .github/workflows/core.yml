@@ -213,27 +213,7 @@ jobs:
       # (.github/scripts/nightly-alpha.sh: a Core run with a host-debug job tested the core).
       matrix:
         include:
-          - { task: host-debug, arch: x86_64, shard: 1, shards: 3 }
-          - { task: host-debug, arch: x86_64, shard: 2, shards: 3 }
-          - { task: host-debug, arch: x86_64, shard: 3, shards: 3 }
-          - { task: host-debug, arch: arm64, shard: 1, shards: 2 }
-          - { task: host-debug, arch: arm64, shard: 2, shards: 2 }
-          - { task: host-tsan, arch: x86_64, shard: 1, shards: 3 }
-          - { task: host-tsan, arch: x86_64, shard: 2, shards: 3 }
-          - { task: host-tsan, arch: x86_64, shard: 3, shards: 3 }
-          - { task: host-tsan, arch: arm64, shard: 1, shards: 2 }
-          - { task: host-tsan, arch: arm64, shard: 2, shards: 2 }
-          - { task: host-release, arch: x86_64, shard: 1, shards: 2 }
-          - { task: host-release, arch: x86_64, shard: 2, shards: 2 }
-          - { task: host-release, arch: arm64, shard: 1, shards: 2 }
-          - { task: host-release, arch: arm64, shard: 2, shards: 2 }
-          - { task: fuzz, arch: x86_64 }
-          - { task: tidy, arch: x86_64, shard: 1, shards: 2 }
-          - { task: tidy, arch: x86_64, shard: 2, shards: 2 }
-          - { task: tidy-android, arch: x86_64, shard: 1, shards: 2 }
-          - { task: tidy-android, arch: x86_64, shard: 2, shards: 2 }
-          - { task: canaries, arch: x86_64 }
-          - { task: android, arch: x86_64 }
+          - { task: host-tsan, arch: x86_64, shard: 1, shards: 1 }
     env:
       TASK: ${{ matrix.task }}
       TOOLS: ${{ github.workspace }}/cache/atlas-tools
@@ -495,6 +475,28 @@ jobs:
           # entries' peaks of memory (core-tests' summary) leave room: 3.4 GB at most under TSan on 30 October, 2.3 GB
           # under ASan, on the runners' 16.
           kept="$RUNNER_TEMP/ctest/$JOB/$SHARD"
+          # PROBE (tsan-probe only): the guard's test file four at a time, as a shard runs its entries.
+          mkdir -p "$kept/probe"
+          echo "LP_NUM_THREADS=1" >> "$RUNNER_TEMP/vulkan.env"
+          set -a; . "$RUNNER_TEMP/vulkan.env"; set +a
+          for round in $(seq 1 12); do
+            for slot in 1 2 3 4; do
+              "build/$TASK/atlas_tests" '--source-file=*tests/gpu/guard_vk_test.cpp' --duration=true > "$kept/probe/$round-$slot.log" 2>&1 &
+            done
+            wait || true
+            coded=$(grep -l -e 'exited with' -e 'ended by signal' "$kept/probe/$round"-*.log | wc -l || true)
+            failed=$(grep -L 'Status: SUCCESS' "$kept/probe/$round"-*.log | wc -l || true)
+            echo "round $round: $coded of 4 runs had a child end with a code or signal; $failed of 4 failed"
+          done
+          for f in "$kept/probe"/*.log; do
+            if grep -q -e 'exited with' -e 'ended by signal' "$f"; then
+              echo "== $f"
+              grep -A400 -e 'exited with' -e 'ended by signal' "$f" | head -600 || true
+            fi
+          done
+          echo "== every run's summary"
+          grep -h -e 'test cases:' "$kept/probe"/*.log | sort | uniq -c || true
+          exit 0
           at_once=$(nproc)
           # host-debug's shards run their entries once more without Vulkan (below), after the first run: the split
           # adds that run's seconds (the table's column $JOB:novk) to each shard's wall.
