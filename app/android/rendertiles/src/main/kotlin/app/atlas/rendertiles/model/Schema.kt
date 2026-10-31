@@ -170,7 +170,7 @@ object Schema {
     ) + BUILDING_ATTRIBUTES
 
     val GROUND: List<Column> = listOf(
-        c("source", Codec.U8, "0: S['areas']; 1: S['land']"),
+        c("source", Codec.U8, "0: S['areas']; 1: S['land']; 2: the world's land under everything (world packs)"),
         c("index", Codec.DELTA, "source order in its list (S['land'] as the loader sorted it: by LAND's draw order, then area, largest first)"),
         c("id", Codec.NVARZ, "the OSM id: land cover's; an area's too where its tile carries the ground's order across windows (the core's windows)"),
         c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's ground feature comes from"),
@@ -218,7 +218,7 @@ object Schema {
     ) + tags(Layer.ROAD)
 
     val LINE: List<Column> = listOf(
-        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']"),
+        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']; 10 the world's rivers"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id where the scene has one, or the tile carries the ground's order across windows (the core's windows)"),
         c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's line comes from"),

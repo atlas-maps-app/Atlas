@@ -54,11 +54,15 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${WindowPacks.USAGE}
 
-  ${CountryTiles.USAGE}"""
+  ${CountryTiles.USAGE}
+
+  ${app.atlas.packer.world.WorldTiles.USAGE}
+
+  ${app.atlas.packer.world.Globe.USAGE}"""
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
- * data (`windows`) and the country's tiles (`country`).
+ * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -187,6 +191,8 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "render-tiles" -> return RenderTiles.run(args, out)
         "windows" -> return WindowPacks.run(args, out)
         "country" -> return CountryTiles.run(args, out)
+        "world" -> return app.atlas.packer.world.WorldTiles.run(args, out)
+        "globe" -> return app.atlas.packer.world.Globe.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

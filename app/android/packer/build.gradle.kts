@@ -27,6 +27,10 @@ dependencies {
     // zstd's compressor for `packer country`, which stores the core's window packs with their chunks at level 19 (the
     // core vendors zstd's decompression alone): rendertiles' own
     implementation(libs.zstd.jni)
+    // `packer world`: Planetiler (Apache-2.0) runs Atlas's own profile over an extract into a scratch MBTiles (ENGINE.md
+    // step 5); its shapefile and EPSG readers (GeoTools, not on Maven Central) are left out, as the packer reads the land
+    // polygons and Natural Earth's shapefiles itself
+    implementation(libs.planetiler.core) { exclude(group = "org.geotools") }
     implementation(libs.sqlite.bundled)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
@@ -35,7 +39,11 @@ dependencies {
 }
 
 tasks.test {
-    maxHeapSize = "1536m"
+    // the world's checks on real data (ENGINE.md step 5), skipped without them: the extracts, windows and packs they
+    // read, as -Datlas.world.<name>=<path> on the command line, and the heap Planetiler takes for a region's extract
+    // (-Datlas.world.heap, at most 4g)
+    maxHeapSize = providers.systemProperty("atlas.world.heap").orElse("1536m").get()
+    for ((k, v) in providers.systemPropertiesPrefixedBy("atlas.world.").get()) systemProperty(k, v)
     // The repo's root, with its cache/ (big downloads such as Luxembourg) and data/.
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
     // The core's stage P tool (atlas_stagep, the host-stagep preset's), which `packer country` builds a country's windows
