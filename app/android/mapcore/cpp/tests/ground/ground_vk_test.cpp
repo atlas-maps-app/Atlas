@@ -163,6 +163,49 @@ TEST_CASE("ground: the boards' views draw on the host's Vulkan, the validation l
     }
 }
 
+TEST_CASE("ground: tiles whose ground and lines lie in the heaps' second buffer draw as from the first, pixel for "
+          "pixel") {
+    // the second buffer's ranges from heap_high_base (ENGINE.md, one pack per country, step 7): the ground's every
+    // stage reads its words there, its shadows' and its lines' among them
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the ground is not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    for (const style::ThemeBlock& theme : {test::sunny(), test::night()}) {
+        const auto first = test::draw_ground(*session, test::home_camera(), theme, dir, "amsterdam");
+        std::size_t high = 0;
+        const auto second = test::draw_ground(
+            *session, test::home_camera(), theme, dir, "amsterdam",
+            [&high](passes::Ground& g, const frame::FrameState& state) {
+                (void)g;
+                if (state.cover == nullptr) return;
+                for (const scene::CoverTile& t : state.cover->tiles()) {
+                    if (t.drawn == nullptr) continue;
+                    for (const scene::PassTile& p : t.drawn->passes) {
+                        for (const scene::HeapRange& r : p.ranges) {
+                            if (!r || (r.kind != scene::HeapKind::ground && r.kind != scene::HeapKind::lines)) continue;
+                            CHECK(r.offset >= scene::heap_high_base);
+                            ++high;
+                        }
+                    }
+                }
+            },
+            40, {}, frame::Mode::structural, nullptr, {}, {.steps = 0}, true);
+        ATLAS_REQUIRE(first.has_value() && second.has_value(), "the frames were not drawn");
+        CHECK(high > 0);
+        REQUIRE(first->pixels.rgba.size() == second->pixels.rgba.size());
+        std::size_t differ = 0;
+        for (std::size_t i = 0; i < first->pixels.rgba.size(); i += 4) {
+            if (std::memcmp(&first->pixels.rgba[i], &second->pixels.rgba[i], 4) != 0) ++differ;
+        }
+        CHECK_MESSAGE(differ == 0, differ << " pixels differ");
+        for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    }
+}
+
 TEST_CASE("ground: a neighbouring frame cell's tiles are decided in their own frame, at their own depths") {
     // A primary road (its asphalt, edge and lane lines) 100 m north of a corner of four frame cells, in the north-east
     // cell's window (tests/load/corner.hpp), the camera's target a metre inside the south-east one, looking north from

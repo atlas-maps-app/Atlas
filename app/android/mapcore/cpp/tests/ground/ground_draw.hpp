@@ -66,14 +66,15 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 /// the active one, `frames` frames 50 ms apart, in `mode`; `before` sees the pass before the frame builder prepares
 /// it, `after` sees it and the last frame's state before the world goes. `globals` (may be null) provides some of set
 /// 1's bindings to the world (the noise fields), and `settle` (may be empty) runs after each frame (their worker's
-/// wait); `options` are the frame builder's (no composite step by default).
+/// wait); `options` are the frame builder's (no composite step by default). With `second_buffer`, the heaps are two
+/// buffers of 64 MB and the first is filled before any tile is built, so the tiles' ground and lines lie in the second.
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
             const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
             const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
             const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {},
-            const frame::FrameOptions& options = {.steps = 0}) {
+            const frame::FrameOptions& options = {.steps = 0}, bool second_buffer = false) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -86,9 +87,14 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     if (!builder) return std::nullopt;
     double now = 0;
     // the ground reads no sun bits: the world's sun stays off
-    auto world = scene::World::create(device, (*builder)->passes(),
-                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    scene::WorldOptions world_options{.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }};
+    constexpr vk::DeviceSize part = vk::DeviceSize{64} << 20U;
+    if (second_buffer) world_options.heaps = {.total = 2 * part, .binding = part};
+    auto world = scene::World::create(device, (*builder)->passes(), world_options);
     if (!world) return std::nullopt;
+    if (second_buffer && !(*world)->heaps()->allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(part), 16)) {
+        return std::nullopt;
+    }
     if (globals && !(*world)->add_globals(globals)) return std::nullopt;
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");

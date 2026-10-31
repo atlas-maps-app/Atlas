@@ -45,7 +45,7 @@ std::string_view name_of(Global g) noexcept {
     case Global::walls: return "walls";
     case Global::ground: return "ground";
     case Global::lines: return "lines";
-    case Global::instances: return "instances";
+    case Global::heap_high: return "heap_high";
     case Global::labels: return "labels";
     case Global::sun_bits: return "sun_bits";
     case Global::noise_rgba: return "noise_rgba";

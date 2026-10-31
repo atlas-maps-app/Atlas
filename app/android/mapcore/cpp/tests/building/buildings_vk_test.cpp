@@ -1527,6 +1527,10 @@ struct PackFile {
     return out;
 }
 
+/// Whether make_scene's world holds its tiles' walls in the heaps' second buffer: heaps of two 64 MB buffers, the first
+/// filled before any tile is built (ENGINE.md, one pack per country, step 7).
+bool second_buffer = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
+
 /// Makes the scene for `config` on a w × h output, drawing from `packs`.
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
@@ -1549,9 +1553,16 @@ struct PackFile {
         frame::FrameBuilder::create(device, cache, std::move(passes), {.overdraw = false, .clear = c, .steps = 0});
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
     s.builder = std::move(*builder);
-    auto world = scene::World::create(device, s.builder->passes(), {.workers = 3, .clock = {}});
+    scene::WorldOptions options{.workers = 3, .clock = {}};
+    constexpr vk::DeviceSize part = vk::DeviceSize{64} << 20U;
+    if (second_buffer) options.heaps = {.total = 2 * part, .binding = part};
+    auto world = scene::World::create(device, s.builder->passes(), options);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
     s.world = std::move(*world);
+    if (second_buffer) {
+        auto filled = s.world->heaps()->allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(part), 16);
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, filled.has_value(), filled.error().text());
+    }
     for (const PackFile& pack : packs) {
         auto added = s.world->store().add({.id = pack.id, .kind = tiles::PackKind::bundled, .path = pack.path});
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, added.has_value(), tiles::describe(added.error()));
@@ -1602,6 +1613,21 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             if (!s.lit) MESSAGE(view << ": drawn without every tile's sun bits (the sun's worker gave none)");
             const scene::HeapStats heap = s.world->heaps()->stats();
             const auto walls = static_cast<std::size_t>(scene::HeapKind::walls);
+            if (second_buffer) {
+                // every tile's walls lie in the second buffer
+                std::size_t high = 0;
+                for (const std::shared_ptr<const scene::ResidentTile>& t : s.world->residency().resident()) {
+                    for (const scene::PassTile& p : t->passes) {
+                        for (const scene::HeapRange& r : p.ranges) {
+                            if (r && r.kind == scene::HeapKind::walls) {
+                                CHECK(r.offset >= scene::heap_high_base);
+                                ++high;
+                            }
+                        }
+                    }
+                }
+                CHECK(high > 0);
+            }
             if (std::getenv("ATLAS_BUILDINGS_DEBUG") != nullptr) { // NOLINT: a test's diagnosis
                 for (const scene::CoverTile& t : s.world->cover()->tiles()) {
                     MESSAGE(std::format("cover {}/{}/{} drawn {} cells {:016x} fade {} offset {} {} {} scale {}",
@@ -1907,6 +1933,24 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
     check_frames(camera(lat, lon, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far", packs, sunny(), 30, nullptr,
                  false, 0, &facades_alone);
     check_frames(camera(lat, lon, 0.0, 0.0, 220.0, 1080, 2400, d), "synthetic straight down", packs, sunny(), 20);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE(
+    "buildings: a tile whose walls lie in the heaps' second buffer drawn on the host's Vulkan, pixel for pixel the "
+    "exact shapes of its twin") {
+    // the second buffer's ranges from heap_high_base (ENGINE.md, one pack per country, step 7): the walls' heap read
+    // there by every stage, the windows' and strokes' decide stages among them
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    second_buffer = true;
+    check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, second buffer", packs,
+                 sunny(), 15);
+    check_frames(camera(52.37422, 4.88486, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far, second buffer", packs,
+                 sunny(), 30);
+    second_buffer = false;
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

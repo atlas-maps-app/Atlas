@@ -48,40 +48,54 @@ HeapBudget heap_budget(const gpu::Device& device) noexcept {
         const vk::MemoryHeap& h = f.memory.memoryHeaps.at(i);
         if (h.flags & vk::MemoryHeapFlagBits::eDeviceLocal) memory = std::max(memory, h.size);
     }
-    vk::DeviceSize total = std::min(vk::DeviceSize{f.limits.maxStorageBufferRange}, most);
+    const vk::DeviceSize binding =
+        std::bit_floor(std::max(std::min(vk::DeviceSize{f.limits.maxStorageBufferRange}, most), least));
+    vk::DeviceSize total = std::min(2 * binding, most);
     if (memory > 0) total = std::min(total, memory / 16);
-    return {.total = std::bit_floor(std::max(total, least))};
+    total = std::bit_floor(std::max(total, least));
+    return {.total = total, .binding = std::min(binding, total)};
 }
 
 gpu::Result<std::unique_ptr<Heaps>> Heaps::create(const gpu::Device& device, const HeapBudget& budget) {
     std::unique_ptr<Heaps> self(new Heaps(device, budget)); // NOLINT(cppcoreguidelines-owning-memory)
-    ATLAS_GPU_LET(buffer,
-                  device.memory().buffer(std::min(budget.initial, budget.total), heap_usage, gpu::MemoryUse::upload));
-    self->buffer_ = std::move(buffer);
-    self->current_ = self->buffer_.handle();
-    self->capacity_.store(self->buffer_.size(), std::memory_order_release);
-    self->pieces_.emplace(0, budget.total);
+    // The first buffer's part of the budget, as much as one binds; the second's the rest, as much again at most.
+    const vk::DeviceSize one = budget.binding == 0 ? budget.total : std::min(budget.binding, budget.total);
+    self->parts_ = {one, std::min(budget.total - one, one)};
+    self->budget_.total = self->parts_[0] + self->parts_[1];
+    for (std::size_t i = 0; i < 2; ++i) {
+        if (self->parts_.at(i) == 0) continue;
+        ATLAS_GPU_LET(buffer, device.memory().buffer(std::min(budget.initial, self->parts_.at(i)), heap_usage,
+                                                     gpu::MemoryUse::upload));
+        self->capacity_.at(i).store(buffer.size(), std::memory_order_release);
+        self->buffers_.at(i) = std::move(buffer);
+    }
+    self->current_ = {.low = self->buffers_[0].handle(),
+                      .high = self->parts_[1] > 0 ? self->buffers_[1].handle() : self->buffers_[0].handle()};
+    self->pieces_.emplace(0, self->parts_[0]);
+    if (self->parts_[1] > 0) self->pieces_.emplace(heap_high_base, self->parts_[1]);
     return self;
 }
 
 Heaps::~Heaps() = default;
 
-gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
+gpu::Result<void> Heaps::grow(std::size_t which, vk::DeviceSize end) {
     const trace::Section traced("atlas heaps grow");
-    const vk::DeviceSize old_size = buffer_.size();
-    const vk::DeviceSize size = std::min(std::max(old_size * 2, end), budget_.total);
+    gpu::Buffer& old = buffers_.at(which);
+    const vk::DeviceSize old_size = old.size();
+    const vk::DeviceSize size = std::min(std::max(old_size * 2, end), parts_.at(which));
     ATLAS_GPU_LET(buffer, device_.memory().buffer(size, heap_usage, gpu::MemoryUse::upload));
     // The old bytes at the same offsets, so every range keeps its place.
-    std::memcpy(buffer.bytes().data(), buffer_.bytes().data(), static_cast<std::size_t>(old_size));
+    std::memcpy(buffer.bytes().data(), old.bytes().data(), static_cast<std::size_t>(old_size));
     buffer.flush();
     {
         // The swap alone under the render lock, after the copy: a frame binds the old buffer or the new one, never
         // waits.
         const std::scoped_lock lock(render_lock_);
-        old_.push_back(OldBuffer{.buffer = std::move(buffer_), .frame = ~std::uint64_t{0}});
-        buffer_ = std::move(buffer);
-        current_ = buffer_.handle();
-        capacity_.store(buffer_.size(), std::memory_order_release);
+        old_.push_back(OldBuffer{.buffer = std::move(old), .frame = ~std::uint64_t{0}});
+        old = std::move(buffer);
+        (which == 0 ? current_.low : current_.high) = old.handle();
+        if (which == 0 && parts_[1] == 0) current_.high = old.handle();
+        capacity_.at(which).store(old.size(), std::memory_order_release);
     }
     version_.fetch_add(1, std::memory_order_release);
     growths_.fetch_add(1, std::memory_order_relaxed);
@@ -107,10 +121,22 @@ std::optional<HeapRange> Heaps::place(HeapKind kind, std::uint32_t bytes, std::u
         offset = o;
         return true;
     };
+    // the points kind in the first buffer alone (its pieces lie below heap_high_base)
+    const auto first_only = [&](const std::pair<const vk::DeviceSize, vk::DeviceSize>& p) {
+        return p.first < heap_high_base && fits(p);
+    };
     if (from == HeapEnd::low) {
-        (void)std::ranges::find_if(pieces_, fits);
+        if (in_both(kind)) {
+            (void)std::ranges::find_if(pieces_, fits);
+        } else {
+            (void)std::ranges::find_if(pieces_, first_only);
+        }
     } else {
-        (void)std::ranges::find_if(std::views::reverse(pieces_), fits);
+        if (in_both(kind)) {
+            (void)std::ranges::find_if(std::views::reverse(pieces_), fits);
+        } else {
+            (void)std::ranges::find_if(std::views::reverse(pieces_), first_only);
+        }
     }
     if (piece == nullptr) return std::nullopt;
     const vk::DeviceSize first = piece->first;
@@ -157,10 +183,10 @@ gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::
             return gpu::fail(std::format("the heaps cannot grow by {} bytes for {}: {} of their {} bytes are used",
                                          bytes, name_of(kind), used, budget_.total));
         }
-        // The capacity from its atomic: buffer_ is a growth's to swap (under the exclusive lock, which this does not
+        // The capacity from its atomic: buffers_ are a growth's to swap (under the exclusive lock, which this does not
         // hold). Seen too small, the range takes the slow path below, which looks again under that lock; seen grown,
         // the range is the new buffer's, which its writer reaches once the growth lets the lock go.
-        if (vk::DeviceSize{placed->offset} + placed->size <= capacity_.load(std::memory_order_acquire)) return *placed;
+        if (within(*placed)) return *placed;
         range = *placed;
     }
     return hold(range);
@@ -174,17 +200,24 @@ std::optional<HeapRange> Heaps::reserve(HeapKind kind, std::uint32_t bytes, std:
 }
 
 gpu::Result<HeapRange> Heaps::claim(const HeapRange& range) {
-    if (vk::DeviceSize{range.offset} + range.size <= capacity_.load(std::memory_order_acquire)) return range;
+    if (within(range)) return range;
     return hold(range);
 }
 
+bool Heaps::within(const HeapRange& range) const noexcept {
+    const std::size_t which = range.offset >= heap_high_base ? 1 : 0;
+    const vk::DeviceSize at = range.offset - (which == 1 ? heap_high_base : 0U);
+    return at + range.size <= capacity_.at(which).load(std::memory_order_acquire);
+}
+
 gpu::Result<HeapRange> Heaps::hold(const HeapRange& range) {
-    // Beyond the buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
+    // Beyond its buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
     // thread grew it meanwhile. The blocks' lock is not held through the copy, so the render thread's stats never wait.
     const std::unique_lock exclusive(lock_);
-    const vk::DeviceSize end = vk::DeviceSize{range.offset} + range.size;
-    if (end > buffer_.size()) {
-        if (auto grown = grow(end); !grown) {
+    const std::size_t which = range.offset >= heap_high_base ? 1 : 0;
+    const vk::DeviceSize end = vk::DeviceSize{range.offset} - (which == 1 ? heap_high_base : 0U) + range.size;
+    if (end > buffers_.at(which).size()) {
+        if (auto grown = grow(which, end); !grown) {
             const std::scoped_lock lock(blocks_lock_);
             unplace(range);
             return std::unexpected(std::move(grown.error()));
@@ -193,7 +226,7 @@ gpu::Result<HeapRange> Heaps::hold(const HeapRange& range) {
     return range;
 }
 
-Heaps::Writer Heaps::writer(const HeapRange& range) { return {lock_, buffer_, range.offset, range.size}; }
+Heaps::Writer Heaps::writer(const HeapRange& range) { return {lock_, buffers_, range.offset, range.size}; }
 
 void Heaps::write(const HeapRange& range, std::span<const std::byte> data, std::uint32_t at) {
     ATLAS_ASSERT(at <= range.size && data.size() <= range.size - at, "a write beyond its heap range");
@@ -203,7 +236,9 @@ void Heaps::write(const HeapRange& range, std::span<const std::byte> data, std::
 
 void Heaps::flush() {
     const std::shared_lock lock(lock_);
-    buffer_.flush();
+    for (gpu::Buffer& b : buffers_) {
+        if (b) b.flush();
+    }
 }
 
 void Heaps::retire(const HeapRange& range, std::uint64_t frame) {
@@ -218,7 +253,7 @@ void Heaps::give_back(const HeapRange& range) {
     unplace(range);
 }
 
-vk::Buffer Heaps::bind(std::uint64_t frame) {
+HeapBuffers Heaps::bind(std::uint64_t frame) {
     const std::scoped_lock lock(render_lock_);
     for (OldBuffer& o : old_) {
         if (o.frame == ~std::uint64_t{0}) o.frame = frame == 0 ? 0 : frame - 1;
@@ -245,12 +280,14 @@ void Heaps::collect(std::uint64_t finished) {
     frees_.fetch_add(1, std::memory_order_release);
 }
 
-vk::Buffer Heaps::buffer() const {
+HeapBuffers Heaps::buffers() const {
     const std::scoped_lock lock(render_lock_);
     return current_;
 }
 
-vk::DeviceSize Heaps::capacity() const { return capacity_.load(std::memory_order_acquire); }
+vk::DeviceSize Heaps::capacity() const {
+    return capacity_[0].load(std::memory_order_acquire) + capacity_[1].load(std::memory_order_acquire);
+}
 
 std::uint64_t Heaps::version() const noexcept { return version_.load(std::memory_order_acquire); }
 
@@ -263,18 +300,24 @@ vk::DeviceSize Heaps::free_bytes() const {
     return used < budget_.total ? budget_.total - used : 0;
 }
 
-vk::DeviceSize Heaps::largest_free() const {
+vk::DeviceSize Heaps::largest_free(HeapKind kind) const {
     const std::scoped_lock lock(blocks_lock_);
     vk::DeviceSize largest = 0;
-    for (const auto& p : pieces_) largest = std::max(largest, p.second);
+    for (const auto& p : pieces_) {
+        if (in_both(kind) || p.first < heap_high_base) largest = std::max(largest, p.second);
+    }
     return largest;
 }
 
-vk::DeviceSize Heaps::largest_with(std::span<const HeapRange> back) const { return runs(back, false); }
+vk::DeviceSize Heaps::largest_with(std::span<const HeapRange> back, HeapKind kind) const {
+    return runs(back, false, kind);
+}
 
-vk::DeviceSize Heaps::joined_with(std::span<const HeapRange> back) const { return runs(back, true); }
+vk::DeviceSize Heaps::joined_with(std::span<const HeapRange> back, HeapKind kind) const {
+    return runs(back, true, kind);
+}
 
-vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined) const {
+vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined, HeapKind kind) const {
     struct Going {
         vk::DeviceSize first = 0;
         vk::DeviceSize last = 0;
@@ -291,12 +334,19 @@ vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined) const {
         if (r) going.push_back({.first = r.offset, .last = vk::DeviceSize{r.offset} + r.size, .back = true});
     }
     std::ranges::sort(going, [](const Going& a, const Going& b) { return a.first < b.first; });
+    // a range of the points kind takes the first buffer's pieces alone
+    if (!in_both(kind)) {
+        std::erase_if(going, [](const Going& g) { return g.first >= heap_high_base; });
+    }
     const std::scoped_lock lock(blocks_lock_);
     vk::DeviceSize largest = 0;
     if (!joined) {
-        for (const auto& p : pieces_) largest = std::max(largest, p.second);
+        for (const auto& p : pieces_) {
+            if (in_both(kind) || p.first < heap_high_base) largest = std::max(largest, p.second);
+        }
     }
-    // Each run of ranges coming back, with the pieces before, between and after them.
+    // Each run of ranges coming back, with the pieces before, between and after them (no run reaches across the two
+    // buffers: no piece and no range lies between their offsets).
     for (std::size_t i = 0; i < going.size();) {
         vk::DeviceSize first = going[i].first;
         vk::DeviceSize last = going[i].last;
@@ -324,7 +374,7 @@ vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined) const {
 
 HeapStats Heaps::stats() const {
     HeapStats s;
-    s.capacity = capacity_.load(std::memory_order_acquire);
+    s.capacity = capacity();
     {
         const std::scoped_lock blocks(blocks_lock_);
         s.used = used_;

@@ -257,11 +257,12 @@ private:
     /// another go, else every tile is asked for as before. What goes is let go of as the next frame begins (going_),
     /// before its covers.
     void make_room();
-    /// make_room's piece of `bytes` for a tile whose largest range finds none though the heaps hold its bytes free:
-    /// whether the tiles going already, those nothing draws, keeps or asks for, and `stand_ins` (those whose places all
-    /// keep another resident level) can make one, joined to the pieces beside them (Heaps::joined_with); those it
-    /// takes are let go of as the next frame begins (going_), none where they cannot.
-    [[nodiscard]] bool piece_for(std::uint32_t bytes,
+    /// make_room's piece of `bytes` for a tile whose largest range (of kind `kind`) finds none though the heaps hold
+    /// its bytes free: whether the tiles going already, those nothing draws, keeps or asks for, and `stand_ins` (those
+    /// whose places all keep another resident level) can make one where a range of its kind may lie, joined to the
+    /// pieces beside them (Heaps::joined_with); those it takes are let go of as the next frame begins (going_), none
+    /// where they cannot.
+    [[nodiscard]] bool piece_for(std::uint32_t bytes, HeapKind kind,
                                  std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins);
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.

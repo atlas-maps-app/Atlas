@@ -41,6 +41,7 @@
 // twin's (twin/Emit.hpp) by L2.
 
 #include "shared/frame.slang"
+#include "shared/heaps.slang"
 #include "shared/painter.slang"
 #include "shared/shadow_grid.slang"
 
@@ -57,6 +58,15 @@
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
 [[vk::binding(2, 1)]] StructuredBuffer<uint> ground_heap;
 [[vk::binding(3, 1)]] StructuredBuffer<uint> lines_heap;
+[[vk::binding(4, 1)]] StructuredBuffer<uint> heap_high; // the heaps' second buffer (shared/heaps.slang)
+
+/// Word i of the ground's heaps and of the lines', in whichever buffer holds it.
+uint ground_word(uint i) {
+    return i < HEAP_HIGH_WORDS ? ground_heap[i] : heap_high[i - HEAP_HIGH_WORDS];
+}
+uint lines_word(uint i) {
+    return i < HEAP_HIGH_WORDS ? lines_heap[i] : heap_high[i - HEAP_HIGH_WORDS];
+}
 /// The pass's words for this frame (passes/Ground.cpp's FrameWords): the tile table, the slot table, the theme's
 /// colours, the fills' visibility bits, the lines' runs and segments.
 [[vk::binding(0, 2)]] StructuredBuffer<uint> words;
@@ -181,11 +191,11 @@ bool in_mat(uint group) {
 [shader("vertex")]
 FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
     uint base = tile_word(tile, 8u);
-    uint v = ground_heap[index];
+    uint v = ground_word(index);
     uint at = base + tile_word(tile, 9u) + 3u * v;
-    float x = asfloat(ground_heap[at]);
-    float z = asfloat(ground_heap[at + 1u]);
-    uint f = ground_heap[at + 2u];
+    float x = asfloat(ground_word(at));
+    float z = asfloat(ground_word(at + 1u));
+    uint f = ground_word(at + 2u);
     uint r = base + tile_word(tile, 10u) + 5u * f;
     FillOut o;
     set_mat(o, false);
@@ -194,12 +204,12 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
         o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return o;
     }
-    float y = asfloat(ground_heap[r]);
-    uint gs = ground_heap[r + 1u];
+    float y = asfloat(ground_word(r));
+    uint gs = ground_word(r + 1u);
     // its order in its group: its scene's, or where the frame draws tiles of more than one scene its rank across them
     uint ranks = tile_word(tile, 19u);
-    uint order = ranks != 0u ? words[ranks + f] : ground_heap[r + 2u];
-    uint c = (push.mode.x & GROUND_NIGHT) != 0u ? ground_heap[r + 4u] : ground_heap[r + 3u];
+    uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
+    uint c = (push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u);
     o.position = place(tile, float3(x, y, z), slot_of(gs & 0xFFFFu, gs >> 16u, order));
     float4 p = paint_of(c);
     // a translucent fill (the canopy's union is composited instead): premultiplied by the screen pass's opacity
@@ -246,11 +256,11 @@ FillOut plate_vs(uint vertex : SV_VulkanVertexID) {
 [shader("vertex")]
 FillOut water_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
     uint base = tile_word(tile, 8u);
-    uint v = ground_heap[index];
+    uint v = ground_word(index);
     uint at = base + tile_word(tile, 9u) + 3u * v;
-    float x = asfloat(ground_heap[at]);
-    float z = asfloat(ground_heap[at + 1u]);
-    uint f = ground_heap[at + 2u];
+    float x = asfloat(ground_word(at));
+    float z = asfloat(ground_word(at + 1u));
+    uint f = ground_word(at + 2u);
     uint r = base + tile_word(tile, 10u) + 5u * f;
     bool level = (push.mode.x & GROUND_WATER_LEVEL) != 0u;
     FillOut o;
@@ -261,7 +271,7 @@ FillOut water_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID
         o.position = FOLDED;
         return o;
     }
-    float y = level ? asfloat(ground_heap[r]) : 0.0f;
+    float y = level ? asfloat(ground_word(r)) : 0.0f;
     // the stencil's count only: the depth is the water's surface slot, never tested
     o.position = place(tile, float3(x, y, z), push.mode.y);
     return o;
@@ -276,7 +286,7 @@ static const uint SHADOW_TREE = 2u;  // a tree's crown (Camera.poly's margin of 
 /// Point `i` of tile `t`'s shadows' points (its ground range from `base`): x, z from the tile's origin.
 float2 shadow_point(uint base, uint t, uint i) {
     uint at = base + tile_word(t, 16u) + 2u * i;
-    return float2(asfloat(ground_heap[at]), asfloat(ground_heap[at + 1u]));
+    return float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
 }
 
 /// Whether edge k of a swept hull (from its point k to k + 1, turned positive) faces the offset d: its outward normal,
@@ -299,11 +309,11 @@ struct ShadowOf {
 ShadowOf shadow_of(uint base, uint tile, uint s) {
     uint r = base + tile_word(tile, 17u) + 5u * s;
     ShadowOf c;
-    c.first = ground_heap[r];
-    c.count = ground_heap[r + 1u];
-    float h = asfloat(ground_heap[r + 2u]);
-    c.flags = ground_heap[r + 3u];
-    c.y = asfloat(ground_heap[r + 4u]);
+    c.first = ground_word(r);
+    c.count = ground_word(r + 1u);
+    float h = asfloat(ground_word(r + 2u));
+    c.flags = ground_word(r + 3u);
+    c.y = asfloat(ground_word(r + 4u));
     float3 sun = push.rows.xyz;
     c.d = float2(-sun.x / sun.y * h, -sun.z / sun.y * h);
     return c;
@@ -366,7 +376,7 @@ float2 shadow_corner(uint base, uint tile, ShadowOf c, uint j) {
 [shader("vertex")]
 FillOut shadow_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
     uint base = tile_word(tile, 8u);
-    uint id = ground_heap[index];
+    uint id = ground_word(index);
     uint s = id >> 16u;
     FillOut o;
     o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -578,7 +588,7 @@ struct MaskOut {
 [shader("vertex")]
 MaskOut shadow_mask_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
     uint base = tile_word(tile, 8u);
-    uint id = ground_heap[index];
+    uint id = ground_word(index);
     uint s = id >> 16u;
     MaskOut o;
     if (!bit(tile_word(tile, 15u), s)) {
@@ -770,8 +780,8 @@ struct StrokeOut {
 
 /// A run's point k in its tile's metres, at height y.
 float3 run_local(uint first, uint k, float y) {
-    float x = asfloat(lines_heap[first + 2u * k]);
-    float z = asfloat(lines_heap[first + 2u * k + 1u]);
+    float x = asfloat(lines_word(first + 2u * k));
+    float z = asfloat(lines_word(first + 2u * k + 1u));
     return float3(x, y, z);
 }
 
@@ -788,10 +798,10 @@ float3 run_point(uint tile, uint first, uint k, float y) {
 /// A coaster track's shadow's point k (its (x, z, height) in the lines heap) at height y in its tile's metres, moved
 /// along the sun's offset −L.xz / L.y · height (push.rows.xyz: L) where `moved`.
 float3 shadow_local(uint first, uint k, float y, bool moved) {
-    float x = asfloat(lines_heap[first + 3u * k]);
-    float z = asfloat(lines_heap[first + 3u * k + 1u]);
+    float x = asfloat(lines_word(first + 3u * k));
+    float z = asfloat(lines_word(first + 3u * k + 1u));
     if (!moved) return float3(x, y, z);
-    float h = asfloat(lines_heap[first + 3u * k + 2u]);
+    float h = asfloat(lines_word(first + 3u * k + 2u));
     float3 sun = push.rows.xyz;
     return float3(x - sun.x / sun.y * h, y, z - sun.z / sun.y * h);
 }
@@ -893,7 +903,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     // a sett road's line: the earlier lines it looks back at, its reaches' level for the ground's stretch at its ends
     uint back = 0u;
     if ((flags & LINE_LAYER) != 0u) {
-        back = sett_reach(lines_heap[first + 2u * count + seg], sett_tolerance_at(tile, first, ia, y, hw));
+        back = sett_reach(lines_word(first + 2u * count + seg), sett_tolerance_at(tile, first, ia, y, hw));
     }
     o.info = uint4(info, asuint(hw), flags | (back << 16u), word);
     return o;

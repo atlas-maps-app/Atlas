@@ -303,6 +303,79 @@ TEST_CASE("a window's ranges are placed from the heaps' low offsets and a level'
     (void)session->take_messages();
 }
 
+TEST_CASE("the heaps' second buffer: the windows go on into it once the first is full, the levels fill it from its end "
+          "and go on into the first, the points kind in the first alone") {
+    // ENGINE.md, one pack per country, step 7: a storage buffer binds at most 128 MB on the user's PowerVR, so the
+    // budget is two buffers, the second's offsets from heap_high_base
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{2} << 20U;
+    budget.binding = vk::DeviceSize{1} << 20U;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    constexpr std::uint32_t part = std::uint32_t{1} << 20U;
+    CHECK(h.budget().total == 2 * part);
+    CHECK(h.free_bytes() == 2 * part);
+    CHECK(h.largest_free() == part); // no piece lies across the two
+    const scene::HeapBuffers two = h.buffers();
+    CHECK(two.low != two.high);
+    const auto take = [&h](scene::HeapKind kind, std::uint32_t bytes, scene::HeapEnd from) {
+        auto r = h.allocate(kind, bytes, 64, from);
+        ATLAS_REQUIRE_OR_RETURN(scene::HeapRange{}, r.has_value(), r.error().text());
+        return *r;
+    };
+    // a level's walls at the second buffer's end, its trees at the first's; a window's from the first's start
+    const scene::HeapRange level = take(scene::HeapKind::walls, 200'000, scene::HeapEnd::high);
+    CHECK(level.offset + level.size == scene::heap_high_base + part);
+    const scene::HeapRange trees = take(scene::HeapKind::points, 100'032, scene::HeapEnd::high);
+    CHECK(trees.offset + trees.size == part);
+    const scene::HeapRange window = take(scene::HeapKind::ground, 300'032, scene::HeapEnd::low);
+    CHECK(window.offset == 0);
+    // the first full but for 4 KB: a window's walls go on into the second, from its start; its trees find no piece
+    const scene::HeapRange filler =
+        take(scene::HeapKind::lines, part - window.size - trees.size - 4'096, scene::HeapEnd::low);
+    CHECK(filler.offset == window.size);
+    const scene::HeapRange spilled = take(scene::HeapKind::walls, 150'016, scene::HeapEnd::low);
+    CHECK(spilled.offset == scene::heap_high_base);
+    CHECK_FALSE(h.allocate(scene::HeapKind::points, 8'192, 64, scene::HeapEnd::low).has_value());
+    CHECK(h.largest_free(scene::HeapKind::points) == 4'096);
+    CHECK(h.largest_free(scene::HeapKind::walls) == part - spilled.size - level.size);
+    // what the first's ranges' going makes for the points kind: the first's bytes alone, however large the second's
+    const std::array<scene::HeapRange, 1> going{filler};
+    CHECK(h.largest_with(going, scene::HeapKind::points) == filler.size + 4'096);
+    // each range's bytes in its own buffer, kept through the second's growths
+    std::vector<std::byte> pattern(150'016);
+    for (std::size_t k = 0; k < pattern.size(); ++k) pattern[k] = static_cast<std::byte>((k * 7) & 0xFF);
+    h.write(spilled, pattern);
+    h.write(window, std::span(pattern).first(1000));
+    const scene::HeapRange more = take(scene::HeapKind::ground, 400'000, scene::HeapEnd::low);
+    CHECK(more.offset == spilled.offset + spilled.size);
+    bool kept = true;
+    {
+        const scene::Heaps::Writer w = h.writer(spilled);
+        for (std::size_t k = 0; k < pattern.size(); ++k) kept &= w.bytes()[k] == pattern[k];
+        const scene::Heaps::Writer v = h.writer(window);
+        for (std::size_t k = 0; k < 1000; ++k) kept &= v.bytes()[k] == pattern[k];
+    }
+    CHECK(kept);
+    CHECK(h.capacity() == 2 * part);
+    // one buffer where the budget is one buffer's: the frame binds it at heap_high too
+    scene::HeapBudget one;
+    one.initial = vk::DeviceSize{64} << 10U;
+    one.total = vk::DeviceSize{1} << 20U;
+    one.binding = vk::DeviceSize{1} << 20U;
+    auto single = scene::Heaps::create(*session->device, one);
+    ATLAS_REQUIRE(single.has_value(), single.error().text());
+    CHECK((*single)->buffers().high == (*single)->buffers().low);
+    auto top = (*single)->allocate(scene::HeapKind::walls, 1024, 64, scene::HeapEnd::high);
+    REQUIRE(top.has_value());
+    CHECK(top->offset + top->size == part);
+    (void)session->take_messages();
+}
+
 TEST_CASE("a frame binds the heaps' buffer with the marking of what a growth replaced (gain 16)") {
     auto session = test::open_session();
     if (!session) return;
@@ -313,18 +386,19 @@ TEST_CASE("a frame binds the heaps' buffer with the marking of what a growth rep
     ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
     scene::Heaps& h = **heaps;
     // Frame 5 binds the first buffer; a worker's growth follows (100 KB in a 64 KB heap).
-    const vk::Buffer first = h.bind(5);
-    CHECK(first == h.buffer());
+    const scene::HeapBuffers first = h.bind(5);
+    CHECK(first == h.buffers());
+    CHECK(first.high == first.low); // one buffer holds the budget
     for (std::size_t i = 0; i < 100; ++i) {
         auto r = h.allocate(scene::HeapKind::walls, 1000, 64);
         ATLAS_REQUIRE(r.has_value(), r.error().text());
     }
-    CHECK(h.buffer() != first);
+    CHECK(h.buffers() != first);
     CHECK(h.stats().old_buffers == 1);
     CHECK(h.capacity() == h.stats().capacity);
     CHECK(h.capacity() >= 100'000);
     // Frame 6 binds the new buffer: frame 5, which bound the old one, is the last that may read it.
-    CHECK(h.bind(6) == h.buffer());
+    CHECK(h.bind(6) == h.buffers());
     h.collect(4);
     CHECK(h.stats().old_buffers == 1);
     h.collect(5);
@@ -2260,8 +2334,9 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     frame_at(2.0);
     frame_at(2.1);
     const frame::FrameLayout& layout = (*builder)->layout();
-    CHECK(layout.bound_buffer(frame::Global::points) == w.heaps()->buffer());
-    CHECK(layout.bound_buffer(frame::Global::labels) == w.heaps()->buffer());
+    CHECK(layout.bound_buffer(frame::Global::points) == w.heaps()->buffers().low);
+    CHECK(layout.bound_buffer(frame::Global::labels) == w.heaps()->buffers().low);
+    CHECK(layout.bound_buffer(frame::Global::heap_high) == w.heaps()->buffers().high);
     REQUIRE(w.sun()->buffer());
     CHECK(layout.bound_buffer(frame::Global::sun_bits) == w.sun()->buffer().handle());
     // The frame drawn, as the passes read it: the Westerkerk's.

@@ -32,17 +32,19 @@ public:
     [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return heap_bindings; }
     void update(const frame::FrameState& state, frame::Globals& globals) override {
         // Every frame: a binding that has not changed costs a comparison, and each frame builder drawing the world
-        // (its own layout) gets the heaps' buffer, at every kind's binding; taken with the marking of what a growth
-        // replaced, and without waiting for a growth's copy (gain 16).
-        const vk::Buffer buffer = heaps_.bind(state.number);
-        for (const frame::Global g : heap_bindings) globals.buffer(g, buffer);
+        // (its own layout) gets the heaps' buffers, the first at every kind's binding and the second at heap_high's;
+        // taken with the marking of what a growth replaced, and without waiting for a growth's copy (gain 16).
+        const HeapBuffers buffers = heaps_.bind(state.number);
+        for (const frame::Global g : heap_bindings) {
+            globals.buffer(g, g == frame::Global::heap_high ? buffers.high : buffers.low);
+        }
         heaps_.collect(state.number >= gpu::Frames::in_flight ? state.number - gpu::Frames::in_flight : 0);
     }
 
 private:
     static constexpr std::array<frame::Global, heap_kinds> heap_bindings{
         frame::Global::points, frame::Global::walls,     frame::Global::ground,
-        frame::Global::lines,  frame::Global::instances, frame::Global::labels};
+        frame::Global::lines,  frame::Global::heap_high, frame::Global::labels};
     Heaps& heaps_;
 };
 
@@ -53,6 +55,7 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
     std::unique_ptr<World> w(new World(std::move(options))); // NOLINT(cppcoreguidelines-owning-memory)
     ATLAS_GPU_LET(heaps, Heaps::create(device, w->options_.heaps));
     w->heaps_ = std::move(heaps);
+    w->options_.heaps.total = w->heaps_->budget().total; // within its two buffers' parts
     std::function<double()> clock = w->options_.clock ? w->options_.clock : std::function<double()>([] { return 0.0; });
     w->residency_ = std::make_unique<Residency>(
         w->store_, *w->heaps_, passes,
@@ -902,13 +905,13 @@ void World::make_room() {
     // they cannot make one, the stand-ins go as for a tile short of bytes (below). (Within 9 km after a pinch out to 12
     // km and back, Alkmaar's window 14/8411/5362, 6.05 MB of walls, found no piece with 37.7 MB free and waited for
     // good: the levels had left the pieces between the windows.)
-    if (stuck && waits[order[first]].refused > heaps_->largest_free()) {
+    if (stuck && waits[order[first]].refused > heaps_->largest_free(waits[order[first]].kind)) {
         std::vector<std::pair<tiles::TileKey, std::string_view>> backed;
         for (const Standing& t : standing) {
             if (std::ranges::all_of(t.at, [&stand_ins](std::size_t i) { return stand_ins[i].backup.has_value(); }))
                 backed.emplace_back(t.key, t.pack);
         }
-        if (piece_for(waits[order[first]].refused, backed)) {
+        if (piece_for(waits[order[first]].refused, waits[order[first]].kind, backed)) {
             for (std::size_t j = h; j < own; ++j) mine[order[j]].held = true;
             for (std::size_t i = own; i < asked_.size(); ++i) asked_[i].held = true;
             return;
@@ -996,7 +999,8 @@ void World::make_room() {
     for (std::size_t i = own; i < asked_.size(); ++i) asked_[i].held = true;
 }
 
-bool World::piece_for(std::uint32_t bytes, std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins) {
+bool World::piece_for(std::uint32_t bytes, HeapKind kind,
+                      std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins) {
     const auto ranges_of = [](const ResidentTile& t, std::vector<HeapRange>& out) {
         std::uint64_t n = 0;
         for (const PassTile& p : t.passes) {
@@ -1016,7 +1020,7 @@ bool World::piece_for(std::uint32_t bytes, std::span<const std::pair<tiles::Tile
     for (const auto& [key, pack] : going_) {
         if (const ResidentTile* t = residency_->find(key, pack)) (void)ranges_of(*t, back);
     }
-    if (heaps_->largest_with(back) >= bytes) return true;
+    if (heaps_->largest_with(back, kind) >= bytes) return true;
     struct Candidate {
         tiles::TileKey key;
         std::string_view pack;
@@ -1051,14 +1055,14 @@ bool World::piece_for(std::uint32_t bytes, std::span<const std::pair<tiles::Tile
     // Each in turn the one that joins the largest piece (the fewest bytes of those as good), until a piece holds it.
     std::vector<bool> chosen(candidates.size(), false);
     std::vector<HeapRange> trial;
-    while (heaps_->largest_with(back) < bytes) {
+    while (heaps_->largest_with(back, kind) < bytes) {
         std::optional<std::size_t> best;
         vk::DeviceSize best_piece = 0;
         for (std::size_t c = 0; c < candidates.size(); ++c) {
             if (chosen[c]) continue;
             trial = back;
             trial.insert(trial.end(), candidates[c].ranges.begin(), candidates[c].ranges.end());
-            const vk::DeviceSize piece = heaps_->joined_with(trial);
+            const vk::DeviceSize piece = heaps_->joined_with(trial, kind);
             if (!best || piece > best_piece || (piece == best_piece && candidates[c].bytes < candidates[*best].bytes)) {
                 best = c;
                 best_piece = piece;
@@ -1075,7 +1079,7 @@ bool World::piece_for(std::uint32_t bytes, std::span<const std::pair<tiles::Tile
         ++let_go;
     }
     log::info("vk tiles: {} let go for a piece of {} bytes, {} free in pieces of {} at most", let_go, bytes,
-              heaps_->free_bytes(), heaps_->largest_free());
+              heaps_->free_bytes(), heaps_->largest_free(kind));
     return true;
 }
 

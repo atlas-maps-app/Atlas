@@ -31,7 +31,7 @@ enum class Global : std::uint8_t {
     walls = 1,         ///< the walls heap
     ground = 2,        ///< the ground heap
     lines = 3,         ///< the lines heap
-    instances = 4,     ///< the instances heap
+    heap_high = 4,     ///< the heaps' second buffer, every kind's ranges from scene::heap_high_base
     labels = 5,        ///< the labels heap
     sun_bits = 6,      ///< the sun bits of the resident tiles (storage buffer, K8's BitTiles texels)
     noise_rgba = 7,    ///< the screen-wide noise fields (combined image samplers, K17a)

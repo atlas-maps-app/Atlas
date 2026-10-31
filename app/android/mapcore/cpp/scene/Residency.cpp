@@ -131,7 +131,10 @@ void Residency::want(std::span<const Request> requests) {
         // (Heaps::reserve) until its build takes it, so a build beside it cannot take it first.
         const std::uint64_t frees = heaps_.frees();
         std::uint64_t room = failed_.empty() ? 0 : heaps_.free_bytes();
-        std::uint64_t piece = failed_.empty() ? 0 : heaps_.largest_free();
+        // the largest piece a range of each kind may take (the points kind's in the first buffer alone)
+        std::array<std::uint64_t, 2> pieces{};
+        if (!failed_.empty()) pieces = {heaps_.largest_free(HeapKind::points), heaps_.largest_free(HeapKind::walls)};
+        const auto piece_of = [&pieces](HeapKind kind) -> std::uint64_t& { return pieces.at(in_both(kind) ? 1 : 0); };
         std::vector<Job> queue;
         queue.reserve(requests.size());
         for (const Request& r : requests) {
@@ -140,7 +143,8 @@ void Residency::want(std::span<const Request> requests) {
             bool again = false;
             std::optional<Failed> retried;
             if (const auto f = failed_.find(k); f != failed_.end()) {
-                if ((f->second.tried && f->second.frees == frees) || f->second.need > room || f->second.refused > piece)
+                if ((f->second.tried && f->second.frees == frees) || f->second.need > room ||
+                    f->second.refused > piece_of(f->second.kind))
                     continue;
                 room -= f->second.need;
                 retried = f->second;
@@ -157,7 +161,7 @@ void Residency::want(std::span<const Request> requests) {
                         heaps_.reserve(retried->kind, retried->refused, retried->alignment, from)) {
                     reserved = *held;
                 }
-                piece = heaps_.largest_free();
+                pieces = {heaps_.largest_free(HeapKind::points), heaps_.largest_free(HeapKind::walls)};
             }
             // queued already: it stays a tile tried again, with the piece held for it
             for (Job& j : queue_) {
@@ -603,14 +607,17 @@ void Residency::set_published(std::function<void()> callback) {
 std::vector<Residency::Wait> Residency::waits(std::span<const Request> requests) const {
     std::vector<Wait> out(requests.size());
     const std::scoped_lock lock(mutex_);
-    std::optional<std::uint64_t> piece; // the heaps' largest free piece, read once a request's tile has failed
+    // the heaps' largest free piece a range of each kind may take, read once a request's tile has failed
+    std::optional<std::array<std::uint64_t, 2>> pieces;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         const std::uint64_t k = key_of(requests[i].key, requests[i].pack);
         if (const auto f = failed_.find(k); f != failed_.end()) {
-            if (!piece) piece = heaps_.largest_free();
+            if (!pieces) pieces = {heaps_.largest_free(HeapKind::points), heaps_.largest_free(HeapKind::walls)};
             out[i].need = std::max<std::uint64_t>(f->second.need, 1);
             out[i].refused = f->second.refused;
-            out[i].stuck = f->second.refused > *piece || (f->second.tried && f->second.frees == heaps_.frees());
+            out[i].kind = f->second.kind;
+            out[i].stuck = f->second.refused > pieces->at(in_both(f->second.kind) ? 1 : 0) ||
+                           (f->second.tried && f->second.frees == heaps_.frees());
         }
         const auto under = underway_.find(k);
         if (under == underway_.end() || under->second == 1) continue; // neither under way nor published

@@ -319,7 +319,8 @@ public:
     struct Wait {
         std::uint64_t need = 0;
         std::uint64_t placed = 0;
-        std::uint32_t refused = 0; ///< the largest of its ranges that found no piece (0: none)
+        std::uint32_t refused = 0;       ///< the largest of its ranges that found no piece (0: none)
+        HeapKind kind = HeapKind::walls; ///< and its kind (the pieces it may take: Heaps::largest_free)
         bool stuck = false;
     };
     /// Each of `requests`' Wait. Render thread.

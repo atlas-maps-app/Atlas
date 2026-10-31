@@ -17,6 +17,7 @@
 // its face's own depth carried past the edge and a little nearer (building_stroke_recip, building_stroke_depth).
 
 #include "shared/frame.slang"
+#include "shared/heaps.slang"
 #include "shared/painter.slang"
 
 // K17a's mat: the walls and roofs are in the renders' mat group (the objects' `<g filter="url(#mat)">` where the moment
@@ -42,7 +43,13 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
 [[vk::binding(1, 0)]] StructuredBuffer<uint> rank_table;
 [[vk::binding(1, 1)]] StructuredBuffer<uint4> walls_heap;
+[[vk::binding(4, 1)]] StructuredBuffer<uint4> walls_high; // the heaps' second buffer (shared/heaps.slang)
 [[vk::binding(6, 1)]] StructuredBuffer<uint2> sun_bits;
+
+/// Vector i of the walls' heaps, in whichever buffer holds it.
+uint4 walls_vector(uint i) {
+    return i < HEAP_HIGH_VECTORS ? walls_heap[i] : walls_high[i - HEAP_HIGH_VECTORS];
+}
 // The strokes' set (passes/Roofs.cpp): this frame slot's jobs, and its records as the vertex stage reads them and as
 // the compute stage writes them (one buffer).
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> stroke_jobs;
@@ -98,7 +105,7 @@ struct Drawn {
 
 /// The primitive at `at` (a uint4 index) of the walls heap.
 BuildingPrim prim_at(uint at) {
-    return building_prim(walls_heap[at], walls_heap[at + 1u], walls_heap[at + 2u], walls_heap[at + 3u]);
+    return building_prim(walls_vector(at), walls_vector(at + 1u), walls_vector(at + 2u), walls_vector(at + 3u));
 }
 
 /// The primitive at record `index` of the list a draw's push constants `p` name (a tile's), its face and its item's rank
@@ -113,7 +120,7 @@ Fetched fetched_at(BuildingPush p, uint index) {
     Fetched f;
     if (p.sun.w != 0u) {
         // a near cell: its record's two words (its wall in the edged list, its place), cut from its wall
-        uint4 pair = walls_heap[p.at.x + index / 2u];
+        uint4 pair = walls_vector(p.at.x + index / 2u);
         bool odd = (index & 1u) != 0u;
         uint wall = odd ? pair.z : pair.x;
         uint code = odd ? pair.w : pair.y;
@@ -122,8 +129,8 @@ Fetched fetched_at(BuildingPush p, uint index) {
         f.prim = prim_at(p.at.x + index * BUILDING_PRIM_VECTORS);
     }
     uint fa = p.at.y + f.prim.face * BUILDING_FACE_VECTORS;
-    f.face = building_face(walls_heap[fa], walls_heap[fa + 1u]);
-    uint4 rows = walls_heap[p.at.w + f.prim.item / 4u];
+    f.face = building_face(walls_vector(fa), walls_vector(fa + 1u));
+    uint4 rows = walls_vector(p.at.w + f.prim.item / 4u);
     f.rank = rank_table[rows[f.prim.item % 4u]];
     return f;
 }
@@ -142,7 +149,7 @@ Drawn drawn_at(BuildingPush p, uint index) {
 /// The face's colour at the frame: its light, lit by its sample's sun bit, through the push constants `p` of its tile.
 float3 colour_at(BuildingPush p, Drawn d) {
     uint word = p.at.z + d.prim.face * 2u; // even, so both words lie in one uint4
-    uint4 pair = walls_heap[word / 4u];
+    uint4 pair = walls_vector(word / 4u);
     uint lit = pair[word % 4u];
     uint unlit = pair[(word % 4u) + 1u];
     uint has = p.sun.x != BUILDING_NO_BITS ? 1u : 0u;
@@ -515,11 +522,11 @@ WindowLane window_lane(uint index) {
     l.p.at = window_jobs[l.at + 2u];
     l.p.sun = window_jobs[l.at + 3u];
     l.span = window_jobs[l.at + 4u];
-    l.w = building_window_wall(walls_heap[l.p.at.x + l.span.x + l.k]);
+    l.w = building_window_wall(walls_vector(l.p.at.x + l.span.x + l.k));
     l.wall = prim_at(l.p.at.z + l.w.wall * BUILDING_PRIM_VECTORS);
     uint fa = l.p.at.y + l.wall.face * BUILDING_FACE_VECTORS;
-    l.f = building_face(walls_heap[fa], walls_heap[fa + 1u]);
-    uint4 rows = walls_heap[l.p.at.w + l.wall.item / 4u];
+    l.f = building_face(walls_vector(fa), walls_vector(fa + 1u));
+    uint4 rows = walls_vector(l.p.at.w + l.wall.item / 4u);
     l.rank = rank_table[rows[l.wall.item % 4u]];
     l.record = l.span.z + l.k;
     return l;
@@ -569,7 +576,7 @@ void window_wall_out(WindowLane l, float4 plane, float2 dark, float2 lit, float 
     uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
     uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
     uint reveal_word = l.p.sun.w + l.span.x + l.k;
-    uint4 reveals = walls_heap[reveal_word / 4u];
+    uint4 reveals = walls_vector(reveal_word / 4u);
     uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
@@ -746,7 +753,7 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
                                                             BUILDING_FACADE_MARGIN),
                                      BUILDING_FACADE_AREA));
         }
-        uint4 slots4 = walls_heap[l.span.w + l.wall.item / 4u];
+        uint4 slots4 = walls_vector(l.span.w + l.wall.item / 4u);
         uint item_slots = slots4[l.wall.item % 4u];
         uint facade_slot = slots.item + (slots.near ? (item_slots & 0xFFFFu) : (item_slots >> 16u));
         BuildingFacadeRecord fr = building_facade_record(plinth, cornice, l.record, facade_slot);

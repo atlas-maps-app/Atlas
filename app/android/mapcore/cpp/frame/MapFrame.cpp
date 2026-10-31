@@ -136,10 +136,12 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count();
     };
     // The passes' own providers of set 1's globals come with the world, made with the map's resources.
-    // The heaps as large as the device binds (scene::heap_budget), and the resident tiles' native bytes alike
+    // The heaps' two buffers, each as large as the device binds (scene::heap_budget), and the resident tiles' native
+    // bytes alike
     scene::HeapBudget heaps = scene::heap_budget(device);
     if (options_.heaps_total != 0) heaps.total = options_.heaps_total;
-    log::info("vk heaps: {} MB budget (the device binds {} MB of a storage buffer)", heaps.total >> 20U,
+    log::info("vk heaps: {} MB budget, {} MB a buffer at most (the device binds {} MB of a storage buffer)",
+              heaps.total >> 20U, std::min(heaps.binding, heaps.total) >> 20U,
               device.facts().limits.maxStorageBufferRange >> 20U);
     auto world = scene::World::create(
         device, (*builder)->passes(),
