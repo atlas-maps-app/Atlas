@@ -54,6 +54,16 @@
 //
 // prints stage P's tag tables as JSON (load/Tags.hpp), which mapcore/style/tags.json holds for the world's profile (the
 // packer's `world`). The exit code: 0 done; 2 a usage error.
+//
+//   atlas_stagep check <pack> [<offset> <length>]
+//
+// reads a render pack as the core's store does (the file, or <length> bytes of it from <offset>: a world pack in its
+// part, ENGINE.md step 5), verifies it (every section's CRC-32, every chunk's SHA-256) and decodes every tile, checked
+// against its chunk; prints its head, `head <profile> <levels>` (the profile's number, the levels comma-separated as
+// the head names them), then a line a tile in the table's order, `tile <z> <x> <y> <features> <hash>`, its canonical
+// hash (tiles/Dump.hpp), which rendertiles' CanonicalDump.hash gives the tile the packer wrote. The exit code: 0 every
+// tile decoded; 1 a tile or the pack failed (why on stderr); 2 a usage error.
+#include "base/arena.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
@@ -64,8 +74,11 @@
 #include "load/Tags.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
+#include "tiles/Container.hpp"
+#include "tiles/Dump.hpp"
 #include "tiles/Error.hpp"
 #include "tiles/Json.hpp"
+#include "tiles/Payload.hpp"
 #include "tiles/Schema.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/Source.hpp"
@@ -82,6 +95,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <fcntl.h>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -93,6 +107,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -304,6 +319,66 @@ private:
     }
     if (std::fflush(stdout) != 0) return std::unexpected(Failure{.why = "stdout could not be written"});
     return {};
+}
+
+/// `check`: the pack at args[2] (or args[4] bytes of it from args[3]) verified and every tile decoded, its head and
+/// tiles printed; whether every tile decoded.
+[[nodiscard]] std::expected<bool, Failure> check(std::span<char*> args) {
+    const std::string path(args[2]);
+    std::unique_ptr<tl::MappedSource> source;
+    if (args.size() == 5) {
+        std::array<std::uint64_t, 2> range{};
+        for (std::size_t i = 0; i < range.size(); ++i) {
+            const std::string_view v(args[3 + i]);
+            const auto [at, error] = std::from_chars(v.data(), v.data() + v.size(), range.at(i));
+            if (v.empty() || error != std::errc{} || at != v.data() + v.size()) {
+                return std::unexpected(input(std::format("'{}' is no offset or length", v)));
+            }
+        }
+        const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC); // NOLINT(cppcoreguidelines-pro-type-vararg)
+        if (fd < 0) return std::unexpected(input(std::format("{} does not open", path)));
+        auto opened = tl::MappedSource::open(fd, range[0], range[1]);
+        (void)::close(fd); // the mapping outlives the descriptor
+        if (!opened) {
+            return std::unexpected(input(std::format("{} does not open: {}", path, tl::describe(opened.error()))));
+        }
+        source = std::move(*opened);
+    } else {
+        auto opened = mapped(path);
+        if (!opened) return std::unexpected(opened.error());
+        source = std::move(*opened);
+    }
+    auto pack = tl::Pack::open(std::move(source));
+    if (!pack) return std::unexpected(Failure{.why = std::format("{}: {}", path, tl::describe(pack.error()))});
+    const tl::RenderHead* head = pack->head();
+    if (head == nullptr) return std::unexpected(Failure{.why = std::format("{} is no render pack", path)});
+    if (auto verified = pack->verify(); !verified) {
+        return std::unexpected(Failure{.why = std::format("{}: {}", path, tl::describe(verified.error()))});
+    }
+    std::string levels;
+    for (const std::uint8_t z : head->levels) levels += std::format("{}{}", levels.empty() ? "" : ",", z);
+    std::string out = std::format("head {} {}\n", static_cast<int>(head->profile), levels);
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    bool all = true;
+    for (const tl::ChunkRef& c : pack->chunks().chunks()) {
+        atlas::Arena arena(std::size_t{1} << 20U, atlas::Growth::grows, "check");
+        auto tile = pack->decode(c, zstd, decoder, arena, raw, scratch);
+        if (!tile) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s: tile %d/%u/%u: %s\n", path.c_str(), int{c.tile.z}, c.tile.x,
+                               c.tile.y, tl::describe(tile.error()).c_str());
+            all = false;
+            continue;
+        }
+        out += std::format("tile {} {} {} {} {}\n", c.tile.z, c.tile.x, c.tile.y, tile->feature_count(),
+                           tl::hex(tl::canonical_hash(*tile)));
+    }
+    if (std::fputs(out.c_str(), stdout) < 0 || std::fflush(stdout) != 0) {
+        return std::unexpected(Failure{.why = "stdout could not be written"});
+    }
+    return all;
 }
 
 /// One window of `windows`' list: its tile and the file of its answer, and what building it made.
@@ -708,6 +783,14 @@ int main(int argc, char** argv) {
         }
         return *built ? 0 : 1;
     }
+    if ((args.size() == 3 || args.size() == 5) && std::string_view(args[1]) == "check") {
+        const auto checked = check(args);
+        if (!checked) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s\n", checked.error().why.c_str());
+            return checked.error().code;
+        }
+        return *checked ? 0 : 1;
+    }
     if (args.size() == 2 && std::string_view(args[1]) == "tags") {
         (void)std::fputs(load::tag_tables_json().c_str(), stdout);
         return 0;
@@ -717,7 +800,8 @@ int main(int argc, char** argv) {
                          "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n"
                          "       atlas_stagep windows <list> <out-dir> [threads]\n"
                          "       atlas_stagep levels <list> <out-dir> [threads]\n"
-                         "       atlas_stagep tags\n",
+                         "       atlas_stagep tags\n"
+                         "       atlas_stagep check <pack> [<offset> <length>]\n",
                          stderr);
         return usage_error;
     }

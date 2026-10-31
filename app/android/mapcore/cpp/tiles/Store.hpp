@@ -30,8 +30,8 @@ enum class PackKind : std::uint8_t {
     bundled = 0,    ///< the APK's tiles (the Westerkerk, the canal ring)
     render = 1,     ///< a downloaded render pack (the renders' regions, K20a; regions.json's, K20)
     window = 2,     ///< an Overpass window built on the phone (K20)
-    world_mid = 3,  ///< the world mid-zoom base L6–L10 (K20b), remote
-    world_base = 4, ///< the world base L0–L5 (K22), bundled
+    world_mid = 3,  ///< the world's mid-zoom base L6–L11 (ENGINE.md step 5): a pack a range of its part, fetched
+    world_base = 4, ///< the globe L0–L5 (ENGINE.md step 5), fetched
 };
 
 /// Where a pack's bytes are: a file; a range of an open file (an APK asset); or a remote pack read by ranges.

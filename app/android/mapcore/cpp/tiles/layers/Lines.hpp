@@ -51,7 +51,7 @@ namespace atlas::tiles::line {
 
 inline constexpr std::array<ColumnSpec, 18> columns = {{
     {"source", Codec::u8},   // 0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'],
-                             // 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']
+                             // 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']; 10 the world's rivers
     {"index", Codec::delta}, // source order in its list
     {"id", Codec::nvarz},    // the OSM id where the scene has one, or its tile carries the order across windows
     {"otype", Codec::str},   // relation for a multipolygon's ring, else null (a way): with id and part, its element

@@ -12,7 +12,7 @@
 namespace atlas::tiles::ground {
 
 inline constexpr std::array<ColumnSpec, 12> columns = {{
-    {"source", Codec::u8},   // 0: S['areas']; 1: S['land']
+    {"source", Codec::u8},   // 0: S['areas']; 1: S['land']; 2: the world's land under everything (world packs)
     {"index", Codec::delta}, // source order in its list (S['land'] sorted by LAND's draw order, then area)
     {"id", Codec::nvarz},    // the OSM id: land cover's; an area's too where its tile carries the order across windows
     {"otype", Codec::str},   // relation for a multipolygon's ring, else null (a way): with id and part, its element
@@ -36,9 +36,11 @@ inline constexpr std::uint8_t ring_keep = slot_of(columns, "ring.keep");
 inline constexpr std::uint8_t kind = slot_of(columns, "kind");
 inline constexpr std::uint8_t ground_key = slot_of(columns, "ground_key");
 
-/// The two sources of the layer.
+/// The layer's sources: a scene's two, and the world packs' land under everything (ENGINE.md step 5: with the sea,
+/// WATER's tidal rings, it fills each cell of a world tile exactly; kind `land`, no ground key).
 inline constexpr std::uint8_t source_area = 0;
 inline constexpr std::uint8_t source_land = 1;
+inline constexpr std::uint8_t source_land_base = 2;
 
 } // namespace atlas::tiles::ground
 
