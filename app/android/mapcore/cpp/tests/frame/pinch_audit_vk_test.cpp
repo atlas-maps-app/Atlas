@@ -14,7 +14,9 @@
 // km of the target (40), with ATLAS_PINCH_BLOCK=0 and ATLAS_PINCH_PACKS=none for them alone.
 // ATLAS_PINCH_PLACE: "lat,lon,bearing,pitch" (52.3735,4.8755,22,48: west of the Westerkerk); ATLAS_PINCH_HEAPS: the
 // heaps' budget in MB instead of the device's; ATLAS_PINCH_FAR: the cover's farthest reach in km instead of the
-// world's (12: as before a frame cell's levels); ATLAS_PINCH_OUTWARD: the pinch back out to the start after.
+// world's (12: as before a frame cell's levels); ATLAS_PINCH_OUTWARD: the pinch back out to the start after;
+// ATLAS_PINCH_CYCLES: that many pinches there and back, each summed up, at rest at the start between them (the frame
+// complete, no tile waiting for room).
 //
 // To compare the packs' cuts (each alone at the same cameras): ATLAS_PINCH_PACKS names the bundled packs listed
 // ("amsterdam,grachten" by default, "none" for none), ATLAS_PINCH_BLOCK=0 lists no windows, ATLAS_PINCH_KIT builds the
@@ -702,7 +704,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     }
                 }
             }
-            MESSAGE(std::format("heaps at {:.0f} m by level and pass (MB): {}{}", d, map.tiles_line(), lines));
+            const scene::Heaps& h = *map.world()->heaps();
+            MESSAGE(
+                std::format("heaps at {:.0f} m by level and pass (MB): {}; {:.1f} free in pieces of {:.1f} at most{}",
+                            d, map.tiles_line(), static_cast<double>(h.free_bytes()) / 1.0e6,
+                            static_cast<double>(h.largest_free()) / 1.0e6, lines));
         };
         settle(from);
         said(std::format("at {:.0f} m", from));
@@ -719,8 +725,10 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         };
         std::vector<Part> parts;
         std::map<std::pair<std::string, std::uint64_t>, std::set<double>> builds;
-        const scene::ResidencyStats before =
-            map.world() != nullptr ? map.world()->residency().stats() : scene::ResidencyStats{};
+        scene::ResidencyStats before{};
+        const int cycles = environment("ATLAS_PINCH_CYCLES").empty() || environment("ATLAS_PINCH_OUTWARD").empty()
+                               ? 1
+                               : std::max(1, std::stoi(environment("ATLAS_PINCH_CYCLES")));
         const auto track = [&](Part& part) {
             ++part.frames;
             if (const frame::FrameBuilder* b = map.builder()) part.stage_f.push_back(b->stage_f_ms());
@@ -733,56 +741,73 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 builds[{t->pack, t->key.packed()}].insert(t->published);
             }
         };
-        parts.push_back({.name = std::format("{:.0f} to {:.0f} m", from, to)});
-        for (int i = 0; i <= steps; ++i) {
-            const double t = static_cast<double>(i) / steps;
-            const double d = from * pymath::strict::pow(to / from, t);
-            (void)draw(std::format("in {:3d}", i), d, i == steps, true);
-            track(parts.back());
-        }
-        said("in the pinch");
-        parts.push_back({.name = std::format("held at {:.0f} m", to)});
-        for (int i = 0; i < 20; ++i) {
-            (void)draw(std::format("held {:2d}", i), to, true, true);
-            track(parts.back());
-        }
-        said(std::format("held at {:.0f} m", to));
-        if (!environment("ATLAS_PINCH_OUTWARD").empty()) {
-            parts.push_back({.name = std::format("{:.0f} to {:.0f} m", to, from)});
+        for (int cycle = 1; cycle <= cycles; ++cycle) {
+            parts.clear();
+            builds.clear();
+            before = map.world() != nullptr ? map.world()->residency().stats() : scene::ResidencyStats{};
+            const std::string round = cycles > 1 ? std::format("pinch {}: ", cycle) : std::string();
+            parts.push_back({.name = std::format("{}{:.0f} to {:.0f} m", round, from, to)});
             for (int i = 0; i <= steps; ++i) {
                 const double t = static_cast<double>(i) / steps;
-                const double d = to * pymath::strict::pow(from / to, t);
-                (void)draw(std::format("out {:3d}", i), d, i == steps, true);
+                const double d = from * pymath::strict::pow(to / from, t);
+                (void)draw(std::format("in {:3d}", i), d, i == steps, true);
                 track(parts.back());
             }
-        }
-        {
-            std::string lines;
-            for (Part& part : parts) {
-                std::ranges::sort(part.stage_f);
-                const std::size_t n = part.stage_f.size();
-                const double p95 = n == 0 ? 0.0 : part.stage_f.at(std::min(n - 1, ((95 * n) + 99) / 100 - 1));
-                lines += std::format("\n  {}: {} frames, stage F median {:.1f} ms, p95 {:.1f}, most {:.1f}; {} drew no "
-                                     "tile; {} left a window's place within 12 km without a tile, {} at most",
-                                     part.name, part.frames, median(part.stage_f), p95,
-                                     n == 0 ? 0.0 : part.stage_f.back(), part.blank, part.holed, part.most_holes);
+            said("in the pinch");
+            parts.push_back({.name = std::format("{}held at {:.0f} m", round, to)});
+            for (int i = 0; i < 20; ++i) {
+                (void)draw(std::format("held {:2d}", i), to, true, true);
+                track(parts.back());
             }
-            const scene::ResidencyStats after =
-                map.world() != nullptr ? map.world()->residency().stats() : scene::ResidencyStats{};
-            std::size_t again = 0;
-            std::size_t most = 0;
-            std::string keys;
-            for (const auto& [k, times] : builds) {
-                most = std::max(most, times.size());
-                if (times.size() < 2) continue;
-                ++again;
-                const tiles::TileKey key = tiles::TileKey::unpack(k.second);
-                if (keys.size() < 2000) keys += std::format(" {}/{}/{}x{}", key.z, key.x, key.y, times.size());
+            said(std::format("held at {:.0f} m", to));
+            if (!environment("ATLAS_PINCH_OUTWARD").empty()) {
+                parts.push_back({.name = std::format("{}{:.0f} to {:.0f} m", round, to, from)});
+                for (int i = 0; i <= steps; ++i) {
+                    const double t = static_cast<double>(i) / steps;
+                    const double d = to * pymath::strict::pow(from / to, t);
+                    (void)draw(std::format("out {:3d}", i), d, i == steps, true);
+                    track(parts.back());
+                }
             }
-            MESSAGE(std::format("the pinch:{}\n  {} tiles built, {} builds that found no room, {} cancelled; {} of {} "
+            {
+                std::string lines;
+                for (Part& part : parts) {
+                    std::ranges::sort(part.stage_f);
+                    const std::size_t n = part.stage_f.size();
+                    const double p95 = n == 0 ? 0.0 : part.stage_f.at(std::min(n - 1, ((95 * n) + 99) / 100 - 1));
+                    lines +=
+                        std::format("\n  {}: {} frames, stage F median {:.1f} ms, p95 {:.1f}, most {:.1f}; {} drew no "
+                                    "tile; {} left a window's place within 12 km without a tile, {} at most",
+                                    part.name, part.frames, median(part.stage_f), p95,
+                                    n == 0 ? 0.0 : part.stage_f.back(), part.blank, part.holed, part.most_holes);
+                }
+                const scene::ResidencyStats after =
+                    map.world() != nullptr ? map.world()->residency().stats() : scene::ResidencyStats{};
+                std::size_t again = 0;
+                std::size_t most = 0;
+                std::string keys;
+                for (const auto& [k, times] : builds) {
+                    most = std::max(most, times.size());
+                    if (times.size() < 2) continue;
+                    ++again;
+                    const tiles::TileKey key = tiles::TileKey::unpack(k.second);
+                    if (keys.size() < 2000) keys += std::format(" {}/{}/{}x{}", key.z, key.x, key.y, times.size());
+                }
+                MESSAGE(
+                    std::format("the pinch:{}\n  {} tiles built, {} builds that found no room, {} cancelled; {} of {} "
                                 "tiles built more than once, at most {} times:{}",
                                 lines, after.built - before.built, after.failed - before.failed,
                                 after.cancelled - before.cancelled, again, builds.size(), most, keys));
+            }
+            // between the pinches, at rest at the start: the frame complete, no tile waiting for room
+            if (cycle < cycles) {
+                settle(from);
+                const scene::Cover* cover = map.world() != nullptr ? map.world()->cover() : nullptr;
+                MESSAGE(std::format("back at rest at {:.0f} m after pinch {}: complete {}, missing {}, waiting {}",
+                                    from, cycle, map.complete(), cover != nullptr ? cover->missing() : 0,
+                                    map.world() != nullptr ? map.world()->residency().stats().waiting : 0));
+                heaps_by_level(from);
+            }
         }
         for (const double d : rests) {
             settle(d);

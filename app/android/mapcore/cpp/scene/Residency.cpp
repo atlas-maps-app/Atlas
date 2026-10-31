@@ -10,6 +10,7 @@
 #include <format>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #if defined(__ANDROID__)
 #include <sys/resource.h>
@@ -93,6 +94,10 @@ Residency::~Residency() {
     }
     for (const std::unique_ptr<Underway>& u : building_) {
         if (u->out) each_range(*u->out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+        if (u->reserved.range && !u->reserved.taken.load()) heaps_.give_back(u->reserved.range);
+    }
+    for (const Job& j : queue_) {
+        if (j.reserved) heaps_.give_back(j.reserved);
     }
     for (const std::shared_ptr<const ResidentTile>& t : resident_) {
         each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
@@ -122,7 +127,8 @@ void Residency::want(std::span<const Request> requests) {
         // A failed tile is tried again once the heaps have the bytes it asked for free, less those the failed tiles
         // tried again before it asked for (the requests' order: the first wanted takes the room first), and a piece
         // for the largest of its ranges that found none (its bytes may be free in pieces too small for it): once on
-        // them, then each time a range has gone back to the heaps since it last found none.
+        // them, then each time a range has gone back to the heaps since it last found none. That piece is held for it
+        // (Heaps::reserve) until its build takes it, so a build beside it cannot take it first.
         const std::uint64_t frees = heaps_.frees();
         std::uint64_t room = failed_.empty() ? 0 : heaps_.free_bytes();
         std::uint64_t piece = failed_.empty() ? 0 : heaps_.largest_free();
@@ -132,24 +138,45 @@ void Residency::want(std::span<const Request> requests) {
             const std::uint64_t k = key_of(r.key, r.pack);
             if (r.held || index_.contains(k)) continue; // held back; resident (the render thread's own map)
             bool again = false;
+            std::optional<Failed> retried;
             if (const auto f = failed_.find(k); f != failed_.end()) {
                 if ((f->second.tried && f->second.frees == frees) || f->second.need > room || f->second.refused > piece)
                     continue;
                 room -= f->second.need;
-                piece -= f->second.refused;
+                retried = f->second;
                 failed_.erase(f);
                 again = true;
             }
             const auto under = underway_.find(k);
             if (under != underway_.end() && under->second != 1) continue; // building, or published and not taken
             if (std::ranges::any_of(queue, [&](const Job& j) { return key_of(j.request.key, j.pack) == k; })) continue;
-            queue.push_back({.request = r, .pack = std::string(r.pack), .generation = generation_, .again = again});
+            HeapRange reserved;
+            if (retried && retried->refused > 0) {
+                const HeapEnd from = r.key.z < 14 ? HeapEnd::high : HeapEnd::low;
+                if (const std::optional<HeapRange> held =
+                        heaps_.reserve(retried->kind, retried->refused, retried->alignment, from)) {
+                    reserved = *held;
+                }
+                piece = heaps_.largest_free();
+            }
+            // queued already: it stays a tile tried again, with the piece held for it
+            for (Job& j : queue_) {
+                if (key_of(j.request.key, j.pack) != k) continue;
+                again = again || j.again;
+                if (!reserved) reserved = std::exchange(j.reserved, HeapRange{});
+            }
+            queue.push_back({.request = r,
+                             .pack = std::string(r.pack),
+                             .generation = generation_,
+                             .again = again,
+                             .reserved = reserved});
             queue.back().request.pack = queue.back().pack;
         }
         for (const Job& j : queue_) {
             const std::uint64_t k = key_of(j.request.key, j.pack);
             const bool still =
                 std::ranges::any_of(queue, [&](const Job& q) { return key_of(q.request.key, q.pack) == k; });
+            if (j.reserved) heaps_.give_back(j.reserved);
             if (!still) {
                 underway_.erase(k);
                 ++stats_.cancelled;
@@ -240,6 +267,7 @@ Residency::Piece Residency::take(std::unique_lock<std::mutex>& lock, const std::
             u->job = std::move(queue_.front());
             queue_.erase(queue_.begin());
             u->job.request.pack = u->job.pack;
+            u->reserved.range = std::exchange(u->job.reserved, HeapRange{});
             u->key = key_of(u->job.request.key, u->job.pack);
             u->worker = worker;
             underway_[u->key] = 2;
@@ -417,7 +445,7 @@ bool Residency::run(Underway& u, std::uint32_t p) {
     // the pass's own work in pieces on the idle workers too, where the workers share
     Helpers helpers(*this, u);
     TileBuild b(u.tile, *pack.pack.head(), *pack.pack.style(), u.job.request.level, u.out->origin, heaps_,
-                u.out->passes[p], u.items[p], p, share_ ? &helpers : nullptr, &u.asked, &u.refused);
+                u.out->passes[p], u.items[p], p, share_ ? &helpers : nullptr, &u.asked, &u.refused, &u.reserved);
     const trace::Section traced(stage_t_names_[p].c_str());
     if (auto built = passes_[p]->build(b); !built) {
         const tiles::TileKey& k = u.job.request.key;
@@ -448,6 +476,8 @@ void Residency::share(const Underway& u, std::size_t count, const std::function<
 void Residency::publish(Underway& u) {
     // Every pass is done (or one failed and the others it was handed are): this worker alone sees the tile now.
     const auto started = std::chrono::steady_clock::now();
+    // the piece held for it that none of its ranges took (its build failed before, or its ranges changed)
+    if (u.reserved.range && !u.reserved.taken.load()) heaps_.give_back(u.reserved.range);
     if (u.failed) {
         // never drawn: back to the heaps at once, not as a free that would try the tile again
         if (u.out) each_range(*u.out, [this](const HeapRange& r) { heaps_.give_back(r); });
@@ -491,9 +521,12 @@ void Residency::publish(Underway& u) {
             published = published_callback_;
         } else {
             underway_.erase(u.key);
+            const std::scoped_lock refused(u.refused.lock);
             failed_[u.key] = {.frees = u.frees,
                               .need = u.asked.load(std::memory_order_relaxed),
-                              .refused = u.refused.load(std::memory_order_relaxed),
+                              .refused = u.refused.bytes,
+                              .kind = u.refused.kind,
+                              .alignment = u.refused.alignment,
                               .tried = u.job.again};
             ++stats_.failed;
         }
@@ -576,6 +609,7 @@ std::vector<Residency::Wait> Residency::waits(std::span<const Request> requests)
         if (const auto f = failed_.find(k); f != failed_.end()) {
             if (!piece) piece = heaps_.largest_free();
             out[i].need = std::max<std::uint64_t>(f->second.need, 1);
+            out[i].refused = f->second.refused;
             out[i].stuck = f->second.refused > *piece || (f->second.tried && f->second.frees == heaps_.frees());
         }
         const auto under = underway_.find(k);

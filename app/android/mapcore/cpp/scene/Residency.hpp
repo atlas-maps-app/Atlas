@@ -122,16 +122,33 @@ public:
     virtual void share(std::size_t pieces, const std::function<void(std::size_t)>& piece) = 0;
 };
 
+/// The largest of a tile's ranges that found no piece of the heaps (its passes' allocate): what the residency waits
+/// for, and what it holds a piece for when it tries the tile again.
+struct Refused {
+    std::mutex lock;
+    std::uint32_t bytes = 0;
+    HeapKind kind = HeapKind::points;
+    std::uint32_t alignment = 16;
+};
+
+/// The piece a tile tried again holds for its largest range that found none (Residency::want), taken by the first of
+/// its ranges of that kind and size: a build beside it took the piece first, before its passes placed that range, and
+/// it found none again (Alkmaar's L13 13/4204/2682, 10.7 MB of walls, four times from 9.3 to 12 km).
+struct Reserved {
+    HeapRange range;
+    std::atomic<bool> taken{false};
+};
+
 /// What a pass's builder sees of a tile and writes for it (frame::Pass::build), on a worker: the passes of one tile
 /// build at once, each into its own record and items.
 class TileBuild {
 public:
     TileBuild(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style, std::uint8_t level,
               view::Vec3 origin, Heaps& heaps, PassTile& out, std::vector<ItemSpec>& items, std::uint32_t pass,
-              Sharer* sharer = nullptr, std::atomic<std::uint64_t>* asked = nullptr,
-              std::atomic<std::uint32_t>* refused = nullptr) noexcept
+              Sharer* sharer = nullptr, std::atomic<std::uint64_t>* asked = nullptr, Refused* refused = nullptr,
+              Reserved* reserved = nullptr) noexcept
         : tile_(tile), head_(head), style_(style), level_(level), origin_(origin), heaps_(heaps), out_(out),
-          items_(items), pass_(pass), sharer_(sharer), asked_(asked), refused_(refused) {}
+          items_(items), pass_(pass), sharer_(sharer), asked_(asked), refused_(refused), reserved_(reserved) {}
 
     [[nodiscard]] const tiles::Tile& tile() const noexcept { return tile_; }
     [[nodiscard]] const tiles::RenderHead& head() const noexcept { return head_; }
@@ -146,16 +163,29 @@ public:
 
     /// A range of `bytes` in heap `kind` (allocate every range first, then write: Heaps' writer holds a lock), its
     /// bytes counted among those the tile asked for, placed or not (the residency's room for a tile that found none),
-    /// and, finding none, among its ranges that found none (the piece of the heaps the residency waits for).
+    /// and, finding none, among its ranges that found none (the piece of the heaps the residency waits for). A level's
+    /// tile places its ranges from the heaps' high end, a window's from the low (HeapEnd); a tile tried again takes
+    /// the piece held for it (Reserved).
     [[nodiscard]] gpu::Result<HeapRange> allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment = 16) {
         if (asked_ != nullptr) asked_->fetch_add(bytes, std::memory_order_relaxed);
-        gpu::Result<HeapRange> range = heaps_.allocate(kind, bytes, alignment);
+        gpu::Result<HeapRange> range =
+            reserved_ != nullptr && reserved_->range.kind == kind && reserved_->range.size == bytes &&
+                    (reserved_->range.offset & (alignment - 1U)) == 0 && !reserved_->taken.exchange(true)
+                ? heaps_.claim(reserved_->range)
+                : heaps_.allocate(kind, bytes, alignment, end_of(tile_));
         if (!range && refused_ != nullptr) {
-            std::uint32_t was = refused_->load(std::memory_order_relaxed);
-            while (was < bytes && !refused_->compare_exchange_weak(was, bytes, std::memory_order_relaxed)) {
+            const std::scoped_lock lock(refused_->lock);
+            if (bytes > refused_->bytes) {
+                refused_->bytes = bytes;
+                refused_->kind = kind;
+                refused_->alignment = alignment;
             }
         }
         return range;
+    }
+    /// The heaps' end a tile's ranges are placed from: a level's (L13, L12) the high, a window's (L14) the low.
+    [[nodiscard]] static HeapEnd end_of(const tiles::Tile& tile) noexcept {
+        return tile.header.level < 14 ? HeapEnd::high : HeapEnd::low;
     }
     [[nodiscard]] Heaps& heaps() noexcept { return heaps_; }
     /// The pass's record of the tile.
@@ -195,7 +225,8 @@ private:
     std::uint32_t pass_;
     Sharer* sharer_;
     std::atomic<std::uint64_t>* asked_;
-    std::atomic<std::uint32_t>* refused_;
+    Refused* refused_;
+    Reserved* reserved_;
 };
 
 /// A request's lane, in the order the workers take them.
@@ -288,6 +319,7 @@ public:
     struct Wait {
         std::uint64_t need = 0;
         std::uint64_t placed = 0;
+        std::uint32_t refused = 0; ///< the largest of its ranges that found no piece (0: none)
         bool stuck = false;
     };
     /// Each of `requests`' Wait. Render thread.
@@ -305,6 +337,7 @@ private:
         std::string pack;
         std::uint64_t generation = 0;
         bool again = false; // a failed tile tried again: finding no room again, it waits for a range back to the heaps
+        HeapRange reserved; // and the piece held for its largest range that found none (none: size 0)
     };
     /// What a tile's decoding needs while the tile is under way: the decoded tile views both.
     struct Scratch {
@@ -318,9 +351,10 @@ private:
     struct Underway {
         Job job;
         std::uint64_t key = 0;
-        std::uint64_t frees = 0;               // the heaps' frees as it began (failed_)
-        std::atomic<std::uint64_t> asked{0};   // the bytes its passes asked of the heaps (TileBuild::allocate)
-        std::atomic<std::uint32_t> refused{0}; // the largest of its ranges that found no piece of them
+        std::uint64_t frees = 0;             // the heaps' frees as it began (failed_)
+        std::atomic<std::uint64_t> asked{0}; // the bytes its passes asked of the heaps (TileBuild::allocate)
+        Refused refused;                     // the largest of its ranges that found no piece of them
+        Reserved reserved;                   // the piece held for it, tried again (Job::reserved)
         std::shared_ptr<const tiles::StorePack> pack;
         std::unique_ptr<Scratch> scratch; // the decoded tile's bytes
         tiles::Tile tile;
@@ -402,6 +436,8 @@ private:
         std::uint64_t frees = 0;
         std::uint64_t need = 0;
         std::uint32_t refused = 0;
+        HeapKind kind = HeapKind::points; // the refused range's kind and alignment, for the piece held for it
+        std::uint32_t alignment = 16;
         bool tried = false;
     };
     std::unordered_map<std::uint64_t, Failed> failed_;

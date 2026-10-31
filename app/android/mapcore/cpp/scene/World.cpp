@@ -1,6 +1,7 @@
 // The world the map draws (scene/World.hpp).
 #include "scene/World.hpp"
 
+#include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/TileBox.hpp"
@@ -11,9 +12,12 @@
 #include <format>
 #include <iterator>
 #include <numeric>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace atlas::scene {
@@ -891,6 +895,25 @@ void World::make_room() {
         going_.emplace_back(t.key, std::string(t.pack));
         going += t.bytes;
     }
+    // A tile whose largest range finds no piece though the heaps hold its bytes free: what goes back joins a piece for
+    // it only where it lies beside one. The tiles nothing draws, keeps or asks for go, and the stand-ins whose places
+    // all keep another resident level, those that join the largest piece first, until a piece holds it
+    // (Heaps::joined_with); and it is asked for once that piece has come, those after it held back meanwhile. Where
+    // they cannot make one, the stand-ins go as for a tile short of bytes (below). (Within 9 km after a pinch out to 12
+    // km and back, Alkmaar's window 14/8411/5362, 6.05 MB of walls, found no piece with 37.7 MB free and waited for
+    // good: the levels had left the pieces between the windows.)
+    if (stuck && waits[order[first]].refused > heaps_->largest_free()) {
+        std::vector<std::pair<tiles::TileKey, std::string_view>> backed;
+        for (const Standing& t : standing) {
+            if (std::ranges::all_of(t.at, [&stand_ins](std::size_t i) { return stand_ins[i].backup.has_value(); }))
+                backed.emplace_back(t.key, t.pack);
+        }
+        if (piece_for(waits[order[first]].refused, backed)) {
+            for (std::size_t j = h; j < own; ++j) mine[order[j]].held = true;
+            for (std::size_t i = own; i < asked_.size(); ++i) asked_[i].held = true;
+            return;
+        }
+    }
     const HeapStats heaps = heaps_->stats();
     const auto coming = [&]() -> std::uint64_t {
         if (stuck) return heaps.retired_bytes + going + arriving;
@@ -971,6 +994,89 @@ void World::make_room() {
         if (j != first || !fits) mine[order[j]].held = true;
     }
     for (std::size_t i = own; i < asked_.size(); ++i) asked_[i].held = true;
+}
+
+bool World::piece_for(std::uint32_t bytes, std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins) {
+    const auto ranges_of = [](const ResidentTile& t, std::vector<HeapRange>& out) {
+        std::uint64_t n = 0;
+        for (const PassTile& p : t.passes) {
+            for (const HeapRange& r : p.ranges) {
+                if (!r) continue;
+                out.push_back(r);
+                n += r.size;
+            }
+        }
+        return n;
+    };
+    const auto goes = [this](const tiles::TileKey& k, std::string_view pack) {
+        return std::ranges::any_of(going_, [&](const auto& g) { return g.first == k && g.second == pack; });
+    };
+    // what goes already (the spare tiles, as the next frame begins)
+    std::vector<HeapRange> back;
+    for (const auto& [key, pack] : going_) {
+        if (const ResidentTile* t = residency_->find(key, pack)) (void)ranges_of(*t, back);
+    }
+    if (heaps_->largest_with(back) >= bytes) return true;
+    struct Candidate {
+        tiles::TileKey key;
+        std::string_view pack;
+        std::vector<HeapRange> ranges;
+        std::uint64_t bytes = 0;
+    };
+    std::vector<Candidate> candidates;
+    // the tiles nothing draws, keeps or asks for (each place's coarsest is kept; a switch's incoming tiles are drawn)
+    const auto drawn = [this](std::uint32_t handle) {
+        const auto of = [handle](const CoverTile& t) { return t.drawn != nullptr && t.drawn->handle == handle; };
+        return std::ranges::any_of(cover_.tiles(), of) ||
+               std::ranges::find(cover_.kept(), handle) != cover_.kept().end() ||
+               (incoming_ != nullptr && std::ranges::any_of(incoming_cover_.tiles(), of));
+    };
+    for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) {
+        if (goes(t->key, t->pack) || drawn(t->handle)) continue;
+        if (std::ranges::any_of(asked_, [&t](const Request& r) { return r.key == t->key && r.pack == t->pack; }))
+            continue;
+        Candidate c{.key = t->key, .pack = t->pack};
+        c.bytes = ranges_of(*t, c.ranges);
+        candidates.push_back(std::move(c));
+    }
+    // the stand-ins whose places all keep another resident level, which they draw instead
+    for (const auto& [key, pack] : stand_ins) {
+        if (goes(key, pack)) continue;
+        if (const ResidentTile* t = residency_->find(key, pack)) {
+            Candidate c{.key = key, .pack = pack};
+            c.bytes = ranges_of(*t, c.ranges);
+            candidates.push_back(std::move(c));
+        }
+    }
+    // Each in turn the one that joins the largest piece (the fewest bytes of those as good), until a piece holds it.
+    std::vector<bool> chosen(candidates.size(), false);
+    std::vector<HeapRange> trial;
+    while (heaps_->largest_with(back) < bytes) {
+        std::optional<std::size_t> best;
+        vk::DeviceSize best_piece = 0;
+        for (std::size_t c = 0; c < candidates.size(); ++c) {
+            if (chosen[c]) continue;
+            trial = back;
+            trial.insert(trial.end(), candidates[c].ranges.begin(), candidates[c].ranges.end());
+            const vk::DeviceSize piece = heaps_->joined_with(trial);
+            if (!best || piece > best_piece || (piece == best_piece && candidates[c].bytes < candidates[*best].bytes)) {
+                best = c;
+                best_piece = piece;
+            }
+        }
+        if (!best) return false; // they cannot make one: none goes
+        chosen[*best] = true;
+        back.insert(back.end(), candidates[*best].ranges.begin(), candidates[*best].ranges.end());
+    }
+    std::size_t let_go = 0;
+    for (std::size_t c = 0; c < candidates.size(); ++c) {
+        if (!chosen[c]) continue;
+        going_.emplace_back(candidates[c].key, std::string(candidates[c].pack));
+        ++let_go;
+    }
+    log::info("vk tiles: {} let go for a piece of {} bytes, {} free in pieces of {} at most", let_go, bytes,
+              heaps_->free_bytes(), heaps_->largest_free());
+    return true;
 }
 
 std::string World::tiles_line() const {
