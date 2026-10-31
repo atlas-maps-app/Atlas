@@ -314,4 +314,8 @@ std::vector<tiles::TileKey> MapFrame::wanted_levels() const {
     return world_ ? world_->wanted_levels() : std::vector<tiles::TileKey>{};
 }
 
+std::vector<tiles::TileKey> MapFrame::levels_in_view() const {
+    return world_ ? world_->levels_in_view() : std::vector<tiles::TileKey>{};
+}
+
 } // namespace atlas::frame

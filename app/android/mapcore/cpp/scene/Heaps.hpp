@@ -78,8 +78,9 @@ struct HeapStats {
     std::array<vk::DeviceSize, heap_kinds> used{};
     std::array<std::uint32_t, heap_kinds> ranges{};
     std::uint64_t growths = 0;
-    std::uint64_t retired = 0;     ///< ranges waiting for their frames to finish
-    std::uint64_t old_buffers = 0; ///< buffers a growth replaced, kept until the frames bound to them finish
+    std::uint64_t retired = 0;        ///< ranges waiting for their frames to finish
+    vk::DeviceSize retired_bytes = 0; ///< and their bytes
+    std::uint64_t old_buffers = 0;    ///< buffers a growth replaced, kept until the frames bound to them finish
     [[nodiscard]] vk::DeviceSize total_used() const noexcept;
 };
 
@@ -145,6 +146,11 @@ public:
     [[nodiscard]] std::uint64_t version() const noexcept;
     /// How many times collect has freed ranges: a range that found no room may find it once this has changed.
     [[nodiscard]] std::uint64_t frees() const noexcept;
+    /// The budget's bytes no range holds (a retired range's among those held until it is freed). Any thread.
+    [[nodiscard]] vk::DeviceSize free_bytes() const;
+    /// The largest piece of the budget no range holds: a larger range finds no room whatever the bytes free (their
+    /// pieces too small for it). Any thread; it walks the ranges.
+    [[nodiscard]] vk::DeviceSize largest_free() const;
     [[nodiscard]] HeapStats stats() const;
 
 private:

@@ -9,6 +9,12 @@
 #include <array>
 #include <cmath>
 #include <format>
+#include <iterator>
+#include <numeric>
+#include <span>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace atlas::scene {
 
@@ -442,15 +448,36 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
     wanted.insert(wanted.end(), next.begin(), next.begin() + static_cast<std::ptrdiff_t>(taken));
     std::vector<tiles::TileKey> in_view = nearest(drawn);
     std::vector<tiles::TileKey> levels = want_levels(view, camera, frame);
+    // the frame cells' levels' tiles drawn, nearest first, then those kept
+    std::vector<std::pair<double, tiles::TileKey>> near;
+    const auto level = [](const ResidentTile& t) {
+        return t.kind == tiles::PackKind::window &&
+               (t.key.z == tiles::Store::far_level || t.key.z == tiles::Store::coarse_level);
+    };
+    for (const CoverTile& t : cover_.tiles()) {
+        if (level(*t.drawn)) near.emplace_back(t.distance, t.drawn->key);
+    }
+    std::vector<tiles::TileKey> levels_drawn = nearest(near);
+    for (const std::uint32_t handle : cover_.kept()) {
+        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) {
+            if (t->handle == handle && level(*t)) levels_drawn.push_back(t->key);
+        }
+    }
+    std::vector<tiles::TileKey> unique;
+    for (const tiles::TileKey& k : levels_drawn) {
+        if (std::ranges::find(unique, k) == unique.end()) unique.push_back(k);
+    }
     const std::scoped_lock lock(wanted_mutex_);
     wanted_ = std::move(wanted);
     ahead_ = taken;
     in_view_ = std::move(in_view);
     levels_ = std::move(levels);
+    levels_drawn_ = std::move(unique);
 }
 
 std::vector<tiles::TileKey> World::want_levels(const view::View& view, const style::CameraState& camera,
                                                const view::GroundFrame& frame) const {
+    if (!levels_on_) return {}; // within levels_from the windows alone, as alpha 23 took them
     const Frustum frustum(view.camera(), 40.0, far_);
     const std::int32_t lat = tiles::grid_round(camera.latitude);
     const std::int32_t lon = tiles::grid_round(camera.longitude);
@@ -497,6 +524,11 @@ std::vector<tiles::TileKey> World::want_levels(const view::View& view, const sty
 std::vector<tiles::TileKey> World::wanted_levels() const {
     const std::scoped_lock lock(wanted_mutex_);
     return levels_;
+}
+
+std::vector<tiles::TileKey> World::levels_in_view() const {
+    const std::scoped_lock lock(wanted_mutex_);
+    return levels_drawn_;
 }
 
 void World::place_items(const ResidentTile& tile) {
@@ -595,6 +627,15 @@ void World::take_neighbour_packs() noexcept {
 
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
+    // what the last frame's make_room let go of, before any cover of this frame can draw it
+    for (const auto& [key, pack] : going_) {
+        if (const ResidentTile* t = residency_->find(key, pack)) {
+            const std::uint32_t handle = t->handle;
+            std::erase_if(last_drawn_, [handle](const auto& p) { return p.first == handle; });
+            residency_->release(key, pack, items_, state.number);
+        }
+    }
+    going_.clear();
     taken_.clear();
     residency_->take_published(items_, &taken_);
     if (!active_ || !state.view) {
@@ -605,6 +646,7 @@ void World::update(const frame::FrameState& state) {
         take_neighbour_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         // without a pack the view looks at its target from a frame centred on it: the windows wanted there
+        levels_on_ = levels_at(state.camera.distance);
         far_ = far_of(state.camera.distance);
         if (state.view) {
             const double lat0 = state.camera.latitude;
@@ -622,6 +664,8 @@ void World::update(const frame::FrameState& state) {
     }
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
+    // the frame cells' levels beyond levels_from, their windows alone within it (alpha 23's cover)
+    levels_on_ = levels_at(state.placed ? state.placed->dist() : state.camera.distance);
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
@@ -640,6 +684,8 @@ void World::update(const frame::FrameState& state) {
     }
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
+    const auto plan_budget =
+        static_cast<std::uint64_t>(options_.plan_fraction * static_cast<double>(options_.heaps.total));
     std::array<std::uint8_t, max_neighbours> neighbour_tolerances{};
     for (std::size_t i = 0; i < max_neighbours; ++i) {
         if (const std::shared_ptr<const tiles::StorePack>& n = neighbours_.at(i)) {
@@ -654,6 +700,7 @@ void World::update(const frame::FrameState& state) {
         .coarse_reach = options_.coarse_reach,
         .far = far_,
         .fine_far = options_.far,
+        .levels = levels_on_,
         .margin_px = 40.0,
         .fade_seconds = 0.18,
         .coarser = coarser_.get(),
@@ -663,7 +710,8 @@ void World::update(const frame::FrameState& state) {
         .mask = mask_,
         .neighbours = neighbours(),
         .neighbour_tolerances = neighbour_tolerances,
-        .budget = static_cast<std::uint64_t>(options_.plan_fraction * static_cast<double>(options_.heaps.total))};
+        .budget = levels_on_ ? plan_budget : 0,
+    };
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
     // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
@@ -685,6 +733,7 @@ void World::update(const frame::FrameState& state) {
                                           .coarse_reach = options_.coarse_reach,
                                           .far = far_,
                                           .fine_far = options_.far,
+                                          .levels = levels_on_,
                                           .margin_px = in.margin_px,
                                           .fade_seconds = in.fade_seconds};
             incoming_cover_.update(*state.view, frames_, incoming_in, *residency_, seconds);
@@ -713,6 +762,10 @@ void World::update(const frame::FrameState& state) {
         CoverInputs landing_in = in;
         landing_in.pinned = placed.view().has_value();
         landing_in.tolerance = head.tolerance_of(placed.view(), placed.dist()).value_or(0);
+        // where it lands: the levels, or its windows alone (levels_from), as that frame will draw it
+        landing_in.levels = levels_at(placed.dist());
+        landing_in.far = far_of(placed.dist());
+        landing_in.budget = landing_in.levels ? plan_budget : 0;
         landing_cover_.update(view::View(placed.camera(), state.view->device()), frames_, landing_in, *residency_,
                               seconds);
         const std::size_t own = asked_.size();
@@ -727,6 +780,7 @@ void World::update(const frame::FrameState& state) {
             asked_.push_back(r);
         }
     }
+    make_room();
     residency_->want(asked_);
     // the tiles drawn, those kept under the places in view (each place's coarsest), and a waiting switch's resident
     // ones, are not idle
@@ -748,16 +802,189 @@ void World::update(const frame::FrameState& state) {
     animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr;
 }
 
+void World::make_room() {
+    // The cover's own requests (a waiting switch's and the landing's follow them), in the order the residency builds
+    // them: by lane, then priority (Residency::want).
+    const std::size_t own = cover_.requests().size();
+    if (own == 0 || own > asked_.size()) return;
+    const std::span<Request> mine = std::span(asked_).first(own);
+    std::vector<std::size_t> order(own);
+    std::ranges::iota(order, std::size_t{0});
+    std::ranges::stable_sort(order, [&mine](std::size_t a, std::size_t b) {
+        return mine[a].lane != mine[b].lane ? mine[a].lane < mine[b].lane : mine[a].priority > mine[b].priority;
+    });
+    const std::vector<Residency::Wait> waits = residency_->waits(mine);
+    // A tile resident already takes no more room: the cover asks for a place's coarser level while the place's own
+    // comes, resident or not (Residency::want passes over it). Counted, the Westerkerk's L12 under its places' L13
+    // took the room first from 12 km and held back every other tile, while the residency built nothing.
+    std::vector<bool> resident(own, false);
+    for (std::size_t i = 0; i < own; ++i) resident[i] = residency_->find(mine[i].key, mine[i].pack) != nullptr;
+    const auto left = [&](std::size_t i) -> std::uint64_t {
+        if (resident[i]) return 0;
+        return std::max(mine[i].bytes > waits[i].placed ? mine[i].bytes - waits[i].placed : 0, waits[i].need);
+    };
+    // Each in turn while the heaps' free bytes hold what the cover expects of it and of those before it (less what a
+    // build of it under way has placed; a tile that found no room, the bytes it asked for); h: the first that does not
+    // fit, or waits for a range to go back to the heaps whatever they hold free.
+    const std::uint64_t free = heaps_->free_bytes();
+    std::uint64_t taken = 0;
+    std::size_t h = own;
+    for (std::size_t j = 0; j < own; ++j) {
+        if (!waits[order[j]].stuck && taken + left(order[j]) <= free) {
+            taken += left(order[j]);
+            continue;
+        }
+        h = j;
+        break;
+    }
+    if (h == own) return;
+    // The one the room goes to first: the coarsest of those left (ties: the residency's order), whose tile stands in
+    // at the most places once resident (zooming out past levels_from, a frame cell's L12 over its sixteen places'
+    // windows, which may then go without a hole).
+    std::size_t first = h;
+    for (std::size_t j = h + 1; j < own; ++j) {
+        if (!resident[order[j]] && mine[order[j]].key.z < mine[order[first]].key.z) first = j;
+    }
+    const Request& wanted = mine[order[first]];
+    const std::uint64_t need = left(order[first]);
+    // stuck, it waits for ranges to go back: the bytes free hold no piece for it
+    const bool stuck = waits[order[first]].stuck;
+    const std::span<const Cover::StandIn> stand_ins = cover_.stand_ins();
+    // the stand-ins' tiles, each with its places
+    struct Standing {
+        tiles::TileKey key;
+        std::string_view pack;
+        std::uint64_t bytes = 0;
+        std::vector<std::size_t> at; // its stand_ins' entries
+        bool coming = false;         // goes once the tiles asked for before h come, as they stand in at no place then
+        bool goes = false;
+    };
+    std::vector<Standing> standing;
+    for (std::size_t i = 0; i < stand_ins.size(); ++i) {
+        const Cover::StandIn& s = stand_ins[i];
+        auto it =
+            std::ranges::find_if(standing, [&s](const Standing& t) { return t.key == s.key && t.pack == s.pack; });
+        if (it == standing.end()) {
+            standing.push_back({.key = s.key, .pack = s.pack, .bytes = s.bytes});
+            it = std::prev(standing.end());
+        }
+        it->at.push_back(i);
+    }
+    const auto asked_before = [&](const tiles::TileKey& k, std::string_view pack) {
+        return std::any_of(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(h),
+                           [&](std::size_t i) { return mine[i].key == k && mine[i].pack == pack; });
+    };
+    const auto backs = [&stand_ins](const Standing& t) {
+        return std::ranges::any_of(stand_ins,
+                                   [&t](const Cover::StandIn& s) { return s.backup == t.key && s.pack == t.pack; });
+    };
+    std::uint64_t arriving = 0;
+    for (Standing& t : standing) {
+        t.coming = !backs(t) && std::ranges::all_of(t.at, [&](std::size_t i) {
+            return asked_before(stand_ins[i].wanted, stand_ins[i].pack);
+        });
+        if (t.coming) arriving += t.bytes;
+    }
+    // What goes, as the next frame begins: the tiles of the places in view that nothing draws, stands in or would.
+    std::uint64_t going = 0;
+    for (const Cover::StandIn& t : cover_.spare()) {
+        going_.emplace_back(t.key, std::string(t.pack));
+        going += t.bytes;
+    }
+    const HeapStats heaps = heaps_->stats();
+    const auto coming = [&]() -> std::uint64_t {
+        if (stuck) return heaps.retired_bytes + going + arriving;
+        const std::uint64_t all = free + heaps.retired_bytes + going + arriving;
+        return all > taken ? all - taken : 0;
+    };
+    // Then, while the room coming is short of it, stand-ins one by one: those whose places keep a backup first (at
+    // its places first, whose own tile comes next; then elsewhere), then those at its places, the fewest holes first
+    // (zooming in, a level's tile over places whose windows wait for room too); the least seen first in each.
+    const auto within = [&wanted](const Cover::StandIn& s) {
+        if (s.pack != wanted.pack || s.place.z < wanted.key.z) return false;
+        const auto gap = static_cast<std::uint32_t>(s.place.z - wanted.key.z);
+        return (s.place.x >> gap) == wanted.key.x && (s.place.y >> gap) == wanted.key.y;
+    };
+    const auto kept = [&standing](const tiles::TileKey& k, std::string_view pack) {
+        const auto it = std::ranges::find_if(standing, [&](const Standing& t) { return t.key == k && t.pack == pack; });
+        return it == standing.end() || !it->goes;
+    };
+    const std::size_t stand_ins_from = going_.size();
+    std::vector<bool> backed; // whether each stand-in let go of has another resident level at its places, at first's
+    bool later = false;       // a stand-in left for the tiles asked for before it, whose coming fills its other places
+    while (coming() < need) {
+        Standing* best = nullptr;
+        std::tuple<int, std::size_t, double> best_rank{};
+        for (Standing& t : standing) {
+            if (t.coming || t.goes) continue;
+            std::size_t holes = 0;
+            bool at = false;
+            bool holes_within = true;
+            bool soon = false;
+            double share = 0;
+            for (const std::size_t i : t.at) {
+                const Cover::StandIn& s = stand_ins[i];
+                const bool hole = !s.backup || !kept(*s.backup, s.pack);
+                holes += hole ? 1 : 0;
+                at = at || within(s);
+                if (hole && !within(s)) {
+                    holes_within = false;
+                    soon = soon || asked_before(s.wanted, s.pack);
+                }
+                share = std::max(share, s.share);
+            }
+            if (holes > 0 && !at) continue; // its holes would wait for tiles not asked for yet
+            if (!holes_within && soon) {    // it goes once the tiles asked for before it have come
+                later = true;
+                continue;
+            }
+            const int kind = holes == 0 ? (at ? 0 : 1) : (holes_within ? 2 : 3);
+            const std::tuple<int, std::size_t, double> rank{kind, holes, share};
+            if (best == nullptr || rank < best_rank) {
+                best = &t;
+                best_rank = rank;
+            }
+        }
+        if (best == nullptr) break;
+        best->goes = true;
+        going_.emplace_back(best->key, std::string(best->pack));
+        backed.push_back(std::get<0>(best_rank) == 0);
+        going += best->bytes;
+    }
+    if (coming() < need) {
+        // what can go is short of it: the stand-ins that would leave holes stay (they would leave them for nothing),
+        // those at its places with another resident level there go (the place draws that level, which may go in its
+        // turn: zooming in, an L13 standing in for a window, then the L12 behind it), the spare tiles go, and it waits
+        // for the tiles asked for before it where their coming lets a stand-in go; else every tile is asked for as
+        // before (it may yet find a piece of the heaps; else it waits for a free)
+        std::size_t kept_going = stand_ins_from;
+        for (std::size_t i = 0; i < backed.size(); ++i) {
+            if (backed[i]) going_[kept_going++] = std::move(going_[stand_ins_from + i]);
+        }
+        going_.resize(kept_going);
+        if (!later) return;
+    }
+    // It is asked for now where it fits, else once the room has come; those after h wait for the room it leaves (and
+    // a waiting switch's and the landing's, after the frame's own).
+    const bool fits = !stuck && taken + need <= free;
+    for (std::size_t j = h; j < own; ++j) {
+        if (j != first || !fits) mine[order[j]].held = true;
+    }
+    for (std::size_t i = own; i < asked_.size(); ++i) asked_[i].held = true;
+}
+
 std::string World::tiles_line() const {
     const ResidencyStats r = residency_->stats();
     const HeapStats h = heaps_->stats();
     // the heaps' bytes in use (MB) of their budget, the tiles that found no room and wait for some to go, what the
     // tiles the cover asks for are planned to take (MB; the plan's budget is plan_fraction of the heaps') and the
     // places it gave a coarser level than their distance asks for
-    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {} planned {:.1f} coarser {}",
+    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {} planned {:.1f} coarser {} holes {} "
+                       "built {} failed {}",
                        r.resident, static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
                        r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting,
-                       static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened());
+                       static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened(), cover_.holes(), r.built,
+                       r.failed);
 }
 
 } // namespace atlas::scene

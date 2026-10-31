@@ -233,6 +233,20 @@ std::uint64_t Heaps::version() const noexcept { return version_.load(std::memory
 
 std::uint64_t Heaps::frees() const noexcept { return frees_.load(std::memory_order_acquire); }
 
+vk::DeviceSize Heaps::free_bytes() const {
+    const std::scoped_lock lock(blocks_lock_);
+    vk::DeviceSize used = 0;
+    for (const vk::DeviceSize u : used_) used += u;
+    return used < budget_.total ? budget_.total - used : 0;
+}
+
+vk::DeviceSize Heaps::largest_free() const {
+    const std::scoped_lock lock(blocks_lock_);
+    VmaDetailedStatistics s{};
+    vmaCalculateVirtualBlockStatistics(block_, &s);
+    return s.unusedRangeSizeMax;
+}
+
 HeapStats Heaps::stats() const {
     HeapStats s;
     s.capacity = capacity_.load(std::memory_order_acquire);
@@ -245,6 +259,7 @@ HeapStats Heaps::stats() const {
     {
         const std::scoped_lock lock(render_lock_);
         s.retired = retired_.size();
+        for (const Retired& r : retired_) s.retired_bytes += r.range.size;
         s.old_buffers = old_.size();
     }
     return s;

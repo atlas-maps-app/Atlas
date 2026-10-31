@@ -495,6 +495,11 @@ public:
     std::optional<tiles::KitBand> kit_band; ///< and its band and boards, where it has them
     std::optional<tiles::KitBoards> kit_boards;
     std::uint32_t facade = 0; ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
+    /// A level's tile (a frame cell's L13 or L12, a region's L12): drawn beyond the finest level's reach (4.7 km), so
+    /// its walls are one cell each, without the near cells (drawn within 460 m) nor the windowed walls (the windows,
+    /// shop glazing, plinths and cornices, a church's windows and the material faces) and a kit's details on them
+    /// (within 760 m at most).
+    bool lean = false;
 
 private:
     std::vector<std::uint32_t> triangles_;

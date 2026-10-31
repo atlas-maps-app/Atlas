@@ -178,6 +178,7 @@ class Windows(
         override fun wanted() = core.wantedWindows()
         override fun inView() = core.windowsInView()
         override fun levels() = core.wantedLevels()
+        override fun levelsInView() = core.levelsInView()
         override fun box(w: MapCore.Window) = w.box()
         override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)

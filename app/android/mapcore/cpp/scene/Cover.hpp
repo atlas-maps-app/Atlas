@@ -92,6 +92,11 @@ struct CoverInputs {
     /// How far a place whose pack holds no coarser tile there (a cell before the phone took its levels, windows outside
     /// the countries) is drawn at its finest level: the cover's reach before the levels.
     double fine_far = 12'000.0;
+    /// Whether the frame cells' levels are drawn (the world's levels_from: a camera beyond 9 km of its target). Without
+    /// them a cell's places are drawn as before the levels (alpha 23): its windows alone, each place in view within
+    /// fine_far at its finest level, no level's tile asked for, planned or kept; one already resident (a zoom in from
+    /// beyond) stands in for a window that has not come, until it has. A region's own levels are drawn either way.
+    bool levels = true;
     /// The renders' least cull margin, CSS px.
     double margin_px = 40.0;
     /// How long a tile fades in, seconds.
@@ -152,14 +157,40 @@ public:
     /// the plan gave a coarser level than their distance asks for.
     [[nodiscard]] std::uint64_t planned() const noexcept { return planned_; }
     [[nodiscard]] std::size_t coarsened() const noexcept { return coarsened_; }
+    /// How many places in view nothing draws this frame (neither their tile nor another level's is resident), and how
+    /// many of them alpha 23 drew: a window's within fine_far, the reach before the levels.
+    [[nodiscard]] std::size_t holes() const noexcept { return holes_; }
+    [[nodiscard]] std::size_t near_holes() const noexcept { return near_holes_; }
+
+    /// A resident tile that the frame draws at a place in view only in the stead of the tile the place asks for (a
+    /// finer or a coarser level's, until that one is resident), never one a place in view plans or keeps: its key and
+    /// pack, the place (its finest level's key) and the tile it asks for, its heaps' bytes, the place's share of the
+    /// view (its priority), and the place's other resident level that would stand in without it (backup). One for each
+    /// place it stands in at. The world lets it go when a tile waits for room (World::make_room).
+    struct StandIn {
+        tiles::TileKey key;
+        std::string_view pack;
+        tiles::TileKey place;
+        tiles::TileKey wanted;
+        std::uint64_t bytes = 0;
+        double share = 0;
+        std::optional<tiles::TileKey> backup;
+    };
+    [[nodiscard]] std::span<const StandIn> stand_ins() const noexcept { return stand_ins_; }
+    /// The resident tiles of the places in view that the frame neither draws nor keeps, and that stand in at none nor
+    /// would (a finer level's where the coarser one planned is resident, a level's where the window is), each once:
+    /// their key, pack and bytes (the rest unused).
+    [[nodiscard]] std::span<const StandIn> spare() const noexcept { return spare_; }
 
 private:
-    /// A pack drawn this frame: its store's pack and id, whether it is the active one, its tiles' ladder index.
+    /// A pack drawn this frame: its store's pack and id, whether it is the active one, its tiles' ladder index, and
+    /// whether its coarser levels are wanted (CoverInputs::levels; a region's always).
     struct Drawn {
         const tiles::StorePack* pack = nullptr;
         std::string_view id;
         bool active = false;
         std::uint8_t tolerance = 0;
+        bool levels = true;
     };
     /// One place of a drawn pack's finest level in view: its pack (drawn_'s index), where it lies, how far it is and
     /// its priority, its levels' tiles there (finest first; none where the pack has none), the level its distance asks
@@ -178,6 +209,12 @@ private:
     /// `above` has a tile of its finest level), each with the level its distance asks for.
     void walk(const Drawn& drawn, const view::Frames& frames, const Frustum& frustum, const CoverInputs& in,
               const std::optional<tiles::GridBox>& mask, std::span<const tiles::StorePack* const> above);
+    /// What the resident tiles of the packs drawn take: each one's bytes remembered, and per zoom the heaps' bytes per
+    /// raw byte of their chunks (ratio_, any_).
+    void measure(const Residency& residency);
+    /// The heaps' bytes tile `k` of pack `p` takes: its ranges' while resident, as they were when it was resident
+    /// before, else its chunk's raw bytes times its level's ratio (any level's before one of its own was resident).
+    [[nodiscard]] std::uint64_t estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
     /// The levels within the budget (Spot::plan).
     void plan(const CoverInputs& in, const Residency& residency);
     /// Pack `p`'s places drawn at their planned levels, and what they lack asked for.
@@ -199,7 +236,10 @@ private:
         bool planned = false; // a place's own tile (its plan's level), kept though none of its cells is seen
     };
     void keep(std::uint32_t handle);
-    void request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance, std::string_view pack);
+    void request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance, std::string_view pack,
+                 std::uint64_t bytes);
+    /// The stand-ins and the spare tiles of the frame, once every pack's places are drawn.
+    void sort_out(const Residency& residency);
 
     std::vector<CoverTile> tiles_;
     std::vector<Request> requests_;
@@ -218,9 +258,18 @@ private:
     bool planning_ = false; // a budget this frame: the plan and the coarsest levels kept
     std::uint64_t planned_ = 0;
     std::size_t coarsened_ = 0;
-    /// Per zoom, the heaps' bytes per raw byte of the resident tiles (0: none seen yet), and the bytes of the tiles
-    /// resident before (by tile_id), for when they are asked for again.
+    std::size_t holes_ = 0;
+    std::size_t near_holes_ = 0;
+    double fine_far_ = 12'000.0; // CoverInputs::fine_far, for near_holes_
+    std::vector<StandIn> stand_ins_;
+    std::vector<StandIn> spare_;
+    std::vector<std::uint32_t> standing_;        // the stand-ins' handles, as stand_ins_ (sort_out)
+    std::vector<std::uint32_t> backing_;         // the stand-ins' backups' handles
+    std::vector<std::uint32_t> planned_handles_; // the resident tiles the places in view plan
+    /// Per zoom, the heaps' bytes per raw byte of the resident tiles (0: none seen yet), the same over every zoom, and
+    /// the bytes of the tiles resident before (by tile_id), for when they are asked for again.
     std::array<double, 32> ratio_{};
+    double any_ = first_ratio;
     std::unordered_map<std::uint64_t, std::uint64_t> bytes_;
 };
 

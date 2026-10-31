@@ -337,7 +337,8 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
     const std::uint64_t flags = bl.v.flags;
     const bool church = (flags & tl::building::flag_church) != 0;
     const bool modern = (flags & tl::building::flag_modern) != 0;
-    const bool windowed = (!bl.v.part_tag || church) && !is(bl.v.btype, "houseboat") && !bl.v.no_win && bl.v.has_levels;
+    const bool windowed =
+        !b.lean && (!bl.v.part_tag || church) && !is(bl.v.btype, "houseboat") && !bl.v.no_win && bl.v.has_levels;
     const WindowStyle style = b.paris && !modern && in_set(bl.v.mat_draw, paris_fronts)
                                   ? WindowStyle::paris
                                   : (modern ? WindowStyle::modern : WindowStyle::plain);
@@ -349,7 +350,7 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
     // with weather): a plinth where it stands on the street (y0 <= 0.5); a cornice on an old house's, under a mansard
     // or where its kit gives it one (`(yr and yr < 1800) or roof == 'mansard' or (TD and TD.get('cornice'))`) where its
     // walls stand over 5 m; a shop floor's glazing on its walls over 2.4 m on the street
-    const bool facades = (!bl.v.part_tag || church) && (flags & tl::building::flag_houseboat) == 0;
+    const bool facades = !b.lean && (!bl.v.part_tag || church) && (flags & tl::building::flag_houseboat) == 0;
     const bool plinth = facades && y0 <= 0.5;
     const bool cornice = facades &&
                          ((bl.v.year != 0 && bl.v.year < 1800) || is(bl.roof, "mansard") ||
@@ -412,8 +413,8 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         // K8's samples of the edge: the wall as one cell, then its ncol × nrow cells when they are not one
         const std::uint32_t one = b.sample++;
         const auto wall = static_cast<std::uint32_t>(b.out.edged.size()); // its one-cell primitive, in either variant
-        const int ncol = std::max(1, kt_int(elen / 9));
-        const int nrow = std::max(1, std::min(3, kt_int((wall_top - y0) / 7)));
+        const int ncol = b.lean ? 1 : std::max(1, kt_int(elen / 9));
+        const int nrow = b.lean ? 1 : std::max(1, std::min(3, kt_int((wall_top - y0) / 7)));
         const auto cell = [&](int r, int nr, int c, int nc) {
             const double ya = y0 + (((wall_top - y0) * r) / nr);
             const double yb = y0 + (((wall_top - y0) * (r + 1)) / nr);
@@ -511,7 +512,7 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         // windows' slots
         std::size_t bays = 0;
         std::size_t transoms = 0;
-        if (church) {
+        if (church && !b.lean) {
             const std::vector<ChurchWindow> arched = church_windows(a, bb, y0, wall_top, {nrm.x, nrm.z});
             bays = arched.size();
             transoms = arched.empty() ? 0 : arched.front().lead.size() - 1;
@@ -606,6 +607,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     TileBuildings& made = out.made;
     std::vector<Made>& spans = out.spans;
     Builder b(made);
+    b.lean = in.tile->header.level < 14;
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
     b.kit_band = in.region.kit_band;
