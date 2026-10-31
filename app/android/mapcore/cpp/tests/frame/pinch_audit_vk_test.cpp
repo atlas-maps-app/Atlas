@@ -706,6 +706,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             // ATLAS_PINCH_SIZES: the buildings' and the ground's words by section (bytes, by level)
             std::map<std::pair<std::uint8_t, std::string>, std::uint64_t> sections;
+            std::map<std::uint8_t, std::array<int, 3>> grid_steps; // a lean level's largest steps, 2^e m as e
             if (!environment("ATLAS_PINCH_SIZES").empty()) {
                 for (const std::shared_ptr<const scene::ResidentTile>& t : map.world()->residency().resident()) {
                     for (std::size_t i = 0; i < t->passes.size() && i < b->passes().size(); ++i) {
@@ -723,6 +724,13 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                                 add("reveals", 16ULL * (w->facades_at - w->reveals_at));
                                 add("facades", 16ULL * (w->rows_at - w->facades_at));
                                 add("rows", 16ULL * (w->vectors - w->rows_at));
+                                if (w->lean) {
+                                    auto [it, first] = grid_steps.try_emplace(t->key.z, std::array<int, 3>{});
+                                    for (std::size_t a = 0; a < 3; ++a) {
+                                        const int e = w->grid_steps.at(a);
+                                        it->second.at(a) = first ? e : std::max(it->second.at(a), e);
+                                    }
+                                }
                             }
                         } else if (name == "ground") {
                             if (const auto* g = t->passes[i].cpu_as<geometry::GroundTile>()) {
@@ -759,6 +767,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     if (k.first == z && v >= 10'000U) {
                         parts += std::format(" {} {:.2f}", k.second, static_cast<double>(v) / 1.0e6);
                     }
+                }
+                if (const auto it = grid_steps.find(z); it != grid_steps.end()) {
+                    parts += std::format(" (lean, the grid's largest steps {} m, {} m and {} m)",
+                                         std::ldexp(1.0, it->second[0]), std::ldexp(1.0, it->second[1]),
+                                         std::ldexp(1.0, it->second[2]));
                 }
                 if (!parts.empty()) lines += std::format("\n    sections:{}", parts);
             }
@@ -801,7 +814,8 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                                                        sun::region_of(*hit->pack->pack.style()), t.drawn->level, {});
                 const sun::TileSamples& m = st.samples;
                 const sun::TileBits& bits = *t.sun->now;
-                if (bits.count != m.size()) continue; // made at another level
+                // made at another level (the quays' samples after the crowns' may differ: their decks are the halo's)
+                if (bits.crowns_from != m.crowns_first) continue;
                 ++s.bits;
                 // the records of the cells drawn (every one of a layer without cells)
                 const auto drawn_of = [&](tiles::LayerId id) {
