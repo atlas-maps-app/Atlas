@@ -386,7 +386,7 @@ void check_pack(const Store& store, std::string_view id, PackKind kind, std::spa
 std::uint64_t tiles_past(const std::map<std::uint8_t, LevelCount>& counts, int above) {
     std::uint64_t sum = 0;
     for (const auto& [z, n] : counts) {
-        if (z > above) sum += n.tiles;
+        if (std::cmp_greater(z, above)) sum += n.tiles;
     }
     return sum;
 }
@@ -394,7 +394,7 @@ std::uint64_t tiles_past(const std::map<std::uint8_t, LevelCount>& counts, int a
 /// The levels from `last` down to `first`, as a head names them.
 std::vector<std::uint8_t> fine_to_coarse(std::uint8_t first, std::uint8_t last) {
     std::vector<std::uint8_t> out;
-    for (int z = last; z >= first; --z) out.push_back(static_cast<std::uint8_t>(z));
+    for (int z = last; std::cmp_greater_equal(z, first); --z) out.push_back(static_cast<std::uint8_t>(z));
     return out;
 }
 
@@ -408,7 +408,7 @@ std::map<std::uint8_t, LevelCount> check_world(const std::string& dir) {
     Store store;
     std::vector<std::vector<std::byte>> parts;
     for (const auto& [name, length] : index->parts) {
-        parts.push_back(read_file(dir + "/" + name));
+        parts.push_back(read_file(std::format("{}/{}", dir, name)));
         CHECK_MESSAGE(parts.back().size() == length, name << " holds " << parts.back().size() << " bytes");
     }
     std::uint64_t tiles = 0;
