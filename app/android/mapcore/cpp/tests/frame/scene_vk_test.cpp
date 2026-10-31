@@ -6,6 +6,7 @@
 // visible cells, fading in, and let go of when the camera leaves, the passes' CPU-side data with them (counted in the
 // tiles' native bytes); the sun's scene the resident tiles and their 220 m halo; and frame cells' windows beside the
 // active pack, where four cells meet the three around it, each with its own sun.
+#include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
@@ -18,6 +19,7 @@
 #include "osm/Overpass.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
+#include "sun/Samples.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/load/corner.hpp"
@@ -1966,6 +1968,217 @@ TEST_CASE("a frame cell's levels from every distance: its windows within 4.7 km 
     auto big = w.heaps()->allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(w.heaps()->free_bytes()), 16);
     CHECK(big.has_value());
     if (big) w.heaps()->retire(*big, n);
+    MESSAGE(w.tiles_line());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a frame cell's coarse level in the sun's scene: each place's buildings from the tile that draws it, a "
+          "window whose place its L13 draws out of the scene with its bits kept, and the L13's walls in a tower's "
+          "shadow as the window's are") {
+    // Two windows of cell 525/336 side by side from south to north (as the levels' test above), and their cell's
+    // levels: in the south window a tower 60 m tall and 12 m square at its middle and a house 8 m tall 30 m east of it,
+    // in the north window a house alike at its middle. The sun low in the west (270°, 15° up) puts the tower's shadow
+    // over the south house's west wall, the north house's in the sun. From 4 km, looking straight down, both places
+    // are drawn from their windows: the scene holds the two windows and their three solids, the south house's west
+    // wall shaded. From 8.5 km both are drawn from their L13: the scene holds it alone with the same three solids (the
+    // windows out of it, their bits kept while they are resident), its south house's west wall shaded as the window's
+    // was and the north house's lit. From 5.5 km at 60° of pitch toward the north window's middle, the south place's
+    // buildings 4.3 km from the eye are drawn from its window and the north's, 5.5 km off, from the L13, which takes
+    // the north place's cells alone: three solids again, no building twice.
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels-sun";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey north(14, south.x, south.y - 1);
+    const tiles::TileKey coarse(13, south.x >> 1U, south.y >> 1U);
+    ATLAS_REQUIRE(coarse == tiles::TileKey(13, north.x >> 1U, north.y >> 1U));
+    const auto middle = [](const tiles::TileKey& k) {
+        const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+        return std::array<double, 2>{(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
+    };
+    constexpr std::int64_t tower = 10;
+    constexpr std::int64_t south_house = 11;
+    constexpr std::int64_t north_house = 12;
+    // a building `side` metres square whose middle lies `east` metres east of the middle of place `k`
+    const auto building = [&middle](const tiles::TileKey& k, std::int64_t id, std::string_view tags, double east,
+                                    double side) {
+        const auto [lat, lon] = middle(k);
+        const double kx = 111320.0 * pymath::cos(pymath::radians(lat));
+        const double south_lat = lat - (side / 2 / 110540.0);
+        const double west_lon = lon + ((east - (side / 2)) / kx);
+        const double dlat = side / 110540.0;
+        const double dlon = side / kx;
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry += std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", south_lat + a,
+                                    west_lon + o);
+        }
+        return std::format(R"({{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{{}}},"geometry":[{}]}})", id, tags,
+                           geometry);
+    };
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    for (const tiles::TileKey& k : {south, north}) {
+        const std::string ways = k == south
+                                     ? building(k, tower, R"("building":"yes","height":"60")", 0.0, 12.0) + "," +
+                                           building(k, south_house, R"("building":"house","height":"8")", 30.0, 8.0)
+                                     : building(k, north_house, R"("building":"house","height":"8")", 0.0, 8.0);
+        const std::string json = std::format(R"({{"version":0.6,"elements":[{}]}})", ways);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
+    }
+    std::vector<std::span<const std::byte>> windows;
+    windows.reserve(packs.size());
+    for (const auto& [name, pack] : packs) windows.emplace_back(pack);
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 2); // their L13 and their L12
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1, .sun = {.threads = 2}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, pack] : packs) {
+        std::string file = name;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    const style::ThemeBlock west_sun = sun_at(270.0, 15.0);
+    style::CameraState c = home();
+    c.bearing = 0.0;
+    c.flags = 0;
+    std::uint64_t n = 0;
+    // frames until the tiles are in and the sun has made their bits, then one to draw them
+    const auto settle = [&](double lat, double lon, double distance, double pitch) {
+        c.latitude = lat;
+        c.longitude = lon;
+        c.distance = distance;
+        c.pitch = pitch;
+        (*builder)->set_inputs({.camera = c, .theme = west_sun, .scene = &w});
+        for (int k = 0; k < 40; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.sun()->wait_idle();
+        }
+        now = now.load() + 1.0;
+        ++n;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    const auto drew = [&w](const tiles::TileKey& k) {
+        return std::ranges::any_of(w.cover()->tiles(), [&k](const scene::CoverTile& t) { return t.drawn->key == k; });
+    };
+    // the newest bits of the drawn tile `k` (null: not drawn with bits)
+    const auto bits_of = [&w](const tiles::TileKey& k) -> const sun::TileBits* {
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (t.drawn->key == k && t.sun && t.sun_base != scene::no_sun) return t.sun->now.get();
+        }
+        return nullptr;
+    };
+    // the sample of building `id`'s west wall in tile `k`, its walls as one cell each (a window's from 460 m, a level's
+    // at any distance), made at the ladder level it is drawn at
+    const auto west_wall = [&w](const tiles::TileKey& k, std::int64_t id) -> std::optional<std::uint32_t> {
+        const scene::CoverTile* drawn = nullptr;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (t.drawn->key == k) drawn = &t;
+        }
+        if (drawn == nullptr) return std::nullopt;
+        const std::vector<tiles::StoreHit> hits = w.store().find(k);
+        if (hits.empty()) return std::nullopt;
+        tiles::Zstd zstd;
+        tiles::TileDecoder decoder;
+        Arena arena(std::size_t{1} << 20U, Growth::grows, "the sun's levels test");
+        std::vector<std::byte> raw;
+        const auto tile = w.store().decode(hits[0], zstd, decoder, arena, raw);
+        if (!tile) return std::nullopt;
+        const tiles::Layer* layer = tile->layer(tiles::LayerId::building);
+        if (layer == nullptr) return std::nullopt;
+        const sun::SunTile st =
+            sun::make_tile(*tile, *hits[0].pack->pack.head(), sun::Region{}, drawn->drawn->level, {});
+        const sun::TileSamples& s = st.samples;
+        for (std::uint32_t i = 0; i < s.size(); ++i) {
+            if (s.kind[i] != sun::Kind::wall || s.source[i] != sun::Source::building || s.face[i] == sun::no_face) {
+                continue;
+            }
+            if (layer->integer(tiles::building::id, s.owner[i]) == id && s.nx[s.face[i]] < -0.9) return i;
+        }
+        return std::nullopt;
+    };
+    const auto [south_lat, south_lon] = middle(south);
+    const auto [north_lat, north_lon] = middle(north);
+    const double between = (south_lat + north_lat) / 2;
+    w.set_active(std::format("window/14/{}/{}", south.x, south.y));
+
+    // From 4 km: both places from their windows, the scene the two windows' three solids, the house in the shadow.
+    settle(between, south_lon, 4'000.0, 0.0);
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(drew(south));
+    CHECK(drew(north));
+    CHECK_FALSE(drew(coarse));
+    CHECK(w.sun()->stats().tiles == 2);
+    CHECK(w.sun()->stats().solids == 3);
+    const sun::TileBits* window_bits = bits_of(south);
+    const std::optional<std::uint32_t> window_wall = west_wall(south, south_house);
+    ATLAS_REQUIRE(window_bits != nullptr);
+    ATLAS_REQUIRE(window_wall.has_value());
+    CHECK_FALSE(window_bits->bit(*window_wall)); // in the tower's shadow
+    const std::optional<std::uint32_t> lit_wall = west_wall(north, north_house);
+    ATLAS_REQUIRE(lit_wall.has_value());
+    ATLAS_REQUIRE(bits_of(north) != nullptr);
+    CHECK(bits_of(north)->bit(*lit_wall));
+
+    // From 8.5 km: both from the L13, the scene it alone with the same three solids, the windows' bits kept.
+    settle(between, south_lon, 8'500.0, 0.0);
+    CHECK(drew(coarse));
+    CHECK_FALSE(drew(south));
+    CHECK_FALSE(drew(north));
+    CHECK(w.sun()->stats().tiles == 1);
+    CHECK(w.sun()->stats().solids == 3);
+    const sun::TileBits* coarse_bits = bits_of(coarse);
+    ATLAS_REQUIRE(coarse_bits != nullptr);
+    CHECK(coarse_bits->windows_from == coarse_bits->count); // a level's walls have no windows
+    const std::optional<std::uint32_t> shaded = west_wall(coarse, south_house);
+    const std::optional<std::uint32_t> sunny = west_wall(coarse, north_house);
+    ATLAS_REQUIRE(shaded.has_value());
+    ATLAS_REQUIRE(sunny.has_value());
+    CHECK_FALSE(coarse_bits->bit(*shaded));
+    CHECK(coarse_bits->bit(*sunny));
+    CHECK(w.sun()->bits().view(south, now.load()).has_value());
+    CHECK(w.sun()->bits().view(north, now.load()).has_value());
+
+    // From 5.5 km at 60° toward the north window's middle: the south place from its window, the north from the L13.
+    settle(north_lat, north_lon, 5'500.0, 60.0);
+    CHECK(drew(south));
+    CHECK_FALSE(drew(north));
+    CHECK(drew(coarse));
+    CHECK(w.sun()->stats().tiles == 2);
+    CHECK(w.sun()->stats().solids == 3);
+    ATLAS_REQUIRE(bits_of(coarse) != nullptr);
+    ATLAS_REQUIRE(bits_of(south) != nullptr);
+    CHECK(bits_of(coarse)->bit(*sunny));
+    CHECK_FALSE(bits_of(south)->bit(*window_wall));
     MESSAGE(w.tiles_line());
     (void)session->take_messages();
 }

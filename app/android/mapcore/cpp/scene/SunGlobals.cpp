@@ -6,6 +6,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "base/trace.hpp"
 #include "frame/FrameBuilder.hpp"
+#include "scene/Cells.hpp"
 #include "tiles/Error.hpp"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <tuple>
 
 #if defined(__ANDROID__)
 #include <sys/resource.h>
@@ -166,7 +168,7 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     }
     for (std::size_t k = 0; k < lanes_.size(); ++k) {
         if (in.at(k).pack) lanes_.at(k).role = in.at(k).role;
-        prepare_lane(lanes_.at(k), state, in.at(k), drawn, eye_frame);
+        prepare_lane(lanes_.at(k), state, in.at(k), levels_of(in.at(k), cover), drawn, eye_frame);
     }
 
     // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
@@ -177,7 +179,10 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         CoverTile& c = drawn[i];
         Lane* lane = nullptr;
         for (Lane& l : lanes_) {
-            if (!l.pack_id.empty() && c.drawn->pack == l.pack_id && c.drawn->key.z == l.fine) lane = &l;
+            if (!l.pack_id.empty() && c.drawn->pack == l.pack_id &&
+                (c.drawn->key.z == l.fine || tiles::Store::derived(c.drawn->key.z))) {
+                lane = &l;
+            }
         }
         if (lane == nullptr) continue; // a stand-in ancestor, or a pack without a lane: not in a scene
         c.sun = lane->bits.view(c.drawn->key, t);
@@ -215,14 +220,18 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
 }
 
 void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const LaneInputs& in,
-                              std::span<const CoverTile> drawn, const std::optional<view::GroundFrame>& eye_frame) {
+                              const LaneLevels& levels, std::span<const CoverTile> drawn,
+                              const std::optional<view::GroundFrame>& eye_frame) {
     const std::shared_ptr<const tiles::StorePack>& pack = in.pack;
     const std::string id = pack ? pack->id : std::string();
     if (id != lane.pack_id) {
         // Another pack, or none: its own tiles from now on.
-        for (const auto& t : lane.asked) lane.bits.forget(tiles::TileKey::unpack(t.first));
+        for (const Asked& t : lane.asked) lane.bits.forget(tiles::TileKey::unpack(t.key));
+        for (const auto& t : lane.held) lane.bits.forget(tiles::TileKey::unpack(t.first));
         lane.asked.clear();
+        lane.held.clear();
         lane.wanted.clear();
+        lane.levels = {};
         lane.asked_others.clear();
         lane.have_bucket = false;
         lane.pack_id = id;
@@ -230,31 +239,50 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
     if (!pack || !state.view) return;
     lane.fine = pack->pack.head()->levels[0];
 
-    // The scene: the resident tiles of the finest zoom at their own levels, their halo at the cover's, and the other
-    // packs' solids near them.
+    // The scene: the resident tiles of the finest zoom at their own levels and their halo at the cover's, but the
+    // windows whose places the levels' tiles take; the coarse level's tiles drawn, each with the cells it takes; and
+    // the other packs' solids near them.
     const sun::Bucket bucket = sun::bucket_of(state.theme);
     bool scene_changed = false;
-    if (in.wanted != lane.wanted || in.level != lane.level) {
-        std::vector<std::pair<std::uint64_t, std::uint8_t>> asked;
+    if (in.wanted != lane.wanted || in.level != lane.level || levels != lane.levels) {
+        using Level = std::pair<std::uint64_t, std::uint8_t>;
+        std::vector<Asked> asked;
         for (const tiles::TileKey& k : residency_.sun_tiles(pack->id)) {
-            const auto it =
-                std::ranges::lower_bound(in.levels, k.packed(), {}, &std::pair<std::uint64_t, std::uint8_t>::first);
+            if (std::ranges::binary_search(levels.taken, k.packed())) continue;
+            const auto it = std::ranges::lower_bound(in.levels, k.packed(), {}, &Level::first);
             const bool resident = it != in.levels.end() && it->first == k.packed();
-            asked.emplace_back(k.packed(), resident ? it->second : in.level);
+            asked.push_back({.key = k.packed(), .level = resident ? it->second : in.level});
         }
+        asked.insert(asked.end(), levels.tiles.begin(), levels.tiles.end());
         std::ranges::sort(asked);
-        // A tile that left the scene, or is made at another level, loses the bits of its old samples.
-        for (const auto& old : lane.asked) {
-            const auto it =
-                std::ranges::lower_bound(asked, old.first, {}, &std::pair<std::uint64_t, std::uint8_t>::first);
-            if (it == asked.end() || it->first != old.first || it->second != old.second) {
-                lane.bits.forget(tiles::TileKey::unpack(old.first));
+        // A tile that left the scene keeps the bits of its samples while it is resident at the level they were made at
+        // (a window whose place a level's tile draws, a level's tile no longer drawn: either may draw again); one made
+        // at another level, or gone, loses them.
+        const auto resident_at = [&](std::uint64_t key, std::uint8_t level) {
+            const std::vector<Level>& list = tiles::TileKey::unpack(key).z == lane.fine ? in.levels : levels.resident;
+            const auto it = std::ranges::lower_bound(list, key, {}, &Level::first);
+            return it != list.end() && it->first == key && it->second == level;
+        };
+        std::vector<Level> held;
+        const auto keep_or_forget = [&](std::uint64_t key, std::uint8_t level) {
+            const auto it = std::ranges::lower_bound(asked, key, {}, &Asked::key);
+            if (it != asked.end() && it->key == key) {
+                if (it->level != level) lane.bits.forget(tiles::TileKey::unpack(key));
+            } else if (resident_at(key, level)) {
+                held.emplace_back(key, level);
+            } else {
+                lane.bits.forget(tiles::TileKey::unpack(key));
             }
-        }
+        };
+        for (const Asked& old : lane.asked) keep_or_forget(old.key, old.level);
+        for (const auto& [key, level] : lane.held) keep_or_forget(key, level);
+        std::ranges::sort(held);
         scene_changed = asked != lane.asked;
         lane.asked = std::move(asked);
+        lane.held = std::move(held);
         lane.wanted = in.wanted;
         lane.level = in.level;
+        lane.levels = levels;
     }
     if (lane.others != lane.asked_others) {
         lane.asked_others = lane.others;
@@ -263,9 +291,10 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
     if (!lane.asked.empty() && (scene_changed || !lane.have_bucket || bucket.key != lane.bucket)) {
         Build b;
         b.pack = pack;
-        for (const auto& [key, lv] : lane.asked) b.tiles.emplace_back(tiles::TileKey::unpack(key), lv);
+        b.tiles = lane.asked;
         b.others = lane.asked_others;
         for (const std::uint64_t key : lane.wanted) b.wanted.push_back(tiles::TileKey::unpack(key));
+        for (const Asked& t : lane.levels.tiles) b.wanted.push_back(tiles::TileKey::unpack(t.key));
         for (const CoverTile& c : drawn) {
             if (c.drawn->pack == pack->id) b.visible.push_back(c.drawn->key);
         }
@@ -322,15 +351,12 @@ void SunGlobals::work(const std::stop_token& stop) {
             lane->next.reset();
             lane->building = true;
         }
-        std::vector<std::pair<std::uint64_t, std::uint8_t>> tiles;
-        tiles.reserve(b.tiles.size());
-        for (const auto& [key, level] : b.tiles) tiles.emplace_back(key.packed(), level);
         std::shared_ptr<const sun::Scene> scene;
         {
             const std::scoped_lock lock(mutex_);
             scene = lane->scene;
         }
-        if (!scene || b.pack->id != lane->built_pack || tiles != lane->built || b.others != lane->built_others) {
+        if (!scene || b.pack->id != lane->built_pack || b.tiles != lane->built || b.others != lane->built_others) {
             const auto started = std::chrono::steady_clock::now();
             {
                 const trace::Section traced("atlas sun scene");
@@ -357,7 +383,7 @@ void SunGlobals::work(const std::stop_token& stop) {
                 ++stats_.failed;
             }
             lane->scene = scene;
-            lane->built = std::move(tiles);
+            lane->built = b.tiles;
             lane->built_others = b.others;
             lane->built_pack = b.pack->id;
         }
@@ -431,8 +457,8 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
         }
         return *tile;
     };
-    for (const auto& [key, level] : b.tiles) {
-        if (const auto tile = decode(key)) sun::collect_decks(*tile, *head, level, decks);
+    for (const Asked& t : b.tiles) {
+        if (const auto tile = decode(tiles::TileKey::unpack(t.key))) sun::collect_decks(*tile, *head, t.level, decks);
     }
     for (const Other& o : b.others) {
         if (const auto tile = decode_other(o)) sun::collect_decks(*tile, head->frame, o.level, decks);
@@ -441,12 +467,13 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     std::vector<tiles::Sha256Digest> chunks;
     double tallest = 0.0;
     std::vector<std::uint8_t> levels;
-    for (const auto& [key, level] : b.tiles) {
+    for (const Asked& t : b.tiles) {
+        const tiles::TileKey key = tiles::TileKey::unpack(t.key);
         const auto tile = decode(key);
         if (!tile) return nullptr;
-        made.push_back(sun::make_tile(*tile, *head, region, level, decks));
+        made.push_back(sun::make_tile(*tile, *head, region, t.level, decks, t.live));
         chunks.push_back(p.chunks().find(key)->sha256);
-        if (std::ranges::find(levels, level) == levels.end()) levels.push_back(level);
+        if (std::ranges::find(levels, t.level) == levels.end()) levels.push_back(t.level);
     }
     // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds.
     for (const std::uint8_t level : levels) {
@@ -469,19 +496,21 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
         chunks.push_back(o.chunk);
         held.push_back(&o);
     }
-    // What each of the pack's tiles is made against (sun::Scene::context, the disk cache's key): its chunk, and every
-    // other tile of the scene within the march's reach of it with its level, its own pack's or another's, so its bits
-    // are made again where a window joins near it or a neighbouring cell's tile comes into the scene.
+    // What each of the pack's tiles is made against (sun::Scene::context, the disk cache's key): its chunk and the
+    // cells it takes, and every other tile of the scene within the march's reach of it with its level and cells, its
+    // own pack's or another's, so its bits are made again where a window joins near it, a neighbouring cell's tile
+    // comes into the scene, or a place is drawn from another level.
     struct Near {
         tiles::GridBox reach;
         tiles::Sha256Digest chunk;
         std::uint8_t level = 0;
+        std::uint64_t live = sun::all_cells;
     };
     std::vector<Near> all;
     all.reserve(made.size());
-    for (const auto& [key, level] : b.tiles) {
-        const tiles::ChunkRef* c = p.chunks().find(key);
-        all.push_back({.reach = c->reach.box, .chunk = c->sha256, .level = level});
+    for (const Asked& t : b.tiles) {
+        const tiles::ChunkRef* c = p.chunks().find(tiles::TileKey::unpack(t.key));
+        all.push_back({.reach = c->reach.box, .chunk = c->sha256, .level = t.level, .live = t.live});
     }
     for (const Other* o : held) {
         all.push_back({.reach = o->pack->pack.chunks().find(o->key)->reach.box, .chunk = o->chunk, .level = o->level});
@@ -489,23 +518,32 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     const auto units = [](double k) { return static_cast<std::int32_t>(std::ceil((sun::reach / k) * 1e7)) + 1; };
     const std::int32_t dlat = units(head->frame.kz);
     const std::int32_t dlon = units(head->frame.kx);
-    std::vector<std::pair<tiles::Sha256Digest, std::uint8_t>> near;
+    std::vector<std::tuple<tiles::Sha256Digest, std::uint8_t, std::uint64_t>> near;
     for (std::size_t i = 0; i < b.tiles.size(); ++i) {
         const tiles::GridBox& r = all[i].reach;
         const tiles::Reach around{
             .box = {.south = r.south - dlat, .west = r.west - dlon, .north = r.north + dlat, .east = r.east + dlon}};
         near.clear();
         for (std::size_t j = 0; j < all.size(); ++j) {
-            if (j != i && around.meets(all[j].reach)) near.emplace_back(all[j].chunk, all[j].level);
+            if (j != i && around.meets(all[j].reach)) near.emplace_back(all[j].chunk, all[j].level, all[j].live);
         }
-        if (near.empty()) continue;
+        if (near.empty() && all[i].live == sun::all_cells) continue;
         std::ranges::sort(near);
         tiles::Sha256 h;
+        // a tile's cells where it takes some alone (a tile taking every cell hashes as before the levels)
+        const auto cells = [&h](std::uint64_t live) {
+            if (live == sun::all_cells) return;
+            std::array<std::byte, 8> word{};
+            for (std::size_t k = 0; k < word.size(); ++k) word.at(k) = static_cast<std::byte>(live >> (8 * k));
+            h.update(word);
+        };
         h.update(all[i].chunk);
-        for (const auto& [chunk, level] : near) {
+        cells(all[i].live);
+        for (const auto& [chunk, level, live] : near) {
             h.update(chunk);
             const std::array<std::byte, 1> lv{static_cast<std::byte>(level)};
             h.update(lv);
+            cells(live);
         }
         chunks[i] = h.finish();
     }
@@ -552,6 +590,58 @@ const sun::BitTiles& SunGlobals::bits(LaneOf lane) const noexcept {
         if (!l.pack_id.empty() && l.role == lane) return l.bits;
     }
     return lanes_[0].bits;
+}
+
+SunGlobals::LaneLevels SunGlobals::levels_of(const LaneInputs& in, const Cover& cover) const {
+    LaneLevels out;
+    if (!in.pack || in.pack->kind != tiles::PackKind::window) return out; // a frame cell's windows and levels alone
+    const std::string& id = in.pack->id;
+    const std::uint8_t fine = in.pack->pack.head()->levels[0];
+    for (const std::shared_ptr<const ResidentTile>& r : residency_.resident()) {
+        if (r->pack == id && tiles::Store::derived(r->key.z)) out.resident.emplace_back(r->key.packed(), r->level);
+    }
+    std::ranges::sort(out.resident);
+    // the zoom of the tile drawing each place in view, by the place: a place drawn from a level's tile takes its
+    // buildings from it, and its window (resident or in the halo) leaves the scene
+    using Drawn = std::pair<std::uint64_t, std::uint8_t>;
+    std::vector<Drawn> drawn_from;
+    for (const Cover::Placed& p : cover.placed()) {
+        if (p.pack != id) continue;
+        drawn_from.emplace_back(p.place.packed(), p.tile.z);
+        if (p.tile.z != fine && tiles::Store::derived(p.tile.z)) out.taken.push_back(p.place.packed());
+    }
+    std::ranges::sort(drawn_from);
+    // each coarse level's tile drawn: the places it draws, and those in it that nothing draws (beyond the view) whose
+    // window is not resident; its cells over them
+    for (const CoverTile& c : cover.tiles()) {
+        const ResidentTile* r = c.drawn;
+        if (r == nullptr || r->pack != id || r->key.z != tiles::Store::coarse_level || r->key.z >= fine) continue;
+        const std::uint64_t key = r->key.packed();
+        if (std::ranges::any_of(out.tiles, [key](const Asked& a) { return a.key == key; })) continue;
+        const std::uint32_t gap = fine - r->key.z;
+        const std::uint32_t side = 1U << gap;
+        std::uint64_t live = 0;
+        for (std::uint32_t py = 0; py < side; ++py) {
+            for (std::uint32_t px = 0; px < side; ++px) {
+                const tiles::TileKey place(fine, (r->key.x << gap) + px, (r->key.y << gap) + py);
+                const std::uint64_t at = place.packed();
+                const auto it = std::ranges::lower_bound(drawn_from, at, {}, &Drawn::first);
+                const bool drawn = it != drawn_from.end() && it->first == at;
+                if (drawn ? it->second != r->key.z : std::ranges::binary_search(in.wanted, at)) continue;
+                live |= cells_over(r->cells_per_side, gap, place.x, place.y);
+                if (!drawn) out.taken.push_back(at);
+            }
+        }
+        const std::uint32_t n = std::uint32_t{r->cells_per_side} * r->cells_per_side;
+        const std::uint64_t every = n >= 64 ? sun::all_cells : (std::uint64_t{1} << n) - 1;
+        if (live == every) live = sun::all_cells;
+        if (live != 0) out.tiles.push_back({.key = key, .level = r->level, .live = live});
+    }
+    std::ranges::sort(out.tiles);
+    std::ranges::sort(out.taken);
+    const auto [first, last] = std::ranges::unique(out.taken);
+    out.taken.erase(first, last);
+    return out;
 }
 
 std::vector<SunGlobals::Other> SunGlobals::others_of(std::size_t k, std::span<const LaneInputs> lanes) {

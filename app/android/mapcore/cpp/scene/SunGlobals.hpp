@@ -5,11 +5,16 @@
 // moves, and the active pack and a neighbour swap roles as it crosses a frame cell's edge, and only the role moves (the
 // active pack's lane is asked first, on the sun's threads; the others on half as many). A lane's scene is its pack's
 // resident tiles at their finest zoom and their 220 m halo (Residency::sun_tiles), each made at the ladder level it is
-// drawn at (a halo tile at the cover's), built on a thread of its own whenever that set changes; K8's Worker runs the
-// moment's bucket (sun::bucket_of the theme block: a named moment's own sun, a live one's 0.5° bucket) over it, visible
-// tiles nearest the eye first (in the lane's own pack's frame), skipping a tile whose bits for the bucket are there,
-// and publishes the run's bits together once it completes (BitTiles, which cross-fades a swap over 300 ms), waking the
-// frame loop once a run.
+// drawn at (a halo tile at the cover's), and the tiles of its coarse level drawn (a frame cell's L13, from 4.7 to 12 km
+// of the eye, where alpha 23 drew its windows in a sun's scene: ENGINE.md one pack per country, step 7), each place's
+// buildings from the tile that draws it (Cover::placed) and a place nothing draws from its resident window, else from
+// its coarse level's tile drawn (levels_of: sun::make_tile's live cells), so no building stands in the grid twice; a
+// window whose place a level's tile draws leaves the scene, its bits kept while it is resident. The far level's tiles
+// (L12, beyond 12 km) have no bits: their faces and crowns are lit by day. The scene is built on a thread of its own
+// whenever it changes; K8's Worker runs the moment's bucket (sun::bucket_of the theme block: a named moment's own sun,
+// a live one's 0.5° bucket) over it, visible tiles nearest the eye first (in the lane's own pack's frame), skipping a
+// tile whose bits for the bucket are there, and publishes the run's bits together once it completes (BitTiles, which
+// cross-fades a swap over 300 ms), waking the frame loop once a run.
 //
 // A building's shadow does not stop at its frame cell's edge: a lane's scene also holds the solids of the other packs
 // drawn (the active pack's and the neighbours', not the coarser pack's, which lies under the active one) within the
@@ -40,6 +45,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -152,12 +158,34 @@ private:
         }
     };
 
-    /// A scene to build: the pack, its tiles (each at its ladder level), the other packs' tiles whose solids it holds,
-    /// which of its own want bits, the bucket and the jobs' order (the camera's ground point, the visible tiles, the
-    /// windows' reach).
+    /// A tile of a lane's scene: its key (packed), its ladder level, and the cells whose buildings the scene takes from
+    /// it (sun::make_tile's `live`: a frame cell's coarse level's tile takes the places it draws, and those in it
+    /// that no window of the scene holds).
+    struct Asked {
+        std::uint64_t key = 0;
+        std::uint8_t level = 0;
+        std::uint64_t live = sun::all_cells;
+        friend bool operator==(const Asked&, const Asked&) = default;
+        friend auto operator<=>(const Asked&, const Asked&) = default;
+    };
+
+    /// What a lane's scene takes from its pack's levels this frame: the coarse level's tiles drawn (L13, from 4.7 to
+    /// 12 km of the eye, where alpha 23 drew its windows in a sun's scene), each with its cells; the places whose
+    /// windows leave the scene (another tile draws them, or a coarse tile takes them); and the levels' resident
+    /// tiles with their ladder levels, whose bits are kept while they are resident though out of the scene. Sorted.
+    struct LaneLevels {
+        std::vector<Asked> tiles;
+        std::vector<std::uint64_t> taken;
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> resident;
+        friend bool operator==(const LaneLevels&, const LaneLevels&) = default;
+    };
+
+    /// A scene to build: the pack, its tiles (each at its ladder level, with its cells), the other packs' tiles whose
+    /// solids it holds, which of its own want bits, the bucket and the jobs' order (the camera's ground point, the
+    /// visible tiles, the windows' reach).
     struct Build {
         std::shared_ptr<const tiles::StorePack> pack;
-        std::vector<std::pair<tiles::TileKey, std::uint8_t>> tiles;
+        std::vector<Asked> tiles;
         std::vector<Other> others;
         std::vector<tiles::TileKey> wanted;
         std::vector<tiles::TileKey> visible;
@@ -176,10 +204,14 @@ private:
         std::string pack_id;
         LaneOf role = LaneOf::neighbour; ///< this frame's, where pack_id is drawn
         std::uint8_t fine = 0;
-        std::vector<std::pair<std::uint64_t, std::uint8_t>> asked; ///< the scene's tiles (packed key, level), sorted
-        std::vector<std::uint64_t> wanted;                         ///< its resident tiles, sorted
-        std::vector<Other> others;                                 ///< the other packs' solids to hold, sorted
-        std::vector<Other> asked_others;                           ///< those its scene was last asked with
+        std::vector<Asked> asked;          ///< the scene's tiles, sorted
+        std::vector<std::uint64_t> wanted; ///< its resident tiles of the finest zoom, sorted
+        LaneLevels levels;                 ///< what it took from its levels
+        /// The tiles out of the scene whose bits it keeps while they are resident at the level they were made at
+        /// (packed key, level), sorted: a window whose place a level's tile draws, a level's tile no longer drawn.
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> held;
+        std::vector<Other> others;       ///< the other packs' solids to hold, sorted
+        std::vector<Other> asked_others; ///< those its scene was last asked with
         std::uint8_t level = 0;
         std::uint64_t bucket = 0;
         bool have_bucket = false;
@@ -188,7 +220,7 @@ private:
         bool building = false;
         std::shared_ptr<const sun::Scene> scene;
         // The builder thread's own.
-        std::vector<std::pair<std::uint64_t, std::uint8_t>> built;
+        std::vector<Asked> built;
         std::vector<Other> built_others;
         std::string built_pack;
     };
@@ -206,8 +238,11 @@ private:
     void work(const std::stop_token& stop);
     /// The lane's scene and bucket for the frame (the render thread): asked for where they changed. `eye_frame` is the
     /// frame the view's eye is in (the active pack's), from which the eye is taken into the lane's pack's own.
-    void prepare_lane(Lane& lane, const frame::FrameState& state, const LaneInputs& in,
+    void prepare_lane(Lane& lane, const frame::FrameState& state, const LaneInputs& in, const LaneLevels& levels,
                       std::span<const CoverTile> drawn, const std::optional<view::GroundFrame>& eye_frame);
+    /// What lane input `in`'s scene takes from its pack's levels this frame (LaneLevels), from the tiles `cover` draws
+    /// and the places they draw.
+    [[nodiscard]] LaneLevels levels_of(const LaneInputs& in, const Cover& cover) const;
     /// The other packs' tiles lane `k`'s scene holds the solids of (Other): each finest tile of the active pack or a
     /// neighbour (not the coarser one) whose reach comes within the march's reach of a resident tile of lane `k`'s
     /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.

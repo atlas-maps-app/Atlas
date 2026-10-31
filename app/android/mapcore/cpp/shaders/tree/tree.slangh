@@ -66,6 +66,9 @@ static const uint TREE_JOB_VECTORS = 5u;
 
 /// No sun bits for the tile yet.
 static const uint TREE_NO_BITS = 0xFFFFFFFFu;
+/// A frame cell's level's tile without bits (the far level's, or one drawn before its first): its crowns lit whenever
+/// the sun is up, as every one is that no building shades.
+static const uint TREE_DAY_BITS = 0xFFFFFFFEu;
 
 /// The tones' table (passes::tree_tones, per moment): the bark, the trunk's sunlit side, then each tint's (deciduous,
 /// then evergreen: TREE_TINT_TONES apart) small crown's two colours and their mix, the crown's under and side tones

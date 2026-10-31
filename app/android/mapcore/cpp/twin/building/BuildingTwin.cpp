@@ -184,7 +184,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                 }
                 const float amount =
                     shaders::building_sun_amount(f.flags, p.sample, texel, sun.has ? 1U : 0U, sun.weight);
-                if (amount > 0.0F && (f.flags & shaders::BUILDING_FACE_DAY) == 0U) ++sunlit_;
+                if (amount > 0.0F && (f.flags & shaders::BUILDING_FACE_DAY) == 0U && sun.has) ++sunlit_;
                 const std::uint32_t argb =
                     argb_of(shaders::building_colour(light_of(p.face, true), light_of(p.face, false), amount));
                 out_.at(s.slot, group_, item_of(b, p.item));

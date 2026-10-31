@@ -536,9 +536,11 @@ template <std::size_t N>
 /// Writes one building's (or part's) samples into a tile's lists.
 class BuildingSamples {
 public:
-    BuildingSamples(TileSamples& out, const Region& region, Source source, std::uint32_t record,
-                    std::uint32_t solid) noexcept
-        : out_(out), region_(region), source_(source), record_(record), solid_(solid) {}
+    /// `lean`: a frame cell's level's tile, whose walls are their one cell each, without a kit's band or windows
+    /// (geometry::Builder's lean).
+    BuildingSamples(TileSamples& out, const Region& region, Source source, std::uint32_t record, std::uint32_t solid,
+                    bool lean = false) noexcept
+        : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean) {}
 
     /// Everything the renders can draw of the building with `v` over footprint `poly`.
     void all(const Values& v, std::span<const V2> poly) {
@@ -592,10 +594,10 @@ private:
         }
         const auto sk_top = [&](const V2& p) { return h - ((rh * (((p.x * dirv.x) + (p.z * dirv.z)) - p0)) / span); };
         const std::size_t n = poly.size();
-        const bool windowed = !part && !is(v.btype, "houseboat") && !v.no_win && v.has_levels;
+        const bool windowed = !lean_ && !part && !is(v.btype, "houseboat") && !v.no_win && v.has_levels;
         // a kit's stucco ground floor (trad_wall's band, drawn with weather), on a building that stands on the street
         // (not a part, nor a houseboat: a boat with weather)
-        const bool band = region_.kit_band && (v.flags & tl::building::flag_kit) != 0 &&
+        const bool band = !lean_ && region_.kit_band && (v.flags & tl::building::flag_kit) != 0 &&
                           (v.flags & tl::building::flag_kit_band) != 0 &&
                           (v.flags & tl::building::flag_houseboat) == 0 && !part && y0 <= 0.5;
         for (std::size_t i = 0; i < n; ++i) {
@@ -622,7 +624,7 @@ private:
             cell(Kind::wall, 0, 1, 0, 1);
             const int ncol = std::max(1, kt_int(elen / 9));
             const int nrow = std::max(1, std::min(3, kt_int((wall_top - y0) / 7)));
-            if (ncol != 1 || nrow != 1) {
+            if (!lean_ && (ncol != 1 || nrow != 1)) {
                 for (int r = 0; r < nrow; ++r) {
                     for (int c = 0; c < ncol; ++c) cell(Kind::cell, r, nrow, c, ncol);
                 }
@@ -974,6 +976,7 @@ private:
     Source source_;
     std::uint32_t record_;
     std::uint32_t solid_;
+    bool lean_;
 };
 
 // ---------------------------------------------------------------- quay walls (Amsterdam.waterLayer)
@@ -1079,6 +1082,58 @@ void append(TileSamples& out, const TileSamples& w) {
     for (std::uint32_t i = 0; i < w.size(); ++i) {
         out.add(w.kind[i], w.source[i], w.owner[i], w.edge[i], w.part[i], w.x[i], w.y[i], w.z[i],
                 w.face[i] == no_face ? no_face : w.face[i] + faces, w.skip[i]);
+    }
+}
+
+/// Whether each record of layer `l` lies in a cell of `live` (every record of a layer without cells).
+[[nodiscard]] std::vector<std::uint8_t> live_records(const tl::Layer* l, std::uint64_t live) {
+    if (l == nullptr) return {};
+    std::vector<std::uint8_t> out(l->count, 1);
+    for (std::size_t c = 0; c + 1 < l->cell_first.size(); ++c) {
+        if (c < 64 && ((live >> c) & 1U) != 0) continue;
+        const auto [first, last] = l->cell(c);
+        for (std::uint32_t i = first; i < last && i < l->count; ++i) out[i] = 0;
+    }
+    return out;
+}
+
+/// Leaves the records outside the cells of `live` to another tile of the scene (make_tile's `live`): their solids out
+/// of the tile's (the others' renumbered, and their samples' skips with them), their samples and their trees' crowns
+/// lit as their faces turn to the sun, with no march.
+void leave_out(const tiles::Tile& tile, std::uint64_t live, SunTile& st) {
+    const std::array<std::vector<std::uint8_t>, 4> kept{
+        live_records(tile.layer(tl::LayerId::building), live), live_records(tile.layer(tl::LayerId::part), live),
+        live_records(tile.layer(tl::LayerId::tree), live), live_records(tile.layer(tl::LayerId::quay), live)};
+    const auto held = [&kept](Source src, std::uint32_t record) {
+        const std::vector<std::uint8_t>& k = kept.at(static_cast<std::size_t>(src));
+        return record >= k.size() || k[record] != 0;
+    };
+    // the solids the tile keeps, each one's new place
+    TileSolids& from = st.solids;
+    TileSolids solids;
+    std::vector<std::uint32_t> moved(from.size(), no_solid);
+    for (std::uint32_t s = 0; s < from.size(); ++s) {
+        if (!held(from.source[s], from.record[s])) continue;
+        moved[s] = solids.size();
+        const std::span<const double> xs = from.xs(s);
+        const std::span<const double> zs = from.zs(s);
+        solids.x.insert(solids.x.end(), xs.begin(), xs.end());
+        solids.z.insert(solids.z.end(), zs.begin(), zs.end());
+        solids.first.push_back(static_cast<std::uint32_t>(solids.x.size()));
+        solids.h.push_back(from.h[s]);
+        solids.min.push_back(from.min[s]);
+        solids.source.push_back(from.source[s]);
+        solids.record.push_back(from.record[s]);
+    }
+    st.solids = std::move(solids);
+    TileSamples& samples = st.samples;
+    for (std::uint32_t i = 0; i < samples.size(); ++i) {
+        std::uint32_t& skip = samples.skip[i];
+        if (!held(samples.source[i], samples.owner[i])) {
+            skip = no_march;
+        } else if (skip != no_solid) {
+            skip = moved[skip];
+        }
     }
 }
 
@@ -1277,7 +1332,7 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
 }
 
 SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region, std::uint8_t level,
-                  std::span<const Deck> decks) {
+                  std::span<const Deck> decks, std::uint64_t live) {
     SunTile st;
     st.key = {tile.header.level, tile.header.x, tile.header.y};
     st.level = level;
@@ -1292,6 +1347,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     TileSamples windows;
     std::vector<std::uint32_t> reflections;
     std::uint32_t next_solid = 0;
+    const bool lean = tile.header.level < 14; // geometry::Builder's lean: a frame cell's level's tile
     for (const auto [layer_id, source] : record_layers) {
         const tl::Layer* l = tile.layer(layer_id);
         if (l == nullptr) continue;
@@ -1304,7 +1360,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
                 ATLAS_ASSERT(st.solids.source[solid] == source && st.solids.record[solid] == i,
                              "solids_of lists the solids in make_tile's order");
             }
-            BuildingSamples b(st.samples, region, source, i, solid);
+            BuildingSamples b(st.samples, region, source, i, solid, lean);
             b.all(v, poly);
             append(windows, b.windows);
             if (b.mirror != no_face) reflections.push_back(b.mirror);
@@ -1344,6 +1400,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     if (!pieces.empty()) st.quays = std::make_shared<const std::vector<QuayPiece>>(std::move(pieces));
     st.samples.windows_first = st.samples.size();
     append(st.samples, windows);
+    if (live != all_cells) leave_out(tile, live, st);
     return st;
 }
 

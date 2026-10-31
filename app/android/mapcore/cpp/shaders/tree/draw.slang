@@ -83,7 +83,9 @@ struct TreeSun {
 TreeSun sun_of(TreeJob j, bool night) {
     bool has = j.sun != TREE_NO_BITS;
     uint2 texel = {0u, 0u};
-    if (has) {
+    if (j.sun == TREE_DAY_BITS) {
+        texel = uint2(0xFFFFFFFFu, 0xFFFFFFFFu);
+    } else if (has) {
         texel = sun_bits[j.sun + j.sample / 32u];
     }
     TreeSun s;

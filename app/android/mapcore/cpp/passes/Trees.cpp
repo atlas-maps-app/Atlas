@@ -416,6 +416,8 @@ void Trees::update(const frame::FrameState& state) {
         const bool side = (choice.flags & shaders::TREE_JOB_SIDE) != 0U;
         const std::uint32_t vectors = trees.lean ? shaders::TREE_LEAN_VECTORS : shaders::TREE_VECTORS;
         const std::uint32_t crowns = t.sun && t.sun->now ? t.sun->now->crowns_from : 0U;
+        // a level's tile without bits: its crowns lit by day (TREE_DAY_BITS), never drawn as if in the shade
+        const std::uint32_t sun = trees.lean && t.sun_base == scene::no_sun ? shaders::TREE_DAY_BITS : t.sun_base;
         const std::uint32_t words[] = {bits(t.place.offset.x),
                                        bits(t.place.offset.y),
                                        bits(t.place.offset.z),
@@ -432,7 +434,7 @@ void Trees::update(const frame::FrameState& state) {
                                        bits(choice.w1),
                                        bits(choice.limb),
                                        side ? sides : 0U,
-                                       t.sun_base,
+                                       sun,
                                        bits(t.sun_weight),
                                        crowns + d.tree,
                                        shaders::TREE_TONE_TINTS +

@@ -157,6 +157,40 @@ TEST_CASE("sun: a bucket's bits on four threads are one thread's, each tile hand
     }
 }
 
+TEST_CASE("sun: a sample whose place another tile holds is lit as its face turns to the sun, with no march") {
+    // A tower 50 m tall and 10 m square; three samples 20 m north of it, 1 m up: one marched (in its shadow, the sun
+    // in the south 45° up), one whose place another tile of the scene holds (no_march: lit, as it faces the sun), and
+    // one such turned from the sun (unlit).
+    SunTile t;
+    t.key = {13, 4207, 2692};
+    for (const auto& [x, z] :
+         {std::pair{-5.0, -5.0}, std::pair{5.0, -5.0}, std::pair{5.0, 5.0}, std::pair{-5.0, 5.0}}) {
+        t.solids.x.push_back(x);
+        t.solids.z.push_back(z);
+    }
+    t.solids.first.push_back(4);
+    t.solids.h.push_back(50.0);
+    t.solids.min.push_back(0.0);
+    t.solids.source.push_back(Source::building);
+    t.solids.record.push_back(0);
+    TileSamples& s = t.samples;
+    const std::uint32_t toward = s.add_face(0.0, 0.0, 1.0);
+    const std::uint32_t away = s.add_face(0.0, 0.0, -1.0);
+    s.add(Kind::wall, Source::building, 1, 0, 0, 0.0, 1.0, -20.0, toward, no_solid);
+    s.add(Kind::wall, Source::building, 1, 0, 0, 0.0, 1.0, -20.0, toward, no_march);
+    s.add(Kind::wall, Source::building, 1, 0, 0, 0.0, 1.0, -20.0, away, no_march);
+    s.crowns_first = s.crowns_end = s.windows_first = s.size();
+    std::vector<SunTile> tiles;
+    tiles.push_back(std::move(t));
+    const Scene scene(std::move(tiles), 50.0);
+    const double r = 0.7071067811865476; // 45° up, toward the south
+    const Sun sun{.x = 0.0, .y = r, .z = r};
+    const TileSamples& in = scene.tiles()[0].samples;
+    CHECK_FALSE(sample_lit(scene.grid(), scene.base(0), in, 0, sun));
+    CHECK(sample_lit(scene.grid(), scene.base(0), in, 1, sun));
+    CHECK_FALSE(sample_lit(scene.grid(), scene.base(0), in, 2, sun));
+}
+
 TEST_CASE("sun: the jobs go nearest first, the visible before the rest, windows within reach") {
     const auto scene = drawn_scene(5, 100);
     tl::Frame frame;

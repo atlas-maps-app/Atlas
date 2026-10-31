@@ -159,6 +159,7 @@ bool sample_lit(const Grid& grid, PrismId base, const TileSamples& s, std::uint3
         const double d = (s.nx[f] * sun.x) + (s.ny[f] * sun.y) + (s.nz[f] * sun.z);
         if (!(d > 0)) return false;
     }
+    if (s.skip[i] == no_march) return true; // another tile's place: lit as it faces the sun
     double px = s.x[i];
     double py = s.y[i];
     double pz = s.z[i];

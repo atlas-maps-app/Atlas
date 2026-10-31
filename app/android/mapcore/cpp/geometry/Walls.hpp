@@ -66,8 +66,10 @@ inline constexpr std::uint8_t owner_area = 4;
 
 /// How a face is lit, besides the theme: by its sample's sun bit (which K8 sets only where the face turns to the sun),
 /// or whenever the sun is up (a houseboat's deck and cabin roof: `not night`; a kit's corner boards, whose
-/// `light(..., facing and not night)` is light(..., True)'s wherever the sun is: lam = max(0, n · L) either way).
-enum class Lit : std::uint8_t { sun = 0, day = 1 };
+/// `light(..., facing and not night)` is light(..., True)'s wherever the sun is: lam = max(0, n · L) either way), or,
+/// a frame cell's level's face, by its sample's bit where its tile has bits and else whenever the sun is up (its
+/// facing alone: the far level, and a tile drawn before its first bits).
+enum class Lit : std::uint8_t { sun = 0, day = 1, level = 2 };
 
 /// A face that is a detail of a tradition's kit on its wall (trad_wall's): its stucco ground floor's band, or a corner
 /// board; drawn on its wall's plane (its face's: the wall's normal through the wall's test point) at a lead of its own

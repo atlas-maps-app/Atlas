@@ -62,6 +62,9 @@ static const uint BUILDING_FACE_BOTH = 2u; // drawn from either side (no facing 
 // only where its item's detail has BUILDING_DETAIL_CORNERS.
 static const uint BUILDING_FACE_BAND = 4u;
 static const uint BUILDING_FACE_CORNER = 8u;
+// A frame cell's level's face: lit by its sample's bit where its tile has bits, else whenever the sun is up (its
+// facing alone, as BUILDING_FACE_DAY).
+static const uint BUILDING_FACE_LEVEL = 16u;
 
 // No sample, and no sun bits for the tile yet.
 static const uint BUILDING_NO_SAMPLE = 0xFFFFFFFFu;
@@ -971,9 +974,10 @@ inline float2 building_outline(BuildingShape s, uint v, float r) {
 }
 
 /// How lit a face draws (0 unlit, 1 lit): by its sample's sun bit, cross-faded while its tile's bits change (K8's
-/// lit_amount); a face lit by day is always lit (its unlit and lit colours are the same at night).
+/// lit_amount); a face lit by day is always lit (its unlit and lit colours are the same at night), and a level's face
+/// where its tile has no bits.
 inline float building_sun_amount(uint face_flags, uint sample, uint2 texel, uint has_bits, float weight) {
-    if ((face_flags & BUILDING_FACE_DAY) != 0u) {
+    if ((face_flags & BUILDING_FACE_DAY) != 0u || ((face_flags & BUILDING_FACE_LEVEL) != 0u && has_bits == 0u)) {
         return 1.0f;
     }
     if (has_bits == 0u || sample == BUILDING_NO_SAMPLE) {

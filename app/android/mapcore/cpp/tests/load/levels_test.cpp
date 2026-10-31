@@ -12,6 +12,8 @@
 #include "geometry/Walls.hpp"
 #include "load/Levels.hpp"
 #include "load/Window.hpp"
+#include "scene/Cells.hpp"
+#include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Grid.hpp"
@@ -19,6 +21,8 @@
 #include "tiles/Source.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/layers/Buildings.hpp"
+#include "twin/building/BuildingShader.hpp"
+#include "twin/building/BuildingTile.hpp"
 
 #include <doctest/doctest.h>
 
@@ -268,6 +272,122 @@ TEST_CASE(
     CHECK(store.find(coarse.key).size() == 1);
     CHECK(store.find(far.key).size() == 1);
     CHECK(store.holder_of("window/12/2103/1346") == tl::Store::cell_id(tl::TileKey(10, k.x >> 4U, k.y >> 4U)));
+}
+
+TEST_CASE("load: a level's sun samples are its lean walls', the places another tile holds leave its solids and its "
+          "marches, and its faces are lit by their bits where its tile has them, else by day") {
+    namespace sun = atlas::sun;
+    namespace sh = atlas::shaders;
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const tl::TileKey east(14, k.x + 1, k.y);
+    // the Westerkerk's window: a tower, a gabled house beside it and a long house of three floors (its walls of ncol
+    // cells at L14); its east neighbour: a house
+    const std::string west_answer = answer({
+        way(10, R"("building": "yes", "height": "60")", box(52.3700, 4.8826, 0.0001, 0.00015)),
+        way(11, R"("building": "house", "height": "8", "roof:shape": "gabled", "roof:height": "3")",
+            box(52.3700, 4.8830, 0.0001, 0.00015)),
+        way(12, R"("building": "house", "building:levels": "3")", box(52.3650, 4.8950, 0.0002, 0.0004)),
+    });
+    const std::string east_answer =
+        answer({way(50, R"("building": "house", "building:levels": "2")", box(52.3700, 4.9050, 0.0001, 0.00015))});
+    const auto west = load::build_window(bytes(west_answer), k, load::place_of(k));
+    ATLAS_REQUIRE(west.has_value(), west.error().what);
+    const auto beside = load::build_window(bytes(east_answer), east, load::place_of(east));
+    ATLAS_REQUIRE(beside.has_value(), beside.error().what);
+    const std::array<std::span<const std::byte>, 2> windows{std::span<const std::byte>(west->pack),
+                                                            std::span<const std::byte>(beside->pack)};
+    const auto built = load::build_levels(windows);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    ATLAS_REQUIRE(built->size() == 2);
+    const auto c = decoded((*built)[0].pack);
+    const auto f = decoded((*built)[1].pack);
+    const auto wd = decoded(west->pack);
+    ATLAS_REQUIRE(c != nullptr && f != nullptr && wd != nullptr);
+    const auto walls = [](const Decoded& d) {
+        return gm::build_buildings({.tile = &d.tile, .head = d.pack.head(), .level = 0, .region = {}, .kind = 0});
+    };
+    const auto samples = [](const Decoded& d, std::uint64_t live = sun::all_cells) {
+        return sun::make_tile(d.tile, *d.pack.head(), sun::Region{}, 0, {}, live);
+    };
+    const auto count = [](const sun::TileSamples& s, sun::Kind kind) { return std::ranges::count(s.kind, kind); };
+    // The window's samples have its walls' cells and its windows; a level's, its walls' one cell each alone, every
+    // primitive's sample the one K8 gives the same face (kind, record, edge), the buildings' samples ending where the
+    // crowns' begin.
+    const sun::SunTile window_samples = samples(*wd);
+    CHECK(count(window_samples.samples, sun::Kind::cell) > 0);
+    CHECK(count(window_samples.samples, sun::Kind::window) > 0);
+    for (const Decoded* level : {c.get(), f.get()}) {
+        const gm::TileBuildings g = walls(*level);
+        const sun::SunTile st = samples(*level);
+        const sun::TileSamples& s = st.samples;
+        CHECK(g.samples == s.crowns_first);
+        CHECK(s.windows_first == s.size());
+        CHECK(count(s, sun::Kind::cell) == 0);
+        CHECK(count(s, sun::Kind::band) == 0);
+        CHECK(count(s, sun::Kind::window) == 0);
+        std::size_t sampled = 0;
+        std::size_t wrong = 0;
+        for (const auto* list : {&g.edged, &g.plain}) {
+            for (const gm::Prim& p : *list) {
+                if (p.sample == gm::no_sample) continue;
+                ++sampled;
+                const gm::BuildingItem& item = g.items[p.item];
+                const bool walled = p.kind == gm::PrimKind::cell;
+                const bool same = p.sample < s.size() && (!walled || s.kind[p.sample] == sun::Kind::wall) &&
+                                  s.source[p.sample] == static_cast<sun::Source>(item.source) &&
+                                  s.owner[p.sample] == item.record && s.edge[p.sample] == p.edge;
+                if (!same) ++wrong;
+            }
+        }
+        CHECK(sampled > 0);
+        CHECK(wrong == 0);
+        // its faces lit by their samples where its tile has bits, else by day; none drawn as if in the shade
+        atlas::passes::BuildingTile layout;
+        (void)atlas::passes::heap_words(g, 0.0, 0.0, layout);
+        CHECK(!layout.lights.empty());
+        CHECK(std::ranges::all_of(layout.lights, [](const atlas::passes::BuildingLight& l) {
+            return (l.flags & (sh::BUILDING_FACE_LEVEL | sh::BUILDING_FACE_DAY)) != 0U;
+        }));
+    }
+    const gm::TileBuildings window_walls = walls(*wd);
+    atlas::passes::BuildingTile window_layout;
+    (void)atlas::passes::heap_words(window_walls, 0.0, 0.0, window_layout);
+    CHECK(std::ranges::none_of(window_layout.lights, [](const atlas::passes::BuildingLight& l) {
+        return (l.flags & sh::BUILDING_FACE_LEVEL) != 0U;
+    }));
+    const atlas::hlsl::uint2 none{0U, 0U};
+    const atlas::hlsl::uint2 lit{1U << 3U, 1U << 3U};
+    CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, none, 0, 1.0F) == 1.0F); // no bits: by day
+    CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, none, 1, 1.0F) == 0.0F); // its bit: in the shade
+    CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, lit, 1, 1.0F) == 1.0F);
+    CHECK(sh::building_sun_amount(0, 3, none, 0, 1.0F) == 0.0F); // a window's face before its bits
+
+    // The L13 taking the east place alone (the west one drawn from its window): the east house its one solid, every
+    // sample of the west place's buildings unmarched, the east house's marched leaving its own solid.
+    const std::uint64_t live = atlas::scene::cells_over(4, 1, east.x, east.y);
+    CHECK(live == 0xCCU);
+    const sun::SunTile taken = samples(*c, live);
+    const tl::Layer* layer = c->tile.layer(tl::LayerId::building);
+    ATLAS_REQUIRE(layer != nullptr);
+    REQUIRE(taken.solids.size() == 1);
+    CHECK(layer->integer(tl::building::id, taken.solids.record[0]) == 50);
+    std::size_t marched = 0;
+    std::size_t unmarched = 0;
+    const sun::TileSamples& ts = taken.samples;
+    for (std::uint32_t i = 0; i < ts.crowns_first; ++i) {
+        const bool mine = layer->integer(tl::building::id, ts.owner[i]) == 50;
+        if (ts.skip[i] == sun::no_march) {
+            ++unmarched;
+            CHECK_FALSE(mine);
+        } else {
+            ++marched;
+            CHECK(mine);
+            CHECK(ts.skip[i] == 0);
+        }
+    }
+    CHECK(marched > 0);
+    CHECK(unmarched > 0);
+    CHECK(ts.size() == samples(*c).samples.size()); // the same samples, in the same order
 }
 
 TEST_CASE("load: windows that hold nothing give no levels; windows of two frame cells are refused") {

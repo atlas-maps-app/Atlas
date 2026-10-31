@@ -18,10 +18,15 @@ namespace {
 /// A point the shader computed, as the stream takes it.
 [[nodiscard]] Point point(hlsl::float2 p) noexcept { return {.x = p.x, .y = p.y}; }
 
-/// The sun texel of a crown's sample, as set 1's sun_bits holds it: bit (sample % 32) of x the new bit, of y the old.
-[[nodiscard]] hlsl::uint2 texel_of(const scene::CoverTile& t, std::uint32_t sample, bool& has) {
+/// The sun texel of a crown's sample, as set 1's sun_bits holds it: bit (sample % 32) of x the new bit, of y the old;
+/// every bit set for a level's tile without bits (TREE_DAY_BITS).
+[[nodiscard]] hlsl::uint2 texel_of(const scene::CoverTile& t, std::uint32_t sample, bool lean, bool& has) {
     has = t.sun_base != scene::no_sun && t.sun && t.sun->now && t.sun->before;
     hlsl::uint2 texel{0U, 0U};
+    if (lean && t.sun_base == scene::no_sun) {
+        has = true;
+        return {0xFFFF'FFFFU, 0xFFFF'FFFFU};
+    }
     if (!has) return texel;
     const std::span<const std::uint64_t> now = t.sun->now->words;
     const std::span<const std::uint64_t> before = t.sun->before->words;
@@ -88,7 +93,7 @@ void TreeTwin::tree(const scene::CoverTile& tile, const passes::TreeTile& trees,
     j.w0 = choice.w0;
     j.w1 = choice.w1;
     j.limb = choice.limb;
-    j.sun = tile.sun_base;
+    j.sun = trees.lean && tile.sun_base == scene::no_sun ? shaders::TREE_DAY_BITS : tile.sun_base;
     j.weight = bits(tile.sun_weight);
     j.sample = (tile.sun && tile.sun->now ? tile.sun->now->crowns_from : 0U) + tree;
     j.tint = shaders::TREE_TONE_TINTS + (trees.evergreen[tree] != 0 ? shaders::TREE_TINT_TONES : 0U);
@@ -98,7 +103,7 @@ void TreeTwin::tree(const scene::CoverTile& tile, const passes::TreeTile& trees,
     tree_records_.assign(shaders::tree_record_count(j.flags), shaders::tree_nothing());
     side_kept_ = false;
     side_record_ = shaders::tree_nothing();
-    sun_texel_ = texel_of(tile, j.sample, sun_has_);
+    sun_texel_ = texel_of(tile, j.sample, trees.lean, sun_has_);
     if ((j.flags & shaders::TREE_JOB_GENERIC) != 0U) {
         generic_tree(j, t, words, item);
     } else if ((j.flags & shaders::TREE_JOB_SMALL) != 0U) {

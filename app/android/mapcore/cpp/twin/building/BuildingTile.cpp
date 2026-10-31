@@ -219,6 +219,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         const gm::Face& face = g.faces[i];
         std::uint32_t flags = 0;
         if (face.lit == gm::Lit::day) flags |= shaders::BUILDING_FACE_DAY;
+        if (face.lit == gm::Lit::level) flags |= shaders::BUILDING_FACE_LEVEL;
         if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
         if (face.kit == gm::KitPart::band) flags |= shaders::BUILDING_FACE_BAND;
         if (face.kit == gm::KitPart::corner) flags |= shaders::BUILDING_FACE_CORNER;

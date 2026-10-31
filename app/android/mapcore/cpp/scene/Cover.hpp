@@ -177,6 +177,18 @@ public:
     /// would (a finer level's where the coarser one planned is resident, a level's where the window is), each once:
     /// their key, pack and bytes (the rest unused).
     [[nodiscard]] std::span<const StandIn> spare() const noexcept { return spare_; }
+    /// A place in view and the resident tile that draws it this frame (its plan's level's, or the one standing in for
+    /// it), whether or not any of its cells is seen: the sun's scene takes the place's buildings from that tile
+    /// (SunGlobals). One for each place drawn, its pack's finest level's key; its distance from the eye, and whether
+    /// the heaps' plan gave it a coarser level than its distance asks for (the pinch audit's).
+    struct Placed {
+        std::string_view pack;
+        tiles::TileKey place;
+        tiles::TileKey tile;
+        double d = 0.0;
+        bool coarsened = false;
+    };
+    [[nodiscard]] std::span<const Placed> placed() const noexcept { return placed_; }
 
 private:
     /// A pack drawn this frame: its store's pack and id, whether it is the active one, and its tiles' ladder index.
@@ -257,6 +269,7 @@ private:
     double fine_far_ = 12'000.0; // CoverInputs::fine_far, for near_holes_
     std::vector<StandIn> stand_ins_;
     std::vector<StandIn> spare_;
+    std::vector<Placed> placed_;
     std::vector<std::uint32_t> standing_;        // the stand-ins' handles, as stand_ins_ (sort_out)
     std::vector<std::uint32_t> backing_;         // the stand-ins' backups' handles
     std::vector<std::uint32_t> planned_handles_; // the resident tiles the places in view plan

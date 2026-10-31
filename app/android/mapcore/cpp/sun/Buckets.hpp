@@ -36,8 +36,9 @@ namespace atlas::sun {
 inline constexpr double bucket_degrees = 0.5;
 
 /// The layout of a tile's samples and bits, kept with every bucket on disk: a change to the samples' order or to what
-/// they are bumps it, and older files are never read. 2: a file keeps where the tile's crowns begin.
-inline constexpr std::uint16_t sample_format = 2;
+/// they are bumps it, and older files are never read. 2: a file keeps where the tile's crowns begin. 3: a frame cell's
+/// level's tile has its lean walls' samples (make_tile).
+inline constexpr std::uint16_t sample_format = 3;
 
 /// A sun bucket: the sun one set of bits is for.
 struct Bucket {
@@ -94,7 +95,8 @@ private:
                                                   double metres = reach);
 
 /// Whether sample `i` of a tile is lit for `sun`: it faces the sun (or is tested whatever the sun) and the march from
-/// it leaves every solid. `base` is where the tile's solids begin in the grid.
+/// it leaves every solid; one whose record the scene takes from another tile (no_march) faces it alone. `base` is
+/// where the tile's solids begin in the grid.
 [[nodiscard]] bool sample_lit(const Grid& grid, PrismId base, const TileSamples& s, std::uint32_t i,
                               const Sun& sun) noexcept;
 

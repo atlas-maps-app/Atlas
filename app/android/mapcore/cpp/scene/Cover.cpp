@@ -101,6 +101,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     near_holes_ = 0;
     stand_ins_.clear();
     spare_.clear();
+    placed_.clear();
     standing_.clear();
     backing_.clear();
     planned_handles_.clear();
@@ -371,8 +372,10 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
                 }
             }
         }
+        const tiles::TileKey place(fine, s.x, s.y);
         if (want == 0) {
             if (const ResidentTile* r = residency.find(key, id)) {
+                placed_.push_back({.pack = id, .place = place, .tile = key, .d = s.d, .coarsened = s.plan > s.want});
                 const std::uint64_t cells = visible_cells(r->cells, r->cells_per_side, frame, frustum);
                 if (cells != 0) {
                     draw(*r, cells, view, frames, frustum, key, seconds);
@@ -384,6 +387,7 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
             }
             if (drawn.active) ++missing_;
         } else if (stand_in(key, s.x, s.y, true)) {
+            placed_.push_back({.pack = id, .place = place, .tile = key, .d = s.d, .coarsened = s.plan > s.want});
             continue;
         }
         request(key, Lane::visible, s.priority, drawn.tolerance, id, estimate(drawn, key, residency));
@@ -419,6 +423,7 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
             if (keys[0] && s.d <= fine_far_) ++near_holes_;
             continue;
         }
+        placed_.push_back({.pack = id, .place = place, .tile = stood->key, .d = s.d, .coarsened = s.plan > s.want});
         // the place's other resident level, which would stand in without it
         std::optional<tiles::TileKey> backup;
         for (std::size_t k = 0; k < count; ++k) {

@@ -87,6 +87,13 @@ inline constexpr std::uint32_t no_face = 0xFFFF'FFFFU;
 /// No solid left out of a march, as a sample's skip.
 inline constexpr std::uint32_t no_solid = 0xFFFF'FFFFU;
 
+/// A sample whose record the scene takes from another tile (make_tile's `live`), as its skip: lit as its face turns to
+/// the sun, with no march (its own solid is not in the grid, and another tile's of the same building may be).
+inline constexpr std::uint32_t no_march = 0xFFFF'FFFEU;
+
+/// Every cell of a tile, as make_tile's `live`.
+inline constexpr std::uint64_t all_cells = ~std::uint64_t{0};
+
 /// Which list a record of a tile is in.
 enum class Source : std::uint8_t { building = 0, part = 1, tree = 2, quay = 3 };
 
@@ -220,8 +227,14 @@ struct SunTile {
 /// The sample points, solids and trees of `tile` at ladder `level` (0 to 13): the rings simplified at it, each
 /// building's and part's attributes from its variant at it where the tile carries one. `decks` are the bridges near
 /// the tile (its own and its halo's, collect_decks), for its quay walls.
+///
+/// A frame cell's level's tile (L13, L12: load/Levels.hpp) has the samples its lean walls read (geometry::Builder's
+/// lean): each wall as its one cell, no kit's band, no windows. `live` are the cells (bit r · n + c for row r from the
+/// north and column c of the tile's n × n, Cells.hpp's) whose records the scene takes from this tile: another tile
+/// holds the others' places (a place drawn from a window, or from another level), so their records are no solids and
+/// their samples are lit as their faces turn to the sun, with no march (no_march), as their trees' crowns are.
 [[nodiscard]] SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region,
-                                std::uint8_t level, std::span<const Deck> decks);
+                                std::uint8_t level, std::span<const Deck> decks, std::uint64_t live = all_cells);
 
 /// The scene's tallest solid at `level`: Python's max of the heights of every building not hidden with a height and
 /// every part with a height in the pack's finest level, each from its variant at `level` where it has one. Decodes
