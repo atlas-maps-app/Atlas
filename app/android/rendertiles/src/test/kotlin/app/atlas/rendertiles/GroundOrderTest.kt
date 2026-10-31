@@ -114,7 +114,11 @@ class GroundOrderTest {
                     if (dd.isNotEmpty()) groups.getOrPut(d.f["kind"] as String) { ArrayList() }.add(dd)
                 }
                 val tiles = StringBuilder("<g filter=\"url(#mat)\">")
-                for ((kind, ds) in groups) tiles.append("<path d=\"").append(ds.joinToString("")).append("\" fill=\"").append(Regions.nightC(th, Regions.LAND.getValue(kind).first)).append("\"/>")
+                for ((kind, ds) in groups) {
+                    // draw_under's fill: a lawn in its area's colour, the other kinds in LAND's
+                    val fill = if (kind in Regions.LAWN_KINDS) Regions.nightC(th, Regions.LAWN, 0.18) else Regions.nightC(th, Regions.LAND.getValue(kind).first)
+                    tiles.append("<path d=\"").append(ds.joinToString("")).append("\" fill=\"").append(fill).append("\"/>")
+                }
                 tiles.append("</g>")
                 assertEquals("$name ${k.name}: the land group from the tiles", portLand, tiles.toString())
                 drawnLand += groups.values.sumOf { it.size }

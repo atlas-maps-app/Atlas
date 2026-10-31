@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "28",
+  "version": "29",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -481,6 +481,21 @@
           "board grey": "69fd913f729eda6cbee5f7613ec3935844f4e4af228ab194a843dabaa3a84301",
           "board wet": "fa926207bfbca7741efaecd70884f31447faaabb542a1b5cee8226698ff42a66",
           "board night": "16e4a90494d8521fe24f560ccdeea2241a1c3a8ffe4ac32d363266eb79895e19"
+        }
+      }
+    },
+    "29": {
+      "note": "Step 4, the ground: a park's, a garden's or grass's lawn drawn once, among the land cover, under the woods and the water (the user, 30 October, of the palette review's Amsterdamse Bos: \"Fix the bug\"): a region's load leaves out the areas whose element the land cover holds as the same kind, but for those inside another area or in the water (render/regions.py's areas_without_lawns), and the land cover draws park, garden and grass in the area's #A9C38A. The board's four frames changed (the wood and paths inside the park at the top of the view show again, where the lawn's area covered them: 0.16 % of the pixels); the home's did not (the living map keeps its areas).",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "7ce15ff3cb2fe6d1729f76a9ebe9f8dcf91e64387e6d6e99138d37485fc8745f",
+          "home grey": "00c72710ca75683d19d9af5af8625c0758b39a9fdc0b20df7d9535502d7d9156",
+          "home wet": "bb4be0344c277466c3aa785a3641787b7371d9c2761e7a402c40df06860ad12e",
+          "home night": "5d6604f83c6cb57e67bf52f462fa47c1ae6d41e75a341178a043ee340549d5b2",
+          "board sunny": "56921b9b7a5b79d6da44955599680a44f8b325031cb6398f6c4bae759436f655",
+          "board grey": "77b0d7f26d75d60f7807ef870e563de1aa6d85cd6e714e2050c8d625ff6353a6",
+          "board wet": "4803e0a84829036dbe5730ba1f0ab37f47db851cdd48f3baa3830bf6a071e166",
+          "board night": "4d8f709785bc5ca5eb53a9d9f0b581389574cb46a960330c29ba0156e211c396"
         }
       }
     }

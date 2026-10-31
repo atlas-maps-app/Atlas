@@ -1039,7 +1039,16 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         ATLAS_REQUIRE(draw_until_complete(session, map, c) > 0, std::format("{} never completed", scene.name));
         // at rest before the reference frame: the scene before may have left a label fading out where it stood
         ATLAS_REQUIRE(draw_until_still(session, map, c), std::format("{} never came to rest", scene.name));
-        CHECK(draw(scene, 0));
+        // and the reference frame once two frames draw the same tiles: a pack beside the named one may let a tile go a
+        // frame after rest on a loaded machine, and its work (the row of doors' far wood, its canopy) would then be
+        // the reference's alone
+        std::vector<std::uint64_t> settled = drawn_tiles(map);
+        for (int k = 0; k < 30; ++k) {
+            CHECK(draw(scene, 0));
+            std::vector<std::uint64_t> now = drawn_tiles(map);
+            if (now == settled) break;
+            settled = std::move(now);
+        }
         std::vector<Work> on;
         on.reserve(parts.size());
         for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));

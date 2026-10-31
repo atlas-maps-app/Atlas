@@ -26,7 +26,7 @@ object EngineVersion {
         "westerkerk-grey" to "8f012acd29fc1820929ce57735d2a2f1",
         "westerkerk-wet" to "f78a8ba17ff9fd7b2459ff60d18417b7",
         "westerkerk-night" to "be235ad49cc3f2edfbdbf7a2827c8736",
-        "grachten_home-sunny" to "62daa11f73eca745ee987baaa3aa1861",
+        "grachten_home-sunny" to "fa485d91d43514edec3c7d241864f4c7",
         "sangimignano_close-wet" to "66ba418212f0e8852c1202519915618f",
     )
 

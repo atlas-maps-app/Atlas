@@ -37,11 +37,14 @@ namespace {
 
 // ---------------------------------------------------------------- the renders' literals (code, not the style)
 
-// regions.py:501 the canopy's fill (drawn at .55; the filter is K17's)
+// regions.py:537 the canopy's fill (drawn at .55; the filter is K17's)
 constexpr Rgba canopy_black{.r = 0, .g = 0, .b = 0, .a = 255};
 
-/// The land kinds the canopy covers (regions.py:498).
+/// The land kinds the canopy covers (regions.py:534).
 constexpr std::array<std::string_view, 3> canopy_kinds = {"forest", "wood", "scrub"};
+
+/// The land kinds drawn as a lawn, in their area's colour (regions.py's LAWN_KINDS, draw_under at regions.py:530).
+constexpr std::array<std::string_view, 3> lawn_kinds = {"park", "garden", "grass"};
 
 /// The areas drawn in their mapped surface where TONE holds (amsterdam.py:665).
 constexpr std::array<std::string_view, 3> surfaced = {"pedestrian", "square", "parking"};
@@ -274,10 +277,12 @@ private:
                 for (const P2& p : points(first, count)) area_scratch_.emplace_back(p.x, p.z);
                 key_.sort = static_cast<std::uint64_t>(style_.land_orders[*k]);
                 key_.sort2 = ~std::bit_cast<std::uint64_t>(std::fabs(signed_area(area_scratch_)));
-                const Rgba c = rgba(style_.land_colours[*k]);
+                // a lawn as its area drew it: AREA's colour, five and a half times darker at night
+                const bool lawn = in(kind, lawn_kinds);
+                const Rgba c = rgba(lawn ? style_.area_colour(kind) : style_.land_colours[*k]);
                 const auto order = static_cast<std::uint32_t>(tl::ground_key::order(key));
                 fill(FillKind::land, static_cast<std::uint16_t>(group::land + *k), order, cell, first, count, 0.01, 600,
-                     0.3, {.day = c, .night = darken(c, 0.2)});
+                     0.3, {.day = c, .night = darken(c, lawn ? 0.18 : 0.2)});
                 if (in(kind, canopy_kinds)) {
                     fill(FillKind::canopy, group::canopy, order, cell, first, count, 0.02, 600, 0.3,
                          {.day = canopy_black, .night = canopy_black});

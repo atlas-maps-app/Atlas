@@ -108,6 +108,79 @@ constexpr std::array<LandKind, 43> land_kinds = {{
     return std::nullopt;
 }
 
+/// regions.py's LAWN_KINDS: a park's, a garden's and grass's lawn, drawn once among the land cover in its own draw
+/// order (under the woods and the water) in its area's colour (geometry/Ground.cpp), where the living map's rules drew
+/// it again as an area over everything in it: a park mapped round a whole wood (the Amsterdamse Bos, 896 ha) covered
+/// its forest, its streams and its lake; one inside another area or in the water stays an area over it
+/// (drop_lawns).
+constexpr std::array<std::string_view, 3> lawn_kinds = {"park", "garden", "grass"};
+
+/// regions.py's `lawn_in_land(a)`: whether an area's lawn is in the land cover (region_features puts its element in
+/// `land` as the same kind).
+[[nodiscard]] bool lawn_in_land(const Area& a) {
+    return std::ranges::find(lawn_kinds, a.kind) != lawn_kinds.end() && land_kind(a.tags) == a.kind &&
+           !a.tags.truthy("building") && !a.tags.is("boundary", "national_park");
+}
+
+/// A ring and its box.
+struct BoxedRing {
+    std::span<const V2> ring;
+    Box box;
+};
+
+/// regions.py's `ring_in(p, pb, q, qb)`: whether ring `p` (its box `pb`) lies in ring `q`: its box within q's and its
+/// centroid in q.
+[[nodiscard]] bool ring_in(std::span<const V2> p, const Box& pb, const BoxedRing& q) noexcept {
+    const bool within = q.box.x0 <= pb.x0 && pb.x1 <= q.box.x1 && q.box.z0 <= pb.z0 && pb.z1 <= q.box.z1;
+    if (!within) return false;
+    const V2 c = centroid(p);
+    return pip(c.x, c.z, q.ring);
+}
+
+/// regions.py's `areas_without_lawns(S, rings)`: drops the lawns the land cover draws (lawn_in_land), but for those
+/// inside another area (a courtyard's garden, a parking lot's grass islands, a park on a square) or in the water (an
+/// island its rings leave in it), by the areas' own `rings` (none: their polys, not simplified): the land cover would
+/// draw them under what holds them, so they stay areas, drawn over it as before.
+void drop_lawns(Scene& s, std::span<const std::vector<V2>> rings) {
+    const auto ring = [&](std::size_t i) -> std::span<const V2> {
+        return rings.empty() ? std::span<const V2>(s.areas[i].poly) : std::span<const V2>(rings[i]);
+    };
+    std::vector<BoxedRing> holders;
+    std::vector<BoxedRing> water;
+    std::vector<BoxedRing> holes;
+    for (std::size_t i = 0; i < s.areas.size(); ++i) {
+        const std::span<const V2> r = ring(i);
+        if (std::ranges::find(lawn_kinds, s.areas[i].kind) == lawn_kinds.end() && r.size() >= 3) {
+            holders.push_back({.ring = r, .box = box_of(r)});
+        }
+    }
+    for (const std::vector<V2>& r : s.water) {
+        if (r.size() >= 3) water.push_back({.ring = r, .box = box_of(r)});
+    }
+    for (const std::vector<V2>& r : s.water_holes) {
+        if (r.size() >= 3) holes.push_back({.ring = r, .box = box_of(r)});
+    }
+    const auto in_any = [](std::span<const V2> p, const Box& b, const std::vector<BoxedRing>& rings) {
+        return std::ranges::any_of(rings, [&](const BoxedRing& q) { return ring_in(p, b, q); });
+    };
+    const auto held = [&](std::span<const V2> p) {
+        if (p.size() < 3) return false;
+        const Box b = box_of(p);
+        if (in_any(p, b, holders)) return true;
+        return in_any(p, b, water) && !in_any(p, b, holes);
+    };
+    // which go, before any moves: the holders' rings are the areas'
+    std::vector<bool> drop;
+    drop.reserve(s.areas.size());
+    for (std::size_t i = 0; i < s.areas.size(); ++i) drop.push_back(lawn_in_land(s.areas[i]) && !held(ring(i)));
+    std::vector<Area> kept;
+    kept.reserve(s.areas.size());
+    for (std::size_t i = 0; i < s.areas.size(); ++i) {
+        if (!drop[i]) kept.push_back(std::move(s.areas[i]));
+    }
+    s.areas = std::move(kept);
+}
+
 constexpr std::array<std::string_view, 5> paris_old = {"#D9CDB4", "#E2D7C1", "#D4C6AA", "#DDD2BC", "#CFC2A6"};
 constexpr std::array<std::string_view, 2> paris_plaster = {"#E8E0D0", "#EEE7D9"};
 constexpr std::array<std::string_view, 3> paris_new = {"#CFC8BC", "#C8C2B8", "#D8D2C6"};
@@ -800,11 +873,17 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     Frame frame(region.frame);
     relation_buildings(doc, s, frame, region.palette);
     closest_roofs(s);
+    // the areas' own rings: the lawns kept as areas are the same at every tolerance (drop_lawns)
+    std::vector<std::vector<V2>> area_rings;
     if (tolerance != 0.0) {
         for (auto* list : {&s.buildings, &s.parts}) {
             for (Building& b : *list) b.poly = simplify(b.poly, tolerance);
         }
-        for (Area& a : s.areas) a.poly = simplify(a.poly, tolerance);
+        area_rings.reserve(s.areas.size());
+        for (Area& a : s.areas) {
+            area_rings.push_back(std::move(a.poly));
+            a.poly = simplify(area_rings.back(), tolerance);
+        }
     }
     std::vector<std::span<const LL>> coast;
     region_features(doc, s, frame, region.name, coast);
@@ -816,6 +895,8 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
         if (oa != ob) return oa < ob;
         return -std::fabs(signed_area(a.poly)) < -std::fabs(signed_area(b.poly));
     });
+    // the lawns the land cover draws, not again as areas over everything in them
+    drop_lawns(s, area_rings);
     outlines(s);
     // each building's look from its own tags, the land use it stands in and the region's tradition
     apply_looks(s, {.region = region.name,

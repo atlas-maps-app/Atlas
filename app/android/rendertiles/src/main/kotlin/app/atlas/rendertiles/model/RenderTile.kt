@@ -109,7 +109,7 @@ class RenderTile(
  */
 object GroundKey {
     /**
-     * `regions.py`'s `draw_under` (regions.py:487–495): land cover, one path per kind, the kinds in the order their
+     * `regions.py`'s `draw_under` (regions.py:522–531): land cover, one path per kind, the kinds in the order their
      * first *drawn* polygon comes in `S['land']` (sorted by `LAND`'s draw order, then by area, largest first). A polygon
      * is drawn when `gpoly(cam, ring, 0.01)` keeps it: its ring, whole, projected and clipped at the near plane
      * (`Camera.poly`, margin 600), not culled, with an area over 0.3 px². Kinds of one draw order interleave by area, and

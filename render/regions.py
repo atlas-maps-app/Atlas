@@ -199,6 +199,11 @@ LAND = {     # kind: (colour, draw order). Generic tones for mapped land cover; 
     'sand': ('#E4D6B3', 4), 'beach': ('#EDE1C1', 4), 'dune': ('#E4D6B3', 4), 'bare_rock': ('#B1ACA2', 4), 'stone': ('#ADA89F', 4), 'scree': ('#B5B0A6', 4),
     'apron': ('#C7C5C0', 5), 'parking': ('#C9C6BE', 5), 'pedestrian': ('#D6CDBE', 5), 'playground': ('#D9B48A', 5), 'pitch': ('#A3C28C', 5), 'track': ('#C98F74', 5), 'flowerbed': ('#B9C48F', 5),
 }
+# A park's, a garden's and grass's lawn: amsterdam.py's AREA colour, drawn once among the land cover in its own draw order
+# (under the woods and the water), where the living map's rules drew it again as an area over everything in it: a park
+# mapped round a whole wood (the Amsterdamse Bos, 896 ha) covered its forest, its streams and its lake (30 Oct 2026);
+# one inside another area or in the water stays an area over it (areas_without_lawns)
+LAWN, LAWN_KINDS = '#A9C38A', ('park', 'garden', 'grass')
 def land_kind(t):
     if t.get('aeroway') == 'apron': return 'apron'
     if t.get('amenity') == 'parking' and t.get('parking') != 'underground': return 'parking'
@@ -207,6 +212,34 @@ def land_kind(t):
     if t.get('natural') in LAND: return t['natural']
     if t.get('landuse') in LAND: return t['landuse']
     return None
+
+def lawn_in_land(a):
+    """Whether an area's lawn is in the land cover: load puts its element in S['land'] as the same kind, which draw_under draws."""
+    t = a.get('tags') or {}
+    return a['kind'] in LAWN_KINDS and land_kind(t) == a['kind'] and not t.get('building') and t.get('boundary') != 'national_park'
+
+def box_of(p):
+    return (min(q[0] for q in p), max(q[0] for q in p), min(q[1] for q in p), max(q[1] for q in p))
+
+def ring_in(p, pb, q, qb):
+    """Whether ring p (its box pb) lies in ring q (its box qb): its box within q's and its centroid in q."""
+    if not (qb[0] <= pb[0] and pb[1] <= qb[1] and qb[2] <= pb[2] and pb[3] <= qb[3]): return False
+    cx, cz = centroid(p)
+    return pip(cx, cz, q)
+
+def areas_without_lawns(S, rings):
+    """S['areas'] without the lawns the land cover draws (lawn_in_land), but for those inside another area (a courtyard's
+    garden, a parking lot's grass islands, a park on a square) or in the water (an island its rings leave in it), by the
+    areas' own `rings`: the land cover would draw them under what holds them, so they stay areas, drawn over it as before."""
+    holders = [(r, box_of(r)) for a, r in zip(S['areas'], rings) if a['kind'] not in LAWN_KINDS and len(r) >= 3]
+    water = [(r, box_of(r)) for r in S['water'] if len(r) >= 3]
+    holes = [(r, box_of(r)) for r in S['water_holes'] if len(r) >= 3]
+    def held(p):
+        if len(p) < 3: return False
+        b = box_of(p)
+        if any(ring_in(p, b, q, qb) for q, qb in holders): return True
+        return any(ring_in(p, b, q, qb) for q, qb in water) and not any(ring_in(p, b, q, qb) for q, qb in holes)
+    return [a for a, r in zip(S['areas'], rings) if not lawn_in_land(a) or held(r)]
 
 # ------------------------------------------------------------------ load
 def base_of(view):
@@ -253,6 +286,7 @@ def load(name):
             if not b['roof_h'] and b['h']:
                 rl = num(b['tags'].get('roof:levels'))
                 b['roof_h'] = min(b['h'] * 0.35, rl * 2.8 if rl else 3.5); b.setdefault('guessed', {})['roof:height'] = True
+    area_rings = [a['poly'] for a in S['areas']]          # their own rings: the lawns kept as areas are the same at every tolerance
     tol = GENERALISE.get(view, GENERALISE.get(view.replace('_detail', '').replace('_kit', ''), GENERALISE.get(name, 0)))
     if tol:
         for b in S['buildings'] + S['parts']: b['poly'] = simplify(b['poly'], tol)
@@ -395,6 +429,7 @@ def load(name):
         import relief as RF
         S['under'] = lambda cam, th, far, defs: RF.draw(S, cam, th, far, defs, cfg_for(view), LAND, S['_lines'])
     else:
+        S['areas'] = areas_without_lawns(S, area_rings)      # their land cover draws the lawns
         S['under'] = lambda cam, th, far, defs: draw_under(S, cam, th, far, defs)
     if os.path.exists(dem_path) and not S.get('_terrain'):
         # the ground's real heights where the drawing stays flat (the streets are the drawing's level 0):
@@ -492,7 +527,8 @@ def draw_under(S, cam, th, far, defs):
         d = gpoly(cam, a['poly'], 0.01)
         if d: groups.setdefault(a['kind'], []).append(d)
     for kind, ds in groups.items():
-        out.append('<path d="%s" fill="%s"/>' % (''.join(ds), night_c(th, LAND[kind][0])))
+        c = night_c(th, LAWN, 0.18) if kind in LAWN_KINDS else night_c(th, LAND[kind][0])      # the lawn as its area drew it
+        out.append('<path d="%s" fill="%s"/>' % (''.join(ds), c))
     out.append('</g>')
     # forest and scrub seen from above: a canopy of crowns, generic, inside the mapped outline
     canopy = [a for a in S['land'] if a['kind'] in ('forest', 'wood', 'scrub')]
