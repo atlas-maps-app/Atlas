@@ -251,7 +251,7 @@ TEST_CASE("a window's ranges are placed from the heaps' low offsets and a level'
         ATLAS_REQUIRE_OR_RETURN(scene::HeapRange{}, r.has_value(), r.error().text());
         return *r;
     };
-    // windows and levels in turn, as a pinch out past 9 km and back builds them
+    // windows and levels in turn, as a pinch out and back builds them
     std::vector<scene::HeapRange> windows;
     std::vector<scene::HeapRange> levels;
     for (int i = 0; i < 3; ++i) {
@@ -287,9 +287,9 @@ TEST_CASE("a window's ranges are placed from the heaps' low offsets and a level'
     CHECK(claimed->offset == held->offset);
     h.give_back(beside);
     h.give_back(*claimed);
-    // the levels gone (the camera back within 9 km): their bytes one piece beside the windows', a window's walls that
-    // size placed in it; placed among the windows they left pieces too small for one (Alkmaar after a pinch out to
-    // 12 km and back: 37.7 MB free, no piece of 6.05 MB)
+    // the levels gone (the camera back within 4.7 km of their places): their bytes one piece beside the windows', a
+    // window's walls that size placed in it; placed among the windows they left pieces too small for one (Alkmaar after
+    // a pinch out to 12 km and back: 37.7 MB free, no piece of 6.05 MB)
     for (const scene::HeapRange& r : levels) h.retire(r, 3);
     h.bound(4);
     h.collect(3);
@@ -1518,7 +1518,7 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     // each, and their cell's levels (load::build_levels: an L13 and an L12 tile each, the hall large enough for the
     // far level's), all in the store as the phone keeps them; the camera 1.6 km from the south window's middle,
     // looking north 70° from down, so the north place lies 7.5 km from the eye, in the coarse level's reach (4.7 to
-    // 9.4 km).
+    // 12 km).
     const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels";
     std::error_code ignored;
     std::filesystem::create_directories(folder, ignored);
@@ -1582,11 +1582,9 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
         auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
         std::atomic<double> now{0};
-        // moving out: a tile not drawn for 0.1 s goes whatever the heaps hold, as one of a dense view's would; the
-        // levels drawn from any distance (the world's draws them beyond 9 km alone)
+        // moving out: a tile not drawn for 0.1 s goes whatever the heaps hold, as one of a dense view's would
         auto world = scene::World::create(*session->device, (*builder)->passes(),
                                           {.workers = 3,
-                                           .levels_from = 0.0,
                                            .idle_seconds = out > 0 ? 0.1 : 2.0,
                                            .keep_fraction = out > 0 ? 0.0 : 0.75,
                                            .plan_fraction = plan_fraction,
@@ -1679,12 +1677,13 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     CHECK(std::ranges::find(all->levels, north_far) != all->levels.end());
     CHECK(std::ranges::all_of(all->levels, [](const tiles::TileKey& k) { return k.z == 12 || k.z == 13; }));
     for (const tiles::TileKey& k : all->levels) CHECK(std::ranges::count(all->levels, k) == 1);
-    // Over the south window from 300 m, then out to 12 km at once (the place 12 km from the eye, at its far level),
-    // tiles not drawn let go of after 0.1 s: the first frame draws the south L12, kept under its place, not its L14,
-    // which goes as no place draws it. Without it kept, the L12 had gone (built as the L14's ancestor, then idle), the
-    // L14 stood in for its place while the L12 was built again, and in the heaps of a dense view held the room the L12
-    // tiles around it waited for, which then showed nothing (the Westerkerk zoomed out from 5 to 20 km).
-    const std::optional<Seen> zoomed_out = look(1.0, 12'000.0);
+    // Over the south window from 300 m, then out to 13 km at once (the place 13 km from the eye, beyond the coarse
+    // level's 12 km, at its far level), tiles not drawn let go of after 0.1 s: the first frame draws the south L12,
+    // kept under its place, not its L14, which goes as no place draws it. Without it kept, the L12 had gone (built as
+    // the L14's ancestor, then idle), the L14 stood in for its place while the L12 was built again, and in the heaps of
+    // a dense view held the room the L12 tiles around it waited for, which then showed nothing (the Westerkerk zoomed
+    // out from 5 to 20 km).
+    const std::optional<Seen> zoomed_out = look(1.0, 13'000.0);
     ATLAS_REQUIRE(zoomed_out.has_value());
     CHECK(drew(*zoomed_out, south_far));
     CHECK_FALSE(drew(*zoomed_out, south));
@@ -1713,27 +1712,26 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     (void)session->take_messages();
 }
 
-TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alone, as alpha 23; past it, zooming out "
-          "and back with the heaps full, the windows stand in for the levels and the levels for the windows, each "
-          "tile built once, and a level's tile that found no room is built once the room has come") {
+TEST_CASE("a frame cell's levels from every distance: its windows within 4.7 km of the eye, its L13 to 12 km, its L12 "
+          "beyond and kept under every place; zooming in and out with the heaps full, the windows and the levels stand "
+          "in for each other, each tile built once, and a level's tile that found no room is built once the room has "
+          "come") {
     // Two windows of cell 525/336 side by side from south to north, a hall of four floors 40 m square in the middle of
     // each, and their cell's levels (their L13 tile and their L12 tile), all in the store as the phone keeps them; the
     // camera looking straight down at a point 100 m north of the middle between them, so the north window is the
-    // larger on the screen. The heaps hold the probe's two windows (272 bytes each) and not the L12 (80 bytes) beside
-    // them; one worker builds the tiles in the order asked, so their ranges' places in the heaps are the same each
-    // run. From 8.5 km both places are drawn by their windows, as alpha 23
-    // drew them: no level asked for, kept or wanted of the phone, the cover reaching 12 km. From 9.5 km both are drawn
-    // by their L12, 9.5 km from the eye, the windows standing in until it comes: one window goes for its room, and it
-    // is built once; the other, its place the L12's now, goes as tiles not drawn for 0.1 s do here. Back at 8.5 km, the
-    // first window fits beside the L12, which stands in for the second until the first has come and then goes for it:
-    // each built once, and a place without a tile only while its own is built. Out once more, from 9.2 km the places
-    // ask for their L13 (9.2 km from the eye, within the coarse level's 9.4), the L12 standing in and kept under them,
-    // and asked for as their ancestor while the L13 comes though it is resident: with the heaps full but for a piece
-    // too small for it, the L13 finds no room, and once the test's ranges are back it is built. Without the room made
-    // for it, the L12 found no room, the windows that stood in were drawn and never went, and it was never built (the
-    // Westerkerk pinched out past 9 km: its heaps full of windows); with the resident L12 counted as room to make, it
-    // took the room first and held the L13 back for good (the Westerkerk from 12 km).
-    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-switch";
+    // larger on the screen. The heaps hold the probe's two windows (272 bytes each) and the L12 (80 bytes) kept under
+    // them, and not the L13 (80 bytes) beside them; one worker builds the tiles in the order asked, so their ranges'
+    // places in the heaps are the same each run. From 4 km both places are drawn by their windows, within the finest
+    // level's 4.7 km, the L12 kept under them. From 13 km by the L12 at once, beyond the coarse level's 12 km, nothing
+    // built. From 8.5 km by their L13 (alpha 24 drew its windows alone within 9 km of its target), the L12 kept under
+    // it. Back at 4 km the second window finds no room beside the levels, and the L13, standing in until it comes,
+    // goes for it (its places keep the L12), each window built once and none found no room. Out to 8.5 km with the
+    // heaps full of the windows and the L12: the windows stand in while the L13 comes, the less seen goes for its
+    // room, and the L13 is built once; the other goes as tiles not drawn for 0.1 s do here. Back at 8.5 km from 13 km
+    // with the heaps full but for a piece too small for the L13: it finds no room, the L12 standing in and asked for as
+    // its places' ancestor though resident, and once the test's ranges are back the L13 is built. No frame leaves a
+    // window's place without a tile.
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels-reach";
     std::error_code ignored;
     std::filesystem::create_directories(folder, ignored);
     const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
@@ -1784,11 +1782,12 @@ TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alon
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     std::atomic<double> now{0};
+    // 688 bytes: the windows and the L12 (624), not the L13 beside them (704)
     auto world = scene::World::create(*session->device, (*builder)->passes(),
                                       {.workers = 1,
                                        .idle_seconds = 0.1,
                                        .keep_fraction = 0.0,
-                                       .heaps = {.initial = 600, .total = 600},
+                                       .heaps = {.initial = 688, .total = 688},
                                        .sun = {.enabled = false},
                                        .clock = [&now] { return now.load(); }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
@@ -1814,8 +1813,7 @@ TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alon
     std::uint64_t n = 0;
     std::size_t most_holes = 0;
     // `count` frames from `distance`, each frame's retired ranges freed after it (as the heaps' globals do as a frame
-    // is recorded), the most places of a window a frame left without a tile among them (the L12's other places, which
-    // have no window, wait for it: alpha 23 drew nothing there)
+    // is recorded), the most places of a window a frame left without a tile among them
     const auto frames = [&](double distance, std::uint64_t count) {
         c.distance = distance;
         (*builder)->set_inputs({.camera = c, .scene = &w});
@@ -1834,54 +1832,91 @@ TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alon
     const auto drew = [&w](const tiles::TileKey& k) {
         return std::ranges::any_of(w.cover()->tiles(), [&k](const scene::CoverTile& t) { return t.drawn->key == k; });
     };
-    const auto resident_levels = [&w] {
-        return std::ranges::count_if(w.residency().resident(), [](const auto& t) { return t->key.z != 14; });
+    const auto resident = [&w](const tiles::TileKey& k) {
+        return std::ranges::any_of(w.residency().resident(), [&k](const auto& t) { return t->key == k; });
     };
-    frames(8'500.0, 2);
+    const auto kept = [&w](const tiles::TileKey& k) {
+        return std::ranges::any_of(w.cover()->kept(), [&w, &k](std::uint32_t handle) {
+            return std::ranges::any_of(w.residency().resident(),
+                                       [&](const auto& t) { return t->handle == handle && t->key == k; });
+        });
+    };
+    const auto wanted_of_the_phone = [&w](const tiles::TileKey& k) {
+        const std::vector<tiles::TileKey> wanted = w.wanted_levels();
+        return std::ranges::find(wanted, k) != wanted.end();
+    };
+    frames(4'000.0, 2);
     w.set_active(std::format("window/14/{}/{}", south.x, south.y));
-    frames(8'500.0, 60);
+    frames(4'000.0, 60);
     ATLAS_REQUIRE(w.active() != nullptr);
-    // alpha 23's view: the windows alone, within 12 km
-    REQUIRE(drew(south));
-    REQUIRE(drew(north));
-    CHECK(resident_levels() == 0);
-    CHECK(w.cover()->requests().empty());
-    CHECK(w.cover()->kept().empty());
-    CHECK(w.wanted_levels().empty());
-    CHECK(w.levels_in_view().empty());
-    CHECK(w.far_of(8'500.0) == scene::WorldOptions{}.far);
-    CHECK(w.cover()->holes() == 0);
-    CHECK(probe->built.load() == 2);
-    // past 9 km: the L12, built once in a window's room
-    frames(9'500.0, 60);
-    CHECK(drew(far));
-    CHECK_FALSE(drew(south));
-    CHECK_FALSE(drew(north));
-    CHECK(resident_levels() == 1);
-    CHECK(w.residency().resident().size() == 1);
-    CHECK(w.levels_in_view() == std::vector<tiles::TileKey>{far}); // its file kept while it is drawn
-    CHECK(w.far_of(9'500.0) == 19'000.0);
-    CHECK(w.cover()->holes() == 0);
-    CHECK(most_holes <= 1); // the place whose window went for the L12, while it was built
-    CHECK(probe->built.load() == 3);
-    CHECK(w.residency().stats().failed == 0);
-    const std::size_t out_holes = most_holes;
-    // and back: the windows, each built once more, the second in the L12's room
-    frames(8'500.0, 60);
+    // within 4.7 km: the windows, the L12 kept under them
     CHECK(drew(south));
     CHECK(drew(north));
-    CHECK(resident_levels() == 0);
-    CHECK(w.levels_in_view().empty());
+    CHECK_FALSE(drew(far));
+    CHECK(kept(far));
+    CHECK_FALSE(resident(coarse));
+    CHECK(w.residency().resident().size() == 3);
+    CHECK(w.levels_in_view() == std::vector<tiles::TileKey>{far}); // its file kept while the places keep it
+    CHECK_FALSE(wanted_of_the_phone(far));                         // the store holds it
+    CHECK(w.far_of(4'000.0) == scene::WorldOptions{}.far);
     CHECK(w.cover()->holes() == 0);
-    CHECK(most_holes <= 1);
-    CHECK(probe->built.load() == 5);
-    CHECK(w.residency().stats().failed == 0);
-    const std::size_t back_holes = most_holes;
-    // out once more, and at 9.2 km: the L13 asked for, the L12 resident and asked for as its places' ancestor; the
-    // heaps full but for a piece too small for the L13, then the test's ranges back
-    frames(9'500.0, 60);
+    CHECK(w.cover()->missing() == 0);
+    CHECK(probe->built.load() == 3);
+    // beyond 12 km: the L12 at once, the windows not asked for
+    frames(13'000.0, 60);
     CHECK(drew(far));
+    CHECK_FALSE(drew(coarse));
+    CHECK(w.residency().resident().size() == 1);
+    CHECK(w.cover()->requests().empty());
+    CHECK(w.levels_in_view() == std::vector<tiles::TileKey>{far});
+    CHECK(w.far_of(13'000.0) == 26'000.0);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes == 0);
+    CHECK(probe->built.load() == 3);
+    // from 8.5 km: the L13, the L12 kept under it
+    frames(8'500.0, 60);
+    CHECK(drew(coarse));
+    CHECK_FALSE(drew(far));
+    CHECK_FALSE(drew(south));
+    CHECK_FALSE(drew(north));
+    CHECK(kept(far));
+    CHECK(w.residency().resident().size() == 2);
+    CHECK(w.levels_in_view() == std::vector<tiles::TileKey>{coarse, far});
+    CHECK(w.far_of(8'500.0) == 17'000.0);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes == 0);
+    CHECK(probe->built.load() == 4);
+    // back at 4 km: the windows, the second in the L13's room
+    frames(4'000.0, 60);
+    CHECK(drew(south));
+    CHECK(drew(north));
+    CHECK_FALSE(drew(coarse));
+    CHECK_FALSE(resident(coarse));
+    CHECK(kept(far));
+    CHECK(w.residency().resident().size() == 3);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(w.cover()->missing() == 0);
+    CHECK(most_holes == 0);
     CHECK(probe->built.load() == 6);
+    CHECK(w.residency().stats().failed == 0);
+    // out to 8.5 km with the heaps full: the L13 in a window's room
+    frames(8'500.0, 60);
+    CHECK(drew(coarse));
+    CHECK_FALSE(resident(south));
+    CHECK_FALSE(resident(north));
+    CHECK(kept(far));
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes == 0);
+    CHECK(probe->built.load() == 7);
+    CHECK(w.residency().stats().failed == 0);
+    // out to 13 km: the L12 drawn, the L13 gone as not drawn
+    frames(13'000.0, 60);
+    CHECK(drew(far));
+    CHECK(w.residency().resident().size() == 1);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes == 0);
+    CHECK(probe->built.load() == 7);
+    // back at 8.5 km, the heaps full but for a piece too small for the L13, then the test's ranges back
     std::vector<scene::HeapRange> blockers; // the heaps' free bytes but 48, in the pieces they are free in
     for (std::uint32_t size = 512; size >= 16 && w.heaps()->free_bytes() > 48;) {
         auto r = w.heaps()->allocate(
@@ -1894,43 +1929,44 @@ TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alon
         }
     }
     ATLAS_REQUIRE(w.heaps()->free_bytes() <= 48);
-    frames(9'200.0, 20);
+    frames(8'500.0, 20);
     CHECK(drew(far)); // standing in
     CHECK_FALSE(drew(coarse));
     CHECK(w.residency().stats().failed == 1);
     CHECK(std::ranges::any_of(w.cover()->requests(), [&far](const scene::Request& r) { return r.key == far; }));
     for (const scene::HeapRange& r : blockers) w.heaps()->retire(r, n);
-    frames(9'200.0, 20);
+    frames(8'500.0, 20);
     CHECK(drew(coarse));
     CHECK(w.cover()->holes() == 0);
-    CHECK(probe->built.load() == 7);
+    CHECK(probe->built.load() == 8);
     CHECK(w.residency().stats().failed == 1);
-    // Back within 9 km with the levels' bytes over the heaps' high end (the L13, the L12, and a far view's other
-    // levels, the test's ranges, which go as the camera comes within 9 km, as tiles not drawn do): the windows come
-    // back from the low end and the levels go, their bytes one piece beside the windows', which a window's walls that
-    // size take. Placed among the windows, the levels left pieces between them too small for one (Alkmaar after a pinch
-    // out to 12 km and back: 37.7 MB free and no piece of 6.05 MB).
+    // In to 4 km with the levels' bytes over the heaps' high end (the L13, the L12, and a far view's other levels, the
+    // test's ranges, which go as tiles not drawn do): the windows come back from the low end and the L13 goes, the
+    // bytes free one piece between the windows and the L12, which a window's walls that size take. Placed among the
+    // windows, the levels left pieces between them too small for one (Alkmaar after a pinch out to 12 km and back:
+    // 37.7 MB free and no piece of 6.05 MB).
     std::vector<scene::HeapRange> far_levels;
     for (const std::uint32_t size : {16U, 32U}) {
         auto r = w.heaps()->allocate(scene::HeapKind::ground, size, 16, scene::HeapEnd::high);
         REQUIRE(r.has_value());
         far_levels.push_back(*r);
     }
-    frames(8'500.0, 1);
+    frames(4'000.0, 1);
     for (const scene::HeapRange& r : far_levels) w.heaps()->retire(r, n);
-    frames(8'500.0, 60);
+    frames(4'000.0, 60);
     CHECK(drew(south));
     CHECK(drew(north));
-    CHECK(resident_levels() == 0);
+    CHECK_FALSE(resident(coarse));
+    CHECK(kept(far));
     CHECK(w.cover()->holes() == 0);
     CHECK(w.cover()->missing() == 0);
-    CHECK(probe->built.load() == 9);
+    CHECK(most_holes == 0);
+    CHECK(probe->built.load() == 10);
     CHECK(w.heaps()->largest_free() == w.heaps()->free_bytes());
     auto big = w.heaps()->allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(w.heaps()->free_bytes()), 16);
     CHECK(big.has_value());
     if (big) w.heaps()->retire(*big, n);
-    MESSAGE("out past 9 km and back, the most places without a tile in a frame: " << out_holes << " and " << back_holes
-                                                                                  << "; " << w.tiles_line());
+    MESSAGE(w.tiles_line());
     (void)session->take_messages();
 }
 
@@ -1981,9 +2017,8 @@ TEST_CASE("a place whose pack holds no coarser tile is drawn within the cover's 
         auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
         std::atomic<double> now{0};
-        // the levels' reach from any distance (the world's from 9 km alone)
         auto world = scene::World::create(*session->device, (*builder)->passes(),
-                                          {.workers = 3, .levels_from = 0.0, .clock = [&now] { return now.load(); }});
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
         scene::World& w = **world;
         for (const auto& [name, pack] : packs) {
@@ -2028,7 +2063,7 @@ TEST_CASE("a place whose pack holds no coarser tile is drawn within the cover's 
     CHECK(at(*from6, south).has_value());
     const std::optional<double> north6 = at(*from6, north);
     ATLAS_REQUIRE(north6.has_value());
-    CHECK(*north6 > scene::WorldOptions{}.coarse_reach);
+    CHECK(*north6 > scene::WorldOptions{}.fine_reach);
     CHECK(*north6 <= scene::WorldOptions{}.far);
     const auto from7 = look(7'000.0);
     ATLAS_REQUIRE(from7.has_value());

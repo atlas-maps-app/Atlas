@@ -484,7 +484,6 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
 
 std::vector<tiles::TileKey> World::want_levels(const view::View& view, const style::CameraState& camera,
                                                const view::GroundFrame& frame) const {
-    if (!levels_on_) return {}; // within levels_from the windows alone, as alpha 23 took them
     const Frustum frustum(view.camera(), 40.0, far_);
     const std::int32_t lat = tiles::grid_round(camera.latitude);
     const std::int32_t lon = tiles::grid_round(camera.longitude);
@@ -653,7 +652,6 @@ void World::update(const frame::FrameState& state) {
         take_neighbour_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         // without a pack the view looks at its target from a frame centred on it: the windows wanted there
-        levels_on_ = levels_at(state.camera.distance);
         far_ = far_of(state.camera.distance);
         if (state.view) {
             const double lat0 = state.camera.latitude;
@@ -671,8 +669,6 @@ void World::update(const frame::FrameState& state) {
     }
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
-    // the frame cells' levels beyond levels_from, their windows alone within it (alpha 23's cover)
-    levels_on_ = levels_at(state.placed ? state.placed->dist() : state.camera.distance);
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
@@ -707,7 +703,6 @@ void World::update(const frame::FrameState& state) {
         .coarse_reach = options_.coarse_reach,
         .far = far_,
         .fine_far = options_.far,
-        .levels = levels_on_,
         .margin_px = 40.0,
         .fade_seconds = 0.18,
         .coarser = coarser_.get(),
@@ -717,7 +712,7 @@ void World::update(const frame::FrameState& state) {
         .mask = mask_,
         .neighbours = neighbours(),
         .neighbour_tolerances = neighbour_tolerances,
-        .budget = levels_on_ ? plan_budget : 0,
+        .budget = plan_budget,
     };
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
@@ -740,7 +735,6 @@ void World::update(const frame::FrameState& state) {
                                           .coarse_reach = options_.coarse_reach,
                                           .far = far_,
                                           .fine_far = options_.far,
-                                          .levels = levels_on_,
                                           .margin_px = in.margin_px,
                                           .fade_seconds = in.fade_seconds};
             incoming_cover_.update(*state.view, frames_, incoming_in, *residency_, seconds);
@@ -769,10 +763,7 @@ void World::update(const frame::FrameState& state) {
         CoverInputs landing_in = in;
         landing_in.pinned = placed.view().has_value();
         landing_in.tolerance = head.tolerance_of(placed.view(), placed.dist()).value_or(0);
-        // where it lands: the levels, or its windows alone (levels_from), as that frame will draw it
-        landing_in.levels = levels_at(placed.dist());
         landing_in.far = far_of(placed.dist());
-        landing_in.budget = landing_in.levels ? plan_budget : 0;
         landing_cover_.update(view::View(placed.camera(), state.view->device()), frames_, landing_in, *residency_,
                               seconds);
         const std::size_t own = asked_.size();
@@ -846,8 +837,8 @@ void World::make_room() {
     }
     if (h == own) return;
     // The one the room goes to first: the coarsest of those left (ties: the residency's order), whose tile stands in
-    // at the most places once resident (zooming out past levels_from, a frame cell's L12 over its sixteen places'
-    // windows, which may then go without a hole).
+    // at the most places once resident (zooming out, a frame cell's L12 over its sixteen places' windows, which may
+    // then go without a hole).
     std::size_t first = h;
     for (std::size_t j = h + 1; j < own; ++j) {
         if (!resident[order[j]] && mine[order[j]].key.z < mine[order[first]].key.z) first = j;
@@ -902,9 +893,9 @@ void World::make_room() {
     // it only where it lies beside one. The tiles nothing draws, keeps or asks for go, and the stand-ins whose places
     // all keep another resident level, those that join the largest piece first, until a piece holds it
     // (Heaps::joined_with); and it is asked for once that piece has come, those after it held back meanwhile. Where
-    // they cannot make one, the stand-ins go as for a tile short of bytes (below). (Within 9 km after a pinch out to 12
-    // km and back, Alkmaar's window 14/8411/5362, 6.05 MB of walls, found no piece with 37.7 MB free and waited for
-    // good: the levels had left the pieces between the windows.)
+    // they cannot make one, the stand-ins go as for a tile short of bytes (below). (Back at 5 km after a pinch out to
+    // 12 km, alpha 24's Alkmaar's window 14/8411/5362, 6.05 MB of walls, found no piece with 37.7 MB free and waited
+    // for good: the levels had left the pieces between the windows.)
     if (stuck && waits[order[first]].refused > heaps_->largest_free(waits[order[first]].kind)) {
         std::vector<std::pair<tiles::TileKey, std::string_view>> backed;
         for (const Standing& t : standing) {

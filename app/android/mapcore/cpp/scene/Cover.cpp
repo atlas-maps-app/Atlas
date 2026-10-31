@@ -116,21 +116,15 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         return;
     }
     const Frustum frustum(view.camera(), in.margin_px, in.far);
-    // a frame cell's levels wanted with the levels alone; a region's own levels always (CoverInputs::levels)
-    const auto levels = [&in](const tiles::StorePack& p) { return in.levels || p.kind != tiles::PackKind::window; };
     pack_id_ = in.pack->id;
-    walk({.pack = in.pack, .id = pack_id_, .active = true, .tolerance = in.tolerance, .levels = levels(*in.pack)},
-         frames, frustum, in, std::nullopt, {});
+    walk({.pack = in.pack, .id = pack_id_, .active = true, .tolerance = in.tolerance}, frames, frustum, in,
+         std::nullopt, {});
     const bool coarser = in.coarser != nullptr && in.coarser != in.pack && in.coarser->pack.is_render() &&
                          in.coarser->pack.head() != nullptr;
     if (coarser) {
         coarser_id_ = in.coarser->id;
-        walk({.pack = in.coarser,
-              .id = coarser_id_,
-              .active = false,
-              .tolerance = in.coarser_tolerance,
-              .levels = levels(*in.coarser)},
-             frames, frustum, in, in.mask, {});
+        walk({.pack = in.coarser, .id = coarser_id_, .active = false, .tolerance = in.coarser_tolerance}, frames,
+             frustum, in, in.mask, {});
     }
     // The neighbours, in the world's order, each where neither the active nor the coarser pack nor a neighbour before
     // it has a tile of its finest level.
@@ -142,11 +136,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         const std::span<const tiles::StorePack* const> nearer = std::span(above).first(above_count);
         if (std::ranges::find(nearer, n) != nearer.end()) continue; // drawn already
         neighbour_ids_.at(i) = n->id;
-        walk({.pack = n,
-              .id = neighbour_ids_.at(i),
-              .active = false,
-              .tolerance = in.neighbour_tolerances.at(i),
-              .levels = levels(*n)},
+        walk({.pack = n, .id = neighbour_ids_.at(i), .active = false, .tolerance = in.neighbour_tolerances.at(i)},
              frames, frustum, in, std::nullopt, nearer);
         above.at(above_count++) = n;
     }
@@ -200,13 +190,6 @@ void Cover::walk(const Drawn& drawn, const view::Frames& frames, const Frustum& 
                                      y >> static_cast<std::uint32_t>(fine - z));
             if (pack.chunks().find(key) != nullptr) s.keys.at(k) = key;
         }
-        // without its levels, a cell's place is its window within fine_far, as before them; its levels' tiles there
-        // only stand in while it comes
-        if (!drawn.levels) {
-            if (!s.keys[0] || d > in.fine_far) return;
-            spots_.push_back(s);
-            return;
-        }
         if (!s.keys[1] && !s.keys[2] && d > in.fine_far) return;
         if (s.keys[0] && ((drawn.active && in.pinned) || d <= in.fine_reach)) {
             s.want = 0;
@@ -229,8 +212,8 @@ void Cover::walk(const Drawn& drawn, const view::Frames& frames, const Frustum& 
         place(c.tile.x, c.tile.y, d, frustum.share(box) + (1.0e-3 / (1.0 + d)), true); // by share, nearest first
     }
     // The coarser levels' places where no finer level has a tile (the sea, a lake's middle; the places of a frame
-    // cell whose windows the phone has not taken), each at its own distance; none without the levels.
-    for (std::size_t k = 1; k < count && drawn.levels; ++k) {
+    // cell whose windows the phone has not taken), each at its own distance.
+    for (std::size_t k = 1; k < count; ++k) {
         const std::uint8_t z = head.levels[k];
         const auto gap = static_cast<std::uint32_t>(fine - z);
         const std::uint32_t n = std::uint32_t{1} << gap;
@@ -404,8 +387,8 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
             continue;
         }
         request(key, Lane::visible, s.priority, drawn.tolerance, id, estimate(drawn, key, residency));
-        // the cheapest coarser level as its ancestor, while it comes (without the levels, none: they only stand in)
-        for (std::size_t k = count; drawn.levels && k-- > want + 1;) {
+        // the cheapest coarser level as its ancestor, while it comes
+        for (std::size_t k = count; k-- > want + 1;) {
             if (const std::optional<tiles::TileKey>& ancestor = keys.at(k)) {
                 request(*ancestor, Lane::ancestor, s.priority, drawn.tolerance, id,
                         estimate(drawn, *ancestor, residency));

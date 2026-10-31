@@ -2,16 +2,17 @@
 // the finest level's reach (4.7 km of the eye), derived by stage P from the cell's L14 windows alone, so a level's tile
 // is a function of its places' packs, the same bytes whoever derives it.
 //
-// L13 (coarse_level), drawn from 4.7 to 9.4 km of the eye: four places a tile, cells_per_side 4, so a place is 2 × 2 of
-// its cells and each feature keeps the quarter of its place its L14 cell lies in; a place drawn at L14 and its
-// neighbour's L13 cells never draw a feature twice. Every feature the frame draws beyond 4.7 km, each in its own look:
+// L13 (coarse_level), drawn from 4.7 to 12 km of the eye (as far as alpha 23's windows drew every building; built for
+// 4.7 to 9.4 km): four places a tile, cells_per_side 4, so a place is 2 × 2 of its cells and each feature keeps the
+// quarter of its place its L14 cell lies in; a place drawn at L14 and its neighbour's L13 cells never draw a feature
+// twice. Every feature the frame draws beyond 4.7 km, each in its own look:
 // its ring at the ladder's 1.5 m (its keep codes: the renders' 0.42 CSS px at 4.7 km), its line at 1.5 m by
 // Douglas-Peucker; what the renders leave out at 4.7 km left out (a face under 0.12 px², a ground polygon under 0.2
 // px²; the doors and street furniture, the quay walls, the cranes, gantries, conveyors and power lines, which they draw
 // only closer; a shop's places and hours, a kit's shutters and party walls; the canal names and the variants of the
 // live map's bands).
 //
-// L12 (far_level), drawn from 9.4 km to the far plane (30 km at most) and the first stand-in of every view: sixteen
+// L12 (far_level), drawn from 12 km to the far plane (30 km at most) and the first stand-in of every view: sixteen
 // places a tile, cells_per_side 4, so each cell is one place whole. The same rules at twice the depth (rings at the
 // ladder's 4 m, a face under 0.12 px² and a ground polygon under 0.2 px² of 9.4 km left out), and of the buildings only
 // the large: a footprint of 1,000 m² or more, or 30 m high or more, each with all its parts, and an outline with a part

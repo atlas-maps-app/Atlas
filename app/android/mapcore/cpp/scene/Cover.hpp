@@ -84,19 +84,15 @@ struct CoverInputs {
     /// The ladder index tiles are built at (rhead's tolerance_of for the view).
     std::uint8_t tolerance = 0;
     /// How far from the eye the finest level serves (D3: L14 within about 4.7 km), and the next where a third follows
-    /// it (a frame cell's coarse level, L13, before its far level, L12: ENGINE.md one pack per country, step 7).
+    /// it (a frame cell's coarse level, L13, before its far level, L12: ENGINE.md one pack per country, step 7; to 12
+    /// km, as far as alpha 23's windows drew every building).
     double fine_reach = 4700.0;
-    double coarse_reach = 9400.0;
+    double coarse_reach = 12'000.0;
     /// How far the cover reaches (the frustum's far plane, metres of depth).
     double far = 12'000.0;
     /// How far a place whose pack holds no coarser tile there (a cell before the phone took its levels, windows outside
     /// the countries) is drawn at its finest level: the cover's reach before the levels.
     double fine_far = 12'000.0;
-    /// Whether the frame cells' levels are drawn (the world's levels_from: a camera beyond 9 km of its target). Without
-    /// them a cell's places are drawn as before the levels (alpha 23): its windows alone, each place in view within
-    /// fine_far at its finest level, no level's tile asked for, planned or kept; one already resident (a zoom in from
-    /// beyond) stands in for a window that has not come, until it has. A region's own levels are drawn either way.
-    bool levels = true;
     /// The renders' least cull margin, CSS px.
     double margin_px = 40.0;
     /// How long a tile fades in, seconds.
@@ -183,14 +179,12 @@ public:
     [[nodiscard]] std::span<const StandIn> spare() const noexcept { return spare_; }
 
 private:
-    /// A pack drawn this frame: its store's pack and id, whether it is the active one, its tiles' ladder index, and
-    /// whether its coarser levels are wanted (CoverInputs::levels; a region's always).
+    /// A pack drawn this frame: its store's pack and id, whether it is the active one, and its tiles' ladder index.
     struct Drawn {
         const tiles::StorePack* pack = nullptr;
         std::string_view id;
         bool active = false;
         std::uint8_t tolerance = 0;
-        bool levels = true;
     };
     /// One place of a drawn pack's finest level in view: its pack (drawn_'s index), where it lies, how far it is and
     /// its priority, its levels' tiles there (finest first; none where the pack has none), the level its distance asks
