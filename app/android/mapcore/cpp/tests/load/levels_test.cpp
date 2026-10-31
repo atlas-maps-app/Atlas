@@ -9,6 +9,7 @@
 //   - the store takes the levels' tiles into the cell's pack beside its windows, its levels 14, 13 and 12;
 //   - windows that hold nothing to draw give no levels; windows of two frame cells are refused.
 #include "base/arena.hpp"
+#include "geometry/Walls.hpp"
 #include "load/Levels.hpp"
 #include "load/Window.hpp"
 #include "tests/base/require.hpp"
@@ -36,6 +37,7 @@
 
 namespace {
 
+namespace gm = atlas::geometry;
 namespace load = atlas::load;
 namespace tl = atlas::tiles;
 
@@ -188,6 +190,45 @@ TEST_CASE(
     const std::map<std::int64_t, std::uint32_t> want_far_parts{{31, 2}, {32, 2}};
     CHECK(cells_of(f->tile, tl::LayerId::part) == want_far_parts);
     CHECK(far.buildings == 5);
+    // A level's walls are lean: one cell each, drawn at any distance, without the near cells (drawn within 460 m)
+    // nor the windowed walls (within 760 m at most), and its buildings without the columns only those read (their
+    // storeys, their no-windows mark, their walls' material, their look's kind); the window's walls have them all.
+    const auto wd = decoded(west->pack);
+    ATLAS_REQUIRE(wd != nullptr);
+    const auto walls = [](const Decoded& d) {
+        return gm::build_buildings({.tile = &d.tile, .head = d.pack.head(), .level = 0, .region = {}, .kind = 0});
+    };
+    const auto near_cells = [](const gm::TileBuildings& g) {
+        return std::ranges::count_if(g.edged,
+                                     [](const gm::Prim& p) { return p.kind == gm::PrimKind::cell && p.ncol > 0; });
+    };
+    const gm::TileBuildings window_walls = walls(*wd);
+    CHECK(near_cells(window_walls) > 0);
+    CHECK(window_walls.windows > 0);
+    CHECK(!window_walls.window_walls.empty());
+    const tl::Layer* window_layer = wd->tile.layer(tl::LayerId::building);
+    ATLAS_REQUIRE(window_layer != nullptr);
+    CHECK(window_layer->column(tl::building::levels).present);
+    for (const Decoded* level : {c.get(), f.get()}) {
+        const gm::TileBuildings g = walls(*level);
+        CHECK(!g.edged.empty());
+        CHECK(near_cells(g) == 0);
+        CHECK(std::ranges::all_of(g.edged, [](const gm::Prim& p) {
+            return p.kind != gm::PrimKind::cell || (p.flags & gm::prim_flag::any) == gm::prim_flag::any;
+        }));
+        CHECK(g.window_walls.empty());
+        CHECK(g.windows == 0);
+        CHECK(g.kit_walls.empty());
+        const tl::Layer* layer = level->tile.layer(tl::LayerId::building);
+        ATLAS_REQUIRE(layer != nullptr);
+        for (const std::uint8_t slot :
+             {tl::building::levels, tl::building::no_win, tl::building::mat_draw, tl::building::kind}) {
+            CHECK_FALSE(layer->column(slot).present);
+        }
+        MESSAGE("L" << int{level->tile.header.level} << ": " << g.edged.size() << " walls' primitives, the window's "
+                    << window_walls.edged.size() << " (" << near_cells(window_walls) << " near cells, "
+                    << window_walls.windows << " windows)");
+    }
     // both hold the street and the park
     CHECK(count_of(c->tile, tl::LayerId::road) == count_of(f->tile, tl::LayerId::road));
     CHECK(count_of(f->tile, tl::LayerId::road) >= 1);

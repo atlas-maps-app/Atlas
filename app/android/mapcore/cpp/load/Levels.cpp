@@ -285,9 +285,12 @@ public:
 
 private:
     /// The columns the level leaves out of a building: a shop's places and their hours, a kit's shutters and party
-    /// walls (corners of the ring at L14), which only a close view draws.
-    static constexpr std::array<std::uint8_t, 4> building_skip{tl::building::places, tl::building::place_hours,
-                                                               tl::building::shutter, tl::building::party};
+    /// walls (corners of the ring at L14), which only a close view draws; and its storeys, its no-windows mark, its
+    /// walls' material and its look's kind, which only its windowed walls read (the windows' rows and style, the
+    /// material face), and a level's walls have none (geometry::Builder::lean).
+    static constexpr std::array<std::uint8_t, 8> building_skip{
+        tl::building::places, tl::building::place_hours, tl::building::shutter,  tl::building::party,
+        tl::building::levels, tl::building::no_win,      tl::building::mat_draw, tl::building::kind};
 
     void write_ring(tl::LayerFill& out, std::uint8_t slot, std::uint32_t f, const LevelRing& ring, bool keep) {
         out.ring(slot, f, ring.lat, ring.lon,
