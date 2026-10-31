@@ -8,10 +8,9 @@
 #include <bit>
 #include <cstring>
 #include <format>
+#include <ranges>
 
 namespace atlas::scene {
-
-static_assert(sizeof(VmaVirtualAllocation) == sizeof(std::uint64_t), "the core runs on 64-bit ABIs only");
 
 namespace {
 
@@ -19,20 +18,6 @@ constexpr vk::BufferUsageFlags heap_usage =
     vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer |
     vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferSrc |
     vk::BufferUsageFlagBits::eTransferDst;
-
-[[nodiscard]] VmaVirtualAllocation allocation_of(std::uint64_t handle) noexcept {
-    return std::bit_cast<VmaVirtualAllocation>(handle);
-}
-
-/// A virtual block of `size` bytes.
-[[nodiscard]] gpu::Result<VmaVirtualBlock> make_block(vk::DeviceSize size) {
-    const VmaVirtualBlockCreateInfo info{.size = size, .flags = 0, .pAllocationCallbacks = nullptr};
-    VmaVirtualBlock block = nullptr;
-    if (const VkResult r = vmaCreateVirtualBlock(&info, &block); r != VK_SUCCESS) {
-        return gpu::fail(static_cast<vk::Result>(r), "a geometry heap's virtual block");
-    }
-    return block;
-}
 
 } // namespace
 
@@ -75,18 +60,11 @@ gpu::Result<std::unique_ptr<Heaps>> Heaps::create(const gpu::Device& device, con
     self->buffer_ = std::move(buffer);
     self->current_ = self->buffer_.handle();
     self->capacity_.store(self->buffer_.size(), std::memory_order_release);
-    ATLAS_GPU_LET(block, make_block(budget.total));
-    self->block_ = block;
+    self->pieces_.emplace(0, budget.total);
     return self;
 }
 
-Heaps::~Heaps() {
-    // Every range goes with the block (VMA asserts on a block with live allocations: clear it first).
-    if (block_ != nullptr) {
-        vmaClearVirtualBlock(block_);
-        vmaDestroyVirtualBlock(block_);
-    }
-}
+Heaps::~Heaps() = default;
 
 gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
     const trace::Section traced("atlas heaps grow");
@@ -110,40 +88,69 @@ gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
     return {};
 }
 
-std::optional<HeapRange> Heaps::place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment) {
-    // The smallest free piece that holds it (best fit): VMA's default takes a piece of a larger size first, so the
-    // pieces the largest tiles had left, a level's 15 to 27 MB of ground or walls, went in parts to small ranges, and
-    // after zooming out from the Westerkerk (5 to 20 km) the densest far tile's 14.6 MB of ground found no piece
-    // though 56 MB were free.
-    const VmaVirtualAllocationCreateInfo info{.size = bytes,
-                                              .alignment = alignment,
-                                              .flags = VMA_VIRTUAL_ALLOCATION_CREATE_STRATEGY_MIN_MEMORY_BIT,
-                                              .pUserData = nullptr};
-    VmaVirtualAllocation allocation = nullptr;
-    VkDeviceSize offset = 0;
-    if (vmaVirtualAllocate(block_, &info, &allocation, &offset) != VK_SUCCESS) return std::nullopt;
+std::optional<HeapRange> Heaps::place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment, HeapEnd from) {
+    const vk::DeviceSize mask = vk::DeviceSize{alignment} - 1;
+    // The piece nearest its end that holds it (first fit by address from that end), the range at the piece's side
+    // toward that end: a window's from the low offsets, a level's from the high, so each end's ranges lie together and
+    // the bytes free gather between the two. Best fit, the smallest piece that holds it on its end's side, left the
+    // windows' free bytes in pieces between them as they went and came in a pinch: the Westerkerk back at 5 km from
+    // 12 km, 12.4 MB free and no piece of 3.8 MB for its 23rd window's walls. (VMA's default took a piece of a larger
+    // size first, so a level's 15 to 27 MB pieces went in parts to small ranges, and after the zoom out from the
+    // Westerkerk, 5 to 20 km, the densest far tile's 14.6 MB of ground found no piece though 56 MB were free.)
+    const std::pair<const vk::DeviceSize, vk::DeviceSize>* piece = nullptr;
+    vk::DeviceSize offset = 0;
+    const auto fits = [&](const std::pair<const vk::DeviceSize, vk::DeviceSize>& p) {
+        if (p.second < bytes) return false;
+        const vk::DeviceSize o = from == HeapEnd::low ? (p.first + mask) & ~mask : (p.first + p.second - bytes) & ~mask;
+        if (o < p.first || o + bytes > p.first + p.second) return false;
+        piece = &p;
+        offset = o;
+        return true;
+    };
+    if (from == HeapEnd::low) {
+        (void)std::ranges::find_if(pieces_, fits);
+    } else {
+        (void)std::ranges::find_if(std::views::reverse(pieces_), fits);
+    }
+    if (piece == nullptr) return std::nullopt;
+    const vk::DeviceSize first = piece->first;
+    const vk::DeviceSize last = piece->first + piece->second;
+    pieces_.erase(first);
+    if (offset > first) pieces_.emplace(first, offset - first);
+    if (offset + bytes < last) pieces_.emplace(offset + bytes, last - (offset + bytes));
     used_[static_cast<std::size_t>(kind)] += bytes;
     ++ranges_[static_cast<std::size_t>(kind)];
-    return HeapRange{.kind = kind,
-                     .block = 0,
-                     .offset = static_cast<std::uint32_t>(offset),
-                     .size = bytes,
-                     .allocation = std::bit_cast<std::uint64_t>(allocation)};
+    return HeapRange{.kind = kind, .offset = static_cast<std::uint32_t>(offset), .size = bytes};
 }
 
 void Heaps::unplace(const HeapRange& range) {
-    vmaVirtualFree(block_, allocation_of(range.allocation));
+    vk::DeviceSize first = range.offset;
+    vk::DeviceSize last = first + range.size;
+    // joined to the pieces either side
+    auto next = pieces_.lower_bound(first);
+    if (next != pieces_.end() && next->first == last) {
+        last += next->second;
+        next = pieces_.erase(next);
+    }
+    if (next != pieces_.begin()) {
+        const auto before = std::prev(next);
+        if (before->first + before->second == first) {
+            first = before->first;
+            pieces_.erase(before);
+        }
+    }
+    pieces_.emplace(first, last - first);
     used_[static_cast<std::size_t>(range.kind)] -= range.size;
     --ranges_[static_cast<std::size_t>(range.kind)];
 }
 
-gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment) {
+gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment, HeapEnd from) {
     ATLAS_ASSERT(std::has_single_bit(alignment), "a heap range's alignment is a power of two");
-    if (bytes == 0) return HeapRange{.kind = kind, .block = 0, .offset = 0, .size = 0, .allocation = 0};
+    if (bytes == 0) return HeapRange{.kind = kind, .offset = 0, .size = 0};
     HeapRange range;
     {
         const std::scoped_lock lock(blocks_lock_);
-        const std::optional<HeapRange> placed = place(kind, bytes, alignment);
+        const std::optional<HeapRange> placed = place(kind, bytes, alignment, from);
         if (!placed) {
             vk::DeviceSize used = 0;
             for (const vk::DeviceSize u : used_) used += u;
@@ -156,6 +163,22 @@ gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::
         if (vk::DeviceSize{placed->offset} + placed->size <= capacity_.load(std::memory_order_acquire)) return *placed;
         range = *placed;
     }
+    return hold(range);
+}
+
+std::optional<HeapRange> Heaps::reserve(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment, HeapEnd from) {
+    ATLAS_ASSERT(std::has_single_bit(alignment), "a heap range's alignment is a power of two");
+    if (bytes == 0) return std::nullopt;
+    const std::scoped_lock lock(blocks_lock_);
+    return place(kind, bytes, alignment, from);
+}
+
+gpu::Result<HeapRange> Heaps::claim(const HeapRange& range) {
+    if (vk::DeviceSize{range.offset} + range.size <= capacity_.load(std::memory_order_acquire)) return range;
+    return hold(range);
+}
+
+gpu::Result<HeapRange> Heaps::hold(const HeapRange& range) {
     // Beyond the buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
     // thread grew it meanwhile. The blocks' lock is not held through the copy, so the render thread's stats never wait.
     const std::unique_lock exclusive(lock_);
@@ -242,9 +265,61 @@ vk::DeviceSize Heaps::free_bytes() const {
 
 vk::DeviceSize Heaps::largest_free() const {
     const std::scoped_lock lock(blocks_lock_);
-    VmaDetailedStatistics s{};
-    vmaCalculateVirtualBlockStatistics(block_, &s);
-    return s.unusedRangeSizeMax;
+    vk::DeviceSize largest = 0;
+    for (const auto& p : pieces_) largest = std::max(largest, p.second);
+    return largest;
+}
+
+vk::DeviceSize Heaps::largest_with(std::span<const HeapRange> back) const { return runs(back, false); }
+
+vk::DeviceSize Heaps::joined_with(std::span<const HeapRange> back) const { return runs(back, true); }
+
+vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined) const {
+    struct Going {
+        vk::DeviceSize first = 0;
+        vk::DeviceSize last = 0;
+        bool back = false; // one of `back`'s, not a retired range
+    };
+    std::vector<Going> going;
+    {
+        const std::scoped_lock lock(render_lock_);
+        for (const Retired& r : retired_) {
+            going.push_back({.first = r.range.offset, .last = vk::DeviceSize{r.range.offset} + r.range.size});
+        }
+    }
+    for (const HeapRange& r : back) {
+        if (r) going.push_back({.first = r.offset, .last = vk::DeviceSize{r.offset} + r.size, .back = true});
+    }
+    std::ranges::sort(going, [](const Going& a, const Going& b) { return a.first < b.first; });
+    const std::scoped_lock lock(blocks_lock_);
+    vk::DeviceSize largest = 0;
+    if (!joined) {
+        for (const auto& p : pieces_) largest = std::max(largest, p.second);
+    }
+    // Each run of ranges coming back, with the pieces before, between and after them.
+    for (std::size_t i = 0; i < going.size();) {
+        vk::DeviceSize first = going[i].first;
+        vk::DeviceSize last = going[i].last;
+        bool mine = going[i].back;
+        ++i;
+        if (const auto next = pieces_.lower_bound(first); next != pieces_.begin()) {
+            const auto before = std::prev(next);
+            if (before->first + before->second == first) first = before->first;
+        }
+        for (;;) {
+            if (const auto p = pieces_.find(last); p != pieces_.end()) {
+                last += p->second;
+            } else if (i < going.size() && going[i].first <= last) {
+                last = std::max(last, going[i].last);
+                mine = mine || going[i].back;
+                ++i;
+            } else {
+                break;
+            }
+        }
+        if (mine || !joined) largest = std::max(largest, last - first);
+    }
+    return largest;
 }
 
 HeapStats Heaps::stats() const {

@@ -1,21 +1,25 @@
 // The geometry heaps (plan-vector D5.7, D3 "Streaming", D5.2): one VkBuffer for every layer kind (points, walls,
 // ground, lines, instances, labels), host-visible and device-local on unified-memory phones (gpu::MemoryUse::upload),
-// sub-allocated per tile and kind in one VMA virtual block of the whole budget, 64 MB. The kinds share the one buffer
-// and the one block, so a range finds room wherever the budget has it: with a buffer per kind, each doubling within
-// the budget, the Main board at S1 found the budget spent on capacity while a tile's ground did not fit, and with a
-// block per growth the densest tiles' walls (12.7 MB) found no block with room. Workers decode and build a
-// tile straight into its mapped ranges (no staging copy, no upload budget per frame), and the render thread references
-// only published tiles; a range a tile lets go of returns to the heap once the frames that may read it have finished
+// sub-allocated per tile and kind over the whole budget, 64 MB. The kinds share the one buffer and its one span of
+// offsets, so a range finds room wherever the budget has it: with a buffer per kind, each doubling within the budget,
+// the Main board at S1 found the budget spent on capacity while a tile's ground did not fit, and with a block per
+// growth the densest tiles' walls (12.7 MB) found no block with room. A window's ranges are placed from the budget's
+// start and a level's from its end, each in the piece nearest its end that holds it (HeapEnd), so the levels a camera
+// leaves behind coming within 9 km give their bytes back in one piece: placed among the windows, they left pieces
+// between them too small for a window's walls (Alkmaar after a pinch out to 12 km and back, 37.7 MB free and none of
+// 6.05 MB). Workers decode and build a tile straight
+// into its mapped ranges (no staging copy, no upload budget per frame), and the render thread references only
+// published tiles; a range a tile lets go of returns to the heap once the frames that may read it have finished
 // (retire, collect: two frames later, after the fences). Shaders read the heap as storage buffers through set 1, the
 // buffer bound at each kind's binding (frame/FrameLayout.hpp), a range's offset the same in all of them.
 //
-// The buffer starts small and doubles when a range the block places lies beyond it, within the budget: the new buffer
-// takes the old one's bytes at the same offsets (so every range keeps its offset), and the old buffer goes once the
-// frames bound to it have finished (bind, collect). Writers hold the heap's shared lock while they write (Writer), a
-// growth its exclusive lock, so no write is lost to a growth. The render thread never waits for a growth (ENGINE.md's
-// gain 16): it takes the buffer to bind and lets go of the replaced ones under the render lock alone, which a growth
-// takes only to swap the buffers, after its copy; its stats read the capacity from an atomic and the ranges under the
-// blocks' lock, which a growth does not hold.
+// The buffer starts small and doubles when a range placed lies beyond it, within the budget (a level's first range
+// grows it to the budget, at its end): the new buffer takes the old one's bytes at the same offsets (so every range
+// keeps its offset), and the old buffer goes once the frames bound to it have finished (bind, collect). Writers hold
+// the heap's shared lock while they write (Writer), a growth its exclusive lock, so no write is lost to a growth. The
+// render thread never waits for a growth (ENGINE.md's gain 16): it takes the buffer to bind and lets go of the replaced
+// ones under the render lock alone, which a growth takes only to swap the buffers, after its copy; its stats read the
+// capacity from an atomic and the ranges under the blocks' lock, which a growth does not hold.
 //
 // Thread-safe: allocate and write from any thread; retire, bind and collect on the render thread.
 #pragma once
@@ -26,6 +30,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -45,13 +50,15 @@ inline constexpr std::size_t heap_kinds = 6;
 /// The kind's name.
 [[nodiscard]] std::string_view name_of(HeapKind kind) noexcept;
 
-/// A range of the heap: its kind, where it lies, and the virtual allocation that holds it.
+/// Which end of the budget a range is placed from: a window's (a tile of the finest level, L14, drawn within 4.7 km of
+/// the eye) from the low offsets, a level's (a frame cell's L13 or L12, a region's L12: drawn beyond) from the high.
+enum class HeapEnd : std::uint8_t { low = 0, high = 1 };
+
+/// A range of the heap: its kind and where it lies.
 struct HeapRange {
     HeapKind kind = HeapKind::points;
-    std::uint32_t block = 0; ///< the heap's virtual block it was allocated from (one: 0)
     std::uint32_t offset = 0;
     std::uint32_t size = 0;
-    std::uint64_t allocation = 0; ///< the VmaVirtualAllocation, as a handle
 
     [[nodiscard]] explicit operator bool() const noexcept { return size > 0; }
 };
@@ -95,9 +102,19 @@ public:
     Heaps& operator=(Heaps&&) = delete;
     ~Heaps();
 
-    /// A range of `bytes` of kind `kind`, aligned to `alignment` (a power of two), growing the heap when it does not
-    /// fit; an error when the budget does not allow it. Any thread.
-    [[nodiscard]] gpu::Result<HeapRange> allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment = 16);
+    /// A range of `bytes` of kind `kind`, aligned to `alignment` (a power of two), placed from `from`: in the piece
+    /// nearest that end that holds it (first fit by address), at the piece's side toward it; growing the heap when it
+    /// lies beyond the buffer; an error when no piece holds it. Any thread.
+    [[nodiscard]] gpu::Result<HeapRange> allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment = 16,
+                                                  HeapEnd from = HeapEnd::low);
+    /// A range placed as allocate places it, without growing the buffer (the render thread's: it never waits for a
+    /// growth's copy), or none; claim makes it the buffer's on the thread that writes it. The residency's room for a
+    /// tile tried again (Residency::want), so a build beside it does not take its piece first.
+    [[nodiscard]] std::optional<HeapRange> reserve(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment,
+                                                   HeapEnd from);
+    /// A reserved range, the buffer grown to hold it when it lies beyond; an error (the range given back) when the
+    /// budget does not allow it. Any thread.
+    [[nodiscard]] gpu::Result<HeapRange> claim(const HeapRange& range);
 
     /// Writes into a range in place: holds the heap's shared lock while it lives, so a growth waits for it.
     class Writer {
@@ -149,8 +166,13 @@ public:
     /// The budget's bytes no range holds (a retired range's among those held until it is freed). Any thread.
     [[nodiscard]] vk::DeviceSize free_bytes() const;
     /// The largest piece of the budget no range holds: a larger range finds no room whatever the bytes free (their
-    /// pieces too small for it). Any thread; it walks the ranges.
+    /// pieces too small for it). Any thread; it walks the pieces.
     [[nodiscard]] vk::DeviceSize largest_free() const;
+    /// The largest piece there would be with `back` and the retired ranges freed too, each joined to the pieces
+    /// beside it: which tiles' going makes room for a range that finds no piece (World::make_room). Any thread.
+    [[nodiscard]] vk::DeviceSize largest_with(std::span<const HeapRange> back) const;
+    /// The largest of those pieces that `back` joins: how near a tile's going comes to making room. Any thread.
+    [[nodiscard]] vk::DeviceSize joined_with(std::span<const HeapRange> back) const;
     [[nodiscard]] HeapStats stats() const;
 
 private:
@@ -167,16 +189,23 @@ private:
 
     /// Grows the buffer to hold `end` bytes or more (doubling, within the budget). Under both locks.
     [[nodiscard]] gpu::Result<void> grow(vk::DeviceSize end);
-    /// A range of the virtual block, or none when it has no room; and a range given back. Under blocks_lock_.
-    [[nodiscard]] std::optional<HeapRange> place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment);
+    /// A range of the budget's offsets, or none when no piece holds it; and a range given back, joined to the pieces
+    /// beside it. Under blocks_lock_.
+    [[nodiscard]] std::optional<HeapRange> place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment,
+                                                 HeapEnd from);
     void unplace(const HeapRange& range);
+    /// largest_with (joined: of the pieces `back` joins alone).
+    [[nodiscard]] vk::DeviceSize runs(std::span<const HeapRange> back, bool joined) const;
+    /// Grows the buffer to hold `range` (allocate's slow path); the range given back when it cannot.
+    [[nodiscard]] gpu::Result<HeapRange> hold(const HeapRange& range);
 
     const gpu::Device& device_;
     HeapBudget budget_;
-    mutable std::shared_mutex lock_;  // shared: writers; exclusive: a growth
-    mutable std::mutex blocks_lock_;  // the virtual block (VMA's are not thread-safe), used_ and ranges_
-    gpu::Buffer buffer_;              // under lock_; swapped by a growth under render_lock_ too
-    VmaVirtualBlock block_ = nullptr; // the budget's offsets; the buffer covers those placed
+    mutable std::shared_mutex lock_; // shared: writers; exclusive: a growth
+    mutable std::mutex blocks_lock_; // the pieces, used_ and ranges_
+    gpu::Buffer buffer_;             // under lock_; swapped by a growth under render_lock_ too
+    // The budget's offsets no range holds, by offset: their sizes (no two touching).
+    std::map<vk::DeviceSize, vk::DeviceSize> pieces_;
     std::array<vk::DeviceSize, heap_kinds> used_{};
     std::array<std::uint32_t, heap_kinds> ranges_{};
     mutable std::mutex render_lock_; // retired_, old_ and current_

@@ -1,5 +1,5 @@
-// The scene on the host's Vulkan (plan-vector D3, D5.7, K7): the geometry heaps (VMA's virtual blocks: ranges
-// allocated, written in place, grown with their bytes kept at their offsets, retired and freed after their frames), and
+// The scene on the host's Vulkan (plan-vector D3, D5.7, K7): the geometry heaps (ranges placed from either end of the
+// budget, written in place, grown with their bytes kept at their offsets, retired and freed after their frames), and
 // the world over the bundled render packs (ATLAS_TILES_DIR, as the tile reader's and the sun's tests take them): the
 // active pack for the camera, its ladder snapping the Westerkerk home onto the living map's view, the cover's requests
 // built on the workers by every pass's stage T into the heaps, published, taken with their items, drawn with their
@@ -198,7 +198,8 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     (void)session->take_messages();
 }
 
-TEST_CASE("a range takes the smallest free piece of the heaps that holds it, a larger piece left whole for its own") {
+TEST_CASE("a range takes the free piece of the heaps nearest its end that holds it, a larger piece beyond left whole "
+          "for its own") {
     auto session = test::open_session();
     if (!session) return;
     scene::HeapBudget budget;
@@ -223,14 +224,82 @@ TEST_CASE("a range takes the smallest free piece of the heaps that holds it, a l
     h.retire(large, 1);
     h.bound(2);
     h.collect(1);
-    // A range a little smaller than the small piece takes it, and the large piece holds a range its size: VMA's default
-    // took the large piece for the first, a piece of a larger size first, and the second found none (the Westerkerk's
-    // densest far tile's 14.6 MB of ground, 56 MB of the 128 free).
+    // A range a little smaller than the small piece takes it, nearer the low end, and the large piece holds a range its
+    // size: VMA's default took the large piece for the first, a piece of a larger size first, and the second found
+    // none (the Westerkerk's densest far tile's 14.6 MB of ground, 56 MB of the 128 free).
     const scene::HeapRange first = take(scene::HeapKind::lines, 61'440);
     CHECK(first.offset == small.offset);
     auto second = h.allocate(scene::HeapKind::ground, 262'144, 64);
     CHECK(second.has_value());
     if (second) CHECK(second->offset == large.offset);
+    (void)session->take_messages();
+}
+
+TEST_CASE("a window's ranges are placed from the heaps' low offsets and a level's from the high, each in the piece "
+          "nearest its end that holds it: the levels gone leave their bytes one piece beside the windows'") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{1} << 20U;
+    budget.total = vk::DeviceSize{1} << 20U;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    constexpr std::uint32_t total = std::uint32_t{1} << 20U;
+    const auto take = [&h](std::uint32_t bytes, scene::HeapEnd from) {
+        auto r = h.allocate(scene::HeapKind::walls, bytes, 64, from);
+        ATLAS_REQUIRE_OR_RETURN(scene::HeapRange{}, r.has_value(), r.error().text());
+        return *r;
+    };
+    // windows and levels in turn, as a pinch out past 9 km and back builds them
+    std::vector<scene::HeapRange> windows;
+    std::vector<scene::HeapRange> levels;
+    for (int i = 0; i < 3; ++i) {
+        windows.push_back(take(150'016, scene::HeapEnd::low));
+        levels.push_back(take(100'032, scene::HeapEnd::high));
+    }
+    CHECK(windows[0].offset == 0);
+    CHECK(windows[1].offset == windows[0].offset + windows[0].size);
+    CHECK(windows[2].offset == windows[1].offset + windows[1].size);
+    CHECK(levels[0].offset + levels[0].size == total);
+    CHECK(levels[1].offset + levels[1].size == levels[0].offset);
+    CHECK(levels[2].offset + levels[2].size == levels[1].offset);
+    // a window gone leaves a piece among the windows, which the next window its size takes, nearer the low end than the
+    // larger one between the two ends
+    h.retire(windows[1], 1);
+    h.bound(2);
+    h.collect(1);
+    windows[1] = take(150'016, scene::HeapEnd::low);
+    CHECK(windows[1].offset == windows[0].size);
+    // what the levels' going would make: one piece with the bytes between the ends, and with the nearest one alone
+    const vk::DeviceSize between = levels[2].offset - (windows[2].offset + windows[2].size);
+    CHECK(h.largest_free() == between);
+    CHECK(h.largest_with(levels) == between + (vk::DeviceSize{3} * levels[0].size));
+    CHECK(h.joined_with(std::span(levels).subspan(2)) == between + levels[2].size);
+    CHECK(h.joined_with(std::span(levels).first(1)) == levels[0].size);
+    // a piece held for a tile tried again: no range placed meanwhile takes it, and its build claims it
+    const std::optional<scene::HeapRange> held = h.reserve(scene::HeapKind::ground, 64'000, 64, scene::HeapEnd::low);
+    ATLAS_REQUIRE(held.has_value());
+    const scene::HeapRange beside = take(64'000, scene::HeapEnd::low);
+    CHECK(beside.offset != held->offset);
+    auto claimed = h.claim(*held);
+    REQUIRE(claimed.has_value());
+    CHECK(claimed->offset == held->offset);
+    h.give_back(beside);
+    h.give_back(*claimed);
+    // the levels gone (the camera back within 9 km): their bytes one piece beside the windows', a window's walls that
+    // size placed in it; placed among the windows they left pieces too small for one (Alkmaar after a pinch out to
+    // 12 km and back: 37.7 MB free, no piece of 6.05 MB)
+    for (const scene::HeapRange& r : levels) h.retire(r, 3);
+    h.bound(4);
+    h.collect(3);
+    CHECK(h.largest_free() == h.free_bytes());
+    auto big = h.allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(h.free_bytes()), 64, scene::HeapEnd::low);
+    REQUIRE(big.has_value());
+    CHECK(big->offset == windows[2].offset + windows[2].size);
+    CHECK(h.free_bytes() == 0);
+    // full, a level's range finds no piece: none is placed over another range
+    CHECK_FALSE(h.allocate(scene::HeapKind::ground, 64, 64, scene::HeapEnd::high).has_value());
     (void)session->take_messages();
 }
 
@@ -1762,6 +1831,30 @@ TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alon
     CHECK(w.cover()->holes() == 0);
     CHECK(probe->built.load() == 7);
     CHECK(w.residency().stats().failed == 1);
+    // Back within 9 km with the levels' bytes over the heaps' high end (the L13, the L12, and a far view's other
+    // levels, the test's ranges, which go as the camera comes within 9 km, as tiles not drawn do): the windows come
+    // back from the low end and the levels go, their bytes one piece beside the windows', which a window's walls that
+    // size take. Placed among the windows, the levels left pieces between them too small for one (Alkmaar after a pinch
+    // out to 12 km and back: 37.7 MB free and no piece of 6.05 MB).
+    std::vector<scene::HeapRange> far_levels;
+    for (const std::uint32_t size : {16U, 32U}) {
+        auto r = w.heaps()->allocate(scene::HeapKind::ground, size, 16, scene::HeapEnd::high);
+        REQUIRE(r.has_value());
+        far_levels.push_back(*r);
+    }
+    frames(8'500.0, 1);
+    for (const scene::HeapRange& r : far_levels) w.heaps()->retire(r, n);
+    frames(8'500.0, 60);
+    CHECK(drew(south));
+    CHECK(drew(north));
+    CHECK(resident_levels() == 0);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(w.cover()->missing() == 0);
+    CHECK(probe->built.load() == 9);
+    CHECK(w.heaps()->largest_free() == w.heaps()->free_bytes());
+    auto big = w.heaps()->allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(w.heaps()->free_bytes()), 16);
+    CHECK(big.has_value());
+    if (big) w.heaps()->retire(*big, n);
     MESSAGE("out past 9 km and back, the most places without a tile in a frame: " << out_holes << " and " << back_holes
                                                                                   << "; " << w.tiles_line());
     (void)session->take_messages();
