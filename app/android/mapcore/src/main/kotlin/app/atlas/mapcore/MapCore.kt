@@ -238,6 +238,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
             /** A window the phone built (ENGINE.md step 3: [Window.build]); the core takes it into its frame cell's pack. */
             const val WINDOW = 2
+
+            /**
+             * A pack of the world's mid-zoom base (ENGINE.md step 5): a range of its part, [path] the part's and [offset] and
+             * [length] the range (world.idx's), drawn beyond 18 km under every country's tiles.
+             */
+            const val WORLD_MID = 3
+
+            /** The world's globe (ENGINE.md step 5: world-globe.atlas, L0 to L5), drawn where no world pack reaches. */
+            const val WORLD_BASE = 4
         }
     }
 

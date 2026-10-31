@@ -15,6 +15,7 @@
 #include "passes/Things.hpp"
 #include "passes/Trees.hpp"
 #include "passes/Walls.hpp"
+#include "passes/World.hpp"
 
 #include <algorithm>
 #include <array>
@@ -43,6 +44,7 @@ constexpr std::array registry{
     Registration{.name = "markers", .make = &make<passes::Markers>},        // ENGINE.md step 6: updates before labels
     Registration{.name = "labels", .make = &make<passes::Labels>},          // K13: the board's labels (D13)
     Registration{.name = "overlays", .make = &make<passes::Overlays>},      // ENGINE.md step 6: the location's puck
+    Registration{.name = "world", .make = &make<passes::World>},            // ENGINE.md step 5: the world, last
 };
 
 } // namespace

@@ -44,6 +44,8 @@ dependencies {
     api(project(":places"))
     // The map's core (plan-vector D19): the C++23 Vulkan engine and its Kotlin façade.
     api(project(":mapcore"))
+    // The world's index (world.idx: ENGINE.md step 5), read as the packer writes it.
+    implementation(project(":tiles"))
     implementation(libs.androidx.core)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

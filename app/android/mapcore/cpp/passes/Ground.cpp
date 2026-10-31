@@ -866,7 +866,10 @@ bool Ground::decide(const frame::FrameState& state) {
     const std::array<geo::P2, 4> rect{
         {{.x = -gr, .z = -gr}, {.x = gr, .z = -gr}, {.x = gr, .z = gr}, {.x = -gr, .z = gr}}};
     const ProjectedPoly p = project_poly(cam, rect, 0.0, 900, cam_, sp_);
-    f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2 && !f.out(style::camera_part::ground);
+    // (where the world draws beyond 18 km, ENGINE.md step 5, its land under everything is the plate's colour and the
+    // sea lies in it: no plate over it)
+    f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2 && !f.out(style::camera_part::ground) &&
+              state.world == nullptr;
     if (only_setts_) {
         // the tests' look at the sett roads' courses: nothing else
         std::ranges::fill(f.drawn, std::uint8_t{0});

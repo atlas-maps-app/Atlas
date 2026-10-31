@@ -126,6 +126,8 @@ internal class Transition(private val log: (String) -> Unit) {
          * elsewhere: beyond the core's reach, and outside those countries where no window is on the phone.
          */
         fun pathOf(packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double): Path {
+            // the world on the phone: the core draws every camera beyond the countries' levels (ENGINE.md step 5)
+            if (packs.hasWorld && distance > PackList.LEVELS_REACH) return Path.CORE
             if (packs.covers(lat, lon, distance)) return Path.CORE
             val country = countryAt(lat, lon) ?: return Path.CANVAS
             return if (distance <= (if (country.levels) PackList.LEVELS_REACH else PackList.CORE_REACH)) Path.CORE else Path.CANVAS

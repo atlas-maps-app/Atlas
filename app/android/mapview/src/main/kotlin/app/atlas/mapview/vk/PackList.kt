@@ -7,6 +7,7 @@ import app.atlas.mapcore.state.CameraWriter
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.RegionFrame
 import app.atlas.render.py.PyJson
+import app.atlas.tiles.WorldIndex
 import java.io.DataInputStream
 import java.io.File
 import java.io.IOException
@@ -39,6 +40,11 @@ class PackList(
      * None on a phone.
      */
     private val bench: () -> List<File> = { emptyList() },
+    /**
+     * The world's folder on the phone (ENGINE.md step 5: world.idx, the parts it names and world-globe.atlas), or null
+     * for none: its packs are listed to the core as ranges of their parts and the globe, drawn beyond 18 km.
+     */
+    private val world: () -> File? = { null },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -97,6 +103,17 @@ class PackList(
     var revision: Int = 0
         private set
 
+    /**
+     * The world's packs as the core takes them ([MapCore.PackRef.WORLD_MID] and [MapCore.PackRef.WORLD_BASE]), from the
+     * [world] folder: none are chosen, named or covered by, as the world is drawn under the countries' tiles alone.
+     */
+    @Volatile
+    var worldRefs: List<MapCore.PackRef> = emptyList()
+        private set
+
+    /** Whether the world is on the phone: the core draws every camera beyond [LEVELS_REACH] ([Transition.pathOf]). */
+    val hasWorld: Boolean get() = worldRefs.isNotEmpty()
+
     /** Whether the packs have been read once ([load]): until then nothing is known of where the core has tiles. */
     @Volatile
     var loaded: Boolean = false
@@ -128,11 +145,38 @@ class PackList(
             if (head.chunks == 0 || (version != null && head.version != version)) return@forEach
             out += packOf(w.id, MapCore.PackRef.WINDOW, head, file)
         }
-        if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) }) {
+        val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
+        if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
+            worldOut.map { listOf(it.id, it.path, it.offset, it.length) } != worldRefs.map { listOf(it.id, it.path, it.offset, it.length) }
+        ) {
             packs = out
+            worldRefs = worldOut
             revision++
         }
         loaded = true
+        return out
+    }
+
+    /**
+     * The world in [dir]: each pack of its world.idx a range of its part (one shorter than its range is left out), and
+     * the globe beside it by its file's time and size.
+     */
+    private fun worldOf(dir: File): List<MapCore.PackRef> {
+        val out = ArrayList<MapCore.PackRef>()
+        val idx = File(dir, "world.idx")
+        if (idx.isFile) {
+            val index = WorldIndex.read(idx.readBytes())
+            for (e in index.entries) {
+                val part = File(dir, index.parts[e.part].name)
+                if (part.length() < e.offset + e.length) continue
+                val id = "world/${e.z}/${e.x}/${e.y}"
+                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.WORLD_MID, path = part.path, offset = e.offset, length = e.length)
+            }
+        }
+        val globe = File(dir, WORLD_GLOBE)
+        if (globe.isFile) {
+            out += MapCore.PackRef(WORLD_GLOBE_ID, numberOf(WORLD_GLOBE_ID), MapCore.PackRef.WORLD_BASE, path = globe.path, offset = globe.lastModified(), length = globe.length())
+        }
         return out
     }
 
@@ -151,7 +195,7 @@ class PackList(
      * again at the same path anew.
      */
     fun refs(): List<MapCore.PackRef> =
-        packs.map { p -> MapCore.PackRef(p.id, p.number, p.kind, path = p.file.path, offset = p.time, length = p.size) }
+        packs.map { p -> MapCore.PackRef(p.id, p.number, p.kind, path = p.file.path, offset = p.time, length = p.size) } + worldRefs
 
     /**
      * The pack the frame draws at a camera whose target is [lat], [lon]: the smallest whose box holds the target, the
@@ -205,6 +249,10 @@ class PackList(
          * 48° from a target 18 km away lies; beyond, today's map.
          */
         const val LEVELS_REACH = 18_000.0
+
+        /** The globe's file in the world's folder, and its id (the core's tiles/WorldIndex.hpp). */
+        const val WORLD_GLOBE = "world-globe.atlas"
+        const val WORLD_GLOBE_ID = "world-globe"
 
         private const val AMSTERDAM = "Europe/Amsterdam"
 

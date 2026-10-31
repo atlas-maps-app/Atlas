@@ -1,19 +1,25 @@
 // The world's packs (ENGINE.md step 5, its step 1: the Netherlands' world on the Mac) as the core reads them. The index
-// (world.idx, as tiles' WorldIndex writes it) is read here; each pack it lists is a range of its part, whose SHA-256 is
-// the entry's, opened by the store as it opens a bundled pack (a range of a file); its head is the world's (profile
-// world_base, its block's levels from fine to coarse), its chunks pass verify(), and every tile is found and decoded
-// through the store and agrees with its chunk. Each tile's ground covers it: in every cell the land under everything
-// (GROUND source 2) and the sea (WATER's tidal rings) add up to the cell's area exactly on the grid, and no ring, line
-// or point of any layer leaves its cell's box. The globe (world-globe.atlas, the store's world_base) is held to the
-// same. A world written here as the packer lays one out (two fine packs end to end in a part, a coarse pack in another,
-// and the globe) holds it on CI, and a tile whose ground leaves a piece of a cell bare or crosses a cell's edge is
-// caught. With ATLAS_WORLD_DIR naming the packer's output folder (world.idx, its parts and world-globe.atlas), its
-// packs are checked so and each level's tiles, features and bytes printed, a line a level: `world level <z> ...`.
+// (world.idx, as tiles' WorldIndex writes it) is read by the core's reader (tiles/WorldIndex.hpp, add_world for a
+// folder); each pack it lists is a range of its part, whose SHA-256 is the entry's, opened by the store as it opens a
+// bundled pack (a range of a file); its head is the world's (profile world_base, its block's levels from fine to
+// coarse), its chunks pass verify(), and every tile is found and decoded through the store and agrees with its chunk.
+// Each tile's ground covers it: in every cell the land under everything (GROUND source 2) and the sea (WATER's tidal
+// rings) add up to the cell's area exactly on the grid, and no ring, line or point of any layer leaves its cell's box.
+// A world pack's levels are the world's (L6 to L11 a pack's, L0 to L5 the globe's), so no country's tile is in one. The
+// globe (world-globe.atlas, the store's world_base) is held to the same. A world written here as the packer lays one
+// out (two fine packs end to end in a part, a coarse pack in another, and the globe) holds it on CI, and a tile whose
+// ground leaves a piece of a cell bare or crosses a cell's edge is caught. With ATLAS_WORLD_DIR naming the packer's
+// output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
+// and bytes printed, a line a level: `world level <z> ...`.
+#include "passes/World.hpp"
+#include "scene/WorldTiles.hpp"
+#include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
+#include "tiles/WorldIndex.hpp"
 #include "tiles/layers/Ground.hpp"
 #include "tiles/layers/Labels.hpp"
 #include "tiles/layers/Lines.hpp"
@@ -24,6 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <fcntl.h>
@@ -88,109 +95,11 @@ void write_file(const std::string& path, std::span<const std::byte> bytes) {
     out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); // NOLINT
 }
 
-/// One pack of the world's index: its block, its tiles' levels, its part and range there, its tiles, the box it was
-/// built for (south, west, north, east) and its SHA-256.
-struct WorldEntry {
-    std::uint8_t z = 0;
-    std::uint8_t first = 0;
-    std::uint8_t last = 0;
-    std::uint8_t part = 0;
-    std::uint32_t x = 0;
-    std::uint32_t y = 0;
-    std::uint64_t offset = 0;
-    std::uint64_t length = 0;
-    std::uint32_t tiles = 0;
-    std::array<std::int32_t, 4> box{};
-    Sha256Digest sha256{};
-};
-
-/// The world's index: the data's date (seconds since the epoch), its parts (name and bytes) and its packs.
-struct WorldIndex {
-    std::int64_t date = 0;
-    std::vector<std::pair<std::string, std::uint64_t>> parts;
-    std::vector<WorldEntry> entries;
-};
-
-/// The magic and the version of the index this test reads (WorldIndex.MAGIC and VERSION).
-constexpr std::string_view index_magic = "ATWX";
-constexpr std::uint16_t index_version = 1;
-
-/// A little-endian reader that fails once its bytes run out.
-class LeReader {
-public:
-    explicit LeReader(std::span<const std::byte> bytes) noexcept : bytes_(bytes) {}
-
-    [[nodiscard]] std::uint64_t le(std::size_t n) noexcept {
-        if (!take(n)) return 0;
-        std::uint64_t v = 0;
-        for (std::size_t k = 0; k < n; ++k)
-            v |= std::uint64_t{std::to_integer<std::uint8_t>(bytes_[at_ + k])} << (8U * k);
-        at_ += n;
-        return v;
-    }
-    [[nodiscard]] std::span<const std::byte> raw(std::size_t n) noexcept {
-        if (!take(n)) return {};
-        const auto out = bytes_.subspan(at_, n);
-        at_ += n;
-        return out;
-    }
-    [[nodiscard]] bool ok() const noexcept { return ok_; }
-    [[nodiscard]] std::size_t left() const noexcept { return ok_ ? bytes_.size() - at_ : 0; }
-
-private:
-    [[nodiscard]] bool take(std::size_t n) noexcept {
-        if (!ok_ || bytes_.size() - at_ < n) ok_ = false;
-        return ok_;
-    }
-
-    std::span<const std::byte> bytes_;
-    std::size_t at_ = 0;
-    bool ok_ = true;
-};
-
-/// world.idx as tiles' WorldIndex writes it; nothing for bytes that are not one (cut short or run on, another magic or
-/// a version this reader does not know).
-std::optional<WorldIndex> read_world_index(std::span<const std::byte> bytes) {
-    LeReader r(bytes);
-    const auto magic = r.raw(index_magic.size());
-    if (!r.ok() || !std::ranges::equal(magic, atlas::tiles::as_bytes(index_magic))) return std::nullopt;
-    if (r.le(2) != index_version) return std::nullopt;
-    (void)r.le(2);
-    WorldIndex index;
-    index.date = static_cast<std::int64_t>(r.le(8));
-    const std::uint64_t parts = r.le(2);
-    for (std::uint64_t p = 0; p < parts && r.ok(); ++p) {
-        const auto name = r.raw(r.le(1));
-        const std::uint64_t length = r.le(8);
-        index.parts.emplace_back(std::string(reinterpret_cast<const char*>(name.data()), name.size()),
-                                 length); // NOLINT
-    }
-    const std::uint64_t count = r.le(4);
-    if (!r.ok() || r.left() != count * 80U) return std::nullopt;
-    for (std::uint64_t i = 0; i < count; ++i) {
-        WorldEntry e;
-        e.z = static_cast<std::uint8_t>(r.le(1));
-        e.first = static_cast<std::uint8_t>(r.le(1));
-        e.last = static_cast<std::uint8_t>(r.le(1));
-        e.part = static_cast<std::uint8_t>(r.le(1));
-        e.x = static_cast<std::uint32_t>(r.le(4));
-        e.y = static_cast<std::uint32_t>(r.le(4));
-        e.offset = r.le(8);
-        e.length = r.le(8);
-        e.tiles = static_cast<std::uint32_t>(r.le(4));
-        for (std::int32_t& v : e.box) v = static_cast<std::int32_t>(static_cast<std::uint32_t>(r.le(4)));
-        std::ranges::copy(r.raw(e.sha256.size()), e.sha256.begin());
-        index.entries.push_back(e);
-    }
-    if (!r.ok()) return std::nullopt;
-    return index;
-}
-
 /// `index` as WorldIndex.write lays it out (written here independently).
 std::vector<std::byte> world_index_bytes(const WorldIndex& index) {
     atlas::test::Sink s;
-    s.raw(atlas::tiles::as_bytes(index_magic));
-    s.u16(index_version);
+    s.raw(atlas::tiles::as_bytes(world_index_magic));
+    s.u16(world_index_version);
     s.u16(0);
     s.u64(static_cast<std::uint64_t>(index.date));
     s.u16(index.parts.size());
@@ -645,6 +554,38 @@ TEST_CASE("tiles: a world's index, its packs as ranges of their parts and the gl
         Store store;
         CHECK(!store.add({.id = "upward", .kind = PackKind::world_mid, .path = dir.path() + "/upward.atlas"}));
     }
+    SUBCASE("add_world adds every pack of the index as a range of its part, and the globe") {
+        Store store;
+        const auto added = add_world(store, dir.path());
+        ATLAS_REQUIRE(added, describe(added.error()));
+        CHECK(added->packs == 3);
+        CHECK(added->globe);
+        CHECK(added->tiles == 6);
+        const auto packs = store.packs();
+        ATLAS_REQUIRE(packs.size() == 4);
+        CHECK(packs[0]->id == "world/3/4/2");
+        CHECK(packs[0]->kind == PackKind::world_mid);
+        CHECK(packs[3]->id == world_globe_id);
+        CHECK(packs[3]->kind == PackKind::world_base);
+        CHECK(store.find(TileKey(11, 1050, 673)).size() == 1);
+        CHECK(store.find(TileKey(0, 0, 0)).size() == 1);
+        // a folder without an index, or a part shorter than its range, is an error
+        Store none;
+        CHECK(!add_world(none, dir.path() + "/nowhere"));
+        write_file(dir.path() + "/world-coarse.000", std::span(c).first(c.size() / 2));
+        Store short_part;
+        CHECK(!add_world(short_part, dir.path()));
+    }
+    SUBCASE("a world pack of a country's level, or a globe of the mid-zoom base's, is refused") {
+        constexpr std::array<std::uint8_t, 1> country = {12};
+        constexpr std::array<std::uint8_t, 1> mid_level = {6};
+        write_file(dir.path() + "/country.atlas", world_pack({world_tile(12, 2100, 1346)}, country));
+        write_file(dir.path() + "/mid.atlas", world_pack({world_tile(6, 32, 21)}, mid_level));
+        Store store;
+        CHECK(!store.add({.id = "country", .kind = PackKind::world_mid, .path = dir.path() + "/country.atlas"}));
+        CHECK(!store.add({.id = "mid", .kind = PackKind::world_base, .path = dir.path() + "/mid.atlas"}));
+        CHECK(store.add({.id = "mid", .kind = PackKind::world_mid, .path = dir.path() + "/mid.atlas"}));
+    }
 }
 
 TEST_CASE("tiles: the world's cover check finds a cell's ground short of its area and a piece across its edge") {
@@ -718,3 +659,60 @@ TEST_CASE("tiles: the packer's world packs and globe, when ATLAS_WORLD_DIR names
 }
 
 } // namespace
+
+TEST_CASE("scene: a world tile's geometry lies the land under everything, then the water, then its lines, each in its "
+          "cell; the levels start where their tiles are as wide as L12's at 9.4 km") {
+    TileBytes tile = world_tile(9, 262, 168);
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const atlas::scene::WorldGeometry g = atlas::scene::build_world_geometry(*decoded, nullptr);
+    REQUIRE(g.triangles > 0);
+    CHECK(g.segments == 1);
+    CHECK(g.words.size() == (4 * std::size_t{g.triangles}) + (3 * std::size_t{g.segments}));
+    // the land's triangles (palette 0) all before the sea's (1): the painter's order
+    std::size_t last_land = 0;
+    std::size_t first_sea = g.triangles;
+    for (std::size_t t = 0; t < g.triangles; ++t) {
+        const std::uint32_t look = g.words[(3 * std::size_t{g.triangles}) + t];
+        if ((look & 0xFFU) == atlas::scene::world_palette::land) last_land = t;
+        if ((look & 0xFFU) == atlas::scene::world_palette::water) first_sea = std::min(first_sea, t);
+        CHECK(((look >> 8U) & 0xFFU) < 16U);
+    }
+    CHECK(last_land < first_sea);
+    CHECK(first_sea < g.triangles);
+    // the secondary road in cell 1, its width not mapped: the renders' width of its class, 7 m
+    const std::uint32_t look = g.words[(4 * std::size_t{g.triangles}) + 2];
+    CHECK((look & 0xFFU) == atlas::scene::world_palette::road);
+    CHECK(((look >> 8U) & 0xFFU) == 1U);
+    CHECK((look >> 16U) == 70U);
+    // the renders' terrain lines (regions.py's LW)
+    CHECK(atlas::scene::terrain_line_width("motorway", false) == 12.0);
+    CHECK(atlas::scene::terrain_line_width("trunk", true) == 10.0);
+    CHECK(atlas::scene::terrain_line_width("primary", false) == 8.0);
+    CHECK(atlas::scene::terrain_line_width("secondary", false) == 7.0);
+    CHECK(atlas::scene::terrain_line_width("tertiary", false) == 6.0);
+    CHECK(atlas::scene::terrain_line_width("residential", false) == 2.0);
+    CHECK(atlas::scene::terrain_line_width("", true) == 8.0);
+    // the levels' starts and the far plane
+    CHECK(atlas::scene::world_level_start(11) == 18'800.0);
+    CHECK(atlas::scene::world_level_start(6) == 18'800.0 * 32);
+    CHECK(atlas::scene::world_far(18'000.0, 1'000.0) == doctest::Approx(30'000.0));
+    CHECK(atlas::scene::world_far(1e6, 1e6) == doctest::Approx(std::sqrt((2.0 * 6'371'000.0 * 1e6) + 1e12)));
+}
+
+TEST_CASE("passes: the world's palette is the theme's land, water and roads, and its land where the style has none") {
+    atlas::style::ThemeBlock theme{};
+    theme.ground = {.r = 10, .g = 20, .b = 30, .a = 255};
+    theme.water = {.r = 40, .g = 50, .b = 60, .a = 255};
+    theme.road = {.r = 70, .g = 80, .b = 90, .a = 255};
+    const std::vector<std::uint32_t> p = atlas::passes::World::palette_of(theme, false, nullptr);
+    REQUIRE(p.size() == atlas::scene::world_palette::size);
+    CHECK(p[atlas::scene::world_palette::land] == 0xFF1E140AU);
+    CHECK(p[atlas::scene::world_palette::water] == 0xFF3C3228U);
+    CHECK(p[atlas::scene::world_palette::road] == 0xFF5A5046U);
+    CHECK(p[atlas::scene::world_palette::rail] == 0xFF1E140AU);
+    CHECK(p[atlas::scene::world_palette::kinds + 3] == 0xFF1E140AU);
+}

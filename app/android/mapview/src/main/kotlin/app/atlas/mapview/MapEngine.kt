@@ -267,6 +267,7 @@ object MapEngine {
     fun packs(): PackList = packList ?: synchronized(this) {
         packList ?: PackList(
             windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
+            world = { worldDir() },
         )
             .also { packList = it }
     }
@@ -340,6 +341,9 @@ object MapEngine {
 
     /** Where the windows the phone took or built are kept: [keptDir]'s `windows/`; null where nothing is kept. */
     fun windowsDir(): File? = keptDir?.let { File(it, "windows") }
+
+    /** Where the world is kept (ENGINE.md step 5: world.idx, its parts and the globe): [keptDir]'s `world/`. */
+    fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null

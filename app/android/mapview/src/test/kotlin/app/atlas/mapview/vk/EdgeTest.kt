@@ -1,10 +1,12 @@
 package app.atlas.mapview.vk
 
 import app.atlas.geo.BBox
+import app.atlas.mapcore.MapCore
 import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapController
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.vk.Transition.Path
+import app.atlas.tiles.WorldIndex
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.file.Files
+import java.time.Instant
 
 /**
  * The edge of the windows on the phone (the user, 30 October, on alpha 21: today's map there "looks different then the
@@ -130,6 +133,37 @@ class EdgeTest {
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
         // with nothing listed, the camera names no pack
         assertNull(PackList(windows = { File(dir, "none") }).also { it.load() }.named(52.37, 4.88))
+    }
+
+    @Test
+    fun withTheWorldOnThePhoneTheCoreDrawsEveryCameraBeyondTheLevelsReach() {
+        // the world's folder as `packer world` and `packer globe` write it: one fine pack, a range of its part, and the
+        // globe (ENGINE.md step 5)
+        val world = File(dir, "world").apply { mkdirs() }
+        val fine = WorldIndex.Entry(6, 33, 21, 9, 11, 0, 20, 80, 1, IntArray(4), ByteArray(WorldIndex.HASH_BYTES))
+        File(world, "world.idx").outputStream().use { WorldIndex(Instant.EPOCH, listOf(WorldIndex.Part("world-mid.000", 100)), listOf(fine)).write(it) }
+        File(world, "world-mid.000").writeBytes(ByteArray(100))
+        File(world, PackList.WORLD_GLOBE).writeBytes(ByteArray(10))
+        val list = PackList(windows = { windows }, world = { world }).also { it.load() }
+        assertTrue(list.hasWorld)
+        assertEquals(
+            listOf("world/6/33/21 3 20 80", "world-globe 4"),
+            list.worldRefs.map { r -> if (r.kind == MapCore.PackRef.WORLD_MID) "${r.id} ${r.kind} ${r.offset} ${r.length}" else "${r.id} ${r.kind}" },
+        )
+        assertEquals(File(world, "world-mid.000").path, list.refs().first { it.id == "world/6/33/21" }.path)
+        // beyond the levels' reach the core draws every camera, in a country or not, over land or the open sea
+        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
+        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 40.0, -30.0, 1_000_000.0))
+        // within it, as before: no window at Lille, today's map
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH))
+        // the world is no pack a camera names
+        assertNull(list.named(50.6292, 3.0573))
+        // a part shorter than its pack's range leaves the pack out; without the globe, the world is gone
+        File(world, "world-mid.000").writeBytes(ByteArray(90))
+        File(world, PackList.WORLD_GLOBE).delete()
+        list.load()
+        assertFalse(list.hasWorld)
+        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
     }
 
     @Test

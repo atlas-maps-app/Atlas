@@ -24,6 +24,7 @@
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
+#include "scene/WorldTiles.hpp"
 #include "tiles/Store.hpp"
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
@@ -179,6 +180,11 @@ public:
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
     void update(const frame::FrameState& state) override;
     [[nodiscard]] const Cover* cover() const noexcept override { return &cover_; }
+    [[nodiscard]] const WorldFrame* world_frame() const noexcept override {
+        return world_tiles_ ? world_tiles_->frame() : nullptr;
+    }
+    /// The world's tiles beyond the countries' (ENGINE.md step 5), once the store holds a world pack; else null.
+    [[nodiscard]] WorldTiles* world_tiles() noexcept { return world_tiles_.get(); }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
     [[nodiscard]] std::span<const std::string_view> pass_names() const noexcept override { return pass_names_; }
@@ -266,6 +272,8 @@ private:
     void take_neighbour_packs() noexcept;
     /// What was built of `pack`, or null.
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
+    /// The world's tiles for this frame (made once the store holds a world pack), in `frame`, the frame drawn.
+    void update_world(const frame::FrameState& state, const view::GroundFrame& frame);
 
     WorldOptions options_;
     std::vector<std::string_view> pass_names_; ///< the passes that build its tiles and packs, in their order
@@ -273,6 +281,9 @@ private:
     std::unique_ptr<Heaps> heaps_;
     std::unique_ptr<Residency> residency_;
     std::unique_ptr<PackStage> pack_stage_;
+    const gpu::Device* device_ = nullptr;     ///< the device the world's tiles are made on
+    std::unique_ptr<WorldTiles> world_tiles_; ///< the world beyond the countries' tiles (ENGINE.md step 5)
+    std::function<void()> wake_;              ///< the frame loop's frame request, for the world's tiles
     std::vector<std::shared_ptr<const ResidentPack>> packs_;   ///< the packs' stage T, built so far
     std::vector<std::shared_ptr<const ResidentPack>> arrived_; ///< taken this frame (kept for its capacity)
     std::shared_ptr<const tiles::StorePack> last_active_;      ///< the packs drawn when packs_ was last pruned

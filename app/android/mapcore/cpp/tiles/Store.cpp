@@ -8,8 +8,11 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <fcntl.h>
 #include <format>
 #include <functional>
+#include <unistd.h>
 #include <utility>
 
 namespace atlas::tiles {
@@ -76,8 +79,28 @@ private:
     std::shared_ptr<const ByteSource> source_;
 };
 
+/// A world pack's range of its part named by path (the app lists the world so: MapCore.PackRef.WORLD_MID), mapped and
+/// the descriptor closed.
+Result<std::unique_ptr<MappedSource>> open_range(const PackRef& ref) {
+    const int fd = ::open(ref.path.c_str(), O_RDONLY | O_CLOEXEC); // NOLINT(cppcoreguidelines-pro-type-vararg)
+    if (fd < 0) return std::unexpected(error(Fault::io, Site::file, static_cast<std::uint64_t>(errno)));
+    auto source = MappedSource::open(fd, ref.offset, ref.length);
+    (void)::close(fd); // the mapping outlives the descriptor
+    return source;
+}
+
+/// Whether `ref` names a range of a file by its path: a world pack's.
+[[nodiscard]] bool names_range(const PackRef& ref) noexcept {
+    return ref.fd < 0 && ref.kind == PackKind::world_mid && !ref.path.empty() && ref.length > 0;
+}
+
 /// A pack's bytes as a shared source: a file or a range of one, mapped.
 Result<std::shared_ptr<const ByteSource>> shared_source(const PackRef& ref) {
+    if (names_range(ref)) {
+        auto source = open_range(ref);
+        if (!source) return std::unexpected(source.error());
+        return std::shared_ptr<const ByteSource>(std::move(*source));
+    }
     if (ref.fd >= 0) {
         auto source = MappedSource::open(ref.fd, ref.offset, ref.length);
         if (!source) return std::unexpected(source.error());
@@ -168,6 +191,10 @@ Result<void> Store::add(const PackRef& ref) {
     if (ref.fetch) {
         remote = true;
         pack = open_remote(ref);
+    } else if (names_range(ref)) {
+        auto source = open_range(ref);
+        if (!source) return std::unexpected(source.error());
+        pack = Pack::open(std::move(*source));
     } else if (ref.fd >= 0) {
         auto source = MappedSource::open(ref.fd, ref.offset, ref.length);
         if (!source) return std::unexpected(source.error());
@@ -179,6 +206,17 @@ Result<void> Store::add(const PackRef& ref) {
     }
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
+    if (ref.kind == PackKind::world_mid || ref.kind == PackKind::world_base) {
+        // The world's levels and the countries' never meet (ENGINE.md step 5): a world pack holds L6 to L11, the globe
+        // L0 to L5, so a country's tile (L12 and finer) is never found in one, nor a world tile in a country's pack.
+        const RenderHead* head = pack->head();
+        const std::uint8_t lo = ref.kind == PackKind::world_mid ? world_mid_first : 0;
+        const std::uint8_t hi = ref.kind == PackKind::world_mid ? world_mid_last : world_mid_first - 1;
+        if (head == nullptr || head->levels.empty() ||
+            std::ranges::any_of(head->levels, [&](std::uint8_t z) { return z < lo || z > hi; })) {
+            return std::unexpected(error(Fault::bad_value, Site::head, head == nullptr ? 0 : head->levels.size()));
+        }
+    }
     insert(std::make_shared<StorePack>(StorePack{
         .id = ref.id, .kind = ref.kind, .identity = ref.identity, .remote = remote, .pack = std::move(*pack)}));
     return {};

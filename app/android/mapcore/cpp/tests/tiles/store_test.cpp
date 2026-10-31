@@ -117,9 +117,9 @@ TEST_CASE("tiles: the store opens packs from a file and from a range of a file, 
 
     // the same id again replaces it (a window joins its frame cell's pack instead: window_test); removing it leaves the
     // other
-    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::world_mid, .path = dir.file("render.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::bundled, .path = dir.file("render.atlas")}));
     CHECK(store.packs().size() == 2);
-    CHECK(store.packs()[1]->kind == PackKind::world_mid);
+    CHECK(store.packs()[1]->kind == PackKind::bundled);
     CHECK(store.remove("grachten"));
     CHECK(!store.remove("grachten"));
     CHECK(store.packs().size() == 1);
@@ -219,7 +219,7 @@ struct Remote {
     [[nodiscard]] PackRef ref(std::string id) {
         PackRef r;
         r.id = std::move(id);
-        r.kind = PackKind::world_mid;
+        r.kind = PackKind::render; // a country's levels: a world pack holds the world's alone (world_test)
         r.length = bytes.size();
         r.identity = Sha256::of(bytes);
         r.fetch = [this](std::uint64_t offset, std::span<std::byte> out) -> Result<void> {

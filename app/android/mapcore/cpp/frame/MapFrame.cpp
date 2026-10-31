@@ -288,8 +288,15 @@ standin::MapCounts MapFrame::counts() const noexcept {
 }
 
 bool MapFrame::complete() const noexcept {
+    if (!made()) return false;
+    // beyond every country's reach, the world's picture (ENGINE.md step 5's step 2): complete once it draws, as no
+    // frame waits for a world tile and its globe's coarsest tiles stay resident
+    if (world_->active() == nullptr && world_->incoming() == nullptr) {
+        const scene::WorldFrame* w = world_->world_frame();
+        return w != nullptr && !w->draws.empty();
+    }
     // a switch waiting for the named pack's tiles (scene::World::incoming) is not the camera's final picture yet
-    if (!made() || world_->active() == nullptr || world_->incoming() != nullptr) return false;
+    if (world_->active() == nullptr || world_->incoming() != nullptr) return false;
     const scene::Cover& cover = *world_->cover();
     if (cover.tiles().empty() || cover.missing() > 0 || cover.fading()) return false;
     return world_->frames().weight(now()) >= 1.0;

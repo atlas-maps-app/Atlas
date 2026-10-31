@@ -77,6 +77,7 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
         }
     }
     w->pack_stage_ = std::make_unique<PackStage>(w->store_, passes);
+    w->device_ = &device;
     // The passes that build its tiles and packs, by name: a frame builder of other passes draws none of them.
     for (const std::unique_ptr<frame::Pass>& p : passes) w->pass_names_.push_back(p->name());
     return w;
@@ -117,6 +118,8 @@ gpu::Result<void> World::add_globals(std::shared_ptr<frame::GlobalProvider> prov
 }
 
 void World::set_wake(std::function<void()> wake) {
+    wake_ = wake;
+    if (world_tiles_) world_tiles_->set_wake(wake);
     if (sun_) sun_->set_wake(wake);
     pack_stage_->set_published(wake);
     residency_->set_published(std::move(wake));
@@ -132,13 +135,19 @@ namespace {
                                              : std::span<const std::uint8_t>(head.levels).first(1);
 }
 
+/// Whether a pack is the world's (ENGINE.md step 5): its mid-zoom base or the globe, which the world's own cover draws
+/// (scene/WorldTiles.hpp); never the pack drawn, nor a coarser or a neighbouring one, nor a place's data.
+[[nodiscard]] bool of_the_world(const tiles::StorePack& p) noexcept {
+    return p.kind == tiles::PackKind::world_mid || p.kind == tiles::PackKind::world_base;
+}
+
 } // namespace
 
 void World::choose(const style::CameraState& camera) {
     const tiles::GridPoint target{tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude)};
     auto holds = [&target](const tiles::StorePack& p) {
         const tiles::RenderHead* head = p.pack.head();
-        if (!p.pack.is_render() || head == nullptr || head->levels.empty()) return false;
+        if (!p.pack.is_render() || head == nullptr || head->levels.empty() || of_the_world(p)) return false;
         for (const std::uint8_t z : data_levels(p)) {
             for (const tiles::ChunkRef& c : p.pack.chunks().level(z)) {
                 const tiles::GridBox& b = c.reach.box;
@@ -234,7 +243,7 @@ std::string World::enclosing_pack() {
     if (!inner) return enclosing_id_;
     double smallest = 0;
     for (const std::shared_ptr<const tiles::StorePack>& p : open) {
-        if (p == active_ || p->id == active_->id || p->kind == tiles::PackKind::window) continue;
+        if (p == active_ || p->id == active_->id || p->kind == tiles::PackKind::window || of_the_world(*p)) continue;
         const std::optional<tiles::GridBox> b = box_of(*p);
         if (!b || b->south > inner->south || b->west > inner->west || b->north < inner->north ||
             b->east < inner->east) {
@@ -285,7 +294,7 @@ void World::choose_neighbours(const style::CameraState& camera) {
     const bool around_render = active_->kind != tiles::PackKind::window;
     auto usable = [&](const std::shared_ptr<const tiles::StorePack>& p) {
         return p != active_ && p->id != active_->id && p != coarser_ && p->pack.is_render() &&
-               p->pack.head() != nullptr && (!around_render || p->kind == tiles::PackKind::window);
+               p->pack.head() != nullptr && !of_the_world(*p) && (!around_render || p->kind == tiles::PackKind::window);
     };
     // around a render pack, the windows of the frame cell holding the target come first, wherever they reach
     std::string cell;
@@ -363,7 +372,7 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
         const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
         std::vector<tiles::GridBox> held; // the bundled and render packs' boxes: their data's places
         for (const std::shared_ptr<const tiles::StorePack>& p : open) {
-            if (p->kind == tiles::PackKind::window) continue;
+            if (p->kind == tiles::PackKind::window || of_the_world(*p)) continue;
             if (const std::optional<tiles::GridBox> b = box_of(*p)) held.push_back(*b);
         }
         const Frustum frustum(view.camera(), 40.0, options_.far);
@@ -631,6 +640,26 @@ void World::take_neighbour_packs() noexcept {
     for (std::size_t i = 0; i < max_neighbours; ++i) neighbour_packs_.at(i) = built(neighbours_.at(i));
 }
 
+void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame) {
+    if (!state.view) return;
+    if (!world_tiles_) {
+        // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps'), which a
+        // map without the world never takes
+        const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+        if (device_ == nullptr || std::ranges::none_of(open, [](const auto& p) { return of_the_world(*p); })) return;
+        auto made = WorldTiles::create(*device_, store_, options_.heaps.total / 6);
+        if (!made) {
+            log::error("vk world: its tiles: {}", made.error().text());
+            device_ = nullptr; // not tried again
+            return;
+        }
+        world_tiles_ = std::move(*made);
+        if (wake_) world_tiles_->set_wake(wake_);
+    }
+    const double distance = state.placed ? state.placed->dist() : state.camera.distance;
+    world_tiles_->update(state.view->camera(), frame, distance, state.number);
+}
+
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
     // what the last frame's make_room let go of, before any cover of this frame can draw it
@@ -660,6 +689,7 @@ void World::update(const frame::FrameState& state) {
                                        .kx = 111320.0 * pymath::cos(pymath::radians(lat0)),
                                        .kz = 110540.0};
             want_windows(*state.view, state.camera, view::frame_of(centred), seconds);
+            update_world(state, view::frame_of(centred));
         }
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
@@ -716,6 +746,7 @@ void World::update(const frame::FrameState& state) {
     };
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
+    update_world(state, frames_.current().value_or(view::frame_of(head.frame)));
     // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
     if (sun_) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbours_,

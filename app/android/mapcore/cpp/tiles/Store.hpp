@@ -41,7 +41,8 @@ struct PackRef {
     std::string path; ///< a file, or empty
     int fd = -1;      ///< an open file (with offset and length), or -1
     /// With fd, its range. With a path, the file's time and size as the app listed it, which the file is not opened by:
-    /// a file built again at the same path (a window's) is then other bytes, which the map opens anew (MapFrame).
+    /// a file built again at the same path (a window's) is then other bytes, which the map opens anew (MapFrame); but a
+    /// world_mid pack's path is its part's, and these are its range there (the app's world.idx).
     std::uint64_t offset = 0;
     std::uint64_t length = 0;
     RangeSource::Fetch fetch; ///< a remote pack's ranges (with its size in `length`), or empty
@@ -109,6 +110,9 @@ public:
 
     /// The level of the frame cells windows are grouped by (load/Window.hpp's frame_cell_level), a window's (its
     /// window_level) and the cell's coarse and far levels' (load/Levels.hpp's coarse_level and far_level).
+    /// The world's levels (ENGINE.md step 5): its mid-zoom base's, a world_mid pack's (L6 to L11); the globe's below.
+    static constexpr std::uint8_t world_mid_first = 6;
+    static constexpr std::uint8_t world_mid_last = 11;
     static constexpr std::uint8_t cell_level = 10;
     static constexpr std::uint8_t window_level = 14;
     static constexpr std::uint8_t coarse_level = 13;

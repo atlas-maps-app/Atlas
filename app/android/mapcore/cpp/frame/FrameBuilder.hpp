@@ -52,6 +52,7 @@ class Cover;         // scene/Cover.hpp
 class Heaps;         // scene/Heaps.hpp
 class ItemTable;     // scene/ItemTable.hpp
 struct ResidentPack; // scene/Packs.hpp
+struct WorldFrame;   // scene/WorldTiles.hpp
 } // namespace atlas::scene
 
 namespace atlas::labels {
@@ -119,6 +120,9 @@ struct FrameState {
     const scene::ResidentPack* active_pack = nullptr;
     const scene::ResidentPack* coarser_pack = nullptr;
     std::span<const scene::ResidentPack* const> neighbour_packs;
+    /// What the frame draws of the world beyond the countries' tiles (ENGINE.md step 5; the world pass's), or null: up
+    /// to 18 km from the target, and without the world's packs, nothing.
+    const scene::WorldFrame* world = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
@@ -202,6 +206,8 @@ public:
     [[nodiscard]] virtual const scene::ResidentPack* active_pack() const noexcept { return nullptr; }
     [[nodiscard]] virtual const scene::ResidentPack* coarser_pack() const noexcept { return nullptr; }
     [[nodiscard]] virtual std::span<const scene::ResidentPack* const> neighbour_packs() const noexcept { return {}; }
+    /// What the frame draws of the world beyond the countries' tiles after update (valid until the next), or null.
+    [[nodiscard]] virtual const scene::WorldFrame* world_frame() const noexcept { return nullptr; }
     /// The providers of set 1's globals that no pass owns (frame/Globals.hpp), asked in this order each frame after
     /// update: the geometry heaps', the sun's, those added to the world.
     [[nodiscard]] virtual std::span<GlobalProvider* const> globals() noexcept { return {}; }
