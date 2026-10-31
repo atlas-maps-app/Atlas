@@ -405,7 +405,17 @@ object Regions {
         "apron" to ("#C7C5C0" to 5), "parking" to ("#C9C6BE" to 5), "pedestrian" to ("#D6CDBE" to 5), "playground" to ("#D9B48A" to 5), "pitch" to ("#A3C28C" to 5), "track" to ("#C98F74" to 5), "flowerbed" to ("#B9C48F" to 5),
     )
 
-    // render/regions.py:202 land_kind
+    // render/regions.py:206 LAWN, LAWN_KINDS
+    /**
+     * A park's, a garden's and grass's lawn: Amsterdam's AREA colour, drawn once among the land cover in its own draw
+     * order (under the woods and the water), where the living map's rules drew it again as an area over everything in it:
+     * a park mapped round a whole wood (the Amsterdamse Bos, 896 ha) covered its forest, its streams and its lake; one
+     * inside another area or in the water stays an area over it ([areasWithoutLawns]).
+     */
+    const val LAWN = "#A9C38A"
+    val LAWN_KINDS: Set<String> = setOf("park", "garden", "grass")
+
+    // render/regions.py:207 land_kind
     fun landKind(t: Map<String, Any?>): String? {
         if (t["aeroway"] == "apron") return "apron"
         if (t["amenity"] == "parking" && t["parking"] != "underground") return "parking"
@@ -416,8 +426,46 @@ object Regions {
         return null
     }
 
+    // render/regions.py:216 lawn_in_land
+    /** Whether an area's lawn is in the land cover: [load] puts its element in S['land'] as the same kind, which [drawUnder] draws. */
+    fun lawnInLand(a: Dict): Boolean {
+        val t = tagsOf(a)
+        return a["kind"] in LAWN_KINDS && landKind(t) == a["kind"] && !truthy(t["building"]) && t["boundary"] != "national_park"
+    }
+
+    // render/regions.py:221 box_of
+    fun boxOf(p: List<V2>): DoubleArray = doubleArrayOf(City.pyMinOf(p.map { it.x }), City.pyMaxOf(p.map { it.x }), City.pyMinOf(p.map { it.y }), City.pyMaxOf(p.map { it.y }))
+
+    // render/regions.py:224 ring_in
+    /** Whether ring [p] (its box [pb]) lies in ring [q] (its box [qb]): its box within q's and its centroid in q. */
+    fun ringIn(p: List<V2>, pb: DoubleArray, q: List<V2>, qb: DoubleArray): Boolean {
+        if (!(qb[0] <= pb[0] && pb[1] <= qb[1] && qb[2] <= pb[2] && pb[3] <= qb[3])) return false
+        val c = centroid(p)
+        return pip(c.x, c.y, q)
+    }
+
+    // render/regions.py:230 areas_without_lawns
+    /**
+     * S['areas'] without the lawns the land cover draws ([lawnInLand]), but for those inside another area (a courtyard's
+     * garden, a parking lot's grass islands, a park on a square) or in the water (an island its rings leave in it), by the
+     * areas' own [rings]: the land cover would draw them under what holds them, so they stay areas, drawn over it as before.
+     */
+    fun areasWithoutLawns(S: Dict, rings: List<List<V2>>): ArrayList<Dict> {
+        val areas = dicts(S["areas"])
+        val holders = areas.zip(rings).filter { (a, r) -> a["kind"] !in LAWN_KINDS && r.size >= 3 }.map { (_, r) -> r to boxOf(r) }
+        val water = rings(S["water"]).filter { it.size >= 3 }.map { it to boxOf(it) }
+        val holes = rings(S["water_holes"]).filter { it.size >= 3 }.map { it to boxOf(it) }
+        fun held(p: List<V2>): Boolean {
+            if (p.size < 3) return false
+            val b = boxOf(p)
+            if (holders.any { (q, qb) -> ringIn(p, b, q, qb) }) return true
+            return water.any { (q, qb) -> ringIn(p, b, q, qb) } && holes.none { (q, qb) -> ringIn(p, b, q, qb) }
+        }
+        return ArrayList(areas.zip(rings).filter { (a, r) -> !lawnInLand(a) || held(r) }.map { it.first })
+    }
+
     // ------------------------------------------------------------------ load
-    // render/regions.py:212 base_of
+    // render/regions.py:245 base_of
     fun baseOf(view: String): String = view.split('_')[0]
 
     private fun pts(e: Map<String, Any?>): List<V2> = geomOf(e)!!.map { ll(it!!) }
@@ -425,7 +473,7 @@ object Regions {
     /** An identity set, as Python's set of `id(ring)`. */
     private fun <T> identitySet(): MutableSet<T> = Collections.newSetFromMap(IdentityHashMap())
 
-    // render/regions.py:215 load
+    // render/regions.py:248 load
     /**
      * A region's scene for a view (`paris_close` is Paris, seen from its close camera): Amsterdam.load on its extract, then what only
      * regions draw (land cover, runways, big roads, rails, power, cranes, masts, turbines, the sea from its coastline, terrain or
@@ -460,6 +508,7 @@ object Regions {
                 }
             }
         }
+        val areaRings = dicts(S["areas"]).map { Amsterdam.polyOf(it) } // their own rings: the lawns kept as areas are the same at every tolerance
         val tol = GENERALISE[view] ?: GENERALISE[view.replace("_detail", "").replace("_kit", "")] ?: GENERALISE[name] ?: 0.0
         if (tol != 0.0) {
             for (b in buildings + parts) b["poly"] = simplify(Amsterdam.polyOf(b), tol)
@@ -536,6 +585,7 @@ object Regions {
                 Relief.draw(S, cam, th, far, defs, cfgFor(view), LAND, S["_lines"] as List<Terrain.Line>)
             } as Amsterdam.SceneLayer
         } else {
+            S["areas"] = areasWithoutLawns(S, areaRings) // their land cover draws the lawns
             S["under"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawUnder(S, cam, th, far, defs) } as Amsterdam.SceneLayer
         }
         flatHeights(S, name, view, demPath, water, naturalShore)
@@ -569,7 +619,7 @@ object Regions {
         return S
     }
 
-    // render/regions.py:215 load: buildings mapped as multipolygon relations (Notre-Dame, the Louvre), outer ways joined into rings
+    // render/regions.py:248 load: buildings mapped as multipolygon relations (Notre-Dame, the Louvre), outer ways joined into rings
     private fun relationBuildings(raw: List<Map<String, Any?>>, buildings: MutableList<Dict>, parts: MutableList<Dict>) {
         val have = HashSet<V2>()
         for (b in buildings + parts) { val p0 = Amsterdam.polyOf(b)[0]; have.add(V2(r1(p0.x), r1(p0.y))) }
@@ -608,7 +658,7 @@ object Regions {
         }
     }
 
-    // render/regions.py:215 load: what only regions draw, from the extract (land cover, runways, big roads, rails, power, marine works,
+    // render/regions.py:248 load: what only regions draw, from the extract (land cover, runways, big roads, rails, power, marine works,
     // cranes, masts, gantries, turbines, towers, parks), and the coastline's ways
     @Suppress("UNCHECKED_CAST")
     private fun regionFeatures(S: Dict, raw: List<Map<String, Any?>>, name: String, land: MutableList<Dict>, coast: MutableList<List<Map<String, Any?>?>>) {
@@ -676,7 +726,7 @@ object Regions {
         }
     }
 
-    // render/regions.py:215 load: the ground's real shape (AHN, not OSM), with land cover, water and paths draped over it
+    // render/regions.py:248 load: the ground's real shape (AHN, not OSM), with land cover, water and paths draped over it
     @Suppress("UNCHECKED_CAST")
     private fun drapeTerrain(S: Dict, name: String, view: String, demPath: File, water: List<List<V2>>, naturalShore: Set<Any?>, buildings: List<Dict>,
                              parts: List<Dict>, land: MutableList<Dict>) {
@@ -738,7 +788,7 @@ object Regions {
         }
     }
 
-    // render/regions.py:215 load: where the drawing stays flat, how far each water body lies below its banks, and the relief
+    // render/regions.py:248 load: where the drawing stays flat, how far each water body lies below its banks, and the relief
     @Suppress("UNCHECKED_CAST")
     private fun flatHeights(S: Dict, name: String, view: String, demPath: File, water: List<List<V2>>, naturalShore: Set<Any?>) {
         if (demPath.exists() && !truthy(S["_terrain"])) {
@@ -839,16 +889,16 @@ object Regions {
     }
 
     // ------------------------------------------------------------------ drawing: on the ground
-    // render/regions.py:481 night_c
+    // render/regions.py:516 night_c
     fun nightC(th: Map<String, Any?>, c: String, k: Double = 0.2): String = if (th["night"] == true) tohex(mulc(hx(c), k)) else c
 
-    // render/regions.py:483 gpoly
+    // render/regions.py:518 gpoly
     fun gpoly(cam: City.Camera, pts: List<V2>, y: Double = 0.0, margin: Double = 600.0): String {
         val sp = cam.poly(pts.map { V3(it.x, y, it.y) }, margin = margin)
         return if (sp != null && City.area(sp) > 0.3) P(sp) else ""
     }
 
-    // render/regions.py:487 draw_under
+    // render/regions.py:522 draw_under
     /** Land cover below the water, the canopy of the woods, and (relief regions) the relief image. */
     fun drawUnder(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>): String {
         val out = arrayListOf(if (th["_no_grain"] == true) "<g>" else "<g filter=\"url(#mat)\">")
@@ -860,7 +910,10 @@ object Regions {
             if (dd.isNotEmpty()) groups.getOrPut(a["kind"] as String) { ArrayList() }.add(dd)
         }
         WorldTape.owner(null)
-        for ((kind, ds) in groups) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", ds.joinToString(""), nightC(th, LAND.getValue(kind).first)))
+        for ((kind, ds) in groups) {
+            val c = if (kind in LAWN_KINDS) nightC(th, LAWN, 0.18) else nightC(th, LAND.getValue(kind).first) // the lawn as its area drew it
+            out.add(pf("<path d=\"%s\" fill=\"%s\"/>", ds.joinToString(""), c))
+        }
         out.add("</g>")
         // forest and scrub seen from above: a canopy of crowns, generic, inside the mapped outline
         val canopy = land.filter { it["kind"] in setOf("forest", "wood", "scrub") }
@@ -879,7 +932,7 @@ object Regions {
         return out.joinToString("")
     }
 
-    // render/regions.py:512 offset_line
+    // render/regions.py:548 offset_line
     /** A polyline moved sideways by [off] metres (left positive). */
     fun offsetLine(pts: List<V2>, off: Double): List<V2> {
         val out = ArrayList<V2>(pts.size)
@@ -891,7 +944,7 @@ object Regions {
         return out
     }
 
-    // render/regions.py:521 line_d
+    // render/regions.py:557 line_d
     fun lineD(cam: City.Camera, pts: List<V2>, y: Double): String {
         var run = ArrayList<V2>(); val out = StringBuilder()
         for (k in 0..pts.size) {
@@ -903,7 +956,7 @@ object Regions {
         return out.toString()
     }
 
-    // render/regions.py:530 dashes
+    // render/regions.py:566 dashes
     /** World-space dashes along a polyline: [on] metres painted, [off] metres gap, measured along the whole line. */
     fun dashes(cam: City.Camera, pts: List<V2>, y: Double, on: Double, off: Double): String {
         val out = StringBuilder(); var s0 = 0.0; val period = on + off
@@ -925,13 +978,13 @@ object Regions {
         return out.toString()
     }
 
-    // render/regions.py:547 px
+    // render/regions.py:583 px
     fun px(cam: City.Camera, w: Double, p: V2): Double {
         val c = cam.cam(V3(p[0], 0.0, p[1]))
         return pmax(0.25, w * cam.focal / pmax(c[2], 1.0))
     }
 
-    // render/regions.py:551 draw_over
+    // render/regions.py:587 draw_over
     /** On the ground above the water: rails, big roads with their lanes, runways and taxiways, marine works, a park's tracks and woods, a national park's edge. */
     fun drawOver(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>, light: Woods.Light): String {
         val night = th["night"] == true; val out = ArrayList<String>()
@@ -1044,7 +1097,7 @@ object Regions {
         return if (i > 0) s.substring(0, i) else null
     }
 
-    // render/regions.py:628 runway_ends
+    // render/regions.py:664 runway_ends
     /** Threshold bars and the designation at each end: the numbers come from the runway's ref (e.g. 18C/36C). */
     fun runwayEnds(cam: City.Camera, pts: List<V2>, w: Double, ref: String, mk: String, night: Boolean): String {
         val out = StringBuilder()
@@ -1084,7 +1137,7 @@ object Regions {
     }
 
     // ------------------------------------------------------------------ drawing: things standing up
-    // render/regions.py:657 draw_items
+    // render/regions.py:693 draw_items
     /** Towers, wind turbines, cranes, masts, gantries and conveyors, a park's tracks and woods, power lines: items sorted with the rest. */
     fun drawItems(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>): List<Amsterdam.Item> {
         val night = th["night"] == true; val L = v3(th["_L"]); val items = ArrayList<Amsterdam.Item>()
@@ -1307,7 +1360,7 @@ object Regions {
         return items
     }
 
-    // render/regions.py:657 draw_items: towers mapped as points with a height (split out of drawItems, so it stays compilable)
+    // render/regions.py:693 draw_items: towers mapped as points with a height (split out of drawItems, so it stays compilable)
     private fun drawTowers(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>, items: MutableList<Amsterdam.Item>) {
         val night = th["night"] == true; val L = v3(th["_L"])
         // towers mapped as points with a height: a round concrete shaft; an airport or observation tower carries a glazed cab
@@ -1342,7 +1395,7 @@ object Regions {
         WorldTape.owner(null)
     }
 
-    // render/regions.py:657 draw_items: wind turbines (split out of drawItems, so it stays compilable)
+    // render/regions.py:693 draw_items: wind turbines (split out of drawItems, so it stays compilable)
     private fun drawTurbines(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, items: MutableList<Amsterdam.Item>) {
         val night = th["night"] == true
         // wind turbines: tower, nacelle, three blades; the rotor faces the hour's real wind
@@ -1379,7 +1432,7 @@ object Regions {
         WorldTape.owner(null)
     }
 
-    // render/regions.py:876 view_moments
+    // render/regions.py:912 view_moments
     /**
      * What a view holds, counted from the mapped data in view, and the real sun and weather of each moment (regions.py writes it
      * as `<name>_moments.json`): `heading`, `counts`, and `wet`, `grey`, `sunny`.
@@ -1452,7 +1505,7 @@ object Regions {
     }
 
     // ------------------------------------------------------------------ cameras
-    // render/regions.py:930 cfg_for
+    // render/regions.py:966 cfg_for
     /** The camera of a view, as Amsterdam.render takes it: the view's own fields, the frame size, and the haze from the camera's distance. */
     fun cfgFor(name: String): Dict {
         if (name !in CAMS && name.endsWith("_detail") && name.dropLast(7) in CAMS) CAMS[name] = LinkedHashMap(CAMS.getValue(name.dropLast(7))) // the second pass: the same camera

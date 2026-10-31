@@ -1,7 +1,7 @@
 // Text laid on the ground and on walls (plan-vector D13, K13): the renders' ground_text (living.py:309), a run's exact
 // perspective at its anchor and the affine map around it, printed as the port prints its `<text>` (the oracle draws
 // the printed values: at rest the core draws them too, so "the matrices after snapping" are the SVG's own); runway
-// designators (regions.py:628, runway_ends); and a run laid out as Slug glyph instances under its matrix.
+// designators (regions.py:664, runway_ends); and a run laid out as Slug glyph instances under its matrix.
 //
 // The camera is the frame's (view::Camera, K7's port of the renders' Camera): its proj takes a point in the region's
 // metres (x east, y up, z south) to CSS px, and nothing nearer than the near plane.
@@ -76,7 +76,7 @@ struct Runway {
     std::string ref;
 };
 
-/// regions.py:628 runway_ends' designations: at each end, the last of the ref's names whose number times ten lies
+/// regions.py:664 runway_ends' designations: at each end, the last of the ref's names whose number times ten lies
 /// within 30° of the heading from that end, 60 m in, 18 m tall in Geist 800 with spacing 0.05, in the marking colour
 /// `mark` (0xRRGGBB: the style's runways' marks by day or at night). The names of a ref without '/' are none. A name's
 /// number is its leading decimal digits as the port reads them: the Basic Multilingual Plane's (Character.isDigit on

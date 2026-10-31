@@ -281,7 +281,7 @@ void TwinPlacer::runs(const DrawnTile& t, std::span<const geo::P2> line, double 
         twin_runs(projector_, t.place, line, t.ground->origin, y, points, ends);
         return;
     }
-    // regions.py:521 line_d: cam.proj of each point (None behind the near plane), runs of two points or more
+    // regions.py:557 line_d: cam.proj of each point (None behind the near plane), runs of two points or more
     std::size_t run = 0;
     for (const geo::P2& p : line) {
         const view::Vec3 k = cam_.cam({p.x, y, p.z});

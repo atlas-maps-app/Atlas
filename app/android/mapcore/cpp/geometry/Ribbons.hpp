@@ -4,10 +4,10 @@
 //     moved by the averaged normal (the neighbours' difference at an inner point) times w / 2 (CPython's hypot, its
 //     zero length taken as 1). Roads draw ribbon(pts, w / 2), so their ribbon is half the mapped width
 //     (amsterdam.py:688).
-//   - offset_line: render/regions.py:512 offset_line, a polyline moved sideways by `off` (left positive).
-//   - dashes: render/regions.py:530 dashes, world-metre dashes along a polyline, `on` painted and `off` gap, measured
+//   - offset_line: render/regions.py:548 offset_line, a polyline moved sideways by `off` (left positive).
+//   - dashes: render/regions.py:566 dashes, world-metre dashes along a polyline, `on` painted and `off` gap, measured
 //     along the whole line from its start, each dash a segment of its own.
-//   - near_radius: render/regions.py:551 draw_over's `near`, the engine's radius cut for a line (any of every
+//   - near_radius: render/regions.py:587 draw_over's `near`, the engine's radius cut for a line (any of every
 //     len // 8th point and the last within the radius).
 // Everything here is plain data in double: stage T keeps it and the frame projects it (the ground's per-frame
 // decisions, passes/Ground.cpp).
