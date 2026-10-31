@@ -37,7 +37,7 @@ object Covers {
     /** [f]'s source: a decoded feature leaves out a column at its default, source 0. */
     fun source(f: Feature): Int = (f["source"] as Number?)?.toInt() ?: 0
 
-    /** The core's stage P tool (-Datlas.stagep, as CI's build job gives it), or null. */
+    /** The core's stage P tool (-Datlas.stagep, as CI's unit-rest job gives it), or null. */
     private val tool: File? = System.getProperty("atlas.stagep")?.let(::File)?.takeIf { it.canExecute() }
 
     /**

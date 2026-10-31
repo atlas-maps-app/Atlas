@@ -24,8 +24,8 @@ import java.security.MessageDigest
  * written as format 3, a fine pack for the L6 block and a coarse one for its L3 block, end to end in their parts, and
  * the index. Every pack's bytes are its entry's (its SHA-256), its head the world's, every tile in its block and found
  * by the index, and every tile's ground covers its cells exactly; Monaco's land cover, roads and places are there. With
- * the core's stage P tool (-Datlas.stagep, as CI's build job gives it), the core reads every pack as its store does, a
- * range of its part, verifies it and decodes every tile to the same canonical hash as the packer's tile.
+ * the core's stage P tool (-Datlas.stagep, as CI's unit-rest job gives it), the core reads every pack as its store
+ * does, a range of its part, verifies it and decodes every tile to the same canonical hash as the packer's tile.
  */
 class WorldTilesTest {
     @get:Rule

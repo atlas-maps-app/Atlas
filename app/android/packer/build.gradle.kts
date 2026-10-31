@@ -47,8 +47,8 @@ tasks.test {
     // The repo's root, with its cache/ (big downloads such as Luxembourg) and data/.
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
     // The core's stage P tool (atlas_stagep, the host-stagep preset's), which `packer country` builds a country's windows
-    // with, from -Patlas.stagep or ATLAS_STAGEP (android.yml's build job builds it before the tests); without it the tests
-    // that need it are skipped.
+    // with, from -Patlas.stagep or ATLAS_STAGEP (android.yml's unit-rest job builds it before the tests); without it the
+    // tests that need it are skipped.
     providers.gradleProperty("atlas.stagep").orElse(providers.environmentVariable("ATLAS_STAGEP")).orNull?.let { path ->
         val tool = file(path)
         inputs.files(tool).withPropertyName("coreStagePTool").withPathSensitivity(PathSensitivity.NONE)
