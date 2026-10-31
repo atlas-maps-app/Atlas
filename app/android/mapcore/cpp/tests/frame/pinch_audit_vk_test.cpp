@@ -34,10 +34,12 @@
 // cores, the drizzle's rings on the water) instead of the sunny moment. ATLAS_PINCH_HASH: each frame's decisions of the
 // water's reflections hashed, to hold two builds to the same ones. ATLAS_PINCH_STILL: at each rest, that many frames
 // more, each one logged (stage F's spread at the view). At each rest the frame cells' levels' tiles drawn are logged,
-// and the heaps' bytes the resident tiles hold by level and pass. After the pinch (in, held, and out with
+// the heaps' bytes the resident tiles hold by level and pass, and the buildings' shade by level (of their samples in
+// the cells drawn that face the sun, those in another's shadow). After the pinch (in, held, and out with
 // ATLAS_PINCH_OUTWARD), each part's stage F (median and 95th percentile), its frames that drew no tile, those that left
 // a window's place within 12 km without a tile (what alpha 23 drew) and the most such places a frame, and the tiles
 // built more than once over it or that found no room in the heaps.
+#include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -45,16 +47,21 @@
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "passes/Ground.hpp"
+#include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Residency.hpp"
 #include "standin/Session.hpp"
+#include "sun/Buckets.hpp"
+#include "sun/Samples.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
 #include "tests/ground/ground_support.hpp"
 #include "tests/load/query.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/layers/Buildings.hpp"
 #include "twin/building/BuildingShader.hpp"
+#include "twin/building/BuildingTile.hpp"
 
 #include <doctest/doctest.h>
 
@@ -571,6 +578,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         std::string why;
         REQUIRE_MESSAGE(session.attach(std::move(window), screen.size, why), why);
         // the moment (ATLAS_PINCH_MOMENT): the sunny one, the live night, or the live night in rain
+        style::ThemeBlock shown = sunny();
         {
             const std::string moment = environment("ATLAS_PINCH_MOMENT");
             style::ThemeBlock theme = sunny();
@@ -587,6 +595,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             REQUIRE((moment.empty() || moment == "sunny" || moment == "night" || moment == "wet-night"));
             map.set_theme(theme);
+            shown = theme;
         }
         // the validation layer's messages since the last call (ATLAS_PINCH_VALIDATE), each kind once with its count
         const auto said = [&](const std::string& when) {
@@ -695,6 +704,48 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     }
                 }
             }
+            // ATLAS_PINCH_SIZES: the buildings' and the ground's words by section (bytes, by level)
+            std::map<std::pair<std::uint8_t, std::string>, std::uint64_t> sections;
+            if (!environment("ATLAS_PINCH_SIZES").empty()) {
+                for (const std::shared_ptr<const scene::ResidentTile>& t : map.world()->residency().resident()) {
+                    for (std::size_t i = 0; i < t->passes.size() && i < b->passes().size(); ++i) {
+                        const std::string_view name = b->passes()[i]->name();
+                        const auto add = [&](std::string_view what, std::uint64_t n) {
+                            sections[{t->key.z, std::format("{}.{}", name, what)}] += n;
+                        };
+                        if (name == "buildings") {
+                            if (const auto* w = t->passes[i].cpu_as<passes::BuildingTile>()) {
+                                add("prims", 16ULL * (w->cells_at - w->prims_at));
+                                add("cells", 16ULL * (w->windows_at - w->cells_at));
+                                add("windowed", 16ULL * (w->faces_at - w->windows_at));
+                                add("faces", 16ULL * (w->colours_at - w->faces_at));
+                                add("colours", 16ULL * (w->reveals_at - w->colours_at));
+                                add("reveals", 16ULL * (w->facades_at - w->reveals_at));
+                                add("facades", 16ULL * (w->rows_at - w->facades_at));
+                                add("rows", 16ULL * (w->vectors - w->rows_at));
+                            }
+                        } else if (name == "ground") {
+                            if (const auto* g = t->passes[i].cpu_as<geometry::GroundTile>()) {
+                                const geometry::GroundLayout& l = g->layout;
+                                // geometry::pack's records: a vertex 3 words, a fill 5, a polyline 4, a shadow's
+                                // point 2 and its record 5; the lines' points every word before the polylines
+                                add("vertices", 12ULL * l.vertices.count);
+                                add("above", 4ULL * l.above.count);
+                                add("below", 4ULL * l.below.count);
+                                add("canopy", 4ULL * l.canopy.count);
+                                add("fans", 4ULL * l.fans.count);
+                                add("fills", 20ULL * l.fills.count);
+                                add("points", 4ULL * l.lines_at.first);
+                                add("lines_at", 16ULL * l.lines_at.count);
+                                add("shadow_points", 8ULL * l.shadow_points.count);
+                                add("shadows", 20ULL * l.shadows.count);
+                                add("shadow_draw", 4ULL * l.shadow_draw.count);
+                                add("woods_draw", 4ULL * l.woods_draw.count);
+                            }
+                        }
+                    }
+                }
+            }
             std::string lines;
             for (const auto& [z, n] : tiles) {
                 lines += std::format("\n  L{}: {} tiles, {:.1f}:", z, n.first, static_cast<double>(n.second) / 1.0e6);
@@ -703,12 +754,157 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                         lines += std::format(" {} {:.1f}", k.second, static_cast<double>(v) / 1.0e6);
                     }
                 }
+                std::string parts;
+                for (const auto& [k, v] : sections) {
+                    if (k.first == z && v >= 10'000U) {
+                        parts += std::format(" {} {:.2f}", k.second, static_cast<double>(v) / 1.0e6);
+                    }
+                }
+                if (!parts.empty()) lines += std::format("\n    sections:{}", parts);
             }
             const scene::Heaps& h = *map.world()->heaps();
             MESSAGE(
                 std::format("heaps at {:.0f} m by level and pass (MB): {}; {:.1f} free in pieces of {:.1f} at most{}",
                             d, map.tiles_line(), static_cast<double>(h.free_bytes()) / 1.0e6,
                             static_cast<double>(h.largest_free()) / 1.0e6, lines));
+        };
+        // the buildings' shade by level: the tiles drawn, those drawn with their sun bits, and of the samples of their
+        // buildings in the cells drawn that face the sun, those in another's shadow (made again as the sun's scene made
+        // them: the drawn tile at its level, in its pack's region; a level's tile without bits draws them lit, by day)
+        const auto shade_by_level = [&](double d) {
+            if (map.world() == nullptr || map.world()->cover() == nullptr) return;
+            scene::World& w = *map.world();
+            const sun::Sun light = sun::bucket_of(shown).sun;
+            struct Shade {
+                std::size_t tiles = 0;
+                std::size_t bits = 0;
+                std::size_t facing = 0;
+                std::size_t shaded = 0;
+            };
+            std::map<std::uint8_t, Shade> by;
+            tiles::Zstd zstd;
+            tiles::TileDecoder decoder;
+            Arena arena(std::size_t{4} << 20U, Growth::grows, "the pinch audit's shade");
+            std::vector<std::byte> raw;
+            for (const scene::CoverTile& t : w.cover()->tiles()) {
+                Shade& s = by[t.drawn->key.z];
+                ++s.tiles;
+                if (!t.sun || !t.sun->now || t.sun_base == scene::no_sun) continue;
+                const std::vector<tiles::StoreHit> hits = w.store().find(t.drawn->key);
+                const auto hit = std::ranges::find_if(
+                    hits, [&t](const tiles::StoreHit& h) { return h.pack && h.pack->id == t.drawn->pack; });
+                if (hit == hits.end() || hit->pack->pack.style() == nullptr) continue;
+                arena.reset();
+                const auto tile = w.store().decode(*hit, zstd, decoder, arena, raw);
+                if (!tile) continue;
+                const sun::SunTile st = sun::make_tile(*tile, *hit->pack->pack.head(),
+                                                       sun::region_of(*hit->pack->pack.style()), t.drawn->level, {});
+                const sun::TileSamples& m = st.samples;
+                const sun::TileBits& bits = *t.sun->now;
+                if (bits.count != m.size()) continue; // made at another level
+                ++s.bits;
+                // the records of the cells drawn (every one of a layer without cells)
+                const auto drawn_of = [&](tiles::LayerId id) {
+                    std::vector<std::uint8_t> in;
+                    const tiles::Layer* l = tile->layer(id);
+                    if (l == nullptr) return in;
+                    in.assign(l->count, l->cell_first.size() < 2 ? 1 : 0);
+                    for (std::size_t c = 0; c + 1 < l->cell_first.size() && c < 64; ++c) {
+                        if (((t.cells >> c) & 1U) == 0) continue;
+                        const auto [first, last] = l->cell(c);
+                        for (std::uint32_t i = first; i < last && i < l->count; ++i) in[i] = 1;
+                    }
+                    return in;
+                };
+                const std::vector<std::uint8_t> buildings = drawn_of(tiles::LayerId::building);
+                const std::vector<std::uint8_t> parts = drawn_of(tiles::LayerId::part);
+                for (std::uint32_t i = 0; i < m.crowns_first; ++i) {
+                    const std::uint32_t f = m.face[i];
+                    if (f == sun::no_face || (m.nx[f] * light.x) + (m.ny[f] * light.y) + (m.nz[f] * light.z) <= 0) {
+                        continue;
+                    }
+                    const std::vector<std::uint8_t>& in = m.source[i] == sun::Source::part ? parts : buildings;
+                    if (m.owner[i] >= in.size() || in[m.owner[i]] == 0) continue;
+                    ++s.facing;
+                    if (!bits.bit(i)) ++s.shaded;
+                }
+            }
+            std::string lines;
+            for (const auto& [z, s] : by) {
+                lines += std::format(
+                    "\n  L{}: {} tiles drawn, {} with their bits; of their buildings' samples in the "
+                    "cells drawn that face the sun {} of {} in a shadow ({:.1f}%)",
+                    z, s.tiles, s.bits, s.shaded, s.facing,
+                    s.facing > 0 ? 100.0 * static_cast<double>(s.shaded) / static_cast<double>(s.facing) : 0.0);
+            }
+            MESSAGE(std::format("shade at {:.0f} m:{}", d, lines));
+        };
+        // the places the heaps' plan gave a coarser level than their distance asks for (Cover::Placed::coarsened):
+        // each one's distance from the eye, the tile drawing it, and the buildings of its L13 its L12 leaves out, with
+        // the breadth of the largest (the square root of its footprint) and how many are over a pixel across on the S1
+        // phone at that distance (its focal length of 1,407 dp)
+        const auto coarsened_at = [&](double d) {
+            if (map.world() == nullptr || map.world()->cover() == nullptr) return;
+            scene::World& w = *map.world();
+            constexpr double focal = 1407.0 * 2.625;
+            tiles::Zstd zstd;
+            tiles::TileDecoder decoder;
+            Arena arena(std::size_t{4} << 20U, Growth::grows, "the pinch audit's coarsened places");
+            std::vector<std::byte> raw;
+            // the buildings of tile `k` of pack `pack` over place `place`: each one's footprint (m²) by its OSM id
+            const auto over = [&](std::string_view pack, const tiles::TileKey& k, const tiles::TileKey& place) {
+                std::map<std::int64_t, double> out;
+                const std::vector<tiles::StoreHit> hits = w.store().find(k);
+                const auto hit = std::ranges::find_if(
+                    hits, [pack](const tiles::StoreHit& h) { return h.pack && h.pack->id == pack; });
+                if (hit == hits.end()) return out;
+                arena.reset();
+                const auto tile = w.store().decode(*hit, zstd, decoder, arena, raw);
+                if (!tile) return out;
+                const tiles::Layer* l = tile->layer(tiles::LayerId::building);
+                if (l == nullptr || l->cell_first.size() < 2) return out;
+                const std::size_t cells = l->cell_first.size() - 1;
+                const auto n = static_cast<std::uint8_t>(std::lround(std::sqrt(static_cast<double>(cells))));
+                const std::uint64_t mask =
+                    scene::cells_over(n, static_cast<std::uint32_t>(place.z - k.z), place.x, place.y);
+                const tiles::Frame& frame = hit->pack->pack.head()->frame;
+                for (std::size_t c = 0; c < cells && c < 64; ++c) {
+                    if (((mask >> c) & 1U) == 0) continue;
+                    const auto [first, last] = l->cell(c);
+                    for (std::uint32_t i = first; i < last && i < l->count; ++i) {
+                        const tiles::RingView r = l->ring(tiles::building::ring, i);
+                        double a = 0.0;
+                        for (std::size_t j = 0; j < r.size(); ++j) {
+                            const std::size_t k2 = (j + 1) % r.size();
+                            a += (frame.x(r.lon[j]) * frame.z(r.lat[k2])) - (frame.x(r.lon[k2]) * frame.z(r.lat[j]));
+                        }
+                        out[l->integer(tiles::building::id, i)] = std::abs(a) / 2.0;
+                    }
+                }
+                return out;
+            };
+            std::string lines;
+            for (const scene::Cover::Placed& p : w.cover()->placed()) {
+                if (!p.coarsened) continue;
+                const auto all = over(p.pack, tiles::TileKey(13, p.place.x >> 1U, p.place.y >> 1U), p.place);
+                const auto kept = over(p.pack, tiles::TileKey(12, p.place.x >> 2U, p.place.y >> 2U), p.place);
+                std::size_t left = 0;
+                std::size_t seen = 0;
+                double largest = 0.0;
+                for (const auto& [id, area] : all) {
+                    if (kept.contains(id)) continue;
+                    ++left;
+                    if (std::sqrt(area) * focal / p.d > 1.0) ++seen;
+                    largest = std::max(largest, std::sqrt(area));
+                }
+                lines +=
+                    std::format("\n  {}/{}/{} at {:.0f} m, drawn from {}/{}/{}: of its L13's {} buildings its L12 "
+                                "keeps {} and leaves out {}, {} of them over a pixel across (the largest {:.0f} m, "
+                                "{:.1f} px)",
+                                p.place.z, p.place.x, p.place.y, p.d, p.tile.z, p.tile.x, p.tile.y, all.size(),
+                                all.size() - left, left, seen, largest, largest * focal / p.d);
+            }
+            MESSAGE(std::format("places given a coarser level at {:.0f} m: {}{}", d, w.cover()->coarsened(), lines));
         };
         settle(from);
         said(std::format("at {:.0f} m", from));
@@ -829,6 +1025,8 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 MESSAGE(std::format("levels drawn at {:.0f} m: {} tiles:{}", d, levels.size(), keys));
             }
             heaps_by_level(d);
+            shade_by_level(d);
+            coarsened_at(d);
             // ATLAS_PINCH_STILL: that many frames more at rest, each one logged (stage F's spread at the view)
             if (const std::string still = environment("ATLAS_PINCH_STILL"); !still.empty()) {
                 int count = 0;
