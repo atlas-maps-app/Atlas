@@ -63,6 +63,11 @@ struct WorldOptions {
     /// How far it reaches at most: twice the camera's distance between the two (step 7: a frame cell's levels drawn out
     /// to 30 km of the eye, where the engine's reach ends).
     double levels_far = 30'000.0;
+    /// The camera's distance from its target beyond which the frame cells' levels are drawn (alpha 24, ENGINE.md one
+    /// pack per country, step 7): within it the cover is the core's before the levels, alpha 23's (PackList.CORE_REACH,
+    /// 9 km), its windows alone to `far`, so no view there draws less than alpha 23's did; beyond it, where alpha 23
+    /// asked to zoom in, the levels within the plan (CoverInputs::levels).
+    double levels_from = 9'000.0;
     double idle_seconds = 2.0;    ///< a tile not drawn this long may go when the heaps fill
     double forget_seconds = 30.0; ///< and goes after this long whatever they hold
     double keep_fraction = 0.75;  ///< of the heaps' budget, and of the native one
@@ -164,11 +169,18 @@ public:
     /// its share of the screen, then nearest first (the app asks for those its country lists). Made with
     /// wanted_windows; read from any thread.
     [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() const;
+    /// The frame cells' levels' tiles the cover draws now, nearest first, then those it keeps under the places in view
+    /// (each place's coarsest): tiles the store holds, whose files the app keeps while they are in use (the windows'
+    /// folder's budget, as windows_in_view for the places' windows). Made with wanted_windows; read from any thread.
+    [[nodiscard]] std::vector<tiles::TileKey> levels_in_view() const;
     /// How far the cover reaches for a camera `distance` metres from its target: twice that, within the options' far
-    /// and levels_far.
+    /// and levels_far, beyond levels_from; within it, far.
     [[nodiscard]] double far_of(double distance) const noexcept {
+        if (!levels_at(distance)) return options_.far;
         return std::clamp(2.0 * distance, options_.far, std::max(options_.far, options_.levels_far));
     }
+    /// Whether a camera `distance` metres from its target draws the frame cells' levels (levels_from).
+    [[nodiscard]] bool levels_at(double distance) const noexcept { return distance > options_.levels_from; }
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -227,9 +239,24 @@ private:
     /// the view's ground frame (the frame drawn, or without a pack one centred on the target, as the view then is).
     void want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
                       double seconds);
-    /// The levels' tiles wanted in `view` (wanted_levels), with the windows.
+    /// The levels' tiles wanted in `view` (wanted_levels), with the windows; none where the levels are not drawn.
     [[nodiscard]] std::vector<tiles::TileKey> want_levels(const view::View& view, const style::CameraState& camera,
                                                           const view::GroundFrame& frame) const;
+    /// Room for the tiles the frame asks for, where tiles that only stand in hold it (ENGINE.md one pack per country,
+    /// step 7: the switch at levels_from, the heaps full of windows zooming out, of levels zooming in). In the order
+    /// the residency builds them, each is asked for while the heaps' free bytes hold what the cover expects of it and
+    /// of those before it (a resident one, nothing more); once one does not fit, or waits for a range to go back to the
+    /// heaps (Residency::Wait::stuck: their bytes free hold no piece for it), the coarsest of those left that is not
+    /// resident takes the room first (zooming out, a frame cell's L12, which then stands in at sixteen places): the
+    /// tiles of the places in view that nothing draws, stands in or would go (the cover's spare), then, while the room
+    /// coming is short of it (the heaps' free and retiring bytes, and the stand-ins that go once the tiles asked for
+    /// before it come; for a tile that waits for a range, those alone but the free), stand-ins one by one, those whose
+    /// places keep a backup first, then those at its own places, the fewest holes first. It is asked for once the room
+    /// is there, the rest held back until then (Request::held). Where what can go is short of it, of the stand-ins only
+    /// those at its places that keep a backup go, and the tiles asked for before it come first where their coming lets
+    /// another go, else every tile is asked for as before. What goes is let go of as the next frame begins (going_),
+    /// before its covers.
+    void make_room();
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.
     void place_items(const ResidentTile& tile);
@@ -276,8 +303,12 @@ private:
     std::optional<std::array<std::int32_t, 2>> last_target_; ///< the camera's target at the last look (render thread)
     std::vector<tiles::TileKey> in_view_;                    ///< under wanted_mutex_
     std::vector<tiles::TileKey> levels_;                     ///< under wanted_mutex_
+    std::vector<tiles::TileKey> levels_drawn_;               ///< under wanted_mutex_ (levels_in_view)
     double far_ = 12'000.0;                                  ///< the cover's reach this frame (far_of)
-    std::size_t ahead_ = 0;                                  ///< under wanted_mutex_
+    bool levels_on_ = false;                                 ///< whether the frame draws the levels (levels_at)
+    /// The tiles make_room lets go of, at the next frame's start (this frame's covers may draw them).
+    std::vector<std::pair<tiles::TileKey, std::string>> going_;
+    std::size_t ahead_ = 0; ///< under wanted_mutex_
     double wanted_at_ = -1.0;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;

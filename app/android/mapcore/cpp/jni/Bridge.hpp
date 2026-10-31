@@ -32,7 +32,8 @@ namespace atlas::jni {
 /// Native.coreFieldsLine (the noise fields' check on the core's device, made on the GPU where it passes the byte
 /// check). 23: the camera state's version 3, 552 bytes, with the parts of the picture the map leaves out (a switch for
 /// every layer and effect, style::camera_part). 24: Native.blurLine (VK facts' blur check, passes/BlurCheck.hpp). 25:
-/// Native.wantedLevels (a frame cell's levels' tiles the map wants, ENGINE.md one pack per country, step 7).
+/// Native.wantedLevels and levelsInView (a frame cell's levels' tiles the map wants, and those it draws, ENGINE.md one
+/// pack per country, step 7).
 inline constexpr jint abi = 25;
 
 /// The Kotlin class whose static natives the library registers.

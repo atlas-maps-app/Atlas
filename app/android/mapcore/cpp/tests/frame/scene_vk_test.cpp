@@ -263,7 +263,12 @@ TEST_CASE("a frame binds the heaps' buffer with the marking of what a growth rep
     (void)session->take_messages();
 }
 
-TEST_CASE("a tile that finds no room in the heaps is not built again until a range has gone back to them") {
+TEST_CASE("a tile that finds no room in the heaps is not built again until they have the bytes it asked for free and a "
+          "piece for its range that found none") {
+    // Built again with less, it would find no room again: the Westerkerk's windows from 9 km, alpha 23's view, built
+    // ten waiting tiles 29 times in a pinch in to 5 km, four of them four times. The bytes it asked for may be free in
+    // pieces too small for its ranges: the Westerkerk's L12 12/2103/1346 from 12 km, 10.1 MB of ground in one range,
+    // was built again and found none three times with 11 to 16 MB free, each time a range had gone back to them.
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -272,44 +277,131 @@ TEST_CASE("a tile that finds no room in the heaps is not built again until a ran
     auto builder = frame::FrameBuilder::create(*session->device, *cache, frame::make_passes(buildings));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     frame::FrameBuilder& fb = **builder;
-    // Heaps of 1 KiB: the synthetic tile's walls do not fit.
-    auto world =
-        scene::World::create(*session->device, fb.passes(),
-                             {.workers = 1, .heaps = {.initial = 1024, .total = 1024}, .sun = {.enabled = false}});
-    ATLAS_REQUIRE(world.has_value(), world.error().text());
-    scene::World& w = **world;
     const std::string path =
         test::building::write_pack(test::building::tile(), test::building::tile_features, "no-room-test");
-    auto added = w.store().add({.id = "synthetic", .kind = tiles::PackKind::bundled, .path = path});
-    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
     style::CameraState camera = home();
     camera.latitude = 52.37422;
     camera.longitude = 4.88486;
     camera.distance = 260.0;
-    fb.set_inputs({.camera = camera, .scene = &w});
-    const auto frames = [&](std::uint64_t first, std::uint64_t last) {
+    // A world of heaps of `total` bytes, the synthetic tile in its store.
+    const auto make = [&](std::uint64_t total) -> std::unique_ptr<scene::World> {
+        auto world = scene::World::create(
+            *session->device, fb.passes(),
+            {.workers = 1, .heaps = {.initial = total, .total = total}, .sun = {.enabled = false}});
+        ATLAS_REQUIRE_OR_RETURN(nullptr, world.has_value(), world.error().text());
+        auto added = (*world)->store().add({.id = "synthetic", .kind = tiles::PackKind::bundled, .path = path});
+        ATLAS_REQUIRE_OR_RETURN(nullptr, added.has_value(), tiles::describe(added.error()));
+        return std::move(*world);
+    };
+    const auto frames = [&](scene::World& w, std::uint64_t first, std::uint64_t last) {
+        fb.set_inputs({.camera = camera, .scene = &w});
         for (std::uint64_t n = first; n <= last; ++n) {
             ATLAS_REQUIRE(fb.derive(n, 0, nullptr));
             w.update(fb.state());
             w.residency().wait_idle();
         }
     };
-    frames(1, 3);
+    // In heaps of 1 KiB its walls do not fit: what it asked for.
+    std::uint64_t need = 0;
+    {
+        const std::unique_ptr<scene::World> small = make(1024);
+        ATLAS_REQUIRE(small != nullptr);
+        frames(*small, 1, 3);
+        ATLAS_REQUIRE(small->residency().stats().failed >= 1);
+        ATLAS_REQUIRE(small->cover() != nullptr);
+        for (const scene::Residency::Wait& wait : small->residency().waits(small->cover()->requests())) {
+            need = std::max(need, wait.need);
+        }
+        ATLAS_REQUIRE(need > 1024);
+    }
+    // In heaps of four times that, three of them held by a range of the test's own: it finds no room, and is not built
+    // again frame after frame.
+    const std::uint64_t total = (4 * need) + 65'536;
+    const std::unique_ptr<scene::World> world = make(total);
+    ATLAS_REQUIRE(world != nullptr);
+    scene::World& w = *world;
+    auto blocker = w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(total - (need / 2)));
+    ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
+    frames(w, 1, 3);
     const scene::ResidencyStats tried = w.residency().stats();
     CHECK(tried.failed >= 1);
     CHECK(tried.waiting >= 1);
     CHECK(tried.resident == 0);
-    frames(4, 20);
-    CHECK(w.residency().stats().failed == tried.failed); // not built again, frame after frame
-    // A range back to the heaps: each waiting tile is tried once more.
+    frames(w, 4, 20);
+    CHECK(w.residency().stats().failed == tried.failed);
+    // A range back to the heaps, the bytes it asked for still not free: not built again.
     auto range = w.heaps()->allocate(scene::HeapKind::points, 16);
     ATLAS_REQUIRE(range.has_value(), range.error().text());
     w.heaps()->retire(*range, 0);
     w.heaps()->collect(0);
-    frames(21, 24);
-    CHECK(w.residency().stats().failed == tried.failed + tried.waiting);
-    CHECK(w.residency().stats().waiting == tried.waiting);
-    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    frames(w, 21, 24);
+    CHECK(w.residency().stats().failed == tried.failed);
+    CHECK(w.residency().stats().resident == 0);
+    // The test's range back too: built once more, and resident.
+    w.heaps()->retire(*blocker, 0);
+    w.heaps()->collect(0);
+    frames(w, 25, 28);
+    CHECK(w.residency().stats().failed == tried.failed);
+    CHECK(w.residency().stats().resident == 1);
+    CHECK(w.residency().stats().waiting == 0);
+    // Its ranges, and the largest of them: in heaps whose bytes free are as many as all of them but in pieces smaller
+    // than the largest, it is not built again, nor when a range goes back that leaves them as small, and it is built
+    // once the pieces join.
+    std::uint32_t largest = 0;
+    std::uint64_t all = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        for (const scene::PassTile& p : t->passes) {
+            for (const scene::HeapRange& r : p.ranges) {
+                largest = std::max(largest, r.size);
+                all += r.size;
+            }
+        }
+    }
+    ATLAS_REQUIRE(largest > 64);
+    const std::uint32_t piece = largest - 32;
+    const std::uint64_t pieces = (all / piece) + 2;
+    const std::uint64_t split_total = (pieces * (piece + 64)) + 4096;
+    const std::unique_ptr<scene::World> split = make(split_total);
+    ATLAS_REQUIRE(split != nullptr);
+    scene::World& v = *split;
+    // the heaps from their start: a piece, a range of 64 bytes, ..., the rest held; then the pieces back
+    std::vector<scene::HeapRange> held;
+    std::vector<scene::HeapRange> gaps;
+    for (std::uint64_t i = 0; i < pieces; ++i) {
+        auto a = v.heaps()->allocate(scene::HeapKind::points, piece);
+        auto b = v.heaps()->allocate(scene::HeapKind::points, 64);
+        ATLAS_REQUIRE(a.has_value() && b.has_value());
+        gaps.push_back(*a);
+        held.push_back(*b);
+    }
+    auto rest = v.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(v.heaps()->free_bytes()));
+    ATLAS_REQUIRE(rest.has_value(), rest.error().text());
+    for (const scene::HeapRange& r : gaps) v.heaps()->retire(r, 0);
+    v.heaps()->collect(0);
+    ATLAS_REQUIRE(v.heaps()->free_bytes() >= all);
+    CHECK(v.heaps()->largest_free() == piece);
+    frames(v, 1, 20);
+    CHECK(v.residency().stats().failed == 1);
+    CHECK(v.residency().stats().resident == 0);
+    auto back = v.heaps()->allocate(scene::HeapKind::points, 16);
+    ATLAS_REQUIRE(back.has_value(), back.error().text());
+    v.heaps()->retire(*back, 0);
+    v.heaps()->collect(0);
+    frames(v, 21, 40);
+    CHECK(v.residency().stats().failed == 1);
+    CHECK(v.residency().stats().resident == 0);
+    for (const scene::HeapRange& r : held) v.heaps()->retire(r, 0);
+    v.heaps()->retire(*rest, 0);
+    v.heaps()->collect(0);
+    CHECK(v.heaps()->largest_free() >= largest);
+    frames(v, 41, 44);
+    CHECK(v.residency().stats().failed == 1);
+    CHECK(v.residency().stats().resident == 1);
+    MESSAGE("the tile asked for " << need << " bytes; its ranges " << all << ", the largest " << largest << "; "
+                                  << w.tiles_line() << "; in pieces of " << piece << ": " << v.tiles_line());
+    for (const std::string& m : session->take_messages()) {
+        if (m.find("the heaps cannot grow") == std::string::npos) CHECK_MESSAGE(false, m);
+    }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
@@ -1334,7 +1426,8 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     struct Seen {
         std::vector<std::pair<tiles::TileKey, std::uint64_t>> drawn; // the drawn tiles' own keys, their cells drawn
         std::vector<tiles::TileKey> asked;
-        std::vector<tiles::TileKey> kept; // resident under the places in view, not drawn
+        std::vector<tiles::TileKey> kept;   // resident under the places in view, not drawn
+        std::vector<tiles::TileKey> levels; // the levels' tiles in view, whose files the app keeps (levels_in_view)
         std::uint64_t planned = 0;
         std::size_t coarser = 0;
     };
@@ -1347,9 +1440,11 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
         auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
         std::atomic<double> now{0};
-        // moving out: a tile not drawn for 0.1 s goes whatever the heaps hold, as one of a dense view's would
+        // moving out: a tile not drawn for 0.1 s goes whatever the heaps hold, as one of a dense view's would; the
+        // levels drawn from any distance (the world's draws them beyond 9 km alone)
         auto world = scene::World::create(*session->device, (*builder)->passes(),
                                           {.workers = 3,
+                                           .levels_from = 0.0,
                                            .idle_seconds = out > 0 ? 0.1 : 2.0,
                                            .keep_fraction = out > 0 ? 0.0 : 0.75,
                                            .plan_fraction = plan_fraction,
@@ -1408,6 +1503,7 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
                 if (t->handle == handle) seen.kept.push_back(t->key);
             }
         }
+        seen.levels = w.levels_in_view();
         seen.planned = w.cover()->planned();
         seen.coarser = w.cover()->coarsened();
         CHECK(w.residency().stats().waiting == 0);
@@ -1433,6 +1529,14 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     CHECK(std::ranges::find(all->kept, south_far) != all->kept.end());
     CHECK(std::ranges::find(all->kept, north_far) != all->kept.end());
     CHECK_FALSE(drew(*all, south_far));
+    // The levels' tiles in view for the app to keep their files: the north L13 drawn, then those kept under the places
+    // in view (the two L12 among them), each once, and no window (windows_in_view lists those).
+    REQUIRE(!all->levels.empty());
+    CHECK(all->levels.front() == north_coarse);
+    CHECK(std::ranges::find(all->levels, south_far) != all->levels.end());
+    CHECK(std::ranges::find(all->levels, north_far) != all->levels.end());
+    CHECK(std::ranges::all_of(all->levels, [](const tiles::TileKey& k) { return k.z == 12 || k.z == 13; }));
+    for (const tiles::TileKey& k : all->levels) CHECK(std::ranges::count(all->levels, k) == 1);
     // Over the south window from 300 m, then out to 12 km at once (the place 12 km from the eye, at its far level),
     // tiles not drawn let go of after 0.1 s: the first frame draws the south L12, kept under its place, not its L14,
     // which goes as no place draws it. Without it kept, the L12 had gone (built as the L14's ancestor, then idle), the
@@ -1464,6 +1568,203 @@ TEST_CASE("the cover asks for a frame cell's levels within the heaps' budget: th
     CHECK(none->coarser >= 1);
     MESSAGE("the plan: " << all->planned << " bytes with the north place at L13, " << short_of->planned << " at L12 ("
                          << short_of->coarser << " places coarser)");
+    (void)session->take_messages();
+}
+
+TEST_CASE("within 9 km of its target the cover draws a frame cell's windows alone, as alpha 23; past it, zooming out "
+          "and back with the heaps full, the windows stand in for the levels and the levels for the windows, each "
+          "tile built once, and a level's tile that found no room is built once the room has come") {
+    // Two windows of cell 525/336 side by side from south to north, a hall of four floors 40 m square in the middle of
+    // each, and their cell's levels (their L13 tile and their L12 tile), all in the store as the phone keeps them; the
+    // camera looking straight down at a point 100 m north of the middle between them, so the north window is the
+    // larger on the screen. The heaps hold the probe's two windows (272 bytes each) and not the L12 (80 bytes) beside
+    // them; one worker builds the tiles in the order asked, so their ranges' places in the heaps are the same each
+    // run. From 8.5 km both places are drawn by their windows, as alpha 23
+    // drew them: no level asked for, kept or wanted of the phone, the cover reaching 12 km. From 9.5 km both are drawn
+    // by their L12, 9.5 km from the eye, the windows standing in until it comes: one window goes for its room, and it
+    // is built once; the other, its place the L12's now, goes as tiles not drawn for 0.1 s do here. Back at 8.5 km, the
+    // first window fits beside the L12, which stands in for the second until the first has come and then goes for it:
+    // each built once, and a place without a tile only while its own is built. Out once more, from 9.2 km the places
+    // ask for their L13 (9.2 km from the eye, within the coarse level's 9.4), the L12 standing in and kept under them,
+    // and asked for as their ancestor while the L13 comes though it is resident: with the heaps full but for a piece
+    // too small for it, the L13 finds no room, and once the test's ranges are back it is built. Without the room made
+    // for it, the L12 found no room, the windows that stood in were drawn and never went, and it was never built (the
+    // Westerkerk pinched out past 9 km: its heaps full of windows); with the resident L12 counted as room to make, it
+    // took the room first and held the L13 back for good (the Westerkerk from 12 km).
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-switch";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey north(14, south.x, south.y - 1);
+    const tiles::TileKey far(12, south.x >> 2U, south.y >> 2U);
+    const tiles::TileKey coarse(13, south.x >> 1U, south.y >> 1U);
+    ATLAS_REQUIRE(far == tiles::TileKey(12, north.x >> 2U, north.y >> 2U));
+    ATLAS_REQUIRE(coarse == tiles::TileKey(13, north.x >> 1U, north.y >> 1U));
+    const auto middle = [](const tiles::TileKey& k) {
+        const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+        return std::array<double, 2>{(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
+    };
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    std::vector<std::span<const std::byte>> windows;
+    for (const tiles::TileKey& k : {south, north}) {
+        const auto [lat, lon] = middle(k);
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            k.y, geometry);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
+    }
+    windows.reserve(packs.size());
+    for (const auto& [name, pack] : packs) windows.emplace_back(pack);
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 2); // their L13 and their L12
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    auto owned = std::make_unique<BuildProbe>();
+    const BuildProbe* probe = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1,
+                                       .idle_seconds = 0.1,
+                                       .keep_fraction = 0.0,
+                                       .heaps = {.initial = 600, .total = 600},
+                                       .sun = {.enabled = false},
+                                       .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, pack] : packs) {
+        std::string file = name;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    style::CameraState c = home();
+    c.latitude = ((middle(south)[0] + middle(north)[0]) / 2) + (100.0 / 110540.0);
+    c.longitude = middle(south)[1];
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.flags = 0;
+    std::uint64_t n = 0;
+    std::size_t most_holes = 0;
+    // `count` frames from `distance`, each frame's retired ranges freed after it (as the heaps' globals do as a frame
+    // is recorded), the most places of a window a frame left without a tile among them (the L12's other places, which
+    // have no window, wait for it: alpha 23 drew nothing there)
+    const auto frames = [&](double distance, std::uint64_t count) {
+        c.distance = distance;
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        most_holes = 0;
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.heaps()->bound(n);
+            w.heaps()->collect(n);
+            if (n > 3) most_holes = std::max(most_holes, w.cover()->near_holes());
+        }
+    };
+    const auto drew = [&w](const tiles::TileKey& k) {
+        return std::ranges::any_of(w.cover()->tiles(), [&k](const scene::CoverTile& t) { return t.drawn->key == k; });
+    };
+    const auto resident_levels = [&w] {
+        return std::ranges::count_if(w.residency().resident(), [](const auto& t) { return t->key.z != 14; });
+    };
+    frames(8'500.0, 2);
+    w.set_active(std::format("window/14/{}/{}", south.x, south.y));
+    frames(8'500.0, 60);
+    ATLAS_REQUIRE(w.active() != nullptr);
+    // alpha 23's view: the windows alone, within 12 km
+    REQUIRE(drew(south));
+    REQUIRE(drew(north));
+    CHECK(resident_levels() == 0);
+    CHECK(w.cover()->requests().empty());
+    CHECK(w.cover()->kept().empty());
+    CHECK(w.wanted_levels().empty());
+    CHECK(w.levels_in_view().empty());
+    CHECK(w.far_of(8'500.0) == scene::WorldOptions{}.far);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(probe->built.load() == 2);
+    // past 9 km: the L12, built once in a window's room
+    frames(9'500.0, 60);
+    CHECK(drew(far));
+    CHECK_FALSE(drew(south));
+    CHECK_FALSE(drew(north));
+    CHECK(resident_levels() == 1);
+    CHECK(w.residency().resident().size() == 1);
+    CHECK(w.levels_in_view() == std::vector<tiles::TileKey>{far}); // its file kept while it is drawn
+    CHECK(w.far_of(9'500.0) == 19'000.0);
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes <= 1); // the place whose window went for the L12, while it was built
+    CHECK(probe->built.load() == 3);
+    CHECK(w.residency().stats().failed == 0);
+    const std::size_t out_holes = most_holes;
+    // and back: the windows, each built once more, the second in the L12's room
+    frames(8'500.0, 60);
+    CHECK(drew(south));
+    CHECK(drew(north));
+    CHECK(resident_levels() == 0);
+    CHECK(w.levels_in_view().empty());
+    CHECK(w.cover()->holes() == 0);
+    CHECK(most_holes <= 1);
+    CHECK(probe->built.load() == 5);
+    CHECK(w.residency().stats().failed == 0);
+    const std::size_t back_holes = most_holes;
+    // out once more, and at 9.2 km: the L13 asked for, the L12 resident and asked for as its places' ancestor; the
+    // heaps full but for a piece too small for the L13, then the test's ranges back
+    frames(9'500.0, 60);
+    CHECK(drew(far));
+    CHECK(probe->built.load() == 6);
+    std::vector<scene::HeapRange> blockers; // the heaps' free bytes but 48, in the pieces they are free in
+    for (std::uint32_t size = 512; size >= 16 && w.heaps()->free_bytes() > 48;) {
+        auto r = w.heaps()->allocate(
+            scene::HeapKind::points,
+            std::min<std::uint32_t>(size, static_cast<std::uint32_t>(w.heaps()->free_bytes() - 48)));
+        if (r) {
+            blockers.push_back(*r);
+        } else {
+            size /= 2;
+        }
+    }
+    ATLAS_REQUIRE(w.heaps()->free_bytes() <= 48);
+    frames(9'200.0, 20);
+    CHECK(drew(far)); // standing in
+    CHECK_FALSE(drew(coarse));
+    CHECK(w.residency().stats().failed == 1);
+    CHECK(std::ranges::any_of(w.cover()->requests(), [&far](const scene::Request& r) { return r.key == far; }));
+    for (const scene::HeapRange& r : blockers) w.heaps()->retire(r, n);
+    frames(9'200.0, 20);
+    CHECK(drew(coarse));
+    CHECK(w.cover()->holes() == 0);
+    CHECK(probe->built.load() == 7);
+    CHECK(w.residency().stats().failed == 1);
+    MESSAGE("out past 9 km and back, the most places without a tile in a frame: " << out_holes << " and " << back_holes
+                                                                                  << "; " << w.tiles_line());
     (void)session->take_messages();
 }
 
@@ -1514,8 +1815,9 @@ TEST_CASE("a place whose pack holds no coarser tile is drawn within the cover's 
         auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
         std::atomic<double> now{0};
+        // the levels' reach from any distance (the world's from 9 km alone)
         auto world = scene::World::create(*session->device, (*builder)->passes(),
-                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+                                          {.workers = 3, .levels_from = 0.0, .clock = [&now] { return now.load(); }});
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
         scene::World& w = **world;
         for (const auto& [name, pack] : packs) {

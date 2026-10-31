@@ -409,6 +409,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call(emptyList()) { h -> Native.wantedLevels(h).map { Window.of(it) } }
 
     /**
+     * The frame cells' levels' tiles the map draws now, nearest first, then those it keeps under the places in view
+     * (each place's coarsest: ENGINE.md one pack per country, step 7): tiles the phone holds, whose files the app keeps
+     * while they are in use, as [windowsInView]' windows. Empty before the map is made. Off the main thread.
+     */
+    fun levelsInView(): List<Window> =
+        core.call(emptyList()) { h -> Native.levelsInView(h).map { Window.of(it) } }
+
+    /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
      * (its last pipeline cache write among it). Under the lock of [shared], [facts] and [resetGuard], and the process's
      * core is forgotten only once it is freed: no other core starts in this process while its close runs.

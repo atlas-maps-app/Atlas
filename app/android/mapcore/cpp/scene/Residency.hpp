@@ -128,9 +128,10 @@ class TileBuild {
 public:
     TileBuild(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style, std::uint8_t level,
               view::Vec3 origin, Heaps& heaps, PassTile& out, std::vector<ItemSpec>& items, std::uint32_t pass,
-              Sharer* sharer = nullptr) noexcept
+              Sharer* sharer = nullptr, std::atomic<std::uint64_t>* asked = nullptr,
+              std::atomic<std::uint32_t>* refused = nullptr) noexcept
         : tile_(tile), head_(head), style_(style), level_(level), origin_(origin), heaps_(heaps), out_(out),
-          items_(items), pass_(pass), sharer_(sharer) {}
+          items_(items), pass_(pass), sharer_(sharer), asked_(asked), refused_(refused) {}
 
     [[nodiscard]] const tiles::Tile& tile() const noexcept { return tile_; }
     [[nodiscard]] const tiles::RenderHead& head() const noexcept { return head_; }
@@ -143,9 +144,18 @@ public:
     /// The pass's number in the registry (its PassTile in ResidentTile::passes).
     [[nodiscard]] std::uint32_t pass() const noexcept { return pass_; }
 
-    /// A range of `bytes` in heap `kind` (allocate every range first, then write: Heaps' writer holds a lock).
+    /// A range of `bytes` in heap `kind` (allocate every range first, then write: Heaps' writer holds a lock), its
+    /// bytes counted among those the tile asked for, placed or not (the residency's room for a tile that found none),
+    /// and, finding none, among its ranges that found none (the piece of the heaps the residency waits for).
     [[nodiscard]] gpu::Result<HeapRange> allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment = 16) {
-        return heaps_.allocate(kind, bytes, alignment);
+        if (asked_ != nullptr) asked_->fetch_add(bytes, std::memory_order_relaxed);
+        gpu::Result<HeapRange> range = heaps_.allocate(kind, bytes, alignment);
+        if (!range && refused_ != nullptr) {
+            std::uint32_t was = refused_->load(std::memory_order_relaxed);
+            while (was < bytes && !refused_->compare_exchange_weak(was, bytes, std::memory_order_relaxed)) {
+            }
+        }
+        return range;
     }
     [[nodiscard]] Heaps& heaps() noexcept { return heaps_; }
     /// The pass's record of the tile.
@@ -184,6 +194,8 @@ private:
     std::vector<ItemSpec>& items_;
     std::uint32_t pass_;
     Sharer* sharer_;
+    std::atomic<std::uint64_t>* asked_;
+    std::atomic<std::uint32_t>* refused_;
 };
 
 /// A request's lane, in the order the workers take them.
@@ -196,6 +208,11 @@ struct Request {
     Lane lane = Lane::visible;
     double priority = 0;
     std::uint8_t level = 0; ///< the ladder index to build it at
+    /// The heaps' bytes the cover expects it to take (Cover::estimate; 0: unknown), for the world's room (make_room).
+    std::uint64_t bytes = 0;
+    /// Held back until the heaps have room for it (World::make_room): wanted, so a tile that found no room keeps what
+    /// it asked for, but not built.
+    bool held = false;
 };
 
 /// Counters for logs and tests.
@@ -205,8 +222,10 @@ struct ResidencyStats {
     std::uint64_t cancelled = 0;
     std::uint64_t failed = 0;
     std::uint64_t released = 0;
-    std::size_t waiting = 0; ///< tiles whose build failed, not asked again until the heaps have freed a range
-    double build_ms = 0;     ///< the workers' time over every tile built (its decoding, its passes and its publication)
+    /// tiles whose build failed, not asked again until the heaps have the bytes they asked for free and a piece for the
+    /// largest range that found none (failing again on them, until a range has gone back to the heaps too)
+    std::size_t waiting = 0;
+    double build_ms = 0; ///< the workers' time over every tile built (its decoding, its passes and its publication)
     std::uint64_t shared = 0; ///< passes built on a worker other than the one that decoded their tile (gain 9)
     std::uint64_t pieces = 0; ///< pieces of a pass's work (TileBuild::share) run on another worker than the pass's
     std::size_t resident = 0;
@@ -262,6 +281,18 @@ public:
     /// never blocking, such as the frame loop's wake (World::set_wake).
     void set_published(std::function<void()> callback);
 
+    /// What a request's tile asks of the heaps now: the bytes its passes asked for when it last found no room, placed
+    /// or not, while it waits for some (need; 0: not waiting), and those a build of it under way or published has
+    /// placed (placed); and whether it waits for ranges to go back to the heaps whatever their free bytes (stuck: no
+    /// piece of them holds the largest of its ranges that found none, or it found none again on them).
+    struct Wait {
+        std::uint64_t need = 0;
+        std::uint64_t placed = 0;
+        bool stuck = false;
+    };
+    /// Each of `requests`' Wait. Render thread.
+    [[nodiscard]] std::vector<Wait> waits(std::span<const Request> requests) const;
+
     /// Waits until no request is queued or under way (tests).
     void wait_idle();
     [[nodiscard]] ResidencyStats stats() const;
@@ -273,6 +304,7 @@ private:
         Request request;
         std::string pack;
         std::uint64_t generation = 0;
+        bool again = false; // a failed tile tried again: finding no room again, it waits for a range back to the heaps
     };
     /// What a tile's decoding needs while the tile is under way: the decoded tile views both.
     struct Scratch {
@@ -286,7 +318,9 @@ private:
     struct Underway {
         Job job;
         std::uint64_t key = 0;
-        std::uint64_t frees = 0; // the heaps' frees as it began (failed_)
+        std::uint64_t frees = 0;               // the heaps' frees as it began (failed_)
+        std::atomic<std::uint64_t> asked{0};   // the bytes its passes asked of the heaps (TileBuild::allocate)
+        std::atomic<std::uint32_t> refused{0}; // the largest of its ranges that found no piece of them
         std::shared_ptr<const tiles::StorePack> pack;
         std::unique_ptr<Scratch> scratch; // the decoded tile's bytes
         tiles::Tile tile;
@@ -357,9 +391,20 @@ private:
     std::condition_variable idle_;
     std::vector<Job> queue_;                          // sorted: lane, then priority
     std::unordered_map<std::uint64_t, int> underway_; // keys requested, building or published but not taken
-    // Keys whose build failed, with the heaps' frees before it: a tile that found no room is not built again, frame
-    // after frame, until a range has gone back to the heaps.
-    std::unordered_map<std::uint64_t, std::uint64_t> failed_;
+    // Keys whose build failed, with the heaps' frees before it and the bytes its passes asked for: a tile that found no
+    // room is not built again, frame after frame, until the heaps have as many bytes free as it asked for (built again
+    // with less, it would find none again: the Westerkerk's windows from 9 km, alpha 23's view, built ten waiting tiles
+    // 29 times in a pinch in to 5 km, four of them four times) and a piece for the largest of its ranges that found
+    // none (the bytes may be free in pieces too small for it: the Westerkerk's L12 12/2103/1346 from 12 km, 10.1 MB of
+    // ground in one range, found none three times with 11 to 16 MB free, each after a range had gone back), and then
+    // once on them, and again each time a range has gone back (tried: it found none on them).
+    struct Failed {
+        std::uint64_t frees = 0;
+        std::uint64_t need = 0;
+        std::uint32_t refused = 0;
+        bool tried = false;
+    };
+    std::unordered_map<std::uint64_t, Failed> failed_;
     std::vector<std::unique_ptr<Underway>> building_; // the tiles under way, in the order they were taken
     std::vector<Split*> splits_;                      // the passes sharing their work, each its worker's
     std::condition_variable split_done_;              // a split's last piece done

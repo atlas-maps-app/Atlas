@@ -9,6 +9,7 @@
 #include <chrono>
 #include <format>
 #include <limits>
+#include <optional>
 
 #if defined(__ANDROID__)
 #include <sys/resource.h>
@@ -118,19 +119,31 @@ void Residency::want(std::span<const Request> requests) {
             return std::ranges::none_of(requests, [&](const Request& r) { return key_of(r.key, r.pack) == f.first; });
         });
         // What is queued and wanted no more is cancelled; what is wanted and neither resident nor under way is queued.
+        // A failed tile is tried again once the heaps have the bytes it asked for free, less those the failed tiles
+        // tried again before it asked for (the requests' order: the first wanted takes the room first), and a piece
+        // for the largest of its ranges that found none (its bytes may be free in pieces too small for it): once on
+        // them, then each time a range has gone back to the heaps since it last found none.
+        const std::uint64_t frees = heaps_.frees();
+        std::uint64_t room = failed_.empty() ? 0 : heaps_.free_bytes();
+        std::uint64_t piece = failed_.empty() ? 0 : heaps_.largest_free();
         std::vector<Job> queue;
         queue.reserve(requests.size());
         for (const Request& r : requests) {
             const std::uint64_t k = key_of(r.key, r.pack);
-            if (index_.contains(k)) continue; // resident (the render thread's own map: want runs on it)
+            if (r.held || index_.contains(k)) continue; // held back; resident (the render thread's own map)
+            bool again = false;
             if (const auto f = failed_.find(k); f != failed_.end()) {
-                if (f->second == heaps_.frees()) continue; // failed, and nothing has gone back to the heaps since
+                if ((f->second.tried && f->second.frees == frees) || f->second.need > room || f->second.refused > piece)
+                    continue;
+                room -= f->second.need;
+                piece -= f->second.refused;
                 failed_.erase(f);
+                again = true;
             }
             const auto under = underway_.find(k);
             if (under != underway_.end() && under->second != 1) continue; // building, or published and not taken
             if (std::ranges::any_of(queue, [&](const Job& j) { return key_of(j.request.key, j.pack) == k; })) continue;
-            queue.push_back({.request = r, .pack = std::string(r.pack), .generation = generation_});
+            queue.push_back({.request = r, .pack = std::string(r.pack), .generation = generation_, .again = again});
             queue.back().request.pack = queue.back().pack;
         }
         for (const Job& j : queue_) {
@@ -404,7 +417,7 @@ bool Residency::run(Underway& u, std::uint32_t p) {
     // the pass's own work in pieces on the idle workers too, where the workers share
     Helpers helpers(*this, u);
     TileBuild b(u.tile, *pack.pack.head(), *pack.pack.style(), u.job.request.level, u.out->origin, heaps_,
-                u.out->passes[p], u.items[p], p, share_ ? &helpers : nullptr);
+                u.out->passes[p], u.items[p], p, share_ ? &helpers : nullptr, &u.asked, &u.refused);
     const trace::Section traced(stage_t_names_[p].c_str());
     if (auto built = passes_[p]->build(b); !built) {
         const tiles::TileKey& k = u.job.request.key;
@@ -478,7 +491,10 @@ void Residency::publish(Underway& u) {
             published = published_callback_;
         } else {
             underway_.erase(u.key);
-            failed_[u.key] = u.frees;
+            failed_[u.key] = {.frees = u.frees,
+                              .need = u.asked.load(std::memory_order_relaxed),
+                              .refused = u.refused.load(std::memory_order_relaxed),
+                              .tried = u.job.again};
             ++stats_.failed;
         }
     }
@@ -549,6 +565,32 @@ std::vector<tiles::TileKey> Residency::sun_tiles(std::string_view pack) const {
 void Residency::set_published(std::function<void()> callback) {
     const std::scoped_lock lock(mutex_);
     published_callback_ = std::move(callback);
+}
+
+std::vector<Residency::Wait> Residency::waits(std::span<const Request> requests) const {
+    std::vector<Wait> out(requests.size());
+    const std::scoped_lock lock(mutex_);
+    std::optional<std::uint64_t> piece; // the heaps' largest free piece, read once a request's tile has failed
+    for (std::size_t i = 0; i < requests.size(); ++i) {
+        const std::uint64_t k = key_of(requests[i].key, requests[i].pack);
+        if (const auto f = failed_.find(k); f != failed_.end()) {
+            if (!piece) piece = heaps_.largest_free();
+            out[i].need = std::max<std::uint64_t>(f->second.need, 1);
+            out[i].stuck = f->second.refused > *piece || (f->second.tried && f->second.frees == heaps_.frees());
+        }
+        const auto under = underway_.find(k);
+        if (under == underway_.end() || under->second == 1) continue; // neither under way nor published
+        for (const std::unique_ptr<Underway>& u : building_) {
+            if (u->key == k) out[i].placed = u->asked.load(std::memory_order_relaxed);
+        }
+        for (const std::shared_ptr<ResidentTile>& t : published_) {
+            if (key_of(t->key, t->pack) != k) continue;
+            std::uint64_t bytes = 0;
+            each_range(*t, [&bytes](const HeapRange& r) { bytes += r.size; });
+            out[i].placed = bytes;
+        }
+    }
+    return out;
 }
 
 void Residency::wait_idle() {
