@@ -64,6 +64,7 @@
 #include "twin/building/BuildingTile.hpp"
 #include "twin/building/BuildingTwin.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -178,6 +179,14 @@ public:
         std::array<std::uint64_t, 3> kept{};
     };
     [[nodiscard]] KeptCounts kept_counts() const;
+    /// Every tile's buildings built as a level's tile's are (geometry::BuildingInput::lean: each wall its one cell, no
+    /// windowed walls, the records lean), so the tests hold the lean records to the twin with every shape of the
+    /// synthetic tiles; set before the world builds a tile.
+    void lean_every_tile(bool on) noexcept { lean_every_ = on; }
+    /// How many of the last frame's tile draws read lean records.
+    [[nodiscard]] std::size_t lean_draws() const noexcept {
+        return static_cast<std::size_t>(std::ranges::count_if(draws_, [](const TileDraw& d) { return d.tile->lean; }));
+    }
     /// Whether the windows are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool windows() const noexcept { return windows_ != nullptr; }
     /// The most windows a frame decides (64 bytes a record, 160 more nearer than 160 m): the jobs beyond are left out,
@@ -317,6 +326,7 @@ private:
     void forget_ahead();
 
     std::uint16_t kind_ = 0;
+    bool lean_every_ = false;
     /// The parts the map leaves out this frame (the camera state's, style::camera_part), from select on.
     std::uint64_t left_out_ = 0;
     [[nodiscard]] bool out(std::uint64_t part) const noexcept { return (left_out_ & part) != 0U; }

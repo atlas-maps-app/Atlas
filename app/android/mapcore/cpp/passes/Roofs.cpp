@@ -122,7 +122,7 @@ void Buildings::record_roofs(const frame::Recording& recording) {
     for (TileDraw& d : draws_) {
         if (d.plain_runs == 0) continue;
         const std::uint32_t at = d.plain_at;
-        const std::uint32_t mode = 0;
+        const std::uint32_t mode = d.tile->list_mode(false);
         std::memcpy(d.push.data() + 32, &at, sizeof at);     // BuildingPush.at.x
         std::memcpy(d.push.data() + 60, &mode, sizeof mode); // BuildingPush.sun.w: primitives
         const std::uint32_t first_run = d.runs_first + d.edged_runs + d.cell_runs;
@@ -152,7 +152,7 @@ void Buildings::write_jobs(std::uint32_t slot) {
     for (const TileDraw& d : std::ranges::reverse_view(draws_)) {
         if (d.plain_runs == 0) continue;
         std::array<std::byte, 64> push = d.push;
-        const std::uint32_t mode = 0;
+        const std::uint32_t mode = d.tile->list_mode(false);
         std::memcpy(push.data() + 32, &d.plain_at, sizeof d.plain_at); // BuildingPush.at.x: the plain list
         std::memcpy(push.data() + 60, &mode, sizeof mode);             // BuildingPush.sun.w: primitives
         const std::uint32_t first_run = d.runs_first + d.edged_runs + d.cell_runs;

@@ -85,7 +85,8 @@ void houseboat(Builder& b, const Building& bl, const BuildingRegion& region) {
     }
     boat_walls(b, poly, lo, deck, region.hull, PrimKind::hull_wall, false);
     day_top(b, poly, deck, region.deck, PrimKind::deck);
-    boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall, true);
+    // its cabin's panes (drawn within 520 m), but on a level's tile, which has no windowed walls (its records lean)
+    boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall, !b.lean);
     day_top(b, roof, top, bl.v.roof_rgb, PrimKind::cabin_roof);
 }
 

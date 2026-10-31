@@ -113,7 +113,8 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
                    .kit_boards = style.kit ? style.kit->boards : std::nullopt},
         .kind = kind_,
         .share = {},
-        .blocks = 1};
+        .blocks = 1,
+        .lean = lean_every_};
     // a dense tile's records in blocks on the residency's idle workers (gain 9), joined as one walk makes them: a block
     // for this worker and one for each worker waiting for work now
     if (const unsigned helpers = b.helpers(); helpers > 0) {
@@ -260,12 +261,12 @@ void Buildings::update(const frame::FrameState& state) {
         // its sun bits' first texel in set 1's sun_bits and their fade (none yet: every face unlit); the edged list's
         // first primitive (a near cell's wall)
         static_assert(scene::no_sun == shaders::BUILDING_NO_BITS);
-        push.sun = {t.sun_base, bits(t.sun_weight), base + b->prims_at, 0U};
+        push.sun = {t.sun_base, bits(t.sun_weight), base + b->prims_at, b->list_mode(false)};
         static_assert(sizeof push == sizeof d.push);
         std::memcpy(d.push.data(), &push, sizeof push);
         d.edged_at = base + b->prims_at;
         d.cells_at = base + b->cells_at;
-        d.plain_at = base + b->prims_at + (b->edged * shaders::BUILDING_PRIM_VECTORS);
+        d.plain_at = base + b->prims_at + (b->edged * b->prim_vectors());
         d.windows_at = base + b->windows_at;
         d.windows_from = t.sun && t.sun->now ? t.sun->now->windows_from : 0U;
         d.tile = b;
@@ -435,7 +436,7 @@ void Buildings::record_walls(const frame::Recording& recording) {
             const std::uint32_t runs = cells ? d.cell_runs : d.edged_runs;
             if (runs == 0) continue;
             const std::uint32_t at = cells ? d.cells_at : d.edged_at;
-            const std::uint32_t mode = cells ? 1U : 0U;
+            const std::uint32_t mode = d.tile->list_mode(cells);
             std::memcpy(d.push.data() + 32, &at, sizeof at);     // BuildingPush.at.x
             std::memcpy(d.push.data() + 60, &mode, sizeof mode); // BuildingPush.sun.w
             cmd.pushConstants(

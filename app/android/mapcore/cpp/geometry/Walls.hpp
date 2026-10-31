@@ -337,6 +337,9 @@ struct BuildingItem {
 /// (cell c's primitives are [first[c], first[c + 1])); the faces; the n-gons; the items.
 struct TileBuildings {
     std::uint8_t level = 0;
+    /// A level's tile (Builder::lean): no near cells nor windowed walls, its records lean in the walls heap
+    /// (twin/building/BuildingTile.hpp).
+    bool lean = false;
     std::uint8_t cells_per_side = 0;
     /// Quads drawn with their same-colour edge: walls' cells, skillion walls, a houseboat's walls.
     std::vector<Prim> edged;
@@ -392,6 +395,9 @@ struct BuildingInput {
     /// block: one walk over them all.
     std::function<void(std::size_t pieces, const std::function<void(std::size_t)>& piece)> share;
     std::size_t blocks = 1;
+    /// Built as a level's tile is (Builder::lean, TileBuildings::lean) though the tile is its pack's finest level (a
+    /// test's switch: passes::Buildings::lean_every_tile); a tile below level 14 is anyway.
+    bool lean = false;
 };
 
 /// The tile's buildings and parts at the input's level.

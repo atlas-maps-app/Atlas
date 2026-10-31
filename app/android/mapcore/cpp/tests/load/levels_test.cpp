@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -343,15 +344,69 @@ TEST_CASE("load: a level's sun samples are its lean walls', the places another t
         CHECK(wrong == 0);
         // its faces lit by their samples where its tile has bits, else by day; none drawn as if in the shade
         atlas::passes::BuildingTile layout;
-        (void)atlas::passes::heap_words(g, 0.0, 0.0, layout);
+        const std::vector<std::array<std::uint32_t, 4>> words = atlas::passes::heap_words(g, 0.0, 0.0, layout);
         CHECK(!layout.lights.empty());
         CHECK(std::ranges::all_of(layout.lights, [](const atlas::passes::BuildingLight& l) {
             return (l.flags & (sh::BUILDING_FACE_LEVEL | sh::BUILDING_FACE_DAY)) != 0U;
         }));
+        // its records lean: its grid, then each primitive in 3 uint4 and each face in 1, every corner and test point
+        // within half a step of the geometry's, the same point the same steps in every primitive, its words, normals
+        // and areas as a window's records hold them
+        CHECK(g.lean);
+        CHECK(layout.lean);
+        CHECK(layout.prims_at == 1);
+        CHECK(layout.cells_at == 1 + ((layout.edged + layout.plain) * sh::BUILDING_LEAN_PRIM_VECTORS));
+        CHECK(layout.colours_at == layout.faces_at + (layout.faces * sh::BUILDING_LEAN_FACE_VECTORS));
+        const auto word4 = [&](std::size_t i) {
+            return atlas::hlsl::uint4{words.at(i)[0], words.at(i)[1], words.at(i)[2], words.at(i)[3]};
+        };
+        const atlas::hlsl::uint4 grid = word4(layout.grid_at);
+        const auto step = [&](unsigned shift) {
+            return std::ldexp(1.0, static_cast<int>((grid.w >> shift) & 0xFFU) - 128);
+        };
+        const std::array<double, 3> half{step(0) / 2, step(8) / 2, step(16) / 2};
+        const auto near = [&](const atlas::hlsl::float3& a, const gm::V3& b) {
+            return std::abs(static_cast<double>(a.x) - b.x) <= half[0] &&
+                   std::abs(static_cast<double>(a.y) - b.y) <= half[1] &&
+                   std::abs(static_cast<double>(a.z) - b.z) <= half[2];
+        };
+        std::map<std::array<double, 3>, std::array<float, 3>> placed; // each corner's point, the first time
+        std::size_t prims = 0;
+        std::size_t off = 0;
+        std::size_t moved = 0;
+        for (const auto* list : {&g.edged, &g.plain}) {
+            for (const gm::Prim& q : *list) {
+                const std::size_t at = layout.prims_at + (prims * sh::BUILDING_LEAN_PRIM_VECTORS);
+                ++prims;
+                const sh::BuildingPrim p = sh::building_lean_prim(grid, word4(at), word4(at + 1), word4(at + 2));
+                const sh::BuildingFace pf =
+                    sh::building_lean_face(grid, word4(layout.faces_at + p.face), word4(at + 2));
+                const gm::Face& face = g.faces.at(q.face);
+                const std::array<atlas::hlsl::float3, 4> corners{p.c0, p.c1, p.c2, p.c3};
+                bool same = p.face == q.face && p.sample == q.sample && p.item == q.item && p.flags == q.flags &&
+                            p.far_slot == q.far_slot && pf.normal.x == static_cast<float>(face.normal.x) &&
+                            pf.normal.y == static_cast<float>(face.normal.y) &&
+                            pf.normal.z == static_cast<float>(face.normal.z) && near(pf.test, face.test);
+                for (std::size_t corner = 0; corner < 4; ++corner) {
+                    const gm::V3& want = q.p.at(corner);
+                    same = same && near(corners.at(corner), want);
+                    const std::array<float, 3> got{corners.at(corner).x, corners.at(corner).y, corners.at(corner).z};
+                    const auto [it, first] = placed.try_emplace({want.x, want.y, want.z}, got);
+                    if (!first && it->second != got) ++moved;
+                }
+                if (!same) ++off;
+            }
+        }
+        MESSAGE(std::format("L{}: {} primitives, {} faces, its grid's steps {} m, {} m and {} m",
+                            level->tile.header.level, prims, layout.faces, step(0), step(8), step(16)));
+        CHECK(prims > 0);
+        CHECK(off == 0);
+        CHECK(moved == 0);
     }
     const gm::TileBuildings window_walls = walls(*wd);
     atlas::passes::BuildingTile window_layout;
     (void)atlas::passes::heap_words(window_walls, 0.0, 0.0, window_layout);
+    CHECK(!window_layout.lean);
     CHECK(std::ranges::none_of(window_layout.lights, [](const atlas::passes::BuildingLight& l) {
         return (l.flags & sh::BUILDING_FACE_LEVEL) != 0U;
     }));

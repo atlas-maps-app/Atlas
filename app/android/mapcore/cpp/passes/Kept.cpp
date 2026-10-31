@@ -145,9 +145,9 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
             const std::array<std::uint32_t, lists> ats{d.edged_at, d.cells_at, d.plain_at};
             if (runs[list] == 0) continue;
             std::array<std::byte, 64> push = d.push;
-            const std::uint32_t mode = list == 1 ? 1U : 0U;
+            const std::uint32_t mode = d.tile->list_mode(list == 1);
             std::memcpy(push.data() + 32, &ats[list], sizeof(std::uint32_t)); // BuildingPush.at.x: the list
-            std::memcpy(push.data() + 60, &mode, sizeof mode);                // BuildingPush.sun.w: near cells or not
+            std::memcpy(push.data() + 60, &mode, sizeof mode);                // BuildingPush.sun.w: the list's kind
             for (std::uint32_t r = 0; r < runs[list]; ++r) {
                 const Run& run = runs_[firsts[list] + r];
                 for (std::uint32_t first = run.first; first < run.end; first += job_size) {

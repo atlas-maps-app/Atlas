@@ -15,6 +15,13 @@
 //   - two areas of reveals' colours, a word a windowed wall (its face's colour times 0.55, unlit), lit alike;
 //   - each item's plinth's and cornice's painter slots (geometry::TileBuildings::item_facades), a word each;
 //   - the items' rows in the item table, one word each, written once the tile is taken.
+// A level's tile (geometry::TileBuildings::lean: a frame cell's L13 or L12, drawn beyond 4.7 km, without near cells or
+// windowed walls) holds lean records instead (ENGINE.md one pack per country, step 7): first its grid, a uint4 (its
+// least corner as floats and each axis's step, a power of two, as building.slangh's building_grid_point reads it);
+// then each primitive in 3 uint4, its corners in 16-bit steps of the grid and the four words a primitive has, with its
+// face's test point in steps and its face's flags (building_lean_prim); and each face in 1 uint4, its normal and area
+// (building_lean_face). Its corners lie within half a step of the geometry's (a step at most 2^-3 m for an L13 and
+// 2^-2 for an L12 of the Netherlands), the same corner the same steps in every primitive, so its faces meet as before.
 // Plain data: no Vulkan, so the twin and its tests read it as the GPU does.
 #pragma once
 
@@ -59,15 +66,18 @@ struct BuildingTile {
     std::uint32_t windows = 0;      ///< their windows (the tile's window group of sun samples)
     std::uint32_t faces = 0;
     std::uint32_t items = 0;
-    std::uint32_t prims_at = 0;   ///< the primitives, 4 uint4 each: the edged ones, then the plain
-    std::uint32_t cells_at = 0;   ///< the near cells, two words each
-    std::uint32_t windows_at = 0; ///< the windowed walls, a uint4 each
-    std::uint32_t faces_at = 0;   ///< each face's geometry, 2 uint4
-    std::uint32_t colours_at = 0; ///< the two areas of colours: area a from word colours_at · 4 + a · 2 · faces
-    std::uint32_t reveals_at = 0; ///< the two areas of reveals' colours: area a from word reveals_at · 4 + a · walls
-    std::uint32_t facades_at = 0; ///< each item's plinth's and cornice's slots, four a uint4
-    std::uint32_t rows_at = 0;    ///< the items' rows, four a uint4
-    std::uint32_t vectors = 0;    ///< the range's size in uint4
+    bool lean = false;               ///< a level's tile's lean records (above)
+    std::uint32_t grid_at = 0;       ///< a lean tile's grid, a uint4
+    std::array<int, 3> grid_steps{}; ///< its steps along x, y and z: 2^e m, as e
+    std::uint32_t prims_at = 0;      ///< the primitives, 4 uint4 each (3 lean): the edged ones, then the plain
+    std::uint32_t cells_at = 0;      ///< the near cells, two words each
+    std::uint32_t windows_at = 0;    ///< the windowed walls, a uint4 each
+    std::uint32_t faces_at = 0;      ///< each face's geometry, 2 uint4 (1 lean)
+    std::uint32_t colours_at = 0;    ///< the two areas of colours: area a from word colours_at · 4 + a · 2 · faces
+    std::uint32_t reveals_at = 0;    ///< the two areas of reveals' colours: area a from word reveals_at · 4 + a · walls
+    std::uint32_t facades_at = 0;    ///< each item's plinth's and cornice's slots, four a uint4
+    std::uint32_t rows_at = 0;       ///< the items' rows, four a uint4
+    std::uint32_t vectors = 0;       ///< the range's size in uint4
     std::uint8_t cells_per_side = 0;
     /// The tile's cell c's edged primitives: [edged_first[c], edged_first[c + 1]); its near cells, plain ones and
     /// windowed walls alike.
@@ -189,6 +199,15 @@ struct BuildingTile {
     /// part (else a building), bit 1 that building is a relation (else a way).
     std::vector<std::int64_t> ids;
     std::vector<std::uint8_t> owners;
+
+    /// A primitive's uint4 and a face's, as its records are lean or not.
+    [[nodiscard]] std::uint32_t prim_vectors() const noexcept { return lean ? 3U : 4U; }
+    [[nodiscard]] std::uint32_t face_vectors() const noexcept { return lean ? 1U : 2U; }
+    /// The push constants' list word of a draw of its edged or plain primitives, or of its near cells
+    /// (building.slangh's BUILDING_LIST_CELLS, with BUILDING_LIST_LEAN where its records are lean).
+    [[nodiscard]] std::uint32_t list_mode(bool near_cells) const noexcept {
+        return (near_cells ? 1U : 0U) | (lean ? 2U : 0U);
+    }
 };
 
 /// Every face's colours at the theme `theme`, lit and unlit (0xBBGGRR: light.slang's light() and tohex in binary64, the
@@ -269,7 +288,8 @@ struct WindowWidths {
                                          double frame_width);
 
 /// The uint4 words of a tile's buildings (BuildingTile's layout, `layout` filled), from stage T's geometry: the
-/// primitives' corners relative to the tile's south-west corner (`origin_x`, `origin_z`, frame metres) as floats.
+/// primitives' corners relative to the tile's south-west corner (`origin_x`, `origin_z`, frame metres) as floats, or
+/// a level's tile's on its grid (its records lean).
 [[nodiscard]] std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildings& g, double origin_x,
                                                                    double origin_z, BuildingTile& layout);
 

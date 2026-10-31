@@ -110,6 +110,13 @@ static const float BUILDING_STROKE_LEAD = 1.52587890625e-5f;
 static const uint BUILDING_PRIM_VECTORS = 4u;
 static const uint BUILDING_FACE_VECTORS = 2u;
 static const uint BUILDING_LIGHT_WORDS = 8u;
+// A level's tile's lean records (twin/building/BuildingTile.hpp): its grid (a uint4 before its primitives), each
+// primitive in 3 uint4 and each face in 1 (building_lean_prim, building_lean_face).
+static const uint BUILDING_LEAN_PRIM_VECTORS = 3u;
+static const uint BUILDING_LEAN_FACE_VECTORS = 1u;
+// A draw's list (BuildingPush's sun.w): near cells cut from their walls, and a level's tile's lean records.
+static const uint BUILDING_LIST_CELLS = 1u;
+static const uint BUILDING_LIST_LEAN = 2u;
 
 // The kept primitives' jobs (passes/Kept.cpp): a header of 4 uint4 (in x, y and z each list's first job, its jobs, its
 // first place among the kept primitives and its first chunk's draw; in w the totals), then each job's 5 uint4 (its
@@ -132,7 +139,8 @@ struct BuildingPush {
     uint4 at;  // x: its first primitive of the draw's list (or near cell: two a uint4), y: its faces (uint4 indexes in
                // the walls heap); z: its colours at the frame's moment (a u32 index); w: its rows (a uint4 index)
     uint4 sun; // x: the tile's first sun texel (BUILDING_NO_BITS: none yet); y: its fade weight's bits; z: its edged
-               // list's first primitive (a near cell's wall); w: the draw's list is near cells (1) or primitives (0)
+               // list's first primitive (a near cell's wall; a lean tile's grid the uint4 before); w: the draw's list,
+               // BUILDING_LIST_CELLS for near cells (else primitives) | BUILDING_LIST_LEAN for a level's lean records
 };
 
 /// The buildings' detail bits (painter.slang's rank_detail; Buildings::select's detail thresholds, in this order):
@@ -185,6 +193,37 @@ inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
     p.flags = c.w >> 16u;
     p.near_slot = d.w & 0xFFFFu;
     p.far_slot = d.w >> 16u;
+    p.lead = 0u;
+    return p;
+}
+
+/// The tile-local point (x, y, z) steps of a level's tile's grid (its uint4: its least corner as floats, each axis's
+/// step 2^e as e + 128 in a byte of w, x's lowest): exact in float, its corner a multiple of each step and every point
+/// fewer than 2^24 steps from 0, so the GPU and the twin read the same corners however they round or fuse.
+inline float3 building_grid_point(uint4 grid, uint x, uint y, uint z) {
+    float sx = asfloat(((grid.w & 0xFFu) - 1u) << 23u);
+    float sy = asfloat((((grid.w >> 8u) & 0xFFu) - 1u) << 23u);
+    float sz = asfloat((((grid.w >> 16u) & 0xFFu) - 1u) << 23u);
+    float3 p = {asfloat(grid.x) + float(x) * sx, asfloat(grid.y) + float(y) * sy, asfloat(grid.z) + float(z) * sz};
+    return p;
+}
+
+/// A level's primitive (BUILDING_LEAN_PRIM_VECTORS uint4) on its tile's grid: its corners' steps two a word, c0's x,
+/// y and z then c1's in a.xyz, c2's and c3's in b.xyz (each word's low half first); its face in a.w, its sample in
+/// b.w, its item and flags and its slots in c.x and c.y as a primitive's words; its face's test point and flags in c.z
+/// and c.w (building_lean_face).
+inline BuildingPrim building_lean_prim(uint4 grid, uint4 a, uint4 b, uint4 c) {
+    BuildingPrim p;
+    p.c0 = building_grid_point(grid, a.x & 0xFFFFu, a.x >> 16u, a.y & 0xFFFFu);
+    p.c1 = building_grid_point(grid, a.y >> 16u, a.z & 0xFFFFu, a.z >> 16u);
+    p.c2 = building_grid_point(grid, b.x & 0xFFFFu, b.x >> 16u, b.y & 0xFFFFu);
+    p.c3 = building_grid_point(grid, b.y >> 16u, b.z & 0xFFFFu, b.z >> 16u);
+    p.face = a.w;
+    p.sample = b.w;
+    p.item = c.x & 0xFFFFu;
+    p.flags = c.x >> 16u;
+    p.near_slot = c.y & 0xFFFFu;
+    p.far_slot = c.y >> 16u;
     p.lead = 0u;
     return p;
 }
@@ -248,6 +287,19 @@ inline BuildingFace building_face(uint4 a, uint4 b) {
     f.area = asfloat(a.w);
     f.test = t;
     f.flags = b.w;
+    return f;
+}
+
+/// A level's face (BUILDING_LEAN_FACE_VECTORS uint4: its normal and area, a face's first words) with its test point's
+/// steps on the tile's grid and its flags, which each of its primitives holds in its third uint4 `c` (x and z in
+/// c.z, y in c.w's low half, the flags in its high half).
+inline BuildingFace building_lean_face(uint4 grid, uint4 a, uint4 c) {
+    BuildingFace f;
+    float3 n = {asfloat(a.x), asfloat(a.y), asfloat(a.z)};
+    f.normal = n;
+    f.area = asfloat(a.w);
+    f.test = building_grid_point(grid, c.z & 0xFFFFu, c.w & 0xFFFFu, c.z >> 16u);
+    f.flags = c.w >> 16u;
     return f;
 }
 

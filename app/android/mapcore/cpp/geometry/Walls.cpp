@@ -607,7 +607,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     TileBuildings& made = out.made;
     std::vector<Made>& spans = out.spans;
     Builder b(made);
-    b.lean = in.tile->header.level < 14;
+    b.lean = in.lean || in.tile->header.level < 14;
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
     b.kit_band = in.region.kit_band;
@@ -770,6 +770,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     const tl::Tile& tile = *in.tile;
     TileBuildings out;
     out.level = in.level;
+    out.lean = in.lean || tile.header.level < 14; // walk()'s Builder::lean
     out.cells_per_side = tile.header.cells_per_side;
     const std::size_t cells = std::size_t{tile.header.cells_per_side} * tile.header.cells_per_side;
     // the variants at this level, by their base feature's layer and source order (as K8 finds them)

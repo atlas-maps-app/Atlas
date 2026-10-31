@@ -118,18 +118,28 @@ struct Fetched {
 
 Fetched fetched_at(BuildingPush p, uint index) {
     Fetched f;
-    if (p.sun.w != 0u) {
-        // a near cell: its record's two words (its wall in the edged list, its place), cut from its wall
-        uint4 pair = walls_vector(p.at.x + index / 2u);
-        bool odd = (index & 1u) != 0u;
-        uint wall = odd ? pair.z : pair.x;
-        uint code = odd ? pair.w : pair.y;
-        f.prim = building_cell_prim(prim_at(p.sun.z + wall * BUILDING_PRIM_VECTORS), code);
+    if ((p.sun.w & BUILDING_LIST_LEAN) != 0u) {
+        // a level's tile's lean records (which hold no near cells): its grid the uint4 before its edged list, its
+        // face's test point and flags in its primitive's third uint4
+        uint4 grid = walls_vector(p.sun.z - 1u);
+        uint at = p.at.x + index * BUILDING_LEAN_PRIM_VECTORS;
+        uint4 c = walls_vector(at + 2u);
+        f.prim = building_lean_prim(grid, walls_vector(at), walls_vector(at + 1u), c);
+        f.face = building_lean_face(grid, walls_vector(p.at.y + f.prim.face * BUILDING_LEAN_FACE_VECTORS), c);
     } else {
-        f.prim = prim_at(p.at.x + index * BUILDING_PRIM_VECTORS);
+        if ((p.sun.w & BUILDING_LIST_CELLS) != 0u) {
+            // a near cell: its record's two words (its wall in the edged list, its place), cut from its wall
+            uint4 pair = walls_vector(p.at.x + index / 2u);
+            bool odd = (index & 1u) != 0u;
+            uint wall = odd ? pair.z : pair.x;
+            uint code = odd ? pair.w : pair.y;
+            f.prim = building_cell_prim(prim_at(p.sun.z + wall * BUILDING_PRIM_VECTORS), code);
+        } else {
+            f.prim = prim_at(p.at.x + index * BUILDING_PRIM_VECTORS);
+        }
+        uint fa = p.at.y + f.prim.face * BUILDING_FACE_VECTORS;
+        f.face = building_face(walls_vector(fa), walls_vector(fa + 1u));
     }
-    uint fa = p.at.y + f.prim.face * BUILDING_FACE_VECTORS;
-    f.face = building_face(walls_vector(fa), walls_vector(fa + 1u));
     uint4 rows = walls_vector(p.at.w + f.prim.item / 4u);
     f.rank = rank_table[rows[f.prim.item % 4u]];
     return f;

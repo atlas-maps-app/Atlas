@@ -52,6 +52,50 @@ static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP
 /// Two runs this close (primitives of cells not drawn between them) are drawn as one.
 constexpr std::uint32_t run_gap = 512;
 
+static_assert(shaders::BUILDING_LEAN_PRIM_VECTORS == 3 && shaders::BUILDING_LEAN_FACE_VECTORS == 1 &&
+                  shaders::BUILDING_LIST_CELLS == 1 && shaders::BUILDING_LIST_LEAN == 2,
+              "BuildingTile's prim_vectors, face_vectors and list_mode and building.slangh's");
+
+/// A level's tile's grid (building.slangh's building_grid_point): per axis its points' least snapped down to a multiple
+/// of its step, the least power of two from which each of them lies within 65535 steps and fewer than 2^24 steps from
+/// 0, so that the float sums the GPU and the twin make of its steps are exact.
+struct Grid {
+    std::array<double, 3> lo{};
+    std::array<int, 3> e{};
+
+    explicit Grid(const std::array<double, 3>& least, const std::array<double, 3>& most) {
+        for (std::size_t i = 0; i < 3; ++i) {
+            const double a = least.at(i) <= most.at(i) ? least.at(i) : 0.0; // no points: any grid
+            const double z = least.at(i) <= most.at(i) ? most.at(i) : 0.0;
+            int k = -24;
+            for (;; ++k) {
+                const double step = std::ldexp(1.0, k);
+                const double from = std::floor(a / step) * step;
+                if ((z - from) / step <= 65535.0 && std::max(std::abs(from), std::abs(z)) / step < 16'000'000.0) {
+                    lo.at(i) = from;
+                    break;
+                }
+            }
+            ATLAS_ASSERT(k <= 127, "a level's tile too large for its grid's steps");
+            e.at(i) = k;
+        }
+    }
+
+    [[nodiscard]] double step(std::size_t i) const { return std::ldexp(1.0, e.at(i)); }
+    /// The steps of tile-local coordinate `v` along axis i.
+    [[nodiscard]] std::uint32_t steps(std::size_t i, double v) const {
+        return static_cast<std::uint32_t>(std::clamp(std::round((v - lo.at(i)) / step(i)), 0.0, 65535.0));
+    }
+    /// The point `q` steps along axis i, as the GPU's float sum makes it (exact).
+    [[nodiscard]] float point(std::size_t i, std::uint32_t q) const {
+        return f32(lo.at(i) + (static_cast<double>(q) * step(i)));
+    }
+    [[nodiscard]] Words words() const {
+        const auto byte = [this](std::size_t i) { return static_cast<std::uint32_t>(e.at(i) + 128); };
+        return {bits(f32(lo[0])), bits(f32(lo[1])), bits(f32(lo[2])), byte(0) | (byte(1) << 8U) | (byte(2) << 16U)};
+    }
+};
+
 } // namespace
 
 std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildings& g, double origin_x, double origin_z,
@@ -117,6 +161,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     const auto k = static_cast<std::uint32_t>(g.items.size());
     ATLAS_ASSERT(k <= 0x1'0000U, "a tile with more buildings than the primitives' 16 bits of item hold");
     ATLAS_ASSERT(e <= shaders::BUILDING_WINDOW_WALL_BITS, "a tile with more walls than a windowed wall's 24 bits hold");
+    ATLAS_ASSERT(!g.lean || (n == 0 && ww == 0), "a level's tile with near cells or windowed walls (its records lean)");
+    layout.lean = g.lean;
+    const std::uint32_t pv = layout.prim_vectors();
     layout.edged = e;
     layout.plain = p;
     layout.cells = n;
@@ -124,11 +171,12 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.windows = g.windows;
     layout.faces = f;
     layout.items = k;
-    layout.prims_at = 0;
-    layout.cells_at = (e + p) * shaders::BUILDING_PRIM_VECTORS;
+    layout.grid_at = 0;
+    layout.prims_at = g.lean ? 1 : 0; // a lean tile's grid first
+    layout.cells_at = layout.prims_at + ((e + p) * pv);
     layout.windows_at = layout.cells_at + ((n + 1) / 2);
     layout.faces_at = layout.windows_at + ww;
-    layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
+    layout.colours_at = layout.faces_at + (f * layout.face_vectors());
     layout.reveals_at = layout.colours_at + f;                  // two areas of two words a face: f uint4
     layout.facades_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two areas of a word a windowed wall
     layout.rows_at = layout.facades_at + ((k + 3) / 4);         // a word an item
@@ -137,18 +185,69 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     const auto local = [&](const gm::V3& v) {
         return std::array<std::uint32_t, 3>{bits(f32(v.x - origin_x)), bits(f32(v.y)), bits(f32(v.z - origin_z))};
     };
+    // each face's flags (the vertex stage's)
+    std::vector<std::uint32_t> face_flags(f, 0);
+    for (std::uint32_t i = 0; i < f; ++i) {
+        const gm::Face& face = g.faces[i];
+        std::uint32_t flags = 0;
+        if (face.lit == gm::Lit::day) flags |= shaders::BUILDING_FACE_DAY;
+        if (face.lit == gm::Lit::level) flags |= shaders::BUILDING_FACE_LEVEL;
+        if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
+        if (face.kit == gm::KitPart::band) flags |= shaders::BUILDING_FACE_BAND;
+        if (face.kit == gm::KitPart::corner) flags |= shaders::BUILDING_FACE_CORNER;
+        face_flags[i] = flags;
+    }
+    // a level's grid: over every corner, test point and ring point it holds, tile-local
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    std::array<double, 3> lowest{inf, inf, inf};
+    std::array<double, 3> highest{-inf, -inf, -inf};
+    if (g.lean) {
+        const auto take = [&](const gm::V3& v) {
+            const std::array<double, 3> l{v.x - origin_x, v.y, v.z - origin_z};
+            for (std::size_t i = 0; i < 3; ++i) {
+                lowest.at(i) = std::min(lowest.at(i), l.at(i));
+                highest.at(i) = std::max(highest.at(i), l.at(i));
+            }
+        };
+        for (const gm::Prim* q : edged) std::ranges::for_each(q->p, take);
+        for (const gm::Prim& q : g.plain) std::ranges::for_each(q.p, take);
+        for (const gm::Face& face : g.faces) take(face.test);
+        for (const gm::Polygon& poly : g.polygons) std::ranges::for_each(poly.ring, take);
+    }
+    const Grid lattice(lowest, highest);
+    const auto steps = [&](const gm::V3& v) {
+        return std::array<std::uint32_t, 3>{lattice.steps(0, v.x - origin_x), lattice.steps(1, v.y),
+                                            lattice.steps(2, v.z - origin_z)};
+    };
+    if (g.lean) {
+        out[layout.grid_at] = lattice.words();
+        layout.grid_steps = lattice.e;
+    }
     const auto put_prim = [&](std::uint32_t at, const gm::Prim& q, std::uint16_t near_slot) {
         const std::array<std::uint32_t, 4> w{q.face, q.sample, (q.item & 0xFFFFU) | (std::uint32_t{q.flags} << 16U),
                                              std::uint32_t{near_slot} | (std::uint32_t{q.far_slot} << 16U)};
+        if (g.lean) {
+            // building_lean_prim's: the corners' steps two a word, then the words, its face's test point and flags
+            std::array<std::uint32_t, 12> c{};
+            for (std::size_t i = 0; i < 4; ++i) {
+                const auto xyz = steps(q.p[i]);
+                std::ranges::copy(xyz, c.begin() + static_cast<std::ptrdiff_t>(3 * i));
+            }
+            const std::array<std::uint32_t, 3> t =
+                q.face < f ? steps(g.faces[q.face].test) : std::array<std::uint32_t, 3>{0, 0, 0};
+            const std::uint32_t flags = q.face < f ? face_flags[q.face] : 0U;
+            out[at] = {c[0] | (c[1] << 16U), c[2] | (c[3] << 16U), c[4] | (c[5] << 16U), w[0]};
+            out[at + 1] = {c[6] | (c[7] << 16U), c[8] | (c[9] << 16U), c[10] | (c[11] << 16U), w[1]};
+            out[at + 2] = {w[2], w[3], t[0] | (t[2] << 16U), t[1] | (flags << 16U)};
+            return;
+        }
         for (std::size_t c = 0; c < 4; ++c) {
             const auto xyz = local(q.p[c]);
             out[at + c] = {xyz[0], xyz[1], xyz[2], w[c]};
         }
     };
-    for (std::uint32_t i = 0; i < e; ++i) put_prim(i * shaders::BUILDING_PRIM_VECTORS, *edged[i], wall_near[i]);
-    for (std::uint32_t i = 0; i < p; ++i) {
-        put_prim((e + i) * shaders::BUILDING_PRIM_VECTORS, g.plain[i], g.plain[i].near_slot);
-    }
+    for (std::uint32_t i = 0; i < e; ++i) put_prim(layout.prims_at + (i * pv), *edged[i], wall_near[i]);
+    for (std::uint32_t i = 0; i < p; ++i) put_prim(layout.prims_at + ((e + i) * pv), g.plain[i], g.plain[i].near_slot);
     for (std::uint32_t i = 0; i < n; ++i) {
         Words& w = out[layout.cells_at + (i / 2)];
         const std::size_t at = std::size_t{2} * (i % 2);
@@ -204,6 +303,12 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                                 .prim = poly.first,
                                 .prims = poly.count});
         for (const gm::V3& v : poly.ring) {
+            if (g.lean) {
+                // on the grid, as its triangles' corners are
+                const auto q = steps(v);
+                for (std::size_t i = 0; i < 3; ++i) layout.ring_points.push_back(lattice.point(i, q.at(i)));
+                continue;
+            }
             layout.ring_points.push_back(f32(v.x - origin_x));
             layout.ring_points.push_back(f32(v.y));
             layout.ring_points.push_back(f32(v.z - origin_z));
@@ -217,16 +322,16 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.lights.resize(f);
     for (std::uint32_t i = 0; i < f; ++i) {
         const gm::Face& face = g.faces[i];
-        std::uint32_t flags = 0;
-        if (face.lit == gm::Lit::day) flags |= shaders::BUILDING_FACE_DAY;
-        if (face.lit == gm::Lit::level) flags |= shaders::BUILDING_FACE_LEVEL;
-        if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
-        if (face.kit == gm::KitPart::band) flags |= shaders::BUILDING_FACE_BAND;
-        if (face.kit == gm::KitPart::corner) flags |= shaders::BUILDING_FACE_CORNER;
-        const auto t = local(face.test);
-        out[layout.faces_at + (i * 2)] = {bits(f32(face.normal.x)), bits(f32(face.normal.y)), bits(f32(face.normal.z)),
-                                          bits(f32(areas[i]))};
-        out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
+        const std::uint32_t flags = face_flags[i];
+        const Words shape{bits(f32(face.normal.x)), bits(f32(face.normal.y)), bits(f32(face.normal.z)),
+                          bits(f32(areas[i]))};
+        if (g.lean) {
+            out[layout.faces_at + i] = shape; // its test point and flags in its primitives'
+        } else {
+            const auto t = local(face.test);
+            out[layout.faces_at + (i * 2)] = shape;
+            out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
+        }
         layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z}, .base = face.base, .flags = flags};
     }
     // the hoist beams, their ends and their gables' faces in the heap's floats

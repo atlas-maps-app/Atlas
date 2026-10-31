@@ -130,9 +130,20 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
         const std::size_t at = (std::size_t{face} * 2) + (lit ? 0 : 1);
         return at < colours_.size() ? colours_[at] : 0U;
     };
+    // a primitive's records and its face's, or a level's tile's lean ones on its grid
+    const std::uint32_t vectors = b.prim_vectors();
+    const hlsl::uint4 grid = b.lean ? word4(words, b.grid_at) : hlsl::uint4{0U, 0U, 0U, 0U};
     const auto prim_at = [&](std::size_t at) {
+        if (b.lean) {
+            return shaders::building_lean_prim(grid, word4(words, at), word4(words, at + 1), word4(words, at + 2));
+        }
         return shaders::building_prim(word4(words, at), word4(words, at + 1), word4(words, at + 2),
                                       word4(words, at + 3));
+    };
+    const auto face_at = [&](std::size_t at, std::uint32_t face) {
+        if (b.lean) return shaders::building_lean_face(grid, word4(words, b.faces_at + face), word4(words, at + 2));
+        return shaders::building_face(word4(words, b.faces_at + (std::size_t{face} * 2)),
+                                      word4(words, b.faces_at + (std::size_t{face} * 2) + 1));
     };
     // a list of the tile's: its edged primitives, its near cells (cut from their walls), or its plain primitives
     enum class List : std::uint8_t { edged, cells, plain };
@@ -143,18 +154,19 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
         for (const passes::BuildingRun& run : runs_) {
             for (std::uint32_t i = run.first; i < run.end; ++i) {
                 shaders::BuildingPrim p{};
+                std::size_t record = 0; // its record (a near cell's wall's)
                 if (list == List::cells) {
                     const hlsl::uint4 pair = word4(words, list_at + (i / 2));
                     const bool odd = (i & 1U) != 0U;
                     const std::uint32_t wall = odd ? pair.z : pair.x;
                     const std::uint32_t code = odd ? pair.w : pair.y;
-                    p = shaders::building_cell_prim(
-                        prim_at(b.prims_at + (std::size_t{wall} * shaders::BUILDING_PRIM_VECTORS)), code);
+                    record = b.prims_at + (std::size_t{wall} * vectors);
+                    p = shaders::building_cell_prim(prim_at(record), code);
                 } else {
-                    p = prim_at(list_at + (std::size_t{i} * shaders::BUILDING_PRIM_VECTORS));
+                    record = list_at + (std::size_t{i} * vectors);
+                    p = prim_at(record);
                 }
-                const shaders::BuildingFace f = shaders::building_face(word4(words, b.faces_at + (p.face * 2)),
-                                                                       word4(words, b.faces_at + (p.face * 2) + 1));
+                const shaders::BuildingFace f = face_at(record, p.face);
                 if (p.item >= rows.size()) continue;
                 const std::uint32_t row = rows[p.item];
                 const std::uint32_t rank = row < table.size() ? table[row] : shaders::RANK_NONE;
@@ -168,8 +180,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                     const passes::BuildingRing& r = b.rings[ring];
                     triangles_.clear();
                     for (std::uint32_t k = r.prim; k < r.prim + r.prims; ++k) {
-                        const shaders::BuildingPrim t =
-                            prim_at(list_at + (std::size_t{k} * shaders::BUILDING_PRIM_VECTORS));
+                        const shaders::BuildingPrim t = prim_at(list_at + (std::size_t{k} * vectors));
                         const shaders::BuildingShape ts = shaders::building_shape(cam, theme_flags, place, t, f, rank);
                         if (ts.count == 0) continue;
                         if (s.count == 0) s = ts;
@@ -211,7 +222,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     };
     emit_list(List::edged, b.prims_at, b.edged_first);
     emit_list(List::cells, b.cells_at, b.cells_first);
-    emit_list(List::plain, b.prims_at + (b.edged * shaders::BUILDING_PRIM_VECTORS), b.plain_first);
+    emit_list(List::plain, b.prims_at + (b.edged * vectors), b.plain_first);
     windows(b, rows, words, place, cells, sun);
     beams(b, rows, place);
     roof_lines(b, rows, place);

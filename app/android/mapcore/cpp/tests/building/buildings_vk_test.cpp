@@ -1531,6 +1531,10 @@ struct PackFile {
 /// filled before any tile is built (ENGINE.md, one pack per country, step 7).
 bool second_buffer = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
 
+/// Whether make_scene's buildings pass builds every tile as a level's tile is: each wall its one cell, no windowed
+/// walls, its records lean on its tile's grid (ENGINE.md, one pack per country, step 7).
+bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
+
 /// Makes the scene for `config` on a w × h output, drawing from `packs`.
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
@@ -1544,6 +1548,7 @@ bool second_buffer = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-v
     constexpr std::array<std::string_view, 1> composite{"composite"};
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
     auto owned = std::make_unique<passes::Buildings>();
+    owned->lean_every_tile(lean_tiles);
     s.buildings = owned.get();
     passes.push_back(std::move(owned));
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
@@ -1611,6 +1616,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             ATLAS_REQUIRE(pixels.has_value());
             CHECK_MESSAGE(s.settled, view << ": the world did not settle");
             if (!s.lit) MESSAGE(view << ": drawn without every tile's sun bits (the sun's worker gave none)");
+            if (lean_tiles) CHECK(s.buildings->lean_draws() > 0);
             const scene::HeapStats heap = s.world->heaps()->stats();
             const auto walls = static_cast<std::size_t>(scene::HeapKind::walls);
             if (second_buffer) {
@@ -2354,6 +2360,27 @@ TEST_CASE(
     later.sun = {.r = 0xFF, .g = 0xD9, .b = 0xA8, .a = 255};
     later.sun_k = 0.9;
     check_moments(*cam, "board", packs, sunny(), later);
+}
+
+TEST_CASE(
+    "buildings: a level's lean records drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {
+    // the synthetic tile built as a level's tile is (ENGINE.md, one pack per country, step 7): each wall its one cell,
+    // no windowed walls, each primitive's corners and its face's test point in steps of the tile's grid, near and far
+    // and under the painter switch, so every stage that reads the records (the walls, the roofs, their thin edges, the
+    // cull) reads what the twin reads
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    lean_tiles = true;
+    check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, lean", packs, sunny(),
+                 10);
+    check_frames(camera(52.37422, 4.88486, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far, lean", packs, sunny(),
+                 10);
+    check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, lean", packs, sunny(),
+                 10, nullptr, true);
+    lean_tiles = false;
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }
 
 #endif
