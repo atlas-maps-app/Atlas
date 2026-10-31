@@ -426,62 +426,103 @@ void Ground::rank_across_scenes() {
     if (handles != ranked_handles_) {
         // every element of the drawn tiles, drawn or not, so the ranks hold while the same tiles are drawn
         ranked_handles_ = handles;
-        ranks_.clear();
-        struct Entry {
-            std::uint16_t group = 0;
-            geo::OrderKey key;
-            std::uint32_t pack = 0;
-            std::uint32_t order = 0;
-            std::uint32_t tile = 0;
-            std::uint32_t index = 0;
-            bool stroke = false;
+        ++rankings_;
+        const auto drawn_as = [&](std::uint32_t handle) -> const DrawnTile* {
+            const auto it = std::ranges::find(f.tiles, handle, [](const DrawnTile& t) { return t.tile->handle; });
+            return it == f.tiles.end() ? nullptr : &*it;
         };
-        std::vector<Entry> entries;
-        for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
-            const DrawnTile& t = f.tiles[ti];
+        // what no longer names its build goes (its ground gone, or its handle another tile's now), and what no
+        // ranking of the last few took part in
+        std::erase_if(ranks_, [&](const TileRanks& r) {
+            const DrawnTile* t = drawn_as(r.handle);
+            if (t != nullptr) return r.ground != t->ground || r.held.expired();
+            return r.held.expired() || r.ranked + 8 < rankings_;
+        });
+        // each drawn tile's elements in their order, once: its fills (the water aside) and strokes by group, then
+        // key, then order (a tile's pack is one)
+        for (const DrawnTile& t : f.tiles) {
+            if (std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle) != ranks_.end()) continue;
             const geo::GroundTile& g = *t.ground;
-            ranks_.push_back({.handle = t.tile->handle,
-                              .fills = std::vector<std::uint32_t>(g.fills.size(), 0),
-                              .strokes = std::vector<std::uint32_t>(g.strokes.size(), 0)});
-            const auto tile = static_cast<std::uint32_t>(ti);
+            TileRanks& r = ranks_.emplace_back();
+            r.handle = t.tile->handle;
+            r.ground = t.ground;
+            r.held = t.pass->cpu;
+            r.fills.assign(g.fills.size(), 0);
+            r.strokes.assign(g.strokes.size(), 0);
+            r.places.reserve(g.fills.size() + g.strokes.size());
             for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
                 const geo::Fill& e = g.fills[i];
                 if (e.kind == geo::FillKind::water) continue;
-                entries.push_back({.group = e.group,
-                                   .key = e.key,
-                                   .pack = pack_ordinals_[ti],
-                                   .order = e.order,
-                                   .tile = tile,
-                                   .index = i,
-                                   .stroke = false});
+                r.places.push_back({.key = e.key, .order = e.order, .group = e.group, .stroke = false, .index = i});
             }
             for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
                 const geo::Stroke& e = g.strokes[i];
-                entries.push_back({.group = e.group,
-                                   .key = e.key,
-                                   .pack = pack_ordinals_[ti],
-                                   .order = e.order,
-                                   .tile = tile,
-                                   .index = i,
-                                   .stroke = true});
+                r.places.push_back({.key = e.key, .order = e.order, .group = e.group, .stroke = true, .index = i});
             }
+            std::ranges::sort(r.places, [](const RankPlace& a, const RankPlace& b) {
+                if (a.group != b.group) return a.group < b.group;
+                if (a.key != b.key) return a.key < b.key;
+                return a.order < b.order;
+            });
         }
-        const auto place = [](const Entry& e) { return std::tie(e.group, e.key, e.pack, e.order); };
-        std::ranges::stable_sort(entries, [&](const Entry& a, const Entry& b) { return place(a) < place(b); });
-        // one rank per element of a group: its fills and strokes (a rail's ballast and rails) share it
+        std::vector<TileRanks*> lists;
+        lists.reserve(f.tiles.size());
+        for (const DrawnTile& t : f.tiles) {
+            TileRanks& r = *std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle);
+            r.ranked = rankings_;
+            lists.push_back(&r);
+        }
+        // The drawn tiles' orders merged into the frame's, by group, key, pack and order (a tournament of the tiles'
+        // next elements, the losers kept at its inner nodes and the winner at 0; a tile at its end loses to every
+        // other), and one rank per element of a group: its fills and strokes (a rail's ballast and rails) share it.
+        const auto k = static_cast<std::uint32_t>(lists.size());
+        std::vector<std::size_t> at(k, 0);
+        const auto ahead = [&](std::uint32_t s, std::uint32_t u) {
+            const std::vector<RankPlace>& ps = lists[s]->places;
+            const std::vector<RankPlace>& pu = lists[u]->places;
+            if (at[u] == pu.size()) return at[s] != ps.size();
+            if (at[s] == ps.size()) return false;
+            const RankPlace& a = ps[at[s]];
+            const RankPlace& b = pu[at[u]];
+            if (a.group != b.group) return a.group < b.group;
+            if (a.key != b.key) return a.key < b.key;
+            if (pack_ordinals_[s] != pack_ordinals_[u]) return pack_ordinals_[s] < pack_ordinals_[u];
+            return a.order < b.order;
+        };
+        std::vector<std::uint32_t> losers(k, 0);
+        const auto play = [&](const auto& self, std::uint32_t node) -> std::uint32_t {
+            if (node >= k) return node - k; // a leaf: its tile
+            const std::uint32_t l = self(self, 2 * node);
+            const std::uint32_t r = self(self, (2 * node) + 1);
+            if (ahead(r, l)) {
+                losers[node] = l;
+                return r;
+            }
+            losers[node] = r;
+            return l;
+        };
+        std::uint32_t win = k > 1 ? play(play, 1) : 0;
+        const RankPlace* before = nullptr;
+        std::uint32_t before_pack = 0;
         std::uint32_t rank = 0;
-        for (std::size_t k = 0; k < entries.size(); ++k) {
-            const Entry& e = entries[k];
-            if (k > 0) {
-                const Entry& before = entries[k - 1];
-                if (before.group != e.group) {
+        while (k > 0 && at[win] < lists[win]->places.size()) {
+            const RankPlace& e = lists[win]->places[at[win]];
+            const std::uint32_t pack = pack_ordinals_[win];
+            if (before != nullptr) {
+                if (before->group != e.group) {
                     rank = 0;
-                } else if (place(before) != place(e)) {
+                } else if (before->key != e.key || before_pack != pack || before->order != e.order) {
                     ++rank;
                 }
             }
-            TileRanks& r = ranks_[e.tile];
+            before = &e;
+            before_pack = pack;
+            TileRanks& r = *lists[win];
             (e.stroke ? r.strokes : r.fills)[e.index] = rank;
+            ++at[win];
+            for (std::uint32_t node = (win + k) / 2; node >= 1; node /= 2) {
+                if (ahead(losers[node], win)) std::swap(losers[node], win);
+            }
         }
     }
     // each drawn tile's ranks where its fills and strokes lie in the frame's arrays

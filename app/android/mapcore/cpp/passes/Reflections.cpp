@@ -216,9 +216,12 @@ void band_water(const geo::GroundTile& g, ReflectionsKept::Tile& own) {
 
 [[nodiscard]] view::Vec3 vec(const geo::V3& v) noexcept { return {v.x, v.y, v.z}; }
 
-/// One element before the sort: its depth (the sort's key) and its place among the frame's elements.
+/// One element before the sort: its depth (the sort's key), its place in the renders' list (its mirror's place in
+/// ReflectionsKept::mirrors, else its tree's after them, then its place among its mirror's elements: the order the
+/// renders append them in, which their stable sort keeps among equal depths) and its place among the frame's elements.
 struct Ranked {
     double depth;
+    std::uint64_t place;
     std::uint32_t element;
 };
 
@@ -236,35 +239,115 @@ constexpr std::uint32_t reflection_circle = 4;
 constexpr std::uint32_t reflection_ellipse = 8;
 constexpr std::uint32_t reflection_leaf = 16;
 
-/// Whether no face of mirror `hd` can pass face()'s margin test: its box (its footprint's, widened by the window rows'
-/// 0.04 m out from their walls, from its gables' apexes down to its walls' mirrored base) lies wholly ahead of the near
-/// plane, so no face is clipped and each one's points project within its corners' box, and that box lies beyond the
-/// frame's 300 px margin and a pixel more (the slack holds where a face's own points round otherwise).
-[[nodiscard]] bool mirror_beyond(const view::Camera& cam, const geo::MirrorHead& hd) noexcept {
+/// Where a mirror's faces lie for face(): its box (its footprint's, widened by the window rows' 0.04 m out from their
+/// walls, between the highest and the lowest of its gables' apexes, its walls' mirrored tops and their mirrored base)
+/// wholly ahead of the near plane and beyond the frame's 300 px margin and a pixel more, so no face passes face()'s
+/// margin test (no face is clipped and each one's points project within its corners' box; the slack holds where a
+/// face's own points round otherwise); wholly ahead (by a micrometre: no face's point is clipped, so face() takes each
+/// face's own points); or neither.
+enum class MirrorBox : std::uint8_t { beyond, ahead, across };
+
+[[nodiscard]] MirrorBox mirror_box(const view::Camera& cam, const geo::MirrorHead& hd) noexcept {
     constexpr double widen = 0.05;
     constexpr double margin = 300 + 1;
     const double near = cam.near() + 1e-6;
+    const double low = std::min({hd.apex_y, hd.top_y, hd.base_y});
+    const double high = std::max({hd.apex_y, hd.top_y, hd.base_y});
     double min_x = 0;
     double max_x = 0;
     double min_y = 0;
     double max_y = 0;
     for (int i = 0; i < 8; ++i) {
-        const view::Vec3 k =
-            cam.cam({(i & 1) != 0 ? hd.x1 + widen : hd.x0 - widen, (i & 2) != 0 ? hd.base_y : hd.apex_y,
-                     (i & 4) != 0 ? hd.z1 + widen : hd.z0 - widen});
-        if (!(k.z >= near)) return false;
+        const view::Vec3 k = cam.cam({(i & 1) != 0 ? hd.x1 + widen : hd.x0 - widen, (i & 2) != 0 ? high : low,
+                                      (i & 4) != 0 ? hd.z1 + widen : hd.z0 - widen});
+        if (!(k.z >= near)) return MirrorBox::across;
         const view::Vec2 p = cam.pc(k);
         min_x = i == 0 ? p.x : std::min(min_x, p.x);
         max_x = i == 0 ? p.x : std::max(max_x, p.x);
         min_y = i == 0 ? p.y : std::min(min_y, p.y);
         max_y = i == 0 ? p.y : std::max(max_y, p.y);
     }
-    return max_x < -margin || min_x > cam.width() + margin || max_y < -margin || min_y > cam.height() + margin;
+    return max_x < -margin || min_x > cam.width() + margin || max_y < -margin || min_y > cam.height() + margin
+               ? MirrorBox::beyond
+               : MirrorBox::ahead;
+}
+
+/// face_kept of a face none of whose points lies nearer than the near plane, so Camera.poly clips none and takes its
+/// points as they are: `p` their screen points (Camera.pc of each one's camera coordinates), in its order; their box
+/// against the frame's margin and their shoelace area against the least, summed as face_kept sums them.
+[[nodiscard]] bool face_kept_ahead(const view::Camera& cam, std::span<const view::Vec2> p, double margin, double least,
+                                   bool strictly, std::array<double, 4>& box) noexcept {
+    double min_x = p[0].x;
+    double max_x = p[0].x;
+    double min_y = p[0].y;
+    double max_y = p[0].y;
+    double sum = 0;
+    view::Vec2 a = p[0];
+    for (std::size_t i = 1; i <= p.size(); ++i) {
+        const view::Vec2 r = i < p.size() ? p[i] : p[0];
+        if (i < p.size()) {
+            min_x = pm::min(min_x, r.x);
+            max_x = pm::max(max_x, r.x);
+            min_y = pm::min(min_y, r.y);
+            max_y = pm::max(max_y, r.y);
+        }
+        sum += (a.x * r.y) - (r.x * a.y);
+        a = r;
+    }
+    if (max_x < -margin || min_x > cam.width() + margin || max_y < -margin || min_y > cam.height() + margin) {
+        return false;
+    }
+    const double area = std::abs(sum) / 2;
+    const bool kept = strictly ? area > least : area >= least;
+    if (kept) box = {min_x, min_y, max_x, max_y};
+    return kept;
 }
 
 /// A streak gradient's stop as the twin carries it: its colour with its opacity in the alpha byte.
 [[nodiscard]] std::uint32_t stop_argb(std::uint32_t rgb, double opacity) noexcept {
     return (static_cast<std::uint32_t>(std::lround(opacity * 255.0)) << 24U) | (rgb & 0xFF'FFFFU);
+}
+
+/// The drawn tiles' lists (each by its order, a tie in the tile's own order: ReflectionsKept::Tile's) merged by their
+/// order, a tie going to the tile drawn first, onto `out`: what one stable sort by order of the lists end to end in
+/// the frame's order gives.
+void merge_by_order(const std::vector<const std::vector<ReflectionsKept::Ordered>*>& lists,
+                    std::vector<ReflectionsKept::Ref>& out) {
+    struct Next {
+        std::uint64_t order;
+        std::uint32_t tile;
+    };
+    // a heap whose top is the earliest next element: the least order, then the least tile
+    const auto later = [](const Next& a, const Next& b) {
+        return a.order != b.order ? a.order > b.order : a.tile > b.tile;
+    };
+    std::vector<std::size_t> at(lists.size(), 0);
+    std::vector<Next> heap;
+    heap.reserve(lists.size());
+    std::size_t total = 0;
+    for (std::uint32_t t = 0; t < lists.size(); ++t) {
+        total += lists[t]->size();
+        if (!lists[t]->empty()) heap.push_back({.order = lists[t]->front().order, .tile = t});
+    }
+    std::ranges::make_heap(heap, later);
+    out.reserve(out.size() + total);
+    while (!heap.empty()) {
+        std::ranges::pop_heap(heap, later);
+        const std::uint32_t t = heap.back().tile;
+        const std::vector<ReflectionsKept::Ordered>& list = *lists[t];
+        out.push_back({.tile = t, .index = list[at[t]].index});
+        if (++at[t] < list.size()) {
+            heap.back() = {.order = list[at[t]].order, .tile = t};
+            std::ranges::push_heap(heap, later);
+        } else {
+            heap.pop_back();
+        }
+    }
+}
+
+/// A list of a tile's elements by their order, a tie in the tile's own order.
+void sort_by_order(std::vector<ReflectionsKept::Ordered>& list) {
+    std::ranges::stable_sort(list, {}, &ReflectionsKept::Ordered::order);
 }
 
 } // namespace
@@ -384,6 +467,28 @@ void Ground::lay_reflections() {
             made->unlit.assign(g.mirror_walls.size(), 0U);
             made->made.assign(g.mirror_walls.size(), 0U);
             made->draws_at.assign(g.casters != nullptr ? g.casters->trees.x.size() : 0U, -1);
+            // S['buildings'] + S['parts'] and S['trees'], each in its source order; the street lamps by S['nodes']'s
+            // order and the lit roads by S['roads']'s
+            if (g.casters != nullptr) {
+                for (std::uint32_t h = 0; h < g.mirror_heads.size(); ++h) {
+                    made->mirrors_by_order.push_back(
+                        {.order = g.solid_order[g.casters->mirrors[g.mirror_heads[h].mirror].solid], .index = h});
+                }
+                const sun::TileTrees& tt = g.casters->trees;
+                for (std::uint32_t i = 0; i < tt.x.size() && i < g.tree_order.size(); ++i) {
+                    made->trees_by_order.push_back({.order = g.tree_order[i], .index = i});
+                }
+            }
+            for (std::uint32_t i = 0; i < g.lamps.size(); ++i) {
+                made->lamps_by_order.push_back({.order = g.lamps[i].index, .index = i});
+            }
+            for (std::uint32_t i = 0; i < g.lit_roads.size(); ++i) {
+                made->roads_by_order.push_back({.order = g.lit_roads[i].index, .index = i});
+            }
+            sort_by_order(made->mirrors_by_order);
+            sort_by_order(made->trees_by_order);
+            sort_by_order(made->lamps_by_order);
+            sort_by_order(made->roads_by_order);
             own = made.get();
             k.tiles.push_back(std::move(made));
         }
@@ -392,32 +497,20 @@ void Ground::lay_reflections() {
     }
     std::erase_if(k.tiles, [](const std::unique_ptr<ReflectionsKept::Tile>& o) { return !o->used; });
     // S['buildings'] + S['parts'], each in its source order, across the drawn tiles; S['trees'] likewise
-    struct Ordered {
-        std::uint64_t order;
-        ReflectionsKept::Ref ref;
+    std::vector<const std::vector<ReflectionsKept::Ordered>*> lists(f.tiles.size());
+    const auto merged = [&](std::vector<ReflectionsKept::Ordered> ReflectionsKept::Tile::* list,
+                            std::vector<ReflectionsKept::Ref>& out) {
+        for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) lists[ti] = &(k.drawn[ti]->*list);
+        out.clear();
+        merge_by_order(lists, out);
     };
-    std::vector<Ordered> ordered;
+    merged(&ReflectionsKept::Tile::mirrors_by_order, k.mirrors);
     for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
-        const geo::GroundTile& g = *f.tiles[ti].ground;
-        if (g.casters == nullptr) continue;
-        for (std::uint32_t h = 0; h < g.mirror_heads.size(); ++h) {
-            ordered.push_back({.order = g.solid_order[g.casters->mirrors[g.mirror_heads[h].mirror].solid],
-                               .ref = {.tile = ti, .index = h}});
-        }
+        k.drawn[ti]->places.assign(f.tiles[ti].ground->mirror_heads.size(), 0U);
     }
-    std::ranges::stable_sort(ordered, {}, &Ordered::order);
-    k.mirrors.clear();
-    for (const Ordered& o : ordered) k.mirrors.push_back(o.ref);
-    ordered.clear();
-    for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
-        const geo::GroundTile& g = *f.tiles[ti].ground;
-        if (g.casters == nullptr) continue;
-        const sun::TileTrees& tt = g.casters->trees;
-        for (std::uint32_t i = 0; i < tt.x.size() && i < g.tree_order.size(); ++i) {
-            ordered.push_back({.order = g.tree_order[i], .ref = {.tile = ti, .index = i}});
-        }
-    }
-    std::ranges::stable_sort(ordered, {}, &Ordered::order);
+    for (std::uint32_t m = 0; m < k.mirrors.size(); ++m) k.drawn[k.mirrors[m].tile]->places[k.mirrors[m].index] = m;
+    std::vector<ReflectionsKept::Ref> trees;
+    merged(&ReflectionsKept::Tile::trees_by_order, trees);
     // the drawn tiles' quay edges, filed once for every near_water test (a tree's 9 m, a lit road's 12)
     std::optional<EdgeCells> edge_cells;
     const auto edges = [&]() -> const EdgeCells& {
@@ -425,26 +518,14 @@ void Ground::lay_reflections() {
         return *edge_cells;
     };
     k.trees.clear();
-    for (const Ordered& o : ordered) {
-        const sun::TileTrees& tt = f.tiles[o.ref.tile].ground->casters->trees;
-        if (edges().near(tt.x[o.ref.index], tt.z[o.ref.index], 9.0)) k.trees.push_back(o.ref);
+    for (const ReflectionsKept::Ref& r : trees) {
+        const sun::TileTrees& tt = f.tiles[r.tile].ground->casters->trees;
+        if (edges().near(tt.x[r.index], tt.z[r.index], 9.0)) k.trees.push_back(r);
     }
     // the street lamps (S['nodes']'s order), then the lit roads (S['roads']'s), and which of their points lie near the
     // water
-    struct Source {
-        std::uint32_t order;
-        ReflectionsKept::Ref ref;
-    };
-    std::vector<Source> lamps;
-    std::vector<Source> roads;
     for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
         const geo::GroundTile& g = *f.tiles[ti].ground;
-        for (std::uint32_t i = 0; i < g.lamps.size(); ++i) {
-            lamps.push_back({.order = g.lamps[i].index, .ref = {.tile = ti, .index = i}});
-        }
-        for (std::uint32_t i = 0; i < g.lit_roads.size(); ++i) {
-            roads.push_back({.order = g.lit_roads[i].index, .ref = {.tile = ti, .index = i}});
-        }
         ReflectionsKept::Tile& own = *k.drawn[ti];
         own.road_near.assign(g.lit_points.size(), 0U);
         for (const geo::LitRoad& road : g.lit_roads) {
@@ -453,12 +534,8 @@ void Ground::lay_reflections() {
             }
         }
     }
-    std::ranges::stable_sort(lamps, {}, &Source::order);
-    std::ranges::stable_sort(roads, {}, &Source::order);
-    k.lamps.clear();
-    k.roads.clear();
-    for (const Source& s : lamps) k.lamps.push_back(s.ref);
-    for (const Source& s : roads) k.roads.push_back(s.ref);
+    merged(&ReflectionsKept::Tile::lamps_by_order, k.lamps);
+    merged(&ReflectionsKept::Tile::roads_by_order, k.roads);
 }
 
 void Ground::decide_reflections(const frame::FrameState& state) {
@@ -498,108 +575,153 @@ void Ground::decide_reflections(const frame::FrameState& state) {
     std::vector<view::Vec3> cs;
     std::vector<ReflectionFace> rows_faces;
     std::array<double, 4> box{};
+    std::uint64_t place = 0;
     const auto rank = [&](double depth, const Reflection& e) {
-        ranked.push_back({.depth = depth, .element = static_cast<std::uint32_t>(elements.size())});
+        ranked.push_back({.depth = depth, .place = place++, .element = static_cast<std::uint32_t>(elements.size())});
         elements.push_back(e);
     };
-    for (std::size_t mi = 0; mirroring && mi < k.mirrors.size(); ++mi) {
-        const ReflectionsKept::Ref& mm = k.mirrors[mi];
-        const DrawnTile& t = f.tiles[mm.tile];
+    // each footprint point's screen points at its mirror's walls' mirrored base and tops, made as a facing wall first
+    // takes it (`made_for`: the mirror they were made for, plus one)
+    std::vector<view::Vec2> base_at;
+    std::vector<view::Vec2> top_at;
+    std::vector<std::uint64_t> made_for;
+    std::uint64_t mirror_count = 0;
+    // The mirrors tile by tile, in each tile's order (its heads, walls and samples lie there in turn); each element's
+    // place is its mirror's in S['buildings'] + S['parts'] (ReflectionsKept::mirrors), then its own among its
+    // mirror's, as the renders append them.
+    for (std::uint32_t ti = 0; mirroring && ti < f.tiles.size(); ++ti) {
+        const DrawnTile& t = f.tiles[ti];
+        const geo::GroundTile& g = *t.ground;
+        if (g.casters == nullptr) continue;
         const view::Camera& cam = *t.cam; // in the tile's own frame
         const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
-        const geo::GroundTile& g = *t.ground;
-        const geo::MirrorHead& hd = g.mirror_heads[mm.index];
-        const sun::Mirror& m = g.casters->mirrors[hd.mirror];
-        if (f.engine && beyond_radius(hd.centre.x, hd.centre.z, f.target_x, f.target_z, f.radius)) continue;
         const double wy = g.water_y;
         const tiles::ReflectionsStyle& rs = g.reflection_style;
         const double dk = night ? rs.dark[2] : (overcast ? rs.dark[1] : rs.dark[0]);
-        const double depth = cam.cam({hd.centre.x, hd.depth_y, hd.centre.z}).z;
-        if (depth < 2) continue;
-        if (mirror_beyond(cam, hd)) continue;
         // its walls' reflection samples, from the first (the tile's bits' list, as its samples have them)
         const auto* firsts = t.sun && t.sun->now != nullptr ? t.sun->now->reflections.get() : nullptr;
         const bool sampled = firsts != nullptr && firsts->size() == g.casters->mirrors.size();
-        const std::uint32_t sample = sampled ? (*firsts)[hd.mirror] : 0U;
-        const std::span<const double> xs = g.casters->solids.xs(m.solid);
-        const std::span<const double> zs = g.casters->solids.zs(m.solid);
-        const std::size_t n = xs.size();
-        const bool rows = !m.boat && !m.part && depth < 520;
-        ReflectionsKept::Tile& own = *k.drawn[mm.tile];
-        Reflection windows{.kind = Reflection::Kind::windows,
-                           .tile = mm.tile,
-                           .first = static_cast<std::uint32_t>(f.reflection_faces.size()),
-                           .count = 0,
-                           .colour = night ? rs.windows.night : rs.windows.day};
-        rows_faces.clear();
-        for (std::uint32_t wi = hd.first; wi < hd.first + hd.count; ++wi) {
-            const geo::MirrorWall& w = g.mirror_walls[wi];
-            const geo::V2 a{xs[w.from], zs[w.from]};
-            const std::size_t next = (w.from + 1) % n;
-            const geo::V2 bb{xs[next], zs[next]};
-            const std::uint32_t at = sample + w.sample;
-            const geo::V3 nrm{w.nx, 0.0, w.nz};
-            const geo::V3 mid{(a.x + bb.x) / 2, hd.mid_y, (a.z + bb.z) / 2};
-            if (geo::vdot(nrm, geo::vsub(eye, mid)) <= 0) continue;
-            const bool toward = !night && geo::vdot(nrm, light) > 0;
-            const bool lit = toward && sampled && sun_bit(t, at);
-            if (own.made[wi] != k.generation) {
-                // its colours in the moment's light, once a moment
-                own.lit[wi] = mirrored(theme, m.wall, nrm, toward, dk);
-                own.unlit[wi] = toward ? mirrored(theme, m.wall, nrm, false, dk) : own.lit[wi];
-                own.made[wi] = k.generation;
+        ReflectionsKept::Tile& own = *k.drawn[ti];
+        for (std::uint32_t h = 0; h < g.mirror_heads.size(); ++h) {
+            const geo::MirrorHead& hd = g.mirror_heads[h];
+            const sun::Mirror& m = g.casters->mirrors[hd.mirror];
+            if (f.engine && beyond_radius(hd.centre.x, hd.centre.z, f.target_x, f.target_z, f.radius)) continue;
+            const double depth = cam.cam({hd.centre.x, hd.depth_y, hd.centre.z}).z;
+            if (depth < 2) continue;
+            const MirrorBox where = mirror_box(cam, hd);
+            if (where == MirrorBox::beyond) continue;
+            const bool ahead = where == MirrorBox::ahead;
+            place = static_cast<std::uint64_t>(own.places[h]) << 32U;
+            const std::uint32_t sample = sampled ? (*firsts)[hd.mirror] : 0U;
+            const std::span<const double> xs = g.casters->solids.xs(m.solid);
+            const std::span<const double> zs = g.casters->solids.zs(m.solid);
+            const std::size_t n = xs.size();
+            const bool rows = !m.boat && !m.part && depth < 520;
+            ++mirror_count;
+            if (ahead && base_at.size() < n) {
+                base_at.resize(n);
+                top_at.resize(n);
+                made_for.resize(n, 0);
             }
-            const std::uint32_t lit_c = own.lit[wi];
-            const std::uint32_t unlit_c = own.unlit[wi];
-            const std::uint32_t col = lit ? lit_c : unlit_c;
-            const std::array<view::Vec3, 4> q{view::Vec3{a.x, hd.base_y, a.z}, view::Vec3{bb.x, hd.base_y, bb.z},
-                                              view::Vec3{bb.x, hd.top_y, bb.z}, view::Vec3{a.x, hd.top_y, a.z}};
-            const Reflection wall{.kind = Reflection::Kind::wall,
-                                  .tile = mm.tile,
-                                  .first = 0,
-                                  .count = 1,
-                                  .colour = col,
-                                  .lit = lit_c,
-                                  .unlit = unlit_c,
-                                  .sample = at,
-                                  .sampled = toward && sampled};
-            if (face_kept(cam, q, 300, 0.12, false, cs, &box)) {
-                Reflection e = wall;
-                e.first = static_cast<std::uint32_t>(f.reflection_faces.size());
-                f.reflection_faces.push_back({.q = q, .n = 4, .box = box});
-                rank(depth, e);
-            }
-            if (w.gable) {
-                const std::array<view::Vec3, 3> tri{q[3], q[2], view::Vec3{mid.x, hd.apex_y, mid.z}};
-                if (face_kept(cam, tri, 300, 0.12, false, cs, &box)) {
+            // a footprint point's screen points at the walls' mirrored base and top (a wall's quad's corners)
+            const auto screen = [&](std::size_t i) {
+                if (made_for[i] != mirror_count) {
+                    base_at[i] = cam.pc(cam.cam({xs[i], hd.base_y, zs[i]}));
+                    top_at[i] = cam.pc(cam.cam({xs[i], hd.top_y, zs[i]}));
+                    made_for[i] = mirror_count;
+                }
+            };
+            Reflection windows{.kind = Reflection::Kind::windows,
+                               .tile = ti,
+                               .first = static_cast<std::uint32_t>(f.reflection_faces.size()),
+                               .count = 0,
+                               .colour = night ? rs.windows.night : rs.windows.day};
+            rows_faces.clear();
+            for (std::uint32_t wi = hd.first; wi < hd.first + hd.count; ++wi) {
+                const geo::MirrorWall& w = g.mirror_walls[wi];
+                const geo::V2 a{xs[w.from], zs[w.from]};
+                const std::size_t next = (w.from + 1) % n;
+                const geo::V2 bb{xs[next], zs[next]};
+                const std::uint32_t at = sample + w.sample;
+                const geo::V3 nrm{w.nx, 0.0, w.nz};
+                const geo::V3 mid{(a.x + bb.x) / 2, hd.mid_y, (a.z + bb.z) / 2};
+                if (geo::vdot(nrm, geo::vsub(eye, mid)) <= 0) continue;
+                const bool toward = !night && geo::vdot(nrm, light) > 0;
+                const bool lit = toward && sampled && sun_bit(t, at);
+                if (own.made[wi] != k.generation) {
+                    // its colours in the moment's light, once a moment
+                    own.lit[wi] = mirrored(theme, m.wall, nrm, toward, dk);
+                    own.unlit[wi] = toward ? mirrored(theme, m.wall, nrm, false, dk) : own.lit[wi];
+                    own.made[wi] = k.generation;
+                }
+                const std::uint32_t lit_c = own.lit[wi];
+                const std::uint32_t unlit_c = own.unlit[wi];
+                const std::uint32_t col = lit ? lit_c : unlit_c;
+                const std::array<view::Vec3, 4> q{view::Vec3{a.x, hd.base_y, a.z}, view::Vec3{bb.x, hd.base_y, bb.z},
+                                                  view::Vec3{bb.x, hd.top_y, bb.z}, view::Vec3{a.x, hd.top_y, a.z}};
+                const Reflection wall{.kind = Reflection::Kind::wall,
+                                      .tile = ti,
+                                      .first = 0,
+                                      .count = 1,
+                                      .colour = col,
+                                      .lit = lit_c,
+                                      .unlit = unlit_c,
+                                      .sample = at,
+                                      .sampled = toward && sampled};
+                if (ahead) {
+                    screen(w.from);
+                    screen(next);
+                }
+                const bool kept_wall = ahead ? face_kept_ahead(cam,
+                                                               std::array<view::Vec2, 4>{base_at[w.from], base_at[next],
+                                                                                         top_at[next], top_at[w.from]},
+                                                               300, 0.12, false, box)
+                                             : face_kept(cam, q, 300, 0.12, false, cs, &box);
+                if (kept_wall) {
                     Reflection e = wall;
-                    e.kind = Reflection::Kind::gable;
                     e.first = static_cast<std::uint32_t>(f.reflection_faces.size());
-                    f.reflection_faces.push_back({.q = {tri[0], tri[1], tri[2], tri[2]}, .n = 3, .box = box});
-                    rank(depth - 0.01, e);
+                    f.reflection_faces.push_back({.q = q, .n = 4, .box = box});
+                    rank(depth, e);
+                }
+                if (w.gable) {
+                    const std::array<view::Vec3, 3> tri{q[3], q[2], view::Vec3{mid.x, hd.apex_y, mid.z}};
+                    const bool kept_gable =
+                        ahead
+                            ? face_kept_ahead(
+                                  cam, std::array<view::Vec2, 3>{top_at[w.from], top_at[next], cam.pc(cam.cam(tri[2]))},
+                                  300, 0.12, false, box)
+                            : face_kept(cam, tri, 300, 0.12, false, cs, &box);
+                    if (kept_gable) {
+                        Reflection e = wall;
+                        e.kind = Reflection::Kind::gable;
+                        e.first = static_cast<std::uint32_t>(f.reflection_faces.size());
+                        f.reflection_faces.push_back({.q = {tri[0], tri[1], tri[2], tri[2]}, .n = 3, .box = box});
+                        rank(depth - 0.01, e);
+                    }
+                }
+                if (rows && w.rows) {
+                    const std::int64_t lv = m.levels;
+                    const double fh = (hd.top - hd.y0) / static_cast<double>(std::max<std::int64_t>(1, lv));
+                    for (std::int64_t r = 0; r < lv; ++r) {
+                        const double ya = (hd.y0 + (static_cast<double>(r) * fh)) + (fh * 0.3);
+                        const double yb = ya + (fh * 0.48);
+                        const std::array<geo::V3, 4> wr =
+                            geo::quad_at(a, bb, (2 * wy) - yb, (2 * wy) - ya, 0.08, 0.92, 0.04, nrm);
+                        const std::array<view::Vec3, 4> wq{vec(wr[0]), vec(wr[1]), vec(wr[2]), vec(wr[3])};
+                        if (face_kept(cam, wq, 300, 0.3, true, cs, &box))
+                            rows_faces.push_back({.q = wq, .n = 4, .box = box});
+                    }
                 }
             }
-            if (rows && w.rows) {
-                const std::int64_t lv = m.levels;
-                const double fh = (hd.top - hd.y0) / static_cast<double>(std::max<std::int64_t>(1, lv));
-                for (std::int64_t r = 0; r < lv; ++r) {
-                    const double ya = (hd.y0 + (static_cast<double>(r) * fh)) + (fh * 0.3);
-                    const double yb = ya + (fh * 0.48);
-                    const std::array<geo::V3, 4> wr =
-                        geo::quad_at(a, bb, (2 * wy) - yb, (2 * wy) - ya, 0.08, 0.92, 0.04, nrm);
-                    const std::array<view::Vec3, 4> wq{vec(wr[0]), vec(wr[1]), vec(wr[2]), vec(wr[3])};
-                    if (face_kept(cam, wq, 300, 0.3, true, cs, &box))
-                        rows_faces.push_back({.q = wq, .n = 4, .box = box});
-                }
+            if (!rows_faces.empty()) {
+                windows.first = static_cast<std::uint32_t>(f.reflection_faces.size());
+                windows.count = static_cast<std::uint32_t>(rows_faces.size());
+                f.reflection_faces.insert(f.reflection_faces.end(), rows_faces.begin(), rows_faces.end());
+                rank(depth - 0.02, windows);
             }
-        }
-        if (!rows_faces.empty()) {
-            windows.first = static_cast<std::uint32_t>(f.reflection_faces.size());
-            windows.count = static_cast<std::uint32_t>(rows_faces.size());
-            f.reflection_faces.insert(f.reflection_faces.end(), rows_faces.begin(), rows_faces.end());
-            rank(depth - 0.02, windows);
         }
     }
+    place = static_cast<std::uint64_t>(k.mirrors.size()) << 32U;
     // the trees within 9 m of a quay edge (S['trees'], in its source order across the drawn tiles), from 30 m on
     for (std::size_t ti = 0; mirroring && ti < k.trees.size(); ++ti) {
         const ReflectionsKept::Ref& tr = k.trees[ti];
@@ -662,7 +784,7 @@ void Ground::decide_reflections(const frame::FrameState& state) {
     }
     // out.sort(key=lambda x: -x[0]): far to near, stable (equal depths in their order)
     std::ranges::sort(ranked, [](const Ranked& a, const Ranked& b) {
-        return a.depth > b.depth || (a.depth == b.depth && a.element < b.element);
+        return a.depth > b.depth || (a.depth == b.depth && a.place < b.place);
     });
     f.reflections.reserve(ranked.size());
     for (const Ranked& r : ranked) f.reflections.push_back(elements[r.element]);
@@ -737,11 +859,25 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
     Words& w = *words_;
     w.reflections = static_cast<std::uint32_t>(words.size());
     w.reflection_count = 0;
+    // every record is reflection_words long (a face's head and corners, a circle's, a streak's): counted first, then
+    // written in place
+    constexpr std::size_t reflection_words = 16;
+    const auto written = [&](const Reflection& e) {
+        const DrawnTile& t = frame_.tiles[e.tile];
+        return t.pass->ranges[1] || t.pass->ranges[0];
+    };
+    std::size_t records = 0;
+    for (const Reflection& e : frame_.reflections) {
+        if (written(e)) records += e.kind == Reflection::Kind::streak ? 1U : e.count;
+    }
+    const std::size_t start = words.size();
+    words.resize(start + (records * reflection_words), 0U);
+    std::uint32_t* out = words.data() + start;
     const auto head = [&](std::uint32_t tile, std::uint32_t slot, std::uint32_t colour, std::uint32_t flags) {
-        words.push_back(tile);
-        words.push_back(slot);
-        words.push_back(colour);
-        words.push_back(flags);
+        out[0] = tile;
+        out[1] = slot;
+        out[2] = colour;
+        out[3] = flags;
         ++w.reflection_count;
     };
     // The opaque elements (the walls, gables and trees) nearest first, then the translucent ones (the window rows, the
@@ -757,8 +893,8 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
         const std::size_t j = second ? n - count : count - 1 - n;
         const Reflection& e = frame_.reflections[j];
         if (translucent(e) != second) continue;
+        if (!written(e)) continue;
         const DrawnTile& t = frame_.tiles[e.tile];
-        if (!t.pass->ranges[1] && !t.pass->ranges[0]) continue;
         const geo::GroundTile& g = *t.ground;
         const std::uint32_t slot_value = slot(geo::group::reflection, static_cast<std::uint32_t>(j), 0);
         if (e.kind == Reflection::Kind::streak) {
@@ -766,31 +902,32 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
             const ReflectionStreak& k = frame_.reflection_streaks[e.first];
             const tiles::ReflectionsStyle& rs = g.reflection_style;
             head(e.tile, slot_value, 0U, reflection_ellipse);
-            for (const double v : {k.cx, k.cy, k.rx, k.ry, k.opacity}) words.push_back(bits_of(static_cast<float>(v)));
+            std::size_t at = 4;
+            for (const double v : {k.cx, k.cy, k.rx, k.ry, k.opacity}) out[at++] = bits_of(static_cast<float>(v));
             for (std::size_t i = 0; i < 3; ++i) {
                 const std::uint32_t argb = stop_argb(rs.streak[i], rs.streak_opacity[i]);
                 // RGBA8, r in the low byte
-                words.push_back(((argb >> 16U) & 0xFFU) | (argb & 0xFF00U) | ((argb & 0xFFU) << 16U) |
-                                (argb & 0xFF00'0000U));
+                out[at++] =
+                    ((argb >> 16U) & 0xFFU) | (argb & 0xFF00U) | ((argb & 0xFFU) << 16U) | (argb & 0xFF00'0000U);
             }
-            words.insert(words.end(), 4, 0U);
+            out += reflection_words; // and four words of nothing
             continue;
         }
         if (e.kind == Reflection::Kind::tree) {
             const std::uint32_t colour = lit_mix(e.colour, e.colour, 0.0);
+            const std::uint32_t leaf =
+                no_leaves_ || frame_.out(style::camera_part::leaf_filters) ? 0U : reflection_leaf;
             for (std::uint32_t k = 0; k < e.count; ++k) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
                 // a circle of its tree's group under the leaf filter: its centre and radius, then the group's region
                 // and its tree's place in the leaves' field
-                head(e.tile, slot_value, colour,
-                     reflection_circle |
-                         (no_leaves_ || frame_.out(style::camera_part::leaf_filters) ? 0U : reflection_leaf));
-                words.push_back(bits_of(static_cast<float>(c.cx)));
-                words.push_back(bits_of(static_cast<float>(c.cy)));
-                words.push_back(bits_of(static_cast<float>(c.r)));
-                for (const std::int32_t v : e.region) words.push_back(std::bit_cast<std::uint32_t>(v));
-                words.push_back(e.anchor);
-                words.insert(words.end(), 4, 0U);
+                head(e.tile, slot_value, colour, reflection_circle | leaf);
+                out[4] = bits_of(static_cast<float>(c.cx));
+                out[5] = bits_of(static_cast<float>(c.cy));
+                out[6] = bits_of(static_cast<float>(c.r));
+                for (std::size_t i = 0; i < 4; ++i) out[7 + i] = std::bit_cast<std::uint32_t>(e.region[i]);
+                out[11] = e.anchor;
+                out += reflection_words; // and four words of nothing
             }
             continue;
         }
@@ -802,11 +939,13 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
         for (std::uint32_t k = 0; k < e.count; ++k) {
             const ReflectionFace& face = frame_.reflection_faces[e.first + k];
             head(e.tile, slot_value, colour, flags);
+            std::size_t at = 4;
             for (const view::Vec3& c : face.q) {
-                words.push_back(bits_of(static_cast<float>(c.x - g.origin.x)));
-                words.push_back(bits_of(static_cast<float>(c.y)));
-                words.push_back(bits_of(static_cast<float>(c.z - g.origin.z)));
+                out[at++] = bits_of(static_cast<float>(c.x - g.origin.x));
+                out[at++] = bits_of(static_cast<float>(c.y));
+                out[at++] = bits_of(static_cast<float>(c.z - g.origin.z));
             }
+            out += reflection_words;
         }
     }
 }

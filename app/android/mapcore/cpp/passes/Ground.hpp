@@ -278,12 +278,24 @@ struct ReflectionsKept {
         std::uint32_t bands = 1;
         std::uint32_t at = 0;
     };
-    /// A drawn tile's own: its ground (held while it is drawn); each wall's colour lit and unlit (0xRRGGBB, made in the
-    /// moment's generation `made`, 0: not yet); whether each of its lit roads' points lies within 12 m of a quay edge;
-    /// each tree's five circles' fifteen draws from random.Random(its id) (its first in `draws`, -1: not drawn yet);
-    /// its water rings by bands (made the first night it is drawn).
+    /// An element of a drawn tile by its scene's order: that order, and its index in the tile.
+    struct Ordered {
+        std::uint64_t order = 0;
+        std::uint32_t index = 0;
+    };
+    /// A drawn tile's own: its ground (held while it is drawn); its mirror heads, trees, street lamps and lit roads
+    /// each by its scene's order, a tie in the tile's own (made with it, so the lists across the drawn tiles are
+    /// merged as the tiles drawn change, not sorted again); each mirror head's place in `mirrors`; each wall's colour
+    /// lit and unlit (0xRRGGBB, made in the moment's generation `made`, 0: not yet); whether each of its lit roads'
+    /// points lies within 12 m of a quay edge; each tree's five circles' fifteen draws from random.Random(its id) (its
+    /// first in `draws`, -1: not drawn yet); its water rings by bands (made the first night it is drawn).
     struct Tile {
         std::shared_ptr<const void> ground;
+        std::vector<Ordered> mirrors_by_order;
+        std::vector<Ordered> trees_by_order;
+        std::vector<Ordered> lamps_by_order;
+        std::vector<Ordered> roads_by_order;
+        std::vector<std::uint32_t> places;
         std::vector<std::uint32_t> lit;
         std::vector<std::uint32_t> unlit;
         std::vector<std::uint32_t> made;
@@ -812,7 +824,8 @@ private:
     /// Where the drawn tiles come from more than one scene, a window among them (GroundFrame::mixed), every fill and
     /// stroke of them ranked in its group by its element across them (geometry::OrderKey, then its pack, then its
     /// scene's order), kept while the same tiles are drawn; each pack's ordinal among the drawn ones
-    /// (`pack_ordinals_`).
+    /// (`pack_ordinals_`). Each tile's elements are put in their order once (TileRanks::places), and the drawn tiles'
+    /// orders merged whenever the tiles drawn change.
     void rank_across_scenes();
     [[nodiscard]] gpu::Result<void> make_pipelines(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> make_fill_pipelines(const frame::PassContext& context, Pipelines& p) const;
@@ -955,13 +968,28 @@ private:
     void emit_shadows(const frame::FrameState& state, twin::Stream& out) const;
 
     GroundFrame frame_;
-    /// The ranks across scenes of a drawn tile's fills and strokes, by its handle (rank_across_scenes).
+    /// One element's place among the drawn tiles' (rank_across_scenes), its tile's pack aside: its group, its
+    /// element's order key and its scene's order, and which of its tile's fills or strokes it is.
+    struct RankPlace {
+        geometry::OrderKey key;
+        std::uint32_t order = 0;
+        std::uint16_t group = 0;
+        bool stroke = false;
+        std::uint32_t index = 0;
+    };
+    /// The ranks across scenes of a drawn tile's fills and strokes, by its handle (rank_across_scenes), and its
+    /// elements' places in their order (by group, then key, then order), made once while its ground lives.
     struct TileRanks {
         std::uint32_t handle = 0;
+        const geometry::GroundTile* ground = nullptr;
+        std::weak_ptr<const void> held; ///< its ground, so that `ground` names that build while it lives
+        std::vector<RankPlace> places;
         std::vector<std::uint32_t> fills;
         std::vector<std::uint32_t> strokes;
+        std::uint64_t ranked = 0; ///< the last ranking it took part in (`rankings_`)
     };
     std::vector<TileRanks> ranks_;
+    std::uint64_t rankings_ = 0;
     std::vector<std::uint32_t> ranked_handles_; ///< the drawn tiles ranks_ was made for, sorted
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
