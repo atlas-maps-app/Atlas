@@ -40,17 +40,6 @@ Camera::Camera(const CameraSpec& spec) noexcept
     u_ = vcross(r_, f_);
 }
 
-Vec3 Camera::cam(Vec3 p) const noexcept {
-    // render/city.py:33 cam
-    const Vec3 d{p.x - eye_.x, p.y - eye_.y, p.z - eye_.z};
-    return {vdot(d, r_), vdot(d, u_), vdot(d, f_)};
-}
-
-Vec2 Camera::pc(Vec3 k) const noexcept {
-    // render/city.py:36 pc
-    return {cx_ + focal_ * k.x / k.z, cy_ - focal_ * k.y / k.z};
-}
-
 std::optional<Vec2> Camera::proj(Vec3 p) const noexcept {
     // render/city.py:38 proj
     const Vec3 k = cam(p);

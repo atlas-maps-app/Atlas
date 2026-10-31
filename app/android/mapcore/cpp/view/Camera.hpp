@@ -64,10 +64,17 @@ class Camera {
 public:
     explicit Camera(const CameraSpec& spec) noexcept;
 
-    /// Camera coordinates (right, up, forward) of world point p: Camera.cam.
-    [[nodiscard]] Vec3 cam(Vec3 p) const noexcept;
-    /// The screen point (CSS px) of camera coordinates k: Camera.pc.
-    [[nodiscard]] Vec2 pc(Vec3 k) const noexcept;
+    /// Camera coordinates (right, up, forward) of world point p: Camera.cam (render/city.py:33, City.vdot's sums
+    /// left to right). Inline, as every pass's tests call it per point.
+    [[nodiscard]] Vec3 cam(Vec3 p) const noexcept {
+        const Vec3 d{p.x - eye_.x, p.y - eye_.y, p.z - eye_.z};
+        return {(d.x * r_.x) + (d.y * r_.y) + (d.z * r_.z), (d.x * u_.x) + (d.y * u_.y) + (d.z * u_.z),
+                (d.x * f_.x) + (d.y * f_.y) + (d.z * f_.z)};
+    }
+    /// The screen point (CSS px) of camera coordinates k: Camera.pc (render/city.py:36).
+    [[nodiscard]] Vec2 pc(Vec3 k) const noexcept {
+        return {cx_ + ((focal_ * k.x) / k.z), cy_ - ((focal_ * k.y) / k.z)};
+    }
     /// The screen point of world point p, or nothing when it lies nearer than the near plane: Camera.proj.
     [[nodiscard]] std::optional<Vec2> proj(Vec3 p) const noexcept;
     /// The depth of world point p along the view: Camera.depth.
