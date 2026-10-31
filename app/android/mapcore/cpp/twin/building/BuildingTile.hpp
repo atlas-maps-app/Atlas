@@ -20,8 +20,9 @@
 // least corner as floats and each axis's step, a power of two, as building.slangh's building_grid_point reads it);
 // then each primitive in 3 uint4, its corners in 16-bit steps of the grid and the four words a primitive has, with its
 // face's test point in steps and its face's flags (building_lean_prim); and each face in 1 uint4, its normal and area
-// (building_lean_face). Its corners lie within half a step of the geometry's (a step at most 2^-3 m for an L13 and
-// 2^-2 for an L12 of the Netherlands), the same corner the same steps in every primitive, so its faces meet as before.
+// (building_lean_face). Its corners lie within half a step of the geometry's (Noord-Holland's steps along x and z
+// 2^-4 m in an L13 and 2^-3 in an L12, 2^-8 or finer in height: under 0.05 px of the phone's at 4.7 km), the same
+// corner the same steps in every primitive, so its faces meet as before.
 // Plain data: no Vulkan, so the twin and its tests read it as the GPU does.
 #pragma once
 
