@@ -155,6 +155,18 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     child.pid = pid;
     (void)::waitpid(pid, &child.status, 0);
     child.log = read(log);
+    // A child that exits with a code, or ends by a signal other than a plant's abort, says why in its log (a failed
+    // check's, a sanitizer's report: ThreadSanitizer exits with 66): shown here, whatever the test then checks of it.
+    int status = child.status; // macOS's wait macros take the address of their operand
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        MESSAGE("the child (plant \"" << plant << "\", build " << build << ") exited with " << WEXITSTATUS(status)
+                                      << "; its log:\n"
+                                      << child.log);
+    } else if (WIFSIGNALED(status) && WTERMSIG(status) != SIGABRT) {
+        MESSAGE("the child (plant \"" << plant << "\", build " << build << ") ended by signal " << WTERMSIG(status)
+                                      << "; its log:\n"
+                                      << child.log);
+    }
     return child;
 }
 
