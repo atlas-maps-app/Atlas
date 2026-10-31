@@ -49,6 +49,11 @@
 // Once all are built, a line on stdout a level's tile, cell by cell in order of x, then y: `z x y <features> <bytes>
 // <raw bytes> <buildings> <trees>`, then the cell's `cell x y <tiles> <ms>`; or `cell x y failed <why>`. The exit code:
 // 0 every cell built; 1 any failed; 2 a usage error.
+//
+//   atlas_stagep tags
+//
+// prints stage P's tag tables as JSON (load/Tags.hpp), which mapcore/style/tags.json holds for the world's profile (the
+// packer's `world`). The exit code: 0 done; 2 a usage error.
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
@@ -56,6 +61,7 @@
 #include "load/PackHead.hpp"
 #include "load/Regions.hpp"
 #include "load/Scene.hpp"
+#include "load/Tags.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Error.hpp"
@@ -702,11 +708,16 @@ int main(int argc, char** argv) {
         }
         return *built ? 0 : 1;
     }
+    if (args.size() == 2 && std::string_view(args[1]) == "tags") {
+        (void)std::fputs(load::tag_tables_json().c_str(), stdout);
+        return 0;
+    }
     if (args.size() != 5 || std::string_view(args[1]) != "tiles") {
         (void)std::fputs("usage: atlas_stagep tiles <raw.json> <job.json> <out>\n"
                          "       atlas_stagep window-boxes <x0> <y0> <x1> <y1>\n"
                          "       atlas_stagep windows <list> <out-dir> [threads]\n"
-                         "       atlas_stagep levels <list> <out-dir> [threads]\n",
+                         "       atlas_stagep levels <list> <out-dir> [threads]\n"
+                         "       atlas_stagep tags\n",
                          stderr);
         return usage_error;
     }

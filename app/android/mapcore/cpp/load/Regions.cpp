@@ -4,6 +4,7 @@
 #include "geometry/RoofShapes.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
+#include "load/Tables.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,56 +39,10 @@ using LL = osm::LatLon;
     return v.has_value() && std::ranges::find(set, *v) != set.end();
 }
 
-/// regions.py's LAND: each kind of land cover and its draw order (the colours are the style's).
-struct LandKind {
-    std::string_view kind;
-    int order;
-};
-constexpr std::array<LandKind, 43> land_kinds = {{
-    {.kind = "farmland", .order = 0},
-    {.kind = "residential", .order = 0},
-    {.kind = "industrial", .order = 0},
-    {.kind = "port", .order = 1},
-    {.kind = "commercial", .order = 0},
-    {.kind = "retail", .order = 0},
-    {.kind = "construction", .order = 0},
-    {.kind = "railway", .order = 0},
-    {.kind = "military", .order = 0},
-    {.kind = "brownfield", .order = 0},
-    {.kind = "greenfield", .order = 0},
-    {.kind = "education", .order = 0},
-    {.kind = "static_caravan", .order = 1},
-    {.kind = "farmyard", .order = 1},
-    {.kind = "meadow", .order = 1},
-    {.kind = "grass", .order = 2},
-    {.kind = "grassland", .order = 2},
-    {.kind = "village_green", .order = 2},
-    {.kind = "recreation_ground", .order = 2},
-    {.kind = "park", .order = 2},
-    {.kind = "garden", .order = 2},
-    {.kind = "cemetery", .order = 2},
-    {.kind = "allotments", .order = 2},
-    {.kind = "orchard", .order = 2},
-    {.kind = "golf_course", .order = 2},
-    {.kind = "heath", .order = 2},
-    {.kind = "scrub", .order = 3},
-    {.kind = "forest", .order = 3},
-    {.kind = "wood", .order = 3},
-    {.kind = "wetland", .order = 3},
-    {.kind = "sand", .order = 4},
-    {.kind = "beach", .order = 4},
-    {.kind = "dune", .order = 4},
-    {.kind = "bare_rock", .order = 4},
-    {.kind = "stone", .order = 4},
-    {.kind = "scree", .order = 4},
-    {.kind = "apron", .order = 5},
-    {.kind = "parking", .order = 5},
-    {.kind = "pedestrian", .order = 5},
-    {.kind = "playground", .order = 5},
-    {.kind = "pitch", .order = 5},
-    {.kind = "track", .order = 5},
-    {.kind = "flowerbed", .order = 5},
-}};
+/// The same for one of load/Tables.hpp's tag tables.
+[[nodiscard]] bool one_of(std::optional<std::string_view> v, std::span<const std::string_view> set) noexcept {
+    return v.has_value() && std::ranges::find(set, *v) != set.end();
+}
 
 [[nodiscard]] const LandKind* land_of(std::optional<std::string_view> kind) noexcept {
     if (!kind) return nullptr;
@@ -99,7 +54,7 @@ constexpr std::array<LandKind, 43> land_kinds = {{
 [[nodiscard]] std::optional<std::string_view> land_kind(const Tags& t) {
     if (t.is("aeroway", "apron")) return "apron";
     if (t.is("amenity", "parking") && !t.is("parking", "underground")) return "parking";
-    if (one_of(t.get("leisure"), {"pitch", "park", "garden", "golf_course", "recreation_ground", "track"})) {
+    if (one_of(t.get("leisure"), land_leisure)) {
         return t.get("leisure");
     }
     if (t.is("industrial", "port") || t.is("landuse", "port")) return "port";
@@ -459,7 +414,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
             }
             continue;
         }
-        if (way && one_of(t.get("aeroway"), {"runway", "taxiway", "taxilane", "parking_position", "stopway"}) && geo) {
+        if (way && one_of(t.get("aeroway"), aero_kinds) && geo) {
             s.aero.push_back({.pts = frame.points(doc.geometry(e), e.id),
                               .kind = *t.get("aeroway"),
                               .tags = t,
@@ -468,12 +423,9 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
             continue;
         }
         const auto underground = [&] {
-            return one_of(t.get("tunnel"), {"yes", "building_passage"}) || num(t.get("layer")).value_or(0.0) < 0;
+            return one_of(t.get("tunnel"), tunnels) || num(t.get("layer")).value_or(0.0) < 0;
         };
-        if (way &&
-            one_of(t.get("highway"),
-                   {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary_link"}) &&
-            geo) {
+        if (way && one_of(t.get("highway"), big_roads) && geo) {
             if (underground()) continue;
             s.big.push_back({.pts = frame.points(doc.geometry(e), e.id),
                              .tags = t,
@@ -484,7 +436,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
             continue;
         }
         const bool crane = t.is("man_made", "crane_rail") || t.is("railway", "crane");
-        if (way && (one_of(t.get("railway"), {"rail", "light_rail", "subway", "narrow_gauge"}) || crane) && geo) {
+        if (way && (one_of(t.get("railway"), rail_kinds) || crane) && geo) {
             if (underground()) continue;
             s.rail.push_back({.pts = frame.points(doc.geometry(e), e.id),
                               .tags = t,
@@ -749,7 +701,7 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
     for (const osm::Element& e : doc.elements()) {
         const Tags t(doc.tags(e));
         const bool relation = e.kind == osm::Kind::relation;
-        if (relation && (t.is("natural", "water") || one_of(t.get("waterway"), {"riverbank", "dock", "canal"}))) {
+        if (relation && (t.is("natural", "water") || one_of(t.get("waterway"), water_ways))) {
             for (std::vector<V2>& r : frame.rings_of(doc, e)) {
                 if (!seen.contains({r1(r[0].x), r1(r[0].z), r.size()})) s.water.push_back(std::move(r));
             }

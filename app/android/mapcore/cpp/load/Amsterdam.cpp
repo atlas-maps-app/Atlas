@@ -4,6 +4,7 @@
 #include "base/pymath/PyRandom.hpp"
 #include "load/PoiStyle.hpp"
 #include "load/Real.hpp"
+#include "load/Tables.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,26 +30,6 @@ constexpr std::array<std::string_view, 4> houseboat_cols = {"#2F4A3A", "#3A4A6A"
 constexpr std::array<std::string_view, 3> gabled_roof_cols = {"#4A3E3A", "#56504C", "#3E4248"};
 constexpr std::array<std::string_view, 3> flat_roof_cols = {"#7E7A74", "#8C8882", "#6E6A66"};
 
-/// A road class amsterdam.py draws, and its width (its `W`), in its order.
-struct RoadClass {
-    std::string_view hw;
-    double w;
-};
-constexpr std::array<RoadClass, 12> road_classes = {{
-    {.hw = "tertiary", .w = 7.5},
-    {.hw = "secondary", .w = 9.0},
-    {.hw = "residential", .w = 5.5},
-    {.hw = "unclassified", .w = 5.0},
-    {.hw = "living_street", .w = 4.5},
-    {.hw = "pedestrian", .w = 5.0},
-    {.hw = "busway", .w = 6.0},
-    {.hw = "service", .w = 3.5},
-    {.hw = "cycleway", .w = 2.4},
-    {.hw = "footway", .w = 2.0},
-    {.hw = "path", .w = 1.6},
-    {.hw = "steps", .w = 2.0},
-}};
-
 /// `v in (a, b, ...)` for a tag's value (None is in none).
 [[nodiscard]] bool one_of(std::optional<std::string_view> v, std::initializer_list<std::string_view> set) noexcept {
     return v.has_value() && std::ranges::find(set, *v) != set.end();
@@ -56,6 +37,11 @@ constexpr std::array<RoadClass, 12> road_classes = {{
 
 [[nodiscard]] bool one_of(std::string_view v, std::span<const std::string_view> set) noexcept {
     return std::ranges::find(set, v) != set.end();
+}
+
+/// The same for a tag's value and one of load/Tables.hpp's tag tables.
+[[nodiscard]] bool one_of(std::optional<std::string_view> v, std::span<const std::string_view> set) noexcept {
+    return v.has_value() && one_of(*v, set);
 }
 
 using geometry::centroid;
@@ -419,7 +405,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
             }
             continue;
         }
-        if ((t.is("natural", "water") || one_of(t.get("waterway"), {"canal", "riverbank", "dock"})) && !node) {
+        if ((t.is("natural", "water") || one_of(t.get("waterway"), water_ways)) && !node) {
             for (std::vector<V2>& r : at.rings(doc, e)) {
                 if (closed(r)) s.water.push_back(clean(std::move(r)));
             }

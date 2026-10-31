@@ -1,0 +1,101 @@
+{
+  "about": "Stage P's tag tables (mapcore/cpp/load/Tables.hpp), as `atlas_stagep tags` prints them: the world's profile reads them (ENGINE.md step 5). Not to be edited: tags_test holds this file to the tables.",
+  "land": [
+    ["farmland", 0],
+    ["residential", 0],
+    ["industrial", 0],
+    ["port", 1],
+    ["commercial", 0],
+    ["retail", 0],
+    ["construction", 0],
+    ["railway", 0],
+    ["military", 0],
+    ["brownfield", 0],
+    ["greenfield", 0],
+    ["education", 0],
+    ["static_caravan", 1],
+    ["farmyard", 1],
+    ["meadow", 1],
+    ["grass", 2],
+    ["grassland", 2],
+    ["village_green", 2],
+    ["recreation_ground", 2],
+    ["park", 2],
+    ["garden", 2],
+    ["cemetery", 2],
+    ["allotments", 2],
+    ["orchard", 2],
+    ["golf_course", 2],
+    ["heath", 2],
+    ["scrub", 3],
+    ["forest", 3],
+    ["wood", 3],
+    ["wetland", 3],
+    ["sand", 4],
+    ["beach", 4],
+    ["dune", 4],
+    ["bare_rock", 4],
+    ["stone", 4],
+    ["scree", 4],
+    ["apron", 5],
+    ["parking", 5],
+    ["pedestrian", 5],
+    ["playground", 5],
+    ["pitch", 5],
+    ["track", 5],
+    ["flowerbed", 5]
+  ],
+  "land_leisure": [
+    "pitch",
+    "park",
+    "garden",
+    "golf_course",
+    "recreation_ground",
+    "track"
+  ],
+  "roads": [
+    ["tertiary", 7.5],
+    ["secondary", 9.0],
+    ["residential", 5.5],
+    ["unclassified", 5.0],
+    ["living_street", 4.5],
+    ["pedestrian", 5.0],
+    ["busway", 6.0],
+    ["service", 3.5],
+    ["cycleway", 2.4],
+    ["footway", 2.0],
+    ["path", 1.6],
+    ["steps", 2.0]
+  ],
+  "big_roads": [
+    "motorway",
+    "motorway_link",
+    "trunk",
+    "trunk_link",
+    "primary",
+    "primary_link",
+    "secondary_link"
+  ],
+  "rail": [
+    "rail",
+    "light_rail",
+    "subway",
+    "narrow_gauge"
+  ],
+  "aero": [
+    "runway",
+    "taxiway",
+    "taxilane",
+    "parking_position",
+    "stopway"
+  ],
+  "water_ways": [
+    "canal",
+    "riverbank",
+    "dock"
+  ],
+  "tunnels": [
+    "yes",
+    "building_passage"
+  ]
+}

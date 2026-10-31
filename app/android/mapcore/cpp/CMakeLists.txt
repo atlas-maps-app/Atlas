@@ -294,7 +294,7 @@ if(ATLAS_TESTS)
     target_compile_definitions(atlas_doctest INTERFACE DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS
                                                         ATLAS_TEST_SCRATCH="${ATLAS_TEST_SCRATCH}"
         ATLAS_FONTS_DIR="${ATLAS_MAPCORE_DIR}/../mapview/src/main/assets/svgfonts"
-        ATLAS_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        ATLAS_STYLE_DIR="${ATLAS_MAPCORE_DIR}/style" ATLAS_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     add_executable(atlas_tests ${_test_sources} ${ATLAS_EXTRA_TEST_SOURCES} ${_core_objects})
     target_link_libraries(atlas_tests PRIVATE atlas_core_requirements atlas_doctest)
     add_dependencies(atlas_tests atlas_core_shaders)
