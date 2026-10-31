@@ -7,6 +7,7 @@ import com.onthegomap.planetiler.VectorTile
 import com.onthegomap.planetiler.reader.SourceFeature
 import com.onthegomap.planetiler.reader.osm.OsmElement
 import com.onthegomap.planetiler.reader.osm.OsmSourceFeature
+import app.atlas.render.Real
 import app.atlas.rendertiles.model.Grid
 import com.onthegomap.planetiler.geo.GeoUtils
 import org.locationtech.jts.algorithm.Area
@@ -298,16 +299,11 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
             return Math.abs(Area.ofRingSigned(c)) * 360.0 * 360.0 * cos * 111_320.0 * cos * 110_540.0
         }
 
-        /** real.py's `num(v)`: the number a tag's value starts with (`\s*(-?\d+(?:\.\d+)?)`), or null. */
-        fun num(v: String?): Double? {
-            if (v == null) return null
-            val m = NUM.find(v) ?: return null
-            val digits = StringBuilder()
-            for (c in m.groupValues[1]) digits.append(if (c == '-' || c == '.') c else Character.forDigit(Character.digit(c, 10), 10))
-            return digits.toString().toDouble()
-        }
-
-        private val NUM = Regex("(?U)^\\s*(-?\\d+(?:\\.\\d+)?)")
+        /**
+         * real.py's `num(v)`: the number a tag's value starts with (`\s*(-?\d+(?:\.\d+)?)`, Python's `\s` and Unicode
+         * digits), or null: the port's own [Real.num], with no regex flag Android's ICU rejects (render's AndroidRegexTest).
+         */
+        fun num(v: String?): Double? = Real.num(v)
     }
 }
 

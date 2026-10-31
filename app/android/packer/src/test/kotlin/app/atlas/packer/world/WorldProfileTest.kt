@@ -94,6 +94,8 @@ class WorldProfileTest {
     fun numbersAndAreasAsStagePReadsThem() {
         assertEquals(-1.0, WorldProfile.num(" -1"))
         assertEquals(12.5, WorldProfile.num("12.5 m"))
+        // Python's \d takes any script's decimal digits
+        assertEquals(12.0, WorldProfile.num("\u0661\u0662 m"))
         assertNull(WorldProfile.num("level -1"))
         assertNull(WorldProfile.num(null))
         // a square 1e-4° a side at 52° N: 111,320 m · cos 52° · 1e-4 by 110,540 m · 1e-4
