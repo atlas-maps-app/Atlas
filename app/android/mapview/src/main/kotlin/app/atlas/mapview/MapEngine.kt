@@ -345,6 +345,15 @@ object MapEngine {
     /** Where the world is kept (ENGINE.md step 5: world.idx, its parts and the globe): [keptDir]'s `world/`. */
     fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
+    /**
+     * Told of the place a map's camera looks at from beyond the countries' reach ([PackList.LEVELS_REACH]), as it moves
+     * there: the app fetches the world's packs of a block a view first enters (ENGINE.md step 5, world-test's fetch:
+     * app.atlas.tiles.WorldFetch) and calls [invalidate] once they are on the phone. Called on the main thread with
+     * each camera there: it must return at once. Nothing by default.
+     */
+    @Volatile
+    var worldPlace: (lat: Double, lon: Double) -> Unit = { _, _ -> }
+
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null
 

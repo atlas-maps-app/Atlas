@@ -899,6 +899,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             // country's whose tiles it draws (its window on its way), today's map elsewhere.
             placedCountries = MapEngine.countries
             val wanted = Transition.pathOf(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance)
+            // beyond the countries' reach the world draws: the app fetches the blocks a view enters
+            if (view.distance > PackList.LEVELS_REACH) MapEngine.worldPlace(view.lat, view.lon)
             // Where the core's own cover stands in for the place's window on its way, today's map's last frame is not
             // drawn either (the paper and the windows' line meanwhile): none of its other look shows in the country.
             val waits = wanted == Transition.Path.CORE && !c.packs.covers(view.lat, view.lon, view.distance)

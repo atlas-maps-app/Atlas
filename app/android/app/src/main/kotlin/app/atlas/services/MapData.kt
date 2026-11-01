@@ -25,10 +25,13 @@ import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
+import app.atlas.tiles.WorldFetch
 import app.atlas.ui.mine.offline.RegionFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -229,6 +232,10 @@ class MapData(private val services: Services) {
             }
         }
         MapEngine.windowsAllowed = { !services.ciRun }
+        // the world beyond the countries' reach (ENGINE.md step 5): world.idx and the globe at the first start, then the
+        // part holding a place's packs as a view beyond 18 km first enters its block (world-test's, whole files until
+        // step 6), each moved into the kept folder's world/ once checked, and the maps handed their packs again
+        MapEngine.worldDir()?.let { wireWorld(WorldFetch(it, client = services.http.client)) }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): those OpenStreetMap
         // took; one still waiting shows as waiting (EditMarkers)
         MapEngine.windowEdits = {
@@ -252,6 +259,42 @@ class MapData(private val services: Services) {
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }
+        }
+    }
+
+    /**
+     * The world's fetch: the first start's index and globe, asked again every ten minutes while they cannot be had
+     * (world-test not published, offline); then each place a map looks at from beyond 18 km, the latest only while a
+     * part comes, and after a failure nothing for ten minutes.
+     */
+    private fun wireWorld(world: WorldFetch) {
+        val place = MutableStateFlow<LatLon?>(null)
+        MapEngine.worldPlace = { lat, lon -> place.value = LatLon(lat, lon) }
+        services.scope.launch(Dispatchers.IO) {
+            while (true) {
+                if (online()) {
+                    val started = runCatching { world.start() }
+                    if (started.isSuccess) break
+                    android.util.Log.i("AtlasMap", "vk world: not on the phone yet: ${started.exceptionOrNull()?.message}")
+                }
+                delay(WORLD_RETRY_MS)
+            }
+            MapEngine.invalidate()
+            var failedAt = 0L
+            place.filterNotNull().collect { p ->
+                if (!online() || System.currentTimeMillis() - failedAt < WORLD_RETRY_MS) return@collect
+                runCatching { world.enter(p.lat, p.lon) }
+                    .onSuccess { parts ->
+                        if (parts.isNotEmpty()) {
+                            android.util.Log.i("AtlasMap", "vk world: ${parts.joinToString()} on the phone")
+                            MapEngine.invalidate()
+                        }
+                    }
+                    .onFailure {
+                        failedAt = System.currentTimeMillis()
+                        android.util.Log.i("AtlasMap", "vk world: a block's packs not fetched: ${it.message}")
+                    }
+            }
         }
     }
 
@@ -296,5 +339,6 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
+        private const val WORLD_RETRY_MS = 600_000L
     }
 }
