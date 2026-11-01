@@ -192,7 +192,8 @@ private:
     fx::FieldCache* fields_ = nullptr;    // the world's noise fields (it holds them), while made
 };
 
-/// The theme `theme` with `profile`'s rules: TONE on for every profile but the living map's.
+/// The theme `theme` with `profile`'s rules: TONE on for every profile but the living map's, and off wherever the
+/// user's strength of it is 0 (the theme's tone_strength).
 [[nodiscard]] style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) noexcept;
 
 /// The theme for `pack` drawn as the active pack: its profile's (with_profile), but the regions' light (TONE) for

@@ -272,6 +272,14 @@ TEST_CASE("the theme takes the profile's rules: TONE off for the living map, on 
     const style::ThemeBlock t = sunny();
     CHECK((frame::with_profile(t, tiles::Profile::living).flags & flag::tone) == 0);
     CHECK((frame::with_profile(t, tiles::Profile::region).flags & flag::tone) != 0);
+    // the user's Tone off (a strength of 0) lights every profile without TONE; any other strength keeps the rule
+    style::ThemeBlock off = t;
+    off.flags |= flag::tone_strength;
+    off.tone = 0.0F;
+    CHECK((frame::with_profile(off, tiles::Profile::region).flags & flag::tone) == 0);
+    off.tone = 0.5F;
+    CHECK((frame::with_profile(off, tiles::Profile::region).flags & flag::tone) != 0);
+    CHECK((frame::with_profile(off, tiles::Profile::living).flags & flag::tone) == 0);
     CHECK((frame::with_profile(t, tiles::Profile::world_base).flags & flag::tone) != 0);
     style::ThemeBlock toned = t;
     toned.flags |= flag::tone;

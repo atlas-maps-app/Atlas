@@ -35,7 +35,9 @@ void close_owned(tiles::PackRef& ref) noexcept {
 } // namespace
 
 style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) noexcept {
-    if (profile == tiles::Profile::living) {
+    // the user's Tone switched off (a strength of 0, the Map look's setting) lights every pack without it
+    const bool off = theme.has(style::theme_flag::tone_strength) && theme.tone <= 0.0F;
+    if (profile == tiles::Profile::living || off) {
         theme.flags &= ~style::theme_flag::tone;
     } else {
         theme.flags |= style::theme_flag::tone;

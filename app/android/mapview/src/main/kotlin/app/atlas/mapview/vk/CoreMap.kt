@@ -101,6 +101,7 @@ internal class CoreMap(
     private val theme = ThemeBlock.allocate()
     private var lastMoment: Moment? = null
     private var lastZone: ZoneId? = null
+    private var lastTone = 1f
     private var packsRevision = -1
     private val records = FrameRecords.allocate(RECORDS)
     private val intervals = DoubleArray(WINDOW)
@@ -148,14 +149,16 @@ internal class CoreMap(
      * changed (off the main thread). "" or why it was not.
      */
     fun moment(moment: Moment, zone: ZoneId, daylight: Boolean): String {
-        if (moment == lastMoment && zone == lastZone) return ""
+        val tone = MapEngine.tone
+        if (moment == lastMoment && zone == lastZone && tone == lastTone) return ""
         val why = runCatching {
-            CoreMoment.write(theme, moment, zone, daylight)
+            CoreMoment.write(theme, moment, zone, daylight, tone)
             core.moment(theme)
         }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
         if (why.isEmpty()) {
             lastMoment = moment
             lastZone = zone
+            lastTone = tone
             night = theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0
         } else {
             Log.w(EngineFrames.TAG, "vk moment: $why")

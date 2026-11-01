@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ import app.atlas.R
 import app.atlas.geo.Sun
 import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapPart
@@ -79,6 +81,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /**
  * The map's look: the real map behind a sheet, so every switch shows at once. Theme chips along the top (auto day and
@@ -101,6 +104,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, true).collectAsStateWithLifecycle(true)
+    val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
@@ -168,6 +173,16 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onVignette = { on -> scope.launch { settings.set(SettingsKeys.MAP_VIGNETTE, on) } },
                     onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
                     onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
+                )
+                ToneRow(
+                    toneOn, tone,
+                    onOn = { on -> scope.launch { settings.set(SettingsKeys.MAP_TONE_ON, on) } },
+                    onStrength = { s ->
+                        scope.launch {
+                            settings.set(SettingsKeys.MAP_TONE, s)
+                            settings.set(SettingsKeys.MAP_TONE_ON, true)
+                        }
+                    },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
                     PartChips(
@@ -444,6 +459,72 @@ private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Bo
             MiniButton(stringResource(R.string.mine_layers_noon), { onChange(sun.second) }, primary = false, symbol = "weather.sun")
             sun.third?.let { MiniButton(stringResource(R.string.mine_layers_sunset), { onChange(it) }, primary = false, symbol = "weather.sunset.3") }
             MiniButton(stringResource(R.string.mine_layers_now), onNow)
+        }
+    }
+}
+
+/**
+ * The Map look's Tone (the Map look board's Tone card): the switch, and the strength from off to 2× in steps of 5 % on a
+ * track with today's 100 % marked, its value at the right. A drag shows on the map behind as it moves and is kept when
+ * the finger lifts; setting a strength turns Tone on, and off keeps the strength for when it is on again.
+ */
+@Composable
+private fun ToneRow(on: Boolean, strength: Float, onOn: (Boolean) -> Unit, onStrength: (Float) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    // the drag's handlers outlive a recomposition: what a cancelled drag returns the map to is the latest kept
+    val kept by rememberUpdatedState(if (on) strength else 0f)
+    val shown = dragging ?: strength
+    val percent = (shown * 100).roundToInt()
+    val lit = on || dragging != null
+    val value = when {
+        !lit || percent == 0 -> stringResource(R.string.mine_layers_tone_off)
+        percent == 100 -> stringResource(R.string.mine_layers_tone_today, percent)
+        else -> stringResource(R.string.mine_layers_tone_value, percent)
+    }
+    val name = stringResource(R.string.mine_layers_tone)
+    val description = stringResource(R.string.mine_layers_tone_cd, percent)
+    // 0 to 2 in steps of 5 %, so today's 1 is a step
+    fun at(x: Float, width: Float) = (x / width * 40f).roundToInt().coerceIn(0, 40) / 20f
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CardLabel(name, Modifier.weight(1f))
+            BText(value, bt(14f, 800, 18f, tnum = true), INK)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            MineSwitch(on, onOn, name, onColour = INK)
+            Canvas(
+                Modifier.weight(1f).height(34.dp).semantics {
+                    contentDescription = description
+                    progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(shown, 0f..2f, 39)
+                    setProgress { v -> onStrength(((v * 20f).roundToInt() / 20f).coerceIn(0f, 2f)); true }
+                }
+                    .pointerInput(Unit) { detectTapGestures { p -> onStrength(at(p.x, size.width.toFloat())) } }
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = { dragging?.let(onStrength); dragging = null },
+                            onDragCancel = { dragging = null; MapEngine.tone(kept) },
+                        ) { change, _ ->
+                            val s = at(change.position.x, size.width.toFloat())
+                            if (s != dragging) {
+                                dragging = s
+                                MapEngine.tone(s)
+                            }
+                        }
+                    },
+            ) {
+                val r = 12.dp.toPx()
+                val y = size.height / 2
+                val track = 6.dp.toPx()
+                val left = r
+                val width = size.width - 2 * r
+                fun x(s: Float) = left + s / 2f * width
+                drawRoundRect(Color(0xFFE6E8EC), Offset(left, y - track / 2), Size(width, track), CornerRadius(track / 2))
+                if (lit) drawRoundRect(Color(INK), Offset(left, y - track / 2), Size(x(shown) - left, track), CornerRadius(track / 2))
+                // today's 100 %
+                drawLine(Color(0xFF8A8F99), Offset(x(1f), y - 9.dp.toPx()), Offset(x(1f), y + 9.dp.toPx()), 2.dp.toPx())
+                drawCircle(Color.White, r, Offset(x(shown), y))
+                drawCircle(Color(if (lit) INK else 0xFFB8BCC4), r, Offset(x(shown), y), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            }
         }
     }
 }

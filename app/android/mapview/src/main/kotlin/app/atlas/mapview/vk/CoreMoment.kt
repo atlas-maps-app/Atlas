@@ -26,9 +26,10 @@ import kotlin.concurrent.withLock
 internal object CoreMoment {
     /**
      * Writes the theme block of [moment] for a pack in [zone] into [out] (little-endian, [ThemeBlock.SIZE] bytes), with
-     * the renders' dusk ([daylight], RenderOptions.daylight). Fails on a moment the port does not know.
+     * the renders' dusk ([daylight], RenderOptions.daylight) and the user's strength of TONE ([tone], the Map look's
+     * Tone: 1 the renders'). Fails on a moment the port does not know.
      */
-    fun write(out: ByteBuffer, moment: Moment, zone: ZoneId, daylight: Boolean) {
+    fun write(out: ByteBuffer, moment: Moment, zone: ZoneId, daylight: Boolean, tone: Float = 1f) {
         LiveEngine.lock.withLock {
             val saved = EngineState.capture()
             try {
@@ -42,7 +43,7 @@ internal object CoreMoment {
                 }
                 val th = Amsterdam.THEMES.getValue(key)
                 val (azimuth, elevation, sun) = Amsterdam.sunOf(th)
-                ThemeBlock.write(out, th, doubleArrayOf(sun.x, sun.y, sun.z), azimuth, elevation, golden = key == "golden", tone = false)
+                ThemeBlock.write(out, th, doubleArrayOf(sun.x, sun.y, sun.z), azimuth, elevation, golden = key == "golden", tone = false, toneStrength = tone)
             } finally {
                 saved.restore()
             }

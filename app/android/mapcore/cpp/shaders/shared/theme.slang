@@ -26,7 +26,7 @@ struct Theme {
     float4 shadow;       // rgb: shadow; a: shadow_op
     float4 weather;      // x: shadow_blur; y: cloud_shadows; z: _dusk; w: the hour's cloud cover (0-1)
     float4 wind;         // x: wind speed (km/h); y: its direction (degrees); z: rain (mm); w: visibility (m)
-    uint4 flags;         // x: the THEME_ bits below; yzw: 0
+    uint4 flags;         // x: the THEME_ bits below; y: the user's TONE strength (THEME_TONE_STRENGTH's float); zw: 1/(50 y)'s double
     uint4 bits_amb_sun;  // amb_k and sun_k, each as its low and high word
     uint4 bits_sky_lx;   // sky_k (1 without) and the sun vector's x
     uint4 bits_lyz;      // the sun vector's y and z
@@ -44,6 +44,7 @@ static const uint THEME_DUSK = 128u;          // th['_dusk'] is set (the dayligh
 static const uint THEME_WET_SET = 256u;       // th['wet'] is set (fixed moments have none)
 static const uint THEME_GOLDEN = 512u;        // the golden moment: the golden wash over the frame
 static const uint THEME_TONE = 1024u;         // the profile's TONE: highlights ease off above 205 (the regions' profile)
+static const uint THEME_TONE_STRENGTH = 2048u; // the user's strength of TONE in flags.y (0-2); the renders' 1 without
 
 /// True when the theme's flags hold `flag`.
 inline bool theme_has(Theme th, uint flag) {

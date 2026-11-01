@@ -58,6 +58,7 @@ class LayoutTest {
         put("ThemeBlock.WET_SET", ThemeBlock.WET_SET)
         put("ThemeBlock.GOLDEN", ThemeBlock.GOLDEN)
         put("ThemeBlock.TONE", ThemeBlock.TONE)
+        put("ThemeBlock.TONE_STRENGTH", ThemeBlock.TONE_STRENGTH)
         for ((i, name) in ThemeBlock.MOMENTS.withIndex()) put("ThemeBlock.MOMENTS[$name]", i)
         put("CameraWriter.VERSION", CameraWriter.VERSION)
         put("CameraWriter.SIZE", CameraWriter.SIZE)

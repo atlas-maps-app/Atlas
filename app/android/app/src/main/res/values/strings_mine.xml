@@ -359,6 +359,11 @@
     <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_grain">Grain</string>
     <string name="mine_layers_glass">Frosted glass</string>
+    <string name="mine_layers_tone">Tone</string>
+    <string name="mine_layers_tone_today">%1$d %% · today</string>
+    <string name="mine_layers_tone_value">%1$d %%</string>
+    <string name="mine_layers_tone_off">Off</string>
+    <string name="mine_layers_tone_cd">Tone %1$d %%</string>
     <string name="mine_layers_parts">Engine parts (debug)</string>
     <string name="mine_part_timings">Frame timings</string>
     <string name="mine_part_pacing">Frame pacing</string>

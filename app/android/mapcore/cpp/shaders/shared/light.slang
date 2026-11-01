@@ -249,6 +249,34 @@ inline double tone_shoulder(double v) {
     return ATLAS_D(205.0) + ATLAS_D(50.0) * (ATLAS_D(1.0) - light_exp(light_div50(-(v - ATLAS_D(205.0)))));
 }
 
+/// The user's strength of TONE where the theme carries one (THEME_TONE_STRENGTH), else the renders' 1.
+inline double tone_strength(Theme th) {
+    return theme_has(th, THEME_TONE_STRENGTH) ? double(asfloat(th.flags.y)) : ATLAS_D(1.0);
+}
+
+/// TONE's ambient mix at strength s: the renders' .26 at 1, the .35 of no TONE at 0, .17 at 2.
+inline double tone_amb_mix(double s) {
+    return ATLAS_D(0.26) + ATLAS_D(0.09) * (ATLAS_D(1.0) - s);
+}
+
+/// The nearest double to 1 / (50 s), which the theme carries beside the user's strength (flags.zw), so the shoulder's
+/// quotient is light_quotient's and the GPU divides no doubles.
+inline double tone_reciprocal(Theme th) {
+    return light_bits(th.flags.z, th.flags.w);
+}
+
+/// TONE's shoulder at strength s: from 255 - 50 s a channel eases over 50 s toward 255 (the renders' 205 and 50 at
+/// 1, as tone_shoulder draws it bit for bit); none at 0. `r` is the nearest double to 1 / (50 s) (tone_reciprocal):
+/// 50 s and 255 - 50 s are exact, s being a float.
+inline double tone_shoulder_at(double v, double s, double r) {
+    double scale = ATLAS_D(50.0) * s;
+    double knee = ATLAS_D(255.0) - scale;
+    if (scale <= ATLAS_D(0.0) || v < knee) {
+        return v;
+    }
+    return knee + scale * (ATLAS_D(1.0) - light_exp(light_quotient(-(v - knee), scale, r)));
+}
+
 /// One channel of the day's light (amsterdam.py:266-269): the ambient mixed toward the theme's, the sky from above
 /// and the sun, as amb[i] + base[i] * sky + base[i] * lam * 1.05 * sun_k * sun[i] / 255.
 inline double light_day(double base, double amb, double sun, double amb_k, double amb_mix, double sky, double lam,
@@ -275,7 +303,10 @@ inline double3 light(Theme th, double3 base, double3 n, bool lit) {
         return m;
     }
     double amb_k = theme_amb_k(th);
-    double amb_mix = theme_has(th, THEME_TONE) ? ATLAS_D(0.26) : ATLAS_D(0.35);
+    double amb_mix = ATLAS_D(0.35);
+    if (theme_has(th, THEME_TONE)) {
+        amb_mix = theme_has(th, THEME_TONE_STRENGTH) ? tone_amb_mix(tone_strength(th)) : ATLAS_D(0.26);
+    }
     double3 l = theme_sun_vector(th);
     double lam = lit ? light_max0(n.x * l.x + n.y * l.y + n.z * l.z) : ATLAS_D(0.0);
     double sky = (ATLAS_D(0.18) + ATLAS_D(0.12) * light_max0(n.y)) * theme_sky_k(th);
@@ -284,7 +315,13 @@ inline double3 light(Theme th, double3 base, double3 n, bool lit) {
     double3 c = {light_day(base.x, amb.x, sun.x, amb_k, amb_mix, sky, lam, sun_k),
                  light_day(base.y, amb.y, sun.y, amb_k, amb_mix, sky, lam, sun_k),
                  light_day(base.z, amb.z, sun.z, amb_k, amb_mix, sky, lam, sun_k)};
-    if (theme_has(th, THEME_TONE)) {
+    if (theme_has(th, THEME_TONE) && theme_has(th, THEME_TONE_STRENGTH)) {
+        double s = tone_strength(th);
+        double r = tone_reciprocal(th);
+        c.x = tone_shoulder_at(c.x, s, r);
+        c.y = tone_shoulder_at(c.y, s, r);
+        c.z = tone_shoulder_at(c.z, s, r);
+    } else if (theme_has(th, THEME_TONE)) {
         c.x = tone_shoulder(c.x);
         c.y = tone_shoulder(c.y);
         c.z = tone_shoulder(c.z);
@@ -325,6 +362,13 @@ inline float tone_shoulder_f32(float v) {
     return v < 205.0f ? v : 205.0f + 50.0f * (1.0f - light_exp_f32(-(v - 205.0f) / 50.0f));
 }
 
+/// tone_shoulder_at in binary32.
+inline float tone_shoulder_at_f32(float v, float s) {
+    float scale = 50.0f * s;
+    float knee = 255.0f - scale;
+    return (scale <= 0.0f || v < knee) ? v : knee + scale * (1.0f - light_exp_f32(-(v - knee) / scale));
+}
+
 /// light() in binary32: the port's rule and order on the theme's float lanes and on float inputs.
 inline float3 light_f32(Theme th, float3 base, float3 n, bool lit) {
     if (theme_has(th, THEME_NIGHT)) {
@@ -334,11 +378,20 @@ inline float3 light_f32(Theme th, float3 base, float3 n, bool lit) {
     float amb_k = th.ambient.w;
     float3 a = base * amb_k;
     float3 b = th.ambient.xyz * (amb_k * 0.55f);
-    float3 amb = a + (b - a) * (theme_has(th, THEME_TONE) ? 0.26f : 0.35f);
+    float amb_mix = 0.35f;
+    if (theme_has(th, THEME_TONE)) {
+        amb_mix = theme_has(th, THEME_TONE_STRENGTH) ? 0.26f + 0.09f * (1.0f - asfloat(th.flags.y)) : 0.26f;
+    }
+    float3 amb = a + (b - a) * amb_mix;
     float lam = lit ? max(0.0f, dot(n, th.light.xyz)) : 0.0f;
     float sky = (0.18f + 0.12f * max(0.0f, n.y)) * th.light.w;
     float3 c = amb + base * sky + base * lam * 1.05f * th.sun.w * th.sun.xyz / 255.0f;
-    if (theme_has(th, THEME_TONE)) {
+    if (theme_has(th, THEME_TONE) && theme_has(th, THEME_TONE_STRENGTH)) {
+        float s = asfloat(th.flags.y);
+        c.x = tone_shoulder_at_f32(c.x, s);
+        c.y = tone_shoulder_at_f32(c.y, s);
+        c.z = tone_shoulder_at_f32(c.z, s);
+    } else if (theme_has(th, THEME_TONE)) {
         c.x = tone_shoulder_f32(c.x);
         c.y = tone_shoulder_f32(c.y);
         c.z = tone_shoulder_f32(c.z);

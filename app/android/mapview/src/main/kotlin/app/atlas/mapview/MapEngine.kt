@@ -180,6 +180,24 @@ object MapEngine {
         (core as? CoreState.Ready)?.core?.setPacing(on)
     }
 
+    /**
+     * The user's strength of TONE (the Map look's Tone: 0 off, 1 the renders', up to 2): the core lights by it from the
+     * next moment it is handed (CoreMap.moment), today's map from its next frame ([options]); [tone] sets it.
+     */
+    @Volatile
+    var tone: Float = 1f
+        private set
+
+    /** Sets [tone] (clamped to 0-2) and draws every map again with it. */
+    fun tone(strength: Float) {
+        val s = strength.coerceIn(0f, 2f)
+        if (s == tone) return
+        tone = s
+        val o = options
+        if (o.toneStrength != s.toDouble()) options = o.copy(toneStrength = s.toDouble())
+        invalidate()
+    }
+
     /** Sets the screen's haze, vignette and paper grain, and hands them to the running core (off the main thread). */
     fun screenEffects(haze: Boolean, vignette: Boolean, grain: Boolean) {
         this.haze = haze

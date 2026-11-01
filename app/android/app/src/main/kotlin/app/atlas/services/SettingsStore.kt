@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import app.atlas.geo.LatLon
@@ -132,6 +133,15 @@ object SettingsKeys {
      * "disabled by default if they add performance overhead"); on, the renders' look.
      */
     val MAP_HAZE = booleanPreferencesKey("map.haze")
+
+    /**
+     * The Map look's Tone: the user's strength of the renders' TONE, the light that keeps a sunlit wall's own colour in
+     * shade and eases bright highlights (0 off, 1 the renders' as the palette review picked it, up to 2); 1 when unset.
+     */
+    val MAP_TONE = floatPreferencesKey("map.tone")
+
+    /** The Map look's Tone switch: off draws no TONE and keeps [MAP_TONE] for when it is on again; on when unset. */
+    val MAP_TONE_ON = booleanPreferencesKey("map.tone.on")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
 

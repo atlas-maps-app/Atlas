@@ -33,6 +33,7 @@ object ThemeBlock {
     const val WET_SET = 256
     const val GOLDEN = 512
     const val TONE = 1024
+    const val TONE_STRENGTH = 2048
 
     /** The moment names the block numbers (`th['name']`); any other name (a region's own moment) is 0. */
     val MOMENTS: List<String> = listOf("", "sunny", "grey", "wet", "night", "golden", "noon", "truth")
@@ -56,7 +57,7 @@ object ThemeBlock {
     const val NAME_AT = 14
     const val CODE_AT = 15
     const val COLOURS_AT = 16
-    const val RESERVED0_AT = 60
+    const val TONE_AT = 60
     const val DOUBLES_AT = 64
     const val SUN_AT = 128
     const val AZIMUTH_AT = 152
@@ -76,7 +77,7 @@ object ThemeBlock {
         add(Triple("name", NAME_AT, 1))
         add(Triple("wx.code", CODE_AT, 1))
         COLOURS.forEachIndexed { i, k -> add(Triple(k, COLOURS_AT + 4 * i, 4)) }
-        add(Triple("reserved0", RESERVED0_AT, 4))
+        add(Triple("tone", TONE_AT, 4))
         DOUBLES.forEachIndexed { i, k -> add(Triple(k, DOUBLES_AT + 8 * i, 8)) }
         add(Triple("_L", SUN_AT, 24))
         add(Triple("az", AZIMUTH_AT, 8))
@@ -92,9 +93,15 @@ object ThemeBlock {
      * Writes [theme] into [out] at [at] (the buffer must be little-endian, with [SIZE] bytes from there): [sun] is the
      * sun vector the render takes (`_L`: toward the sun, straight down at night), [azimuth] and [elevation] the sun's
      * position at the moment in degrees, [golden] whether the moment is `THEMES`' golden one (the golden wash), [tone]
-     * the profile's TONE. Fails on a theme without a value the block needs.
+     * the profile's TONE and [toneStrength] the user's strength of it (the Map look's Tone, 0 to 2: 0 lights every pack
+     * without TONE; the renders' 1 writes no strength, so the block is the one the renders' light reads). Fails on a theme
+     * without a value the block needs.
      */
-    fun write(out: ByteBuffer, theme: Map<String, Any?>, sun: DoubleArray, azimuth: Double, elevation: Double, golden: Boolean, tone: Boolean, at: Int = 0) {
+    fun write(
+        out: ByteBuffer, theme: Map<String, Any?>, sun: DoubleArray, azimuth: Double, elevation: Double, golden: Boolean, tone: Boolean,
+        at: Int = 0, toneStrength: Float = 1f,
+    ) {
+        require(toneStrength in 0f..2f) { "a TONE strength of 0 to 2, not $toneStrength" }
         require(out.order() == ByteOrder.LITTLE_ENDIAN) { "the theme block is little-endian" }
         require(at >= 0 && out.limit() - at >= SIZE) { "no room for a theme block at $at" }
         require(sun.size == 3) { "the sun vector has three components" }
@@ -112,8 +119,10 @@ object ThemeBlock {
         if ("_dusk" in theme) flags = flags or DUSK
         if (golden) flags = flags or GOLDEN
         if (tone) flags = flags or TONE
+        if (toneStrength != 1f) flags = flags or TONE_STRENGTH
         out.putInt(at + VERSION_AT, VERSION)
         out.putInt(at + FLAGS_AT, flags)
+        out.putFloat(at + TONE_AT, if (toneStrength != 1f) toneStrength else 0f)
         val date = ints(theme, "date", 3)
         val hhmm = ints(theme, "hhmm", 2)
         out.putShort(at + YEAR_AT, date[0].toShort())

@@ -248,6 +248,13 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
+        // the Map look's Tone, as the user set it (on at the renders' 1 when unset; off is 0)
+        services.scope.launch {
+            services.settings.data
+                .map { if (it[SettingsKeys.MAP_TONE_ON] ?: true) it[SettingsKeys.MAP_TONE] ?: 1f else 0f }
+                .distinctUntilChanged()
+                .collect { s -> MapEngine.tone(s) }
+        }
         // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }

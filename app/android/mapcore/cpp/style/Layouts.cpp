@@ -46,7 +46,7 @@ constexpr std::array theme_block_table = {
     ATLAS_FIELD("water_top", ThemeBlock, water_top),
     ATLAS_FIELD("water_bot", ThemeBlock, water_bottom),
     ATLAS_FIELD("shadow", ThemeBlock, shadow),
-    ATLAS_FIELD("reserved0", ThemeBlock, reserved0),
+    ATLAS_FIELD("tone", ThemeBlock, tone),
     ATLAS_FIELD("haze_max", ThemeBlock, haze_max),
     ATLAS_FIELD("sun_k", ThemeBlock, sun_k),
     ATLAS_FIELD("amb_k", ThemeBlock, amb_k),
@@ -175,6 +175,7 @@ constexpr std::array constants_table = {
     Constant{.name = "ThemeBlock.WET_SET", .value = theme_flag::wet_set},
     Constant{.name = "ThemeBlock.GOLDEN", .value = theme_flag::golden},
     Constant{.name = "ThemeBlock.TONE", .value = theme_flag::tone},
+    Constant{.name = "ThemeBlock.TONE_STRENGTH", .value = theme_flag::tone_strength},
     Constant{.name = "ThemeBlock.MOMENTS[]", .value = moment(MomentName::other)},
     Constant{.name = "ThemeBlock.MOMENTS[sunny]", .value = moment(MomentName::sunny)},
     Constant{.name = "ThemeBlock.MOMENTS[grey]", .value = moment(MomentName::grey)},
@@ -272,7 +273,8 @@ static_assert(tiles(shader_theme_table, size_of<shaders::Theme>(), shader_theme_
 // The flag bits are the known ones, each once.
 static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme_flag::overcast |
                theme_flag::shadow_blur | theme_flag::cloud_shadows | theme_flag::water_gradient | theme_flag::dusk |
-               theme_flag::wet_set | theme_flag::golden | theme_flag::tone) == theme_flag::known);
+               theme_flag::wet_set | theme_flag::golden | theme_flag::tone | theme_flag::tone_strength) ==
+              theme_flag::known);
 static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
                camera_flag::location | camera_flag::heading) == camera_flag::known);
 // The parts are the known ones, each once, in the order of their bits.

@@ -132,8 +132,11 @@ std::expected<ThemeBlock, ThemeError> read_theme_block(std::span<const std::byte
     if ((b.flags & ~theme_flag::known) != 0U || (b.has(theme_flag::wet) && !b.has(theme_flag::wet_set))) {
         return std::unexpected(ThemeError::flags);
     }
-    if (b.reserved0 != 0U || b.reserved1 != 0U) {
+    if (b.reserved1 != 0U || (!b.has(theme_flag::tone_strength) && std::bit_cast<std::uint32_t>(b.tone) != 0U)) {
         return std::unexpected(ThemeError::reserved);
+    }
+    if (b.has(theme_flag::tone_strength) && (!std::isfinite(b.tone) || b.tone < 0.0F || b.tone > 2.0F)) {
+        return std::unexpected(ThemeError::value);
     }
     if (!real_date(b.year, b.month, b.day, b.hour, b.minute)) {
         return std::unexpected(ThemeError::date);
@@ -185,7 +188,11 @@ shaders::Theme shader_theme(const ThemeBlock& b) noexcept {
     t.weather = weather;
     const shaders::float4 wind = {f(b.wind), f(b.wind_direction), f(b.rain), f(b.visibility)};
     t.wind = wind;
-    const shaders::uint4 flags = {b.flags, 0U, 0U, 0U};
+    // the user's strength of TONE and the nearest double to 1 / (50 s), its shoulder's reciprocal (tone_reciprocal)
+    const bool strength = b.has(theme_flag::tone_strength);
+    const shaders::uint4 tone =
+        words(strength && b.tone > 0.0F ? 1.0 / (50.0 * static_cast<double>(b.tone)) : 0.0, 0.0);
+    const shaders::uint4 flags = {b.flags, strength ? std::bit_cast<std::uint32_t>(b.tone) : 0U, tone.x, tone.y};
     t.flags = flags;
     // sky_k is 1 in a block without overcast (the reader holds it to that), as th.get('sky_k', 1.0) reads it
     t.bits_amb_sun = words(b.amb_k, b.sun_k);

@@ -46,6 +46,9 @@ using double3 = Double3;
 [[nodiscard]] constexpr double light_div255(double x) noexcept { return x / 255.0; }
 [[nodiscard]] constexpr double light_div50(double x) noexcept { return x / 50.0; }
 
+/// a / b, which the shader rounds from the reciprocal r as IEEE division does (TONE's shoulder at the user's strength).
+[[nodiscard]] constexpr double light_quotient(double a, double b, double /*r*/) noexcept { return a / b; }
+
 /// The port's math.exp: StrictMath.exp (fdlibm 5.3), as pymath computes it.
 [[nodiscard]] inline double light_exp(double x) noexcept { return pymath::strict::exp(x); }
 

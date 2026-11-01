@@ -359,6 +359,11 @@
     <string name="mine_layers_vignette">Vignet</string>
     <string name="mine_layers_grain">Korrel</string>
     <string name="mine_layers_glass">Matglas</string>
+    <string name="mine_layers_tone">Toon</string>
+    <string name="mine_layers_tone_today">%1$d %% · vandaag</string>
+    <string name="mine_layers_tone_value">%1$d %%</string>
+    <string name="mine_layers_tone_off">Uit</string>
+    <string name="mine_layers_tone_cd">Toon %1$d %%</string>
     <string name="mine_layers_parts">Engine-onderdelen (debug)</string>
     <string name="mine_part_timings">Beeldtijden</string>
     <string name="mine_part_pacing">Beeldritme</string>
