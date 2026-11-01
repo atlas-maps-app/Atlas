@@ -482,12 +482,15 @@ class LocalData(
     /** Whether a region's store or a pack on the phone holds [at]: what is there is read without the network. */
     fun holds(at: LatLon): Boolean = storeCovering(at) != null || packsCovering(at) != null
 
-    /** The map's window data around [at] ([windows]); null where there is none, or its read failed (Overpass then). */
+    /**
+     * The map's window data around [at] ([windows]); null where there is none, or where it did not read (the network
+     * failed, or a kept copy is cut short as the map writes it): Overpass then.
+     */
     private suspend fun windowAround(at: LatLon, radiusM: Double): PackFeatures? = try {
         windows(at, radiusM)
     } catch (e: CancellationException) {
         throw e
-    } catch (e: IOException) {
+    } catch (e: Exception) {
         null
     }
 

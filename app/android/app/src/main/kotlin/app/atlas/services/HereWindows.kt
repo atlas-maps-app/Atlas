@@ -18,6 +18,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.lang.ref.SoftReference
 import java.util.zip.GZIPInputStream
 
 /**
@@ -37,8 +38,9 @@ class HereWindows(
     private val packed: (x: Int, y: Int) -> ByteArray?,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
+    /** The last window read from the packs, by its key; the heap may take it back. */
     @Volatile
-    private var last: Pair<Long, ByteArray>? = null
+    private var last: Pair<Long, SoftReference<ByteArray>>? = null
 
     /**
      * The window's elements within [radiusM] (and [MARGIN_M]) of [at], and its place names; null where neither copy is
@@ -52,8 +54,8 @@ class HereWindows(
         val input: InputStream = when {
             file != null -> file.inputStream()
             else -> {
-                val bytes = last?.takeIf { it.first == key }?.second ?: run {
-                    val read = scope.async { packed(x, y)?.also { last = key to it } }
+                val bytes = last?.takeIf { it.first == key }?.second?.get() ?: run {
+                    val read = scope.async { packed(x, y)?.also { last = key to SoftReference(it) } }
                     withTimeoutOrNull(withinMs) { read.await() ?: NONE } ?: throw IOException("the window's data did not come within ${withinMs / 1000} s")
                 }
                 if (bytes === NONE) return null
