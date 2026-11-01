@@ -154,6 +154,9 @@ struct DrawnTile {
     std::optional<sun::TileView> sun;
     std::uint32_t sun_base = 0xFFFF'FFFFU;
     float sun_weight = 1.0F;
+    /// Its fade in (the cover's, 0 to 1; its place's scale.w): below 1 its fills are drawn over what lies under it
+    /// (Ground::record_fading_fills), its lines at that alpha.
+    float fade = 1.0F;
     /// The camera in its own frame, whose metres its points are (GroundFrame::cams): the frame drawn's camera, or for a
     /// tile of another frame (a neighbouring frame cell's, whose origin lies kilometres off) the same camera about its
     /// target taken into that frame. Every decision on its points is made with it.
@@ -849,6 +852,9 @@ private:
     void write_words(const frame::FrameState& state);
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
     void record_fills(const frame::Recording& r, bool above);
+    /// The fills of the tiles fading in (ENGINE.md's fades), coarse to fine, after the opaque phase's: each sample
+    /// takes its tile's topmost fill alone at the tile's fade over what lies under it, written at that fill's depth.
+    void record_fading_fills(const frame::Recording& r);
     void record_plate(const frame::Recording& r);
     /// The filter's 256 results (fx::canopy_table) into the frame's words, then in the app's map
     /// (FrameState::grounded) the ground's map its field is read by.
@@ -1069,6 +1075,7 @@ struct Ground::Pipelines {
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
+    vk::raii::Pipeline fill_fading{nullptr};
     vk::raii::Pipeline plate{nullptr};
     vk::raii::Pipeline tile_plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};

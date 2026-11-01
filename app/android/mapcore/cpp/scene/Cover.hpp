@@ -73,6 +73,10 @@ struct CoverTile {
     /// sample i's in texel sun_base + i / 32, bit i % 32), or no_sun; and how far the swap has faded (old 0, new 1).
     std::uint32_t sun_base = no_sun;
     float sun_weight = 1.0F;
+    /// Kept under a tile fading in (ENGINE.md's fades): what the frame before drew where it lies, its nearest ancestor
+    /// drawn or else its descendants drawn, until its fade ends; `cells` are its cells under the fading tile. The
+    /// ground draws them under the fading tile's ground; Cover::tiles leaves it out, so nothing that stands up does.
+    bool under = false;
 };
 
 /// What the cover is made of for a frame.
@@ -128,9 +132,11 @@ public:
                 double seconds);
 
     /// The tiles drawn, nearest first.
-    [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return tiles_; }
+    [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return std::span(tiles_).first(drawn_tiles_); }
+    /// The same, then the tiles kept under those fading in (CoverTile::under), nearest first: the ground's.
+    [[nodiscard]] std::span<const CoverTile> with_under() const noexcept { return tiles_; }
     /// The same, for the world to fill their sun (SunGlobals::prepare).
-    [[nodiscard]] std::span<CoverTile> tiles() noexcept { return tiles_; }
+    [[nodiscard]] std::span<CoverTile> with_under() noexcept { return tiles_; }
     /// The requests for the residency (want), by lane and priority.
     [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
     /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).
@@ -246,8 +252,14 @@ private:
                  std::uint64_t bytes);
     /// The stand-ins and the spare tiles of the frame, once every pack's places are drawn.
     void sort_out(const Residency& residency);
+    /// Under each tile fading in, what the frame before drew where it lies (CoverTile::under), after the tiles drawn.
+    void lay_under(const view::View& view, const view::Frames& frames, const Frustum& frustum,
+                   const Residency& residency, double seconds);
 
     std::vector<CoverTile> tiles_;
+    std::size_t drawn_tiles_ = 0;            // tiles_'s tiles drawn, before those kept under the fading ones
+    std::vector<std::uint32_t> drew_;        // the handles of the tiles drawn this frame, those kept under too (sorted)
+    std::vector<std::uint32_t> drew_before_; // the frame before's
     std::vector<Request> requests_;
     std::vector<Shown> shown_;
     std::vector<Pending> pending_;

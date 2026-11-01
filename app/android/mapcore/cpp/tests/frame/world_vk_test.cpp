@@ -677,4 +677,144 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
     fs::remove_all(guard, ec);
 }
 
+TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame before drew there, its ground by "
+          "alpha, and no frame waits for it") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the countries' fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-tile-fade-{}", ::getpid());
+    auto started = start_world(guard);
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        std::vector<frame::MapPack> packs;
+        packs.push_back(canal_ring(tiles_dir));
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // the ground alone: what stands up, the shadows and the water's effects left out
+        style::CameraState cam = camera(52.3765, 4.897, 0.0, 0.0, 9'000.0);
+        cam.pack_id = 1;
+        for (unsigned bit = 8; bit <= 40; ++bit) cam.parts |= std::uint64_t{1} << bit;
+        cam.parts |= style::camera_part::canopy | style::camera_part::setts | style::camera_part::ground_text |
+                     style::camera_part::quays;
+        // at rest from 9 km over the canal ring's L12 tiles, faded in
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const scene::Cover& cover = *map.world()->cover();
+        CHECK(std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& c) { return c.drawn->key.z == 12; }));
+        CHECK(cover.with_under().size() == cover.tiles().size());
+        const auto read = [&] {
+            auto pixels = kept->kept->read(kept->kept->latest());
+            REQUIRE(pixels.has_value());
+            return *std::move(pixels);
+        };
+        const auto mad = [](const gpu::Pixels& a, const gpu::Pixels& b) {
+            double sum = 0;
+            for (std::size_t i = 0; i + 3 < a.rgba.size() && i + 3 < b.rgba.size(); i += 4) {
+                for (std::size_t k = 0; k < 3; ++k) sum += std::abs(int{a.rgba[i + k]} - int{b.rgba[i + k]});
+            }
+            const std::size_t pixels = a.rgba.size() / 4;
+            return sum / static_cast<double>(pixels);
+        };
+        // then 1.2 km, whose L14 tiles are not resident: the L12 stand in, and each L14 fades in over them as it lands
+        cam.distance = 1'200.0;
+        int drawn = 0;
+        int frames = 0;
+        int fading_frames = 0;
+        std::size_t fading = 0;
+        std::size_t held = 0;
+        std::size_t under = 0;
+        std::optional<gpu::Pixels> before;
+        std::optional<gpu::Pixels> first;
+        std::vector<double> path; // each fading frame's distance from the stand-ins' picture
+        gpu::Pixels last = read();
+        float least = 1.0F;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+        while (std::chrono::steady_clock::now() < until) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            ++frames;
+            drawn += s.drawn ? 1 : 0;
+            const gpu::Pixels now = read();
+            bool fades = false;
+            for (const scene::CoverTile& t : cover.tiles()) {
+                if (t.fade >= 1.0F) continue;
+                fades = true;
+                ++fading;
+                least = std::min(least, t.fade);
+                const tiles::TileKey k = t.drawn->key;
+                // its ancestor drawn (a stand-in drawing whole) or kept under it, its cells over it
+                held += std::ranges::any_of(cover.with_under(),
+                                            [&](const scene::CoverTile& a) {
+                                                const tiles::TileKey ak = a.drawn->key;
+                                                if (ak.z >= k.z || a.drawn->pack != t.drawn->pack) return false;
+                                                const auto gap = static_cast<std::uint32_t>(k.z - ak.z);
+                                                if ((k.x >> gap) != ak.x || (k.y >> gap) != ak.y) return false;
+                                                const std::uint64_t over =
+                                                    scene::cells_over(a.drawn->cells_per_side, gap, k.x, k.y);
+                                                return (!a.under && a.key == ak) || (a.cells & over) == over;
+                                            })
+                            ? 1
+                            : 0;
+            }
+            under += cover.with_under().size() - cover.tiles().size();
+            if (fades) {
+                ++fading_frames;
+                CHECK_FALSE(map.complete());
+                CHECK(map.animating());
+                if (!first) {
+                    before = last; // the stand-ins' picture
+                    first = now;
+                }
+                if (before) path.push_back(mad(now, *before));
+            }
+            last = now;
+            if (map.complete() && frames > 2) break;
+        }
+        MESSAGE(std::format("{} of {} frames drawn, {} of them fading ({} tiles fading, the least fade {:.3f}, {} of "
+                            "them over an ancestor; {} kept under them)",
+                            drawn, frames, fading_frames, fading, least, held, under));
+        CHECK(drawn == frames);
+        CHECK(fading_frames > 0);
+        CHECK(held == fading);
+        CHECK(under > 0);
+        // once every fade has ended: the L14 alone, nothing kept under them, the picture complete and at rest
+        CHECK(map.complete());
+        CHECK_FALSE(map.animating());
+        CHECK(cover.with_under().size() == cover.tiles().size());
+        CHECK(std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& c) { return c.fade >= 1.0F; }));
+        // each fade starts from the picture before it, the stand-ins', and ends at the tiles' own
+        if (first && before) {
+            const double start = mad(*first, *before);
+            const double end = mad(last, *before);
+            std::string steps;
+            for (const double d : path) steps += std::format(" {:.3f}", d);
+            MESSAGE(std::format("the first fading frame {:.3f} from the stand-ins' picture, the last frame {:.3f}; "
+                                "the fading frames{}",
+                                start, end, steps));
+            CHECK(start < end / 2);
+            // and on through the fade toward the tiles' own, frame by frame
+            for (std::size_t i = 1; i < path.size(); ++i) CHECK(path[i] >= path[i - 1] - 0.05);
+            CHECK(std::ranges::all_of(path, [end](double d) { return d < end; }));
+        }
+        const std::string out = environment("ATLAS_LOOK_OUT");
+        if (!out.empty() && first && before) {
+            CHECK(gpu::write_ppm(*before, (fs::path(out) / "tile_fade_before.ppm").string()));
+            CHECK(gpu::write_ppm(*first, (fs::path(out) / "tile_fade_first.ppm").string()));
+            CHECK(gpu::write_ppm(last, (fs::path(out) / "tile_fade_last.ppm").string()));
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
 } // namespace atlas

@@ -89,6 +89,9 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
 void Cover::update(const view::View& view, const view::Frames& frames, const CoverInputs& in,
                    const Residency& residency, double seconds) {
     tiles_.clear();
+    drawn_tiles_ = 0;
+    drew_before_.swap(drew_);
+    drew_.clear();
     requests_.clear();
     pending_.clear();
     spots_.clear();
@@ -144,10 +147,15 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     if (!spots_.empty()) measure(residency);
     plan(in, residency);
     for (std::size_t p = 0; p < drawn_count_; ++p) emit(p, view, frames, frustum, residency, seconds);
+    lay_under(view, frames, frustum, residency, seconds);
     sort_out(residency);
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
-    // stable: tiles at one distance keep the cover's order, on every libc++
-    std::ranges::stable_sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
+    // stable: tiles at one distance keep the cover's order, on every libc++; those kept under after the tiles drawn
+    const auto nearer = [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; };
+    std::ranges::stable_sort(std::span(tiles_).first(drawn_tiles_), nearer);
+    std::ranges::stable_sort(std::span(tiles_).subspan(drawn_tiles_), nearer);
+    for (const CoverTile& t : tiles_) drew_.push_back(t.drawn->handle);
+    std::ranges::sort(drew_);
     std::ranges::sort(requests_, [](const Request& a, const Request& b) {
         return a.lane != b.lane ? a.lane < b.lane : a.priority > b.priority;
     });
@@ -454,6 +462,58 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
         }
         if (pending_[k].planned) planned_handles_.push_back(r->handle);
     }
+}
+
+void Cover::lay_under(const view::View& view, const view::Frames& frames, const Frustum& frustum,
+                      const Residency& residency, double seconds) {
+    drawn_tiles_ = tiles_.size();
+    const auto drew_before = [this](std::uint32_t handle) { return std::ranges::binary_search(drew_before_, handle); };
+    std::vector<const ResidentTile*> under;
+    // each tile fading in, and those kept under it as they come (one fading in itself keeps its own under it)
+    for (std::size_t i = 0; i < tiles_.size(); ++i) {
+        if (tiles_[i].fade >= 1.0F) continue;
+        const ResidentTile& t = *tiles_[i].drawn;
+        under.clear();
+        // its nearest ancestor that the frame before drew (zooming in, or the stand-in it takes over from)
+        for (std::uint32_t up = 1; up <= t.key.z && under.empty(); ++up) {
+            const tiles::TileKey a(static_cast<std::uint8_t>(t.key.z - up), t.key.x >> up, t.key.y >> up);
+            const ResidentTile* r = residency.find(a, t.pack);
+            if (r != nullptr && drew_before(r->handle)) under.push_back(r);
+        }
+        // else its descendants that it drew (zooming out)
+        if (under.empty()) {
+            for (const std::shared_ptr<const ResidentTile>& r : residency.resident()) {
+                if (r->key.z <= t.key.z || r->pack != t.pack || !drew_before(r->handle)) continue;
+                const auto up = static_cast<std::uint32_t>(r->key.z - t.key.z);
+                if ((r->key.x >> up) == t.key.x && (r->key.y >> up) == t.key.y) under.push_back(r.get());
+            }
+        }
+        // where the frame before drew nothing (the map's first picture, a place panned into view) it shows at once,
+        // as it did before the fades: there is nothing it takes over from
+        if (under.empty()) {
+            for (Shown& sh : shown_) {
+                if (sh.handle == t.handle) sh.since = seconds - fade_seconds_;
+            }
+            tiles_[i].fade = 1.0F;
+            tiles_[i].place.scale.w = 1.0F;
+            continue;
+        }
+        for (const ResidentTile* r : under) {
+            // an ancestor's cells over the fading tile, a descendant whole
+            const std::uint64_t cells =
+                r->key.z < t.key.z
+                    ? cells_over(r->cells_per_side, static_cast<std::uint32_t>(t.key.z - r->key.z), t.key.x, t.key.y)
+                    : ~std::uint64_t{0};
+            if (const auto it = std::ranges::find(tiles_, r, &CoverTile::drawn); it != tiles_.end()) {
+                if (it->under) it->cells |= cells; // (a tile drawn draws whole)
+                continue;
+            }
+            keep(r->handle);
+            draw(*r, cells, view, frames, frustum, r->key, seconds);
+            tiles_.back().under = true;
+        }
+    }
+    fading_ = std::ranges::any_of(tiles_, [](const CoverTile& c) { return c.fade < 1.0F; });
 }
 
 void Cover::keep(std::uint32_t handle) {
