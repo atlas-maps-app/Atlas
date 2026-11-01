@@ -57,7 +57,8 @@
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
 # frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
-# switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
+# switch without its lines, no honest state under atlas.vk.off, or (once world-test is published) a world that does not
+# come or draw whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -67,8 +68,9 @@
 # environment sets another; ATLAS_PACKS (a folder of render packs put on the device for the debug and bench builds to
 # draw: the canal ring, android.yml's apk job's :app:benchTiles, as no APK carries a map).
 # A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
-# of "screens vk pills map truth" (the default, all of them: the debug loop over the screens; VK facts, bench and the
-# crash guard; the frosted pills; the map drawn by the core; the truth phase, which ATLAS_BENCH=0 skips too);
+# of "screens vk pills map world truth" (the default, all of them: the debug loop over the screens; VK facts, bench and
+# the crash guard; the frosted pills; the map drawn by the core; the world beyond the countries from world-test; the
+# truth phase, which ATLAS_BENCH=0 skips too);
 # ATLAS_SCREENS_SKIP, screens another part opens; ATLAS_SCREENS_PART=<k>/<n>, every n-th of the screens left from the
 # k-th, in the app's order. The part writes the app's whole list (screens-all.txt), its own screens (screens.txt) and
 # its phases (phases.txt), which android.yml's emulator-coverage holds the parts to: each screen and phase once.
@@ -88,7 +90,7 @@ IDLE=${ATLAS_IDLE:-20}
 # `timeout` is coreutils (the CI runner has it); a Mac may not.
 LIMIT=""; command -v timeout >/dev/null 2>&1 && LIMIT="timeout 900"
 FAIL=0
-PHASES=${ATLAS_PHASES:-screens vk pills map truth}
+PHASES=${ATLAS_PHASES:-screens vk pills map world truth}
 # Whether this part runs phase $1 (ATLAS_PHASES).
 has_phase() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 
@@ -897,6 +899,73 @@ map_tiles() {
 if has_phase map; then
   map_phase
   adb logcat -d > "$OUT/logcat.map.txt"
+fi
+
+# --- the world beyond the countries (ENGINE.md step 5) -----------------------------------------------------------------
+
+# The world as a phone takes it from the world-test release, as the map's phase takes the Netherlands' tiles from
+# packs-latest: the app's data cleared and the home opened on the Westerkerk (atlas.ci: the canal ring put on the device)
+# with the world's fetch on (atlas.ci.world: CI's other runs ask no server for it, as they build no windows), and the
+# world script (atlas.vk.script world) out to 25 km pitched 60° (the canal ring's tiles beside the world) and to 100 km
+# pitched 30°. world.idx and the globe must come at the first start (`vk world: world.idx (<n> packs) and
+# world-globe.atlas on the phone`), the Westerkerk's block's parts as the view first enters it (`vk world: parts …`),
+# and each view's picture be final with the core's last rest there saying the world drew it (`vk tiles … world <n>
+# drawn finest <z> wanted 0 bare 0`: every tile it wants resident, no cell without one; at 100 km a level of the
+# block's packs, 6 or finer, where the globe holds L0 to L3), with no crash or ANR. While world-test is not published
+# (the user's yes) the phase says so and draws nothing: the app's fetch then finds no release and asks again every ten
+# minutes. The lines go to world.txt, the screens to world-25km.png and world-100km.png.
+WORLD_TEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-test
+world_phase() {
+  local code km next line rest at drawn finest wanted bare
+  code=$(curl -s -r 0-0 -L -o /dev/null -w '%{http_code}' "$WORLD_TEST/world.idx")
+  if [ "$code" != 200 ] && [ "$code" != 206 ]; then
+    echo "WARNING: world: world-test is not published (HTTP $code for its world.idx): no world to draw yet"
+    return
+  fi
+  fresh_state
+  vk_launch world --es atlas.screen home --ez atlas.ci true --ez atlas.ci.world true --ez atlas.vk.ci true --es atlas.vk.script world
+  if wait_line world 300 "vk world: world.idx"; then
+    echo "world: $(since_marker world | grep -m1 -o 'vk world: world.idx.*' | sed 's/^vk world: //')"
+  else
+    echo "WORLD FAILED: world.idx and the globe were not on the phone within 300 s"; FAIL=1
+  fi
+  for km in 25 100; do
+    if [ "$km" = 25 ]; then next="world out to 100 km"; else next="back"; fi
+    # the script waits up to 300 s for the packs, then 300 s for the picture, and holds it 15 s
+    if ! wait_line world 700 "vk script: world at $km km "; then
+      echo "WORLD FAILED: the world script did not reach its view at $km km"; FAIL=1; break
+    fi
+    line=$(since_marker world | grep -m1 -o "vk script: world at $km km .*")
+    adb exec-out screencap -p > "$OUT/world-${km}km.png"
+    echo "world: ${line#vk script: }"
+    [[ $line == *" final" ]] || { echo "WORLD FAILED: the picture at $km km was not final"; FAIL=1; }
+    # the core's last rest at the view, once the script has moved on from it
+    wait_line world 60 "vk script: $next\$" || echo "world: the script did not move on from $km km within 60 s"
+    rest=$(since_marker world | sed -n "/vk script: world out to $km km\$/,/vk script: $next\$/p" |
+      grep -o 'vk tiles .* world [0-9]* drawn .*' | tail -1)
+    echo "world: at $km km, the last rest: ${rest:-none}"
+    at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\).*/\1 \2 \3 \4/p' <<< "$rest")
+    read -r drawn finest wanted bare <<< "${at:-0 0 -1 -1}"
+    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$bare" != 0 ]; then
+      echo "WORLD FAILED: at $km km the core's last rest did not draw the world whole (${rest:-no rest line with the world})"; FAIL=1
+    fi
+    if [ "$km" = 100 ] && [ "$finest" -lt 6 ]; then
+      echo "WORLD FAILED: at 100 km the world drew no level of the block's packs (its finest L$finest)"; FAIL=1
+    fi
+  done
+  wait_line world 300 "vk script done" || { echo "WORLD FAILED: the world script did not finish"; FAIL=1; }
+  since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|transition)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
+  if grep -q '^vk world: parts ' "$OUT/world.txt"; then
+    echo "world: $(grep -m1 '^vk world: parts ' "$OUT/world.txt" | sed 's/^vk world: //')"
+  else
+    echo "WORLD FAILED: no part of the Westerkerk's block came (no 'vk world: parts' line)"; FAIL=1
+  fi
+  vk_crashes world; vk_anr world
+  adb shell am force-stop $PKG
+}
+if has_phase world; then
+  world_phase
+  adb logcat -d > "$OUT/logcat.world.txt"
 fi
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------

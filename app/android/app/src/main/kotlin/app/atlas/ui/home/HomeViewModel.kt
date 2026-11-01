@@ -243,10 +243,17 @@ class HomeViewModel(
         }
         // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
         viewModelScope.launch { minutes.collect { map.time = it } }
-        // CI's scripted run of the core's transitional rule (MainActivity's atlas.vk.script; debug and bench builds).
-        if (MapEngine.script == TRANSITION_SCRIPT) {
-            MapEngine.script = null
-            viewModelScope.launch { transitionScript() }
+        // CI's scripted runs of the core (MainActivity's atlas.vk.script; debug and bench builds): the transitional rule,
+        // and the world beyond the countries
+        when (MapEngine.script) {
+            TRANSITION_SCRIPT -> {
+                MapEngine.script = null
+                viewModelScope.launch { transitionScript() }
+            }
+            WORLD_SCRIPT -> {
+                MapEngine.script = null
+                viewModelScope.launch { worldScript() }
+            }
         }
     }
 
@@ -274,10 +281,52 @@ class HomeViewModel(
         log("vk script done")
     }
 
-    /** Waits until the map's status passes [test], at most [timeoutMs]. */
-    private suspend fun awaitStatus(timeoutMs: Long, test: (MapStatus) -> Boolean) {
-        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { androidx.compose.runtime.snapshotFlow { map.status }.first(test) }
+    /**
+     * CI's scripted look at the world beyond the countries (ENGINE.md step 5; smoke.sh's world phase, with
+     * `atlas.ci.world`): once the core's first picture is final, the camera goes out from the start to each of
+     * [WORLD_VIEWS] in turn, waits there for the world's packs of the start's block (the first start's index and globe,
+     * then the block's parts, which the view's first frames there ask for) and then for the map's picture to be final,
+     * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then back. `vk script …` lines mark each step for smoke.sh,
+     * which reads the world's fetch (`vk world` lines) and the core's rests (`vk tiles … world` lines) between them.
+     */
+    private suspend fun worldScript() {
+        val log = { line: String -> android.util.Log.i("AtlasMap", line) }
+        val start = map.camera
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        for ((km, pitch) in WORLD_VIEWS) {
+            log("vk script: world out to $km km")
+            map.camera = start.copy(zoom = HomeView.zoomForDistance(km * 1_000.0, HomeView.HEIGHT_DP, start.target.lat), pitch = pitch)
+            val here = kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+                while (!worldHere(start.target)) delay(1_000)
+            } != null
+            log("vk script: world's packs ${if (here) "on the phone" else "not on the phone within ${WORLD_WAIT_MS / 1_000} s"}")
+            // the maps handed the packs, and the core's frames with them under way
+            delay(WORLD_SETTLE_MS)
+            val final = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
+            log("vk script: world at $km km ${if (final) "final" else "not final: ${map.status}"}")
+            delay(WORLD_HOLD_MS)
+        }
+        log("vk script: back")
+        map.camera = start
+        delay(SCRIPT_SETTLE_MS)
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script done")
     }
+
+    /** Whether the world's index, its globe and the parts holding [place]'s packs are on the phone (WorldFetch's files). */
+    private suspend fun worldHere(place: LatLon): Boolean = withContext(Dispatchers.IO) {
+        val dir = MapEngine.worldDir() ?: return@withContext false
+        val idx = java.io.File(dir, app.atlas.tiles.WorldFetch.INDEX)
+        if (!idx.isFile || !java.io.File(dir, app.atlas.tiles.WorldFetch.GLOBE).isFile) return@withContext false
+        val index = runCatching { app.atlas.tiles.WorldIndex.read(idx.readBytes()) }.getOrNull() ?: return@withContext false
+        app.atlas.tiles.WorldFetch.missing(dir, index, place.lat, place.lon).isEmpty()
+    }
+
+    /** Waits until the map's status passes [test], at most [timeoutMs]; false where it did not. */
+    private suspend fun awaitStatus(timeoutMs: Long, test: (MapStatus) -> Boolean): Boolean =
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { androidx.compose.runtime.snapshotFlow { map.status }.first(test) } != null
 
     fun onCameraMove(camera: CameraPosition, byUser: Boolean) {
         if (byUser) {
@@ -443,6 +492,20 @@ class HomeViewModel(
         val AWAY = LatLon(50.6292, 3.0573)
         private const val SCRIPT_WAIT_MS = 180_000L
         private const val SCRIPT_SETTLE_MS = 2_000L
+
+        /** CI's script of the world beyond the countries (MainActivity's `atlas.vk.script world`, with `atlas.ci.world`). */
+        const val WORLD_SCRIPT = "world"
+
+        /**
+         * Where the world script looks from, km from the start's target and pitch: the countries' cover beside the world
+         * (the canal ring's tiles at 25 km pitched 60°, ENGINE.md step 5's seam), and the world alone at 100 km pitched 30°.
+         */
+        private val WORLD_VIEWS = listOf(25 to 60.0, 100 to 30.0)
+
+        /** How long the script waits for the world's packs, then for the picture: world-test's 92 MB over the emulator's network. */
+        private const val WORLD_WAIT_MS = 300_000L
+        private const val WORLD_SETTLE_MS = 10_000L
+        private const val WORLD_HOLD_MS = 15_000L
     }
 }
 

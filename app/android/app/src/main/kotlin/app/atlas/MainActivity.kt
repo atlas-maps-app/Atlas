@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
         // VK facts and VK bench (plan-vector A0): the phone's Vulkan, and the stand-in measured on it
         if (showVulkanScreen(intent)) return
         offerBenchShortcuts()
+        // The world beyond the countries comes with the map (not with CI's other screens, nor VK facts and bench)
+        allowWorld(services, intent)
         // The map's core starts with the first map screen, on its own thread beside Compose's first frame (T8), behind
         // the crash guard; it draws the maps where it has tiles, today's map elsewhere (the transitional rule until A5),
         // and a phone that cannot run it shows T2's honest state in the map's place.
@@ -117,6 +119,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (showVulkanScreen(intent)) return
+        allowWorld(services, intent)
         if (finishOsmSignIn(intent)) return
         stackFor(intent)?.let { navigator?.reset(it) }
     }
@@ -231,6 +234,17 @@ class MainActivity : ComponentActivity() {
 
         /** CI: true frosts the Map home's chrome and the bottom bar whatever the settings say (CI's pill check). */
         const val EXTRA_CI_GLASS = "atlas.ci.glass"
+
+        /** CI: true fetches the world in a CI run (`atlas.ci`), which otherwise asks no server for it (smoke.sh's world phase). */
+        const val EXTRA_CI_WORLD = "atlas.ci.world"
+
+        /**
+         * The world's fetch, once a launch of the map says whether it may (Services.worldFetch): not in CI's runs, but for
+         * its world phase.
+         */
+        private fun allowWorld(services: Services, intent: Intent) {
+            if (!services.ciRun || intent.getBooleanExtra(EXTRA_CI_WORLD, false)) services.worldFetch.complete(Unit)
+        }
         const val SCREEN_LIST = "list"
 
         /** CI: the map view's SVG filter probes through AGSL, the GPU path, against the CPU's. */

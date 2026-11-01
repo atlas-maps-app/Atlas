@@ -74,10 +74,14 @@ class WorldFetchTest {
         assertArrayEquals(p.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertEquals(3, fetch.index!!.entries.size)
         assertEquals(listOf(WorldFetch.INDEX, WorldFetch.GLOBE), requested())
+        // what a place lacks (CI's world script asks it too): Amsterdam both parts, fine first; the open sea none
+        assertEquals(listOf(0, 1), WorldFetch.missing(world, fetch.index!!, amsterdam.first, amsterdam.second))
+        assertEquals(emptyList<Int>(), WorldFetch.missing(world, fetch.index!!, ocean.first, ocean.second))
         // Amsterdam: its fine pack's part and its coarse pack's, whole
         assertEquals(listOf("world-mid.000", "world-coarse.000"), fetch.enter(amsterdam.first, amsterdam.second))
         assertArrayEquals(p.mid, File(world, "world-mid.000").readBytes())
         assertArrayEquals(p.coarse, File(world, "world-coarse.000").readBytes())
+        assertEquals(emptyList<Int>(), WorldFetch.missing(world, fetch.index!!, amsterdam.first, amsterdam.second))
         // each once: again, a neighbouring block in the same part, a second start and the open sea ask for nothing
         val asked = requested().size
         assertEquals(emptyList<String>(), fetch.enter(amsterdam.first, amsterdam.second))

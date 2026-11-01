@@ -9,8 +9,9 @@
 # unit tests (unit-app), every other module's (unit-rest), the JNI tests against the core's host build (mapcorecheck)
 # and the likeness smoke tier (likeness) are jobs of their own, and once the APKs are built the emulator's work runs
 # in five parts, each on an emulator of its own: the home and the filters with the bench APK's truth phase, the Vulkan
-# core's phases (VK facts, bench and the crash guard, the frosted pills, the map), and every other screen in three
-# shares. emulator-coverage then holds the parts to having opened each screen the app lists, and run each phase, once.
+# core's phases (VK facts, bench and the crash guard, the frosted pills, the map, the world), and every other screen
+# in three shares. emulator-coverage then holds the parts to having opened each screen the app lists, and run each
+# phase, once.
 name: Android
 
 on:
@@ -727,10 +728,11 @@ jobs:
     # The real thing: the APK on an Android emulator, opened on each screen, with screenshots and frame timings, in
     # parts on emulators of their own (smoke.sh's ATLAS_PHASES and ATLAS_SCREENS_*): bench, the home and the filters
     # at the debug build's first launch and then the bench APK's truth phase, which tables both; vk, VK facts, VK bench
-    # and the crash guard, the frosted pills and the map drawn by the core, in that order on one emulator (the map's
-    # launches find the pipeline cache warm); and screens-<k>, every third of the other screens from the k-th. A run by
-    # hand that names its screens opens them on one emulator, every phase after them. It runs whenever the APKs were
-    # built, even when a unit test failed: the device's word is worth having either way.
+    # and the crash guard, the frosted pills, the map drawn by the core and the world beyond the countries from the
+    # world-test release (once published), in that order on one emulator (the map's launches find the pipeline cache
+    # warm); and screens-<k>, every third of the other screens from the k-th. A run by hand that names its screens
+    # opens them on one emulator, every phase after them. It runs whenever the APKs were built, even when a unit test
+    # failed: the device's word is worth having either way.
     name: emulator ${{ matrix.part }}
     needs: apk
     runs-on: ubuntu-latest
@@ -772,7 +774,7 @@ jobs:
             case "$PART" in
               all) echo "ATLAS_SCREENS=$SCREENS" ;;
               bench) echo "ATLAS_SCREENS=home filters"; echo "ATLAS_PHASES=screens truth" ;;
-              vk) echo "ATLAS_PHASES=vk pills map" ;;
+              vk) echo "ATLAS_PHASES=vk pills map world" ;;
               screens-*) echo "ATLAS_SCREENS_SKIP=home filters"; echo "ATLAS_SCREENS_PART=${PART#screens-}/3"; echo "ATLAS_PHASES=screens" ;;
               *) echo "::error::no part $PART"; exit 1 ;;
             esac
@@ -826,7 +828,8 @@ jobs:
           if-no-files-found: ignore
 
   # The emulator's parts opened every screen the app lists for CI exactly once between them, and ran each phase (VK
-  # facts, bench and guard; the pills; the map; the truth phase, unless a run by hand left the bench out) exactly once.
+  # facts, bench and guard; the pills; the map; the world; the truth phase, unless a run by hand left the bench out)
+  # exactly once.
   emulator-coverage:
     needs: emulator
     if: ${{ !cancelled() && needs.emulator.result != 'skipped' && !(github.event_name == 'workflow_dispatch' && inputs.screens != '') }}
@@ -858,8 +861,8 @@ jobs:
           [ -z "$twice" ] || { echo "::error::screens more than one part opened: $(tr '\n' ' ' <<< "$twice")"; status=1; }
           [ -z "$extra" ] || { echo "::error::screens the app does not list: $(tr '\n' ' ' <<< "$extra")"; status=1; }
           phases=$(cat parts/*/phases.txt | grep . | grep -v -x screens | sort || true)
-          want="map pills vk"
-          if [ "$BENCH" = 1 ]; then want="map pills truth vk"; fi
+          want="map pills vk world"
+          if [ "$BENCH" = 1 ]; then want="map pills truth vk world"; fi
           if [ "$(tr '\n' ' ' <<< "$phases" | sed 's/ $//')" != "$want" ]; then
             echo "::error::the parts ran the phases '$(tr '\n' ' ' <<< "$phases")', not each of '$want' once"; status=1
           fi

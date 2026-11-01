@@ -1117,12 +1117,20 @@ std::string World::tiles_line() const {
     // the heaps' bytes in use (MB) of their budget, the tiles that found no room and wait for some to go, what the
     // tiles the cover asks for are planned to take (MB; the plan's budget is plan_fraction of the heaps') and the
     // places it gave a coarser level than their distance asks for
-    return std::format("vk tiles {} resident {:.1f} of {} build {:.1f} waiting {} planned {:.1f} coarser {} holes {} "
-                       "built {} failed {}",
-                       r.resident, static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
-                       r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting,
-                       static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened(), cover_.holes(), r.built,
-                       r.failed);
+    std::string line = std::format(
+        "vk tiles {} resident {:.1f} of {} build {:.1f} waiting {} planned {:.1f} coarser {} "
+        "holes {} built {} failed {}",
+        r.resident, static_cast<double>(h.total_used()) / 1.0e6, options_.heaps.total >> 20U,
+        r.built > 0 ? r.build_ms / static_cast<double>(r.built) : 0.0, r.waiting,
+        static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened(), cover_.holes(), r.built, r.failed);
+    // where the world draws (beyond 18 km, ENGINE.md step 5): its tiles drawn and the finest level among them, the
+    // tiles its cover wants that are not resident yet and the cells in view no resident tile holds (CI's world phase)
+    if (const WorldFrame* w = world_frame(); w != nullptr) {
+        unsigned finest = 0;
+        for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
+        line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size(), finest, w->wanted, w->bare);
+    }
+    return line;
 }
 
 } // namespace atlas::scene

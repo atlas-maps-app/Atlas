@@ -422,6 +422,14 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     var ciRun: Boolean = false
 
     /**
+     * Whether this process fetches the world beyond the countries (ENGINE.md step 5: world.idx and the globe at the first
+     * start, a block's parts as a view enters it): completed by the first launch of the map, except in CI's runs
+     * (`atlas.ci`), which ask no server for the world as they ask none for windows, but for CI's world phase
+     * (`atlas.ci.world`, ci/smoke.sh). A process that opens no map (CI's screen list, VK facts and bench) fetches none.
+     */
+    val worldFetch = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /**
      * CI's light (`atlas.ci.theme`): the home's map in this theme whatever the settings say, so two launches compared
      * pixel for pixel draw the same moment instead of whichever the live forecast gave each by then.
      */

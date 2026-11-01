@@ -55,18 +55,11 @@ class WorldFetch(
     @Synchronized
     fun enter(lat: Double, lon: Double): List<String> {
         val index = index ?: return emptyList()
-        val fetched = ArrayList<String>()
-        for (level in intArrayOf(WorldIndex.FINE_BLOCK, WorldIndex.COARSE_BLOCK)) {
-            val (x, y) = tileOf(lat, lon, level)
-            val e = index.find(level, x, y) ?: continue
-            val part = index.parts[e.part]
-            val file = File(dir, part.name)
-            // a part is moved into place only once whole and checked
-            if (file.length() == part.bytes) continue
-            fetch(part.name, file) { checkPart(it, e.part, index) }
-            fetched += part.name
+        return missing(dir, index, lat, lon).map { number ->
+            val part = index.parts[number]
+            fetch(part.name, File(dir, part.name)) { checkPart(it, number, index) }
+            part.name
         }
-        return fetched
     }
 
     /** Fetches [name] of the release into [target] by way of `<target>.download`, moved into place once [check] passes. */
@@ -120,6 +113,17 @@ class WorldFetch(
         const val GLOBE = "world-globe.atlas"
 
         private const val BUFFER = 1 shl 16
+
+        /**
+         * The parts of [index] holding the packs of the place at [lat], [lon] (its L6 tile's fine pack, its L3 tile's
+         * coarse pack) that [dir] lacks, by number, fine first: a part is moved into place only once whole and checked,
+         * so one as long as the index says is on the phone. None where no pack holds the place.
+         */
+        fun missing(dir: File, index: WorldIndex, lat: Double, lon: Double): List<Int> =
+            listOf(WorldIndex.FINE_BLOCK, WorldIndex.COARSE_BLOCK).mapNotNull { level ->
+                val (x, y) = tileOf(lat, lon, level)
+                index.find(level, x, y)?.part
+            }.distinct().filter { File(dir, index.parts[it].name).length() != index.parts[it].bytes }
 
         /** Web Mercator's tile at [level] holding [lat], [lon] (clamped to the tiles' 85.05°). */
         fun tileOf(lat: Double, lon: Double, level: Int): Pair<Int, Int> {
