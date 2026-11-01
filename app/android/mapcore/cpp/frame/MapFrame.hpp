@@ -28,6 +28,7 @@
 #include "scene/Pick.hpp"
 #include "scene/World.hpp"
 #include "standin/SessionMap.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tiles/Store.hpp"
 
@@ -97,6 +98,14 @@ public:
     [[nodiscard]] std::string set_packs(std::vector<MapPack> packs);
     /// The moment's theme from now on (checked by style::read_theme_block).
     void set_theme(const style::ThemeBlock& theme) noexcept { theme_ = theme; }
+    /// The user's palette from now on (checked by style::read_palette_block; today's look until one is handed over).
+    void set_palette(const style::PaletteBlock& palette) noexcept {
+        palette_ = palette;
+        ++palette_revision_;
+    }
+    /// The user's palette, and how many times one was handed over (a pass redoes what it drew by it when that moves).
+    [[nodiscard]] const style::PaletteBlock& palette() const noexcept { return palette_; }
+    [[nodiscard]] std::uint64_t palette_revision() const noexcept { return palette_revision_; }
     /// The app's labels from now on (MapCore.labels; null: none), drawn by the labels pass.
     void set_labels(std::shared_ptr<const labels::LabelSet> labels) noexcept { labels_ = std::move(labels); }
     /// The app's markers from now on (MapCore.markers; null: none), drawn by the markers pass.
@@ -176,6 +185,8 @@ private:
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;
+    style::PaletteBlock palette_{};
+    std::uint64_t palette_revision_ = 0;
     std::shared_ptr<const labels::LabelSet> labels_;
     std::shared_ptr<const markers::MarkerSet> markers_;
     std::shared_ptr<const routes::RouteSet> routes_;

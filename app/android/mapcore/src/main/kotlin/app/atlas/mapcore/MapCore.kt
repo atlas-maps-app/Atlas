@@ -275,6 +275,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The moment's theme for the map from now on (`state.ThemeBlock`'s block, about once a minute); "" or why refused. */
     fun moment(theme: ByteBuffer): String = core.call("the core is closed") { Native.moment(it, theme) }
 
+    /** The user's palette for the map from now on (`state.PaletteBlock`'s block), drawn at once; "" or why refused. */
+    fun palette(block: ByteBuffer): String = core.call("the core is closed") { Native.palette(it, block) }
+
     /**
      * The map's labels from now on, as `state.LabelBlock` writes them (each label's sprite, drawn once by the app at its
      * own size and at the band's top, with what the core places it by; an empty block, none), at [revision]: the core

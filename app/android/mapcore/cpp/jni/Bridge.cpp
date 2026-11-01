@@ -36,6 +36,7 @@
 #include "routes/Routes.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
@@ -313,6 +314,14 @@ public:
         on_session([this, &theme] {
             map_->set_theme(theme);
             ask_camera();
+        });
+    }
+
+    /// The user's palette for the map from now on (the Map look), drawn at once, at rest too.
+    void palette(const style::PaletteBlock& palette) {
+        on_session([this, &palette] {
+            map_->set_palette(palette);
+            ask_frame();
         });
     }
 
@@ -1125,6 +1134,23 @@ jboolean native_edit_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y,
     return JNI_TRUE;
 }
 
+/// The user's palette for the map (MK/state/PaletteBlock.kt's 1,040 bytes in a direct buffer); "" or why it was
+/// refused.
+jstring native_palette(JNIEnv* env, jclass /*cls*/, jlong handle, jobject palette) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = palette == nullptr ? nullptr : env->GetDirectBufferAddress(palette);
+    const jlong capacity = palette == nullptr ? 0 : env->GetDirectBufferCapacity(palette);
+    if (address == nullptr || std::cmp_less(capacity, style::palette_block_size)) {
+        return java(env, "the palette must be a direct buffer of 1,040 bytes");
+    }
+    const auto block =
+        style::read_palette_block(std::span(static_cast<const std::byte*>(address), style::palette_block_size));
+    if (!block) return java(env, std::format("the palette was refused: {}", style::name_of(block.error())));
+    core->palette(*block);
+    return java(env, "");
+}
+
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
 jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) {
     Core* core = core_of(handle);
@@ -1394,8 +1420,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 50>& methods() {
-    static const std::array<JNINativeMethod, 50> table{{
+const std::array<JNINativeMethod, 51>& methods() {
+    static const std::array<JNINativeMethod, 51> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1444,6 +1470,7 @@ const std::array<JNINativeMethod, 50>& methods() {
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
+        method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),

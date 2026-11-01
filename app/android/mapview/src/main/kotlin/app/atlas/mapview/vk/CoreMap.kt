@@ -10,6 +10,7 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.MarkerBlock
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
 import app.atlas.mapview.EngineFrames
@@ -25,6 +26,7 @@ import app.atlas.mapview.MarkerSprites
 import app.atlas.mapview.OverlayPainter
 import app.atlas.mapview.RouteChips
 import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.Slot
 import app.atlas.model.OsmType
 import app.atlas.render.live.Moment
 import java.time.ZoneId
@@ -100,6 +102,7 @@ internal class CoreMap(
     )
 
     private val theme = ThemeBlock.allocate()
+    private val paletteBlock = PaletteBlock.allocate()
     private var lastMoment: Moment? = null
     private var lastZone: ZoneId? = null
     private var lastTone = 1f
@@ -155,6 +158,11 @@ internal class CoreMap(
         val palette = MapEngine.palette
         if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette) return ""
         val why = runCatching {
+            if (palette != lastPalette) {
+                // the colours the theme does not carry (buildings, trees, surfaces), drawn by the core's passes
+                PaletteBlock.write(paletteBlock, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
+                core.palette(paletteBlock).takeIf { it.isNotEmpty() }?.let { error(it) }
+            }
             CoreMoment.write(theme, moment, zone, daylight, tone, palette)
             core.moment(theme)
         }.getOrElse { "the moment could not be made: ${it.message ?: it}" }

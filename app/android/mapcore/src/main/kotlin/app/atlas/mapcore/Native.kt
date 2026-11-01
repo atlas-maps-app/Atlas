@@ -243,6 +243,9 @@ object Native {
     /** The moment's theme for the map (`state.ThemeBlock`'s 256 bytes in a direct buffer); "" or why it was refused. */
     @JvmStatic external fun moment(handle: Long, theme: ByteBuffer): String
 
+    /** The user's palette for the map (`state.PaletteBlock`'s 1,040 bytes in a direct buffer); "" or why it was refused. */
+    @JvmStatic external fun palette(handle: Long, palette: ByteBuffer): String
+
     /** The windows the map wants built, nearest first, each its tile's key packed as `z shl 48 or x shl 24 or y`. */
     @JvmStatic external fun wantedWindows(handle: Long): LongArray
 

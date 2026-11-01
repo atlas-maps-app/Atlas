@@ -215,9 +215,9 @@ sourceSets {
         // Files of :mapview, an Android library this module cannot depend on, that use no Android types, compiled here
         // without their neighbours: K17a's field parity (MT/fx) runs the port's Turbulence beside the core's (it needs
         // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
-        // parts with the app's own CoreMoment and MapParts.
+        // parts with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
         val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
-        val mapviewShared = listOf("svg/Turbulence.kt", "MapParts.kt", "vk/CoreMoment.kt").map(mapviewKotlin::resolve).toSet()
+        val mapviewShared = listOf("svg/Turbulence.kt", "MapParts.kt", "vk/CoreMoment.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
         kotlin.srcDir(mapviewKotlin)
         kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
     }
