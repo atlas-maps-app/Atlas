@@ -26,6 +26,11 @@ static const uint FRAME_NO_GRAIN = 512u;
 // The map leaves the trees' leaf filters out (style::camera_part::leaf_filters): the crowns are drawn as their circles,
 // as where mat_on says no.
 static const uint FRAME_NO_CROWNS = 1024u;
+// The map leaves out a facade's shop glazing, its plinth or its cornice (style::camera_part::shop_glazing, plinths,
+// cornices): window_facades_cs writes their records without them.
+static const uint FRAME_NO_GLAZING = 2048u;
+static const uint FRAME_NO_PLINTHS = 4096u;
+static const uint FRAME_NO_CORNICES = 8192u;
 
 /// The thin strokes of the buildings in the style of the frame's active pack (tiles/Style.hpp's EdgesStyle, the engine's
 /// style file's `buildings` and `houseboats`; a coarser pack drawn around it, made with the same file, draws them so

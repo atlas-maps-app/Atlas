@@ -253,8 +253,8 @@ class MapData(private val services: Services) {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
         }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: every part drawn when unset (MapParts.byDefault); set before the settings are read, so the first frame
-        // draws what the defaults say
+        // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
+        // are read, so the first frame draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }

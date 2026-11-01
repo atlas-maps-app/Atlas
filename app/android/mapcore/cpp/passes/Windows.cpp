@@ -259,10 +259,14 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     const bool night = (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U;
     const double focal = state.view ? state.view->camera().focal() : 0.0;
     const auto frame_width = static_cast<double>(shaders::building_window_frame_width(state.block.windows));
-    constexpr std::uint8_t detailed =
-        geometry::window_flag::plinth | geometry::window_flag::cornice | geometry::window_flag::glazing;
     // the parts the map leaves out that their reach does not (Buildings::select): a church's own windows, whose
-    // records are the jobs' alone, a cabin's panes, and a kit's lines and eaves' shadows (records the CPU lays)
+    // records are the jobs' alone, a cabin's panes, and a kit's lines and eaves' shadows (records the CPU lays); and a
+    // plinth or a cornice, whose wall has a facade record only for one drawn (a shop's glazing keeps its record, drawn
+    // or not, as the GPU counts it)
+    const auto facade_flags =
+        static_cast<std::uint8_t>((out(style::camera_part::plinths) ? 0U : geometry::window_flag::plinth) |
+                                  (out(style::camera_part::cornices) ? 0U : geometry::window_flag::cornice));
+    const auto detailed = static_cast<std::uint8_t>(facade_flags | geometry::window_flag::glazing);
     const bool no_windows = out(style::camera_part::windows);
     const bool no_churches = out(style::camera_part::church_windows);
     const bool kit = !out(style::camera_part::kit_details);
@@ -386,8 +390,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                         window_widths(detail, weather, row < depths.size() ? depths[row] : 0.0, focal, frame_width);
                     w[at + job_widths + k] = std::uint32_t{widths.frame} | (std::uint32_t{widths.sash} << 16U);
                     w[at + job_facades + k] = no_near;
-                    if ((flags & (geometry::window_flag::plinth | geometry::window_flag::cornice)) != 0U &&
-                        (detail & shaders::BUILDING_DETAIL_FACADES) != 0U) {
+                    if ((flags & facade_flags) != 0U && (detail & shaders::BUILDING_DETAIL_FACADES) != 0U) {
                         w[at + job_facades + k] = facades++;
                     }
                     // its church windows (none of its plain ones then): their records, their leading's width

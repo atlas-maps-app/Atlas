@@ -379,6 +379,8 @@
     <string name="mine_part_setts">Klinkers</string>
     <string name="mine_part_ground_text">Grachtnamen</string>
     <string name="mine_part_quays">Kademuren</string>
+    <string name="mine_part_quay_waterlines">Waterlijnen langs kades</string>
+    <string name="mine_part_quay_tops">Kaderanden</string>
     <string name="mine_part_sky">Lucht</string>
     <string name="mine_part_building_shadows">Gebouwschaduwen</string>
     <string name="mine_part_shadow_blur">Zachte schaduwen</string>
@@ -403,7 +405,9 @@
     <string name="mine_part_roof_edges">Dakranden</string>
     <string name="mine_part_windows">Ramen</string>
     <string name="mine_part_window_depth">Raamdiepte</string>
-    <string name="mine_part_flat_detail">Etalages en plinten</string>
+    <string name="mine_part_shop_glazing">Etalages</string>
+    <string name="mine_part_plinths">Plinten</string>
+    <string name="mine_part_cornices">Kroonlijsten</string>
     <string name="mine_part_church_windows">Kerkramen</string>
     <string name="mine_part_material_faces">Gevelmaterialen</string>
     <string name="mine_part_hoist_beams">Hijsbalken</string>

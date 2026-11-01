@@ -78,18 +78,22 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     const double focal = state.view ? state.view->camera().focal() : 0.0;
     // A part the map leaves out reaches no item (its detail bit is never set), so the CPU's jobs and the GPU's stages,
     // which both count a wall's records by its rank's detail, leave it out alike. A church's own windows share their
-    // reach with a houseboat cabin's panes: those the jobs leave out (passes/Windows.cpp).
+    // reach with a houseboat cabin's panes: those the jobs leave out (passes/Windows.cpp). The flat detail reaches
+    // while any of its three parts is drawn; the frame's mode tells its stage which of them it leaves out
+    // (FrameBuilder: FRAME_NO_GLAZING, FRAME_NO_PLINTHS, FRAME_NO_CORNICES).
     left_out_ = state.camera.parts;
     namespace part = style::camera_part;
     const auto reach = [&](std::uint64_t p, double d) { return out(p) ? none : d; };
+    const std::uint64_t flat_detail = part::shop_glazing | part::plinths | part::cornices;
+    const double facades = (left_out_ & flat_detail) == flat_detail ? none : geometry::facades_reach;
     const std::array<double, 11> details{geometry::cells_reach,
                                          reach(part::windows, win_d),
                                          geometry::church_windows_reach,
                                          reach(part::window_depth, geometry::deep_windows_reach),
                                          reach(part::window_depth, geometry::sash_reach),
-                                         reach(part::flat_detail, geometry::facades_reach),
-                                         reach(part::flat_detail, geometry::low_plinth_reach),
-                                         reach(part::flat_detail, geometry::cornices_reach),
+                                         facades,
+                                         reach(part::plinths, geometry::low_plinth_reach),
+                                         reach(part::cornices, geometry::cornices_reach),
                                          reach(part::material_faces, win_d * 1.35),
                                          reach(part::hoist_beams, geometry::beams_reach),
                                          reach(part::kit_details, corner_boards_reach(focal))};

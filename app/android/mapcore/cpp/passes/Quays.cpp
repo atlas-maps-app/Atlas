@@ -130,8 +130,12 @@ namespace {
 void Ground::decide_quays(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.quays.clear();
-    // `if th.get('wx')`: without weather the water is flat and has no walls
-    if (!f.weather || no_quays_ || f.out(style::camera_part::quays)) return;
+    // `if th.get('wx')`: without weather the water is flat and has no walls; and each of a wall's faces the map leaves
+    // out (style::camera_part's quays, quay_waterlines, quay_tops: each its own switch) is not decided
+    const bool walls = !f.out(style::camera_part::quays);
+    const bool waterlines = !f.out(style::camera_part::quay_waterlines);
+    const bool tops = !f.out(style::camera_part::quay_tops);
+    if (!f.weather || no_quays_ || (!walls && !waterlines && !tops)) return;
     const shaders::Theme& theme = state.block.theme;
     const std::array<double, 3>& light = f.light;
     // every piece of the drawn tiles, in water_edges' order: the sun's pieces where its bits have come, else each
@@ -229,7 +233,7 @@ void Ground::decide_quays(const frame::FrameState& state) {
                       .sample = p.sample,
                       .sampled = toward && p.sampled};
         const auto wall = face_of(face, wy);
-        const bool f1 = face_kept(cam, wall, 300, 0.12, false, cs);
+        const bool f1 = walls && face_kept(cam, wall, 300, 0.12, false, cs);
         if (f1 && g.tone && toward && wy < -2 && p.sampled && p.columns > 0) {
             // a tall quay wall in sun: its lit bands' path, then its unlit ones'
             for (const bool want : {true, false}) {
@@ -256,13 +260,13 @@ void Ground::decide_quays(const frame::FrameState& state) {
         waterline.colour = f.night ? g.quay_waterline.night : g.quay_waterline.day;
         waterline.lit = waterline.unlit = waterline.colour;
         waterline.sampled = false;
-        if (face_kept(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
+        if (waterlines && face_kept(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
         QuayFace coping = face;
         coping.kind = QuayFace::Kind::coping;
         coping.lit = lit_colour(theme, g.quay_coping, q.nx, q.nz, toward);
         coping.unlit = lit_colour(theme, g.quay_coping, q.nx, q.nz, false);
         coping.colour = lit ? coping.lit : coping.unlit;
-        if (face_kept(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
+        if (tops && face_kept(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
     }
 }
 

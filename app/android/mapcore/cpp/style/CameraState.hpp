@@ -93,7 +93,7 @@ inline constexpr std::uint64_t ground_lines = 1ULL << 3U;
 inline constexpr std::uint64_t setts = 1ULL << 4U;
 /// The names on the ground: the canal names and the runways' designators (passes/GroundText.hpp).
 inline constexpr std::uint64_t ground_text = 1ULL << 5U;
-/// The quay walls.
+/// The quay walls' brick faces, down to the water (their waterlines and tops are parts of their own).
 inline constexpr std::uint64_t quays = 1ULL << 6U;
 /// The sky: its band, the sun's glow and disc, the city's glow.
 inline constexpr std::uint64_t sky = 1ULL << 7U;
@@ -144,8 +144,8 @@ inline constexpr std::uint64_t roof_edges = 1ULL << 26U;
 inline constexpr std::uint64_t windows = 1ULL << 27U;
 /// The deep windows' parts and the sash bars: reveals, sills and bars.
 inline constexpr std::uint64_t window_depth = 1ULL << 28U;
-/// The facades' flat detail: shop glazing, plinths and cornices, and their decide stage.
-inline constexpr std::uint64_t flat_detail = 1ULL << 29U;
+/// A shop floor's glazing (the facades' flat detail's; its plinths and cornices are parts of their own).
+inline constexpr std::uint64_t shop_glazing = 1ULL << 29U;
 /// A church's own windows and their decide stage.
 inline constexpr std::uint64_t church_windows = 1ULL << 30U;
 /// The walls' material faces and their decide stage.
@@ -189,15 +189,28 @@ inline constexpr std::uint64_t near_cells = 1ULL << 46U;
 /// The walls' and roofs' cull on the GPU (passes/Kept.cpp: its cull, scan and scatter): the walls and roofs drawn as
 /// their runs instead, every primitive submitted.
 inline constexpr std::uint64_t kept_cull = 1ULL << 47U;
+// The facades' flat detail, each its own switch (the user, 1 November: "Every part gets its own switch"), with the shop
+// glazing above: the facades' decide stage runs while any of the three is drawn.
+/// The dark plinth along the foot of a wall on the street.
+inline constexpr std::uint64_t plinths = 1ULL << 48U;
+/// The white cornice along an old house's top.
+inline constexpr std::uint64_t cornices = 1ULL << 49U;
+// The quay walls' other faces, each its own switch, with the brick faces above.
+/// The dark band at the water's level under a quay wall.
+inline constexpr std::uint64_t quay_waterlines = 1ULL << 50U;
+/// The light stone top along a quay wall at the street's level.
+inline constexpr std::uint64_t quay_tops = 1ULL << 51U;
 /// Every part version 3 knows; a state with another is refused.
-inline constexpr std::uint64_t known = (1ULL << 48U) - 1U;
+inline constexpr std::uint64_t known = (1ULL << 52U) - 1U;
 
 /// The facades' detail: every part of a facade wall (ENGINE.md step 4, the facades), its doors and numbers too.
-inline constexpr std::uint64_t facade_detail = windows | window_depth | flat_detail | church_windows | material_faces |
-                                               hoist_beams | kit_details | doors | house_numbers;
+inline constexpr std::uint64_t facade_detail = windows | window_depth | shop_glazing | plinths | cornices |
+                                               church_windows | material_faces | hoist_beams | kit_details | doors |
+                                               house_numbers;
 /// Every part of the buildings pass (the doors are a pass of their own).
-inline constexpr std::uint64_t buildings = walls | roofs | roof_edges | windows | window_depth | flat_detail |
-                                           church_windows | material_faces | hoist_beams | kit_details;
+inline constexpr std::uint64_t buildings = walls | roofs | roof_edges | windows | window_depth | shop_glazing |
+                                           plinths | cornices | church_windows | material_faces | hoist_beams |
+                                           kit_details;
 /// The water's light: every effect on the water.
 inline constexpr std::uint64_t water_light = reflections | ripple | glitter | rings | glints | water_streaks;
 } // namespace camera_part
