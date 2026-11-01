@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -169,6 +170,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val c = Atlas.colors
     // the map on screen, which keeps the view and its look: the point is marked and brought out from under the sheet
     val map = rememberOverMap(p)
+    val scope = rememberCoroutineScope()
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
     val context = LocalContext.current
     var writing by remember { mutableStateOf(false) }
@@ -191,13 +193,19 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
             onLongPress = { at -> nav.replace(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.replace(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         )
-        BringInto(map, p, bandOver(HALF), go = args.go)
+        val band = bandOver(HALF)
+        BringInto(map, p, band, go = args.go)
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             SymbolButton("ui-chevron-left", stringResource(R.string.kit_back), { nav.back() }, size = 52.dp)
             Spacer(Modifier.weight(1f))
+            val above = remember(map) { ViewFromAbove(map, p, POINT_ABOVE_ZOOM, POINT_ABOVE_PITCH) }
+            SymbolButton(
+                "ui-rotate-3d", stringResource(if (above.before == null) R.string.place_view_above else R.string.place_view_back),
+                { scope.launch { above.toggle(band) } }, size = 52.dp, selected = above.before != null,
+            )
             SymbolButton("ui-share", shareLabel, {
                 val text = listOfNotNull(facts?.address?.line, CoordinateFormat.decimal(p), CoordinateFormat.geoUri(p), osmLink(p)).joinToString("\n")
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)

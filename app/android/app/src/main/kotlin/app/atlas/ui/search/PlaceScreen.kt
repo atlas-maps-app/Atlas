@@ -10,6 +10,7 @@ import app.atlas.ui.kit.SheetLook
 import app.atlas.ui.kit.backdropSource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -131,12 +133,15 @@ private fun PlaceView(
     var saveTo by remember { mutableStateOf(false) }
     val (symbol, colour) = remember(place) { symbolOf(place) }
     // the map on screen, which goes to the place in its own look (over the Map home's, the home brings it out itself)
-    val map = if (ownMap) rememberOverMap(place.location) else null
+    val over = rememberOverMap(place.location)
+    val map = if (ownMap) over else null
+    val scope = rememberCoroutineScope()
     val shareText = shareTextOf(place, lang)
     val shareLabel = stringResource(R.string.place_share)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val halfDp = maxHeight * PLACE_SHEET_HALF
+        val band = bandOver(PLACE_SHEET_HALF)
         if (map != null) {
             OverStageMap(
                 map,
@@ -151,7 +156,7 @@ private fun PlaceView(
                 onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
                 onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
             )
-            BringInto(map, place.location, bandOver(PLACE_SHEET_HALF), go = true)
+            BringInto(map, place.location, band, go = true)
         }
 
         // Over the map, 16 px above the sheet: the level, as the board's dark glass pill (40 px, 12 px in).
@@ -184,6 +189,18 @@ private fun PlaceView(
         ) {
             BoardRoundButton("ui.back", stringResource(R.string.kit_back), onBack, side = 48f, glyph = 22f, bg = 0xDBFFFFFF, shadows = glass, blur = 20f)
             Spacer(Modifier.weight(1f))
+            // the view from above, on the map on screen (the Map home's too): dark while the map is there
+            val above = remember(over) { ViewFromAbove(over, place.location, PLACE_ABOVE_ZOOM, PLACE_ABOVE_PITCH) }
+            val up = above.before != null
+            val aboveLabel = stringResource(if (up) R.string.place_view_back else R.string.place_view_above)
+            Box(
+                Modifier.size(48.dp).boardBox(if (up) 0xFF14161B else 0xDBFFFFFF, round(24f), glass, blur = if (up) 0f else 20f)
+                    .clickable(role = Role.Button, onClickLabel = aboveLabel) { scope.launch { above.toggle(band) } }
+                    .semantics { contentDescription = aboveLabel },
+                contentAlignment = Alignment.Center,
+            ) {
+                BoardSymbol("ui.3d", 20f, if (up) 0xFFFFFFFF else 0xFF14161B)
+            }
             BoardRoundButton("ui.share", shareLabel, {
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareText)
                 runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }

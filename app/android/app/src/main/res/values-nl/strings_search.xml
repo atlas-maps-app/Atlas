@@ -100,6 +100,8 @@
     <string name="place_not_found">Deze plek staat niet op de telefoon en er is geen verbinding om haar op te zoeken.</string>
     <string name="place_level">Verdieping %1$s</string>
     <string name="place_share">Delen</string>
+    <string name="place_view_above">Van boven bekijken</string>
+    <string name="place_view_back">Terug naar de vorige weergave</string>
     <string name="place_save">Bewaren · vasthouden om een lijst te kiezen</string>
     <string name="place_saved">Bewaard · vasthouden om lijsten te kiezen</string>
     <string name="place_save_plain">Dit punt bewaren</string>

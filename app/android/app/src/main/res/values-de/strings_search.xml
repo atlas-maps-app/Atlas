@@ -22,6 +22,8 @@
     <string name="query_download">Dieses Gebiet laden</string>
     <string name="place_route">Route</string>
     <string name="place_share">Teilen</string>
+    <string name="place_view_above">Von oben ansehen</string>
+    <string name="place_view_back">Zurück zur vorigen Ansicht</string>
     <string name="place_web">Website</string>
     <string name="place_hours">Öffnungszeiten</string>
     <string name="place_copy">Kopieren</string>

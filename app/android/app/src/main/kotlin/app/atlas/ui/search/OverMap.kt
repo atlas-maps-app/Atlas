@@ -6,7 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -110,6 +112,32 @@ internal fun BringInto(over: OverMap, at: LatLon, band: Rect, go: Boolean) {
 }
 
 /**
+ * A card's view from above (the user, 1 November: "A place card can get a button"): the map on screen goes to [at] as the
+ * card's own preview showed it before the screens took on the map on screen, [zoom] at [pitch]°, in the band's middle
+ * with the bearing kept; pressed again, back to the view it came from. Nothing is rebuilt, and the look stays the map's.
+ */
+@Stable
+internal class ViewFromAbove(private val over: OverMap, private val at: LatLon, private val zoom: Double, private val pitch: Double) {
+    /** The view the button left; null while the map is not taken above the place. */
+    var before by mutableStateOf<CameraPosition?>(null)
+        private set
+
+    suspend fun toggle(band: Rect) {
+        val map = over.state
+        val back = before
+        if (back != null) {
+            before = null
+            map.animateTo(back, GO_MS)
+            return
+        }
+        val to = map.placing(at, band.center.x, band.center.y, map.camera.copy(zoom = zoom, pitch = pitch)) ?: return
+        before = map.camera
+        map.follow = Follow.NONE
+        map.animateTo(to, GO_MS)
+    }
+}
+
+/**
  * Where the camera goes for the ground at [place] to show inside [band] (screen px): null where it shows there already,
  * or before the view's first frame. By the least pan, the zoom, bearing and tilt kept ([revealTarget]): a long press's
  * point, or a place the view is near enough to show. With [go] (a search's result, a link, a list's place) from further
@@ -143,6 +171,12 @@ private val PLACE_TOP = 156.dp
 
 /** How far above the place's sheet (at its half stop) an opened place shows. */
 private val PLACE_FOOT = 16.dp
+
+/** The views from above: a point's (What's here) and a place's, as their screens' own maps showed them until 1 November. */
+internal const val POINT_ABOVE_ZOOM = 17.4
+internal const val POINT_ABOVE_PITCH = 40.0
+internal const val PLACE_ABOVE_ZOOM = 17.6
+internal const val PLACE_ABOVE_PITCH = 48.0
 
 /** The Map home's view of a link's point, where a screen over the map has none to take on. */
 private const val POINT_ZOOM = 17.0
