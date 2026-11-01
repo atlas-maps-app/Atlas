@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import app.atlas.providers.OsmAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
@@ -108,9 +111,15 @@ class OsmAccount(
     /** The account as its file holds it, read the first time. */
     private suspend fun read(): Preferences = keeping.withLock { held ?: keep(store.data.first()) }
 
-    /** Writes [change] to the file, the account then as it holds it. */
+    /**
+     * Writes [change] to the file, the account then as it holds it, as SettingsStore.edit does: on IO, so it lets go of
+     * the lock even while its caller's thread is blocked, and once begun the write is kept though its caller is
+     * cancelled (a screen left), as the file takes it all the same.
+     */
     private suspend fun edit(change: (MutablePreferences) -> Unit) {
-        keeping.withLock { keep(store.edit { change(it) }) }
+        withContext(Dispatchers.IO) {
+            keeping.withLock { withContext(NonCancellable) { keep(store.edit { change(it) }) } }
+        }
     }
 
     private fun keep(p: Preferences): Preferences {

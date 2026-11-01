@@ -2,11 +2,15 @@ package app.atlas.services
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.atlas.providers.OsmAuth
+import app.atlas.testing.HeldWrites
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -156,6 +160,24 @@ class OsmAccountTest {
         assertTrue(a.finish("${OsmAccount.REDIRECT}?code=c&state=$state"))
         assertEquals("Erika", a.user.value)
         assertFalse(a.waiting.value)
+    }
+
+    @Test
+    fun aSignInBegunFromAScreenThatGoesAsTheFileTakesItShowsAsUnderWay() = runBlocking {
+        val file = HeldWrites(File(dir.root, "osm.preferences_pb"))
+        val store = PreferenceDataStoreFactory.create(file, scope = scope)
+        val a = OsmAccount(store, sealer, FakeOsm(), scope)
+        // the sign-in's write held where DataStore has taken its change and the file has not yet
+        file.hold()
+        val screen = launch(Dispatchers.IO) { a.begin() }
+        file.waiting.await()
+        // the screen that began it goes, and the file takes the write all the same
+        screen.cancel()
+        file.release()
+        screen.join()
+        assertTrue(withTimeout(5_000) { OsmAccount(store, sealer, FakeOsm(), scope).waiting.first { it } })
+        // so the account has it too
+        assertTrue(a.waiting.value)
     }
 
     @Test
