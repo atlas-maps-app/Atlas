@@ -76,6 +76,8 @@ struct CoverTile {
     /// Kept under a tile fading in (ENGINE.md's fades): what the frame before drew where it lies, its nearest ancestor
     /// drawn or else its descendants drawn, until its fade ends; `cells` are its cells under the fading tile. The
     /// ground draws them under the fading tile's ground; Cover::tiles leaves it out, so nothing that stands up does.
+    /// (`fade` is a tile's fade as the picture's completion reckons it; its place's scale.w the fade it is drawn at, 1
+    /// for a tile that took over from nothing.)
     bool under = false;
 };
 
@@ -240,6 +242,8 @@ private:
         std::uint32_t handle = 0;
         double since = 0;
         bool drawn = false; // this frame
+        bool whole =
+            false; // drawn whole from its first frame, the frame before having drawn nothing it takes over from
     };
     /// An ancestor's cells to draw this frame over its missing descendants.
     struct Pending {

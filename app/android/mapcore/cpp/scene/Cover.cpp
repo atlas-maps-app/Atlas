@@ -473,28 +473,27 @@ void Cover::lay_under(const view::View& view, const view::Frames& frames, const 
     for (std::size_t i = 0; i < tiles_.size(); ++i) {
         if (tiles_[i].fade >= 1.0F) continue;
         const ResidentTile& t = *tiles_[i].drawn;
+        const auto shown = std::ranges::find(shown_, t.handle, &Shown::handle);
+        const bool whole = shown != shown_.end() && shown->whole;
         under.clear();
         // its nearest ancestor that the frame before drew (zooming in, or the stand-in it takes over from)
-        for (std::uint32_t up = 1; up <= t.key.z && under.empty(); ++up) {
+        for (std::uint32_t up = 1; !whole && up <= t.key.z && under.empty(); ++up) {
             const tiles::TileKey a(static_cast<std::uint8_t>(t.key.z - up), t.key.x >> up, t.key.y >> up);
             const ResidentTile* r = residency.find(a, t.pack);
             if (r != nullptr && drew_before(r->handle)) under.push_back(r);
         }
         // else its descendants that it drew (zooming out)
-        if (under.empty()) {
+        if (!whole && under.empty()) {
             for (const std::shared_ptr<const ResidentTile>& r : residency.resident()) {
                 if (r->key.z <= t.key.z || r->pack != t.pack || !drew_before(r->handle)) continue;
                 const auto up = static_cast<std::uint32_t>(r->key.z - t.key.z);
                 if ((r->key.x >> up) == t.key.x && (r->key.y >> up) == t.key.y) under.push_back(r.get());
             }
         }
-        // where the frame before drew nothing (the map's first picture, a place panned into view) it shows at once,
-        // as it did before the fades: there is nothing it takes over from
+        // where the frame before drew nothing it takes over from (the map's first picture, a place panned into view)
+        // it is drawn whole from its first frame on, as before the fades; its fade is still the picture's to wait for
         if (under.empty()) {
-            for (Shown& sh : shown_) {
-                if (sh.handle == t.handle) sh.since = seconds - fade_seconds_;
-            }
-            tiles_[i].fade = 1.0F;
+            if (shown != shown_.end()) shown->whole = true;
             tiles_[i].place.scale.w = 1.0F;
             continue;
         }
@@ -513,7 +512,6 @@ void Cover::lay_under(const view::View& view, const view::Frames& frames, const 
             tiles_.back().under = true;
         }
     }
-    fading_ = std::ranges::any_of(tiles_, [](const CoverTile& c) { return c.fade < 1.0F; });
 }
 
 void Cover::keep(std::uint32_t handle) {

@@ -745,12 +745,15 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
             ++frames;
             drawn += s.drawn ? 1 : 0;
             const gpu::Pixels now = read();
-            bool fades = false;
+            bool fades = false;   // a tile whose fade the picture waits for
+            bool blended = false; // a tile drawn at its fade
             for (const scene::CoverTile& t : cover.tiles()) {
                 if (t.fade >= 1.0F) continue;
                 fades = true;
+                if (t.place.scale.w >= 1.0F) continue; // drawn whole: it took over from nothing
+                blended = true;
                 ++fading;
-                least = std::min(least, t.fade);
+                least = std::min(least, t.place.scale.w);
                 const tiles::TileKey k = t.drawn->key;
                 // its ancestor drawn (a stand-in drawing whole) or kept under it, its cells over it
                 held += std::ranges::any_of(cover.with_under(),
@@ -768,9 +771,11 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
             }
             under += cover.with_under().size() - cover.tiles().size();
             if (fades) {
-                ++fading_frames;
                 CHECK_FALSE(map.complete());
                 CHECK(map.animating());
+            }
+            if (blended) {
+                ++fading_frames;
                 if (!first) {
                     before = last; // the stand-ins' picture
                     first = now;

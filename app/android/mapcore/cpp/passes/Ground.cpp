@@ -721,7 +721,7 @@ bool Ground::decide(const frame::FrameState& state) {
                                .sun = c.sun,
                                .sun_base = c.sun_base,
                                .sun_weight = c.sun_weight,
-                               .fade = c.fade});
+                               .fade = c.place.scale.w});
         }
     }
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
