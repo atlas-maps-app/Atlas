@@ -8,6 +8,7 @@ import app.atlas.guide.GuideSettings
 import app.atlas.model.Fix
 import app.atlas.model.Mode
 import app.atlas.model.RoutePrefs
+import app.atlas.model.RouteRequest
 import app.atlas.services.NoVoice
 import app.atlas.services.RegionLayer
 import app.atlas.testing.testServices
@@ -15,6 +16,7 @@ import app.atlas.ui.mine.offline.RegionScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -76,6 +78,28 @@ class GoModelsTest {
         assertEquals(app.atlas.geo.UnitSystem.NAUTICAL, g.units)
         assertEquals(1.6, g.vehicle.airDraftM!!, 0.0)
         assertEquals(s.clock.zone, g.zone)
+        s.close()
+    }
+
+    @Test
+    fun aTruckTripCarriesOnTheKeptHoursThoughNoScreenShowedThem() = runBlocking {
+        val s = testServices()
+        val kept = TachoState(drivingSinceBreak = 3_600, drivenToday = 7_200)
+        s.go.store.setTacho(kept)
+        // the trip begins before any screen showed the hours, so the tacho has not read them
+        val route = GoFixtures.fixture(Mode.TRUCK)!!
+        val req = RouteRequest(Mode.TRUCK, listOf(route.points.first(), route.points.last()), vehicle = GoStore.defaultVehicle(Mode.TRUCK))
+        val trip = s.go.startNav(ApplicationProvider.getApplicationContext(), req, route, "Haarlem", GuideSettings(mode = Mode.TRUCK), demo = true)
+        // the test drives
+        trip.start(emptyFlow())
+        assertEquals(kept.drivingSinceBreak, trip.view.value.tacho!!.drivingSinceBreak)
+        assertEquals(kept.drivenToday, trip.view.value.tacho!!.drivenToday)
+        // hours kept as the tacho first reads the settings show there as well
+        val shown = s.go.tacho
+        val later = TachoState(drivingSinceBreak = 4_000, drivenToday = 8_000)
+        s.go.store.setTacho(later)
+        assertEquals(later, withTimeout(5_000) { shown.first { it == later } })
+        s.go.stopAll()
         s.close()
     }
 

@@ -12,10 +12,20 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import app.atlas.geo.LatLon
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /** Where the map looked when the app was last used. */
@@ -30,7 +40,23 @@ enum class Units { METRIC, IMPERIAL, NAUTICAL }
  * A broken or unreadable file reads as empty settings rather than crashing.
  */
 class SettingsStore(private val store: DataStore<Preferences>) {
-    val data: Flow<Preferences> = store.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+    /**
+     * The settings as their file holds them, null until read: read once, then taken from each write as it returns, one
+     * at a time ([writing]), and [data] follows them. This class is the file's only writer, so they never lag a write,
+     * where a collector of DataStore's own data flow can for good: one whose first read meets a write reads the old file
+     * under the version the write has already raised (DataStore 1.2.1 raises it before writing, and a read that cannot
+     * take the write's lock reads without it), then drops the write's own update as no newer and shows nothing until the
+     * next write. The driver's hours as GoHub's tacho first showed them, the units or a source switched off could have
+     * stayed as they were so.
+     */
+    private val held = MutableStateFlow<Preferences?>(null)
+    private val writing = Mutex()
+
+    /** The settings now and after each write, read from the file the first time. */
+    val data: Flow<Preferences> = flow {
+        read()
+        emitAll(held.filterNotNull())
+    }.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
 
     fun <T> flow(key: Preferences.Key<T>, default: T): Flow<T> = data.map { it[key] ?: default }.distinctUntilChanged()
 
@@ -38,11 +64,25 @@ class SettingsStore(private val store: DataStore<Preferences>) {
 
     /** Sets [key] to [value], or removes it when [value] is null. */
     suspend fun <T> set(key: Preferences.Key<T>, value: T?) {
-        store.edit { if (value == null) it.remove(key) else it[key] = value }
+        edit { if (value == null) it.remove(key) else it[key] = value }
     }
 
+    /**
+     * Writes [block]'s change, which [data] has as soon as this returns. It runs on IO, so it lets go of the lock even
+     * while its caller's thread is blocked (a runBlocking on the main thread waiting for another write), and a write once
+     * begun is held though its caller is cancelled, as the file takes it all the same.
+     */
     suspend fun edit(block: (MutablePreferences) -> Unit) {
-        store.edit { block(it) }
+        withContext(Dispatchers.IO) {
+            writing.withLock { withContext(NonCancellable) { held.value = store.edit { block(it) } } }
+        }
+    }
+
+    /** The settings as the file holds them, read the first time. */
+    private suspend fun read(): Preferences = held.value ?: store.data.first().let { p ->
+        // a write that returned meanwhile holds them newer
+        held.compareAndSet(null, p)
+        held.value!!
     }
 
     val camera: Flow<SavedCamera?> = data.map { p ->
