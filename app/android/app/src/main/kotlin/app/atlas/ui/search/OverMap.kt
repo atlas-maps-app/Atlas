@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -23,6 +24,7 @@ import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.Follow
 import app.atlas.mapview.LocalMapStage
+import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapPick
 import app.atlas.mapview.MapState
@@ -36,60 +38,93 @@ import app.atlas.ui.home.revealTarget
 import kotlinx.coroutines.flow.map
 
 /**
- * The map under a screen that opens over the map (a long press's point, a place): the one on screen ([shown]) as the
- * user left it, in its look, with nothing rebuilt (the user, 1 November: "when long pressing it shouldnt open that view
- * it should stay on the map"; "Search should take you to a place on the map and not show that view either"). Only where
- * none is shown (a link opened the app, or Android ended it while the screen was open) is [state] its own, at the Map
- * home's view of a link's point.
+ * The map under a screen that opens over the map (a long press's point, a place, a search's or a list's places): the one
+ * on screen ([shown]) as the user left it, in its look, with nothing rebuilt (the user, 1 November: "when long pressing
+ * it shouldnt open that view it should stay on the map"; "Search should take you to a place on the map and not show
+ * that view either"; "There is too much re loading the map"). Only where none is shown (a link opened the app, or
+ * Android ended it while the screen was open) is [state] its own, at the view the screen's own map had.
  */
 @Stable
 internal class OverMap(val shown: ShownMap?, val state: MapState)
 
+/** [OverMap] for a point or place at [at]: its own map, where none is shown, at the Map home's view of a link's point. */
 @Composable
-internal fun rememberOverMap(at: LatLon): OverMap {
+internal fun rememberOverMap(at: LatLon): OverMap = rememberOverMap(at) { CameraPosition(at, POINT_ZOOM, 0.0, HomeViewModel.DEFAULT_PITCH) }
+
+/** [OverMap], asked again when [key] changes; its own map, where none is shown, at [own]. */
+@Composable
+internal fun rememberOverMap(key: Any?, own: () -> CameraPosition): OverMap {
     val stage = LocalMapStage.current
-    return remember(at) {
+    return remember(key) {
         val shown = stage?.shown()
-        OverMap(shown, shown?.state ?: MapState(CameraPosition(at, POINT_ZOOM, 0.0, HomeViewModel.DEFAULT_PITCH)))
+        OverMap(shown, shown?.state ?: MapState(own()))
     }
 }
 
+/** The user's look, as the Map home draws it ([mapStyleOf]): what a screen's own map takes. */
+@Composable
+internal fun userLook(): MapStyle {
+    val services = LocalServices.current
+    val style by remember(services) { services.settings.data.map { mapStyleOf(it, services.ciTheme) } }
+        .collectAsStateWithLifecycle(MapStyle(calm = true))
+    return style
+}
+
 /**
- * [over]'s map with this screen's [overlays] and long presses: the shown map's look, padding and camera's listener, or,
- * for its own, the user's look ([mapStyleOf]) with [ownPadding].
+ * [over]'s map with this screen's [overlays], taps and long presses: the shown map's look, padding and camera's listener,
+ * or, for its own, the user's look ([userLook]) with [ownPadding]. Where the screen's places show is its own band
+ * ([bandBetween] its padding), whichever map it is.
  */
 @Composable
 internal fun OverStageMap(
     over: OverMap,
     overlays: MapOverlays,
     ownPadding: PaddingValues,
-    onLongPress: (LatLon) -> Unit,
-    onLongPressBuilding: (MapPick) -> Unit,
+    onLongPress: (LatLon) -> Unit = {},
+    onLongPressBuilding: ((MapPick) -> Unit)? = null,
     modifier: Modifier = Modifier,
     background: Color = Color.Unspecified,
     hostModifier: Modifier = Modifier,
+    onTap: (MapHit) -> Unit = {},
 ) {
     val shown = over.shown
     if (shown != null) {
         StageMap(
             state = shown.state, modifier = modifier, style = shown.style, overlays = overlays,
-            contentPadding = shown.contentPadding, onLongPress = onLongPress, onLongPressBuilding = onLongPressBuilding,
-            onCameraMove = shown::cameraMoved, debug = shown.debug, units = shown.units,
-            labelTypeface = shown.labelTypeface, background = background, hostModifier = hostModifier,
+            contentPadding = shown.contentPadding, onTap = onTap, onLongPress = onLongPress,
+            onLongPressBuilding = onLongPressBuilding, onCameraMove = shown::cameraMoved, debug = shown.debug,
+            units = shown.units, labelTypeface = shown.labelTypeface, background = background, hostModifier = hostModifier,
         )
         return
     }
-    val services = LocalServices.current
     val context = LocalContext.current
-    val style by remember(services) { services.settings.data.map { mapStyleOf(it, services.ciTheme) } }
-        .collectAsStateWithLifecycle(MapStyle(calm = true))
     val face = remember { runCatching { ResourcesCompat.getFont(context, R.font.instrument_serif_italic) }.getOrNull() }
     StageMap(
-        state = over.state, modifier = modifier, style = style, overlays = overlays, contentPadding = ownPadding,
-        onLongPress = onLongPress, onLongPressBuilding = onLongPressBuilding, labelTypeface = face,
+        state = over.state, modifier = modifier, style = userLook(), overlays = overlays, contentPadding = ownPadding,
+        onTap = onTap, onLongPress = onLongPress, onLongPressBuilding = onLongPressBuilding, labelTypeface = face,
         background = background, hostModifier = hostModifier,
     )
 }
+
+/** A screen's band between [top] and [bottom] of its map's own padding (screen px): where its places show. */
+@Composable
+internal fun BoxWithConstraintsScope.bandBetween(top: Dp, bottom: Dp): Rect = with(LocalDensity.current) {
+    Rect(0f, top.toPx(), maxWidth.toPx(), (maxHeight - bottom).toPx())
+}
+
+/**
+ * Glides [over]'s map so [place] lands in [band]'s middle, seen as [view] sees it (its zoom, bearing and tilt): where a
+ * screen's list shows its chosen place. Before the view's first frame, [view] at the place (its own map's padding is
+ * the band's).
+ */
+internal suspend fun OverMap.centre(place: LatLon, band: Rect, view: CameraPosition, durationMs: Int) {
+    val to = state.placing(place, band.center.x, band.center.y, view) ?: view.copy(target = place)
+    state.follow = Follow.NONE
+    state.animateTo(to, durationMs)
+}
+
+/** This view, or from further out than [NEAR_ZOOM] the same at [zoom]: a screen's places among their streets. */
+internal fun CameraPosition.near(zoom: Double): CameraPosition = if (this.zoom < NEAR_ZOOM) copy(zoom = zoom) else this
 
 /**
  * Brings [at] into [band] (screen px) on [over]'s map as the screen opens ([goTarget]): a long press's point by the

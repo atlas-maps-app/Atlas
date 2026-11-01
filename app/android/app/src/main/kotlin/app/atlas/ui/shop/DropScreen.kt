@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -46,13 +47,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.UserLocation
+import app.atlas.ui.search.BringInto
+import app.atlas.ui.search.OverStageMap
+import app.atlas.ui.search.bandBetween
+import app.atlas.ui.search.rememberOverMap
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
@@ -87,10 +90,13 @@ fun DropScreen(stream: String?, nav: Navigator) {
     val streetOnes = mine.filterNot { it.centre }
     val centres = remember(all) { all.filter { it.centre } }
     val fix by services.location.last.collectAsStateWithLifecycle()
-    val map = remember { MapState(CameraPosition(here, 16.4, 0.0, 45.0)) }
+    // the map on screen, as the user left it, brought to here (its own map, where none is shown, starts there)
+    val over = rememberOverMap(Unit) { CameraPosition(here, 16.4, 0.0, 45.0) }
     val colour = Color(sel.colour)
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val band = bandBetween(120.dp, 360.dp)
+        BringInto(over, here, band, go = true)
         val markers = buildList {
             streetOnes.take(12).forEachIndexed { i, t ->
                 add(Marker("d${t.key}", t.place.location, StreamArts.getValue(sel).symbol, sel.colour or 0xFF000000, if (i == 0) MarkerStyle.PIN else MarkerStyle.DOT, priority = 100 - i, selected = i == 0))
@@ -99,10 +105,10 @@ fun DropScreen(stream: String?, nav: Navigator) {
                 add(Marker("t${t.key}", t.place.location, "bin.trash", Stream.RUBBISH.colour or 0xFF000000, MarkerStyle.DOT, priority = 10))
             }
         }
-        StageMap(
-            state = map, modifier = Modifier.fillMaxSize(), background = Color(0xFFEFE9DE),
+        OverStageMap(
+            over, modifier = Modifier.fillMaxSize(), background = Color(0xFFEFE9DE),
             overlays = MapOverlays(markers = markers, location = (fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) } ?: UserLocation(here, 10.0))),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 120.dp, bottom = 360.dp),
+            ownPadding = androidx.compose.foundation.layout.PaddingValues(top = 120.dp, bottom = 360.dp),
         )
         // The board's top row at y 42: back (44, 92 % white) and the chooser of materials (52 high, 6 px in, spread out).
         Row(

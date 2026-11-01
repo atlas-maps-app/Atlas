@@ -5,6 +5,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Rect
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import java.time.Instant
@@ -55,7 +56,7 @@ class MapState(initial: CameraPosition) {
     var chosenTilt: Double? by mutableStateOf(null)
 
     internal var animator: (suspend (CameraPosition, Int) -> Unit)? = null
-    internal var fitter: (suspend (BBox, Int) -> Unit)? = null
+    internal var fitter: (suspend (BBox, Int, Rect?) -> Unit)? = null
     internal var projector: Projector? = null
 
     /** The view drawing this state, while it is on screen. */
@@ -65,9 +66,12 @@ class MapState(initial: CameraPosition) {
         animator?.invoke(target, durationMs) ?: run { camera = target }
     }
 
-    /** Moves the camera so [box] fills the view inside its content padding, plus [paddingPx]. */
-    suspend fun fit(box: BBox, paddingPx: Int = 48) {
-        fitter?.invoke(box, paddingPx) ?: run { camera = camera.copy(target = box.center) }
+    /**
+     * Moves the camera so [box] fills the view inside its content padding, plus [paddingPx]; or, given [within] (screen
+     * px), inside that: the band of a screen that took on a map padded for another (the map on screen, [MapStage.shown]).
+     */
+    suspend fun fit(box: BBox, paddingPx: Int = 48, within: Rect? = null) {
+        fitter?.invoke(box, paddingPx, within) ?: run { camera = camera.copy(target = box.center) }
     }
 
     /** Screen pixel to ground, or null off the ground (above the horizon) or before the first frame. */

@@ -7,6 +7,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -60,11 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.UserLocation
@@ -80,6 +79,11 @@ import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.frosted
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberSpeechInput
+import app.atlas.ui.search.OverStageMap
+import app.atlas.ui.search.bandBetween
+import app.atlas.ui.search.centre
+import app.atlas.ui.search.near
+import app.atlas.ui.search.rememberOverMap
 import java.text.NumberFormat
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -126,7 +130,8 @@ fun EatMapScreen(nav: Navigator) {
     val worked = rememberWorked(ctx.area, ctx.at, tab, filters, ctx.ratings, loved) { EatMapModel.view(ctx.area, ctx.at, tab, filters, ctx.ratings, loved) }
     val view = worked.value
     val places = answer?.let { a -> a.hits.mapNotNull { ctx.area[it.place.key] } } ?: view?.places.orEmpty()
-    val map = remember { MapState(CameraPosition(ctx.area.centre, 16.2, 0.0, 40.0)) }
+    // the map on screen, as the user left it; the chosen place glides into the band over the carousel
+    val over = rememberOverMap(Unit) { CameraPosition(ctx.area.centre, EAT_ZOOM, 0.0, 40.0) }
     val carousel = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val selected by remember(places) { derivedStateOf { places.getOrNull(carousel.firstVisibleItemIndex)?.key } }
@@ -157,13 +162,18 @@ fun EatMapScreen(nav: Navigator) {
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        StageMap(
-            state = map,
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val band = bandBetween(150.dp, 408.dp)
+        LaunchedEffect(selected) {
+            val p = places.firstOrNull { it.key == selected } ?: return@LaunchedEffect
+            over.centre(p.location, band, over.state.camera.near(EAT_ZOOM), 500)
+        }
+        OverStageMap(
+            over,
             modifier = Modifier.fillMaxSize(),
             hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
-            contentPadding = PaddingValues(top = 150.dp, bottom = 408.dp),
+            ownPadding = PaddingValues(top = 150.dp, bottom = 408.dp),
             onTap = { hit ->
                 when (hit) {
                     is MapHit.OnMarker -> places.indexOfFirst { it.key == hit.marker.id }.takeIf { it >= 0 }?.let { scope.launch { carousel.animateScrollToItem(it) } }
@@ -243,11 +253,10 @@ fun EatMapScreen(nav: Navigator) {
             if (ctx.area.waiting || !worked.fresh) Looking(Atlas.colors.inkSoft, vertical = 4.dp)
         }
     }
-    LaunchedEffect(selected) {
-        val p = places.firstOrNull { it.key == selected } ?: return@LaunchedEffect
-        map.animateTo(map.camera.copy(target = p.location), 500)
-    }
 }
+
+/** The zoom the eat map shows its places at (its own map's), from further out than [app.atlas.ui.search.NEAR_ZOOM]. */
+private const val EAT_ZOOM = 16.2
 
 /** The search pill (52 px, white, 0 6 20 shadow, 16 px in, 10 apart): the cutlery chip (30), the waiter's field ("dinner for 2") and the mic (20). */
 @Composable

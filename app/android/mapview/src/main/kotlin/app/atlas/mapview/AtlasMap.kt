@@ -80,7 +80,9 @@ fun AtlasMap(
     val direction = LocalLayoutDirection.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
-    val controller = remember(state) { MapController(state, scope) }
+    // One controller for the map's life: a new state (a screen's own camera) is handed to it ([MapController.take]), so
+    // the core's map, its surface and tiles stay.
+    val controller = remember { MapController(state, scope) }
     val tap by rememberUpdatedState(onTap)
     val longPress by rememberUpdatedState(onLongPress)
     val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
@@ -111,6 +113,7 @@ fun AtlasMap(
         // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }
         if (controller.fonts == null) controller.fonts = MapEngine.fonts(assets)
+        controller.take(state)
     }
     DisposableEffect(controller) {
         controller.attach()
@@ -141,7 +144,7 @@ fun AtlasMap(
             if (controller.chrome === chrome) controller.chrome = null
         }
     }
-    LaunchedEffect(controller) {
+    LaunchedEffect(controller, state) {
         // Anything that changes the picture asks for a frame; the frame loop conflates the requests.
         launch { snapshotFlow { controller.overlays.markers }.collect { controller.warm(it) } }
         launch {

@@ -92,4 +92,43 @@ class MapStageTest {
         assertSame(controller, home.controller)
         assertEquals(camera, home.camera)
     }
+
+    @Test
+    fun aScreenWithItsOwnCameraKeepsTheOneMap() {
+        val stage = MapStage()
+        val home = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 30.0, 40.0)).apply { time = Fixtures.afternoon }
+        // a view of its own (the fill-in's of a building): close up, steeper, north up
+        val own = MapState(CameraPosition(Fixtures.westermarkt, 18.2, 0.0, 55.0)).apply { time = Fixtures.afternoon }
+        var screen by mutableStateOf(0)
+        compose.setContent {
+            Box(Modifier.fillMaxSize()) {
+                MapStageHost(stage, cover = Color.White)
+                CompositionLocalProvider(LocalMapStage provides stage) {
+                    if (screen == 0) StageMap(home, Modifier.fillMaxSize()) else StageMap(own, Modifier.fillMaxSize())
+                }
+            }
+        }
+        compose.waitForIdle()
+        threads.track(home)
+        val controller = home.controller
+        assertNotNull(controller)
+        val camera = home.camera
+
+        // the screen's camera drawn by the same map (the user, 1 November: "There is too much re loading the map"): the
+        // state handed over, its view drawn at once, the home's left as it was
+        compose.runOnIdle { screen = 1 }
+        compose.waitForIdle()
+        assertSame(controller, own.controller)
+        assertNull(home.controller)
+        assertSame(own, controller!!.state)
+        assertNotNull(own.visibleBounds)
+        assertEquals(camera, home.camera)
+
+        // and back: the home's camera, where the user left it, on the same map
+        compose.runOnIdle { screen = 0 }
+        compose.waitForIdle()
+        assertSame(controller, home.controller)
+        assertNull(own.controller)
+        assertEquals(camera, home.camera)
+    }
 }

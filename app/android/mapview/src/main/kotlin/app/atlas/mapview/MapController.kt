@@ -66,8 +66,12 @@ data class Insets(val left: Float = 0f, val top: Float = 0f, val right: Float = 
  *
  * Everything here runs on the main thread except what the frame thread does.
  */
-internal class MapController(val state: MapState, private val scope: CoroutineScope) : GestureListener, RememberObserver {
+internal class MapController(initial: MapState, private val scope: CoroutineScope) : GestureListener, RememberObserver {
     private val main = Handler(Looper.getMainLooper())
+
+    /** The camera drawn: the state the map began with, or a screen's own one since ([take]). */
+    var state: MapState = initial
+        private set
 
     /** The engine's typefaces, set by the view from its assets. */
     var fonts: SvgFonts? = null
@@ -426,12 +430,43 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     }
 
     fun attach() {
-        state.controller = this
         MapEngine.register(engineChanged)
-        // Callers may be on any dispatcher; the camera's animations start on the main thread.
-        state.animator = { target, ms -> await(withContext(Dispatchers.Main.immediate) { flyTo(target, ms, byUser = false) }) }
-        state.fitter = { box, pad -> await(withContext(Dispatchers.Main.immediate) { fit(box, pad) }) }
-        state.projector = object : MapState.Projector {
+        hook(state)
+    }
+
+    /**
+     * Draws [next] from now on, in place of the state drawn: a screen's map with a camera of its own, over the one map
+     * (the user, 1 November: "There is too much re loading the map"). Nothing is rebuilt: the core's map, its surface and
+     * tiles, and today's frames stay; the state left keeps its camera for when it is drawn again, and the new camera is
+     * drawn at once.
+     */
+    fun take(next: MapState) {
+        val old = state
+        if (next === old) return
+        stopAnimation()
+        unhook(old)
+        state = next
+        if (closed) return
+        hook(next)
+        // a camera neither the user's fingers nor this map wrote, told to the screen as such ([update])
+        lastWritten = null
+        lastReported = null
+        update()
+        noteStatus()
+    }
+
+    /** [s]'s camera moves through this map: its animations, fits and projections. */
+    private fun hook(s: MapState) {
+        s.controller = this
+        // Callers may be on any dispatcher; the camera's animations start on the main thread, where [s] is still the
+        // state drawn (one handed over meanwhile jumps, as it would with no map: [MapState.animateTo], [MapState.fit]).
+        s.animator = { target, ms ->
+            await(withContext(Dispatchers.Main.immediate) { if (state === s) flyTo(target, ms, byUser = false) else jumped(s, target) })
+        }
+        s.fitter = { box, pad, within ->
+            await(withContext(Dispatchers.Main.immediate) { if (state === s) fit(box, pad, within) else jumped(s, s.camera.copy(target = box.center)) })
+        }
+        s.projector = object : MapState.Projector {
             override fun toLatLon(x: Float, y: Float): LatLon? {
                 val v = viewport()
                 return if (v.isEmpty) null else CameraOps.groundAt(state.camera, v, x, y)
@@ -454,13 +489,23 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     fun detach() {
         main.removeCallbacks(published)
         stopAnimation()
-        if (state.controller === this) {
-            state.controller = null
-            state.animator = null
-            state.fitter = null
-            state.projector = null
-        }
+        unhook(state)
         close()
+    }
+
+    /** [s]'s camera set to [to] at once, outside this map: a call that began before [s] was handed over ([take]). */
+    private fun jumped(s: MapState, to: CameraPosition): Job {
+        s.camera = to
+        return Job().apply { complete() }
+    }
+
+    /** [s] no longer moves through this map: set, its camera jumps. */
+    private fun unhook(s: MapState) {
+        if (s.controller !== this) return
+        s.controller = null
+        s.animator = null
+        s.fitter = null
+        s.projector = null
     }
 
     private var closed = false
@@ -1307,14 +1352,14 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         return animate(durationMs.toLong(), byUser) { fly.at(it) }
     }
 
-    /** Fits [box] inside the content padding plus [paddingPx]. */
-    fun fit(box: BBox, paddingPx: Int): Job {
+    /** Fits [box] inside the content padding, or inside [within] (screen px) where given, plus [paddingPx]. */
+    fun fit(box: BBox, paddingPx: Int, within: androidx.compose.ui.geometry.Rect? = null): Job {
         val v = viewport()
         if (v.isEmpty) {
             write(state.camera.copy(target = box.center), false)
             return Job().apply { complete() }
         }
-        val i = insets
+        val i = within?.let { Insets(it.left, it.top, v.width - it.right, v.height - it.bottom) } ?: insets
         val pad = floatArrayOf(i.left + paddingPx, i.top + paddingPx, i.right + paddingPx, i.bottom + paddingPx)
         return flyTo(CameraOps.fit(state.camera, v, box, pad), FIT_MS, byUser = false)
     }
