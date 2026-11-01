@@ -262,6 +262,13 @@ constexpr std::array constants_table = {
     Constant{.name = "Slot.LEAVES", .value = static_cast<std::uint32_t>(palette_slot::leaves)},
     Constant{.name = "Slot.EVERGREEN", .value = static_cast<std::uint32_t>(palette_slot::evergreen)},
     Constant{.name = "Slot.BARK", .value = static_cast<std::uint32_t>(palette_slot::bark)},
+    Constant{.name = "Slot.WOODS", .value = static_cast<std::uint32_t>(palette_slot::woods)},
+    Constant{.name = "Slot.BENCHES", .value = static_cast<std::uint32_t>(palette_slot::benches)},
+    Constant{.name = "Slot.LAMP_POSTS", .value = static_cast<std::uint32_t>(palette_slot::lamp_posts)},
+    Constant{.name = "Slot.BOLLARDS", .value = static_cast<std::uint32_t>(palette_slot::bollards)},
+    Constant{.name = "Slot.TURBINES", .value = static_cast<std::uint32_t>(palette_slot::turbines)},
+    Constant{.name = "Slot.PYLONS", .value = static_cast<std::uint32_t>(palette_slot::pylons)},
+    Constant{.name = "Slot.WOODS.today", .value = woods_own},
 };
 
 // Each table spans its struct without gaps or overlaps (fields in order, each starting where the last ended).

@@ -231,7 +231,8 @@ ItemChoice item_choice(const geometry::RegionItem& item, double depth, double fo
     return c;
 }
 
-ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, const tiles::ItemsStyle& style) {
+ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, const tiles::ItemsStyle& style,
+                     const style::PaletteBlock* palette) {
     static_assert(shaders::ITEM_TONES == item_tone_count);
     ItemTones out{};
     const bool night = night_of(theme);
@@ -251,13 +252,22 @@ ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, c
         out[shaders::ITEM_TONE_TOWER + (3 * k) + 1] = bands[k];
         out[shaders::ITEM_TONE_TOWER + (3 * k) + 2] = hex_bgr(mix(col, hx(shadow), 0.5));
     }
-    out[shaders::ITEM_TONE_TURBINE] = pick(style.turbine);
-    out[shaders::ITEM_TONE_TURBINE + 1] = pick(style.blades);
-    out[shaders::ITEM_TONE_TURBINE + 2] = pick(style.blade_edge);
-    out[shaders::ITEM_TONE_TURBINE + 3] = pick(style.hub);
+    // the user's palette: the turbines' slot (a tower, its blades, their edges and the hub; its light keeps the
+    // style's) and the pylons' (the towers and the conductors), each with what goes with it
+    const auto slotted = [&](std::size_t code, std::uint32_t own) {
+        return [palette, code, own, night](const tiles::DayNight& c) {
+            return bgr(style::paint(palette, code, own, night ? c.night : c.day));
+        };
+    };
+    const auto turbine = slotted(style::palette_slot::turbines, style.turbine.day);
+    out[shaders::ITEM_TONE_TURBINE] = turbine(style.turbine);
+    out[shaders::ITEM_TONE_TURBINE + 1] = turbine(style.blades);
+    out[shaders::ITEM_TONE_TURBINE + 2] = turbine(style.blade_edge);
+    out[shaders::ITEM_TONE_TURBINE + 3] = turbine(style.hub);
     out[shaders::ITEM_TONE_TURBINE + 4] = bgr(style.turbine_light);
-    out[shaders::ITEM_TONE_POWER] = pick(style.pylon);
-    out[shaders::ITEM_TONE_POWER + 1] = pick(style.conductor);
+    const auto power = slotted(style::palette_slot::pylons, style.pylon.day);
+    out[shaders::ITEM_TONE_POWER] = power(style.pylon);
+    out[shaders::ITEM_TONE_POWER + 1] = power(style.conductor);
     out[shaders::ITEM_TONE_CORE] = bgr(style.glow_core);
     out[shaders::ITEM_TONE_GLOW] = bgr(style.glow_inner);
     out[shaders::ITEM_TONE_GLOW + 1] = bgr(style.glow_middle);
@@ -296,7 +306,9 @@ ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, c
     // L[2])), not night)), tohex(light(th, mulc(base, 1.12), vnorm((L[0], 0.6, L[2])), not night))
     const std::array<double, 3>& l = theme.sun_vector;
     for (std::size_t k = 0; k < style.woods_greens.size(); ++k) {
-        const shaders::double3 base = hx(style.woods_greens.at(k));
+        // the woods' slot: each green moved as the woods' own colour becomes the user's
+        const shaders::double3 base =
+            hx(style::paint(palette, style::palette_slot::woods, style::woods_own, style.woods_greens.at(k)));
         const std::size_t at = shaders::ITEM_TONE_WOODS + (3 * k);
         out.at(at) = lit_bgr(th, mulc(base, 0.6), {.x = 0.0, .y = 1.0, .z = 0.0}, false);
         out.at(at + 1) = lit_bgr(th, base, vnorm(l[0], 0.8, l[2]), !night);
@@ -748,7 +760,7 @@ void Items::update(const frame::FrameState& state) {
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
     if (jobs == 0) return;
     if (extra_words_.empty()) extra_words_.push_back(0U);
-    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items);
+    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items, state.palette);
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     using B = vk::BufferUsageFlagBits;
@@ -895,7 +907,7 @@ void Items::emit_records(const frame::FrameState& state, twin::Stream& out, std:
     out.layer(twin::Layer::objects); // the port's objects image (`o`)
     const view::Camera& camera = state.view->camera();
     const bool high = item_high(state.theme, camera);
-    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items);
+    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items, state.palette);
     twin::ItemTwin twin(state, tones, out);
     twin.keep_records(faces, parts, sides);
     const std::uint32_t me = index();

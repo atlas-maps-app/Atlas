@@ -335,6 +335,40 @@ TEST_CASE("things: the gather's kinds, the render thread's choices and the momen
     CHECK((thing_choice(ThingKind::lamp, 0, 100, 700, true, true, false).flags & sh::THING_JOB_STREAK) == 0U);
 }
 
+TEST_CASE("things: the user's palette colours the lamp posts, the benches and the bollards, today's none") {
+    const tl::Style style = test_style();
+    namespace slot = atlas::style::palette_slot;
+    atlas::style::PaletteBlock p{};
+    p.colours.at(slot::lamp_posts) = 0x01803028U;
+    p.colours.at(slot::benches) = 0x01707070U;
+    p.colours.at(slot::bollards) = 0x01707070U;
+    for (const bool night : {false, true}) {
+        CAPTURE(night);
+        const auto today = atlas::passes::thing_tones(night, style.things);
+        const atlas::style::PaletteBlock none{};
+        CHECK(atlas::passes::thing_tones(night, style.things, &none) == today);
+        const auto t = atlas::passes::thing_tones(night, style.things, &p);
+        for (const std::uint32_t at :
+             {sh::THING_TONE_MAST, sh::THING_TONE_CAP, sh::THING_TONE_BENCH, sh::THING_TONE_BENCH + 1,
+              sh::THING_TONE_BACK, sh::THING_TONE_BOLLARD, sh::THING_TONE_HEAD}) {
+            CAPTURE(at);
+            CHECK(t.at(at) != today.at(at));
+        }
+        // the glint, a basket, a rack and a railing keep the style's, and so does a lantern's light at night
+        for (const std::uint32_t at :
+             {sh::THING_TONE_GLINT, sh::THING_TONE_BASKET, sh::THING_TONE_RACK, sh::THING_TONE_RAILING}) {
+            CAPTURE(at);
+            CHECK(t.at(at) == today.at(at));
+        }
+        CHECK((t[sh::THING_TONE_LANTERN] == today[sh::THING_TONE_LANTERN]) == night);
+    }
+    // by day each slot's own colour is the user's (0xBBGGRR)
+    const auto day = atlas::passes::thing_tones(false, style.things, &p);
+    CHECK(day[sh::THING_TONE_MAST] == 0x283080U);
+    CHECK(day[sh::THING_TONE_BENCH] == 0x707070U);
+    CHECK(day[sh::THING_TONE_BOLLARD] == 0x707070U);
+}
+
 TEST_CASE("things: stage T of every bundled tile") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) return;

@@ -34,10 +34,20 @@ inline constexpr std::uint32_t known = 0xFU;
 
 /// The slots the passes draw by (PaletteCode's numbers: mapview's Slot).
 namespace palette_slot {
+inline constexpr std::size_t woods = 3;
 inline constexpr std::size_t leaves = 112;
 inline constexpr std::size_t evergreen = 113;
 inline constexpr std::size_t bark = 114;
+inline constexpr std::size_t benches = 115;
+inline constexpr std::size_t lamp_posts = 116;
+inline constexpr std::size_t bollards = 117;
+inline constexpr std::size_t turbines = 118;
+inline constexpr std::size_t pylons = 119;
 } // namespace palette_slot
+
+/// The woods' own colour (the Woods slot's today): the canopy's matrix's .16 .24 .12 in linear light as sRGB, which
+/// the woods' generic trees' greens are darker tones of.
+inline constexpr std::uint32_t woods_own = 0x6F8661U;
 
 struct PaletteBlock {
     std::uint32_t version = palette_block_version;

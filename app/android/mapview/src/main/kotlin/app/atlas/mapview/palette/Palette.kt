@@ -18,7 +18,7 @@ enum class Family { GROUND, WATER, ROADS, WALLS, ROOFS, TREES, NIGHT }
 enum class Slot(val code: Int, val family: Family, val today: Int) {
     PAPER(1, Family.GROUND, 0xD6CFC2),
     LAWN(2, Family.GROUND, 0xA9C38A),
-    WOODS(3, Family.GROUND, 0x708662),
+    WOODS(3, Family.GROUND, 0x6F8661),
     SQUARES(4, Family.GROUND, 0xDCD3C4),
     PARKING(5, Family.GROUND, 0xC9C4BA),
     PLAYGROUND(6, Family.GROUND, 0xD9B48A),

@@ -18,6 +18,7 @@
 #include "frame/Pass.hpp"
 #include "geometry/Items.hpp"
 #include "gpu/Memory.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tiles/Style.hpp"
 
@@ -68,11 +69,12 @@ struct ItemChoice {
 [[nodiscard]] ItemChoice item_choice(const geometry::RegionItem& item, double depth, double focal, bool night);
 
 /// The moment's tones (items.slangh's table, ITEM_TONES words): the port's colours by day or at night, the towers'
-/// gradients' stops mixed toward the moment's shadow, the turbines' blades' angles and the hour's wind.
+/// gradients' stops mixed toward the moment's shadow, the turbines' blades' angles and the hour's wind. The user's
+/// `palette` (null: today's) colours the turbines, the pylons and their conductors, and the woods' greens.
 inline constexpr std::size_t item_tone_count = 69;
 using ItemTones = std::array<std::uint32_t, item_tone_count>;
 [[nodiscard]] ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th,
-                                   const tiles::ItemsStyle& style);
+                                   const tiles::ItemsStyle& style, const style::PaletteBlock* palette = nullptr);
 
 /// Whether the towers' gradients' middle stop lies at .65: the sun on the camera's right (L[0] · sx + L[2] · sz > 0).
 [[nodiscard]] bool item_high(const style::ThemeBlock& theme, const view::Camera& camera) noexcept;

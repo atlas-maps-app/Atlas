@@ -138,7 +138,10 @@ class LayoutTest {
         put("PaletteFlags.MAPPED_FOLLOW", PaletteFlags.MAPPED_FOLLOW)
         put("PaletteFlags.FLAT_GREYS", PaletteFlags.FLAT_GREYS)
         // the slots the core's passes draw by
-        for (slot in listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK)) put("Slot.${slot.name}", slot.code)
+        for (slot in listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK, Slot.WOODS, Slot.BENCHES, Slot.LAMP_POSTS, Slot.BOLLARDS, Slot.TURBINES, Slot.PYLONS)) {
+            put("Slot.${slot.name}", slot.code)
+        }
+        put("Slot.WOODS.today", Slot.WOODS.today)
     }
 
     @Test
