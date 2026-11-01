@@ -31,8 +31,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -264,43 +262,17 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * The world's fetch, once a launch of the map allows it (Services.worldFetch: not CI's runs but its world phase): the
-     * first start's index and globe as soon as the phone is online, asked again every ten minutes while they cannot be
-     * had (world-test not published); then each place a map looks at from beyond 18 km, the latest only while a part
-     * comes, and after a failure nothing for ten minutes. `vk world` lines say what came (CI's world phase reads them).
+     * The world's fetch, once a launch of the map allows it (Services.worldFetch: not CI's runs but its world phase):
+     * the first start's index and globe as soon as the phone is online, then each place a map looks at from beyond
+     * 18 km, the latest only while a part comes; what failed is tried again soon, at rest too (WorldFetch.follow).
+     * `vk world` lines say what came (CI's world phase reads them).
      */
     private fun wireWorld(world: WorldFetch) {
-        val place = MutableStateFlow<LatLon?>(null)
-        MapEngine.worldPlace = { lat, lon -> place.value = LatLon(lat, lon) }
+        val place = MutableStateFlow<WorldFetch.Place?>(null)
+        MapEngine.worldPlace = { lat, lon -> place.value = WorldFetch.Place(lat, lon) }
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
-            while (true) {
-                services.connectivity.online.first { it }
-                val started = runCatching { world.start() }
-                if (started.isSuccess) break
-                android.util.Log.i("AtlasMap", "vk world: not on the phone yet: ${started.exceptionOrNull()?.message}")
-                delay(WORLD_RETRY_MS)
-            }
-            android.util.Log.i(
-                "AtlasMap",
-                "vk world: ${WorldFetch.INDEX} (${world.index?.entries?.size ?: 0} packs) and ${WorldFetch.GLOBE} on the phone",
-            )
-            MapEngine.invalidate()
-            var failedAt = 0L
-            place.filterNotNull().collect { p ->
-                if (!online() || System.currentTimeMillis() - failedAt < WORLD_RETRY_MS) return@collect
-                runCatching { world.enter(p.lat, p.lon) }
-                    .onSuccess { parts ->
-                        if (parts.isNotEmpty()) {
-                            android.util.Log.i("AtlasMap", "vk world: parts ${parts.joinToString()} on the phone")
-                            MapEngine.invalidate()
-                        }
-                    }
-                    .onFailure {
-                        failedAt = System.currentTimeMillis()
-                        android.util.Log.i("AtlasMap", "vk world: a block's packs not fetched: ${it.message}")
-                    }
-            }
+            world.follow(place, services.connectivity.online, said = { android.util.Log.i("AtlasMap", "vk world: $it") }, landed = MapEngine::invalidate)
         }
     }
 
@@ -345,6 +317,5 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
-        private const val WORLD_RETRY_MS = 600_000L
     }
 }
