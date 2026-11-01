@@ -3,6 +3,7 @@
 
 #include "style/CameraState.hpp"
 #include "style/Light.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 
 #include <array>
@@ -252,6 +253,15 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.PROFILE_REGION", .value = profile(Profile::region)},
     Constant{.name = "CameraWriter.PROFILE_WILLIAMSBURG", .value = profile(Profile::williamsburg)},
     Constant{.name = "CameraWriter.PROFILE_WORLD_BASE", .value = profile(Profile::world_base)},
+    Constant{.name = "PaletteBlock.VERSION", .value = palette_block_version},
+    Constant{.name = "PaletteBlock.SIZE", .value = static_cast<std::uint32_t>(palette_block_size)},
+    Constant{.name = "PaletteFlags.NO_GUESSES", .value = palette_flag::no_guesses},
+    Constant{.name = "PaletteFlags.GRASS", .value = palette_flag::grass},
+    Constant{.name = "PaletteFlags.MAPPED_FOLLOW", .value = palette_flag::mapped_follow},
+    Constant{.name = "PaletteFlags.FLAT_GREYS", .value = palette_flag::flat_greys},
+    Constant{.name = "Slot.LEAVES", .value = static_cast<std::uint32_t>(palette_slot::leaves)},
+    Constant{.name = "Slot.EVERGREEN", .value = static_cast<std::uint32_t>(palette_slot::evergreen)},
+    Constant{.name = "Slot.BARK", .value = static_cast<std::uint32_t>(palette_slot::bark)},
 };
 
 // Each table spans its struct without gaps or overlaps (fields in order, each starting where the last ended).

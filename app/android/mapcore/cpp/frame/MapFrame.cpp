@@ -251,7 +251,8 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .labels = labels_.get(),
                           .markers = markers_.get(),
                           .routes = routes_.get(),
-                          .asked = asked_});
+                          .asked = asked_,
+                          .palette = &palette_});
 }
 
 std::optional<scene::Picked> MapFrame::pick(double x, double y) {

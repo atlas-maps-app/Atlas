@@ -159,13 +159,17 @@ double tree_tint(const style::ThemeBlock& block) noexcept {
 }
 
 std::array<std::uint32_t, 25> tree_tones(const shaders::Theme& theme, const style::ThemeBlock& block,
-                                         const tiles::TreesStyle& style) {
+                                         const tiles::TreesStyle& style, const style::PaletteBlock* palette) {
     static_assert(shaders::TREE_TONES == 25);
     std::array<std::uint32_t, 25> out{};
     const bool night = (theme.flags.x & shaders::THEME_NIGHT) != 0U;
     const shaders::double3 l = shaders::theme_sun_vector(theme);
-    out[shaders::TREE_TONE_BARK] = bgr(night ? style.bark.night : style.bark.day);
-    out[shaders::TREE_TONE_SIDE] = bgr(style.bark_lit);
+    // the user's palette: the bark's slot and what goes with it (today's: the style's own)
+    const auto bark = [&](std::uint32_t c) {
+        return style::paint(palette, style::palette_slot::bark, style.bark.day, c);
+    };
+    out[shaders::TREE_TONE_BARK] = bgr(bark(night ? style.bark.night : style.bark.day));
+    out[shaders::TREE_TONE_SIDE] = bgr(bark(style.bark_lit));
     // each tint: leaf = mix(hx('#4E6B35'), hx('#9C8A36'), autumn(th['date'], tags))
     const std::array<double, 2> tints{tree_tint(block), 0.0};
     const shaders::double3 up{0.0, 0.3, 0.0};
@@ -174,7 +178,10 @@ std::array<std::uint32_t, 25> tree_tones(const shaders::Theme& theme, const styl
     const shaders::double3 side5 = vnorm(l.x, 0.5, l.z);
     for (std::size_t k = 0; k < tints.size(); ++k) {
         const std::uint32_t at = shaders::TREE_TONE_TINTS + (static_cast<std::uint32_t>(k) * shaders::TREE_TINT_TONES);
-        const shaders::double3 leaf = mix(hx(style.leaf), hx(style.autumn), tints[k]);
+        // the leaves' slot, the evergreens' for the second, its autumn moved with it
+        const std::size_t slot = k == 0 ? style::palette_slot::leaves : style::palette_slot::evergreen;
+        const shaders::double3 leaf = mix(hx(style::paint(palette, slot, style.leaf, style.leaf)),
+                                          hx(style::paint(palette, slot, style.leaf, style.autumn)), tints[k]);
         // a small crown: c0 = light(mulc(leaf, 0.7), (0, 0.3, 0), False), c1 = light(leaf, vnorm((L0, 0.8, L2)), not
         // night), one circle mix(hx(c0), hx(c1), 0.55)
         const std::uint32_t c0 = lit_bgr(theme, mulc(leaf, 0.7), up, false);
@@ -193,12 +200,12 @@ std::array<std::uint32_t, 25> tree_tones(const shaders::Theme& theme, const styl
         out[at + shaders::TREE_TONE_HIGHLIGHT + 1] = lit_bgr(theme, mulc(leaf, 0.93), side5, !night);
     }
     // the generic tree: dark = light(mulc(base, 0.6), (0, 1, 0), False), mid = light(base, vnorm((L0, 0.7, L2)), lit)
-    const shaders::double3 base = hx(style.crown);
+    const shaders::double3 base = hx(style::paint(palette, style::palette_slot::leaves, style.leaf, style.crown));
     out[shaders::TREE_TONE_GENERIC_DARK] = lit_bgr(theme, mulc(base, 0.6), {0.0, 1.0, 0.0}, false);
     const shaders::double3 side7 = vnorm(l.x, 0.7, l.z);
     out[shaders::TREE_TONE_GENERIC_MID] = lit_bgr(theme, base, side7, false);
     out[shaders::TREE_TONE_GENERIC_MID + 1] = lit_bgr(theme, base, side7, !night);
-    out[shaders::TREE_TONE_GENERIC_TRUNK] = bgr(night ? style.trunk.night : style.trunk.day);
+    out[shaders::TREE_TONE_GENERIC_TRUNK] = bgr(bark(night ? style.trunk.night : style.trunk.day));
     out[shaders::TREE_TONE_SIDE_OPACITY] = bits(style.bark_lit_opacity);
     return out;
 }
@@ -454,7 +461,7 @@ void Trees::update(const frame::FrameState& state) {
     // the tones, then the crown filter's displacement at the frame's filter scale (render/closeup.py's crown_filter,
     // scale 10; DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt() for each of the 256 levels)
     std::array<std::uint32_t, shaders::TREE_TONE_WORDS> tones{};
-    std::ranges::copy(tree_tones(state.block.theme, state.theme, style->trees), tones.begin());
+    std::ranges::copy(tree_tones(state.block.theme, state.theme, style->trees, state.palette), tones.begin());
     const fx::RippleDisplacement crown = fx::ripple_displacement(10.0F, static_cast<float>(state.camera.density));
     tones[shaders::TREE_TONE_CROWN_REACH] = static_cast<std::uint32_t>(crown.reach);
     for (std::uint32_t c = 0; c < 256; ++c) {

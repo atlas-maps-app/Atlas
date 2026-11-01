@@ -11,6 +11,8 @@
 #include "geometry/Trees.hpp"
 #include "passes/Things.hpp"
 #include "passes/Trees.hpp"
+#include "style/Palette.hpp"
+#include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Payload.hpp"
@@ -76,6 +78,44 @@ TEST_CASE("trees: autumn's tint by the moment's date") {
     b.month = 12;
     b.day = 31;
     CHECK(atlas::passes::tree_tint(b) == 0.7);
+}
+
+TEST_CASE("trees: the user's palette colours the leaves, the evergreens and the bark, today's none") {
+    const tl::Style style = test_style();
+    atlas::style::ThemeBlock block{};
+    block.month = 10;
+    block.day = 20; // autumn's tint
+    block.sun = {.r = 255, .g = 235, .b = 203, .a = 255};
+    block.ambient = {.r = 147, .g = 166, .b = 204, .a = 255};
+    block.sun_k = 0.8;
+    block.amb_k = 0.6;
+    block.sun_vector = {0.3, 0.8, 0.5};
+    const sh::Theme th = atlas::style::shader_theme(block);
+    const auto today = atlas::passes::tree_tones(th, block, style.trees);
+    const atlas::style::PaletteBlock none{};
+    CHECK(atlas::passes::tree_tones(th, block, style.trees, &none) == today);
+    // the bark's slot: the bark by day takes it (0xBBGGRR), its sunlit side and the generic tree's trunk move with it
+    atlas::style::PaletteBlock bark{};
+    bark.colours.at(atlas::style::palette_slot::bark) = 0x01803028U;
+    const auto b = atlas::passes::tree_tones(th, block, style.trees, &bark);
+    CHECK(b[sh::TREE_TONE_BARK] == 0x283080U);
+    CHECK(b[sh::TREE_TONE_SIDE] != today[sh::TREE_TONE_SIDE]);
+    CHECK(b[sh::TREE_TONE_GENERIC_TRUNK] != today[sh::TREE_TONE_GENERIC_TRUNK]);
+    CHECK(b[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT] == today[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT]);
+    // the leaves' slot: a deciduous tree's tones and the generic tree's crown, not an evergreen's nor the bark
+    atlas::style::PaletteBlock leaves{};
+    leaves.colours.at(atlas::style::palette_slot::leaves) = 0x01707070U;
+    const auto l = atlas::passes::tree_tones(th, block, style.trees, &leaves);
+    const std::uint32_t evergreen = sh::TREE_TONE_TINTS + sh::TREE_TINT_TONES;
+    CHECK(l[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT] != today[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT]);
+    CHECK(l[sh::TREE_TONE_GENERIC_MID] != today[sh::TREE_TONE_GENERIC_MID]);
+    CHECK(l[evergreen + sh::TREE_TONE_LIT] == today[evergreen + sh::TREE_TONE_LIT]);
+    CHECK(l[sh::TREE_TONE_BARK] == today[sh::TREE_TONE_BARK]);
+    atlas::style::PaletteBlock evergreens{};
+    evergreens.colours.at(atlas::style::palette_slot::evergreen) = 0x01707070U;
+    const auto e = atlas::passes::tree_tones(th, block, style.trees, &evergreens);
+    CHECK(e[evergreen + sh::TREE_TONE_LIT] != today[evergreen + sh::TREE_TONE_LIT]);
+    CHECK(e[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT] == today[sh::TREE_TONE_TINTS + sh::TREE_TONE_LIT]);
 }
 
 TEST_CASE("trees: the render thread's choices, as tree_close and draw_tree3d compare them in double") {

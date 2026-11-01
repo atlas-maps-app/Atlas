@@ -1,7 +1,10 @@
 package app.atlas.mapcorecheck.style
 
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.palette.PaletteFlags
+import app.atlas.mapview.palette.Slot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,6 +131,14 @@ class LayoutTest {
         put("CameraWriter.PROFILE_REGION", CameraWriter.PROFILE_REGION)
         put("CameraWriter.PROFILE_WILLIAMSBURG", CameraWriter.PROFILE_WILLIAMSBURG)
         put("CameraWriter.PROFILE_WORLD_BASE", CameraWriter.PROFILE_WORLD_BASE)
+        put("PaletteBlock.VERSION", PaletteBlock.VERSION)
+        put("PaletteBlock.SIZE", PaletteBlock.SIZE)
+        put("PaletteFlags.NO_GUESSES", PaletteFlags.NO_GUESSES)
+        put("PaletteFlags.GRASS", PaletteFlags.GRASS)
+        put("PaletteFlags.MAPPED_FOLLOW", PaletteFlags.MAPPED_FOLLOW)
+        put("PaletteFlags.FLAT_GREYS", PaletteFlags.FLAT_GREYS)
+        // the slots the core's passes draw by
+        for (slot in listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK)) put("Slot.${slot.name}", slot.code)
     }
 
     @Test

@@ -1,9 +1,93 @@
 #include "style/Palette.hpp"
 
+#include "base/pymath/PyMath.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace atlas::style {
+
+namespace {
+
+struct Lab {
+    double l = 0.0;
+    double a = 0.0;
+    double b = 0.0;
+};
+
+[[nodiscard]] double linear(std::uint32_t c) noexcept {
+    const double v = static_cast<double>(c & 0xFFU) / 255.0;
+    return v <= 0.04045 ? v / 12.92 : pymath::strict::pow((v + 0.055) / 1.055, 2.4);
+}
+
+[[nodiscard]] std::uint32_t encoded(double v) noexcept {
+    const double c = v <= 0.0031308 ? 12.92 * v : (1.055 * pymath::strict::pow(v, 1.0 / 2.4)) - 0.055;
+    return static_cast<std::uint32_t>(std::clamp(std::lround(c * 255.0), 0L, 255L));
+}
+
+// Björn Ottosson's Oklab, as mapview's Oklab
+[[nodiscard]] Lab lab_of(std::uint32_t rgb) noexcept {
+    const double r = linear(rgb >> 16U);
+    const double g = linear(rgb >> 8U);
+    const double b = linear(rgb);
+    const double l = pymath::strict::cbrt((0.4122214708 * r) + (0.5363325363 * g) + (0.0514459929 * b));
+    const double m = pymath::strict::cbrt((0.2119034982 * r) + (0.6806995451 * g) + (0.1073969566 * b));
+    const double s = pymath::strict::cbrt((0.0883024619 * r) + (0.2817188376 * g) + (0.6299787005 * b));
+    return {.l = (0.2104542553 * l) + (0.7936177850 * m) - (0.0040720468 * s),
+            .a = (1.9779984951 * l) - (2.4285922050 * m) + (0.4505937099 * s),
+            .b = (0.0259040371 * l) + (0.7827717662 * m) - (0.8086757660 * s)};
+}
+
+[[nodiscard]] std::uint32_t rgb_of(const Lab& c) noexcept {
+    const auto cube = [](double x) { return x * x * x; };
+    const double l = cube(c.l + (0.3963377774 * c.a) + (0.2158037573 * c.b));
+    const double m = cube(c.l - (0.1055613458 * c.a) - (0.0638541728 * c.b));
+    const double s = cube(c.l - (0.0894841775 * c.a) - (1.2914855480 * c.b));
+    const std::uint32_t r = encoded((4.0767416621 * l) - (3.3077115913 * m) + (0.2309699292 * s));
+    const std::uint32_t g = encoded((-1.2684380046 * l) + (2.6097574011 * m) - (0.3413193965 * s));
+    const std::uint32_t b = encoded((-0.0041960863 * l) - (0.7034186147 * m) + (1.7076147010 * s));
+    return (r << 16U) | (g << 8U) | b;
+}
+
+} // namespace
+
+std::uint32_t palette_move(std::uint32_t c, std::uint32_t from, std::uint32_t to) noexcept {
+    if (c == from) return to;
+    const Lab v = lab_of(c);
+    const Lab f = lab_of(from);
+    const Lab t = lab_of(to);
+    // the lightness: a darker tone the same share of the way to black, a lighter one of the way to white
+    double l = t.l;
+    if (v.l < f.l) l = t.l * (v.l / f.l);
+    if (v.l > f.l && f.l < 1.0) l = 1.0 - ((1.0 - t.l) * ((1.0 - v.l) / (1.0 - f.l)));
+    // the tints per unit of lightness: c's against from's, turned as from's turns into to's and lessened as to's is
+    // greyer, never strengthened (so a grey's tones' small tints are not blown up; `grey` the tint under which a colour
+    // has no hue to turn by)
+    constexpr double grey = 0.02;
+    const auto tint = [](const Lab& x) { return x.l > 1e-9 ? Lab{.l = 1.0, .a = x.a / x.l, .b = x.b / x.l} : Lab{}; };
+    const Lab vt = tint(v);
+    const Lab ft = tint(f);
+    const Lab tt = tint(t);
+    const double fm = pymath::hypot(ft.a, ft.b);
+    const double tm = pymath::hypot(tt.a, tt.b);
+    double re = 0.0;
+    double im = 0.0;
+    if (fm > 1e-9) {
+        const double d = fm * std::max({fm, tm, grey});
+        re = ((tt.a * ft.a) + (tt.b * ft.b)) / d;
+        im = ((tt.b * ft.a) - (tt.a * ft.b)) / d;
+    }
+    const double da = vt.a - ft.a;
+    const double db = vt.b - ft.b;
+    return rgb_of({.l = l, .a = (tt.a + (da * re) - (db * im)) * l, .b = (tt.b + (da * im) + (db * re)) * l});
+}
+
+std::uint32_t paint(const PaletteBlock* palette, std::size_t code, std::uint32_t own, std::uint32_t c) noexcept {
+    if (palette == nullptr) return c;
+    const std::optional<std::uint32_t> to = palette->colour(code);
+    return to ? palette_move(c, own, *to) : c;
+}
 
 bool PaletteBlock::today() const noexcept {
     return flags == 0U && std::ranges::all_of(colours, [](std::uint32_t c) { return c == 0U; });

@@ -2,6 +2,7 @@ package app.atlas.mapview.palette
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PaletteThemeTest {
@@ -32,5 +33,18 @@ class PaletteThemeTest {
         assertEquals("#%06X".format(PaletteTheme.move(0x1B1F2C, 0xC9C1B4, 0x55585C)), n["road"])
         assertEquals(0x86A060, PaletteTheme.move(0xD6CFC2, 0xD6CFC2, 0x86A060))
         assertEquals(0x102030, PaletteTheme.move(0x102030, 0x405060, 0x405060))
+    }
+
+    @Test
+    fun aGreyGreysWhatGoesWithItAndAToneStaysATone() {
+        fun spread(c: Int) = listOf(16, 8, 0).map { (c shr it) and 0xFF }.let { it.max() - it.min() }
+        // a grey sky's lighter horizon is a lighter grey (a ratio per channel made it peach)
+        val horizon = PaletteTheme.move(0xDCE8F0, 0x7FA6DA, 0xA0A0A0)
+        assertTrue("%06X".format(horizon), spread(horizon) <= 2 && (horizon and 0xFF) > 0xA0)
+        // dusk's darker water stays darker than the new water, in the new water's hue
+        val dusk = PaletteTheme.move(0x2E4A60, 0x4F7590, 0x2D6A4F)
+        assertTrue("%06X".format(dusk), (dusk shr 8 and 0xFF) < 0x6A && (dusk shr 8 and 0xFF) > (dusk shr 16 and 0xFF))
+        // black stays black
+        assertEquals(0, PaletteTheme.move(0, 0x4F7590, 0x2D6A4F))
     }
 }
