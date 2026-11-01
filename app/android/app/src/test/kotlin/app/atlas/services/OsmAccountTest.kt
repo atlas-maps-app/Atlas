@@ -134,10 +134,10 @@ class OsmAccountTest {
         val osm = FakeOsm()
         val a = account(osm)
         var state = a.begin()!!.toHttpUrl().queryParameter("state")!!
-        withTimeout(5_000) { a.waiting.first { it } }
+        withTimeout(STORED_MS) { a.waiting.first { it } }
         assertFalse(a.finish("${OsmAccount.REDIRECT}?error=access_denied&error_description=The+resource+owner+denied&state=$state"))
         assertEquals(OsmAccount.Failure(declined = true, why = "The resource owner denied"), a.failure.value)
-        withTimeout(5_000) { a.waiting.first { w -> !w } }
+        withTimeout(STORED_MS) { a.waiting.first { w -> !w } }
         // a new sign-in clears it; OpenStreetMap out of reach for the token says so
         state = a.begin()!!.toHttpUrl().queryParameter("state")!!
         assertNull(a.failure.value)
@@ -171,5 +171,13 @@ class OsmAccountTest {
     @Test
     fun aRedirectsQueryIsDecoded() {
         assertEquals(mapOf("code" to "a b", "state" to "x/y"), OsmAccount.query("${OsmAccount.REDIRECT}?code=a+b&state=x%2Fy"))
+    }
+
+    private companion object {
+        /**
+         * How long the store's file may take to show a write (DataStore syncs each one to the disk): on 1 November CI's
+         * unit-app ran out of 5 s twice, on app's scheduled run 41267832114 and a branch's, beside every other run's pass.
+         */
+        const val STORED_MS = 30_000L
     }
 }
