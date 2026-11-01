@@ -9,10 +9,16 @@ import java.nio.ByteBuffer
 interface FrameSource {
     /**
      * Writes the gesture camera for the frame of [vsyncNanos] into [out] (CameraState, through
-     * `app.atlas.mapcore.state.CameraWriter`); false when nothing changed, and the core stops asking until
-     * [MapCore.requestFrame].
+     * `app.atlas.mapcore.state.CameraWriter`); false when nothing changed since the last camera it wrote (and no
+     * [redraw] was asked since), and the core stops asking until [MapCore.requestFrame].
      */
     fun camera(vsyncNanos: Long, out: ByteBuffer): Boolean
+
+    /**
+     * The window shows nothing of the last frame (a new window, one Android cleared, the app back from the background):
+     * the next [camera] writes the camera though it has not changed, so the core draws it. Any thread.
+     */
+    fun redraw() {}
 
     /** Frame [frame] was presented at [nanos] (CLOCK_MONOTONIC); post elsewhere to act on it. */
     fun presented(frame: Long, nanos: Long, complete: Boolean)

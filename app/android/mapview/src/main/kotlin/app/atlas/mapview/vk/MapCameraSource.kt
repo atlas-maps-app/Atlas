@@ -89,6 +89,10 @@ internal class MapCameraSource(
     @Volatile
     private var chromeRevision = 0
 
+    /** A [redraw] asked: the next vsync writes the camera though nothing changed. */
+    @Volatile
+    private var again = false
+
     // The render thread's.
     private var sequence = 0L
     private var drawnRevision = -1L
@@ -106,6 +110,10 @@ internal class MapCameraSource(
         chromeRevision++
     }
 
+    override fun redraw() {
+        again = true
+    }
+
     /** The newest publication (the main thread's own view of it). */
     val published: Samples? get() = samples
 
@@ -117,7 +125,8 @@ internal class MapCameraSource(
         val span = s.t1 - s.t0
         val moving = s.moving && vsyncNanos - s.t1 <= span + STALE_SLACK_NS
         val chromeNow = chromeRevision
-        if (s.revision == drawnRevision && !moving && !drawnMoving && chromeNow == drawnChrome) return false
+        if (!again && s.revision == drawnRevision && !moving && !drawnMoving && chromeNow == drawnChrome) return false
+        again = false
         val u = if (s.moving) ((vsyncNanos - s.t0).toDouble() / span.toDouble()).coerceIn(0.0, 2.0) else 0.0
         val lat = s.lat0 + (s.lat1 - s.lat0) * u
         val lon = s.lon0 + (s.lon1 - s.lon0) * u
