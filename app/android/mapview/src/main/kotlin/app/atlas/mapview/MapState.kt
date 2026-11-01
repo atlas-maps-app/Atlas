@@ -76,9 +76,16 @@ class MapState(initial: CameraPosition) {
     /** Ground to screen pixel, or null when behind the camera. */
     fun latLonToScreen(p: LatLon): Pair<Float, Float>? = projector?.toScreen(p)
 
-    /** What the view registers so [screenToLatLon] and [latLonToScreen] work. */
+    /**
+     * [from] moved, its zoom, bearing and tilt kept, so the ground at [anchor] lands under pixel ([x], [y]) of this view:
+     * where a camera at another zoom puts a place above a sheet. Null before the first frame.
+     */
+    fun placing(anchor: LatLon, x: Float, y: Float, from: CameraPosition = camera): CameraPosition? = projector?.place(from, anchor, x, y)
+
+    /** What the view registers so [screenToLatLon], [latLonToScreen] and [placing] work. */
     interface Projector {
         fun toLatLon(x: Float, y: Float): LatLon?
         fun toScreen(p: LatLon): Pair<Float, Float>?
+        fun place(from: CameraPosition, anchor: LatLon, x: Float, y: Float): CameraPosition?
     }
 }

@@ -28,7 +28,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -73,8 +72,8 @@ import app.atlas.ui.kit.backdropSource
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.rememberSpeechInput
 import app.atlas.ui.search.PLACE_SHEET_HALF
+import app.atlas.ui.search.bandOver
 import app.atlas.ui.search.PlaceOverMap
-import app.atlas.ui.search.boardShift
 import app.atlas.ui.search.symbolOf
 import java.time.Instant
 import kotlin.math.roundToInt
@@ -195,9 +194,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
       val screenHeight = maxHeight
       // A place opened from the map or the results comes up over this map, which keeps the user's view: it moves only
       // when the place would be under the place's sheet or buttons, by the least pan (the zoom, bearing and tilt kept).
-      val placeBand = with(LocalDensity.current) {
-          Rect(PLACE_SIDE.toPx(), (boardShift() + PLACE_TOP).toPx(), (maxWidth - PLACE_SIDE).toPx(), (maxHeight * (1f - PLACE_SHEET_HALF) - PLACE_FOOT).toPx())
-      }
+      val placeBand = bandOver(PLACE_SHEET_HALF)
       val openPlace: (Place) -> Unit = { p ->
           services.remember(p)
           vm.open(p)
@@ -337,15 +334,6 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     }
     }
 }
-
-/** How far in from the sides an opened place shows: its chosen pin's 44 px disc and a margin. */
-private val PLACE_SIDE = 32.dp
-
-/** How far down an opened place shows: under the Place board's buttons (44 px down, 48 tall) and its chosen pin (56 tall). */
-private val PLACE_TOP = 156.dp
-
-/** How far above the place's sheet (at its half stop) an opened place shows. */
-private val PLACE_FOOT = 16.dp
 
 /** The board's wash over the top of the map: [paper] at 90 % fading to nothing. */
 private fun scrim(paper: Color) = Brush.verticalGradient(listOf(paper.copy(alpha = 0.9f), paper.copy(alpha = 0f)))

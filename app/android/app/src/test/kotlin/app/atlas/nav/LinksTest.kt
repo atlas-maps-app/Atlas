@@ -12,7 +12,8 @@ class LinksTest {
     fun geoPointOpensTheMapThereWithWhatIsHere() {
         val s = Links.forUri("geo:52.37452,4.88377?z=18")!!
         assertEquals(Dest.Home(52.37452, 4.88377, 18.0), s[0])
-        assertEquals(Dest.WhatsHere(52.37452, 4.88377), s[1])
+        // the map goes to a link's point; a long press's keeps the view
+        assertEquals(Dest.WhatsHere(52.37452, 4.88377, go = true), s[1])
     }
 
     @Test
@@ -20,6 +21,7 @@ class LinksTest {
         val pressed = Dest.WhatsHere(52.37452, 4.88377, "w266556292")
         assertEquals(pressed, Dest.parse(pressed.route))
         assertEquals(Dest.WhatsHere(52.37452, 4.88377), Dest.parse(Dest.WhatsHere(52.37452, 4.88377).route))
+        assertEquals(Dest.WhatsHere(52.37452, 4.88377, go = true), Dest.parse(Dest.WhatsHere(52.37452, 4.88377, go = true).route))
     }
 
     @Test
@@ -46,13 +48,13 @@ class LinksTest {
     fun osmMapViewsMoveTheMapAndMarkersShowThePoint() {
         assertEquals(listOf<Dest>(Dest.Home(52.3745, 4.8838, 17.0)), Links.forUri("https://www.openstreetmap.org/#map=17/52.3745/4.8838"))
         val marker = Links.forUri("https://www.openstreetmap.org/?mlat=52.3745&mlon=4.8838#map=18/52.3745/4.8838")!!
-        assertEquals(Dest.WhatsHere(52.3745, 4.8838), marker.last())
+        assertEquals(Dest.WhatsHere(52.3745, 4.8838, go = true), marker.last())
     }
 
     @Test
     fun sharedTextWithCoordinatesOrAPlusCode() {
-        assertEquals(Dest.WhatsHere(52.3745, 4.8838), Links.forText("52.3745, 4.8838")!!.last())
-        assertEquals(Dest.WhatsHere(52.3745, 4.8838), Links.forText("Look: https://www.openstreetmap.org/?mlat=52.3745&mlon=4.8838")!!.last())
+        assertEquals(Dest.WhatsHere(52.3745, 4.8838, go = true), Links.forText("52.3745, 4.8838")!!.last())
+        assertEquals(Dest.WhatsHere(52.3745, 4.8838, go = true), Links.forText("Look: https://www.openstreetmap.org/?mlat=52.3745&mlon=4.8838")!!.last())
         val code = CoordinateFormat.plusCode(LatLon(52.37452, 4.88377))
         val s = Links.forText(code)!!
         val p = (s.last() as Dest.WhatsHere).at
@@ -72,7 +74,7 @@ class LinksTest {
         assertEquals(Dest.Home(52.37452, 4.88377, 17.0), s.first())
         assertEquals(Dest.Search("apotheek"), s.last())
         // The same point repeated in q, with no label, is just the point.
-        assertEquals(Dest.WhatsHere(52.37452, 4.88377), Links.forUri("geo:52.37452,4.88377?q=52.37452,4.88377")!!.last())
+        assertEquals(Dest.WhatsHere(52.37452, 4.88377, go = true), Links.forUri("geo:52.37452,4.88377?q=52.37452,4.88377")!!.last())
     }
 
     @Test

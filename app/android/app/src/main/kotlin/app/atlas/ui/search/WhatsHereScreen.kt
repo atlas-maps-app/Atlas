@@ -55,12 +55,9 @@ import app.atlas.Services
 import app.atlas.geo.CoordinateFormat
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.UserLocation
 import app.atlas.model.OsmId
 import app.atlas.model.Place
@@ -74,11 +71,13 @@ import app.atlas.places.Facts
 import app.atlas.places.Localise
 import app.atlas.places.OpeningHoursContext
 import app.atlas.search.PlaceRecord
+import app.atlas.services.HereGap
 import app.atlas.services.PlaceOrigin
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Card
 import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.Kicker
+import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.PrimaryButton
 import app.atlas.ui.kit.Sheet
 import app.atlas.ui.kit.SheetStop
@@ -116,13 +115,23 @@ class WhatsHereViewModel(private val services: Services, private val at: LatLon,
     val online: Boolean get() = !services.config.offline && services.connectivity.online.value
 
     init {
+        find()
+    }
+
+    /** Looks again: after a lookup that could not read the places around (offline, or the network failed). */
+    fun retry() {
+        mutable.update { it.copy(facts = null) }
+        find()
+    }
+
+    private fun find() {
         viewModelScope.launch {
             val facts = try {
                 HereFinder.find(services, at, lang, online, spot)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                HereFacts(null, null, emptyList(), null)
+                HereFacts(null, null, emptyList(), null, HereGap.UNANSWERED)
             }
             mutable.update { it.copy(facts = facts) }
         }
@@ -158,7 +167,8 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val vm = viewModel(key = "whatshere:" + args.route) { WhatsHereViewModel(services, p, lang, args.osmId?.let(OsmId::parse)) }
     val state by vm.state.collectAsStateWithLifecycle()
     val c = Atlas.colors
-    val map = remember { MapState(CameraPosition(p, 17.4, 0.0, 40.0)) }
+    // the map on screen, which keeps the view and its look: the point is marked and brought out from under the sheet
+    val map = rememberOverMap(p)
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
     val context = LocalContext.current
     var writing by remember { mutableStateOf(false) }
@@ -168,8 +178,8 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val shareLabel = stringResource(R.string.place_share)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        StageMap(
-            state = map,
+        OverStageMap(
+            map,
             modifier = Modifier.fillMaxSize(),
             background = c.paper,
             overlays = MapOverlays(
@@ -177,10 +187,11 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 location = UserLocation(here, 15.0),
                 measure = false,
             ),
-            contentPadding = PaddingValues(top = 80.dp, bottom = maxHeight * 0.55f),
+            ownPadding = PaddingValues(top = 80.dp, bottom = maxHeight * HALF),
             onLongPress = { at -> nav.replace(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.replace(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         )
+        BringInto(map, p, bandOver(HALF), go = args.go)
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -199,7 +210,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 services.scope.launch(Dispatchers.IO) { runCatching { services.saved.toggle(point.copy(tags = facts?.address?.line?.let { mapOf("name" to it) } ?: emptyMap())) } }
             }, size = 52.dp, selected = saved)
         }
-        Sheet(sheet, peekHeight = 170.dp, halfFraction = 0.55f, fullTopGap = 96.dp) {
+        Sheet(sheet, peekHeight = 170.dp, halfFraction = HALF, fullTopGap = 96.dp) {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -225,6 +236,13 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                                     if (i < facts.nearby.lastIndex) Hairline()
                                 }
                             }
+                        } else if (facts.spot == null && facts.gap != null) {
+                            // the places around could not be read: said so, never "nothing named"
+                            Text(
+                                stringResource(if (facts.gap == HereGap.OFFLINE) R.string.whatshere_offline else R.string.whatshere_unanswered),
+                                style = Atlas.type.caption, color = c.inkSoft,
+                            )
+                            PillButton(onClick = vm::retry) { Text(stringResource(R.string.kit_retry), style = Atlas.type.label) }
                         } else if (facts.spot == null) {
                             Text(stringResource(R.string.whatshere_nothing_named), style = Atlas.type.caption, color = c.inkSoft)
                         }
@@ -444,3 +462,6 @@ private fun NoteDialog(onNext: (String) -> Unit, onDismiss: () -> Unit) {
         PrimaryButton(stringResource(R.string.place_review_next), onClick = { onNext(words.trim()) }, modifier = Modifier.fillMaxWidth(), symbol = "ui-mail", enabled = words.isNotBlank())
     }
 }
+
+/** The share of the screen the sheet takes at its half stop. */
+private const val HALF = 0.55f

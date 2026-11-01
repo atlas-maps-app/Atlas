@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.datastore.preferences.core.Preferences
 import androidx.compose.ui.geometry.Rect
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
@@ -128,13 +129,8 @@ class HomeViewModel(
 
     val permitted: StateFlow<Boolean> get() = services.location.permitted
 
-    val style: StateFlow<MapStyle> = services.settings.data.map { p ->
-        val theme = services.ciTheme ?: p[SettingsKeys.MAP_THEME]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.AUTO
-        // The board's map: the home's own markers stand for places, so the tiles' points of interest are off until asked for.
-        val layers = p[SettingsKeys.MAP_LAYERS]?.mapNotNull { runCatching { MapLayer.valueOf(it) }.getOrNull() }?.toSet() ?: HomeView.style.layers
-        val with3d = if (p[SettingsKeys.MAP_3D] ?: true) layers + MapLayer.BUILDINGS_3D else layers - MapLayer.BUILDINGS_3D
-        MapStyle(theme = theme, layers = with3d, language = p[SettingsKeys.NAME_LANGUAGE], calm = true)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, MapStyle(calm = true))
+    val style: StateFlow<MapStyle> = services.settings.data.map { mapStyleOf(it, services.ciTheme) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, MapStyle(calm = true))
 
     private val forecastState = MutableStateFlow<Forecast?>(null)
 
@@ -507,6 +503,15 @@ class HomeViewModel(
         private const val WORLD_SETTLE_MS = 10_000L
         private const val WORLD_HOLD_MS = 15_000L
     }
+}
+
+/** The map's look the user picked in the Look settings ([ciTheme]: the sky a CI run sets), as the Map home draws it. */
+internal fun mapStyleOf(p: Preferences, ciTheme: Theme?): MapStyle {
+    val theme = ciTheme ?: p[SettingsKeys.MAP_THEME]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.AUTO
+    // The board's map: the home's own markers stand for places, so the tiles' points of interest are off until asked for.
+    val layers = p[SettingsKeys.MAP_LAYERS]?.mapNotNull { runCatching { MapLayer.valueOf(it) }.getOrNull() }?.toSet() ?: HomeView.style.layers
+    val with3d = if (p[SettingsKeys.MAP_3D] ?: true) layers + MapLayer.BUILDINGS_3D else layers - MapLayer.BUILDINGS_3D
+    return MapStyle(theme = theme, layers = with3d, language = p[SettingsKeys.NAME_LANGUAGE], calm = true)
 }
 
 /**

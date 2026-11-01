@@ -91,8 +91,14 @@ data class LocalBridge(
 /** One chain around: the brand and its branches, nearest first. */
 data class LocalBrand(val brand: Brand, val branches: List<Place>)
 
-/** What is at a point: its address, the place it is in (a building, a church, a park), and the named places around. */
-data class LocalHere(val address: LocalAddress?, val spot: Place?, val nearby: List<Place>, val origin: PlaceOrigin?)
+/**
+ * What is at a point: its address, the place it is in (a building, a church, a park), and the named places around;
+ * [gap] where those could not be read at all.
+ */
+data class LocalHere(val address: LocalAddress?, val spot: Place?, val nearby: List<Place>, val origin: PlaceOrigin?, val gap: HereGap? = null)
+
+/** Why the places around a point could not be read: the phone holds nothing for it, and the network is off, or failed. */
+enum class HereGap { OFFLINE, UNANSWERED }
 
 /**
  * A name to set over the map: a quarter ([water] false) or a large water, with where it may stand, likeliest first.
@@ -117,6 +123,11 @@ class LocalData(
     private val overpass: () -> Overpass? = { null },
     private val isOnline: () -> Boolean = { false },
     private val onClose: () -> Unit = {},
+    /**
+     * The map's data around a point within a radius, where no store or pack holds it ([HereWindows]: the window's, kept
+     * or from Atlas's packs); null where there is none. Throws IOException where its read failed.
+     */
+    private val windows: suspend (at: LatLon, radiusM: Double) -> PackFeatures? = { _, _ -> null },
 ) : Closeable {
     /** Elements asked of Overpass where no pack reaches: street names at a route's steps and near a pin, bridges along a line. */
     private val online = OnlineElements(overpass, isOnline)
@@ -423,11 +434,13 @@ class LocalData(
      * places Atlas lists within [radiusM], measured to their outlines, nearest first.
      */
     suspend fun whatsHere(at: LatLon, radiusM: Double = NEARBY_M, spotId: OsmId? = null): LocalHere = withContext(Dispatchers.IO) {
-        val address = address(at)
         val box = BBox.around(at, radiusM)
-        val pack = packsCovering(at)
         val store = storeCovering(at)
+        // the map's packs, else (nothing on the phone holds the point) the map's window data, kept or from Atlas's packs
+        val pack = packsCovering(at) ?: if (store == null) windowAround(at, radiusM) else null
+        val address = pack?.let { fromPacks(it, at, store) } ?: store?.let { fromStore(it, at) }
         val listed = { t: Map<String, String> -> t["name"] != null && Categories.of(t) != null }
+        var gap: HereGap? = null
         // The places around with their distance to the point (to their outline when they have one).
         val (around, origin) = when {
             store != null -> store.inBox(box).filter { it.category != null && it.tags["name"] != null }
@@ -435,7 +448,13 @@ class LocalData(
             pack != null -> pack.elements(box) { e -> e.tags?.let { listed(it) && keeps(e, it) } == true }
                 .mapNotNull { e -> PackFeatures.place(e)?.let { it to PackFeatures.distance(e, at) } } to PlaceOrigin.PACK
             else -> {
-                val got = askOverpass(TagFilter.Has("name"), box)
+                // the last resort, never waited on long: Overpass's one query at a time is the map's windows' and searches' too
+                val got = askOverpass(TagFilter.Has("name"), box, withinMs = HERE_ONLINE_MS)
+                gap = when {
+                    got.origin == null -> HereGap.OFFLINE
+                    got.error != null -> HereGap.UNANSWERED
+                    else -> null
+                }
                 got.value.filter { listed(it.tags) }.map { it to Geo.distance(at, it.location) } to got.origin
             }
         }
@@ -457,7 +476,19 @@ class LocalData(
                 .minByOrNull { r -> r.place.bbox!!.let { it.width * it.height } }?.place
         } ?: near.firstOrNull { it.second <= SPOT_POINT_M }?.first
         val nearby = near.map { it.first }.filter { it.key != spot?.key }.distinctBy { it.key }.take(NEARBY_MAX)
-        LocalHere(address, spot, nearby, origin ?: address?.origin)
+        LocalHere(address, spot, nearby, origin ?: address?.origin, gap)
+    }
+
+    /** Whether a region's store or a pack on the phone holds [at]: what is there is read without the network. */
+    fun holds(at: LatLon): Boolean = storeCovering(at) != null || packsCovering(at) != null
+
+    /** The map's window data around [at] ([windows]); null where there is none, or its read failed (Overpass then). */
+    private suspend fun windowAround(at: LatLon, radiusM: Double): PackFeatures? = try {
+        windows(at, radiusM)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: IOException) {
+        null
     }
 
     // ---- Queries --------------------------------------------------------------------------------------------------
@@ -514,16 +545,18 @@ class LocalData(
         f.elements(box) { e -> e.tags?.let { keeps(e, it) && accept(it) } == true }.mapNotNull { PackFeatures.place(it) }
 
     /** Places in [box] passing [filter] from Overpass, when the phone is online; nothing (and no origin) when not. */
-    private suspend fun askOverpass(filter: TagFilter, box: BBox): LocalAnswer<List<Place>> {
+    private suspend fun askOverpass(filter: TagFilter, box: BBox, withinMs: Long? = null): LocalAnswer<List<Place>> {
         val op = overpass()?.takeIf { isOnline() } ?: return LocalAnswer(emptyList(), null)
         val selectors = OverpassSelectors.of(filter) ?: return LocalAnswer(emptyList(), null, "the filter cannot be asked of Overpass")
-        return askOnline {
+        return askOnline(withinMs) {
             op.places(OverpassQl.places(selectors, OverpassArea.Box(box), timeoutSeconds = 25)).filter { filter.matches(it.tags) && Categories.isPlace(it.tags) }
         }
     }
 
-    private suspend fun askOnline(ask: suspend () -> List<Place>): LocalAnswer<List<Place>> = try {
-        LocalAnswer(ask(), PlaceOrigin.ONLINE)
+    /** [ask]'s places, or its failure to report; given up after [withinMs] where one is given. */
+    private suspend fun askOnline(withinMs: Long? = null, ask: suspend () -> List<Place>): LocalAnswer<List<Place>> = try {
+        val got = if (withinMs == null) ask() else withTimeoutOrNull(withinMs) { ask() }
+        if (got != null) LocalAnswer(got, PlaceOrigin.ONLINE) else LocalAnswer(emptyList(), PlaceOrigin.ONLINE, "no answer within ${withinMs!! / 1000} s")
     } catch (e: CancellationException) {
         throw e
     } catch (e: IOException) {
@@ -630,6 +663,9 @@ class LocalData(
         const val NEARBY_M = 150.0
         const val SPOT_POINT_M = 12.0
         private const val NEARBY_MAX = 8
+
+        /** What's here: the longest Overpass is waited on for the places around, where nothing else has them. */
+        const val HERE_ONLINE_MS = 20_000L
 
         /** Two bridge crossings closer than this along a route are one bridge (metres). */
         const val SAME_M = 15.0

@@ -271,6 +271,8 @@
     <string name="whatshere_coordinates">Coördinaten</string>
     <string name="whatshere_nearby">Dichtstbij</string>
     <string name="whatshere_nothing_named">Binnen 150 m staat niets met een naam in de kaart.</string>
+    <string name="whatshere_offline">Geen verbinding, en deze telefoon heeft geen kaartgegevens voor hier. Download het land bij Offline gebieden om offline te zoeken.</string>
+    <string name="whatshere_unanswered">De plekken in de buurt kwamen niet: het netwerk viel uit of is traag. Probeer het straks opnieuw.</string>
     <string name="whatshere_at_spot">Op deze plek</string>
     <string name="whatshere_open_place">Open deze plek</string>
     <string name="whatshere_levels">Verdiepingen</string>

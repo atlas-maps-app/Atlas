@@ -49,10 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
 import app.atlas.geo.CoordinateFormat
-import app.atlas.mapview.StageMap
-import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.model.Place
@@ -133,26 +130,29 @@ private fun PlaceView(
     val saved = remember(lists, place.key) { lists.any { l -> l.places.any { it.place.key == place.key } } }
     var saveTo by remember { mutableStateOf(false) }
     val (symbol, colour) = remember(place) { symbolOf(place) }
-    // its own map at the board's view of it, unless it is over the Map home's, which keeps the user's view
-    val map = if (ownMap) remember(place.key) { MapState(CameraPosition(place.location, HERO_ZOOM, 0.0, HERO_PITCH)) } else null
+    // the map on screen, which goes to the place in its own look (over the Map home's, the home brings it out itself)
+    val map = if (ownMap) rememberOverMap(place.location) else null
     val shareText = shareTextOf(place, lang)
     val shareLabel = stringResource(R.string.place_share)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val halfDp = maxHeight * PLACE_SHEET_HALF
-        if (map != null) StageMap(
-            state = map,
-            modifier = Modifier.fillMaxSize(),
-            background = Color(SHEET_PAPER),
-            hostModifier = Modifier.backdropSource(LocalBackdrop.current),
-            overlays = MapOverlays(
-                markers = listOf(Marker(place.key, place.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = place)),
-                measure = false,
-            ),
-            contentPadding = PaddingValues(top = 80.dp, bottom = halfDp),
-            onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
-            onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
-        )
+        if (map != null) {
+            OverStageMap(
+                map,
+                modifier = Modifier.fillMaxSize(),
+                background = Color(SHEET_PAPER),
+                hostModifier = Modifier.backdropSource(LocalBackdrop.current),
+                overlays = MapOverlays(
+                    markers = listOf(Marker(place.key, place.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = place)),
+                    measure = false,
+                ),
+                ownPadding = PaddingValues(top = 80.dp, bottom = halfDp),
+                onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+                onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
+            )
+            BringInto(map, place.location, bandOver(PLACE_SHEET_HALF), go = true)
+        }
 
         // Over the map, 16 px above the sheet: the level, as the board's dark glass pill (40 px, 12 px in).
         Row(
@@ -236,8 +236,6 @@ private fun shareTextOf(place: Place, lang: String): String = remember(place, la
     ).joinToString("\n")
 }
 
-private const val HERO_ZOOM = 17.6
-private const val HERO_PITCH = 48.0
 /** The share of the screen the Place board's sheet takes: from 440 to the foot of 915 px. */
 internal const val PLACE_SHEET_HALF = 475f / 915f
 

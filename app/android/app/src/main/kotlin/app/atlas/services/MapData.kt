@@ -122,6 +122,13 @@ class MapData(private val services: Services) {
     }
 
     /**
+     * Window ([x], [y])'s data in Atlas's own packs (Overpass's answer for its box, gzipped), for "What's here" where the
+     * phone holds nothing for a point: null where no pack holds it. Blocks; throws IOException where its bytes did not
+     * come whole.
+     */
+    fun packedWindow(x: Int, y: Int): ByteArray? = windowPacks.window(WindowPacks.LEVEL, x, y, null)?.gz
+
+    /**
      * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
      * thread.
      */
