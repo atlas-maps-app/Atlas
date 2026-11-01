@@ -81,10 +81,16 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private val engineChanged: () -> Unit = {
         frames.invalidate()
         main.post(repack)
+        // what the core's camera carries may have changed with it (the parts the app's diagnostics leave out,
+        // MapEngine.leftOut): published again, at rest too, so the core draws it at once rather than at the next touch
+        main.post(republish)
         // the countries whose tiles the core draws came to be known (or changed): the rule places the camera again, at
         // rest too, so a place of theirs leaves today's map at once rather than at the next touch
         if (MapEngine.countries !== placedCountries) main.post(placeAgain)
     }
+
+    /** The core's camera published again where what it carries changed (nothing otherwise: the map stays at rest). */
+    private val republish = Runnable { if (!closed) publishCamera() }
 
     /** The countries the rule last placed the camera with ([update]); written on the main thread. */
     @Volatile

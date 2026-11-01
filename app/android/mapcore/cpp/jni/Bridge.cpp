@@ -15,6 +15,7 @@
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
 #include "frame/CompositeCheck.hpp"
+#include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
@@ -304,11 +305,14 @@ public:
         return on_session([this] { return map_->levels_in_view(); });
     }
 
-    /// The moment's theme for the map from now on.
+    /// The moment's theme for the map from now on, drawn with the next frame. At rest it asks for none of its own, as
+    /// before: the light moves on in steps of five minutes (MapController.MOMENT_STEP_S), and each step's frames would
+    /// come while the map lies still, at any time of the five minutes (on CI's emulator too, whose clock is the
+    /// wall's).
     void moment(const style::ThemeBlock& theme) {
         on_session([this, &theme] {
             map_->set_theme(theme);
-            ask_frame();
+            ask_camera();
         });
     }
 
@@ -457,6 +461,7 @@ public:
         return on_session([&] {
             release_refs();
             requested_ = false;
+            due_.attached();
             if (!session_->attach(std::make_unique<AndroidWindow>(std::move(window)), size, why)) {
                 // Nothing of a refused attach is held: the session let go of what it made, and the refs go too.
                 render_env_->DeleteGlobalRef(source_ref);
@@ -548,10 +553,19 @@ private:
 #if defined(__ANDROID__)
     // ---- On the render thread.
 
-    /// A frame is asked for (render thread): the next paced vsync asks Kotlin for the camera.
-    void ask_frame() {
+    /// A frame is asked for (render thread): the next paced vsync asks Kotlin for the camera, and draws if it moved.
+    void ask_camera() {
         requested_ = true;
         ask_vsync();
+    }
+
+    /// The map's picture changed at the same camera (render thread): what the app handed it (the labels, the markers,
+    /// the routes, the building asked about, the screen's effects, the packs) or a tile of its world. The next paced
+    /// vsync draws it, at rest too, at the camera Kotlin last wrote, where Kotlin's own answer is that nothing moved
+    /// (frame/Due.hpp).
+    void ask_frame() {
+        due_.changed();
+        ask_camera();
     }
 
     /// A tile of the map's world was published (on a worker, World::set_wake): the next vsync draws it, at rest too.
@@ -559,7 +573,6 @@ private:
         if (closing_.load()) return;
         loop_->post([this] {
             if (closing_.load()) return;
-            woken_ = true;
             ask_frame();
         });
     }
@@ -620,12 +633,11 @@ private:
             rest();
             return;
         }
-        // The map's picture may change at the same camera: a tile landed (the world's wake) or a fade or the frame's
-        // blend is under way, and the frame is drawn again at the camera Kotlin last wrote.
-        const bool due = map_on_ && (woken_ || map_->animating());
-        woken_ = false;
-        if (more != JNI_TRUE && !due) {
-            rest(); // nothing changed: no frame, and no more vsyncs until requestFrame (or the map's wake)
+        // The map's picture may change at the same camera: the app handed it something new, a tile landed (the world's
+        // wake) or a fade or the frame's blend is under way, and the frame is drawn again at the camera Kotlin last
+        // wrote.
+        if (!due_.at_vsync(more == JNI_TRUE, map_on_, map_on_ && map_->animating())) {
+            rest(); // nothing changed: no frame, and no more vsyncs until one is asked for again
             return;
         }
         const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
@@ -705,7 +717,7 @@ private:
     bool off_told_ = false;
     bool requested_ = false;
     bool camera_warned_ = false;
-    bool woken_ = false;               // the map's world published a tile since the last vsync
+    frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     std::int64_t last_vsync_ns_ = 0;
@@ -714,6 +726,7 @@ private:
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
+    void ask_camera() noexcept {}
     void ask_frame() noexcept {}
 
     std::mutex session_mutex_;
