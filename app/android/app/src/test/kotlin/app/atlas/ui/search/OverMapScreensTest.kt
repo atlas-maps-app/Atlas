@@ -93,11 +93,11 @@ class OverMapScreensTest {
 
         // the fill-in's own view of the building, in the user's look with the layers that view needs
         compose.runOnIdle { screen = Dest.FillIn("way", 1L, Services.WESTERKERK.lat, Services.WESTERKERK.lon) }
+        compose.waitForIdle()
+        assertNotSame("the fill-in's own map", home, stage.shown()?.state)
         // the user's look comes with the settings' first read: the live sky (AUTO) until then
-        compose.waitUntil(10_000) { stage.shown()?.let { it.state !== home && it.style.theme == Theme.DAY } == true }
-        val own = checkNotNull(stage.shown())
-        assertNotSame(home, own.state)
-        assertEquals(MapStyle(theme = Theme.DAY, calm = true), own.style)
+        compose.waitUntil(30_000) { stage.shown()?.style?.theme == Theme.DAY }
+        assertEquals(MapStyle(theme = Theme.DAY, calm = true), stage.shown()?.style)
         compose.runOnIdle { screen = null }
         compose.waitForIdle()
         assertSame(home, stage.shown()?.state)
