@@ -347,6 +347,11 @@ TEST_CASE("the world: a camera over the Netherlands from 18 to 1,000 km draws it
             CHECK(f->wanted == 0);
             CHECK(st.failed == 0);
             CHECK(segments > 0); // the roads, railways and rivers
+            // the rest's `vk tiles` line ends with the world's, as CI's world phase reads it (ci/smoke.sh)
+            const std::string line = map.tiles_line();
+            CHECK_MESSAGE(line.ends_with(std::format(" world {} drawn finest {} wanted 0 bare 0", f->draws.size(),
+                                                     *levels.rbegin())),
+                          line);
             ATLAS_REQUIRE(kept->kept != nullptr);
             auto pixels = kept->kept->read(kept->kept->latest());
             ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
