@@ -87,7 +87,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         // the countries whose tiles the core draws came to be known (or changed): the rule places the camera again, at
         // rest too, so a place of theirs leaves today's map at once rather than at the next touch
         if (MapEngine.countries !== placedCountries) main.post(placeAgain)
+        // the user's Tone changed (the Map look): the core's theme is sent again with it, and drawn at once, at rest too
+        if (MapEngine.tone != sentTone) main.post(retone)
     }
+
+    /** The moment sent again where the user's Tone changed since it was last sent ([sendMoment]). */
+    private val retone = Runnable { if (!closed && MapEngine.tone != sentTone) update() }
 
     /** The core's camera published again where what it carries changed (nothing otherwise: the map stays at rest). */
     private val republish = Runnable { if (!closed) publishCamera() }
@@ -249,6 +254,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var canvasFrameAtWant = 0L
     private var transitionJob: Job? = null
     private var sentMoment: Moment? = null
+
+    /** The user's Tone (MapEngine.tone) the core's theme was last sent with. */
+    @Volatile
+    private var sentTone = 1f
 
     /** The labels last handed to the core: the list (by identity), its face, the density, whether the core draws them. */
     private class SentLabels(val labels: List<MapLabel>, val face: android.graphics.Typeface?, val density: Float, val draws: Boolean)
@@ -502,6 +511,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         canvasTick.intValue++
         coreWanted = null
         sentMoment = null
+        sentTone = MapEngine.tone
         sentLabels = null
         coreLabels = false
         sentMarkers = null
@@ -826,13 +836,24 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         scope.launch(Dispatchers.Default) { runCatching { c.ask(asked, revision) } }
     }
 
-    /** The moment the core lights the map by, handed over off the main thread when it changed. */
+    /**
+     * The moment the core lights the map by, handed over off the main thread when it changed or the user's Tone did
+     * (MapEngine.tone). A moment's own step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at
+     * rest has not moved); a new Tone is the user's, so once the core has the theme the camera is published again and the
+     * map draws it at once, at rest too.
+     */
     private fun sendMoment(c: CoreMap, moment: Moment) {
-        if (moment == sentMoment) return
+        val tone = MapEngine.tone
+        if (moment == sentMoment && tone == sentTone) return
+        val retoned = tone != sentTone
         sentMoment = moment
+        sentTone = tone
         val zone = drawnPack()?.zone ?: java.time.ZoneId.of("Europe/Amsterdam")
         val daylight = MapEngine.options.daylight
-        scope.launch(Dispatchers.Default) { c.moment(moment, zone, daylight) }
+        scope.launch(Dispatchers.Default) {
+            c.moment(moment, zone, daylight)
+            if (retoned) main.post { if (core === c && !closed) publishCamera(force = true) }
+        }
     }
 
     /** The debug panel's core line, refreshed every second while the map moves (it asks the core: off the main thread). */
