@@ -7,7 +7,8 @@ import org.junit.Test
 
 /**
  * The map's parts (MapParts.kt): a bit each of the camera state's parts, every one once; the defaults (every part
- * drawn, the clouds' shadows and the water's light again since their rework); and the group switches.
+ * drawn but the roofs' edges and the plinths, the clouds' shadows and the water's light again since their rework); and
+ * the group switches.
  */
 class MapPartsTest {
     @Test
@@ -22,9 +23,11 @@ class MapPartsTest {
     }
 
     @Test
-    fun everyPartIsDrawnByDefaultTheCloudsShadowsAndTheWatersLightAmongThem() {
-        assertEquals(emptySet<MapPart>(), MapParts.byDefault)
-        assertTrue(MapPart.entries.all { it.drawn })
+    fun everyPartButTheRoofEdgesAndThePlinthsIsDrawnByDefaultTheCloudsShadowsAndTheWatersLightAmongThem() {
+        // the user, 1 November: "Roof edges off by default for now", then of the plinths: "And the thin dark band off by
+        // default"
+        assertEquals(setOf(MapPart.ROOF_EDGES, MapPart.PLINTHS), MapParts.byDefault)
+        assertTrue(MapPart.entries.filter { it !in MapParts.byDefault }.all { it.drawn })
         assertEquals(
             setOf(MapPart.REFLECTIONS, MapPart.RIPPLE, MapPart.GLITTER, MapPart.RINGS, MapPart.GLINTS, MapPart.WATER_STREAKS),
             MapPartGroup.WATER_LIGHT.parts,
@@ -38,7 +41,7 @@ class MapPartsTest {
         assertTrue(MapPart.WET_CORES in weather && MapPart.LAMP_STREAKS in weather)
         // from the defaults one tap leaves all of the weather out, the next takes it all in again
         val off = MapParts.toggled(MapParts.byDefault, MapPartGroup.WEATHER)
-        assertEquals(weather, off)
+        assertEquals(MapParts.byDefault + weather, off)
         assertEquals(MapParts.byDefault, MapParts.toggled(off, MapPartGroup.WEATHER))
         // with the clouds' shadows alone left out, one tap leaves the rest of the weather out too, the next takes it all in
         val cloudless = MapParts.toggled(setOf(MapPart.CLOUD_SHADOWS), MapPartGroup.WEATHER)
@@ -55,6 +58,9 @@ class MapPartsTest {
             setOf(MapPart.BUILDING_SHADOWS, MapPart.SHADOW_BLUR, MapPart.PARK_SHADOWS, MapPart.CLOUD_SHADOWS),
             MapPartGroup.SHADOWS.parts,
         )
+        // a quay wall's faces and a facade's flat detail each their own switch ("Every part gets its own switch")
+        assertTrue(MapPartGroup.GROUND.listed.containsAll(setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)))
+        assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOP_GLAZING, MapPart.PLINTHS, MapPart.CORNICES)))
         // one part's switch alone
         assertEquals(MapParts.byDefault + MapPart.RAIN, MapParts.toggled(MapParts.byDefault, MapPart.RAIN))
         assertEquals(setOf(MapPart.RAIN), MapParts.toggled(setOf(MapPart.RAIN, MapPart.RIPPLE), MapPart.RIPPLE))

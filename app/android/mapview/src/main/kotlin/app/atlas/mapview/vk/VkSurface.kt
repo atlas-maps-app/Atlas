@@ -95,7 +95,6 @@ private class Binding(
         if (attached) {
             core.resize(width, height)
             onState(VkSurfaceState(true, width, height))
-            redraw()
             return
         }
         attached = core.attach(surface, width, height, source, camera)

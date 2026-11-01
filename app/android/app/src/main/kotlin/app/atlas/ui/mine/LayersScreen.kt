@@ -340,6 +340,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.SETTS -> R.string.mine_part_setts
     MapPart.GROUND_TEXT -> R.string.mine_part_ground_text
     MapPart.QUAYS -> R.string.mine_part_quays
+    MapPart.QUAY_WATERLINES -> R.string.mine_part_quay_waterlines
+    MapPart.QUAY_TOPS -> R.string.mine_part_quay_tops
     MapPart.SKY -> R.string.mine_part_sky
     MapPart.BUILDING_SHADOWS -> R.string.mine_part_building_shadows
     MapPart.SHADOW_BLUR -> R.string.mine_part_shadow_blur
@@ -365,7 +367,9 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.ROOF_EDGES -> R.string.mine_part_roof_edges
     MapPart.WINDOWS -> R.string.mine_part_windows
     MapPart.WINDOW_DEPTH -> R.string.mine_part_window_depth
-    MapPart.FLAT_DETAIL -> R.string.mine_part_flat_detail
+    MapPart.SHOP_GLAZING -> R.string.mine_part_shop_glazing
+    MapPart.PLINTHS -> R.string.mine_part_plinths
+    MapPart.CORNICES -> R.string.mine_part_cornices
     MapPart.CHURCH_WINDOWS -> R.string.mine_part_church_windows
     MapPart.MATERIAL_FACES -> R.string.mine_part_material_faces
     MapPart.HOIST_BEAMS -> R.string.mine_part_hoist_beams

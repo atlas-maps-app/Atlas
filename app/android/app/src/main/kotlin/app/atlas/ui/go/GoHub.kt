@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
@@ -51,7 +52,7 @@ class GoHub(private val services: Services) {
     /** The voice is off (vibrations stay). */
     val muted: StateFlow<Boolean> = mutedState.asStateFlow()
 
-    /** The driver's hours as kept, current (trucks). */
+    /** The driver's hours as kept, current (trucks); null until the settings are read, and while none are kept. */
     val tacho: StateFlow<TachoState?> by lazy { store.tacho.stateIn(services.scope, SharingStarted.Eagerly, null) }
 
     /** The units of Settings, kept current. */
@@ -112,8 +113,10 @@ class GoHub(private val services: Services) {
         stopEars()
         // A trip begins with the voice on: a mute left from an earlier one would make this one silent without warning.
         if (mutedState.value) setMuted(false)
-        // The hours carry on from the last trip; a demo drive shows them but does not add to them.
-        val tachoStart = if (req.mode == Mode.TRUCK) tacho.value ?: TachoState() else null
+        // The hours carry on from the last trip, as the settings hold them: [tacho] has not read them yet when no screen
+        // showed them first, and a trip begun from nothing would keep its own over them. A demo drive shows them but does
+        // not add to them.
+        val tachoStart = if (req.mode == Mode.TRUCK) runBlocking { store.tacho.first() } ?: TachoState() else null
         val session = NavSession(
             request = req, route = route, destinationName = name, router = services.router, voice = services.voice,
             settings = settings, features = features, scope = services.scope, demo = demo, tachoStart = tachoStart,
