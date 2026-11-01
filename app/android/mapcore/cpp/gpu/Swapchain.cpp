@@ -96,23 +96,34 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
         usage |= vk::ImageUsageFlagBits::eTransferSrc;
         self->transfer_source_ = true;
     }
-    const vk::SwapchainCreateInfoKHR info{.surface = surface,
-                                          .minImageCount = count,
-                                          .imageFormat = self->colour_.format,
-                                          .imageColorSpace = self->colour_.space,
-                                          .imageExtent = extent,
-                                          .imageArrayLayers = 1,
-                                          .imageUsage = usage,
-                                          .imageSharingMode = vk::SharingMode::eExclusive,
-                                          .preTransform = self->transform_,
-                                          .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
-                                          .presentMode = vk::PresentModeKHR::eFifo,
-                                          .clipped = vk::True,
-                                          .oldSwapchain = old != nullptr ? old->swapchain() : vk::SwapchainKHR{}};
+    // Imagination's images without the driver's framebuffer compression (Facts' swapchain_uncompressed).
+    const vk::ImageCompressionControlEXT uncompressed{.flags = vk::ImageCompressionFlagBitsEXT::eDisabled};
+    vk::SwapchainCreateInfoKHR info{.pNext = device.enabled().swapchain_uncompressed ? &uncompressed : nullptr,
+                                    .surface = surface,
+                                    .minImageCount = count,
+                                    .imageFormat = self->colour_.format,
+                                    .imageColorSpace = self->colour_.space,
+                                    .imageExtent = extent,
+                                    .imageArrayLayers = 1,
+                                    .imageUsage = usage,
+                                    .imageSharingMode = vk::SharingMode::eExclusive,
+                                    .preTransform = self->transform_,
+                                    .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
+                                    .presentMode = vk::PresentModeKHR::eFifo,
+                                    .clipped = vk::True,
+                                    .oldSwapchain = old != nullptr ? old->swapchain() : vk::SwapchainKHR{}};
     // Refused, a 10-bit one included (a driver that lists a format it cannot make a swapchain of), the call fails: the
     // caller makes the frame at 8 bits, outside VK bench's colour stage (standin/Session.cpp). The old swapchain is
     // retired by the call either way.
     auto made = device.handle().createSwapchainKHR(info);
+    if (!made && info.pNext != nullptr) {
+        // A driver that refuses its images uncompressed makes them its own way at once; the call retired the old one.
+        log::warn("vk swapchain: uncompressed images refused ({}), made with the driver's compression",
+                  vk::to_string(made.error()));
+        info.pNext = nullptr;
+        info.oldSwapchain = vk::SwapchainKHR{};
+        made = device.handle().createSwapchainKHR(info);
+    }
     if (!made) {
         return fail(made.error(), std::format("a swapchain of {} x {} in {}", extent.width, extent.height,
                                               colour_name(self->colour_.format)));

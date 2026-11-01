@@ -42,6 +42,8 @@ struct Enabled {
     bool synchronization2 = false;
     bool create_renderpass2 = false;
     bool swapchain_maintenance1 = false;
+    /// The swapchain's images made without the driver's framebuffer compression (Facts' swapchain_uncompressed).
+    bool swapchain_uncompressed = false;
     bool display_timing = false;
     bool incremental_present = false;
     bool calibrated_timestamps = false;
