@@ -68,7 +68,7 @@ object Links {
     /** The map centred on [p], with what is there on top (or the place, when it has a label). */
     private fun point(p: LatLon, zoom: Double?, label: String?): List<Dest> {
         val home = Dest.Home(p.lat, p.lon, zoom ?: 17.0)
-        return if (label != null) listOf(home, Dest.Place(p.lat, p.lon, name = label)) else listOf(home, Dest.WhatsHere(p.lat, p.lon))
+        return if (label != null) listOf(home, Dest.Place(p.lat, p.lon, name = label)) else listOf(home, Dest.WhatsHere(p.lat, p.lon, go = true))
     }
 
     /** Percent-decodes a query value; '+' is a space, except inside a Plus Code. */

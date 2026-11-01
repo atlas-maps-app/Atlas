@@ -14,6 +14,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
@@ -47,6 +50,14 @@ fun VkSurface(
     val binding = remember(core, host) { Binding(core, source, camera, onState) }
     val composeView = LocalView.current
     DisposableEffect(binding) { onDispose { binding.release() } }
+    // Back from the background the window may show nothing of the last frame, and the surface that outlived it makes no
+    // attach to draw one (the user, 1 November: "when you exit the app and come back its black until you move it").
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(binding, lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_START) binding.redraw() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -89,7 +100,14 @@ private class Binding(
         attached = core.attach(surface, width, height, source, camera)
         if (attached) owner = this
         onState(VkSurfaceState(attached, width, height, if (attached) "" else core.lastAttachError()))
-        if (attached) core.requestFrame()
+        redraw()
+    }
+
+    /** The window shows nothing of the last frame: the core draws it again, the camera unchanged. */
+    fun redraw() {
+        if (!attached) return
+        source.redraw()
+        core.requestFrame()
     }
 
     fun release() {
@@ -129,7 +147,7 @@ private class Binding(
         onState(VkSurfaceState(false, 0, 0))
     }
 
-    override fun surfaceRedrawNeeded(holder: SurfaceHolder) = core.requestFrame()
+    override fun surfaceRedrawNeeded(holder: SurfaceHolder) = redraw()
 
     // TextureView.
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {

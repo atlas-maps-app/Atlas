@@ -100,6 +100,8 @@
     <string name="place_not_found">This place is not on the phone, and there is no connection to look it up.</string>
     <string name="place_level">Level %1$s</string>
     <string name="place_share">Share</string>
+    <string name="place_view_above">View from above</string>
+    <string name="place_view_back">Back to the view before</string>
     <string name="place_save">Save · hold to choose a list</string>
     <string name="place_saved">Saved · hold to choose lists</string>
     <string name="place_save_plain">Save this point</string>
@@ -271,6 +273,8 @@
     <string name="whatshere_coordinates">Coordinates</string>
     <string name="whatshere_nearby">Nearest</string>
     <string name="whatshere_nothing_named">Nothing named is mapped within 150 m.</string>
+    <string name="whatshere_offline">No connection, and this phone holds no map data for here. Download the country under Offline regions to look offline.</string>
+    <string name="whatshere_unanswered">The places around did not come: the network failed or is slow. Try again in a moment.</string>
     <string name="whatshere_at_spot">At this spot</string>
     <string name="whatshere_open_place">Open this place</string>
     <string name="whatshere_levels">Floors</string>

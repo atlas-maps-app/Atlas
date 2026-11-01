@@ -151,6 +151,9 @@ struct FeatureFacts {
     bool maintenance4 = false;
     bool shader_fma32 = false;
     bool swapchain_maintenance1 = false;
+    /// VK_EXT_image_compression_control_swapchain's feature (with VK_EXT_image_compression_control's): a swapchain made
+    /// without the driver's framebuffer compression.
+    bool swapchain_compression_control = false;
     bool rasterization_order = false;
     bool multisampled_to_single = false;
 
@@ -215,6 +218,9 @@ struct Facts {
     bool hardware = false;
     bool tiler = false;
     std::string tiler_reason;
+    /// The swapchain's images made without the driver's framebuffer compression (classify_scanout), and why or why not.
+    bool swapchain_uncompressed = false;
+    std::string scanout_reason;
     bool lazy_memory = false;
     bool host_visible_device_local = false;
     bool presents = false; // judged for a device that presents (VK_KHR_swapchain needed), not for offscreen work
@@ -306,6 +312,18 @@ struct TilerVerdict {
 };
 [[nodiscard]] TilerVerdict classify_tiler(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId driver_id,
                                           vk::PhysicalDeviceType type) noexcept;
+
+/// Whether the swapchain's images are made without the driver's lossless framebuffer compression
+/// (VkImageCompressionControlEXT, disabled), with the reason: on Imagination's driver, where it can turn it off (can:
+/// Facts' swapchain_compression_control). The user's Pixel 10 (PowerVR, 25.3) shows flicker and broken blocks in busy
+/// frames, such as the overcast sky's, only while the display reads the frames itself: with a picture-in-picture window
+/// on screen the compositor's GPU reads them, and the glitches are gone (1 November).
+struct ScanoutVerdict {
+    bool uncompressed;
+    std::string_view reason;
+};
+[[nodiscard]] ScanoutVerdict classify_scanout(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId driver_id,
+                                              bool can) noexcept;
 
 /// The vendor's name for a PCI or Khronos vendor ID ("unknown" otherwise).
 [[nodiscard]] std::string_view vendor_name(std::uint32_t vendor_id) noexcept;

@@ -151,6 +151,8 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     vk::PhysicalDeviceDynamicRenderingLocalReadFeatures local_read{};
     vk::PhysicalDeviceShaderFmaFeaturesKHR fma{};
     vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain1{};
+    vk::PhysicalDeviceImageCompressionControlFeaturesEXT compression{};
+    vk::PhysicalDeviceImageCompressionControlSwapchainFeaturesEXT compression_swapchain{};
     vk::PhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT raster_order{};
     vk::PhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT to_single{};
     auto has = [&](std::string_view name) { return facts.has_extension(name); };
@@ -180,6 +182,10 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     if (has(vk::KHRShaderFmaExtensionName)) link(fma);
     if (has(vk::KHRSwapchainMaintenance1ExtensionName) || has(vk::EXTSwapchainMaintenance1ExtensionName))
         link(swapchain1);
+    if (has(vk::EXTImageCompressionControlExtensionName) && has(vk::EXTImageCompressionControlSwapchainExtensionName)) {
+        link(compression);
+        link(compression_swapchain);
+    }
     if (has(vk::EXTRasterizationOrderAttachmentAccessExtensionName) ||
         has(vk::ARMRasterizationOrderAttachmentAccessExtensionName)) {
         link(raster_order);
@@ -250,6 +256,8 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     }
     out.shader_fma32 = fma.shaderFmaFloat32 == vk::True;
     out.swapchain_maintenance1 = swapchain1.swapchainMaintenance1 == vk::True;
+    out.swapchain_compression_control = compression.imageCompressionControl == vk::True &&
+                                        compression_swapchain.imageCompressionControlSwapchain == vk::True;
     out.rasterization_order = raster_order.rasterizationOrderColorAttachmentAccess == vk::True;
     out.multisampled_to_single = to_single.multisampledRenderToSingleSampled == vk::True;
 }
@@ -562,6 +570,20 @@ TilerVerdict classify_tiler(std::uint32_t vendor_id, bool has_driver_id, vk::Dri
     }
 }
 
+ScanoutVerdict classify_scanout(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId driver_id,
+                                bool can) noexcept {
+    const bool imagination = has_driver_id ? driver_id == vk::DriverId::eImaginationProprietary : vendor_id == 0x1010;
+    if (!imagination) return {.uncompressed = false, .reason = "the driver's own"};
+    if (!can) {
+        return {.uncompressed = false,
+                .reason = "Imagination PowerVR, whose driver cannot turn it off (no "
+                          "VK_EXT_image_compression_control_swapchain)"};
+    }
+    return {.uncompressed = true,
+            .reason = "Imagination PowerVR: busy frames glitched only where the display read them itself (the "
+                      "user's Pixel 10, 25.3)"};
+}
+
 void choose_configuration(Facts& facts, bool msaa2_close) {
     const QuirkSet quirks =
         quirks_for(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.device_id, facts.driver_version);
@@ -743,6 +765,10 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     const TilerVerdict tiler = classify_tiler(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.type);
     facts.tiler = tiler.tiler;
     facts.tiler_reason = std::string(tiler.reason);
+    const ScanoutVerdict scanout = classify_scanout(facts.vendor_id, facts.driver_properties, facts.driver_id,
+                                                    facts.features.swapchain_compression_control);
+    facts.swapchain_uncompressed = scanout.uncompressed;
+    facts.scanout_reason = std::string(scanout.reason);
     facts.hardware = facts.type != vk::PhysicalDeviceType::eCpu &&
                      (!facts.driver_properties || (facts.driver_id != vk::DriverId::eMesaLlvmpipe &&
                                                    facts.driver_id != vk::DriverId::eGoogleSwiftshader));
@@ -786,6 +812,7 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("hardware: {}",
          f.hardware ? "yes" : "no (a CPU implementation: Android's design notes advise against software Vulkan)");
     line("tiler: {} ({})", yes_no(f.tiler), f.tiler_reason);
+    line("swapchain.compression: {} ({})", f.swapchain_uncompressed ? "off" : "the driver's", f.scanout_reason);
     line("lazily.allocated.memory: {}", yes_no(f.lazy_memory));
     line("host.visible.device.local: {}", yes_no(f.host_visible_device_local));
     // A device for offscreen work says so (it needs no VK_KHR_swapchain); the phone's device presents.
@@ -862,6 +889,7 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("feature.timelineSemaphore: {}", yes_no(x.timeline_semaphore));
     line("feature.shaderFmaFloat32: {}", yes_no(x.shader_fma32));
     line("feature.swapchainMaintenance1: {}", yes_no(x.swapchain_maintenance1));
+    line("feature.imageCompressionControlSwapchain: {}", yes_no(x.swapchain_compression_control));
     line("feature.pipelineCreationCacheControl: {}", yes_no(x.pipeline_cache_control));
     line("feature.shaderClipDistance: {}", yes_no(x.clip_distance));
     line("feature.sampleRateShading: {}", yes_no(x.sample_rate_shading));
@@ -894,6 +922,8 @@ std::vector<std::string> facts_lines(const Facts& f) {
                              vk::KHRIncrementalPresentExtensionName,
                              vk::KHRSwapchainMaintenance1ExtensionName,
                              vk::EXTSwapchainMaintenance1ExtensionName,
+                             vk::EXTImageCompressionControlExtensionName,
+                             vk::EXTImageCompressionControlSwapchainExtensionName,
                              vk::KHRDriverPropertiesExtensionName,
                              vk::KHRCalibratedTimestampsExtensionName,
                              vk::EXTCalibratedTimestampsExtensionName,

@@ -87,6 +87,12 @@ class HomeScreenshotTest {
         compose.onAllNodes(hasContentDescription("Close the list")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
         compose.settle()
         capture("home_place")
+        // The card's view from above takes the home's own map near the place, tilted, and its second press back (the
+        // user, 1 November: "A place card can get a button").
+        compose.onNodeWithContentDescription("View from above").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Back to the view before")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back to the view before").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("View from above")).fetchSemanticsNodes().isNotEmpty() }
         // Its back closes it, and the category's list is there again.
         compose.onNodeWithContentDescription("Back").performClick()
         compose.waitForIdle()

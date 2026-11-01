@@ -700,6 +700,12 @@ private:
                                     complete ? JNI_TRUE : JNI_FALSE);
         if (render_env_->ExceptionCheck() == JNI_TRUE) render_env_->ExceptionClear();
         if (d.stale) session_->remake();
+        // A frame the swapchain did not show (out of date, as the first after the app comes back from the background
+        // can be, or its image did not come) is drawn again at the next vsync, at the same camera and at rest too, up
+        // to 8 in a row (the user, 1 November: "when you exit the app and come back its black until you move it").
+        const bool skipped = (r.flags & standin::frame_flag::skipped) != 0;
+        skipped_in_row_ = skipped ? skipped_in_row_ + 1 : 0;
+        if (skipped && skipped_in_row_ <= 8) due_.changed();
     }
 
     // Declared after session_, so that the render thread (whose last task closed the session) goes before it.
@@ -718,6 +724,7 @@ private:
     bool requested_ = false;
     bool camera_warned_ = false;
     frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
+    int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     std::int64_t last_vsync_ns_ = 0;

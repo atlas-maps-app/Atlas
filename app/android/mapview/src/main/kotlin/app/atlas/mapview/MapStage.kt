@@ -47,6 +47,33 @@ class MapStage {
 
     /** The request drawn: the newest one with its place known. */
     internal val active: StageRequest? get() = requests.lastOrNull { it.args != null && it.bounds != null }
+
+    /** The request last drawn, which [MapStageHost] keeps under its cover once no screen asks. */
+    internal var kept by mutableStateOf<StageRequest?>(null)
+
+    /**
+     * The map on screen, or kept under a screen without one: what a screen that opens over it (a long press's point, a
+     * place) takes on with [StageMap], so the view stays as the user left it, in the same look, and nothing is rebuilt.
+     * Null before any screen has asked for the map.
+     */
+    fun shown(): ShownMap? = (active ?: kept)?.args?.let(::ShownMap)
+}
+
+/**
+ * The map a [MapStage] shows, as a screen over it takes it on: its camera's [state], its look ([style], [labelTypeface]),
+ * the [contentPadding] that places its principal point (another would move the picture), and who hears its camera.
+ */
+@Stable
+class ShownMap internal constructor(private val args: StageArgs) {
+    val state: MapState get() = args.state
+    val style: MapStyle get() = args.style
+    val contentPadding: PaddingValues get() = args.contentPadding
+    val labelTypeface: android.graphics.Typeface? get() = args.labelTypeface
+    val debug: Boolean get() = args.debug
+    val units: UnitSystem get() = args.units
+
+    /** The camera moved: told to the screen the map is (the Map home's model keeps its view and forecast). */
+    fun cameraMoved(camera: CameraPosition, byUser: Boolean) = args.onCameraMove(camera, byUser)
 }
 
 /** One screen's map: what [StageMap] was given, and its place in the root. */
@@ -137,10 +164,9 @@ fun StageMap(
  */
 @Composable
 fun MapStageHost(stage: MapStage, cover: Color, modifier: Modifier = Modifier) {
-    val last = remember { mutableStateOf<StageRequest?>(null) }
     val active = stage.active
-    SideEffect { if (active != null) last.value = active }
-    val request = active ?: last.value ?: return
+    SideEffect { if (active != null) stage.kept = active }
+    val request = active ?: stage.kept ?: return
     val args = request.args ?: return
     val bounds = request.bounds ?: return
     BoxWithConstraints(modifier.fillMaxSize()) {

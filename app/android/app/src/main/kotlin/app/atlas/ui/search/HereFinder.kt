@@ -5,13 +5,16 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.Place
+import app.atlas.services.HereGap
 import app.atlas.services.LocalAddress
 import app.atlas.services.LocalData
 import app.atlas.services.PlaceOrigin
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** The address of a point: its street and number, the quarter and town, and where it was read. */
 data class HereAddress(
@@ -40,32 +43,46 @@ data class HereAddress(
     }
 }
 
-/** What is at a point: its address, the place it is in (a building, a church, a park), and the named things around. */
-data class HereFacts(val address: HereAddress?, val spot: Place?, val nearby: List<Place>, val origin: PlaceOrigin?)
+/**
+ * What is at a point: its address, the place it is in (a building, a church, a park), and the named things around; [gap]
+ * where those could not be read at all (said so, never "nothing named").
+ */
+data class HereFacts(val address: HereAddress?, val spot: Place?, val nearby: List<Place>, val origin: PlaceOrigin?, val gap: HereGap? = null)
 
 /**
  * Finds what is at a point for "What's here": from what the phone holds ([LocalData.whatsHere]: a downloaded region's
- * store, else the map's packs; the place whose outline holds the point, the nearest mapped address, the named places
- * measured to their outlines), with Overpass online for the places around where nothing on the phone covers; and,
- * online, the reverse geocoder for an address the phone does not know.
+ * store, else the map's packs, else the map's window data, kept or from Atlas's packs; the place whose outline holds the
+ * point, the nearest mapped address, the named places measured to their outlines), with Overpass online, never waited on
+ * long, for the places around where none of those has them; and, online, the reverse geocoder for an address the phone
+ * does not know, asked beside the rest where the phone holds nothing for the point.
  */
 object HereFinder {
     const val NEARBY_M = LocalData.NEARBY_M
     private const val ADDRESS_M = 40.0
 
+    /** The longest the reverse geocoder is waited on, ms. */
+    private const val REVERSE_MS = 10_000L
+
     /** What is at [p]; [spot] the building a press on the map named there (the one drawn under the finger), if any. */
-    suspend fun find(services: Services, p: LatLon, lang: String, online: Boolean, spot: OsmId? = null): HereFacts = withContext(Dispatchers.Default) {
+    suspend fun find(services: Services, p: LatLon, lang: String, online: Boolean, spot: OsmId? = null): HereFacts = withContext(Dispatchers.IO) {
+        // where the phone holds nothing for the point, its places come over the network: its address is asked meanwhile
+        val early = if (online && !services.localData.holds(p)) async { reverse(services, p, lang) } else null
         val here = services.localData.whatsHere(p, NEARBY_M, spot)
-        val facts = HereFacts(here.address?.let(HereAddress::of), here.spot, here.nearby, here.origin)
-        if (facts.address != null || !online) return@withContext facts
-        val reverse = try {
-            services.geocoder.reverse(p, lang)
+        val local = here.address?.let(HereAddress::of)
+        if (local != null) early?.cancel()
+        val address = local ?: (early ?: if (online) async { reverse(services, p, lang) } else null)?.await()
+        HereFacts(address, here.spot, here.nearby, here.origin, here.gap)
+    }
+
+    /** The reverse geocoder's address of [p], where it is near [p]; null where it has none, or failed, or was slow. */
+    private suspend fun reverse(services: Services, p: LatLon, lang: String): HereAddress? {
+        val found = try {
+            withTimeoutOrNull(REVERSE_MS) { services.geocoder.reverse(p, lang) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             null
         }
-        val address = reverse?.takeIf { Geo.distance(it.location, p) <= ADDRESS_M * 2 }?.let { HereAddress.of(it.tags, PlaceOrigin.ONLINE) }
-        facts.copy(address = address)
+        return found?.takeIf { Geo.distance(it.location, p) <= ADDRESS_M * 2 }?.let { HereAddress.of(it.tags, PlaceOrigin.ONLINE) }
     }
 }

@@ -22,6 +22,8 @@
     <string name="query_download">Télécharger cette zone</string>
     <string name="place_route">Itinéraire</string>
     <string name="place_share">Partager</string>
+    <string name="place_view_above">Vue d\'en haut</string>
+    <string name="place_view_back">Retour à la vue précédente</string>
     <string name="place_web">Site web</string>
     <string name="place_hours">Horaires</string>
     <string name="place_copy">Copier</string>

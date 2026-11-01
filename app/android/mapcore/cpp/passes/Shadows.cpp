@@ -385,9 +385,12 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     };
     ATLAS_GPU_LET(samples_view, view_of(s->samples));
     s->samples_view = std::move(samples_view);
-    // the mask's pass: the 4x samples cleared and drawn, resolved into the frame slot's mask; record moves both into
-    // the colour layout before it and the mask out after it
-    ATLAS_GPU_LET(pass, soft_mask_pass(d, false));
+    // the mask's pass: the 4x samples cleared and drawn, resolved into the frame slot's mask, which is cleared as the
+    // pass begins too, so a tiler that leaves a tile without geometry unresolved leaves it empty, not as a frame two
+    // back drew it (ENGINE.md's blocks under an overcast sky on the user's PowerVR: 32 px squares, PowerVR's tiles);
+    // the same picture wherever the resolve is whole, and nothing more to pay on a tiler. Record moves both into the
+    // colour layout before it and the mask out after it
+    ATLAS_GPU_LET(pass, soft_mask_pass(d, true));
     s->pass = std::move(pass);
     // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
     // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
@@ -576,12 +579,14 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
          .new_layout = L::eColorAttachmentOptimal},
     }};
     sync.barrier(cmd, {}, to_draw);
-    const vk::ClearValue clear{.color = vk::ClearColorValue{std::array<float, 4>{0.0F, 0.0F, 0.0F, 0.0F}}};
+    // the samples and the mask they resolve into, both cleared
+    const vk::ClearValue none{.color = vk::ClearColorValue{std::array<float, 4>{0.0F, 0.0F, 0.0F, 0.0F}}};
+    const std::array<vk::ClearValue, 2> clear{none, none};
     cmd.beginRenderPass({.renderPass = *s.pass,
                          .framebuffer = *mine.framebuffer,
                          .renderArea = {.offset = {.x = 0, .y = 0}, .extent = s.extent},
-                         .clearValueCount = 1,
-                         .pClearValues = &clear},
+                         .clearValueCount = static_cast<std::uint32_t>(clear.size()),
+                         .pClearValues = clear.data()},
                         vk::SubpassContents::eInline);
     cmd.setViewport(0, vk::Viewport{.x = 0,
                                     .y = 0,

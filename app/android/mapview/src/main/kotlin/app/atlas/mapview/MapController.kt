@@ -443,6 +443,11 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 val s = CameraOps.camera(state.camera, v).project(p) ?: return null
                 return s.x to s.y
             }
+
+            override fun place(from: CameraPosition, anchor: LatLon, x: Float, y: Float): CameraPosition? {
+                val v = viewport()
+                return if (v.isEmpty) null else CameraOps.place(CameraOps.clamp(from), v, anchor, x, y)
+            }
         }
     }
 
