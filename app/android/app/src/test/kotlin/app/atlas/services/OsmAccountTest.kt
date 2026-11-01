@@ -6,10 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -86,7 +83,8 @@ class OsmAccountTest {
         // the verifier sent proves the challenge the page carried
         assertEquals(page.queryParameter("code_challenge"), OsmAuth.challenge(osm.verifier!!))
         assertEquals("tok-1", a.token())
-        assertEquals("Erika", a.user.filterNotNull().first())
+        // the name shows as the sign-in finishes
+        assertEquals("Erika", a.user.value)
         // the token is kept sealed, never as its text
         val kept = File(dir.root, "osm.preferences_pb").readBytes().toString(Charsets.ISO_8859_1)
         assertFalse(kept.contains("tok-1"))
@@ -134,10 +132,11 @@ class OsmAccountTest {
         val osm = FakeOsm()
         val a = account(osm)
         var state = a.begin()!!.toHttpUrl().queryParameter("state")!!
-        withTimeout(STORED_MS) { a.waiting.first { it } }
+        // under way as soon as it begins, over as soon as it ends
+        assertTrue(a.waiting.value)
         assertFalse(a.finish("${OsmAccount.REDIRECT}?error=access_denied&error_description=The+resource+owner+denied&state=$state"))
         assertEquals(OsmAccount.Failure(declined = true, why = "The resource owner denied"), a.failure.value)
-        withTimeout(STORED_MS) { a.waiting.first { w -> !w } }
+        assertFalse(a.waiting.value)
         // a new sign-in clears it; OpenStreetMap out of reach for the token says so
         state = a.begin()!!.toHttpUrl().queryParameter("state")!!
         assertNull(a.failure.value)
@@ -145,6 +144,18 @@ class OsmAccountTest {
         assertFalse(a.finish("${OsmAccount.REDIRECT}?code=c&state=$state"))
         assertEquals(OsmAccount.Failure(declined = false, why = "OpenStreetMap could not be reached"), a.failure.value)
         assertNull(a.token())
+    }
+
+    @Test
+    fun aSignInFinishedAsTheAppStartsOnItsRedirectShowsTheUser() = runBlocking {
+        val store = PreferenceDataStoreFactory.create(scope = scope) { File(dir.root, "osm.preferences_pb") }
+        val state = OsmAccount(store, sealer, FakeOsm(), scope).begin()!!.toHttpUrl().queryParameter("state")!!
+        // the app ended while the user was in the browser, and the redirect starts it again
+        val a = OsmAccount(store, sealer, FakeOsm(), scope)
+        assertTrue(a.awaits("${OsmAccount.REDIRECT}?code=c&state=$state"))
+        assertTrue(a.finish("${OsmAccount.REDIRECT}?code=c&state=$state"))
+        assertEquals("Erika", a.user.value)
+        assertFalse(a.waiting.value)
     }
 
     @Test
@@ -171,13 +182,5 @@ class OsmAccountTest {
     @Test
     fun aRedirectsQueryIsDecoded() {
         assertEquals(mapOf("code" to "a b", "state" to "x/y"), OsmAccount.query("${OsmAccount.REDIRECT}?code=a+b&state=x%2Fy"))
-    }
-
-    private companion object {
-        /**
-         * How long the store's file may take to show a write (DataStore syncs each one to the disk): on 1 November CI's
-         * unit-app ran out of 5 s twice, on app's scheduled run 41267832114 and a branch's, beside every other run's pass.
-         */
-        const val STORED_MS = 30_000L
     }
 }
