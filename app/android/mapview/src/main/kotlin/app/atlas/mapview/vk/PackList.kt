@@ -114,6 +114,9 @@ class PackList(
     /** Whether the world is on the phone: the core draws every camera beyond [LEVELS_REACH] ([Transition.pathOf]). */
     val hasWorld: Boolean get() = worldRefs.isNotEmpty()
 
+    /** Whether the world draws a camera [distance] metres from its target: on the phone, and beyond [LEVELS_REACH]. */
+    fun worldDraws(distance: Double): Boolean = hasWorld && distance > LEVELS_REACH
+
     /** Whether the packs have been read once ([load]): until then nothing is known of where the core has tiles. */
     @Volatile
     var loaded: Boolean = false

@@ -1,5 +1,10 @@
 package app.atlas.tiles
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -137,6 +142,54 @@ class WorldFetchTest {
         fetch.start()
         assertArrayEquals(p.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertTrue(world.listFiles()!!.none { it.name.endsWith(".download") })
+    }
+
+    @Test
+    fun whatFailedIsTriedAgainForTheLatestPlaceAtRestAndAtOnceWhereTheNetworkComesBack() = runTest {
+        val p = publish()
+        val fetch = WorldFetch(world, base)
+        val places = MutableStateFlow<WorldFetch.Place?>(null)
+        val online = MutableStateFlow(true)
+        val said = ArrayList<String>()
+        var landed = 0
+        val follow = launch { fetch.follow(places, online, { said += it }, { landed++ }) }
+        runCurrent()
+        assertEquals(listOf("world.idx (3 packs) and world-globe.atlas on the phone"), said)
+        // the view enters Amsterdam's block as the network goes (CI's emulator moved to its mobile network, 1 November)
+        gh.down = true
+        places.value = WorldFetch.Place(amsterdam.first, amsterdam.second)
+        runCurrent()
+        assertTrue(said.last(), said.last().startsWith("a block's packs not fetched: "))
+        val asked = gh.githubRequests.size
+        // a pan meanwhile asks nothing before the wait is over
+        places.value = WorldFetch.Place(52.36, 4.90)
+        advanceTimeBy(WorldFetch.FIRST_WAIT_MS - 1)
+        runCurrent()
+        assertEquals(asked, gh.githubRequests.size)
+        // the network lost and back: tried again at once, for the latest place (failing still, so the wait doubles)
+        online.value = false
+        runCurrent()
+        online.value = true
+        runCurrent()
+        assertEquals(asked + 1, gh.githubRequests.size)
+        // and at rest, once the doubled wait is over, the parts come
+        gh.down = false
+        advanceTimeBy(2 * WorldFetch.FIRST_WAIT_MS - 1)
+        runCurrent()
+        assertEquals(asked + 1, gh.githubRequests.size)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals("parts world-mid.000, world-coarse.000 on the phone", said.last())
+        assertArrayEquals(p.mid, File(world, "world-mid.000").readBytes())
+        assertArrayEquals(p.coarse, File(world, "world-coarse.000").readBytes())
+        assertEquals(2, landed)
+        // the place done, a map at rest asks nothing more
+        val all = gh.githubRequests.size
+        places.value = WorldFetch.Place(52.36, 4.90)
+        advanceTimeBy(WorldFetch.LONGEST_WAIT_MS)
+        runCurrent()
+        assertEquals(all, gh.githubRequests.size)
+        follow.cancel()
     }
 
     @Test

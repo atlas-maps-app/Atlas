@@ -903,7 +903,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             if (view.distance > PackList.LEVELS_REACH) MapEngine.worldPlace(view.lat, view.lon)
             // Where the core's own cover stands in for the place's window on its way, today's map's last frame is not
             // drawn either (the paper and the windows' line meanwhile): none of its other look shows in the country.
-            val waits = wanted == Transition.Path.CORE && !c.packs.covers(view.lat, view.lon, view.distance)
+            // Where the world draws (beyond the countries' reach) no window is on its way: offline too, the map is final.
+            val waits = wanted == Transition.Path.CORE && !c.packs.covers(view.lat, view.lon, view.distance) && !c.packs.worldDraws(view.distance)
             if (waits != coreWaits) {
                 coreWaits = waits
                 canvasTick.intValue++
