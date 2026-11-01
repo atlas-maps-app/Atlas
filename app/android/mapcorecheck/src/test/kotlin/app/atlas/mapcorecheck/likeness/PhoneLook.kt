@@ -86,7 +86,7 @@ internal object LookHost {
  * - the moment: the theme block [CoreMoment] writes for the core (the map's live moment, the clock in five-minute steps,
  *   lit by the forecast's hours: the same Moment today's map draws), for the drawn pack's zone;
  * - each frame's camera state as MapCameraSource writes it at rest: the view, the frame, the pack PackList names, and
- *   the parts the map leaves out by default ([MapParts.byDefault]: the clouds' shadows and the water's light);
+ *   the parts the map leaves out by default ([MapParts.byDefault]: the roofs' edges and the plinths);
  * - the packs, on alpha 22's path (`-Datlas.phonelook.path=22`, the default): the windows alone, each taken from its
  *   country's tiles as the phone's Windows takes them ([WindowTiles]: the published list, the index, a range of the
  *   tiles held to its SHA-256), the ones the map's world wants (MapCore.wantedWindows), nearest first, until it wants
@@ -135,7 +135,7 @@ class PhoneLook {
                 .also { require(it.isFile) { "no canal ring at $it" } }
         } else null
         val list = System.getProperty("atlas.phonelook.list")?.takeIf { it.isNotBlank() }?.let { File(it).readText() }
-        // the parts left out: the app's default (the clouds' shadows and the water's light), or none (every part drawn,
+        // the parts left out: the app's default (the roofs' edges and the plinths), or none (every part drawn,
         // as a debug build's Look settings can switch them back on)
         val off = when (val parts = System.getProperty("atlas.phonelook.parts")?.takeIf { it.isNotBlank() } ?: "default") {
             "default" -> MapParts.bits(MapParts.byDefault)

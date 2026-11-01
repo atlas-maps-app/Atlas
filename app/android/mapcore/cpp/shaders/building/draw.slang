@@ -710,8 +710,9 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
 
 /// A wall's flat detail: its shop glazing (by day: the open shops at night come with the night) into the window record
 /// after its windows', and its plinth (low nearer than 300 m) and cornice (nearer than 520 m) into its facade record,
-/// at its building's slots after its walls. The only stage of the frames whose walls come no nearer than the facades'
-/// 760 m (with weather: about z 17 on the phone).
+/// at its building's slots after its walls, each but those the frame's mode leaves out (FRAME_NO_GLAZING, _PLINTHS,
+/// _CORNICES). The only stage of the frames whose walls come no nearer than the facades' 760 m (with weather: about
+/// z 17 on the phone).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -721,6 +722,7 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
     }
     WindowLane l = window_lane(index);
     uint theme_flags = frame.theme.flags.x;
+    uint mode = frame.info.x;
     bool facades = building_facades_drawn(theme_flags, l.p.place, l.f, l.rank);
     uint detail = l.rank != RANK_NONE ? rank_detail(l.rank) : 0u;
     WindowSlots slots = window_slots(l);
@@ -728,7 +730,7 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
     uint count = building_window_count(l.w, detail);
     if (building_window_records(l.w, l.rank) > count) {
         BuildingWindowShape g = building_window_nothing();
-        if (facades && (theme_flags & THEME_NIGHT) == 0u) {
+        if (facades && (theme_flags & THEME_NIGHT) == 0u && (mode & FRAME_NO_GLAZING) == 0u) {
             g = building_window_over(
                 building_window_cut(frame.camera, l.p.place, building_glazing(l.wall, l.f.normal)),
                 BUILDING_GLAZING_AREA);
@@ -746,7 +748,7 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
     if (facade_first != WINDOW_NO_NEAR) {
         BuildingWindowShape plinth = building_window_nothing();
         BuildingWindowShape cornice = building_window_nothing();
-        if (facades && (l.w.flags & BUILDING_WINDOW_PLINTH) != 0u) {
+        if (facades && (mode & FRAME_NO_PLINTHS) == 0u && (l.w.flags & BUILDING_WINDOW_PLINTH) != 0u) {
             bool low = (detail & BUILDING_DETAIL_LOW_PLINTH) != 0u;
             plinth = building_window_on_plane(
                 frame.camera, plane,
@@ -755,7 +757,8 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
                                                             BUILDING_FACADE_MARGIN),
                                      BUILDING_FACADE_AREA));
         }
-        if (facades && (l.w.flags & BUILDING_WINDOW_CORNICE) != 0u && (detail & BUILDING_DETAIL_CORNICES) != 0u) {
+        if (facades && (mode & FRAME_NO_CORNICES) == 0u && (l.w.flags & BUILDING_WINDOW_CORNICE) != 0u &&
+            (detail & BUILDING_DETAIL_CORNICES) != 0u) {
             cornice = building_window_on_plane(
                 frame.camera, plane,
                 building_window_over(building_window_cut_in(frame.camera, l.p.place,

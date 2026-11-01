@@ -7,10 +7,13 @@ import app.atlas.mapcore.state.CameraWriter
  * CameraWriter.PART_*; style::camera_part in the core), each a switch of its own in a debug build's Look settings (Mine →
  * Map look → Engine parts), so the map's panel shows on the phone what each one costs (ENGINE.md, "On the user's phone
  * first"). A part left out costs nothing: the core decides, lays and draws none of it. Each is listed in one [group]
- * (its home), and [drawn] is its default: every part. The clouds' shadows and the water's light were left out from alpha
- * 19 (the user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these
- * need to be worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows
- * on the ground) brought a moving frame with them to within about a millisecond and a half of one without them.
+ * (its home), and [drawn] is its default. The clouds' shadows and the water's light were left out from alpha 19 (the
+ * user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these need to be
+ * worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows on the
+ * ground) brought a moving frame with them to within about a millisecond and a half of one without them. The roofs'
+ * edges and the plinths are left out by default (the user, 1 November: "Roof edges off by default for now", then of the
+ * plinths: "And the thin dark band off by default"), and a quay wall's faces and a facade's flat detail each have their
+ * own switch ("Every part gets its own switch").
  */
 enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = true) {
     GROUND(CameraWriter.PART_GROUND, MapPartGroup.GROUND),
@@ -19,7 +22,14 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     GROUND_LINES(CameraWriter.PART_GROUND_LINES, MapPartGroup.GROUND),
     SETTS(CameraWriter.PART_SETTS, MapPartGroup.GROUND),
     GROUND_TEXT(CameraWriter.PART_GROUND_TEXT, MapPartGroup.GROUND),
+    /** The quay walls' brick faces, down to the water. */
     QUAYS(CameraWriter.PART_QUAYS, MapPartGroup.GROUND),
+
+    /** The dark band at the water's level under a quay wall. */
+    QUAY_WATERLINES(CameraWriter.PART_QUAY_WATERLINES, MapPartGroup.GROUND),
+
+    /** The light stone top along a quay wall at the street's level. */
+    QUAY_TOPS(CameraWriter.PART_QUAY_TOPS, MapPartGroup.GROUND),
     SKY(CameraWriter.PART_SKY, MapPartGroup.GROUND),
     BUILDING_SHADOWS(CameraWriter.PART_BUILDING_SHADOWS, MapPartGroup.SHADOWS),
 
@@ -47,13 +57,20 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     /** The walls' near cells, nearer than 460 m: without them the walls are drawn plain, as farther away. */
     NEAR_CELLS(CameraWriter.PART_NEAR_CELLS, MapPartGroup.BUILDINGS),
     ROOFS(CameraWriter.PART_ROOFS, MapPartGroup.BUILDINGS),
-    ROOF_EDGES(CameraWriter.PART_ROOF_EDGES, MapPartGroup.BUILDINGS),
+    ROOF_EDGES(CameraWriter.PART_ROOF_EDGES, MapPartGroup.BUILDINGS, drawn = false),
 
     /** The walls' and roofs' cull on the GPU: without it they are drawn as their runs, every primitive submitted. */
     KEPT_CULL(CameraWriter.PART_KEPT_CULL, MapPartGroup.BUILDINGS),
     WINDOWS(CameraWriter.PART_WINDOWS, MapPartGroup.FACADES),
     WINDOW_DEPTH(CameraWriter.PART_WINDOW_DEPTH, MapPartGroup.FACADES),
-    FLAT_DETAIL(CameraWriter.PART_FLAT_DETAIL, MapPartGroup.FACADES),
+    /** A shop floor's glazing. */
+    SHOP_GLAZING(CameraWriter.PART_SHOP_GLAZING, MapPartGroup.FACADES),
+
+    /** The thin dark band along the foot of a wall on the street, within 760 m. */
+    PLINTHS(CameraWriter.PART_PLINTHS, MapPartGroup.FACADES, drawn = false),
+
+    /** The white cornice along an old house's top, within 520 m. */
+    CORNICES(CameraWriter.PART_CORNICES, MapPartGroup.FACADES),
     CHURCH_WINDOWS(CameraWriter.PART_CHURCH_WINDOWS, MapPartGroup.FACADES),
     MATERIAL_FACES(CameraWriter.PART_MATERIAL_FACES, MapPartGroup.FACADES),
     HOIST_BEAMS(CameraWriter.PART_HOIST_BEAMS, MapPartGroup.FACADES),
@@ -106,7 +123,7 @@ enum class MapPartGroup(private val also: () -> Set<MapPart> = { emptySet() }) {
 
 /** The parts the map leaves out, as the settings keep them (their names) and as the camera state carries them. */
 object MapParts {
-    /** The parts left out until the user switches one: none, every part drawn. */
+    /** The parts left out until the user switches one: the roofs' edges and the plinths. */
     val byDefault: Set<MapPart> = MapPart.entries.filterTo(mutableSetOf()) { !it.drawn }
 
     /** The camera state's word of [parts]. */

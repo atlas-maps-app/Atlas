@@ -81,7 +81,7 @@ object CameraWriter {
     const val PART_ROOF_EDGES = 26
     const val PART_WINDOWS = 27
     const val PART_WINDOW_DEPTH = 28
-    const val PART_FLAT_DETAIL = 29
+    const val PART_SHOP_GLAZING = 29
     const val PART_CHURCH_WINDOWS = 30
     const val PART_MATERIAL_FACES = 31
     const val PART_HOIST_BEAMS = 32
@@ -100,9 +100,13 @@ object CameraWriter {
     const val PART_SHADOW_BLUR = 45
     const val PART_NEAR_CELLS = 46
     const val PART_KEPT_CULL = 47
+    const val PART_PLINTHS = 48
+    const val PART_CORNICES = 49
+    const val PART_QUAY_WATERLINES = 50
+    const val PART_QUAY_TOPS = 51
 
     /** How many parts there are: the bits of [parts] past them are 0. */
-    const val PARTS = 48
+    const val PARTS = 52
 
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0

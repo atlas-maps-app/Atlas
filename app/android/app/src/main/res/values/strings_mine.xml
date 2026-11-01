@@ -379,6 +379,8 @@
     <string name="mine_part_setts">Cobblestones</string>
     <string name="mine_part_ground_text">Canal names</string>
     <string name="mine_part_quays">Quay walls</string>
+    <string name="mine_part_quay_waterlines">Quay waterlines</string>
+    <string name="mine_part_quay_tops">Quay tops</string>
     <string name="mine_part_sky">Sky</string>
     <string name="mine_part_building_shadows">Building shadows</string>
     <string name="mine_part_shadow_blur">Soft shadows</string>
@@ -403,7 +405,9 @@
     <string name="mine_part_roof_edges">Roof edges</string>
     <string name="mine_part_windows">Windows</string>
     <string name="mine_part_window_depth">Window depth</string>
-    <string name="mine_part_flat_detail">Shopfronts and plinths</string>
+    <string name="mine_part_shop_glazing">Shopfronts</string>
+    <string name="mine_part_plinths">Plinths</string>
+    <string name="mine_part_cornices">Cornices</string>
     <string name="mine_part_church_windows">Church windows</string>
     <string name="mine_part_material_faces">Wall materials</string>
     <string name="mine_part_hoist_beams">Hoist beams</string>

@@ -379,6 +379,8 @@
     <string name="mine_part_setts">Pflaster</string>
     <string name="mine_part_ground_text">Grachtennamen</string>
     <string name="mine_part_quays">Kaimauern</string>
+    <string name="mine_part_quay_waterlines">Wasserlinien an Kaimauern</string>
+    <string name="mine_part_quay_tops">Kaikanten</string>
     <string name="mine_part_sky">Himmel</string>
     <string name="mine_part_building_shadows">Gebäudeschatten</string>
     <string name="mine_part_shadow_blur">Weiche Schatten</string>
@@ -403,7 +405,9 @@
     <string name="mine_part_roof_edges">Dachkanten</string>
     <string name="mine_part_windows">Fenster</string>
     <string name="mine_part_window_depth">Fenstertiefe</string>
-    <string name="mine_part_flat_detail">Schaufenster und Sockel</string>
+    <string name="mine_part_shop_glazing">Schaufenster</string>
+    <string name="mine_part_plinths">Sockel</string>
+    <string name="mine_part_cornices">Gesimse</string>
     <string name="mine_part_church_windows">Kirchenfenster</string>
     <string name="mine_part_material_faces">Wandmaterialien</string>
     <string name="mine_part_hoist_beams">Hebebalken</string>
