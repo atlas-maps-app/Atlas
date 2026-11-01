@@ -91,12 +91,16 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         // the countries whose tiles the core draws came to be known (or changed): the rule places the camera again, at
         // rest too, so a place of theirs leaves today's map at once rather than at the next touch
         if (MapEngine.countries !== placedCountries) main.post(placeAgain)
-        // the user's Tone changed (the Map look): the core's theme is sent again with it, and drawn at once, at rest too
-        if (MapEngine.tone != sentTone) main.post(retone)
+        // the user's Tone or palette changed (the Map look): the core's theme is sent again with them, and drawn at once,
+        // at rest too
+        if (lookChanged()) main.post(retone)
     }
 
-    /** The moment sent again where the user's Tone changed since it was last sent ([sendMoment]). */
-    private val retone = Runnable { if (!closed && MapEngine.tone != sentTone) update() }
+    /** The moment sent again where the user's Tone or palette changed since it was last sent ([sendMoment]). */
+    private val retone = Runnable { if (!closed && lookChanged()) update() }
+
+    /** Whether the user's Tone or palette differs from what the core's theme was last sent with. */
+    private fun lookChanged() = MapEngine.tone != sentTone || MapEngine.palette != sentPalette
 
     /** The core's camera published again where what it carries changed (nothing otherwise: the map stays at rest). */
     private val republish = Runnable { if (!closed) publishCamera() }
@@ -262,6 +266,10 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** The user's Tone (MapEngine.tone) the core's theme was last sent with. */
     @Volatile
     private var sentTone = 1f
+
+    /** The user's palette (MapEngine.palette) the core's theme was last sent with. */
+    @Volatile
+    private var sentPalette = MapEngine.palette
 
     /** The labels last handed to the core: the list (by identity), its face, the density, whether the core draws them. */
     private class SentLabels(val labels: List<MapLabel>, val face: android.graphics.Typeface?, val density: Float, val draws: Boolean)
@@ -562,6 +570,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         coreWanted = null
         sentMoment = null
         sentTone = MapEngine.tone
+        sentPalette = MapEngine.palette
         sentLabels = null
         coreLabels = false
         sentMarkers = null
@@ -887,17 +896,19 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * The moment the core lights the map by, handed over off the main thread when it changed or the user's Tone did
-     * (MapEngine.tone). A moment's own step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at
-     * rest has not moved); a new Tone is the user's, so once the core has the theme the camera is published again and the
-     * map draws it at once, at rest too.
+     * The moment the core lights the map by, handed over off the main thread when it changed or the user's Tone or
+     * palette did (MapEngine.tone, MapEngine.palette). A moment's own step is drawn with the next frame (Bridge's moment()
+     * asks Kotlin's camera, which at rest has not moved); a new Tone or palette is the user's, so once the core has the
+     * theme the camera is published again and the map draws it at once, at rest too.
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         val tone = MapEngine.tone
-        if (moment == sentMoment && tone == sentTone) return
-        val retoned = tone != sentTone
+        val palette = MapEngine.palette
+        if (moment == sentMoment && tone == sentTone && palette == sentPalette) return
+        val retoned = tone != sentTone || palette != sentPalette
         sentMoment = moment
         sentTone = tone
+        sentPalette = palette
         val zone = drawnPack()?.zone ?: java.time.ZoneId.of("Europe/Amsterdam")
         val daylight = MapEngine.options.daylight
         scope.launch(Dispatchers.Default) {

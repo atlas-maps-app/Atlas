@@ -10,6 +10,8 @@ import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteCode
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
 import app.atlas.providers.SwitchedOffException
@@ -261,6 +263,13 @@ class MapData(private val services: Services) {
                 .map { if (it[SettingsKeys.MAP_TONE_ON] ?: true) it[SettingsKeys.MAP_TONE] ?: 1f else 0f }
                 .distinctUntilChanged()
                 .collect { s -> MapEngine.tone(s) }
+        }
+        // the Map look's palette, as the user picked it (today's look when unset or unreadable)
+        services.scope.launch {
+            services.settings.flow(SettingsKeys.MAP_PALETTE).collect { code ->
+                val read = code?.let(PaletteCode::read)
+                MapEngine.palette((read as? PaletteCode.Read.Ok)?.palette ?: Palette())
+            }
         }
         // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {

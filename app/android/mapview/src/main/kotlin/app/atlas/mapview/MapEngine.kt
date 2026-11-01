@@ -11,6 +11,7 @@ import app.atlas.geo.LatLon
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
+import app.atlas.mapview.palette.Palette
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.VkHost
@@ -195,6 +196,21 @@ object MapEngine {
         tone = s
         val o = options
         if (o.toneStrength != s.toDouble()) options = o.copy(toneStrength = s.toDouble())
+        invalidate()
+    }
+
+    /**
+     * The user's palette (the Map look's presets and colours): the core takes its ground, streets, water and light from
+     * the next moment it is handed (CoreMap.moment, PaletteTheme); today's, the default, changes nothing. [palette] sets it.
+     */
+    @Volatile
+    var palette: Palette = Palette()
+        private set
+
+    /** Sets [palette] and draws every map again with it. */
+    fun palette(p: Palette) {
+        if (p == palette) return
+        palette = p
         invalidate()
     }
 

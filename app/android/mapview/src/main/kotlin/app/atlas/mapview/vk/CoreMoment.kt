@@ -1,6 +1,8 @@
 package app.atlas.mapview.vk
 
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteTheme
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
 import app.atlas.render.live.EngineState
@@ -29,7 +31,7 @@ internal object CoreMoment {
      * the renders' dusk ([daylight], RenderOptions.daylight) and the user's strength of TONE ([tone], the Map look's
      * Tone: 1 the renders'). Fails on a moment the port does not know.
      */
-    fun write(out: ByteBuffer, moment: Moment, zone: ZoneId, daylight: Boolean, tone: Float = 1f) {
+    fun write(out: ByteBuffer, moment: Moment, zone: ZoneId, daylight: Boolean, tone: Float = 1f, palette: Palette = Palette()) {
         LiveEngine.lock.withLock {
             val saved = EngineState.capture()
             try {
@@ -41,7 +43,7 @@ internal object CoreMoment {
                         LiveMoment.KEY
                     }
                 }
-                val th = Amsterdam.THEMES.getValue(key)
+                val th = PaletteTheme.recolour(Amsterdam.THEMES.getValue(key), palette)
                 val (azimuth, elevation, sun) = Amsterdam.sunOf(th)
                 ThemeBlock.write(out, th, doubleArrayOf(sun.x, sun.y, sun.z), azimuth, elevation, golden = key == "golden", tone = false, toneStrength = tone)
             } finally {

@@ -142,6 +142,9 @@ object SettingsKeys {
 
     /** The Map look's Tone switch: off draws no TONE and keeps [MAP_TONE] for when it is on again; on when unset. */
     val MAP_TONE_ON = booleanPreferencesKey("map.tone.on")
+
+    /** The Map look's palette as its code (PaletteCode, AT1-...): today's look when unset or unreadable. */
+    val MAP_PALETTE = stringPreferencesKey("map.palette")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
 
