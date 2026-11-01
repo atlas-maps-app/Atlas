@@ -14,6 +14,7 @@
 #include "scene/Residency.hpp"
 #include "sun/Buckets.hpp"
 #include "text/GroundText.hpp"
+#include "tiles/TileBox.hpp"
 #include "view/Frames.hpp"
 
 #include <algorithm>
@@ -607,6 +608,23 @@ std::uint32_t Ground::ground_tail_slots(const frame::FrameState& state) const {
 
 namespace {
 
+/// The plate under cover tile `c`'s wanted tile, placed by the tile drawing it (entry `tile` of the tile table): the
+/// wanted tile's box on OSM's grid in the drawing tile's metres about its south-west corner. A stand-in ancestor's
+/// plate is its wanted descendant's box, so neighbouring wanted tiles' plates share their edges exactly.
+[[nodiscard]] TilePlate tile_plate(const scene::CoverTile& c, std::uint32_t tile) noexcept {
+    const tiles::TileKey k = c.key;
+    const scene::ResidentTile& d = *c.drawn;
+    const double west = tiles::Frame::degrees(tiles::column_edge(k.z, k.x));
+    const double east = tiles::Frame::degrees(tiles::column_edge(k.z, k.x + 1));
+    const double north = tiles::Frame::degrees(tiles::row_edge(k.z, k.y));
+    const double south = tiles::Frame::degrees(tiles::row_edge(k.z, k.y + 1));
+    return {.tile = tile,
+            .x0 = static_cast<float>(d.frame.x(0, west) - d.origin.x),
+            .z0 = static_cast<float>(d.frame.z(north, 0) - d.origin.z),
+            .x1 = static_cast<float>(d.frame.x(0, east) - d.origin.x),
+            .z1 = static_cast<float>(d.frame.z(south, 0) - d.origin.z)};
+}
+
 /// The decisions' key at camera `cam` with the frame's settings `f`.
 [[nodiscard]] DecisionKey key_of(const view::Camera& cam, const GroundFrame& f) noexcept {
     DecisionKey k;
@@ -672,6 +690,10 @@ bool Ground::decide(const frame::FrameState& state) {
     f.park_sun = !f.night && f.light[1] > 0.05 && !f.out(style::camera_part::park_shadows);
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
+    f.tile_plates.clear();
+    // where the world draws beyond 18 km (ENGINE.md step 5), the plate under each wanted tile's box alone, placed by
+    // the tile drawing it, so the countries' cover and the world's meet at tile edges and never inside a tile
+    const bool tile_plates = state.world != nullptr && !f.out(style::camera_part::ground);
     if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->tiles()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
@@ -683,6 +705,7 @@ bool Ground::decide(const frame::FrameState& state) {
             // wherever they are ahead); a stand-in ancestor for its wanted tile's cells alone
             const std::uint64_t cells = c.drawn->key == c.key ? ~std::uint64_t{0} : c.cells;
             const auto it = std::ranges::find(f.tiles, c.drawn, &DrawnTile::tile);
+            if (tile_plates) f.tile_plates.push_back(tile_plate(c, static_cast<std::uint32_t>(it - f.tiles.begin())));
             if (it != f.tiles.end()) {
                 it->cells |= cells;
                 continue;
@@ -875,6 +898,7 @@ bool Ground::decide(const frame::FrameState& state) {
         std::ranges::fill(f.drawn, std::uint8_t{0});
         std::ranges::fill(f.shadow_drawn, std::uint8_t{0});
         f.plate = false;
+        f.tile_plates.clear();
         f.water = false;
         f.canopy = false;
         f.shadows = false;
@@ -980,7 +1004,7 @@ void Ground::lay_out() {
         use(geo::group::over + 4, static_cast<std::uint32_t>(f.track_shadows.size()));
     }
     use(geo::group::sky, 0);
-    if (f.plate) use(geo::group::plate, 0);
+    if (f.plate || !f.tile_plates.empty()) use(geo::group::plate, 0);
     if (f.water) use(geo::group::water, 0);
     if (!f.reflections.empty()) {
         use(geo::group::reflection, 0);
@@ -1190,6 +1214,10 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     opaque_depth(plate);
     ATLAS_GPU_LET(pl, frame::make_pipeline(context, plate, frame::Overdraw::opaque));
     p.plate = std::move(pl);
+    gpu::GraphicsDesc tile_plate = ground_desc(context, p, "ground tile plates", "tile_plate_vs", "colour_fs");
+    opaque_depth(tile_plate);
+    ATLAS_GPU_LET(tp, frame::make_pipeline(context, tile_plate, frame::Overdraw::opaque));
+    p.tile_plate = std::move(tp);
     // the canopy: its rings' union in the stencil, then one composite at .55 where it is set, clearing it
     gpu::GraphicsDesc un = ground_desc(context, p, "ground canopy union", "fill_vs", "colour_fs");
     colour_off(un);
@@ -1269,6 +1297,12 @@ void Ground::write_words(const frame::FrameState& state) {
             v.push_back(bits_of(x));
         }
         v.insert(v.end(), tile_words - 8, 0U);
+    }
+    // the tile plates, where the world draws
+    w.tile_plates = static_cast<std::uint32_t>(v.size());
+    for (const TilePlate& t : f.tile_plates) {
+        v.push_back(t.tile);
+        for (const float x : {t.x0, t.z0, t.x1, t.z1}) v.push_back(bits_of(x));
     }
     // the slot table: per group its absolute base (signed) and stride
     w.slots = static_cast<std::uint32_t>(v.size());
@@ -1467,18 +1501,28 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
 }
 
 void Ground::record_plate(const frame::Recording& r) {
-    if (!frame_.plate) return;
+    if (!frame_.plate && frame_.tile_plates.empty()) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->plate);
     const Words& w = *words_;
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
-    pc.mode = {0U, slot(geo::group::plate, 0, 0), w.plate_tile, 0U};
     pc.rows = {0.0F, 0.0F, 1.0F, static_cast<float>(frame_.ground_r)};
     pc.colour = {0U, 0U, w.w[w.theme + static_cast<std::uint32_t>(geo::ThemeColour::ground)], 0U};
+    if (frame_.plate) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->plate);
+        pc.mode = {0U, slot(geo::group::plate, 0, 0), w.plate_tile, 0U};
+        cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+        cmd.draw(6, 1, 0, 0);
+        r.counters.draw("ground plate", 2);
+        return;
+    }
+    // where the world draws: each wanted tile's box, by the tile drawing it
+    const auto n = static_cast<std::uint32_t>(frame_.tile_plates.size());
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->tile_plate);
+    pc.mode = {0U, slot(geo::group::plate, 0, 0), w.tile_plates, 0U};
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
-    cmd.draw(6, 1, 0, 0);
-    r.counters.draw("ground plate", 2);
+    cmd.draw(6, n, 0, 0);
+    r.counters.draw("ground tile plates", 2ULL * n);
 }
 
 bool Ground::canopy_filtered(const frame::FrameState& state) const noexcept {

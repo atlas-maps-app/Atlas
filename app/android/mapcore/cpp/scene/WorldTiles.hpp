@@ -47,6 +47,11 @@ namespace atlas::scene {
 /// countries' cover alone, as before the world.
 inline constexpr double world_from = 18'000.0;
 
+/// How long a world tile fades in from the first frame it can be drawn, seconds (the countries' cover's): its
+/// ancestor drawn under it until the fade ends, and no frame waits for it. The globe's resident levels (L0 to L3) are
+/// drawn whole from the first frame: the floor every fade lies over.
+inline constexpr double world_fade_seconds = 0.18;
+
 /// The world's finest level, and the levels per tile's side of cells.
 inline constexpr std::uint8_t world_finest = 11;
 inline constexpr std::uint8_t world_cells_per_side = 4;
@@ -109,14 +114,17 @@ struct WorldTile {
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
     std::uint64_t drawn = 0; ///< the last frame that drew it
+    double shown = -1;       ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
     bool pinned = false;     ///< the globe's L0 to L3: never let go of
     bool ever_drawn = false;
 };
 
-/// A tile a frame draws, and its cells (bit r · 4 + c, rows from the north).
+/// A tile a frame draws, its cells (bit r · 4 + c, rows from the north) and how far it has faded in (1: done; under
+/// 1 the tile is drawn over its nearest resident ancestor's cells, which the frame draws first).
 struct WorldDraw {
     const WorldTile* tile = nullptr;
     std::uint64_t cells = 0;
+    float fade = 1.0F;
 };
 
 /// What a frame draws of the world: its tiles coarse to fine, from the world's heap, in the frame drawn.
@@ -129,6 +137,11 @@ struct WorldFrame {
     const tiles::Style* style = nullptr;
     /// The tiles the cover wants that are not resident yet: 0 once every tile in view draws itself.
     std::size_t wanted = 0;
+    /// Whether a tile drawn is still fading in (a later frame draws it otherwise).
+    bool fading = false;
+    /// The cells in view no resident tile draws (no ancestor down to the globe's L0 holds them): 0 once the globe's
+    /// coarse levels are resident, so a zoom out never shows the frame's clear colour.
+    std::size_t bare = 0;
 };
 
 /// What the world holds: resident tiles, their heap bytes and triangles, builds done and failed.
@@ -155,10 +168,11 @@ public:
     /// Called on the worker as each tile is built (the frame loop's frame request).
     void set_wake(std::function<void()> wake);
 
-    /// Frame `number`'s world: its cover for `camera` (in `frame`'s metres) `distance` metres from its target, the
-    /// tiles it draws and those it wants, the tiles built since the last frame taken in and room made. Nothing is drawn
-    /// up to world_from, or without a world pack in the store. Render thread.
-    void update(const view::Camera& camera, const view::GroundFrame& frame, double distance, std::uint64_t number);
+    /// Frame `number`'s world at `seconds` (the frame's clock): its cover for `camera` (in `frame`'s metres)
+    /// `distance` metres from its target, the tiles it draws and those it wants, the tiles built since the last frame
+    /// taken in and room made. Nothing is drawn up to world_from, or without a world pack in the store. Render thread.
+    void update(const view::Camera& camera, const view::GroundFrame& frame, double distance, std::uint64_t number,
+                double seconds);
 
     /// The last update's frame, or null where it draws nothing.
     [[nodiscard]] const WorldFrame* frame() const noexcept { return drawing_ ? &frame_ : nullptr; }

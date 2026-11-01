@@ -273,7 +273,9 @@ private:
     /// What was built of `pack`, or null.
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
     /// The world's tiles for this frame (made once the store holds a world pack), in `frame`, the frame drawn.
-    void update_world(const frame::FrameState& state, const view::GroundFrame& frame);
+    void update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds);
+    /// Whether a world tile drawn is still fading in (ENGINE.md step 5's fades).
+    [[nodiscard]] bool world_fading() const noexcept;
 
     WorldOptions options_;
     std::vector<std::string_view> pass_names_; ///< the passes that build its tiles and packs, in their order

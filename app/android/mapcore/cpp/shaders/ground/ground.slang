@@ -249,6 +249,23 @@ FillOut plate_vs(uint vertex : SV_VulkanVertexID) {
     return o;
 }
 
+/// Where the world draws beyond 18 km (ENGINE.md step 5), the plate under each wanted tile's box alone: entry
+/// `instance` of the frame's tile plates (push.mode.z their first word; 5 words each: the tile table's entry of the tile
+/// drawing it, then the box's west, north, east and south in that tile's metres), at painter slot push.mode.y, in
+/// push.colour.z.
+[shader("vertex")]
+FillOut tile_plate_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint at = push.mode.z + 5u * instance;
+    float2 lo = float2(asfloat(words[at + 1u]), asfloat(words[at + 2u]));
+    float2 hi = float2(asfloat(words[at + 3u]), asfloat(words[at + 4u]));
+    float2 c = lerp(lo, hi, plate_corners[vertex] * 0.5f + 0.5f);
+    FillOut o;
+    o.position = place(words[at], float3(c.x, 0.0f, c.y), push.mode.y);
+    o.colour = float4(unpack(push.colour.z).rgb, 1.0f);
+    set_mat(o, false);
+    return o;
+}
+
 // ---------------------------------------------------------------- the water's pieces, counted in the stencil
 
 /// A water piece's vertex, at the street's height (w0) or at its level (wclip): drawn where the frame drew its ring at

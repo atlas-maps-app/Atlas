@@ -12,7 +12,10 @@
 //
 // Every draw writes the world's depth (push.origin.w: between the sky's painter slots and the ground's first), with
 // GREATER_OR_EQUAL, so a later draw of the world lies over an earlier one, the countries' ground over all of it and
-// the sky, drawn after, nowhere over it. Its colours are the palette's (set 2, binding 1), the moment's theme and the
+// the sky, drawn after, nowhere over it. A tile fading in (push.scale.z under 1) is drawn over its ancestors' cells at
+// a depth a little above the world's (higher for a finer level's), its triangles top first with GREATER (the fading
+// pipeline), so each pixel takes its topmost fill alone at the fade's alpha, as the tile would look whole and faded,
+// and its lines at that alpha. Its colours are the palette's (set 2, binding 1), the moment's theme and the
 // world's style as passes/World.cpp writes them, as 8-bit RGBA (r in the low byte), premultiplied by the line's alpha.
 #include "shared/frame.slang"
 
@@ -22,7 +25,8 @@
 
 struct WorldPush {
     float4 origin; // xyz: the tile's north-west corner from the eye (frame metres, on the ground); w: the world's depth
-    float4 scale;  // x: metres a unit of u spans (east), y: of v (south); z, w: 0
+    float4 scale;  // x: metres a unit of u spans (east), y: of v (south); z: the tile's fade (1 drawn whole); w: 1 where
+                   // it fades (its triangles top first), else 0
     uint4 at;      // x: the tile's first word; y: the cells drawn (bit r * 4 + c); z: its triangles' words (3T); w: its
                    // segments' (4T)
 };
@@ -69,13 +73,16 @@ static const float4 nowhere = {0.0f, 0.0f, 0.0f, 1.0f};
 [shader("vertex")]
 WorldOut fill_vs(uint vertex : SV_VulkanVertexID) {
     WorldOut o;
-    uint look = world_words[push.at.x + push.at.z + vertex / 3u];
-    o.colour = unpack(world_palette[look & 0xFFu]);
+    // a fading tile's triangles top first, the last of its painter's order first
+    uint v = push.scale.w != 0.0f ? push.at.z - 1u - vertex : vertex;
+    uint look = world_words[push.at.x + push.at.z + v / 3u];
+    float4 colour = unpack(world_palette[look & 0xFFu]);
+    o.colour = float4(colour.rgb * push.scale.z, colour.a * push.scale.z);
     if (!drawn((look >> 8u) & 0xFFu)) {
         o.position = nowhere;
         return o;
     }
-    float3 k = camera_of(frame.camera, point_of(world_words[push.at.x + vertex]));
+    float3 k = camera_of(frame.camera, point_of(world_words[push.at.x + v]));
     o.position = clip_of_camera(frame.camera, k, push.origin.w);
     return o;
 }
@@ -131,7 +138,7 @@ WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstan
     float2 n = {s.x * c.device.x - 1.0f, s.y * c.device.y - 1.0f};
     float2 t = {c.turn.x * n.x + c.turn.y * n.y, c.turn.z * n.x + c.turn.w * n.y};
     o.position = float4(t.x, t.y, push.origin.w, 1.0f);
-    float alpha = min(1.0f, wide);
+    float alpha = min(1.0f, wide) * push.scale.z;
     float4 colour = unpack(world_palette[look & 0xFFu]);
     o.colour = float4(colour.rgb * alpha, alpha);
     return o;

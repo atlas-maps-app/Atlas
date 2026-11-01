@@ -43,6 +43,9 @@ public:
         std::array<std::uint32_t, 4> at{};
         std::uint32_t triangles = 0;
         std::uint32_t segments = 0;
+        float fade = 1.0F;      ///< under 1 while the tile fades in (scene::WorldDraw::fade)
+        std::uint8_t level = 0; ///< its tile's level
+        std::uint32_t lift = 0; ///< while it fades, its depth's lift above the world's (World.cpp's fading_depth)
     };
 
     World() = default;
@@ -70,6 +73,9 @@ public:
     /// (null: its entries the land's).
     [[nodiscard]] static std::vector<std::uint32_t> palette_of(const style::ThemeBlock& theme, bool night,
                                                                const tiles::Style* style);
+    /// Every world pass of the process paints all the world in `colour` (RGBA8, r in the low byte; 0: its palette
+    /// again), so a test tells the world's pixels from the countries', whose colours are the world's by design.
+    static void paint_for_tests(std::uint32_t colour) noexcept;
 
 private:
     static constexpr std::array<frame::Phase, 1> phase_list{
@@ -94,6 +100,7 @@ private:
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::Pipeline fills_{nullptr};
+    vk::raii::Pipeline fading_fills_{nullptr}; ///< a fading tile's fills: top first, GREATER, used only while one fades
     vk::raii::Pipeline lines_{nullptr};
 };
 

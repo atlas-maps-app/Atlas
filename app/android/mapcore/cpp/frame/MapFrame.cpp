@@ -127,9 +127,9 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
 
 std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& cache, gpu::PipelineWatch* watch) {
     if (made()) return {};
-    auto builder = FrameBuilder::create(
-        device, cache, make_passes(),
-        FrameOptions{.steps = steps_, .grain = grain_, .grounded = true, .passes = passes_}, watch);
+    FrameOptions frame_options{.steps = steps_, .grain = grain_, .grounded = true, .passes = passes_};
+    if (options_.clear) frame_options.clear = *options_.clear;
+    auto builder = FrameBuilder::create(device, cache, make_passes(), frame_options, watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());
     // The world's clock is the map's own: its workers stamp each tile's publication with it, the cover fades by it.
     auto clock = [epoch = epoch_] {
@@ -289,14 +289,15 @@ standin::MapCounts MapFrame::counts() const noexcept {
 
 bool MapFrame::complete() const noexcept {
     if (!made()) return false;
-    // beyond every country's reach, the world's picture (ENGINE.md step 5's step 2): complete once it draws, as no
-    // frame waits for a world tile and its globe's coarsest tiles stay resident
+    // beyond the countries' reach, the world's picture (ENGINE.md step 5): final once every tile in view draws itself
+    // and has faded in (no frame waits for one meanwhile: its ancestors draw, down to the globe's resident levels)
+    const scene::WorldFrame* w = world_->world_frame();
+    const bool world_final = w == nullptr || (w->wanted == 0 && !w->fading);
     if (world_->active() == nullptr && world_->incoming() == nullptr) {
-        const scene::WorldFrame* w = world_->world_frame();
-        return w != nullptr && !w->draws.empty();
+        return w != nullptr && !w->draws.empty() && world_final;
     }
     // a switch waiting for the named pack's tiles (scene::World::incoming) is not the camera's final picture yet
-    if (world_->active() == nullptr || world_->incoming() != nullptr) return false;
+    if (world_->active() == nullptr || world_->incoming() != nullptr || !world_final) return false;
     const scene::Cover& cover = *world_->cover();
     if (cover.tiles().empty() || cover.missing() > 0 || cover.fading()) return false;
     return world_->frames().weight(now()) >= 1.0;

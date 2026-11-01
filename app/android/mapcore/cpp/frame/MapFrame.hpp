@@ -31,6 +31,7 @@
 #include "style/Theme.hpp"
 #include "tiles/Store.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -71,6 +72,8 @@ struct MapOptions {
     /// How far the cover reaches at most, metres, instead of the world's (scene::WorldOptions::levels_far): a test's,
     /// to draw as before a frame cell's levels (12 km, the cover's reach until step 7); 0 for the world's.
     double levels_far = 0;
+    /// The frame's clear colour instead of paper's (FrameOptions::clear): a test's, to tell where nothing draws.
+    std::optional<std::array<float, 4>> clear;
 };
 
 /// The app's map.

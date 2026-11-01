@@ -4,18 +4,26 @@
 // picture is complete with no country's pack: the app's path beyond 18 km, where the map said "Zoom in to see the map".
 // With ATLAS_LOOK_OUT, each view is written as <out>/world_<distance>.ppm.
 #include "base/pymath/PyMath.hpp"
+#include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "passes/World.hpp"
+#include "scene/Cover.hpp"
+#include "scene/Residency.hpp"
+#include "scene/World.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tiles/TileBox.hpp"
 #include "tiles/WorldIndex.hpp"
+#include "view/Camera.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -25,9 +33,11 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace atlas {
@@ -172,6 +182,101 @@ constexpr double density = 1.0;
     return n;
 }
 
+/// The canal ring's bundled render pack of ATLAS_TILES_DIR as the app lists it, pack 1.
+[[nodiscard]] frame::MapPack canal_ring(const fs::path& dir) {
+    frame::MapPack p;
+    p.number = 1;
+    p.ref.id = "grachten";
+    p.ref.kind = tiles::PackKind::bundled;
+    p.ref.path = (dir / "grachten.atlas").string();
+    return p;
+}
+
+/// The world's test paint (passes::World::paint_for_tests): magenta, which no map colour is near.
+constexpr std::uint32_t magenta = 0xFFFF00FFU;
+constexpr style::Rgb8 magenta_rgb{.r = 255, .g = 0, .b = 255, .a = 255};
+
+/// A convex quad on the screen (device pixels), and whether a point lies in it at least `inset` pixels from each edge.
+struct ScreenQuad {
+    std::array<view::Vec2, 4> p{};
+
+    [[nodiscard]] bool holds(double x, double y, double inset) const noexcept {
+        // the quad's turn: the corners as projected, either way round
+        double area = 0;
+        for (std::size_t i = 0; i < 4; ++i) {
+            const view::Vec2& a = p.at(i);
+            const view::Vec2& b = p.at((i + 1) % 4);
+            area += (a.x * b.y) - (b.x * a.y);
+        }
+        const double turn = area >= 0 ? 1.0 : -1.0;
+        for (std::size_t i = 0; i < 4; ++i) {
+            const view::Vec2& a = p.at(i);
+            const view::Vec2& b = p.at((i + 1) % 4);
+            const double ex = b.x - a.x;
+            const double ey = b.y - a.y;
+            const double len = std::sqrt((ex * ex) + (ey * ey));
+            if (len == 0) return false;
+            if (turn * ((ex * (y - a.y)) - (ey * (x - a.x))) / len < inset) return false;
+        }
+        return true;
+    }
+};
+
+/// The screen quads of the wanted tiles the countries' cover drew in the map's last frame: each wanted tile's box on
+/// OSM's grid placed by the tile drawing it, as the ground's tile plates are (none with a corner behind the eye).
+[[nodiscard]] std::vector<ScreenQuad> drawn_quads(frame::MapFrame& map) {
+    std::vector<ScreenQuad> out;
+    const std::optional<view::View>& view = map.builder()->state().view;
+    if (!view || map.world()->cover() == nullptr) return out;
+    const view::Vec3& eye = view->camera().eye();
+    for (const scene::CoverTile& c : map.world()->cover()->tiles()) {
+        if (c.drawn == nullptr) continue;
+        const tiles::TileKey k = c.key;
+        const view::GroundFrame& f = c.drawn->frame;
+        const double west = tiles::Frame::degrees(tiles::column_edge(k.z, k.x));
+        const double east = tiles::Frame::degrees(tiles::column_edge(k.z, k.x + 1));
+        const double north = tiles::Frame::degrees(tiles::row_edge(k.z, k.y));
+        const double south = tiles::Frame::degrees(tiles::row_edge(k.z, k.y + 1));
+        const auto scale = static_cast<double>(c.place.scale.x);
+        const view::Vec3 offset{static_cast<double>(c.place.offset.x), static_cast<double>(c.place.offset.y),
+                                static_cast<double>(c.place.offset.z)};
+        ScreenQuad q;
+        bool seen = true;
+        std::size_t i = 0;
+        for (const auto& [lat, lon] :
+             {std::pair{north, west}, std::pair{north, east}, std::pair{south, east}, std::pair{south, west}}) {
+            const view::Vec3 at{
+                eye.x + offset.x + (scale * (f.x(lat, lon) - c.drawn->origin.x)),
+                eye.y + offset.y,
+                eye.z + offset.z + (scale * (f.z(lat, lon) - c.drawn->origin.z)),
+            };
+            const std::optional<view::Vec2> s = view->device_proj(at);
+            if (!s) {
+                seen = false;
+                break;
+            }
+            q.p.at(i++) = *s;
+        }
+        if (seen) out.push_back(q);
+    }
+    return out;
+}
+
+/// Draws `cam` until the map's picture is complete and the world wants no tile (at most four minutes).
+void draw_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& cam) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+    int frames = 0;
+    while (std::chrono::steady_clock::now() < until) {
+        const standin::Drawn s = session.draw(cam, {});
+        if (s.stale) session.remake();
+        frames += s.drawn ? 1 : 0;
+        scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+        const scene::WorldFrame* f = tiles != nullptr ? tiles->frame() : nullptr;
+        if (map.complete() && f != nullptr && f->wanted == 0 && frames > 2) return;
+        if (tiles != nullptr) tiles->wait_idle();
+    }
+}
+
 } // namespace
 
 TEST_CASE("the world: a camera over the Netherlands from 18 to 1,000 km draws its land, water and roads, complete "
@@ -254,6 +359,314 @@ TEST_CASE("the world: a camera over the Netherlands from 18 to 1,000 km draws it
             if (!out.empty())
                 CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("world_{:.0f}.ppm", d)).string()));
         }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the hand-over: the canal ring's tiles at 25 km pitched 60 degrees over the world, which shows beyond them "
+          "and never inside one") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (world_dir.empty() || tiles_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR or ATLAS_TILES_DIR is not set: the hand-over is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    packs.push_back(canal_ring(tiles_dir));
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-seam-{}", ::getpid());
+    fs::create_directories(guard);
+    auto started = gpu::start_guarded({.guard_dir = guard,
+                                       .cache_file = guard / "pipelines.bin",
+                                       .system = "host-test-system",
+                                       .build = "world-test",
+                                       .present = true,
+                                       .spirv = 42});
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    passes::World::paint_for_tests(magenta);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        const std::string listed = map.set_packs(std::move(packs));
+        CHECK(listed.find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        for (const double bearing : {0.0, 45.0}) {
+            style::CameraState cam = camera(52.3765, 4.897, bearing, 60.0, 25'000.0);
+            cam.pack_id = 1;
+            draw_complete(session, map, cam);
+            CHECK(map.complete());
+            const std::vector<ScreenQuad> quads = drawn_quads(map);
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            // every pixel 2 px inside the drawn tiles' boxes together is the countries' (where two tiles meet too), and
+            // the world's lie beyond them
+            const auto in = [&quads](double x, double y) {
+                return std::ranges::any_of(quads, [&](const ScreenQuad& q) { return q.holds(x, y, 0); });
+            };
+            const auto around = [&in](double x, double y, double r) {
+                int n = 0;
+                for (const double dx : {-r, 0.0, r}) {
+                    for (const double dy : {-r, 0.0, r}) n += in(x + dx, y + dy) ? 1 : 0;
+                }
+                return n;
+            };
+            // and the ring 2 to 6 px beyond them is the world's: no plate reaches past a tile's edge
+            std::size_t ring = 0;
+            std::size_t world_ring = 0;
+            std::size_t inside = 0;
+            std::size_t world_inside = 0;
+            std::size_t world_beyond = 0;
+            const auto near = [](std::uint8_t a, std::uint8_t b) { return std::abs(int{a} - int{b}) <= 60; };
+            for (std::uint32_t y = 0; y < pixels->height; ++y) {
+                for (std::uint32_t x = 0; x < pixels->width; ++x) {
+                    const std::size_t i = 4 * ((std::size_t{y} * pixels->width) + x);
+                    const bool world = near(pixels->rgba[i], magenta_rgb.r) &&
+                                       near(pixels->rgba[i + 1], magenta_rgb.g) &&
+                                       near(pixels->rgba[i + 2], magenta_rgb.b);
+                    const double px = x + 0.5;
+                    const double py = y + 0.5;
+                    const bool held = around(px, py, 2) == 9;
+                    const bool ringed = around(px, py, 2) == 0 && around(px, py, 6) > 0;
+                    ring += ringed ? 1 : 0;
+                    world_ring += ringed && world ? 1 : 0;
+                    inside += held ? 1 : 0;
+                    world_inside += held && world ? 1 : 0;
+                    world_beyond += !in(px, py) && world ? 1 : 0;
+                }
+            }
+            const std::size_t all = std::size_t{pixels->width} * pixels->height;
+            MESSAGE(std::format("bearing {:.0f}: {} tiles drawn, {} px inside them ({} the world's), {} px of the ring "
+                                "beyond them ({} the world's), {} the world's beyond of {}; {}",
+                                bearing, quads.size(), inside, world_inside, ring, world_ring, world_beyond, all,
+                                map.tiles_line()));
+            CHECK(quads.size() >= 4); // the canal ring's coarse level from 25 km: 4 tiles
+            CHECK(inside > all / 100);
+            CHECK(world_inside == 0);
+            CHECK(ring > 0);
+            CHECK(world_ring * 100 >= ring * 99);
+            CHECK(world_beyond > all / 10);
+            if (!out.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("seam_{:.0f}.ppm", bearing)).string()));
+            }
+        }
+    }
+    passes::World::paint_for_tests(0);
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+namespace {
+
+/// The tests' clear colour: green, which no map colour is near, where nothing draws.
+constexpr std::array<float, 4> green_clear{0.0F, 1.0F, 0.0F, 1.0F};
+
+/// The pixels of `p` the clear colour shows in, alone or through what lies faded over it: green by at least 50 levels
+/// over red and blue (the map's greenest, the parks' #A9C38A, by 26).
+[[nodiscard]] std::size_t count_clear(const gpu::Pixels& p) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+        const int r = p.rgba[i];
+        const int g = p.rgba[i + 1];
+        const int b = p.rgba[i + 2];
+        if (g > r + 50 && g > b + 50) ++n;
+    }
+    return n;
+}
+
+/// A session's start for the world's tests in folder `guard`.
+[[nodiscard]] auto start_world(const fs::path& guard) {
+    fs::create_directories(guard);
+    return gpu::start_guarded({.guard_dir = guard,
+                               .cache_file = guard / "pipelines.bin",
+                               .system = "host-test-system",
+                               .build = "world-test",
+                               .present = true,
+                               .spirv = 42});
+}
+
+} // namespace
+
+TEST_CASE("the hand-over: a zoom from 1 to 100 km over the canal ring draws each frame at once, and from 18 km on no "
+          "cell lacks the countries' ground or the world's") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (world_dir.empty() || tiles_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR or ATLAS_TILES_DIR is not set: the zoom is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    packs.push_back(canal_ring(tiles_dir));
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-zoom-{}", ::getpid());
+    auto started = start_world(guard);
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // at rest over the canal ring from 1 km first, then out to 100 km in 60 frames, one frame a step: nothing waits
+        style::CameraState cam = camera(52.3765, 4.897, 0.0, 30.0, 1'000.0);
+        cam.pack_id = 1;
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        cam.flags = 0; // moving
+        constexpr int steps = 60;
+        int drawn = 0;
+        int beyond = 0;
+        double slowest_ms = 0;
+        std::size_t clear_within =
+            0; // up to 18 km: today's cover (the plate about the frame's origin, the pack's tiles)
+        std::size_t clear_beyond = 0;
+        std::size_t bare = 0;
+        for (int i = 0; i <= steps; ++i) {
+            cam.distance = 1'000.0 * pymath::pow(100.0, static_cast<double>(i) / steps);
+            const auto start = std::chrono::steady_clock::now();
+            const standin::Drawn s = session.draw(cam, {});
+            const double ms =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            if (s.stale) session.remake();
+            drawn += s.drawn ? 1 : 0;
+            slowest_ms = std::max(slowest_ms, ms);
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            const std::size_t clear = count_clear(*pixels);
+            const scene::WorldTiles* tiles = map.world()->world_tiles();
+            const scene::WorldFrame* f = tiles != nullptr ? tiles->frame() : nullptr;
+            if (cam.distance > scene::world_from) {
+                ++beyond;
+                clear_beyond += clear;
+                bare += f != nullptr ? f->bare : 1;
+                CHECK(f != nullptr);
+            } else {
+                clear_within += clear;
+            }
+            if (i % 10 == 0 && !out.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("zoom_{:.0f}.ppm", cam.distance)).string()));
+            }
+            if (i % 10 == 0) {
+                MESSAGE(std::format("{:.0f} m: drawn {}, {} px of the clear colour, the world {} draws, {} wanted, {} "
+                                    "bare, fading {}; {:.1f} ms",
+                                    cam.distance, s.drawn, clear, f != nullptr ? f->draws.size() : 0U,
+                                    f != nullptr ? f->wanted : 0U, f != nullptr ? f->bare : 0U,
+                                    f != nullptr && f->fading, ms));
+            }
+        }
+        MESSAGE(std::format("{} of {} frames drawn, the slowest in {:.1f} ms; up to 18 km {} px of the clear colour in "
+                            "all, beyond {} in {} frames, {} bare cells",
+                            drawn, steps + 1, slowest_ms, clear_within, clear_beyond, beyond, bare));
+        CHECK(drawn == steps + 1);
+        CHECK(beyond > 20);
+        CHECK(clear_beyond == 0);
+        CHECK(bare == 0);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's cells, and no frame waits for it") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-fade-{}", ::getpid());
+    auto started = start_world(guard);
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        (void)map.set_packs(std::move(packs));
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // the L8 tiles from 200 km, faded in
+        style::CameraState cam = camera(52.37, 4.89, 0.0, 0.0, 200'000.0);
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        // then 30 km, whose L11 tiles are not resident: the first frame draws their ancestors' cells, at once
+        cam.distance = 30'000.0;
+        CHECK(session.draw(cam, {}).drawn);
+        scene::WorldTiles* tiles = map.world()->world_tiles();
+        ATLAS_REQUIRE(tiles != nullptr);
+        const scene::WorldFrame* f = tiles->frame();
+        ATLAS_REQUIRE(f != nullptr);
+        CHECK(f->wanted > 0);
+        CHECK(f->bare == 0);
+        CHECK_FALSE(map.complete());
+        // once they are built, the frame that takes them in draws each fading over its ancestor's cells
+        tiles->wait_idle();
+        CHECK(session.draw(cam, {}).drawn);
+        const auto taken = std::chrono::steady_clock::now();
+        f = tiles->frame();
+        ATLAS_REQUIRE(f != nullptr);
+        CHECK(f->fading);
+        CHECK(map.animating());
+        CHECK_FALSE(map.complete());
+        std::size_t fading = 0;
+        std::size_t under = 0;
+        for (const scene::WorldDraw& d : f->draws) {
+            if (d.fade >= 1.0F) continue;
+            ++fading;
+            const tiles::TileKey k = d.tile->key;
+            const bool held = std::ranges::any_of(f->draws, [&](const scene::WorldDraw& a) {
+                const tiles::TileKey ak = a.tile->key;
+                if (ak.z >= k.z) return false;
+                const auto gap = static_cast<std::uint32_t>(k.z - ak.z);
+                if ((k.x >> gap) != ak.x || (k.y >> gap) != ak.y) return false;
+                const std::uint64_t over = scene::cells_over(scene::world_cells_per_side, gap, k.x, k.y);
+                return (a.cells & over) == over;
+            });
+            under += held ? 1 : 0;
+        }
+        {
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            CHECK(count_clear(*pixels) == 0); // the ancestors under the fading tiles: no clear colour
+        }
+        MESSAGE(
+            std::format("{} draws, {} fading, {} of them over an ancestor's cells", f->draws.size(), fading, under));
+        CHECK(fading > 0);
+        CHECK(under == fading);
+        // each frame drawn meanwhile; after 0.18 s every tile drawn whole and alone
+        int frames = 0;
+        while (std::chrono::steady_clock::now() - taken < std::chrono::milliseconds(250)) {
+            CHECK(session.draw(cam, {}).drawn);
+            ++frames;
+        }
+        CHECK(session.draw(cam, {}).drawn);
+        f = tiles->frame();
+        ATLAS_REQUIRE(f != nullptr);
+        MESSAGE(std::format("{} frames during the fade; then {} draws, fading {}", frames, f->draws.size(), f->fading));
+        CHECK_FALSE(f->fading);
+        CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) { return d.fade >= 1.0F; }));
+        CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11; }));
+        CHECK(map.complete());
+        CHECK_FALSE(map.animating());
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

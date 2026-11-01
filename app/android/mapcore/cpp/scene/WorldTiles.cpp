@@ -448,7 +448,7 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
 }
 
 void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& frame, double distance,
-                        std::uint64_t number) {
+                        std::uint64_t number, double seconds) {
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
     take_style();
@@ -467,6 +467,8 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
     drawing_ = false;
     frame_.draws.clear();
     frame_.wanted = 0;
+    frame_.fading = false;
+    frame_.bare = 0;
     if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) return;
     // The globe's coarse levels, kept resident from the first frame on: every tile the store holds there.
     std::vector<tl::TileKey> wanted;
@@ -494,29 +496,53 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held);
         std::map<std::uint64_t, std::uint64_t> cells; // by packed key: coarse to fine, then by column and row
         std::vector<std::pair<double, tl::TileKey>> asked;
+        // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
+        // globe's resident levels are the floor every fade lies over, drawn whole from the first frame, so a zoom out
+        // never shows the frame's clear colour
+        const auto fade_of = [seconds](const WorldTile& t) {
+            if (t.pinned) return 1.0;
+            const double since = t.shown < 0 ? seconds : t.shown;
+            return std::clamp((seconds - since) / world_fade_seconds, 0.0, 1.0);
+        };
+        // the nearest resident ancestor of `key` above level `below`
+        const auto ancestor = [this](const tl::TileKey& key, int below) -> WorldTile* {
+            for (int z = below - 1; z >= 0; --z) {
+                const auto up = static_cast<std::uint32_t>(key.z - z);
+                const tl::TileKey a(static_cast<std::uint8_t>(z), key.x >> up, key.y >> up);
+                if (auto at = resident_.find(a.packed()); at != resident_.end()) return at->second.get();
+            }
+            return nullptr;
+        };
         for (const WorldLeaf& leaf : leaves) {
             const tl::TileKey& h = leaf.holder;
-            const WorldTile* drawer = nullptr;
+            WorldTile* drawer = nullptr;
             if (auto it = resident_.find(h.packed()); it != resident_.end()) {
                 drawer = it->second.get();
             } else {
                 asked.emplace_back(leaf.distance, h);
                 // meanwhile its nearest resident ancestor, its cells over the tile
-                for (int z = int{h.z} - 1; z >= 0 && drawer == nullptr; --z) {
-                    const auto up = static_cast<std::uint32_t>(h.z - z);
-                    const tl::TileKey a(static_cast<std::uint8_t>(z), h.x >> up, h.y >> up);
-                    if (auto at = resident_.find(a.packed()); at != resident_.end()) drawer = at->second.get();
-                }
+                drawer = ancestor(h, h.z);
             }
-            if (drawer == nullptr) continue;
-            const auto gap = static_cast<std::uint32_t>(leaf.key.z - drawer->key.z);
-            cells[drawer->key.packed()] |= cells_over(world_cells_per_side, gap, leaf.key.x, leaf.key.y);
+            if (drawer == nullptr) {
+                ++frame_.bare;
+                continue;
+            }
+            // and while the drawer fades in, the nearest resident ancestor under it, down to one faded in or the globe
+            for (WorldTile* t = drawer; t != nullptr; t = fade_of(*t) < 1.0 ? ancestor(t->key, t->key.z) : nullptr) {
+                const auto gap = static_cast<std::uint32_t>(leaf.key.z - t->key.z);
+                cells[t->key.packed()] |= cells_over(world_cells_per_side, gap, leaf.key.x, leaf.key.y);
+            }
         }
         for (const auto& [k, bits] : cells) {
             WorldTile& t = *resident_.at(k);
             t.drawn = number;
             t.ever_drawn = true;
-            if (t.triangles + t.segments > 0) frame_.draws.push_back({.tile = &t, .cells = bits});
+            if (t.shown < 0) t.shown = seconds;
+            const double fade = fade_of(t);
+            frame_.fading = frame_.fading || fade < 1.0;
+            if (t.triangles + t.segments > 0) {
+                frame_.draws.push_back({.tile = &t, .cells = bits, .fade = static_cast<float>(fade)});
+            }
         }
         // the tiles wanted nearest first (stable: the walk's order on a tie), each once
         std::ranges::stable_sort(asked, [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -529,6 +555,10 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         }
         frame_.wanted = view_wanted.size();
         wanted.insert(wanted.begin(), view_wanted.begin(), view_wanted.end());
+    }
+    // a tile not drawn by this frame fades in again when it is next drawn
+    for (auto& [k, t] : resident_) {
+        if (t->drawn != number) t->shown = -1;
     }
     // room for what is wanted: the least lately drawn go while the heap is fuller than its share, or a build found none
     const vk::DeviceSize total = heaps_->budget().total;

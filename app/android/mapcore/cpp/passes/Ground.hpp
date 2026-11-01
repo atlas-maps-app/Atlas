@@ -405,6 +405,16 @@ struct DecisionKey {
 };
 
 /// What the ground decided for a frame (select), shared by its parts and by the twin.
+/// Where the world draws (beyond 18 km, ENGINE.md step 5), the plate under one drawn tile's cell or tile: its entry in
+/// the tile table, and its west, north, east and south in the tile's metres (about its south-west corner).
+struct TilePlate {
+    std::uint32_t tile = 0;
+    float x0 = 0.0F;
+    float z0 = 0.0F;
+    float x1 = 0.0F;
+    float z1 = 0.0F;
+};
+
 struct GroundFrame {
     /// The parts the map leaves out this frame (the camera state's, style::camera_part): the ground decides none of
     /// its own of them, so none is laid or drawn.
@@ -421,6 +431,9 @@ struct GroundFrame {
     double ground_r = 1500;
     bool plate = false; ///< the plate is drawn
     std::vector<DrawnTile> tiles;
+    /// Where the world draws, the plate under the drawn tiles' drawn cells alone (no whole plate then): the world shows
+    /// beyond the countries' tiles and never inside one.
+    std::vector<TilePlate> tile_plates;
     /// The cameras of the drawn tiles' other frames (DrawnTile::cam), this frame's: the frames are plate carrée about
     /// their origins, so the camera keeps its bearing and pitch and only its target moves (view::convert's degrees);
     /// across a frame cell the frames' x scales differ by under 1 %, which no decision tells.
@@ -1057,6 +1070,7 @@ struct Ground::Pipelines {
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
     vk::raii::Pipeline plate{nullptr};
+    vk::raii::Pipeline tile_plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};
     vk::raii::Pipeline canopy_composite{nullptr};
     vk::raii::Pipeline canopy_filtered{nullptr};
@@ -1235,6 +1249,7 @@ struct Ground::Words {
     std::vector<std::uint32_t> w;
     std::uint32_t tiles = 0;                  ///< the tile table's first word (20 words a tile, the plate's place last)
     std::uint32_t plate_tile = 0;             ///< the plate's entry in it
+    std::uint32_t tile_plates = 0;            ///< the tile plates' first word (5 words each: TilePlate)
     std::uint32_t slots = 0;                  ///< the slot table's
     std::uint32_t theme = 0;                  ///< the theme colours'
     std::uint32_t runs = 0;                   ///< the lines' runs'

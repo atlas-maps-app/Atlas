@@ -14,6 +14,7 @@
 #include "view/Ladder.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 namespace atlas::passes {
@@ -45,7 +46,26 @@ constexpr std::array<std::string_view, 3> lawn_kinds = {"park", "garden", "grass
     return 3.5F * scale;
 }
 
+/// The depth of a tile fading in, `lift` sixteenths of the scale above the world's (1 to 7: its level's rank among the
+/// levels fading, coarse to fine), so it lies over its ancestors' cells, a finer fading tile over a coarser one, and
+/// all under the ground's first slot; a sixteenth is the 24-bit attachment's step at the scale 2^-20.
+[[nodiscard]] float fading_depth(std::uint32_t camera_flags, std::uint32_t lift) noexcept {
+    const float scale = (camera_flags & shaders::CAMERA_DEPTH24) != 0U ? 0x1p-20F : 0x1p-60F;
+    return (3.5F + (static_cast<float>(lift) / 16.0F)) * scale;
+}
+
+/// The most levels whose fading tiles lie at depths of their own (a finer one shares the finest's).
+constexpr std::uint32_t fading_lifts = 7;
+
+/// World::paint_for_tests's colour (0: none).
+[[nodiscard]] std::atomic<std::uint32_t>& test_paint() noexcept {
+    static std::atomic<std::uint32_t> colour{0};
+    return colour;
+}
+
 } // namespace
+
+void World::paint_for_tests(std::uint32_t colour) noexcept { test_paint().store(colour, std::memory_order_relaxed); }
 
 World::~World() { World::release(); }
 
@@ -77,6 +97,9 @@ void World::update(const frame::FrameState& state) {
     if (world == nullptr || world->draws.empty() || !state.view.has_value() || !*fills_ || !palette_buffer_) return;
     const bool night = state.theme.has(style::theme_flag::night);
     palette_ = palette_of(state.theme, night, world->style);
+    if (const std::uint32_t paint = test_paint().load(std::memory_order_relaxed); paint != 0) {
+        std::ranges::fill(palette_, paint);
+    }
     std::memcpy(palette_buffer_.bytes().data() + ((state.slot & 1U) * palette_bytes), palette_.data(), palette_bytes);
     palette_buffer_.flush();
     if (s.bound != world->buffer) {
@@ -102,12 +125,28 @@ void World::update(const frame::FrameState& state) {
         Draw out;
         out.origin = {static_cast<float>(x0 - eye.x), static_cast<float>(-eye.y), static_cast<float>(z0 - eye.z), 0.0F};
         out.scale = {static_cast<float>((f.x(north, east) - x0) / 65'535.0),
-                     static_cast<float>((f.z(south, west) - z0) / 65'535.0), 0.0F, 0.0F};
+                     static_cast<float>((f.z(south, west) - z0) / 65'535.0), d.fade, d.fade < 1.0F ? 1.0F : 0.0F};
+        out.fade = d.fade;
+        out.level = t.key.z;
         out.at = {t.range.offset / 4U, static_cast<std::uint32_t>(d.cells & 0xFFFFU), 3U * t.triangles,
                   4U * t.triangles};
         out.triangles = t.triangles;
         out.segments = t.segments;
         draws_.push_back(out);
+    }
+    // the fading tiles' depths: their levels' ranks, coarse to fine
+    std::array<bool, 32> fading{};
+    for (const Draw& d : draws_) {
+        if (d.fade < 1.0F && d.level < fading.size()) fading.at(d.level) = true;
+    }
+    std::array<std::uint32_t, 32> lift{};
+    std::uint32_t rank = 0;
+    for (std::size_t z = 0; z < fading.size(); ++z) {
+        if (fading.at(z)) rank = std::min(rank + 1, fading_lifts);
+        lift.at(z) = rank;
+    }
+    for (Draw& d : draws_) {
+        if (d.fade < 1.0F) d.lift = lift.at(std::min<std::size_t>(d.level, lift.size() - 1));
     }
     s.drawing = !draws_.empty();
 }
@@ -167,6 +206,11 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     };
     ATLAS_GPU_LET(fills, frame::make_pipeline(context, desc("world fills", "fill_vs"), frame::Overdraw::opaque));
     fills_ = std::move(fills);
+    // a fading tile's: each pixel its topmost fill alone (top first, GREATER), blended over its ancestor's cells
+    gpu::GraphicsDesc fading = desc("world fills fading", "fill_vs");
+    fading.depth_op = vk::CompareOp::eGreater;
+    ATLAS_GPU_LET(fading_fills, frame::make_pipeline(context, fading, frame::Overdraw::opaque));
+    fading_fills_ = std::move(fading_fills);
     ATLAS_GPU_LET(lines, frame::make_pipeline(context, desc("world lines", "line_vs"), frame::Overdraw::opaque));
     lines_ = std::move(lines);
     return {};
@@ -174,6 +218,7 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
 
 void World::release() noexcept {
     fills_.clear();
+    fading_fills_.clear();
     lines_.clear();
     layout_.clear();
     for (Slot& s : slots_) {
@@ -195,28 +240,28 @@ void World::record(const frame::Recording& recording, std::uint32_t phase) {
     if (!*fills_ || !*lines_ || !s.drawing) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     std::uint64_t triangles = 0;
-    const float depth = world_depth(recording.state.block.camera.flags.x);
-    // each tile, coarse to fine: its fills, then its lines over them
-    bool lines_bound = true;
+    const std::uint32_t flags = recording.state.block.camera.flags.x;
+    // each tile, coarse to fine: its fills, then its lines over them; a fading tile over its ancestor's cells
+    const vk::Pipeline* bound = nullptr;
+    const auto bind = [&](const vk::raii::Pipeline& p) {
+        if (bound == &*p) return;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *p);
+        if (bound == nullptr) cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *s.set, {});
+        bound = &*p;
+    };
     for (const Draw& d : draws_) {
+        const bool fading = d.fade < 1.0F;
+        const float depth = fading ? fading_depth(flags, d.lift) : world_depth(flags);
         const wl::PushConstants pc{
             .origin = {d.origin[0], d.origin[1], d.origin[2], depth}, .scale = d.scale, .at = d.at};
         if (d.triangles > 0) {
-            if (lines_bound) {
-                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fills_);
-                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *s.set, {});
-                lines_bound = false;
-            }
+            bind(fading ? fading_fills_ : fills_);
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
             cmd.draw(3 * d.triangles, 1, 0, 0);
             triangles += d.triangles;
         }
         if (d.segments > 0) {
-            if (!lines_bound) {
-                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *lines_);
-                lines_bound = true;
-            }
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *s.set, {});
+            bind(lines_);
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
             cmd.draw(6, d.segments, 0, 0);
             triangles += 2ULL * d.segments;

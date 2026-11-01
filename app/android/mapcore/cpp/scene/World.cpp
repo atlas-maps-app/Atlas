@@ -640,7 +640,12 @@ void World::take_neighbour_packs() noexcept {
     for (std::size_t i = 0; i < max_neighbours; ++i) neighbour_packs_.at(i) = built(neighbours_.at(i));
 }
 
-void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame) {
+bool World::world_fading() const noexcept {
+    const WorldFrame* w = world_tiles_ ? world_tiles_->frame() : nullptr;
+    return w != nullptr && w->fading;
+}
+
+void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds) {
     if (!state.view) return;
     if (!world_tiles_) {
         // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps'), which a
@@ -657,7 +662,7 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
         if (wake_) world_tiles_->set_wake(wake_);
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
-    world_tiles_->update(state.view->camera(), frame, distance, state.number);
+    world_tiles_->update(state.view->camera(), frame, distance, state.number, seconds);
 }
 
 void World::update(const frame::FrameState& state) {
@@ -689,12 +694,12 @@ void World::update(const frame::FrameState& state) {
                                        .kx = 111320.0 * pymath::cos(pymath::radians(lat0)),
                                        .kz = 110540.0};
             want_windows(*state.view, state.camera, view::frame_of(centred), seconds);
-            update_world(state, view::frame_of(centred));
+            update_world(state, view::frame_of(centred), seconds);
         }
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
         release_idle(seconds, state.number);
-        animating_ = frames_.weight(seconds) < 1.0;
+        animating_ = frames_.weight(seconds) < 1.0 || world_fading();
         return;
     }
     const tiles::RenderHead& head = *active_->pack.head();
@@ -746,7 +751,7 @@ void World::update(const frame::FrameState& state) {
     };
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
-    update_world(state, frames_.current().value_or(view::frame_of(head.frame)));
+    update_world(state, frames_.current().value_or(view::frame_of(head.frame)), seconds);
     // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
     if (sun_) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbours_,
@@ -828,7 +833,8 @@ void World::update(const frame::FrameState& state) {
     }
     release_idle(seconds, state.number);
     // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds)
-    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr;
+    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr ||
+                 world_fading();
 }
 
 void World::make_room() {
