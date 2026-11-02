@@ -1984,7 +1984,10 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
     // windows out of it, their bits kept while they are resident), its south house's west wall shaded as the window's
     // was and the north house's lit. From 5.5 km at 60° of pitch toward the north window's middle, the south place's
     // buildings 4.3 km from the eye are drawn from its window and the north's, 5.5 km off, from the L13, which takes
-    // the north place's cells alone: three solids again, no building twice.
+    // the north place's cells alone: three solids again, no building twice. Then the south window leaves the cell's
+    // pack, its levels kept: from 4 km the south place is drawn from the L13, the tower among its solids though no
+    // window of the pack holds it, and the march reaches the tower's top (the scene's tallest solid is taken at each
+    // zoom its tiles are of, the L13's too), the south house's west wall shaded.
     const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels-sun";
     std::error_code ignored;
     std::filesystem::create_directories(folder, ignored);
@@ -2179,6 +2182,24 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
     ATLAS_REQUIRE(bits_of(south) != nullptr);
     CHECK(bits_of(coarse)->bit(*sunny));
     CHECK_FALSE(bits_of(south)->bit(*window_wall));
+
+    // The south window off the phone (the windows' budget trims it, or it has not come yet: the levels come before the
+    // windows), its levels kept: the cell's pack holds the north window, the L13 and the L12. From 4 km the south place
+    // is drawn from the L13 standing in for its window, which brings the tower into the scene though no window of the
+    // pack holds it, and the march reaches the tower's top: the south house's west wall is in its shadow.
+    CHECK(w.store().remove(std::format("window/14/{}/{}", south.x, south.y)));
+    w.set_active(std::format("window/14/{}/{}", north.x, north.y));
+    settle(between, south_lon, 4'000.0, 0.0);
+    CHECK(drew(coarse));
+    CHECK(drew(north));
+    CHECK_FALSE(drew(south));
+    CHECK(w.sun()->stats().tiles == 2);
+    CHECK(w.sun()->stats().solids == 3);
+    CHECK(w.sun()->stats().failed == 0);
+    const std::optional<std::uint32_t> left = west_wall(coarse, south_house);
+    ATLAS_REQUIRE(left.has_value());
+    ATLAS_REQUIRE(bits_of(coarse) != nullptr);
+    CHECK_FALSE(bits_of(coarse)->bit(*left));
     MESSAGE(w.tiles_line());
     (void)session->take_messages();
 }

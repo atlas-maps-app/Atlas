@@ -7,12 +7,15 @@
 //     each in its place's cell; both hold the street and the park;
 //   - a level's tile is the same bytes from the same windows in any order;
 //   - the store takes the levels' tiles into the cell's pack beside its windows, its levels 14, 13 and 12;
+//   - a cell's pack's tallest solid at its coarse level is its L13's: a window's tower where the pack lacks the window;
 //   - windows that hold nothing to draw give no levels; windows of two frame cells are refused.
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "geometry/Walls.hpp"
 #include "load/Levels.hpp"
 #include "load/Window.hpp"
 #include "scene/Cells.hpp"
+#include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
 #include "tiles/Container.hpp"
@@ -38,6 +41,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -443,6 +447,68 @@ TEST_CASE("load: a level's sun samples are its lean walls', the places another t
     CHECK(marched > 0);
     CHECK(unmarched > 0);
     CHECK(ts.size() == samples(*c).samples.size()); // the same samples, in the same order
+}
+
+TEST_CASE("load: a cell's pack's tallest solid at its coarse level is its L13's, which holds the buildings of a window "
+          "the pack lacks, and a sun scene of its window and its L13 marches to it") {
+    // The levels come before the windows and stay when the windows' budget trims one, so a cell's pack may hold an L13
+    // with a window's tower and not the window. The Westerkerk's window with a tower 60 m tall, its east neighbour's
+    // with a house 6 m tall; the cell's pack holds the east window and their levels. Its windows' tallest solid is the
+    // house's, its L13's the tower's, which a scene of the east window and the L13 taking the west place holds.
+    namespace sun = atlas::sun;
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const tl::TileKey east(14, k.x + 1, k.y);
+    const auto west = load::build_window(
+        bytes(answer({way(10, R"("building": "yes", "height": "60")", box(52.3700, 4.8826, 0.0001, 0.00015))})), k,
+        load::place_of(k));
+    ATLAS_REQUIRE(west.has_value(), west.error().what);
+    const auto beside = load::build_window(
+        bytes(answer({way(50, R"("building": "house", "height": "6")", box(52.3700, 4.9050, 0.0001, 0.00015))})), east,
+        load::place_of(east));
+    ATLAS_REQUIRE(beside.has_value(), beside.error().what);
+    const std::array<std::span<const std::byte>, 2> windows{std::span<const std::byte>(west->pack),
+                                                            std::span<const std::byte>(beside->pack)};
+    const auto built = load::build_levels(windows);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    ATLAS_REQUIRE(built->size() == 2);
+    const tl::TileKey coarse = (*built)[0].key;
+    ATLAS_REQUIRE(coarse == tl::TileKey(13, k.x >> 1U, k.y >> 1U));
+    tl::Store store;
+    const auto add = [&store](const tl::TileKey& key, const std::vector<std::byte>& pack) {
+        const std::string name = std::format("{}/{}/{}", key.z, key.x, key.y);
+        const std::string file = std::format("tallest-{}-{}-{}.atlas", key.z, key.x, key.y);
+        return store.add({.id = "window/" + name, .kind = tl::PackKind::window, .path = written(pack, file)});
+    };
+    ATLAS_REQUIRE(add(east, beside->pack).has_value());
+    for (const load::BuiltLevel& l : *built) ATLAS_REQUIRE(add(l.key, l.pack).has_value());
+    ATLAS_REQUIRE(store.packs().size() == 1);
+    const std::shared_ptr<const tl::StorePack> cell = store.packs()[0];
+    const auto windows_tallest = sun::scene_maxh(cell->pack, 0);
+    const auto coarse_tallest = sun::scene_maxh(cell->pack, 0, tl::Store::coarse_level);
+    ATLAS_REQUIRE(windows_tallest.has_value());
+    ATLAS_REQUIRE(coarse_tallest.has_value());
+    CHECK(*windows_tallest == 6.0);
+    CHECK(*coarse_tallest == 60.0);
+    // the scene: the east window, and the L13 taking the west place's cells (its window not in the pack)
+    const std::array<std::pair<tl::TileKey, std::uint64_t>, 2> parts{
+        {{east, sun::all_cells}, {coarse, atlas::scene::cells_over(4, 1, k.x, k.y)}}};
+    std::vector<sun::SunTile> tiles;
+    for (const auto& [key, live] : parts) {
+        const std::vector<tl::StoreHit> hits = store.find(key);
+        ATLAS_REQUIRE(hits.size() == 1);
+        tl::Zstd zstd;
+        tl::TileDecoder decoder;
+        atlas::Arena arena(std::size_t{1} << 20U, atlas::Growth::grows, "levels test, the tallest");
+        std::vector<std::byte> raw;
+        const auto tile = store.decode(hits[0], zstd, decoder, arena, raw);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        tiles.push_back(sun::make_tile(*tile, *cell->pack.head(), sun::Region{}, 0, {}, live));
+    }
+    REQUIRE(tiles[0].solids.h == std::vector<double>{6.0});
+    REQUIRE(tiles[1].solids.h == std::vector<double>{60.0});
+    const sun::Scene scene(std::move(tiles), atlas::pymath::max(*windows_tallest, *coarse_tallest));
+    CHECK(scene.grid().size() == 2);
+    CHECK(scene.grid().maxh() == 60.0);
 }
 
 TEST_CASE("load: windows that hold nothing give no levels; windows of two frame cells are refused") {

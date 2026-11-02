@@ -1404,10 +1404,10 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     return st;
 }
 
-tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level) {
+tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level, std::optional<std::uint8_t> zoom) {
     const tl::RenderHead* head = pack.head();
     if (head == nullptr || head->levels.empty()) return 0.0;
-    const std::uint8_t z = head->levels.front();
+    const std::uint8_t z = zoom.value_or(head->levels.front());
     tl::Zstd zstd;
     tl::TileDecoder decoder;
     std::vector<std::byte> raw;
