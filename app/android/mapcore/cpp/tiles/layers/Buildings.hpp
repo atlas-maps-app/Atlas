@@ -14,7 +14,7 @@ namespace atlas::tiles {
 
 namespace building_attributes {
 /// What buildings and parts carry besides their ring, and a variant besides its key; then the tags the renders read.
-inline constexpr std::array<ColumnSpec, 26> columns = {{
+inline constexpr std::array<ColumnSpec, 28> columns = {{
     {"h", Codec::centi},           // height above the ground, metres (guessed or mapped)
     {"min", Codec::centi},         // the walls' base, metres (min_height, or terrain)
     {"roof_h", Codec::centi},      // the roof's height, metres
@@ -25,6 +25,8 @@ inline constexpr std::array<ColumnSpec, 26> columns = {{
     {"orient", Codec::str},        // roof:orientation (along, across)
     {"wall_rgb", Codec::varu},     // the wall's base colour 0xRRGGBB: surface_colour(b, None), before light
     {"roof_rgb", Codec::varu},     // the roof's base colour 0xRRGGBB: surface_colour(b, None, 'roof'), before light
+    {"wall_slot", Codec::varu},    // the user's palette's slot the wall's colour goes with (0 none, +256 mapped)
+    {"roof_slot", Codec::varu},    // the roof's (0 none, +256 mapped; a roof in its walls' colour, theirs)
     {"mat_draw", Codec::str},      // the wall material drawn (brick, plaster, ...: its pattern)
     {"rmat_draw", Codec::str},     // the roof material drawn (roof_tiles, metal, ...: its pattern)
     {"kind", Codec::str},          // the generic look's kind (home, office, ...)

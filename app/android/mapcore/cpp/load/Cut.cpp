@@ -6,6 +6,7 @@
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
+#include "style/Palette.hpp"
 #include "text/Utf8.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/Schema.hpp"
@@ -221,6 +222,48 @@ struct GridLine {
     const std::string_view rmat = b.rmat.value_or("");
     if (!rmat.empty()) return colour(material_or_clay(rmat));
     return wall_rgb(b);
+}
+
+/// A colour as it was guessed (b['col'] or b['rcol']): its #RRGGBB before the looks' jitter, else the colour drawn.
+[[nodiscard]] std::uint32_t guessed_as(const std::optional<std::string_view>& c, std::uint32_t drawn) {
+    if (!c || c->size() != 7 || c->front() != '#') return drawn;
+    std::uint32_t v = 0;
+    for (const char ch : c->substr(1)) {
+        const int d = ch >= '0' && ch <= '9'   ? ch - '0'
+                      : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                      : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
+                                               : -1;
+        if (d < 0) return drawn;
+        v = (v << 4U) | static_cast<std::uint32_t>(d);
+    }
+    return v;
+}
+
+/// The user's palette's slot a building's walls go with (the tiles' wall_slot): a guessed colour's nearest wall slot to
+/// the colour it was guessed as, a mapped colour's or material's nearest with style::slot_mapped, none for the clay. A
+/// houseboat's colours are a boat's: its guessed paint goes with no slot (style::slot_guessed), its mapped colour with
+/// none. SceneToTiles's BuildingSlots.wall is its twin.
+[[nodiscard]] std::uint32_t wall_slot(const Building& b, std::uint32_t drawn) {
+    const bool boat = b.tags.is("building", "houseboat");
+    if (b.guessed.has(Guess::building_colour)) {
+        return boat ? style::slot_guessed : style::nearest_slot(style::wall_slots, guessed_as(b.col, drawn));
+    }
+    if (!boat && (truthy(b.col) || truthy(b.mat))) {
+        return style::slot_mapped | style::nearest_slot(style::wall_slots, drawn);
+    }
+    return 0;
+}
+
+/// The roof's (the tiles' roof_slot), as wall_slot's with the roof slots; a roof in its walls' colour goes with them.
+[[nodiscard]] std::uint32_t roof_slot(const Building& b, std::uint32_t drawn, std::uint32_t wall) {
+    const bool boat = b.tags.is("building", "houseboat");
+    if (b.guessed.has(Guess::roof_colour)) {
+        return boat ? style::slot_guessed : style::nearest_slot(style::roof_slots, guessed_as(b.rcol, drawn));
+    }
+    if (truthy(b.rcol) || truthy(b.rmat)) {
+        return boat ? 0U : style::slot_mapped | style::nearest_slot(style::roof_slots, drawn);
+    }
+    return wall;
 }
 
 // ---------------------------------------------------------------- the quays
@@ -670,6 +713,8 @@ struct Attributes {
     std::optional<std::string_view> orient;
     std::uint32_t wall_rgb = 0;
     std::uint32_t roof_rgb = 0;
+    std::uint32_t wall_slot = 0;
+    std::uint32_t roof_slot = 0;
     std::optional<std::string_view> mat_draw;
     std::optional<std::string_view> rmat_draw;
     std::optional<std::string_view> kind;
@@ -698,10 +743,11 @@ struct Attributes {
     };
     return same(a.h, b.h) && same(a.min, b.min) && same_opt(a.roof_h, b.roof_h) && a.year == b.year &&
            a.levels == b.levels && a.parent_id == b.parent_id && a.roof == b.roof && a.orient == b.orient &&
-           a.wall_rgb == b.wall_rgb && a.roof_rgb == b.roof_rgb && a.mat_draw == b.mat_draw &&
-           a.rmat_draw == b.rmat_draw && a.kind == b.kind && a.relation == b.relation && a.hidden == b.hidden &&
-           a.no_win == b.no_win && a.in_church == b.in_church && a.guessed == b.guessed && a.places == b.places &&
-           a.hours == b.hours && a.flags == b.flags && a.shutter == b.shutter && a.party == b.party && a.tags == b.tags;
+           a.wall_rgb == b.wall_rgb && a.roof_rgb == b.roof_rgb && a.wall_slot == b.wall_slot &&
+           a.roof_slot == b.roof_slot && a.mat_draw == b.mat_draw && a.rmat_draw == b.rmat_draw && a.kind == b.kind &&
+           a.relation == b.relation && a.hidden == b.hidden && a.no_win == b.no_win && a.in_church == b.in_church &&
+           a.guessed == b.guessed && a.places == b.places && a.hours == b.hours && a.flags == b.flags &&
+           a.shutter == b.shutter && a.party == b.party && a.tags == b.tags;
 }
 
 // ---------------------------------------------------------------- the cut
@@ -828,6 +874,8 @@ struct CutPlan {
     a.orient = b.orient;
     a.wall_rgb = wall_rgb(b);
     a.roof_rgb = roof_rgb(b);
+    a.wall_slot = wall_slot(b, a.wall_rgb);
+    a.roof_slot = roof_slot(b, a.roof_rgb, a.wall_slot);
     a.mat_draw = b.mat_draw;
     if (b.look != LookPath::none) {
         a.rmat_draw = b.rmat_draw;
@@ -1744,6 +1792,8 @@ private:
         std::uint8_t orient;
         std::uint8_t wall_rgb;
         std::uint8_t roof_rgb;
+        std::uint8_t wall_slot;
+        std::uint8_t roof_slot;
         std::uint8_t mat_draw;
         std::uint8_t rmat_draw;
         std::uint8_t kind;
@@ -1772,6 +1822,8 @@ private:
         .orient = tl::slot_of(tl::building_attributes::columns, "orient"),
         .wall_rgb = tl::slot_of(tl::building_attributes::columns, "wall_rgb"),
         .roof_rgb = tl::slot_of(tl::building_attributes::columns, "roof_rgb"),
+        .wall_slot = tl::slot_of(tl::building_attributes::columns, "wall_slot"),
+        .roof_slot = tl::slot_of(tl::building_attributes::columns, "roof_slot"),
         .mat_draw = tl::slot_of(tl::building_attributes::columns, "mat_draw"),
         .rmat_draw = tl::slot_of(tl::building_attributes::columns, "rmat_draw"),
         .kind = tl::slot_of(tl::building_attributes::columns, "kind"),
@@ -1804,6 +1856,8 @@ private:
         lf.string(slot(o.orient), f, a.orient);
         lf.integer(slot(o.wall_rgb), f, a.wall_rgb);
         lf.integer(slot(o.roof_rgb), f, a.roof_rgb);
+        lf.integer(slot(o.wall_slot), f, a.wall_slot);
+        lf.integer(slot(o.roof_slot), f, a.roof_slot);
         lf.string(slot(o.mat_draw), f, a.mat_draw);
         lf.string(slot(o.rmat_draw), f, a.rmat_draw);
         lf.string(slot(o.kind), f, a.kind);

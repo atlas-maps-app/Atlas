@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
+#include <limits>
+#include <span>
 #include <utility>
 
 namespace atlas::style {
@@ -82,6 +85,34 @@ std::uint32_t palette_move(std::uint32_t c, std::uint32_t from, std::uint32_t to
     const double da = vt.a - ft.a;
     const double db = vt.b - ft.b;
     return rgb_of({.l = l, .a = (tt.a + (da * re) - (db * im)) * l, .b = (tt.b + (da * im) + (db * re)) * l});
+}
+
+std::uint32_t nearest_slot(std::span<const SlotColour> slots, std::uint32_t rgb) noexcept {
+    std::uint32_t best = 0;
+    std::int64_t least = std::numeric_limits<std::int64_t>::max();
+    for (const SlotColour& s : slots) {
+        std::int64_t d = 0;
+        for (const std::uint32_t shift : {16U, 8U, 0U}) {
+            const std::int64_t k = static_cast<std::int64_t>((rgb >> shift) & 0xFFU) -
+                                   static_cast<std::int64_t>((s.today >> shift) & 0xFFU);
+            d += k * k;
+        }
+        if (d < least) {
+            least = d;
+            best = s.code;
+        }
+    }
+    return best;
+}
+
+std::uint32_t building_today(std::uint32_t code) noexcept {
+    for (const std::span<const SlotColour> slots :
+         {std::span<const SlotColour>(wall_slots), std::span<const SlotColour>(roof_slots)}) {
+        for (const SlotColour& s : slots) {
+            if (s.code == code) return s.today;
+        }
+    }
+    return 0;
 }
 
 std::optional<std::size_t> land_slot(std::string_view kind) noexcept {

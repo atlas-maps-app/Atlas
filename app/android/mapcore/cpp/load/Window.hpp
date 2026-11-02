@@ -59,8 +59,10 @@ inline constexpr double window_margin = 200.0;
 /// (red_tiles_colour), which core-p11 drew in tiles_red's, a flat region's lawns drawn once among its land cover under
 /// the woods and the water (load/Regions.cpp's lawn_in_land), which core-p11 drew again as areas over them, and each
 /// frame cell's levels beside its windows (load/Levels.hpp: its L13 and L12 tiles, which the core draws beyond the
-/// windows' reach), where core-p11's country tiles held the windows alone and today's map drew beyond 9 km.
-inline constexpr std::string_view stage_p_version = "core-p12";
+/// windows' reach), where core-p11's country tiles held the windows alone and today's map drew beyond 9 km; core-p13
+/// each building's wall and roof slots (wall_slot and roof_slot: the user's palette's slots their colours go with),
+/// which core-p12's tiles lack, so their buildings keep today's colours whatever the palette.
+inline constexpr std::string_view stage_p_version = "core-p13";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and every pack there
 /// lights with TONE (frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.

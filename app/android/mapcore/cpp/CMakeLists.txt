@@ -165,16 +165,16 @@ list(FILTER _jni_sources EXCLUDE REGEX "/Test[^/]*\\.cpp$")
 list(FILTER _jni_test_sources INCLUDE REGEX "/Test[^/]*\\.cpp$")
 
 # Stage P (ENGINE.md step 3): OpenStreetMap's data into render tiles, for the phone's windows and the packer alike:
-# pymath, the Overpass reader, the loads and the cut, the tiles' reader and writer, the text's case and code points and
-# the roofs' shapes. Its objects are a library of their own (atlas_stage_p), in the core and in the packer's tool, which
-# links nothing else: no Vulkan, shaders or HarfBuzz.
+# pymath, the Overpass reader, the loads and the cut, the tiles' reader and writer, the text's case and code points, the
+# roofs' shapes and the palette (the slots a building's colours go with). Its objects are a library of their own
+# (atlas_stage_p), in the core and in the packer's tool, which links nothing else: no Vulkan, shaders or HarfBuzz.
 set(_stage_p_sources "")
 foreach(area IN ITEMS base/pymath osm load tiles)
     file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${area}/*.cpp" "${area}/*.c")
     list(APPEND _stage_p_sources ${_found})
 endforeach()
 list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/text/Utf8.cpp"
-     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp")
+     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
 list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 
 # What stage P's code links: dialect, warnings, sanitizers, zstd, and the generated headers under the build directory

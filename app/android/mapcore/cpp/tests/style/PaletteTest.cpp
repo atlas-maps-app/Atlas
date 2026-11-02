@@ -116,3 +116,22 @@ TEST_CASE("a colour moves with the one it goes with: that one exactly, a tone of
     const std::uint32_t lantern = palette_move(0x3B4148U, 0x2A2E33U, red);
     CHECK(channel(lantern, 16) > channel(lantern, 8) + 20);
 }
+
+TEST_CASE("a building's colour goes with the nearest wall or roof slot, its own exactly") {
+    using atlas::style::building_today;
+    using atlas::style::nearest_slot;
+    using atlas::style::roof_slots;
+    using atlas::style::wall_slots;
+    // each slot's own colour goes with it, the codes ascending in their families
+    for (const auto& s : wall_slots) CHECK(nearest_slot(wall_slots, s.today) == s.code);
+    for (const auto& s : roof_slots) CHECK(nearest_slot(roof_slots, s.today) == s.code);
+    CHECK(std::ranges::is_sorted(wall_slots, {}, &atlas::style::SlotColour::code));
+    CHECK(std::ranges::is_sorted(roof_slots, {}, &atlas::style::SlotColour::code));
+    // the generic looks' brick goes with the old brick nearest it, a concrete with the concrete
+    CHECK(nearest_slot(wall_slots, 0x8E5A46U) == 51U);
+    CHECK(nearest_slot(wall_slots, 0xBDBAB2U) == 63U);
+    CHECK(nearest_slot(roof_slots, 0x9E5038U) == 80U);
+    CHECK(building_today(53) == 0x7E5242U);
+    CHECK(building_today(87) == 0x56585CU);
+    CHECK(building_today(19) == 0U);
+}

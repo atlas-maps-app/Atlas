@@ -147,6 +147,8 @@ object Schema {
         c("orient", Codec.STR, "roof:orientation (along, across)"),
         c("wall_rgb", Codec.VARU, "the wall's base colour, 0xRRGGBB: surface_colour(b, None) (drawn, mapped, material or clay), before light"),
         c("roof_rgb", Codec.VARU, "the roof's base colour, 0xRRGGBB: surface_colour(b, None, 'roof'), before light"),
+        c("wall_slot", Codec.VARU, "the user's palette's slot the wall's colour goes with (BuildingSlots: 0 none, +256 mapped)"),
+        c("roof_slot", Codec.VARU, "the roof's (0 none, +256 mapped; a roof in its walls' colour, theirs)"),
         c("mat_draw", Codec.STR, "the wall material drawn (brick, plaster, …: its pattern)"),
         c("rmat_draw", Codec.STR, "the roof material drawn (roof_tiles, metal, …: its pattern)"),
         c("kind", Codec.STR, "the generic look's kind (home, office, …)"),

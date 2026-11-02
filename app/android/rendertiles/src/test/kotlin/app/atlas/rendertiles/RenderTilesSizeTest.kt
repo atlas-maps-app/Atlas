@@ -13,7 +13,8 @@ import org.junit.Test
  * building each door is on, 4 KB more with the street wall it opens onto, a corner of that building's ring, each door
  * filed in its building's tile; and 2 KB more for the style file every pack carries, which grows with each look the
  * core draws: step 4's windows, sills, shop glazing, plinths and cornices took the pack past 160 KB, its runways',
- * taxiways' and park edges' tables past 161 KB).
+ * taxiways' and park edges' tables past 161 KB); and 2 KB more for the slots of the user's palette each building's
+ * walls and roof go with (stage P core-p13's wall_slot and roof_slot), which took it past 167 KB.
  */
 class RenderTilesSizeTest {
     private class Pin(val name: String, val ceiling: Long, val bytesPerFeature: Double)
@@ -41,6 +42,6 @@ class RenderTilesSizeTest {
 
     companion object {
         /** The Westerkerk's gate. */
-        const val WESTERKERK_CEILING = 166_000L
+        const val WESTERKERK_CEILING = 169_000L
     }
 }
