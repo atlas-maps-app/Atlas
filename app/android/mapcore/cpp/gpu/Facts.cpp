@@ -570,20 +570,6 @@ TilerVerdict classify_tiler(std::uint32_t vendor_id, bool has_driver_id, vk::Dri
     }
 }
 
-ScanoutVerdict classify_scanout(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId driver_id,
-                                bool can) noexcept {
-    const bool imagination = has_driver_id ? driver_id == vk::DriverId::eImaginationProprietary : vendor_id == 0x1010;
-    if (!imagination) return {.uncompressed = false, .reason = "the driver's own"};
-    if (!can) {
-        return {.uncompressed = false,
-                .reason = "Imagination PowerVR, whose driver cannot turn it off (no "
-                          "VK_EXT_image_compression_control_swapchain)"};
-    }
-    return {.uncompressed = true,
-            .reason = "Imagination PowerVR: busy frames glitched only where the display read them itself (the "
-                      "user's Pixel 10, 25.3)"};
-}
-
 void choose_configuration(Facts& facts, bool msaa2_close) {
     const QuirkSet quirks =
         quirks_for(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.device_id, facts.driver_version);
@@ -765,10 +751,6 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     const TilerVerdict tiler = classify_tiler(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.type);
     facts.tiler = tiler.tiler;
     facts.tiler_reason = std::string(tiler.reason);
-    const ScanoutVerdict scanout = classify_scanout(facts.vendor_id, facts.driver_properties, facts.driver_id,
-                                                    facts.features.swapchain_compression_control);
-    facts.swapchain_uncompressed = scanout.uncompressed;
-    facts.scanout_reason = std::string(scanout.reason);
     facts.hardware = facts.type != vk::PhysicalDeviceType::eCpu &&
                      (!facts.driver_properties || (facts.driver_id != vk::DriverId::eMesaLlvmpipe &&
                                                    facts.driver_id != vk::DriverId::eGoogleSwiftshader));
@@ -812,7 +794,11 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("hardware: {}",
          f.hardware ? "yes" : "no (a CPU implementation: Android's design notes advise against software Vulkan)");
     line("tiler: {} ({})", yes_no(f.tiler), f.tiler_reason);
-    line("swapchain.compression: {} ({})", f.swapchain_uncompressed ? "off" : "the driver's", f.scanout_reason);
+    // The driver's own unless the Map look's switch turns it off, which only a driver with the swapchain's control
+    // obeys.
+    line("swapchain.compression: {}", f.features.swapchain_compression_control
+                                          ? "the driver's; the Map look's switch can turn it off"
+                                          : "the driver's; no switch (no VK_EXT_image_compression_control_swapchain)");
     line("lazily.allocated.memory: {}", yes_no(f.lazy_memory));
     line("host.visible.device.local: {}", yes_no(f.host_visible_device_local));
     // A device for offscreen work says so (it needs no VK_KHR_swapchain); the phone's device presents.

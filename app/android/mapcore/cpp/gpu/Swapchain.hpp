@@ -35,11 +35,13 @@ public:
     /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`
     /// (the swapchain it is, if any: Output::swapchain; its caller lets go of it once this returns, made or refused, so
     /// that the crash guard names it as it goes: standin/Session.cpp), in the frame's colour at `depth` (8 bits by
-    /// default; as deep as the surface and the device allow in VK bench's colour stage). A swapchain the driver
-    /// refuses, 10-bit or not, is an error.
+    /// default; as deep as the surface and the device allow in VK bench's colour stage), its images with the driver's
+    /// framebuffer compression or, where the driver lets an app ask, without it (`compression`, the Map look's
+    /// switch). A swapchain the driver refuses, 10-bit or not, is an error.
     [[nodiscard]] static Result<std::unique_ptr<Swapchain>> create(const Device& device, vk::SurfaceKHR surface,
                                                                    vk::Extent2D wanted, const Output* old,
-                                                                   Depth depth = default_depth);
+                                                                   Depth depth = default_depth,
+                                                                   Compression compression = Compression::driver);
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
     Swapchain(Swapchain&&) = delete;

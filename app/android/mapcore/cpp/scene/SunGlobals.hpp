@@ -248,7 +248,8 @@ private:
     /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.
     [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
-    [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level);
+    [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t zoom,
+                                             std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
     [[nodiscard]] double now() const;
 
@@ -281,9 +282,10 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
-    /// scene_maxh per pack (the store's own, never its identity: the APK's packs have none) and level.
+    /// scene_maxh per pack (the store's own, never its identity: the APK's packs have none), zoom and level.
     struct Tallest {
         std::weak_ptr<const tiles::StorePack> pack;
+        std::uint8_t zoom = 0;
         std::uint8_t level = 0;
         double h = 0.0;
     };

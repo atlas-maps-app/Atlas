@@ -275,6 +275,10 @@ class MapData(private val services: Services) {
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
         }
+        // a debug build's screen compression, as the Look settings have it (the driver's when unset)
+        services.scope.launch {
+            services.settings.flow(SettingsKeys.MAP_COMPRESSION, true).collect { on -> MapEngine.compression(on) }
+        }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
         // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
         // are read, so the first frame draws what the defaults say

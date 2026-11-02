@@ -101,6 +101,10 @@ TEST_CASE("a device that presents opens with the swapchain where the host's Vulk
     CHECK(std::ranges::find(lines, "requirements: all met") != lines.end()); // as the phone's facts say it
     CHECK(std::ranges::find(lines, "ext.VK_KHR_swapchain: yes") != lines.end());
     CHECK(s.device->enabled().swapchain);
+    // The screen's compression is the driver's, with the Map look's switch exactly where the driver lets an app ask.
+    CHECK(s.device->enabled().swapchain_compression_control ==
+          s.device->facts().features.swapchain_compression_control);
+    CHECK(has_line(lines, "swapchain.compression: the driver's; "));
     CHECK(s.take_messages().empty());
 }
 
@@ -210,7 +214,7 @@ TEST_CASE("without a window system an offscreen device opens, and one that prese
     CHECK_FALSE(s.device->enabled().swapchain_maintenance1);
     CHECK_FALSE(s.device->enabled().display_timing);
     CHECK_FALSE(s.device->enabled().incremental_present);
-    CHECK_FALSE(s.device->enabled().swapchain_uncompressed);
+    CHECK_FALSE(s.device->enabled().swapchain_compression_control);
     // VkFacts still says whether the device has the swapchain, and what the tests hid.
     const std::vector<std::string> lines = gpu::facts_lines(facts);
     CHECK(std::ranges::find(lines, "requirements: all met (offscreen)") != lines.end());
@@ -222,17 +226,4 @@ TEST_CASE("without a window system an offscreen device opens, and one that prese
     CHECK(swapchain.error().text().ends_with("without VK_KHR_swapchain: it cannot present"));
     const auto messages = s.take_messages();
     CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
-}
-
-TEST_CASE("Imagination's swapchain is made uncompressed where its driver can, and no other driver's is") {
-    // The user's Pixel 10 (PowerVR, 25.3): glitches only where the display reads the frames itself (1 November).
-    const auto pvr = gpu::classify_scanout(0x1010, true, vk::DriverId::eImaginationProprietary, true);
-    CHECK(pvr.uncompressed);
-    CHECK(pvr.reason.starts_with("Imagination PowerVR"));
-    CHECK(gpu::classify_scanout(0x1010, false, vk::DriverId{}, true).uncompressed);
-    CHECK_FALSE(gpu::classify_scanout(0x1010, true, vk::DriverId::eImaginationProprietary, false).uncompressed);
-    CHECK_FALSE(gpu::classify_scanout(0x13B5, true, vk::DriverId::eArmProprietary, true).uncompressed);
-    CHECK_FALSE(gpu::classify_scanout(0x5143, true, vk::DriverId::eQualcommProprietary, true).uncompressed);
-    CHECK_FALSE(gpu::classify_scanout(0x1010, true, vk::DriverId::eImaginationOpenSourceMESA, true).uncompressed);
-    CHECK_FALSE(gpu::classify_scanout(0x10005, true, vk::DriverId::eMesaLlvmpipe, true).uncompressed);
 }

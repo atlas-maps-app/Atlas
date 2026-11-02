@@ -32,6 +32,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -237,8 +238,9 @@ struct SunTile {
                                 std::uint8_t level, std::span<const Deck> decks, std::uint64_t live = all_cells);
 
 /// The scene's tallest solid at `level`: Python's max of the heights of every building not hidden with a height and
-/// every part with a height in the pack's finest level, each from its variant at `level` where it has one. Decodes
-/// every tile of that level once; 0 for a pack without solids.
-[[nodiscard]] tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level);
+/// every part with a height in the pack's tiles of zoom `zoom` (its finest level when none), each from its variant at
+/// `level` where it has one. Decodes every tile of that zoom once; 0 for a pack without solids there.
+[[nodiscard]] tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level,
+                                               std::optional<std::uint8_t> zoom = std::nullopt);
 
 } // namespace atlas::sun

@@ -9,12 +9,13 @@
 // the solid's box and height beside its id, so a march reads one array.
 //
 // The tallest solid ends every march (Shadows.lit's tmax): it is the scene's, the largest height over every solid the
-// port's scene holds, which for a render pack is the whole pack at the frame's level (scene_maxh in Samples.hpp), not
-// only the tiles a grid holds. A march's steps above every solid's top can never hit one (a step hits only where its
-// height is at most the solid's), so a larger value adds only steps that cannot hit, but for one: the first step at or
-// past the true tmax can land a rounding (an ulp or two) below the tallest top, where the port's own answer turns on
-// the last bit of maxh. So the core takes the scene's exact value, and a pack too big to scan, or windowed, wants rhead
-// to carry it (K2, K20).
+// port's scene holds, which for a render pack is the whole pack at the frame's level (scene_maxh in Samples.hpp), and
+// for a frame cell's pack each of its zooms the scene takes tiles of (its windows', its L13's), not only the tiles a
+// grid holds. A march's steps above every solid's top can never hit one (a step hits only where its height is at most
+// the solid's), so a larger value adds only steps that cannot hit, but for one: the first step at or past the true tmax
+// can land a rounding (an ulp or two) below the tallest top, where the port's own answer turns on the last bit of maxh.
+// So the core takes the scene's exact value, and a pack too big to scan, or windowed, wants rhead to carry it (K2,
+// K20).
 #pragma once
 
 #include <cstddef>
