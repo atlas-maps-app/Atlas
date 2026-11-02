@@ -183,9 +183,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
             on.swapchain_maintenance1 = enable(vk::EXTSwapchainMaintenance1ExtensionName);
         }
     }
-    if (on.swapchain && facts.swapchain_uncompressed) {
-        on.swapchain_uncompressed = enable(vk::EXTImageCompressionControlExtensionName) &&
-                                    enable(vk::EXTImageCompressionControlSwapchainExtensionName);
+    if (on.swapchain && facts.features.swapchain_compression_control) {
+        on.swapchain_compression_control = enable(vk::EXTImageCompressionControlExtensionName) &&
+                                           enable(vk::EXTImageCompressionControlSwapchainExtensionName);
     }
     if (on.swapchain) {
         on.display_timing = enable(vk::GOOGLEDisplayTimingExtensionName);
@@ -241,7 +241,7 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     }
     if (on.shader_fma) link(fma);
     if (on.swapchain_maintenance1) link(swapchain1);
-    if (on.swapchain_uncompressed) {
+    if (on.swapchain_compression_control) {
         link(compression);
         link(compression_swapchain);
     }

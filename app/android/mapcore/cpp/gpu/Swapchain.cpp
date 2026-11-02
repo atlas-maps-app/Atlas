@@ -65,7 +65,7 @@ void Swapchain::retire_presents() {
 }
 
 Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                     const Output* old, Depth depth) {
+                                                     const Output* old, Depth depth, Compression compression) {
     if (!device.enabled().swapchain) {
         return fail(std::format("{} was opened for offscreen work, without VK_KHR_swapchain: it cannot present",
                                 device.facts().name));
@@ -96,9 +96,11 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
         usage |= vk::ImageUsageFlagBits::eTransferSrc;
         self->transfer_source_ = true;
     }
-    // Imagination's images without the driver's framebuffer compression (Facts' swapchain_uncompressed).
+    // The images without the driver's framebuffer compression where the Map look's switch turned it off and the driver
+    // lets an app ask; else the driver's own, its default.
+    const bool off = compression == Compression::off && device.enabled().swapchain_compression_control;
     const vk::ImageCompressionControlEXT uncompressed{.flags = vk::ImageCompressionFlagBitsEXT::eDisabled};
-    vk::SwapchainCreateInfoKHR info{.pNext = device.enabled().swapchain_uncompressed ? &uncompressed : nullptr,
+    vk::SwapchainCreateInfoKHR info{.pNext = off ? &uncompressed : nullptr,
                                     .surface = surface,
                                     .minImageCount = count,
                                     .imageFormat = self->colour_.format,

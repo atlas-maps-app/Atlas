@@ -728,6 +728,46 @@ TEST_CASE("VK bench's mode 0 lets go of the frame and of 10 bits whatever config
     }
 }
 
+TEST_CASE("the Map look's compression switch makes the output again with it, once a change, and the next window's") {
+    // The user, 2 November: the swapchain's images with the driver's framebuffer compression by default, and a switch
+    // that makes them without it (gpu::Compression), as a phone's swapchain takes it where the driver lets an app ask.
+    if (!test::open_session()) return;
+    const Folder folder("compression");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        auto window = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        ATLAS_REQUIRE(session.bench(1, started->device->facts().choice, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        CHECK(w->compression() == gpu::Compression::driver);
+        const int made = w->made();
+        session.set_compression(gpu::Compression::off);
+        CHECK(w->made() == made + 1);
+        CHECK(w->compression() == gpu::Compression::off);
+        CHECK(draw(session, 2) == 2);
+        session.set_compression(gpu::Compression::off); // no change: nothing is made
+        CHECK(w->made() == made + 1);
+        // A window come back is made with the switch as it stands, and switched back with the next change.
+        auto next = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* n = next.get();
+        ATLAS_REQUIRE(session.attach(std::move(next), size, why), why);
+        CHECK(n->compression() == gpu::Compression::off);
+        session.set_compression(gpu::Compression::driver);
+        CHECK(n->made() == 2);
+        CHECK(n->compression() == gpu::Compression::driver);
+        CHECK(draw(session, 2) == 2);
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+    }
+}
+
 TEST_CASE("the frame loop at rest leaves no marker on disk, inside VK bench's colour stage too: a trim from "
           "TRIM_MEMORY_UI_HIDDEN rests it") {
     // So that a routine kill of a cached process rarely finds a marker (D5.10): the frame loop rests when nothing

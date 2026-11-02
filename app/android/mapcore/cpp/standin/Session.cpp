@@ -52,8 +52,8 @@ std::string guard_lines(const gpu::Started& started) {
 
 gpu::Result<std::unique_ptr<gpu::Output>> SessionWindow::output(const gpu::Device& device, vk::SurfaceKHR surface,
                                                                 vk::Extent2D wanted, const gpu::Output* old,
-                                                                gpu::Depth depth) {
-    ATLAS_GPU_LET(swapchain, gpu::Swapchain::create(device, surface, wanted, old, depth));
+                                                                gpu::Depth depth, gpu::Compression compression) {
+    ATLAS_GPU_LET(swapchain, gpu::Swapchain::create(device, surface, wanted, old, depth, compression));
     return std::unique_ptr<gpu::Output>(std::move(swapchain));
 }
 
@@ -99,10 +99,13 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
     if (why.empty()) why = make_output();
     if (why.empty()) {
         frame_rate_ = window_->set_frame_rate(60.0F);
-        log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {} colour {}",
+        log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {} colour {} compression {}",
                   output_->extent().width, output_->extent().height, vk::to_string(output_->transform()),
                   output_->images().size(), output_->transfer_source() ? "yes" : "no",
-                  frame_rate_ ? "60 asked" : "not available", gpu::colour_name(output_->format()));
+                  frame_rate_ ? "60 asked" : "not available", gpu::colour_name(output_->format()),
+                  compression_ == gpu::Compression::off && started_.device->enabled().swapchain_compression_control
+                      ? "off"
+                      : "the driver's");
         // VK bench's stand-in at once; the app's map at its first frame (renderer_due_)
         if (mode_ == 1) why = make_renderer();
         renderer_due_ = mode_ == 2;
@@ -122,6 +125,12 @@ void Session::resize(vk::Extent2D size) {
 }
 
 void Session::remake() { remake_output(); }
+
+void Session::set_compression(gpu::Compression compression) {
+    if (compression == compression_) return;
+    compression_ = compression;
+    remake_output();
+}
 
 void Session::detach() { release_window(); }
 
@@ -182,7 +191,8 @@ std::string Session::make_output() {
         } else if (facts.deepest.ten_bit()) {
             const vk::Format asked = facts.deepest.format;
             auto made = behind(gpu::Stage::surface, [&] {
-                return window_->output(*started_.device, *surface_, wanted_, nullptr, gpu::Depth::deepest);
+                return window_->output(*started_.device, *surface_, wanted_, nullptr, gpu::Depth::deepest,
+                                       compression_);
             });
             if (made) {
                 output_ = std::move(*made);
@@ -205,8 +215,9 @@ std::string Session::make_output() {
         close_colour();
         depth_ = gpu::default_depth;
     }
-    auto made = behind(gpu::Stage::surface,
-                       [&] { return window_->output(*started_.device, *surface_, wanted_, nullptr, depth_); });
+    auto made = behind(gpu::Stage::surface, [&] {
+        return window_->output(*started_.device, *surface_, wanted_, nullptr, depth_, compression_);
+    });
     if (!made) {
         output_error_ = made.error().text();
         return output_error_;
@@ -234,7 +245,7 @@ void Session::remake_output() {
     // one's making, which is the stage's alone.
     behind(gpu::Stage::surface, [&] {
         if (renderer_) renderer_->drain();
-        auto made = window_->output(*started_.device, *surface_, wanted_, output_.get(), depth_);
+        auto made = window_->output(*started_.device, *surface_, wanted_, output_.get(), depth_, compression_);
         release_output();
         if (made) {
             output_ = std::move(*made);
