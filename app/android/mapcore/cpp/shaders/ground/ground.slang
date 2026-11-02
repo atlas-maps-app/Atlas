@@ -146,6 +146,28 @@ float4 paint_of(uint c) {
     return unpack(c);
 }
 
+/// A fill's colour word as the user's palette has it (passes/Ground.cpp's ground_palette): the table's first word is
+/// the theme colours' fourth (0: none), 256 pairs of a colour today and the user's, a colour's at its hash
+/// (palette_hash) or in the first pairs after it, an empty pair ending the search. A theme colour's word is not in it.
+uint repainted(uint c) {
+    uint at = words[push.at.z + 3u];
+    if (at == 0u || (c >> 24u) == 0u) {
+        return c;
+    }
+    uint h = (c * 2654435761u) >> 24u;
+    for (uint k = 0u; k < 256u; k++) {
+        uint i = at + 2u * ((h + k) & 255u);
+        uint from = words[i];
+        if (from == c) {
+            return words[i + 1u];
+        }
+        if (from == 0u) {
+            return c;
+        }
+    }
+    return c;
+}
+
 /// A painter slot: its group's base (a signed word) and stride from the slot table, the order and the sub-element.
 uint slot_of(uint group, uint sub, uint order) {
     int base = int(words[push.at.y + 2u * group]);
@@ -209,7 +231,7 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     // its order in its group: its scene's, or where the frame draws tiles of more than one scene its rank across them
     uint ranks = tile_word(tile, 19u);
     uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
-    uint c = (push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u);
+    uint c = repainted((push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u));
     o.position = place(tile, float3(x, y, z), slot_of(gs & 0xFFFFu, gs >> 16u, order));
     float4 p = paint_of(c);
     // a translucent fill (the canopy's union is composited instead): premultiplied by the screen pass's opacity

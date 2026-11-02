@@ -138,10 +138,16 @@ class LayoutTest {
         put("PaletteFlags.MAPPED_FOLLOW", PaletteFlags.MAPPED_FOLLOW)
         put("PaletteFlags.FLAT_GREYS", PaletteFlags.FLAT_GREYS)
         // the slots the core's passes draw by
-        for (slot in listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK, Slot.WOODS, Slot.BENCHES, Slot.LAMP_POSTS, Slot.BOLLARDS, Slot.TURBINES, Slot.PYLONS)) {
+        val drawn = listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK, Slot.WOODS, Slot.BENCHES, Slot.LAMP_POSTS, Slot.BOLLARDS, Slot.TURBINES, Slot.PYLONS) +
+            listOf(Slot.PAPER, Slot.LAWN, Slot.SQUARES, Slot.PARKING, Slot.PLAYGROUND, Slot.MEMORIAL, Slot.BRIDGE_DECK) +
+            listOf(Slot.QUAY_WALLS) +
+            listOf(Slot.ASPHALT, Slot.PAVING_STONES, Slot.SETTS, Slot.CONCRETE_PAVING, Slot.BRICK_PAVING, Slot.BOARDWALK)
+        for (slot in drawn) {
             put("Slot.${slot.name}", slot.code)
         }
         put("Slot.WOODS.today", Slot.WOODS.today)
+        put("Slot.PAPER.today", Slot.PAPER.today)
+        put("Slot.QUAY_WALLS.today", Slot.QUAY_WALLS.today)
     }
 
     @Test

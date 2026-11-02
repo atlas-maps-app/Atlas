@@ -269,6 +269,22 @@ constexpr std::array constants_table = {
     Constant{.name = "Slot.TURBINES", .value = static_cast<std::uint32_t>(palette_slot::turbines)},
     Constant{.name = "Slot.PYLONS", .value = static_cast<std::uint32_t>(palette_slot::pylons)},
     Constant{.name = "Slot.WOODS.today", .value = woods_own},
+    Constant{.name = "Slot.PAPER.today", .value = paper_own},
+    Constant{.name = "Slot.PAPER", .value = static_cast<std::uint32_t>(palette_slot::paper)},
+    Constant{.name = "Slot.LAWN", .value = static_cast<std::uint32_t>(palette_slot::lawn)},
+    Constant{.name = "Slot.SQUARES", .value = static_cast<std::uint32_t>(palette_slot::squares)},
+    Constant{.name = "Slot.PARKING", .value = static_cast<std::uint32_t>(palette_slot::parking)},
+    Constant{.name = "Slot.PLAYGROUND", .value = static_cast<std::uint32_t>(palette_slot::playground)},
+    Constant{.name = "Slot.MEMORIAL", .value = static_cast<std::uint32_t>(palette_slot::memorial)},
+    Constant{.name = "Slot.BRIDGE_DECK", .value = static_cast<std::uint32_t>(palette_slot::bridge_deck)},
+    Constant{.name = "Slot.QUAY_WALLS", .value = static_cast<std::uint32_t>(palette_slot::quay_walls)},
+    Constant{.name = "Slot.QUAY_WALLS.today", .value = quay_walls_own},
+    Constant{.name = "Slot.ASPHALT", .value = static_cast<std::uint32_t>(palette_slot::asphalt)},
+    Constant{.name = "Slot.PAVING_STONES", .value = static_cast<std::uint32_t>(palette_slot::paving_stones)},
+    Constant{.name = "Slot.SETTS", .value = static_cast<std::uint32_t>(palette_slot::setts)},
+    Constant{.name = "Slot.CONCRETE_PAVING", .value = static_cast<std::uint32_t>(palette_slot::concrete_paving)},
+    Constant{.name = "Slot.BRICK_PAVING", .value = static_cast<std::uint32_t>(palette_slot::brick_paving)},
+    Constant{.name = "Slot.BOARDWALK", .value = static_cast<std::uint32_t>(palette_slot::boardwalk)},
 };
 
 // Each table spans its struct without gaps or overlaps (fields in order, each starting where the last ended).

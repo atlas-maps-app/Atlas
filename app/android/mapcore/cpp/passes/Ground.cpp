@@ -11,6 +11,7 @@
 #include "gen/spirv/ground/ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "scene/Cover.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "sun/Buckets.hpp"
 #include "text/GroundText.hpp"
@@ -1320,7 +1321,7 @@ void Ground::write_words(const frame::FrameState& state) {
     v.push_back(rgba(th.ground).packed());
     v.push_back(road.packed());
     v.push_back(rgba(th.water).packed());
-    v.push_back(0);
+    v.push_back(0); // the palette table's first word (write_palette)
     // each tile's bits: its fills drawn (at the street, for the water), its water pieces drawn at their level, its
     // shadows drawn
     for (std::size_t i = 0; i < f.tiles.size(); ++i) {
@@ -1361,6 +1362,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_ripple(v, state);
     write_wind_glints(v, state);
     write_canopy(v, state);
+    write_palette(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1534,8 +1536,15 @@ void Ground::write_canopy(std::vector<std::uint32_t>& words, const frame::FrameS
     Words& w = *words_;
     w.canopy = static_cast<std::uint32_t>(words.size());
     if (!canopy_filtered(state) || !state.view) return;
-    const std::array<fx::Argb, 256>& table = fx::canopy_table();
-    words.insert(words.end(), table.begin(), table.end());
+    // the canopy in the user's woods, where the palette changes them
+    if (const auto woods =
+            state.palette != nullptr ? state.palette->colour(style::palette_slot::woods) : std::nullopt) {
+        const std::array<fx::Argb, 256> table = fx::canopy_table_of(*woods);
+        words.insert(words.end(), table.begin(), table.end());
+    } else {
+        const std::array<fx::Argb, 256>& table = fx::canopy_table();
+        words.insert(words.end(), table.begin(), table.end());
+    }
     // the app's map reads the field where the ground lies, as the clouds' shadows on the ground do (the user, 27
     // October: "The leafs and water streaks should be drawn with the object like buildings are")
     if (state.grounded) {
@@ -1543,6 +1552,92 @@ void Ground::write_canopy(std::vector<std::uint32_t>& words, const frame::FrameS
             water_map(state.view->camera(), 0.0, state.camera.density, state.camera.width_px, state.camera.height_px);
         for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
     }
+}
+
+void Ground::write_palette(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
+    const tiles::Style* style =
+        state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
+    if (state.palette == nullptr || style == nullptr) return;
+    const bool night = frame_.night;
+    const bool same = palette_style_ == style && palette_night_ == night &&
+                      std::memcmp(&palette_of_, state.palette, sizeof palette_of_) == 0;
+    if (!same) {
+        palette_table_ = ground_palette(*style, state.palette, night);
+        palette_of_ = *state.palette;
+        palette_style_ = style;
+        palette_night_ = night;
+    }
+    if (palette_table_.empty()) return;
+    words[words_->theme + 3] = static_cast<std::uint32_t>(words.size());
+    words.insert(words.end(), palette_table_.begin(), palette_table_.end());
+}
+
+std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style::PaletteBlock* palette, bool night) {
+    std::vector<std::uint32_t> table;
+    if (palette == nullptr) return table;
+    const auto put = [&table](geo::Rgba from, geo::Rgba to) {
+        const std::uint32_t f = from.packed();
+        const std::uint32_t t = to.packed();
+        if (f == t || (f >> 24U) == 0U) return;
+        if (table.empty()) table.assign(std::size_t{2} * palette_pairs, 0U);
+        for (std::uint32_t k = 0; k < palette_pairs; ++k) {
+            const std::size_t at = std::size_t{2} * ((palette_hash(f) + k) & (palette_pairs - 1));
+            if (table[at] == f) return; // the first colour's move wins
+            if (table[at] == 0U) {
+                table[at] = f;
+                table[at + 1] = t;
+                return;
+            }
+        }
+    };
+    // a colour of the style and its move with its slot, by day, or at night as the fills darken it (lawns and areas
+    // .18, the rest .2)
+    const auto add = [&](std::optional<std::size_t> code, std::uint32_t own, tiles::StyleRgb c) {
+        if (!code) return;
+        const std::uint32_t to = style::paint(palette, *code, own, c);
+        if (to == c) return;
+        if (!night) {
+            put(geo::rgba(c), geo::rgba(to));
+            return;
+        }
+        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(c), k), geo::darken(geo::rgba(to), k));
+    };
+    // each slot's own colour in the style
+    namespace slot = style::palette_slot;
+    const auto own = [&style](std::size_t code) -> std::uint32_t {
+        switch (code) {
+        case slot::paper: return style::paper_own;
+        case slot::woods: return style::woods_own;
+        case slot::lawn: return style.area_colour("park");
+        case slot::squares: return style.area_colour("square");
+        case slot::parking: return style.area_colour("parking");
+        case slot::playground: return style.area_colour("playground");
+        case slot::memorial: return style.area_colour("memorial");
+        case slot::bridge_deck: return style.area_colour("bridge");
+        case slot::asphalt: return style.surface("asphalt").value_or(0U);
+        case slot::paving_stones: return style.surface("paving_stones").value_or(0U);
+        case slot::setts: return style.surface("sett").value_or(0U);
+        case slot::concrete_paving: return style.surface("concrete").value_or(0U);
+        case slot::brick_paving: return style.surface("bricks").value_or(0U);
+        case slot::boardwalk: return style.surface("wood").value_or(0U);
+        default: return 0U;
+        }
+    };
+    const auto of = [&](std::optional<std::size_t> code, tiles::StyleRgb c) {
+        if (code) add(code, own(*code), c);
+    };
+    for (const auto& [kind, c] : style.areas) of(style::area_slot(kind), c);
+    of(slot::squares, style.area_other);
+    for (const auto& [name, c] : style.surfaces) of(style::surface_slot(name), c);
+    for (std::size_t k = 0; k < style.land_kinds.size() && k < style.land_colours.size(); ++k) {
+        of(style::land_slot(style.land_kinds[k]), style.land_colours[k]);
+    }
+    // the big roads' asphalt, by day or at night as the style has it
+    const std::uint32_t asphalt = own(slot::asphalt);
+    const tiles::StyleRgb big = night ? style.asphalt.night : style.asphalt.day;
+    const std::uint32_t moved = style::paint(palette, slot::asphalt, asphalt, big);
+    if (asphalt != 0U && moved != big) put(geo::rgba(big), geo::rgba(moved));
+    return table;
 }
 
 void Ground::record_canopy(const frame::Recording& r) {

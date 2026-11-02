@@ -29,7 +29,7 @@ enum class Slot(val code: Int, val family: Family, val today: Int) {
     WATER_DEEP(18, Family.WATER, 0x2D506C),
     QUAY_WALLS(19, Family.WATER, 0x6E5546),
     STREET(32, Family.ROADS, 0xC9C1B4),
-    ASPHALT(33, Family.ROADS, 0x7B7B7E),
+    ASPHALT(33, Family.ROADS, 0x9B9A99),
     PAVING_STONES(34, Family.ROADS, 0xC9B9A6),
     SETTS(35, Family.ROADS, 0xA89A88),
     CONCRETE_PAVING(36, Family.ROADS, 0xC4C2BC),

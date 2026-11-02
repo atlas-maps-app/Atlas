@@ -34,7 +34,21 @@ inline constexpr std::uint32_t known = 0xFU;
 
 /// The slots the passes draw by (PaletteCode's numbers: mapview's Slot).
 namespace palette_slot {
+inline constexpr std::size_t paper = 1;
+inline constexpr std::size_t lawn = 2;
 inline constexpr std::size_t woods = 3;
+inline constexpr std::size_t squares = 4;
+inline constexpr std::size_t parking = 5;
+inline constexpr std::size_t playground = 6;
+inline constexpr std::size_t memorial = 7;
+inline constexpr std::size_t bridge_deck = 8;
+inline constexpr std::size_t quay_walls = 19;
+inline constexpr std::size_t asphalt = 33;
+inline constexpr std::size_t paving_stones = 34;
+inline constexpr std::size_t setts = 35;
+inline constexpr std::size_t concrete_paving = 36;
+inline constexpr std::size_t brick_paving = 37;
+inline constexpr std::size_t boardwalk = 38;
 inline constexpr std::size_t leaves = 112;
 inline constexpr std::size_t evergreen = 113;
 inline constexpr std::size_t bark = 114;
@@ -48,6 +62,23 @@ inline constexpr std::size_t pylons = 119;
 /// The woods' own colour (the Woods slot's today): the canopy's matrix's .16 .24 .12 in linear light as sRGB, which
 /// the woods' generic trees' greens are darker tones of.
 inline constexpr std::uint32_t woods_own = 0x6F8661U;
+
+/// The bare ground's own colour (the Paper slot's today): the live day's ground, which the built land's colours are
+/// lighter or darker tones of.
+inline constexpr std::uint32_t paper_own = 0xD6CFC2U;
+
+/// The quay walls' own colour (the Quay walls slot's today): Amsterdam's brick quays (the style's `quay_col` where a
+/// region has none of its own), which another region's walls, the copings and the waterlines are tones of.
+inline constexpr std::uint32_t quay_walls_own = 0x6E5546U;
+
+/// The slot a land kind's colour goes with (the style's `land`): the built land the paper's, the open green land the
+/// lawns', the forest, the scrub, the wetland and the heath the woods', a pedestrian area the squares', a parking and
+/// an apron the parkings', a playground and a track the playgrounds'; sand, rock and every other kind none.
+[[nodiscard]] std::optional<std::size_t> land_slot(std::string_view kind) noexcept;
+/// The slot an area kind's colour goes with (the style's `area`; another kind takes `area_other`, the squares').
+[[nodiscard]] std::optional<std::size_t> area_slot(std::string_view kind) noexcept;
+/// The slot a mapped surface's colour goes with (the style's `surf`), or none.
+[[nodiscard]] std::optional<std::size_t> surface_slot(std::string_view surface) noexcept;
 
 struct PaletteBlock {
     std::uint32_t version = palette_block_version;

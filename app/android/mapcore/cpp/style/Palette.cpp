@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace atlas::style {
 
@@ -81,6 +82,71 @@ std::uint32_t palette_move(std::uint32_t c, std::uint32_t from, std::uint32_t to
     const double da = vt.a - ft.a;
     const double db = vt.b - ft.b;
     return rgb_of({.l = l, .a = (tt.a + (da * re) - (db * im)) * l, .b = (tt.b + (da * im) + (db * re)) * l});
+}
+
+std::optional<std::size_t> land_slot(std::string_view kind) noexcept {
+    namespace slot = palette_slot;
+    static constexpr std::array<std::pair<std::string_view, std::size_t>, 35> kinds{{
+        {"residential", slot::paper},
+        {"industrial", slot::paper},
+        {"commercial", slot::paper},
+        {"retail", slot::paper},
+        {"construction", slot::paper},
+        {"railway", slot::paper},
+        {"military", slot::paper},
+        {"brownfield", slot::paper},
+        {"education", slot::paper},
+        {"static_caravan", slot::paper},
+        {"farmyard", slot::paper},
+        {"port", slot::paper},
+        {"farmland", slot::lawn},
+        {"greenfield", slot::lawn},
+        {"meadow", slot::lawn},
+        {"grass", slot::lawn},
+        {"grassland", slot::lawn},
+        {"village_green", slot::lawn},
+        {"recreation_ground", slot::lawn},
+        {"park", slot::lawn},
+        {"garden", slot::lawn},
+        {"cemetery", slot::lawn},
+        {"allotments", slot::lawn},
+        {"orchard", slot::lawn},
+        {"golf_course", slot::lawn},
+        {"pitch", slot::lawn},
+        {"flowerbed", slot::lawn},
+        {"scrub", slot::woods},
+        {"forest", slot::woods},
+        {"wood", slot::woods},
+        {"wetland", slot::woods},
+        {"heath", slot::woods},
+        {"pedestrian", slot::squares},
+        {"parking", slot::parking},
+        {"apron", slot::parking},
+    }};
+    if (kind == "playground" || kind == "track") return slot::playground;
+    const auto* it = std::ranges::find(kinds, kind, &std::pair<std::string_view, std::size_t>::first);
+    return it != kinds.end() ? std::optional(it->second) : std::nullopt;
+}
+
+std::optional<std::size_t> area_slot(std::string_view kind) noexcept {
+    namespace slot = palette_slot;
+    if (kind == "park" || kind == "garden" || kind == "grass") return slot::lawn;
+    if (kind == "playground") return slot::playground;
+    if (kind == "memorial") return slot::memorial;
+    if (kind == "parking") return slot::parking;
+    if (kind == "bridge") return slot::bridge_deck;
+    return slot::squares; // a pedestrian area, a square and every other kind (area_other)
+}
+
+std::optional<std::size_t> surface_slot(std::string_view surface) noexcept {
+    namespace slot = palette_slot;
+    if (surface == "asphalt") return slot::asphalt;
+    if (surface == "paving_stones") return slot::paving_stones;
+    if (surface == "sett" || surface == "cobblestone") return slot::setts;
+    if (surface == "concrete") return slot::concrete_paving;
+    if (surface == "bricks") return slot::brick_paving;
+    if (surface == "wood") return slot::boardwalk;
+    return std::nullopt;
 }
 
 std::uint32_t paint(const PaletteBlock* palette, std::size_t code, std::uint32_t own, std::uint32_t c) noexcept {

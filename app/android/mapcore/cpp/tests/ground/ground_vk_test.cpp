@@ -7,10 +7,13 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/Selectors.hpp"
 #include "passes/Ground.hpp"
+#include "style/Palette.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
 #include "tests/load/corner.hpp"
+#include "tests/tiles/support.hpp"
+#include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
 #include "view/Frames.hpp"
 
@@ -25,8 +28,11 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace atlas;
@@ -96,6 +102,75 @@ std::size_t near_differ(const passes::GroundFrame& frame) {
 }
 
 } // namespace
+
+TEST_CASE("ground: the user's palette's table holds the fills' colours today and the user's, today's palette none") {
+    namespace v = test::values;
+    auto tables = test::style_tables();
+    const auto set = [&tables](std::string_view name, v::ValueBytes value) {
+        for (auto& [table, bytes] : tables) {
+            if (table == name) {
+                bytes = std::move(value);
+                return;
+            }
+        }
+    };
+    set("land", v::map({{"meadow", v::list({v::text("#B8CC94"), v::integer(2)})},
+                        {"residential", v::list({v::text("#DDD6C8"), v::integer(1)})}}));
+    set("area", v::map({{"park", v::text("#A9C38A")}, {"pedestrian", v::text("#E4DED2")}}));
+    set("surf", v::map({{"asphalt", v::text("#9B9A99")}}));
+    auto read = tiles::read_style(test::style_bytes(tables));
+    ATLAS_REQUIRE(read.has_value());
+    auto typed = tiles::Style::of(*read);
+    ATLAS_REQUIRE(typed.has_value());
+    const tiles::Style& style = *typed;
+    const std::optional<std::uint16_t> meadow = style.land_kind("meadow");
+    const std::optional<std::uint16_t> residential = style.land_kind("residential");
+    const std::optional<tiles::StyleRgb> asphalt = style.surface("asphalt");
+    ATLAS_REQUIRE(meadow.has_value() && residential.has_value() && asphalt.has_value());
+    const geometry::Rgba meadows = geometry::rgba(style.land_colours.at(*meadow));
+    const geometry::Rgba built = geometry::rgba(style.land_colours.at(*residential));
+    const geometry::Rgba paved = geometry::rgba(*asphalt);
+    CHECK(passes::ground_palette(style, nullptr, false).empty());
+    const atlas::style::PaletteBlock none{};
+    CHECK(passes::ground_palette(style, &none, true).empty());
+    // a colour word's pair as repainted searches for it
+    const auto found = [](const std::vector<std::uint32_t>& t, geometry::Rgba c) -> std::optional<std::uint32_t> {
+        for (std::uint32_t k = 0; k < passes::palette_pairs; ++k) {
+            const std::size_t at = std::size_t{2} * ((passes::palette_hash(c.packed()) + k) & 255U);
+            if (t.at(at) == c.packed()) return t.at(at + 1);
+            if (t.at(at) == 0U) return std::nullopt;
+        }
+        return std::nullopt;
+    };
+    atlas::style::PaletteBlock lawns{};
+    lawns.colours.at(atlas::style::palette_slot::lawn) = 0x01607850U;
+    const geometry::Rgba lawn = geometry::rgba(style.area_colour("park"));
+    const geometry::Rgba to = geometry::rgba(0x607850U);
+    for (const bool night : {false, true}) {
+        CAPTURE(night);
+        const std::vector<std::uint32_t> t = passes::ground_palette(style, &lawns, night);
+        ATLAS_REQUIRE(t.size() == std::size_t{2} * passes::palette_pairs);
+        const auto at = [night](geometry::Rgba c) { return night ? geometry::darken(c, 0.18) : c; };
+        // the lawns take the user's colour exactly (at night five and a half times darker, as their fills are)
+        CHECK(found(t, at(lawn)) == at(to).packed());
+        // a meadow moves with them; the built land, a square and the asphalt keep theirs
+        CHECK(found(t, at(meadows)).has_value());
+        CHECK(!found(t, at(built)).has_value());
+        CHECK(!found(t, at(geometry::rgba(style.area_colour("pedestrian")))).has_value());
+        CHECK(!found(t, at(paved)).has_value());
+    }
+    // the paper moves the built land, the asphalt the big roads' too
+    atlas::style::PaletteBlock paper{};
+    paper.colours.at(atlas::style::palette_slot::paper) = 0x01303030U;
+    paper.colours.at(atlas::style::palette_slot::asphalt) = 0x01202020U;
+    const std::vector<std::uint32_t> t = passes::ground_palette(style, &paper, false);
+    ATLAS_REQUIRE(t.size() == std::size_t{2} * passes::palette_pairs);
+    CHECK(found(t, built).has_value());
+    CHECK(found(t, paved) == geometry::rgba(0x202020U).packed());
+    CHECK(found(t, geometry::rgba(style.asphalt.day)).has_value());
+    CHECK(!found(t, lawn).has_value());
+    CHECK(!found(t, meadows).has_value());
+}
 
 TEST_CASE("ground: the boards' views draw on the host's Vulkan, the validation layer silent") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
