@@ -41,10 +41,14 @@ namespace {
 /// The top drawn when the eye is above it: the ring at h, facing up (vdot((0, 1, 0), C - p) > 0 is the port's
 /// cam.C[1] > h), lit by its sample 0.05 m above its centroid, whatever the sun's side (`not night and sh.lit(...)`).
 void top(Builder& b, std::span<const V2> ring, double h, PrimKind kind, std::uint16_t variant, std::uint32_t sample,
-         std::uint32_t base) {
+         std::uint32_t base, std::uint16_t slot) {
     const V2 ce = centroid(ring);
-    const std::uint32_t face =
-        b.face({.base = base, .normal = {0.0, 1.0, 0.0}, .test = {ce.x, h, ce.z}, .lit = Lit::sun, .facing = true});
+    const std::uint32_t face = b.face({.base = base,
+                                       .normal = {0.0, 1.0, 0.0},
+                                       .test = {ce.x, h, ce.z},
+                                       .lit = Lit::sun,
+                                       .facing = true,
+                                       .slot = slot});
     b.polygon(at_height(ring, h), ring, kind, static_cast<std::uint16_t>(variant | prim_flag::any), face, sample,
               Builder::slot(b.near_slot), Builder::slot(b.far_slot), std::abs(signed_area(ring)));
     ++b.near_slot;
@@ -84,8 +88,12 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
         if (dist3(qa, qb) < 0.3 && hipped) {
             const std::array<V3, 3> tri{pa, pb, qa};
             const V3 nr = normal_of(tri[0], tri[1], tri[2]);
-            const std::uint32_t face =
-                b.face({.base = bl.v.roof_rgb, .normal = nr, .test = cen(tri), .lit = Lit::sun, .facing = true});
+            const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                               .normal = nr,
+                                               .test = cen(tri),
+                                               .lit = Lit::sun,
+                                               .facing = true,
+                                               .slot = bl.v.roof_slot});
             slopes.push_back({.p = {pa, pb, qa, qa},
                               .corners = 3,
                               .kind = PrimKind::hip,
@@ -98,8 +106,12 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
             // the gable end: a vertical wall triangle in the wall's material
             const std::array<V3, 3> tri{pa, pb, V3{(qa.x + qb.x) / 2, h, (qa.z + qb.z) / 2}};
             const V3 nr = vnorm({bb.z - a.z, 0.0, -(bb.x - a.x)});
-            const std::uint32_t face =
-                b.face({.base = bl.v.wall_rgb, .normal = nr, .test = cen(tri), .lit = Lit::sun, .facing = true});
+            const std::uint32_t face = b.face({.base = bl.v.wall_rgb,
+                                               .normal = nr,
+                                               .test = cen(tri),
+                                               .lit = Lit::sun,
+                                               .facing = true,
+                                               .slot = bl.v.wall_slot});
             gables.push_back({.p = {tri[0], tri[1], tri[2], tri[2]},
                               .corners = 3,
                               .kind = PrimKind::gable,
@@ -123,8 +135,12 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
         }
         const std::array<V3, 4> q{pa, pb, qb, qa};
         const V3 nr = upward(vnorm(vcross(vsub(q[1], q[0]), vsub(q[3], q[0]))));
-        const std::uint32_t face =
-            b.face({.base = bl.v.roof_rgb, .normal = nr, .test = cen(q), .lit = Lit::sun, .facing = true});
+        const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                           .normal = nr,
+                                           .test = cen(q),
+                                           .lit = Lit::sun,
+                                           .facing = true,
+                                           .slot = bl.v.roof_slot});
         slopes.push_back({.p = q,
                           .corners = 4,
                           .kind = PrimKind::slope,
@@ -211,8 +227,12 @@ void kit_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t variant
             V3 nr = vnorm({bb.z - a.z, 0.0, -(bb.x - a.x)});
             if (pip(((a.x + bb.x) / 2) + (nr.x * 0.05), ((a.z + bb.z) / 2) + (nr.z * 0.05), poly)) nr = neg(nr);
             const std::array<V3, 3> tri{V3{a.x, wall_top, a.z}, V3{bb.x, wall_top, bb.z}, apex};
-            const std::uint32_t face =
-                b.face({.base = bl.v.wall_rgb, .normal = nr, .test = cen(tri), .lit = Lit::sun, .facing = true});
+            const std::uint32_t face = b.face({.base = bl.v.wall_rgb,
+                                               .normal = nr,
+                                               .test = cen(tri),
+                                               .lit = Lit::sun,
+                                               .facing = true,
+                                               .slot = bl.v.wall_slot});
             const auto [near, far_slot] = slot();
             b.plain({tri[0], tri[1], tri[2], tri[2]}, 3, PrimKind::gable, flags, face, b.sample++, near, far_slot,
                     {.edge = static_cast<std::uint32_t>(i), .part = 0});
@@ -258,8 +278,12 @@ void kit_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t variant
         V3 nr = vnorm(vcross(vsub(q[1], q[0]), vsub(q[corners - 1], q[0])));
         if (nr.y < 0) nr = neg(nr);
         const V3 mid = cen(std::span<const V3>(q.data(), corners));
-        const std::uint32_t face =
-            b.face({.base = bl.v.roof_rgb, .normal = nr, .test = mid, .lit = Lit::sun, .facing = true});
+        const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                           .normal = nr,
+                                           .test = mid,
+                                           .lit = Lit::sun,
+                                           .facing = true,
+                                           .slot = bl.v.roof_slot});
         const auto [near, far_slot] = slot();
         // the eaves overhang the walls: the face leads them where it passes their top
         const auto overhang = static_cast<std::uint16_t>(flags | (e != 0.0 ? prim_flag::eaves : 0U));
@@ -334,14 +358,18 @@ void mansard(Builder& b, const Building& bl, std::uint16_t variant) {
             nr = vnorm({bb.z - a.z, 0.0, -(bb.x - a.x)});
             if (pip(((a.x + bb.x) / 2) + (nr.x * 0.05), ((a.z + bb.z) / 2) + (nr.z * 0.05), poly)) nr = neg(nr);
         }
-        const std::uint32_t face =
-            b.face({.base = bl.v.roof_rgb, .normal = nr, .test = cen(q), .lit = Lit::sun, .facing = true});
+        const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                           .normal = nr,
+                                           .test = cen(q),
+                                           .lit = Lit::sun,
+                                           .facing = true,
+                                           .slot = bl.v.roof_slot});
         b.plain(q, 4, PrimKind::mansard, static_cast<std::uint16_t>(variant | prim_flag::any), face, b.sample++,
                 Builder::slot(b.near_slot++), Builder::slot(b.far_slot++),
                 {.edge = static_cast<std::uint32_t>(i), .part = 0});
         if (elen >= 2.4 && rh >= 2.4) ++b.sample; // K8's dormer sample (K14 draws the dormers)
     }
-    top(b, ins, h, PrimKind::mansard_top, variant, b.sample++, bl.v.roof_rgb);
+    top(b, ins, h, PrimKind::mansard_top, variant, b.sample++, bl.v.roof_rgb, bl.v.roof_slot);
 }
 
 } // namespace
@@ -360,8 +388,12 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
             const V2 bb = poly[(i + 1) % n];
             const std::array<V3, 3> tri{V3{a.x, wall_top, a.z}, V3{bb.x, wall_top, bb.z}, apex};
             const V3 nr = normal_of(tri[0], tri[1], tri[2]);
-            const std::uint32_t face =
-                b.face({.base = bl.v.roof_rgb, .normal = nr, .test = cen(tri), .lit = Lit::sun, .facing = true});
+            const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                               .normal = nr,
+                                               .test = cen(tri),
+                                               .lit = Lit::sun,
+                                               .facing = true,
+                                               .slot = bl.v.roof_slot});
             b.plain({tri[0], tri[1], tri[2], tri[2]}, 3, PrimKind::pyramid,
                     static_cast<std::uint16_t>(variant | prim_flag::any), face, b.sample++,
                     Builder::slot(b.near_slot++), Builder::slot(b.far_slot++),
@@ -380,8 +412,12 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
         const double s = rh / bl.span;
         const V3 nr = vnorm({bl.dirv.x * s, 1.0, bl.dirv.z * s});
         const V2 ce = centroid(poly);
-        const std::uint32_t face = b.face(
-            {.base = bl.v.roof_rgb, .normal = nr, .test = {ce.x, h - (rh / 2), ce.z}, .lit = Lit::sun, .facing = true});
+        const std::uint32_t face = b.face({.base = bl.v.roof_rgb,
+                                           .normal = nr,
+                                           .test = {ce.x, h - (rh / 2), ce.z},
+                                           .lit = Lit::sun,
+                                           .facing = true,
+                                           .slot = bl.v.roof_slot});
         std::vector<V3> ring;
         ring.reserve(n);
         for (const V2& p : poly) ring.emplace_back(p.x, bl.sk_top(p), p.z);
@@ -392,7 +428,7 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
     } else if (is(bl.roof, "mansard") && rh != 0.0) {
         mansard(b, bl, variant);
     } else {
-        top(b, poly, h, PrimKind::top, variant, b.sample++, bl.v.roof_rgb);
+        top(b, poly, h, PrimKind::top, variant, b.sample++, bl.v.roof_rgb, bl.v.roof_slot);
     }
 }
 

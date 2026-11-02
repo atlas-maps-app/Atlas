@@ -205,14 +205,9 @@ void Buildings::update(const frame::FrameState& state) {
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
     const std::uint32_t me = index();
-    // a new moment (the frame block's theme): every tile's colours again as it is drawn, once, into the area of them no
-    // frame in flight reads; those the light ahead lit for it (ready_for) copied in
-    const std::span<const std::byte> theme = std::as_bytes(std::span(&state.block.theme, 1));
-    if (!std::ranges::equal(theme, theme_) || moment_ == 0) {
-        std::ranges::copy(theme, theme_.begin());
-        ++moment_;
-        take_ahead(state.block.theme);
-    }
+    // a new moment (the frame block's theme, or the user's palette): every tile's colours again as it is drawn, once,
+    // into the area of them no frame in flight reads; those the light ahead lit for it (ready_for) copied in
+    if (new_moment(state)) take_ahead(state.block.theme);
     // the building asked about changed: the tiles that hold it (now, or before) light again
     if (state.asked != asked_) {
         asked_ = state.asked;

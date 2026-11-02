@@ -84,6 +84,8 @@ struct Face {
     Lit lit = Lit::sun;
     bool facing = true; ///< tested for facing (a deck and a cabin roof are drawn from either side)
     KitPart kit = KitPart::none;
+    /// The user's palette's slot its base goes with (its building's wall_slot or roof_slot: 0 none, +256 mapped)
+    std::uint16_t slot = 0;
 };
 
 /// What a primitive is, as the port draws it.
@@ -419,6 +421,8 @@ struct Values {
     std::optional<std::string_view> orient;
     std::uint32_t wall_rgb = 0;
     std::uint32_t roof_rgb = 0;
+    std::uint16_t wall_slot = 0; ///< the palette's slot the walls go with (0 none, +256 mapped)
+    std::uint16_t roof_slot = 0; ///< the roof's
     bool relation = false;
     std::optional<std::string_view> btype;
     bool part_tag = false;

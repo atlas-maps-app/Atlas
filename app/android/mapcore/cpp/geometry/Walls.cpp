@@ -58,6 +58,8 @@ struct Slots {
     std::uint8_t orient;
     std::uint8_t wall_rgb;
     std::uint8_t roof_rgb;
+    std::uint8_t wall_slot;
+    std::uint8_t roof_slot;
     std::uint8_t otype;
     std::uint8_t hidden;
     std::uint8_t flags;
@@ -81,6 +83,8 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "orient"),
             tl::slot_of(c, "wall_rgb"),
             tl::slot_of(c, "roof_rgb"),
+            tl::slot_of(c, "wall_slot"),
+            tl::slot_of(c, "roof_slot"),
             tl::slot_of(c, "otype"),
             tl::slot_of(c, "hidden"),
             tl::slot_of(c, "flags"),
@@ -109,6 +113,8 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.orient = l.string(s.orient, i);
     v.wall_rgb = static_cast<std::uint32_t>(l.integer(s.wall_rgb, i)) & 0xFF'FFFFU;
     v.roof_rgb = static_cast<std::uint32_t>(l.integer(s.roof_rgb, i)) & 0xFF'FFFFU;
+    v.wall_slot = static_cast<std::uint16_t>(l.integer(s.wall_slot, i) & 0x1FF);
+    v.roof_slot = static_cast<std::uint16_t>(l.integer(s.roof_slot, i) & 0x1FF);
     v.relation = l.string(s.otype, i).value_or(std::string_view{}) == "relation";
     v.btype = l.string(s.tag_building, i);
     v.part_tag = l.string(s.tag_part, i).has_value();
@@ -400,7 +406,8 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                            .normal = nrm,
                                            .test = {(a.x + bb.x) / 2, (y0 + wall_top) / 2, (a.z + bb.z) / 2},
                                            .lit = Lit::sun,
-                                           .facing = true});
+                                           .facing = true,
+                                           .slot = bl.v.wall_slot});
         // the kit's details this wall has: its boards' lines where it takes two boards or more (`range(1, nb)`), its
         // corner boards where it is over 1 m long, the shadow of its eaves (|e · u| / max(elen, 1e-6) > 0.7 along
         // the ridge); its cells' leads under theirs

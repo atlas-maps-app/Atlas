@@ -61,6 +61,7 @@
 #include "gpu/Pipelines.hpp"
 #include "passes/ObjectStrokes.hpp"
 #include "scene/Heaps.hpp"
+#include "style/Palette.hpp"
 #include "twin/building/BuildingTile.hpp"
 #include "twin/building/BuildingTwin.hpp"
 
@@ -320,6 +321,9 @@ private:
     /// The tiles the light ahead lit for the frame's new moment `theme`, taken by the frame that takes it, and let go
     /// of once that frame's tiles have their colours.
     void take_ahead(const shaders::Theme& theme);
+    /// Whether `state` shows a moment other than the last frame's (its theme, or the user's palette): then it is the
+    /// moment, a new one.
+    [[nodiscard]] bool new_moment(const frame::FrameState& state);
     void drop_ahead() noexcept;
     /// The light ahead of a moment the frame builder no longer asks about (ready_for not asked since the last frame:
     /// its inputs back at the moment shown) let go of, with the tiles it holds.
@@ -367,6 +371,7 @@ private:
     };
     /// The moments the CPU's light has seen (a moment: the frame block's theme), and each tile's areas.
     std::array<std::byte, sizeof(shaders::Theme)> theme_{};
+    style::PaletteBlock palette_{}; ///< the user's palette the moment is lit in (FrameState::palette's)
     std::uint64_t moment_ = 0;
     std::unordered_map<std::uint32_t, Lit> lit_;
     /// The building asked about, and its revision (a count of its changes).

@@ -16,6 +16,7 @@
 #include "passes/Walls.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
+#include "style/Palette.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -48,6 +49,16 @@ using clock = std::chrono::steady_clock;
     return std::ranges::equal(std::as_bytes(std::span(&a, 1)), std::as_bytes(std::span(&b, 1)));
 }
 
+[[nodiscard]] bool same(const style::PaletteBlock& a, const style::PaletteBlock& b) noexcept {
+    return a.flags == b.flags && a.colours == b.colours;
+}
+
+/// The palette a frame draws in (FrameState::palette; null, the twin's and the checks', is today's).
+[[nodiscard]] const style::PaletteBlock& palette_of(const frame::FrameState& state) noexcept {
+    static const style::PaletteBlock today{};
+    return state.palette != nullptr ? *state.palette : today;
+}
+
 } // namespace
 
 /// The light of a new moment, done ahead on a thread of its own: the moment asked for, the tiles the frames drew while
@@ -76,11 +87,13 @@ struct Buildings::Ahead {
     /// so far starts afresh (the tiles lit for that one are let go of, and the one under way is dropped), the same one
     /// adds the tiles not asked for yet; `wake` is called from the thread once every tile asked for is lit. Whether
     /// every one is now.
-    [[nodiscard]] bool ask(const shaders::Theme& next, std::vector<Tile> drawn, const std::function<void()>& wake) {
+    [[nodiscard]] bool ask(const shaders::Theme& next, const style::PaletteBlock& in, std::vector<Tile> drawn,
+                           const std::function<void()>& wake) {
         {
             const std::scoped_lock lock(mutex);
-            if (!asked || !same(theme, next)) {
+            if (!asked || !same(theme, next) || !same(palette, in)) {
                 theme = next;
+                palette = in;
                 asked = true;
                 ++generation;
                 tiles.clear();
@@ -102,10 +115,10 @@ struct Buildings::Ahead {
     /// The tiles lit for moment `now` (every one when the frame waited for them), taken by the frame that takes it
     /// (the render thread), what their light cost the thread added to `lighting`; whatever was asked for, the thread
     /// rests until the next ask.
-    void take(const shaders::Theme& now, Lighting& lighting) {
+    void take(const shaders::Theme& now, const style::PaletteBlock& in, Lighting& lighting) {
         taken.clear();
         const std::scoped_lock lock(mutex);
-        if (asked && same(theme, now)) {
+        if (asked && same(theme, now) && same(palette, in)) {
             tiles.resize(lit);
             taken = std::move(tiles);
             lighting.ahead_tiles += lit;
@@ -161,14 +174,15 @@ struct Buildings::Ahead {
             const std::size_t i = lit;
             const std::shared_ptr<const BuildingTile> b = tiles[i].tile;
             const shaders::Theme at = theme;
+            const style::PaletteBlock in = palette;
             lock.unlock();
             const auto started = clock::now();
             std::vector<std::uint32_t> colours(std::size_t{b->faces} * 2);
             std::vector<std::uint32_t> reveals(b->window_walls, 0U);
             {
                 const trace::Section traced("atlas light ahead");
-                building_colours(at, b->lights, colours);
-                building_reveals(at, b->lights, b->window_faces, reveals);
+                building_colours(at, &in, b->lights, colours);
+                building_reveals(at, &in, b->lights, b->window_faces, reveals);
             }
             const double took = ms_since(started);
             lock.lock();
@@ -196,6 +210,7 @@ struct Buildings::Ahead {
     std::condition_variable idle;        ///< wait's
     // under mutex
     shaders::Theme theme{};
+    style::PaletteBlock palette{}; ///< the user's palette asked for with the theme
     bool asked = false;
     std::uint64_t generation = 0; ///< bumped as a moment is asked for afresh or taken: a tile under way is dropped
     std::vector<Tile> tiles;
@@ -212,8 +227,11 @@ Buildings::~Buildings() = default;
 bool Buildings::ready_for(const frame::FrameState& last, const shaders::Theme& next,
                           const std::function<void()>& wake) {
     asked_ahead_ = true;
-    // the light of the moment the frames show (the moment changed elsewhere in its block)
-    if (moment_ != 0 && std::ranges::equal(std::as_bytes(std::span(&next, 1)), theme_)) return true;
+    // the light of the moment the frames show (the moment changed elsewhere in its block), in the palette they show
+    const style::PaletteBlock& palette = palette_of(last);
+    if (moment_ != 0 && std::ranges::equal(std::as_bytes(std::span(&next, 1)), theme_) && same(palette, palette_)) {
+        return true;
+    }
     // the tiles the frame before drew, a tile once though it draws for several (a stand-in ancestor)
     std::vector<Ahead::Tile> drawn;
     if (last.cover != nullptr) {
@@ -230,7 +248,7 @@ bool Buildings::ready_for(const frame::FrameState& last, const shaders::Theme& n
     }
     if (drawn.empty()) return true; // nothing drawn to light ahead: a tile drawn then is lit as it is drawn
     if (!ahead_) ahead_ = std::make_unique<Ahead>();
-    return ahead_->ask(next, std::move(drawn), wake);
+    return ahead_->ask(next, palette, std::move(drawn), wake);
 }
 
 void Buildings::wait_ahead() {
@@ -238,7 +256,17 @@ void Buildings::wait_ahead() {
 }
 
 void Buildings::take_ahead(const shaders::Theme& theme) {
-    if (ahead_) ahead_->take(theme, lighting_);
+    if (ahead_) ahead_->take(theme, palette_, lighting_);
+}
+
+bool Buildings::new_moment(const frame::FrameState& state) {
+    const std::span<const std::byte> theme = std::as_bytes(std::span(&state.block.theme, 1));
+    const style::PaletteBlock& palette = palette_of(state);
+    if (moment_ != 0 && std::ranges::equal(theme, theme_) && same(palette, palette_)) return false;
+    std::ranges::copy(theme, theme_.begin());
+    palette_ = palette;
+    ++moment_;
+    return true;
 }
 
 void Buildings::drop_ahead() noexcept {
@@ -278,9 +306,9 @@ std::uint32_t Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme,
     const Ahead::Tile* ahead = ahead_ ? ahead_->find(tile.handle, &b) : nullptr;
     if (ahead == nullptr) {
         colours_.resize(std::size_t{b.faces} * 2);
-        building_colours(theme, b.lights, colours_);
+        building_colours(theme, &palette_, b.lights, colours_);
         reveals_.assign(b.window_walls, 0U);
-        building_reveals(theme, b.lights, b.window_faces, reveals_);
+        building_reveals(theme, &palette_, b.lights, b.window_faces, reveals_);
     }
     std::span<const std::uint32_t> colours = ahead != nullptr ? ahead->colours : colours_;
     const std::span<const std::uint32_t> reveals = ahead != nullptr ? ahead->reveals : reveals_;
