@@ -426,6 +426,9 @@ struct GroundFrame {
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
+    /// The app's map (FrameState::grounded): a line px wide takes its width at each of its points (LINE_METRES)
+    /// rather than at its one point, as the renders' frames do.
+    bool grounded = false;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;

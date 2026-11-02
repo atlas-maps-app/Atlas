@@ -15,9 +15,15 @@ static const uint LINE_LAYER = 32u; // its paint's alpha the path's opacity, its
 static const uint LINE_DASH = 64u;  // dashed along the screen, butt-ended (its dash table: passes/Lines.cpp)
 static const uint LINE_SHADOW = 128u; // a coaster track's shadow: its points (x, z, height), moved along the sun's offset
 static const uint LINE_POST = 256u;   // a post's shadow: its one point's foot to the point moved
-/// A dashed run's flags word holds its dash table's first word in the frame's words from this bit.
+/// Its width (a run's word 4) in metres on the ground, each point px at its own depth (the app's map): a painted line
+/// as wide as it lies wherever it lies, from the near plane on (stroke_vs).
+static const uint LINE_METRES = 512u;
+/// A dashed run's flags word holds its dash table's first word in the frame's words from this bit; a run in metres
+/// (never dashed) the px it is drawn over there, in hundredths of a CSS px (a big road's lines' 0.3; 0: everywhere).
 static const uint LINE_DASH_SHIFT = 10u;
 static const uint LINE_FLAG_BITS = 0x3FFu;
+/// px's least width (render/regions.py's px: max(0.25, w · focal / depth)), CSS px.
+static const float LINE_PX_LEAST = 0.25f;
 
 /// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
 static const uint LINE_HAIR = 0u;
@@ -72,15 +78,23 @@ struct Seg {
     bool round_join;
     uint cap;
     float hw;
+    float dw; // how much its half width grows a device px along it from a (a run in metres; 0: one width)
 };
 
+/// Its half width at `al` device px along it from a (held to its ends).
+inline float seg_hw(Seg g, float al) {
+    return g.hw + g.dw * clamp(al, 0.0f, g.len);
+}
+
 /// The shape of the segment from a to b (device px), its run's point before a and after b (`p`, `n`: where `info`, the
-/// line stage's LINE_HAS_ bits, has them), half its width and its run's LINE_ flags.
+/// line stage's LINE_HAS_ bits, has them), half its width (at a, the same along it until Seg.dw says otherwise) and its
+/// run's LINE_ flags.
 inline Seg seg_make(float2 a, float2 b, float2 p, float2 n, uint info, float hw, uint flags) {
     Seg g;
     g.a = a;
     g.b = b;
     g.hw = hw;
+    g.dw = 0.0f;
     g.prev = (info & LINE_HAS_PREV) != 0u;
     g.next = (info & LINE_HAS_NEXT) != 0u;
     g.cap = (flags & LINE_CAP_ROUND) != 0u ? 1u : ((flags & LINE_CAP_SQUARE) != 0u ? 2u : 0u);
@@ -121,52 +135,57 @@ inline Seg seg_make(float2 a, float2 b, float2 p, float2 n, uint info, float hw,
     return g;
 }
 
-/// SegGeom.coverage: G1's exact-area coverage of the pixel centred at c (device px).
+/// SegGeom.coverage: G1's exact-area coverage of the pixel centred at c (device px), its half width the one at the
+/// pixel's place along it (seg_hw), its join's and its end's b's.
 inline float seg_coverage(Seg g, float2 c) {
     float2 q = c - g.a;
     float al = dot(q, g.u);
     float pe = dot(q, g.n);
     if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return 0.0f;
     float2 r = c - g.b;
+    float hb = seg_hw(g, g.len);
     if (g.next && al > g.len) {
         if (dot(r, g.v) >= 0.0f) return 0.0f;
-        if (g.round_join) return radial(length(r), g.hw);
-        if (g.bevel) return g.ol < 1e-9f ? 0.0f : saturate(0.5f + g.hw * abs(dot(g.oi, g.o)) / g.ol - dot(r, g.o) / g.ol);
-        return saturate(0.5f + g.hw - dot(r, g.oi)) * saturate(0.5f + g.hw - dot(r, g.oo));
+        if (g.round_join) return radial(length(r), hb);
+        if (g.bevel) return g.ol < 1e-9f ? 0.0f : saturate(0.5f + hb * abs(dot(g.oi, g.o)) / g.ol - dot(r, g.o) / g.ol);
+        return saturate(0.5f + hb - dot(r, g.oi)) * saturate(0.5f + hb - dot(r, g.oo));
     }
     if (g.next && dot(r, g.sb) >= 0.0f) return 0.0f;
     if (!g.prev && g.cap == 1u && al < 0.0f) return radial(length(q), g.hw);
-    if (!g.next && g.cap == 1u && al > g.len) return radial(length(r), g.hw);
-    if (abs(pe) > g.hw + 1.0f) return 0.0f;
-    float strip = box_cdf(g.hw - pe, g.n.x, g.n.y) - box_cdf(-g.hw - pe, g.n.x, g.n.y);
+    if (!g.next && g.cap == 1u && al > g.len) return radial(length(r), hb);
+    float hw = seg_hw(g, al);
+    if (abs(pe) > hw + 1.0f) return 0.0f;
+    float strip = box_cdf(hw - pe, g.n.x, g.n.y) - box_cdf(-hw - pe, g.n.x, g.n.y);
     float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
-    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
+    float ext_b = (!g.next && g.cap == 2u) ? hb : 0.0f;
     float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
     float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
     return strip * (box_cdf(hi - al, g.u.x, g.u.y) - box_cdf(lo - al, g.u.x, g.u.y));
 }
 
-/// SegGeom.inside: whether the point x (device px) lies in the segment's shape.
+/// SegGeom.inside: whether the point x (device px) lies in the segment's shape, its half width the one at x's place
+/// along it (seg_hw), its join's and its end's b's.
 inline bool seg_inside(Seg g, float2 x) {
     float2 q = x - g.a;
     float al = dot(q, g.u);
     float pe = dot(q, g.n);
     if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return false;
     float2 r = x - g.b;
+    float hb = seg_hw(g, g.len);
     if (g.next && al > g.len) {
         if (dot(r, g.v) >= 0.0f) return false;
-        if (g.round_join) return length(r) <= g.hw;
-        if (g.bevel) return g.ol >= 1e-9f && dot(r, g.o) <= g.hw * abs(dot(g.oi, g.o));
-        return dot(r, g.oi) <= g.hw && dot(r, g.oo) <= g.hw;
+        if (g.round_join) return length(r) <= hb;
+        if (g.bevel) return g.ol >= 1e-9f && dot(r, g.o) <= hb * abs(dot(g.oi, g.o));
+        return dot(r, g.oi) <= hb && dot(r, g.oo) <= hb;
     }
     if (g.next && dot(r, g.sb) >= 0.0f) return false;
     if (!g.prev && g.cap == 1u && al < 0.0f) return length(q) <= g.hw;
-    if (!g.next && g.cap == 1u && al > g.len) return length(r) <= g.hw;
+    if (!g.next && g.cap == 1u && al > g.len) return length(r) <= hb;
     float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
-    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
+    float ext_b = (!g.next && g.cap == 2u) ? hb : 0.0f;
     float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
     float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
-    return abs(pe) <= g.hw && al >= lo && al <= hi;
+    return abs(pe) <= seg_hw(g, al) && al >= lo && al <= hi;
 }
 
 /// Strokes.hairline's coverage of the pixel at integer (px, py) (device px of the view): Skia's anti-aliased hairline,

@@ -13,6 +13,14 @@
 // painter slot) and the runs' segments instances, in the renders' order: draw_over's in the over phase, the marks in
 // theirs. One instanced draw each: every segment a quad whose coverage the line stage finds as RefRaster does
 // (shaders/ground/ground.slang).
+//
+// In the app's map (GroundFrame::grounded) a line px wide (a big road's edge and lane lines, a runway's centre line, a
+// taxiway's line, a stand's lead-in) is a painted line on the ground instead: its run holds its metres (LINE_METRES)
+// and the line stage takes px at each of its points' own depth, a big road's lines drawn where that is over 0.3. The
+// renders' one width at the line's middle point is the px of wherever that point lies, so where it lay beside or
+// behind the camera every metre of the line took w · focal px (a taxiway's 0.3 m some 390 dp on a phone) and the line
+// covered the ground about it (the user, 2 November: the yellow at Schiphol "glitches out and covers and takes over
+// much more area", and the N245's lines at 52.69297, 4.77424, a way of five points over 1.8 km).
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -45,6 +53,21 @@ namespace {
 
 [[nodiscard]] std::uint32_t rgba_of(const geo::Paint& paint, bool night) noexcept {
     return (night ? paint.night : paint.day).packed();
+}
+
+/// The px a line px wide is drawn over: a big road's lines' 0.3 (regions.py: `if sw > 0.3`), else 0 (drawn however
+/// thin, at px's least 0.25).
+[[nodiscard]] double px_cut(geo::StrokeKind kind) noexcept {
+    return kind == geo::StrokeKind::edges || kind == geo::StrokeKind::lanes ? 0.3 : 0.0;
+}
+
+/// The least depth of a fill's box on the ground at its height: a corner's, as depth goes affinely over the plane.
+[[nodiscard]] double nearest_depth(const view::Camera& cam, const geo::Fill& f) noexcept {
+    double least = std::numeric_limits<double>::infinity();
+    for (const double x : {f.x0, f.x1}) {
+        for (const double z : {f.z0, f.z1}) least = std::min(least, cam.depth({x, f.y, z}));
+    }
+    return least;
 }
 
 /// A dashed polyline's dash table (stroke_vs reads it): its dash and the pattern's period (CSS px), then each point's
@@ -103,8 +126,15 @@ void Ground::decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDec
             // regions.py's px(cam, w, p): max(0.25, w * focal / max(depth at the ground, 1))
             const view::Vec3 k = cam.cam({s.width.at.x, 0.0, s.width.at.z});
             width = pm::max(0.25, (s.width.metres * cam.focal()) / pm::max(k.z, 1.0));
-            // a big road's lines: `if sw > 0.3`
-            if ((s.kind == geo::StrokeKind::edges || s.kind == geo::StrokeKind::lanes) && !(width > 0.3)) continue;
+            // a big road's lines: `if sw > 0.3`; in the app's map the line stage cuts them by each point's own px,
+            // so a road under the camera keeps its lines however far its middle point lies, and they are left out
+            // here only where all of their asphalt lies beyond the depth of that px (2 m spare for the GPU's floats)
+            const double cut = px_cut(s.kind);
+            if (cut > 0 && !f.grounded && !(width > cut)) continue;
+            if (cut > 0 && f.grounded && s.fill &&
+                !(nearest_depth(cam, g.fills[*s.fill]) - 2.0 <= (s.width.metres * cam.focal()) / cut)) {
+                continue;
+            }
             if (f.exact) width = printed(width, 2);
         }
         d.stroke_drawn[i] = 1;
@@ -199,7 +229,15 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         const geo::GroundTile& g = *tile.ground;
         const geo::Stroke& s = g.strokes[d.stroke];
         const std::uint32_t base = (tile.pass->ranges[1].offset / 4) + g.layout.points.first;
-        const auto width = static_cast<float>(frame_.stroke_width[tile.strokes + d.stroke]);
+        // the app's map: a line px wide in its metres, each point px at its own depth (LINE_METRES), drawn over its cut
+        // (hundredths of a CSS px where a dashed run's table would be: such a line is never dashed)
+        const bool metres = frame_.grounded && s.width.css == 0.0;
+        ATLAS_ASSERT(!metres || s.dash[0] == 0);
+        const std::uint32_t in_metres =
+            metres ? shaders::LINE_METRES |
+                         (static_cast<std::uint32_t>(std::lround(px_cut(s.kind) * 100.0)) << shaders::LINE_DASH_SHIFT)
+                   : 0U;
+        const auto width = static_cast<float>(metres ? s.width.metres : frame_.stroke_width[tile.strokes + d.stroke]);
         for (std::uint32_t p = s.first; p < s.first + s.count; ++p) {
             const geo::Polyline& pl = g.polylines[p];
             // its segments: a polyline's between its points, a pair polyline's lines
@@ -214,7 +252,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             words.push_back(d.slot);
             // butt caps, miter joins (limit 4): the SVG's defaults; a sett road's courses: lines of their own, the
             // path's opacity a layer (the paint's alpha); a park's edge dashed along the screen
-            std::uint32_t flags = pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U;
+            std::uint32_t flags = (pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U) | in_metres;
             if (s.dash[0] > 0 && placer) {
                 flags |= shaders::LINE_DASH;
                 dashed.emplace_back(words.size(), tables.size());
@@ -309,6 +347,8 @@ void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::
             const geo::Rgba c = frame_.night ? s.paint.night : s.paint.day;
             st.stroke =
                 twin::Paint::colour(0xFF00'0000U | (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | c.b);
+            // the renders' one width (the twin is their frames': the app's map, whose lines in metres widen along
+            // them, emits none)
             st.stroke_width = static_cast<float>(frame_.stroke_width[t.strokes + i]);
             // a park's edge's stroke-dasharray
             const std::array<float, 2> dash{static_cast<float>(s.dash[0]), static_cast<float>(s.dash[1])};

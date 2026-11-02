@@ -668,6 +668,7 @@ bool Ground::decide(const frame::FrameState& state) {
     f.night = state.theme.has(style::theme_flag::night);
     f.wet = state.theme.has(style::theme_flag::wet);
     f.engine = state.camera.has(style::camera_flag::engine_mode) && state.placed.has_value();
+    f.grounded = state.grounded;
     f.radius = 0;
     f.ground_r = view::default_ground_r;
     f.target_x = 0;

@@ -801,6 +801,13 @@ ColourOut soft_fs(ScreenOut v) {
 // coverage (the strip's area times the pixel box's along it, trimmed at the bisectors with its neighbours, the join's
 // wedge drawn by the segment that ends there), a wider one by the samples inside its shape (the standard sample
 // positions). A run's points behind the near plane end it (line_d's runs): a segment with an end there folds away.
+//
+// A run in metres (LINE_METRES: the app's map's markings, a taxiway's line, a big road's) is a painted line on the
+// ground: each end of a segment px at its own depth, max(0.25, w · focal / depth), the half width between them along
+// it (as 1 / depth goes on the screen), so it is never wider than it lies wherever the renders' one point of the line
+// (its middle) is, even behind the camera. Its segments are kept between the near plane and the depth where the px
+// reaches its cut (a big road's lines' 0.3), an end beyond either moved along it to that depth, a free end there. A
+// pixel of it takes the coverage of the width it is drawn at there (a hairline's, the exact area's or the samples').
 
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
@@ -810,11 +817,14 @@ struct StrokeOut {
     nointerpolation float4 colour : COLOR0; // the paint, premultiplied
     nointerpolation float4 ab : TEXCOORD0;  // its ends a and b, device px of the view
     nointerpolation float4 pn : TEXCOORD1;  // the point before a and the point after b (where LINE_HAS_PREV, _NEXT)
-    nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px) as bits; z: the
-                                            // run's LINE_ flags, and from bit 16 a layer run's line's reach (how many
-                                            // lines before it it looks back at); w: its instance word (run << 14 | segment)
+    nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px, at a) as bits;
+                                            // z: the run's LINE_ flags, and from bit 16 a layer run's line's reach
+                                            // (how many lines before it it looks back at); w: its instance word
+                                            // (run << 14 | segment)
     nointerpolation float4 dash : TEXCOORD3; // a dashed run's (in_dash): its start's place in the pattern, the dash and
                                              // the period (device px), 1; else 0
+    nointerpolation float taper : TEXCOORD4; // a run in metres': how much the half width grows a device px along it
+                                             // (Seg.dw); else 0
 };
 
 /// A run's point k in its tile's metres, at height y.
@@ -859,6 +869,17 @@ float2 device_of(float3 k) {
 static const float2 quad_corners[6] = {float2(-1.0f, -1.0f), float2(1.0f, -1.0f), float2(1.0f, 1.0f),
                                        float2(-1.0f, -1.0f), float2(1.0f, 1.0f),  float2(-1.0f, 1.0f)};
 
+/// The point of the segment from camera coordinates k0 to k1 at depth z (k0's depth differing from k1's).
+float3 at_depth(float3 k0, float3 k1, float z) {
+    return k0 + (k1 - k0) * ((z - k0.z) / (k1.z - k0.z));
+}
+
+/// A run in metres' neighbour k of its end `end`: k, or where the segment from `end` to k passes the near plane (a
+/// point behind it has no place on the screen; any point of the segment ahead of it gives the join's direction).
+float3 ahead_toward(float3 end, float3 k, float near) {
+    return k.z < near ? at_depth(end, k, near) : k;
+}
+
 [shader("vertex")]
 StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
     uint word = words[push.mode.z + instance];
@@ -879,6 +900,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     o.pn = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.info = uint4(0u, 0u, 0u, 0u);
     o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.taper = 0.0f;
     // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours; a post's shadow its point's
     // foot to the point moved
     bool pairs = (flags & LINE_PAIRS) != 0u;
@@ -888,8 +910,42 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow);
     float3 kb = post ? local_camera(tile, shadow_local(first, 0u, y, true))
                      : stroke_point(tile, first, ia + 1u, y, shadow);
-    // a segment with an end behind the near plane is no part of a run
-    if (ka.z < frame.camera.frame.w || kb.z < frame.camera.frame.w) {
+    float near = frame.camera.frame.w;
+    float focal = frame.camera.forward.w;
+    // a run in metres: the part of the segment between the near plane and the depth where its px is its cut (none:
+    // as far as it goes), each end beyond them moved to the depth it passes and free there
+    bool metres = (flags & LINE_METRES) != 0u;
+    float cut = float(table) * 0.01f;
+    float far = metres && cut > 0.0f ? width * focal / cut : 3.0e38f;
+    bool free_a = false;
+    bool free_b = false;
+    if (metres) {
+        float lo = 0.0f;
+        float hi = 1.0f;
+        float dz = kb.z - ka.z;
+        if (dz != 0.0f) {
+            float tn = (near - ka.z) / dz;
+            float tf = (far - ka.z) / dz;
+            lo = max(lo, min(tn, tf));
+            hi = min(hi, max(tn, tf));
+        } else if (ka.z < near || ka.z > far) {
+            hi = -1.0f;
+        }
+        if (!(lo < hi)) {
+            o.position = FOLDED;
+            return o;
+        }
+        float3 k0 = ka;
+        if (lo > 0.0f) {
+            ka = k0 + (kb - k0) * lo;
+            free_a = true;
+        }
+        if (hi < 1.0f) {
+            kb = k0 + (kb - k0) * hi;
+            free_b = true;
+        }
+    } else if (ka.z < near || kb.z < near) {
+        // a segment with an end behind the near plane is no part of a run
         o.position = FOLDED;
         return o;
     }
@@ -898,23 +954,31 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint info = 0u;
     float2 p = a;
     float2 n = b;
-    if (!pairs && !post && seg > 0u) {
+    if (!pairs && !post && seg > 0u && !free_a) {
         float3 kp = stroke_point(tile, first, seg - 1u, y, shadow);
-        if (kp.z >= frame.camera.frame.w) {
+        if (metres) kp = ahead_toward(ka, kp, near);
+        if (metres || kp.z >= near) {
             p = device_of(kp);
             info |= LINE_HAS_PREV;
         }
     }
-    if (!pairs && !post && seg + 2u < count) {
+    if (!pairs && !post && seg + 2u < count && !free_b) {
         float3 kn = stroke_point(tile, first, seg + 2u, y, shadow);
-        if (kn.z >= frame.camera.frame.w) {
+        if (metres) kn = ahead_toward(kb, kn, near);
+        if (metres || kn.z >= near) {
             n = device_of(kn);
             info |= LINE_HAS_NEXT;
         }
     }
     float density = frame.camera.frame.z;
     float hw = width * density * 0.5f;
-    float wide = 2.0f * hw;
+    float hb = hw;
+    if (metres) {
+        // px at each end's own depth, regions.py's rule a point at a time
+        hw = max(LINE_PX_LEAST, width * focal / ka.z) * density * 0.5f;
+        hb = max(LINE_PX_LEAST, width * focal / kb.z) * density * 0.5f;
+    }
+    float wide = 2.0f * max(hw, hb);
     // a dashed run by its samples whatever its width (a park's edge is wider than two pixels anyway)
     bool dashed = (flags & LINE_DASH) != 0u;
     info |= dashed ? LINE_SAMPLES : (wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES));
@@ -929,10 +993,29 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float len = length(d);
     float2 u = len > 1e-6f ? d / len : float2(1.0f, 0.0f);
     float2 v = float2(-u.y, u.x);
-    float reach = hw * 4.0f + 2.0f;
     float2 c = quad_corners[vertex];
-    // around a join the wedge stands out across too (a miter reaches four half widths): the quad as wide as it is long
-    float2 at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
+    float2 at;
+    if (!metres) {
+        float reach = hw * 4.0f + 2.0f;
+        // around a join the wedge stands out across too (a miter reaches four half widths): the quad as wide as it is
+        // long
+        at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
+    } else {
+        // each end's reach as above, the quad about the two discs of them: bounded by their outer tangents (whose
+        // sine is the reaches' difference over the length) and beyond each end by its reach, or where one disc all
+        // but holds the other, the box of both
+        float ra = hw * 4.0f + 2.0f;
+        float rb = hb * 4.0f + 2.0f;
+        float s = (rb - ra) / max(len, 1e-6f);
+        if (abs(s) < 0.8f) {
+            float k = 1.0f / sqrt(1.0f - s * s);
+            at = c.x < 0.0f ? a - u * ra + v * (c.y * ra * (1.0f - s) * k) : b + u * rb + v * (c.y * rb * (1.0f + s) * k);
+        } else {
+            float r = max(ra, rb);
+            at = a + u * (c.x < 0.0f ? min(-ra, len - rb) : max(ra, len + rb)) + v * (c.y * r);
+        }
+        o.taper = len > 1e-6f ? (hb - hw) / len : 0.0f;
+    }
     float2 css = at / density;
     o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, slot));
     float4 paint = unpack(colour);
@@ -948,9 +1031,12 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     return o;
 }
 
-/// A fragment's segment: its ends and neighbours as the vertex stage found them.
+/// A fragment's segment: its ends and neighbours as the vertex stage found them, its half width growing along it as
+/// the vertex stage tapered it.
 Seg seg_of(StrokeOut s) {
-    return seg_make(s.ab.xy, s.ab.zw, s.pn.xy, s.pn.zw, s.info.x, asfloat(s.info.y), s.info.z);
+    Seg g = seg_make(s.ab.xy, s.ab.zw, s.pn.xy, s.pn.zw, s.info.x, asfloat(s.info.y), s.info.z);
+    g.dw = s.taper;
+    return g;
 }
 
 /// A pair run (a sett road's courses) as setts.slangh reads it: its tile, its points' first word, their count and their
@@ -1040,6 +1126,13 @@ StrokeOutput stroke_fs(StrokeOut s) {
     uint n = push.mode.w;
     StrokeOutput o;
     uint mode = s.info.x & 3u;
+    if (s.taper != 0.0f) {
+        // a run in metres tapers: the mode of its width at the pixel's place along it, so its thin far end is drawn as
+        // a line that thin is (by its area or as a hairline) and its wide near end by its samples
+        float2 at = device_at(corner + 0.5f);
+        float wide = 2.0f * seg_hw(g, dot(at - g.a, g.u));
+        mode = wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES);
+    }
     // a sett road's courses: one layer at the paint's alpha (ground/setts.slangh), each line's share of it
     bool layer = (s.info.z & LINE_LAYER) != 0u;
     SettRun run = {0u, 0u, 0u, 0.0f};
@@ -1069,8 +1162,9 @@ StrokeOutput stroke_fs(StrokeOut s) {
     float2 centre = device_at(corner + 0.5f);
     float cov;
     if (mode == LINE_HAIR) {
-        // the pixel of the view's device grid the output's pixel is (a turned output keeps the grid)
-        cov = hair_coverage(g, floor(centre), 2.0f * g.hw);
+        // the pixel of the view's device grid the output's pixel is (a turned output keeps the grid), its alpha the
+        // width at the pixel's place along it
+        cov = hair_coverage(g, floor(centre), 2.0f * seg_hw(g, dot(centre - g.a, g.u)));
     } else {
         cov = g.len < 1e-9f ? 0.0f : seg_coverage(g, centre);
     }
@@ -1692,6 +1786,7 @@ StrokeOut lit_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInsta
     o.pn = float4(p, n);
     o.info = uint4(info, asuint(hw), LINE_CAP_ROUND | LINE_JOIN_ROUND, word);
     o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.taper = 0.0f;
     return o;
 }
 
