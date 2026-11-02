@@ -135,3 +135,21 @@ TEST_CASE("a building's colour goes with the nearest wall or roof slot, its own 
     CHECK(building_today(87) == 0x56585CU);
     CHECK(building_today(19) == 0U);
 }
+
+TEST_CASE("a guessed flat roof carries one of the three mid greys, its own where it is one") {
+    using atlas::style::flat_roof_slot;
+    using atlas::style::slot_grey_shift;
+    constexpr std::uint32_t grey_1 = 1U << slot_grey_shift;
+    // a mid grey keeps its own, whatever the id
+    CHECK(flat_roof_slot(84, 7) == (84U | grey_1));
+    CHECK(flat_roof_slot(86, 7) == (86U | (3U << slot_grey_shift)));
+    // the bitumen, the gravel and the dark tiles take the one the id picks
+    CHECK(flat_roof_slot(87, 30) == (87U | grey_1));
+    CHECK(flat_roof_slot(88, 31) == (88U | (2U << slot_grey_shift)));
+    CHECK(flat_roof_slot(81, 32) == (81U | (3U << slot_grey_shift)));
+    // a mapped roof, a houseboat's paint, a roof in its walls' colour and none keep their words
+    CHECK(flat_roof_slot(atlas::style::slot_mapped | 87U, 30) == (atlas::style::slot_mapped | 87U));
+    CHECK(flat_roof_slot(atlas::style::slot_guessed, 30) == atlas::style::slot_guessed);
+    CHECK(flat_roof_slot(51, 30) == 51U);
+    CHECK(flat_roof_slot(0, 30) == 0U);
+}

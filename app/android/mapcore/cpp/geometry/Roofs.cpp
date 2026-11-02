@@ -3,6 +3,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Ground.hpp"
+#include "style/Palette.hpp"
 #include "tiles/layers/Buildings.hpp"
 
 #include <array>
@@ -428,7 +429,9 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
     } else if (is(bl.roof, "mansard") && rh != 0.0) {
         mansard(b, bl, variant);
     } else {
-        top(b, poly, h, PrimKind::top, variant, b.sample++, bl.v.roof_rgb, bl.v.roof_slot);
+        // a flat top: a guessed one carries the mid grey the palette's flat greys give it
+        top(b, poly, h, PrimKind::top, variant, b.sample++, bl.v.roof_rgb,
+            static_cast<std::uint16_t>(style::flat_roof_slot(bl.v.roof_slot, bl.id)));
     }
 }
 

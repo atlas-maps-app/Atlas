@@ -472,6 +472,7 @@ struct GroundFrame {
     /// draw_over's park shadows: by day with the moment's own sun (th['_L'], `light`) over 0.05; the woods' drawn
     /// (their trees' bits among each tile's shadows'), a union of its own; the coaster tracks', element by element.
     bool park_sun = false;
+    bool planted = true; ///< the woods' planted trees drawn, and so their shadows (the palette's guesses on)
     std::array<double, 3> light{};
     bool woods = false;
     std::vector<TrackShadow> track_shadows;

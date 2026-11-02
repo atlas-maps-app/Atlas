@@ -266,6 +266,10 @@ struct GridLine {
     return wall;
 }
 
+// with the palette's guesses off, a guessed wall or roof is drawn in the clay a building the looks guess nothing for
+// has
+static_assert(style::plain_building == clay_rgb);
+
 // ---------------------------------------------------------------- the quays
 
 /// One of water_edges' edges: its ring (a water ring, or an island), its ends (the ring's vertices) and whether its

@@ -589,6 +589,8 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
     const double focal = camera.focal();
     // woods.draw's sun: by day, the sun above the horizon (L[1] > 0.05)
     const bool sun = !night && state.theme.sun_vector[1] > 0.05;
+    // the trees a park or a zoo plants in its woods, a guess: none with the user's palette's guesses off
+    const bool planted = state.palette == nullptr || !state.palette->has(style::palette_flag::no_guesses);
     for (std::size_t c = 0; c < tiles.size(); ++c) {
         const scene::CoverTile& t = tiles[c];
         if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
@@ -656,6 +658,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
             const view::Vec3 b = drawn_point(it.bx, it.bz);
             // a wood's tree: `if not q0 or not (-30 < q0[0] < cam.W + 30 and -30 < q0[1] < cam.H + 30): continue`
             if (it.kind == geometry::RegionItemKind::wood) {
+                if (!planted) continue;
                 const std::optional<view::Vec2> q0 = camera.proj({a.x, it.h * 0.7, a.z});
                 if (!q0 || !in_picture(*q0, 30)) continue;
             }

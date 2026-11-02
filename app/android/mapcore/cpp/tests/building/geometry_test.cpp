@@ -1138,3 +1138,39 @@ TEST_CASE(
     atlas::passes::building_reveals(theme, nullptr, std::span(&moved, 1), faces, moved_reveal);
     CHECK(reveal == moved_reveal);
 }
+
+TEST_CASE("buildings: the flat greys give a guessed flat roof its mid grey, the guesses off paint guesses plain") {
+    using atlas::passes::BuildingLight;
+    using atlas::passes::painted;
+    namespace st = atlas::style;
+    const auto word = [](std::uint32_t slot, std::int64_t id) {
+        return static_cast<std::uint16_t>(st::flat_roof_slot(slot, id));
+    };
+    const BuildingLight bitumen{.base = 0x56585CU, .slot = word(87, 31)}; // the second grey's
+    const BuildingLight jittered{.base = 0x5A5C61U, .slot = word(87, 31)};
+    const BuildingLight grey{.base = 0x8C8882U, .slot = word(85, 30)}; // a mid grey keeps its own
+    const BuildingLight gable{.base = 0x4A3E3AU, .slot = 81};          // a pitched roof carries none
+    const BuildingLight mapped{.base = 0x56585CU, .slot = word(st::slot_mapped | 87U, 31)};
+    const BuildingLight wall{.base = 0x8A5040U, .slot = 51};
+    const BuildingLight boat{.base = 0x2F4A3AU, .slot = static_cast<std::uint16_t>(st::slot_guessed)};
+    const BuildingLight clay{.base = 0xE4E0D8U, .slot = 0};
+    const st::PaletteBlock today{};
+    for (const BuildingLight& l : {bitumen, jittered, grey, gable, mapped, wall, boat, clay}) {
+        CHECK(painted(&today, l) == l.base);
+    }
+    st::PaletteBlock greys{};
+    greys.flags = st::palette_flag::flat_greys;
+    CHECK(painted(&greys, bitumen) == 0x8C8882U);  // the second mid grey today, exactly
+    CHECK(painted(&greys, jittered) != 0x8C8882U); // a tone of it
+    CHECK(painted(&greys, grey) == grey.base);
+    CHECK(painted(&greys, gable) == gable.base);
+    CHECK(painted(&greys, mapped) == mapped.base);
+    greys.colours.at(85) = 0x01707070U;
+    CHECK(painted(&greys, bitumen) == 0x707070U); // the user's second grey
+    CHECK(painted(&greys, grey) != grey.base);
+    st::PaletteBlock plain{};
+    plain.flags = st::palette_flag::no_guesses | st::palette_flag::flat_greys;
+    for (const BuildingLight& l : {bitumen, grey, gable, wall, boat}) CHECK(painted(&plain, l) == st::plain_building);
+    CHECK(painted(&plain, mapped) == mapped.base);
+    CHECK(painted(&plain, clay) == clay.base);
+}

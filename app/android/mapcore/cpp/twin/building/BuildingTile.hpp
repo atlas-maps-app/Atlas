@@ -215,7 +215,9 @@ struct BuildingTile {
 
 /// A face's base colour as the user's palette has it (0xRRGGBB): moved with its slot (style::paint, the slot's colour
 /// today its own); its base itself without a slot, by today's palette (null, or no colour for its slot), or where it
-/// is a mapped colour and the palette does not let mapped colours follow.
+/// is a mapped colour and the palette does not let mapped colours follow. With the palette's guesses off a guessed
+/// colour is the plain clay (style::plain_building); with its flat greys a guessed flat roof moves from its own slot's
+/// colour to its mid grey's (style::flat_roof_slot).
 [[nodiscard]] std::uint32_t painted(const style::PaletteBlock* palette, const BuildingLight& light) noexcept;
 /// Every face's colours at the theme `theme` in the user's palette `palette` (null: today's), lit and unlit (0xBBGGRR:
 /// light.slang's light() and tohex in binary64, the port's bits), two words a face, into `out` (2 · lights.size()

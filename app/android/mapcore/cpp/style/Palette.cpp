@@ -115,6 +115,17 @@ std::uint32_t building_today(std::uint32_t code) noexcept {
     return 0;
 }
 
+std::uint32_t flat_roof_slot(std::uint32_t slot, std::int64_t id) noexcept {
+    const std::uint32_t code = slot & 0xFFU;
+    const bool roof = std::ranges::any_of(roof_slots, [code](const SlotColour& s) { return s.code == code; });
+    if ((slot & (slot_mapped | slot_guessed)) != 0U || !roof) return slot;
+    const auto first = static_cast<std::uint32_t>(palette_slot::flat_grey_1);
+    const std::uint32_t grey = code >= first && code < first + 3U
+                                   ? code - first
+                                   : static_cast<std::uint32_t>(static_cast<std::uint64_t>(id) % 3U);
+    return slot | ((grey + 1U) << slot_grey_shift);
+}
+
 std::optional<std::size_t> land_slot(std::string_view kind) noexcept {
     namespace slot = palette_slot;
     static constexpr std::array<std::pair<std::string_view, std::size_t>, 35> kinds{{

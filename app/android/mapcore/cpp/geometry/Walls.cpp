@@ -113,8 +113,8 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.orient = l.string(s.orient, i);
     v.wall_rgb = static_cast<std::uint32_t>(l.integer(s.wall_rgb, i)) & 0xFF'FFFFU;
     v.roof_rgb = static_cast<std::uint32_t>(l.integer(s.roof_rgb, i)) & 0xFF'FFFFU;
-    v.wall_slot = static_cast<std::uint16_t>(l.integer(s.wall_slot, i) & 0x1FF);
-    v.roof_slot = static_cast<std::uint16_t>(l.integer(s.roof_slot, i) & 0x1FF);
+    v.wall_slot = static_cast<std::uint16_t>(l.integer(s.wall_slot, i) & 0x3FF);
+    v.roof_slot = static_cast<std::uint16_t>(l.integer(s.roof_slot, i) & 0x3FF);
     v.relation = l.string(s.otype, i).value_or(std::string_view{}) == "relation";
     v.btype = l.string(s.tag_building, i);
     v.part_tag = l.string(s.tag_part, i).has_value();
@@ -633,6 +633,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, i));
             const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
             bl.v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
+            bl.id = l->integer(tl::building::id, i);
             ring_at(l->ring(tl::building::ring, i), in.level, frame, kept, bl.poly);
             // BuildingSamples::all: an outline drawn by its parts, or one without a height, is never drawn
             if (bl.v.hidden && source == Source::building) continue;

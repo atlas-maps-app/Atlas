@@ -49,6 +49,7 @@ inline constexpr std::size_t setts = 35;
 inline constexpr std::size_t concrete_paving = 36;
 inline constexpr std::size_t brick_paving = 37;
 inline constexpr std::size_t boardwalk = 38;
+inline constexpr std::size_t flat_grey_1 = 84; // the first of the flat roofs' three mid greys
 inline constexpr std::size_t leaves = 112;
 inline constexpr std::size_t evergreen = 113;
 inline constexpr std::size_t bark = 114;
@@ -111,6 +112,7 @@ inline constexpr std::array<SlotColour, 12> roof_slots{{{.code = 80, .today = 0x
                                                         {.code = 89, .today = 0x535C66U},
                                                         {.code = 90, .today = 0x737E88U},
                                                         {.code = 91, .today = 0x7A8187U}}};
+static_assert(roof_slots[4].code == palette_slot::flat_grey_1 && roof_slots[4].today == 0x7E7A74U);
 
 /// A wall_slot's or roof_slot's bit for a colour OpenStreetMap maps (its code the nearest slot's): drawn as mapped
 /// unless the palette's mapped colours follow.
@@ -118,6 +120,14 @@ inline constexpr std::uint32_t slot_mapped = 256U;
 /// Their bit for a colour Atlas guessed that goes with no slot (a houseboat's paint, code 0): drawn as it is, and plain
 /// where the palette's guesses are off.
 inline constexpr std::uint32_t slot_guessed = 512U;
+/// A face's slot word (geometry::Face::slot) holds its building's wall_slot or roof_slot and, for a guessed flat roof,
+/// above them, which of the three mid greys from palette_slot::flat_grey_1 it takes (1 to 3) where the palette's flat
+/// greys are on.
+inline constexpr std::uint32_t slot_grey_shift = 10U;
+
+/// The colour a guessed wall or roof is drawn in where the palette's guesses are off: the clay (load/Tables.hpp's
+/// clay_rgb), as the cut draws a building the looks guess nothing for.
+inline constexpr std::uint32_t plain_building = 0xE4E0D8U;
 
 /// The code of the slot of `slots` nearest `rgb` (0xRRGGBB): the least sum of the channels' squared differences, the
 /// first on a tie. Integers alone, so the cut's Kotlin twin (SceneToTiles's BuildingSlots) finds the same.
@@ -125,6 +135,11 @@ inline constexpr std::uint32_t slot_guessed = 512U;
 
 /// A wall's or a roof's slot's colour today (0xRRGGBB), 0 for a code that is neither.
 [[nodiscard]] std::uint32_t building_today(std::uint32_t code) noexcept;
+
+/// A flat roof's slot word with its mid grey (slot_grey_shift): a guessed roof colour (a roof's slot, neither mapped
+/// nor without a slot) takes its own where it is one of the three, else the one its OpenStreetMap id `id` picks
+/// (id % 3); any other word as it is.
+[[nodiscard]] std::uint32_t flat_roof_slot(std::uint32_t slot, std::int64_t id) noexcept;
 
 /// The slot a land kind's colour goes with (the style's `land`): the built land the paper's, the open green land the
 /// lawns', the forest, the scrub, the wetland and the heath the woods', a pedestrian area the squares', a parking and

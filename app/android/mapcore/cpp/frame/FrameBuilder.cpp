@@ -13,6 +13,7 @@
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
+#include "style/Palette.hpp"
 #include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
 #include "view/Snap.hpp"
@@ -378,6 +379,10 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.routes = inputs_.routes;
     state_.asked = inputs_.asked;
     state_.palette = inputs_.palette;
+    // Atlas's guesses off (the user's palette): the map leaves out the buildings' parts it guesses
+    if (state_.palette != nullptr && state_.palette->has(style::palette_flag::no_guesses)) {
+        state_.camera.parts |= style::camera_part::guessed;
+    }
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
