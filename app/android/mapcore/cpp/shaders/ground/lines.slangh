@@ -24,6 +24,8 @@ static const uint LINE_DASH_SHIFT = 10u;
 static const uint LINE_FLAG_BITS = 0x3FFu;
 /// px's least width (render/regions.py's px: max(0.25, w · focal / depth)), CSS px.
 static const float LINE_PX_LEAST = 0.25f;
+/// A coaster track's shadow's (coasters.draw's: max(0.5, w)), CSS px.
+static const float LINE_SHADOW_PX_LEAST = 0.5f;
 
 /// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
 static const uint LINE_HAIR = 0u;

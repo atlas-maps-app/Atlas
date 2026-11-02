@@ -7,7 +7,8 @@
 //     the tile's place in the frame's tile table), each vertex placed by its tile, projected as camera.slang projects
 //     (snapped at rest), at its fill's painter depth: its group's base and stride from the frame's slot table, its
 //     order and sub-element (geometry/Ground.hpp), in its day or night colour or the theme's. A fill the frame does not
-//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away.
+//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away. In the app's map a big road's
+//     asphalt is as wide as the road (GROUND_WIDE), where the renders lay it half as wide.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
@@ -104,6 +105,10 @@ static const uint GROUND_NIGHT = 1u;       // the night colours
 static const uint GROUND_WATER_LEVEL = 2u; // water_vs: the pieces at their water level (wclip), else at the street (w0)
 static const uint GROUND_VISIBLE_ALL = 4u; // every fill drawn (the frame's decisions not applied)
 static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Ripple.cpp): the upright view, its own colours
+static const uint GROUND_WIDE = 16u;       // fill_vs: a big road's asphalt as wide as the road (the app's map)
+
+/// draw_over's big roads' painter group (geometry::group::over + 1): their asphalt is its one fill.
+static const uint GROUP_BIG = 25u;
 
 /// A tile's record in the tile table: 20 words.
 static const uint TILE_WORDS = 20u;
@@ -208,6 +213,24 @@ bool in_mat(uint group) {
     return group == 4u || (group >= 8u && group < 32u) || group >= 64u;
 }
 
+/// A big road's asphalt's vertex v at (x, z), as wide as the road (GROUND_WIDE): render's ribbon(pts, w / 2) lays its
+/// sides w / 4 from the centreline, where the road's edge lines lie at w / 2 - 0.5, so each side point moves twice as
+/// far from the centreline, the middle of it and its mirror on the other side. The ribbon's vertices are its left side,
+/// then its right side reversed, so a point and its mirror sum to the same s throughout; its quads are the triangles
+/// (l, l + 1, s - l - 1) and (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle tells s, the first
+/// kind where its second corner follows its first. The tile's triangle lists follow its vertices' words, 3 a vertex,
+/// and hold whole triangles, so a word's corner is its place past the tile's first word, mod 3.
+float2 wide_point(uint tile, uint index, uint v, float2 p) {
+    uint base = tile_word(tile, 8u);
+    uint t0 = index - (index - base) % 3u;
+    uint a = ground_word(t0);
+    uint b = ground_word(t0 + 1u);
+    uint s = ground_word(t0 + 2u) + (b == a + 1u ? b : a);
+    uint at = base + tile_word(tile, 9u) + 3u * (s - v);
+    float2 m = float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+    return 2.0f * p - 0.5f * (p + m);
+}
+
 /// A fill's vertex: its index from the ground heap at word `index` (the draw's firstVertex counts the words), its tile
 /// the instance (the draw's firstInstance).
 [shader("vertex")]
@@ -232,6 +255,11 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     uint ranks = tile_word(tile, 19u);
     uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
     uint c = repainted((push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u));
+    if ((push.mode.x & GROUND_WIDE) != 0u && (gs & 0xFFFFu) == GROUP_BIG) {
+        float2 w = wide_point(tile, index, v, float2(x, z));
+        x = w.x;
+        z = w.y;
+    }
     o.position = place(tile, float3(x, y, z), slot_of(gs & 0xFFFFu, gs >> 16u, order));
     float4 p = paint_of(c);
     // a translucent fill (the canopy's union is composited instead): premultiplied by the screen pass's opacity
@@ -808,6 +836,8 @@ ColourOut soft_fs(ScreenOut v) {
 // (its middle) is, even behind the camera. Its segments are kept between the near plane and the depth where the px
 // reaches its cut (a big road's lines' 0.3), an end beyond either moved along it to that depth, a free end there. A
 // pixel of it takes the coverage of the width it is drawn at there (a hairline's, the exact area's or the samples').
+// A coaster track's shadow in the app's map is such a run too, its points moved by the sun: 1.1 m (a post's 0.5 m), at
+// least 0.5 px as coasters.draw's are, without a cut.
 
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
@@ -974,9 +1004,10 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float hw = width * density * 0.5f;
     float hb = hw;
     if (metres) {
-        // px at each end's own depth, regions.py's rule a point at a time
-        hw = max(LINE_PX_LEAST, width * focal / ka.z) * density * 0.5f;
-        hb = max(LINE_PX_LEAST, width * focal / kb.z) * density * 0.5f;
+        // px at each end's own depth, regions.py's rule a point at a time (a track's shadow's least coasters.draw's)
+        float least = shadow ? LINE_SHADOW_PX_LEAST : LINE_PX_LEAST;
+        hw = max(least, width * focal / ka.z) * density * 0.5f;
+        hb = max(least, width * focal / kb.z) * density * 0.5f;
     }
     float wide = 2.0f * max(hw, hb);
     // a dashed run by its samples whatever its width (a park's edge is wider than two pixels anyway)

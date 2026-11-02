@@ -20,7 +20,9 @@
 // renders' one width at the line's middle point is the px of wherever that point lies, so where it lay beside or
 // behind the camera every metre of the line took w · focal px (a taxiway's 0.3 m some 390 dp on a phone) and the line
 // covered the ground about it (the user, 2 November: the yellow at Schiphol "glitches out and covers and takes over
-// much more area", and the N245's lines at 52.69297, 4.77424, a way of five points over 1.8 km).
+// much more area", and the N245's lines at 52.69297, 4.77424, a way of five points over 1.8 km). A coaster track's
+// shadow is such a line there too (passes/Shadows.cpp's decide_tracks): the renders' 1.1 · focal / the depth of the
+// track's middle point, 1.1 m on the ground at each of its points (a post's 0.5 m), at least 0.5 px.
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -205,7 +207,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         }
         if (d.shadow != none) {
             // a coaster track's shadow: its points (x, z, height) moved by the sun's offset in the line stage; a post's
-            // from its point's foot to its point moved; round-capped
+            // from its point's foot to its point moved; round-capped; in the app's map in its metres, each end px at
+            // its own depth (LINE_METRES: no cut)
             const TrackShadow& e = frame_.track_shadows[d.shadow];
             const DrawnTile& tile = frame_.tiles[d.tile];
             const geo::GroundTile& g = *tile.ground;
@@ -220,7 +223,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(e.width)));
             words.push_back(shade.packed());
             words.push_back(d.slot);
-            words.push_back(shaders::LINE_SHADOW | shaders::LINE_CAP_ROUND | (e.post ? shaders::LINE_POST : 0U));
+            words.push_back(shaders::LINE_SHADOW | shaders::LINE_CAP_ROUND | (e.post ? shaders::LINE_POST : 0U) |
+                            (frame_.grounded ? shaders::LINE_METRES : 0U));
             for (std::uint32_t k = 0; k < n; ++k) segments[0].push_back((run << 14U) | k);
             ++run;
             continue;

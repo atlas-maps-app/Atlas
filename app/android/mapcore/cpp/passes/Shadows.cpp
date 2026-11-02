@@ -193,6 +193,10 @@ void Ground::decide_tracks() {
     const double kx = -f.light[0] / f.light[1];
     const double kz = -f.light[2] / f.light[1];
     const auto width = [&](double w) { return f.exact ? printed(pm::max(0.5, w), 2) : pm::max(0.5, w); };
+    // coasters.draw's widths: a track's points' shadow 1.1 · focal / depth, a path 1.1 m wide on the ground; a post's
+    // s · 0.5, half a metre
+    constexpr double track_metres = 1.1;
+    constexpr double post_metres = 0.5;
     CoasterWalk walk;
     for (const Track& tr : tracks) {
         const geo::GroundTile& g = *f.tiles[tr.tile].ground;
@@ -207,7 +211,9 @@ void Ground::decide_tracks() {
         const geo::Polyline& pl = g.polylines[st.polyline];
         const std::span<const geo::P2> pts = std::span(g.points).subspan(pl.first, pl.count);
         const std::span<const double> ys = std::span(g.heights).subspan(pl.height, pl.count);
-        // the walk: each post's shadow from its foot along the ground, where both its ends project
+        // the walk: each post's shadow from its foot along the ground, where both its ends project (in the app's map
+        // where its foot does, the line stage keeping its part ahead of the near plane, 0.5 m and each end px at its
+        // own depth)
         walk.start();
         for (std::uint32_t i = 1; i < pl.count; ++i) {
             const geo::P2 a = pts[i - 1];
@@ -216,17 +222,32 @@ void Ground::decide_tracks() {
             const CoasterWalk::Step step =
                 walk.step(cam, {a.x, 0.0, a.z}, {b.x, 0.0, b.z}, ys[i - 1], ys[i], length, st.wooden);
             if (!step.post) continue;
-            if (!cam.proj({b.x, 0.12, b.z}) || !cam.proj({b.x + (kx * ys[i]), 0.12, b.z + (kz * ys[i])})) continue;
+            if (!cam.proj({b.x, 0.12, b.z}) ||
+                (!f.grounded && !cam.proj({b.x + (kx * ys[i]), 0.12, b.z + (kz * ys[i])}))) {
+                continue;
+            }
             f.track_shadows.push_back({.tile = tr.tile,
                                        .track = tr.track,
                                        .first = i,
                                        .count = 1,
-                                       .width = width(step.s * 0.5),
+                                       .width = f.grounded ? post_metres : width(step.s * post_metres),
                                        .post = true});
+        }
+        if (f.grounded) {
+            // the app's map: its points' shadows one run, the path 1.1 m wide on the ground, each point px at its own
+            // depth and each segment kept from the near plane on (LINE_METRES): the renders' one width at the track's
+            // middle point is 1.1 · focal wherever that point lies beside, under or behind the camera
+            f.track_shadows.push_back({.tile = tr.tile,
+                                       .track = tr.track,
+                                       .first = 0,
+                                       .count = pl.count,
+                                       .width = track_metres,
+                                       .post = false});
+            continue;
         }
         // its points' shadows, by runs ahead of the near plane, each a path 1.1 · focal / its middle's depth wide
         const geo::P2 mid = pts[pl.count / 2];
-        const double w = width(1.1 * cam.focal() / pm::max(1.0, cam.cam({mid.x, 0.0, mid.z}).z));
+        const double w = width(track_metres * cam.focal() / pm::max(1.0, cam.cam({mid.x, 0.0, mid.z}).z));
         std::uint32_t run = 0;
         for (std::uint32_t k = 0; k <= pl.count; ++k) {
             if (k < pl.count && !(cam.cam({pts[k].x + (kx * ys[k]), 0.12, pts[k].z + (kz * ys[k])}).z < cam.near())) {
