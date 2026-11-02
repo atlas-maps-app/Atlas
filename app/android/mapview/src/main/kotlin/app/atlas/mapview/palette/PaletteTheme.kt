@@ -7,7 +7,8 @@ import kotlin.math.hypot
  * a mapped surface, the water and its gradient, and the light (sky, sun, the shade's light, shadows, haze). A changed
  * colour moves each moment's own with it ([move]), so the live day's (whose colours are today's slots) takes it
  * exactly and dusk, night or rain keep their mood around it; a colour left as today's leaves the theme as it is, byte
- * for byte.
+ * for byte. With grass on bare ground (PaletteFlags.GRASS) the bare ground is the lawns' colour where it was the
+ * paper's, so where nothing is mapped it is grass; the night's stays the night ground's.
  */
 object PaletteTheme {
     /** The theme's colour keys (ThemeBlock.COLOURS) and the slots that move them, by day and at night. */
@@ -28,10 +29,11 @@ object PaletteTheme {
     /** [theme] with its colours moved by [palette]; [theme] itself where the palette changes none of them. */
     fun recolour(theme: Map<String, Any?>, palette: Palette): Map<String, Any?> {
         val night = theme["night"] == true
+        val grass = palette.switches and PaletteFlags.GRASS != 0
         var out: LinkedHashMap<String, Any?>? = null
         for ((key, value) in theme) {
             val slot = slotOf(key, night) ?: continue
-            val to = palette.colour(slot)
+            val to = if (grass && slot == Slot.PAPER) palette.colour(Slot.LAWN) else palette.colour(slot)
             if (to == slot.today || value !is String) continue
             val moved = move(rgbOf(value), slot.today, to)
             (out ?: LinkedHashMap(theme).also { out = it })[key] = "#%06X".format(moved)

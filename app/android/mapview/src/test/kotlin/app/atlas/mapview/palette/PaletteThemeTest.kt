@@ -36,6 +36,20 @@ class PaletteThemeTest {
     }
 
     @Test
+    fun grassOnBareGroundMakesTheDaysGroundTheLawns() {
+        val grass = Palette(flags = PaletteFlags.GRASS)
+        assertEquals("#A9C38A", PaletteTheme.recolour(day, grass)["ground"])
+        // the lawns' own colour where the palette changes it, and the night's ground stays the night ground's
+        assertEquals("#607850", PaletteTheme.recolour(day, grass.copy(colours = mapOf(Slot.LAWN to 0x607850)))["ground"])
+        assertEquals("#12151F", PaletteTheme.recolour(night, grass)["ground"])
+        // real colour brings grass: its lawns' green
+        assertEquals("#6E9448", PaletteTheme.recolour(day, Palette(base = Preset.REAL))["ground"])
+        // another moment's ground (a rain's darker paper) is the same tone of the lawns'
+        val rain = linkedMapOf<String, Any?>("ground" to "#B8B2A6")
+        assertEquals("#%06X".format(PaletteTheme.move(0xB8B2A6, 0xD6CFC2, 0xA9C38A)), PaletteTheme.recolour(rain, grass)["ground"])
+    }
+
+    @Test
     fun aGreyGreysWhatGoesWithItAndAToneStaysATone() {
         fun spread(c: Int) = listOf(16, 8, 0).map { (c shr it) and 0xFF }.let { it.max() - it.min() }
         // a grey sky's lighter horizon is a lighter grey (a ratio per channel made it peach)
