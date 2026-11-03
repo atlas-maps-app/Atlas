@@ -21,6 +21,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <span>
 #include <vector>
 
@@ -128,8 +129,20 @@ namespace {
 
 } // namespace
 
+Ground::QuaysMoment Ground::quays_moment(const frame::FrameState& state) const {
+    const std::uint32_t walls =
+        state.palette != nullptr ? state.palette->colours.at(style::palette_slot::quay_walls) : 0U;
+    static_assert(sizeof(GroundFrame::light) == 3 * sizeof(double));
+    QuaysMoment m{};
+    std::memcpy(m.data(), &state.block.theme, sizeof(shaders::Theme));
+    std::memcpy(m.data() + sizeof(shaders::Theme), frame_.light.data(), sizeof(frame_.light));
+    std::memcpy(m.data() + sizeof(shaders::Theme) + sizeof(frame_.light), &walls, sizeof(walls));
+    return m;
+}
+
 void Ground::decide_quays(const frame::FrameState& state) {
     GroundFrame& f = frame_;
+    quays_made_ = quays_moment(state);
     f.quays.clear();
     // `if th.get('wx')`: without weather the water is flat and has no walls; and each of a wall's faces the map leaves
     // out (style::camera_part's quays, quay_waterlines, quay_tops: each its own switch) is not decided

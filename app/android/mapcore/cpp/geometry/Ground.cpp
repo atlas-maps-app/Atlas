@@ -8,6 +8,7 @@
 #include "geometry/Items.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Water.hpp"
+#include "style/Palette.hpp"
 #include "sun/Hulls.hpp"
 #include "sun/Samples.hpp"
 #include "tiles/Checksums.hpp"
@@ -1350,6 +1351,45 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         b = {pm::min(b[0], sh.at.x), pm::max(b[1], sh.at.x), pm::min(b[2], sh.at.z), pm::max(b[3], sh.at.z)};
     }
     park_shadows(tile, head, out);
+    return out;
+}
+
+std::vector<GroundSlot> ground_slots(const tiles::Style& style, bool night) {
+    namespace slot = style::palette_slot;
+    // each slot's own colour in the style
+    const auto own = [&style](std::size_t code) -> std::uint32_t {
+        switch (code) {
+        case slot::paper: return style::paper_own;
+        case slot::woods: return style::woods_own;
+        case slot::lawn: return style.area_colour("park");
+        case slot::squares: return style.area_colour("square");
+        case slot::parking: return style.area_colour("parking");
+        case slot::playground: return style.area_colour("playground");
+        case slot::memorial: return style.area_colour("memorial");
+        case slot::bridge_deck: return style.area_colour("bridge");
+        case slot::asphalt: return style.surface("asphalt").value_or(0U);
+        case slot::paving_stones: return style.surface("paving_stones").value_or(0U);
+        case slot::setts: return style.surface("sett").value_or(0U);
+        case slot::concrete_paving: return style.surface("concrete").value_or(0U);
+        case slot::brick_paving: return style.surface("bricks").value_or(0U);
+        case slot::boardwalk: return style.surface("wood").value_or(0U);
+        default: return 0U;
+        }
+    };
+    std::vector<GroundSlot> out;
+    const auto of = [&](std::optional<std::size_t> code, tiles::StyleRgb c) {
+        if (code) out.push_back({.code = *code, .own = own(*code), .colour = c});
+    };
+    for (const auto& [kind, c] : style.areas) of(style::area_slot(kind), c);
+    of(slot::squares, style.area_other);
+    for (const auto& [name, c] : style.surfaces) of(style::surface_slot(name), c);
+    for (std::size_t k = 0; k < style.land_kinds.size() && k < style.land_colours.size(); ++k) {
+        of(style::land_slot(style.land_kinds[k]), style.land_colours[k]);
+    }
+    out.push_back({.code = slot::asphalt,
+                   .own = own(slot::asphalt),
+                   .colour = night ? style.asphalt.night : style.asphalt.day,
+                   .darkens = false});
     return out;
 }
 

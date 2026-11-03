@@ -327,6 +327,13 @@ object Native {
     @JvmStatic external fun pick(handle: Long, x: Float, y: Float): String
 
     /**
+     * What the view's device point ([x], [y]) shows of the ground as the map's last frame drew it: "<plate|fill|water|quay>
+     * <slot> <lat> <lon>", what the ray met, the slot of the user's palette that paints it (0: none does) and where;
+     * "" for none.
+     */
+    @JvmStatic external fun pickGround(handle: Long, x: Float, y: Float): String
+
+    /**
      * The building the app asks about (FillIn's question): way or [relation] [id] (0: none, the question closed), its
      * walls' flat colour [wall] (0xRRGGBB), drawn [hatched] while the question is open.
      */

@@ -386,6 +386,11 @@ public:
         return on_session([this, x, y] { return map_->pick(x, y); });
     }
 
+    /// What the view's device point (x, y) shows of the ground as the map's last frame drew it, or none (no map).
+    [[nodiscard]] std::optional<scene::PickedGround> pick_ground(double x, double y) {
+        return on_session([this, x, y] { return map_->pick_ground(x, y); });
+    }
+
     /// VK facts' twin check over the bundled Westerkerk (frame/TwinCheck.hpp) on the session's device, a world and a
     /// frame builder of its own that draw nothing: `twin <hash> ok`, `… FAIL expected <hash>`, or why it could not run.
     [[nodiscard]] std::string twin_line(const tiles::PackRef& westerkerk) {
@@ -1310,6 +1315,27 @@ jstring native_pick(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat 
                                  picked->slot, picked->rgb));
 }
 
+/// What the view's device point (`x`, `y`) shows of the ground as the map's last frame drew it (frame/MapFrame.hpp's
+/// pick_ground): "<plate|fill|water|quay> <slot> <latitude> <longitude>", what the ray met, the slot of the user's
+/// palette that paints it (0: none does) and where; "" where it met none.
+jstring native_pick_ground(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat y) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "");
+    const auto picked = core->pick_ground(static_cast<double>(x), static_cast<double>(y));
+    if (!picked) return java(env, "");
+    const auto what = [](scene::PickedGround::What w) -> std::string_view {
+        switch (w) {
+        case scene::PickedGround::What::plate: return "plate";
+        case scene::PickedGround::What::fill: return "fill";
+        case scene::PickedGround::What::water: return "water";
+        case scene::PickedGround::What::quay: return "quay";
+        }
+        return "fill";
+    };
+    return java(
+        env, std::format("{} {} {:.7f} {:.7f}", what(picked->what), picked->slot, picked->latitude, picked->longitude));
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -1448,8 +1474,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 53>& methods() {
-    static const std::array<JNINativeMethod, 53> table{{
+const std::array<JNINativeMethod, 54>& methods() {
+    static const std::array<JNINativeMethod, 54> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1505,6 +1531,7 @@ const std::array<JNINativeMethod, 53>& methods() {
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
+        method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
         method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),

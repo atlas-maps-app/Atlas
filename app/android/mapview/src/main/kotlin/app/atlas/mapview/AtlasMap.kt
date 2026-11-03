@@ -72,6 +72,8 @@ fun AtlasMap(
     onLongPressBuilding: ((MapPick) -> Unit)? = null,
     /** A tap on a building the core draws: the building under the finger and where it was (px), in place of [onTap]. */
     onTapBuilding: ((MapPick, Offset) -> Unit)? = null,
+    /** A tap on the ground the core draws: what it shows there and where the finger was (px), in place of [onTap]. */
+    onTapGround: ((GroundPick, Offset) -> Unit)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -90,6 +92,7 @@ fun AtlasMap(
     val longPress by rememberUpdatedState(onLongPress)
     val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
     val tapBuilding by rememberUpdatedState(onTapBuilding)
+    val tapGround by rememberUpdatedState(onTapGround)
     val cameraMove by rememberUpdatedState(onCameraMove)
 
     val insets = with(density) {
@@ -114,6 +117,7 @@ fun AtlasMap(
         controller.onLongPress = { longPress(it) }
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onTapBuilding = if (tapBuilding != null) { p, at -> tapBuilding?.invoke(p, at) } else null
+        controller.onTapGround = if (tapGround != null) { p, at -> tapGround?.invoke(p, at) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
         // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }

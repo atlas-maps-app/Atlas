@@ -166,6 +166,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * finger was (view px), in place of [onTap]'s empty hit; null to take [onTap] alone. A marker takes its tap first.
      */
     var onTapBuilding: ((MapPick, Offset) -> Unit)? = null
+
+    /**
+     * A tap on the ground where the core draws the map: what the finger's point shows of it as the core drew it (the
+     * slot that paints it) and where the finger was (view px), in place of [onTap]'s empty hit; null to take [onTap]
+     * alone. A building before it takes the tap ([onTapBuilding]).
+     */
+    var onTapGround: ((GroundPick, Offset) -> Unit)? = null
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
     /** Plays one of Android's haptic feedback constants on the map's view (the view sets it): the tilt's stops. */
@@ -1637,12 +1644,20 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val at = CameraOps.groundAt(state.camera, v, x, y)
         val c = core
         val building = onTapBuilding
-        // the building under the finger as the core drew it, where it draws the map (as a long press finds it)
-        if (c != null && building != null && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
+        val ground = onTapGround
+        // the building under the finger as the core drew it, where it draws the map (as a long press finds it), else
+        // the ground it shows there: a building stands before the ground it hides
+        if (c != null && (building != null || ground != null) && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
             scope.launch {
                 val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
                 if (core !== c || closed) return@launch
-                if (picked != null) building(picked, Offset(x, y)) else at?.let { onTap(MapHit.Empty(it)) }
+                if (picked != null) {
+                    if (building != null) building(picked, Offset(x, y)) else at?.let { onTap(MapHit.Empty(it)) }
+                    return@launch
+                }
+                val shown = if (ground != null) withContext(Dispatchers.Default) { runCatching { c.pickGround(x, y) }.getOrNull() } else null
+                if (core !== c || closed) return@launch
+                if (ground != null && shown != null) ground(shown, Offset(x, y)) else at?.let { onTap(MapHit.Empty(it)) }
             }
             return
         }

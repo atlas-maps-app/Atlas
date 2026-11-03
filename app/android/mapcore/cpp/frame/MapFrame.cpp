@@ -6,6 +6,7 @@
 #include "fx/FieldCache.hpp"
 #include "load/Countries.hpp"
 #include "load/Window.hpp"
+#include "passes/Ground.hpp"
 
 #include <algorithm>
 #include <format>
@@ -271,6 +272,17 @@ std::optional<scene::Picked> MapFrame::pick(double x, double y) {
     const bool plain_roofs = state.palette != nullptr && state.palette->has(style::palette_flag::no_guesses);
     return scene::pick_building(world_->store(), packs, *state.ground_frame, state.view->camera().eye(),
                                 scene::ray_of(*state.view, x, y), plain_roofs);
+}
+
+std::optional<scene::PickedGround> MapFrame::pick_ground(double x, double y) {
+    if (!made() || !world_) return std::nullopt;
+    for (const std::unique_ptr<Pass>& p : builder_->passes()) {
+        if (p->name() != "ground") continue;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "ground" is passes::Ground
+        const auto& ground = static_cast<const passes::Ground&>(*p);
+        return ground.pick(builder_->state(), x, y);
+    }
+    return std::nullopt;
 }
 
 bool MapFrame::noise_due(const style::CameraState& camera) const {

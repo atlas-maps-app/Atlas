@@ -320,6 +320,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun pick(x: Float, y: Float): String = core.call("") { Native.pick(it, x, y) }
 
     /**
+     * What the view's device point ([x], [y]) shows of the ground as the map's last frame drew it, from that frame's own
+     * decisions (a building or an item may stand before it: ask [pick] first): "<plate|fill|water|quay> <slot> <lat>
+     * <lon>", what the ray met, the slot of the user's palette that paints it (0: none does) and where; "" for none (or
+     * no map). Off the main thread: it waits for the render thread.
+     */
+    fun pickGround(x: Float, y: Float): String = core.call("") { Native.pickGround(it, x, y) }
+
+    /**
      * The building the app asks about from now on (FillIn's question): way or [relation] [id] (0: none), drawn plain in
      * its walls' flat colour [wall] (0xRRGGBB, the board's), hatched while the question is open ([hatched]). Off the main
      * thread.

@@ -114,8 +114,8 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     var group by remember { mutableStateOf(false) }
     var before by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
-    // the building face a tap met and where: its colour picked, its callout over the map until the map moves or the
-    // sheet picks another
+    // what a tap met and where, a building's face or the ground: its colour picked, its callout over the map until the
+    // map moves or the sheet picks another
     var tapped by remember { mutableStateOf<Tapped?>(null) }
     LaunchedEffect(Unit) {
         val prefs = settings.data.first()
@@ -156,8 +156,17 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
             onTap = { tapped = null },
             onTapBuilding = { pick, at ->
                 val face = PaletteFace.of(pick.slot, working.switches)
-                tapped = Tapped(pick.roof, face, pick.rgb, at)
+                tapped = Tapped.Face(pick.roof, face, pick.rgb, at)
                 face.slot?.let {
+                    family = it.family
+                    slot = it
+                }
+            },
+            onTapGround = { pick, at ->
+                // the slot that paints the ground there; a colour no slot moves (sand, a cycleway's red) picks nothing
+                val painted = Slot.ofCode(pick.slot)
+                tapped = painted?.let { Tapped.Ground(it, at) }
+                painted?.let {
                     family = it.family
                     slot = it
                 }
@@ -199,7 +208,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                 }
             }
         }
-        tapped?.let { t -> TapCallout(t, t.face.slot?.let { working.colour(it) } ?: t.rgb) }
+        tapped?.let { t -> TapCallout(t, t.colour(working)) }
         val sheetHeight = 412.dp
         // Hold: before, 15 px over the sheet at the right
         val beforeCd = stringResource(R.string.mine_colour_before_cd)
@@ -262,8 +271,23 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     }
 }
 
-/** A building's face a tap met ([roof], else a wall), how the palette paints it, its own colour, and where (px). */
-private data class Tapped(val roof: Boolean, val face: PaletteFace, val rgb: Int, val at: Offset)
+/** What a tap met, and where (px). */
+private sealed interface Tapped {
+    val at: Offset
+
+    /** The colour its callout shows in [p]. */
+    fun colour(p: Palette): Int
+
+    /** A building's face ([roof], else a wall), how the palette paints it, and its own colour. */
+    data class Face(val roof: Boolean, val face: PaletteFace, val rgb: Int, override val at: Offset) : Tapped {
+        override fun colour(p: Palette): Int = face.slot?.let { p.colour(it) } ?: rgb
+    }
+
+    /** The ground, and the slot that paints it there. */
+    data class Ground(val slot: Slot, override val at: Offset) : Tapped {
+        override fun colour(p: Palette): Int = p.colour(slot)
+    }
+}
 
 /** The board's mark of a tap on the map: a ring of 17 px, 2 of ink over 4 of white, and a dot of 3. */
 @Composable
@@ -310,9 +334,16 @@ private fun TapCallout(t: Tapped, colour: Int) {
     }
 }
 
-/** What a tap met, as the callout says it ("Red tiles · a guessed roof"). */
+/** What a tap met, as the callout says it ("Red tiles · a guessed roof", "Water · canals, rivers and lakes in sun"). */
 @Composable
-private fun tapLine(t: Tapped): String {
+private fun tapLine(t: Tapped): String = when (t) {
+    is Tapped.Ground -> "${slotName(t.slot)} · ${stringResource(slotSub(t.slot))}"
+    is Tapped.Face -> faceLine(t)
+}
+
+/** A building's face a tap met, as the callout says it ("Red tiles · a guessed roof"). */
+@Composable
+private fun faceLine(t: Tapped.Face): String {
     val name = t.face.slot?.let { slotName(it) }.orEmpty()
     return when (t.face.colour) {
         PaletteFace.How.GUESSED -> stringResource(if (t.roof) R.string.mine_colour_tap_guessed_roof else R.string.mine_colour_tap_guessed_wall, name)
