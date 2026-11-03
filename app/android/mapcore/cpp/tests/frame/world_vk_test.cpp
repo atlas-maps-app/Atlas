@@ -4,6 +4,7 @@
 // picture is complete with no country's pack: the app's path beyond 18 km, where the map said "Zoom in to see the map".
 // With ATLAS_LOOK_OUT, each view is written as <out>/world_<distance>.ppm.
 #include "base/pymath/PyMath.hpp"
+#include "frame/Counters.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -37,6 +38,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -261,6 +263,17 @@ struct ScreenQuad {
         if (seen) out.push_back(q);
     }
     return out;
+}
+
+/// The triangles the map's last frame drew of the counters' kind `kind`, across its passes.
+[[nodiscard]] std::uint64_t drawn_triangles(const frame::MapFrame& map, std::string_view kind) {
+    std::uint64_t n = 0;
+    for (const frame::PassCounters& c : map.builder()->counters()) {
+        for (const frame::KindCount& k : c.kinds()) {
+            if (k.kind == kind) n += k.count.triangles;
+        }
+    }
+    return n;
 }
 
 /// Draws `cam` until the map's picture is complete and the world wants no tile (at most four minutes).
@@ -761,6 +774,7 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
         std::size_t fading = 0;
         std::size_t held = 0;
         std::size_t under = 0;
+        std::uint64_t fading_streets = 0; // the triangles of the fading tiles' streets, drawn in their own run
         std::optional<gpu::Pixels> before;
         std::optional<gpu::Pixels> first;
         std::vector<double> path; // each fading frame's distance from the stand-ins' picture
@@ -804,6 +818,7 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
             }
             if (blended) {
                 ++fading_frames;
+                fading_streets += drawn_triangles(map, "ground fading streets");
                 if (!first) {
                     before = last; // the stand-ins' picture
                     first = now;
@@ -820,6 +835,9 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
         CHECK(fading_frames > 0);
         CHECK(held == fading);
         CHECK(under > 0);
+        // the app's map's streets off a bridge fade in with the rest of their tile, kept off the water as at rest
+        MESSAGE(std::format("{} triangles of the fading tiles' streets drawn in their own run", fading_streets));
+        CHECK(fading_streets > 0);
         // once every fade has ended: the L14 alone, nothing kept under them, the picture complete and at rest
         CHECK(map.complete());
         CHECK_FALSE(map.animating());
@@ -891,13 +909,13 @@ TEST_CASE("the countries' fades: a tile kept under one fading in draws no reflec
             if (p->name() == "ground") ground = static_cast<const passes::Ground*>(p.get());
         }
         ATLAS_REQUIRE(ground != nullptr, "the map has no ground pass");
-        // Each frame until the picture is complete again: whether a tile is kept under one fading in, whether one kept
-        // under holds mirrored walls, whether a fading tile's reflections are drawn, and those of the tiles kept under.
+        // Each frame until the picture is complete again: whether a fading tile's reflections are drawn, whether a tile
+        // is kept under one fading in and holds mirrored walls, and the reflections of the tiles kept under.
         struct Leg {
             int frames = 0;
+            int fading_drawn = 0;
             int kept = 0;
             int kept_mirrors = 0;
-            int fading_drawn = 0;
             std::size_t reflections = 0;
             std::size_t of_kept = 0;
         };
@@ -915,23 +933,24 @@ TEST_CASE("the countries' fades: a tile kept under one fading in draws no reflec
                 const auto of_fading = [&f](const passes::Reflection& e) { return f.tiles[e.tile].fade < 1.0F; };
                 leg.reflections += f.reflections.size();
                 leg.of_kept += static_cast<std::size_t>(std::ranges::count_if(f.reflections, of_kept));
+                if (std::ranges::any_of(f.reflections, of_fading)) ++leg.fading_drawn;
                 if (std::ranges::any_of(f.tiles, &passes::DrawnTile::under)) {
                     ++leg.kept;
                     if (std::ranges::any_of(f.tiles, mirrors)) ++leg.kept_mirrors;
-                    if (std::ranges::any_of(f.reflections, of_fading)) ++leg.fading_drawn;
                 }
                 if (map.complete() && leg.frames > 2) break;
             }
-            MESSAGE(std::format("to {} m: {} frames, {} with a tile kept under one fading in ({} of them one holding "
-                                "mirrored walls, {} drawing a fading tile's reflections); {} reflections, {} of a tile "
+            MESSAGE(std::format("to {} m: {} frames, {} drawing a fading tile's reflections, {} with a tile kept under "
+                                "one fading in ({} of them one holding mirrored walls); {} reflections, {} of a tile "
                                 "kept under",
-                                distance, leg.frames, leg.kept, leg.kept_mirrors, leg.fading_drawn, leg.reflections,
+                                distance, leg.frames, leg.fading_drawn, leg.kept, leg.kept_mirrors, leg.reflections,
                                 leg.of_kept));
             CHECK(map.complete());
             return leg;
         };
         // then 1.2 km, whose L14 tiles are not resident: each fades in as it lands over the L12 that drew there (which
-        // mirrors no wall), its own reflections drawn from its first frame
+        // mirrors no wall), its own reflections drawn from its first frame, whether the L12 is kept under it or still
+        // stands in beside it
         const Leg in = zoom(1'200.0);
         CHECK(in.kept > 0);
         CHECK(in.fading_drawn > 0);

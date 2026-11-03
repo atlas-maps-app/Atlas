@@ -22,7 +22,12 @@
 // covered the ground about it (the user, 2 November: the yellow at Schiphol "glitches out and covers and takes over
 // much more area", and the N245's lines at 52.69297, 4.77424, a way of five points over 1.8 km). A coaster track's
 // shadow is such a line there too (passes/Shadows.cpp's decide_tracks): the renders' 1.1 · focal / the depth of the
-// track's middle point, 1.1 m on the ground at each of its points (a post's 0.5 m), at least 0.5 px.
+// track's middle point, 1.1 m on the ground at each of its points (a post's 0.5 m), at least 0.5 px. A line of a fixed
+// width (the rails, a tram track, a bridge's line, a sett road's course, a park's edge) is drawn there from the near
+// plane on as well (ground_flag::near_clip), where the renders leave out a segment with an end behind it, so such a
+// line stopped short of the screen's bottom edge wherever it passed under the camera. A bridge's lines lie at the edges
+// of its street, which the app's map lays as wide as its way (ground_flag::wide): each point twice as far from the
+// middle of it and its mirror on the other line (its words on where a dashed run's table would be).
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -257,6 +262,19 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             // butt caps, miter joins (limit 4): the SVG's defaults; a sett road's courses: lines of their own, the
             // path's opacity a layer (the paint's alpha); a park's edge dashed along the screen
             std::uint32_t flags = (pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U) | in_metres;
+            // the app's map: a bridge's lines at the edges of its street as wide as its way, each point twice as far
+            // from the middle of it and its mirror on the other line (its words on, signed, where the table would be:
+            // the line is neither dashed nor in metres; its mirror's polyline follows or precedes its own, as long)
+            if (frame_.grounded && s.mirror != 0) {
+                ATLAS_ASSERT(!metres && s.dash[0] == 0 && s.count == 1);
+                const std::int64_t mirror =
+                    static_cast<std::int64_t>(
+                        g.polyline_words[static_cast<std::uint32_t>(static_cast<std::int64_t>(p) + s.mirror)]) -
+                    static_cast<std::int64_t>(g.polyline_words[p]);
+                ATLAS_ASSERT(mirror != 0 && mirror > -(std::int64_t{1} << (31U - shaders::LINE_DASH_SHIFT)) &&
+                             mirror < (std::int64_t{1} << (31U - shaders::LINE_DASH_SHIFT)));
+                flags |= static_cast<std::uint32_t>(static_cast<std::int32_t>(mirror)) << shaders::LINE_DASH_SHIFT;
+            }
             if (s.dash[0] > 0 && placer) {
                 flags |= shaders::LINE_DASH;
                 dashed.emplace_back(words.size(), tables.size());
@@ -273,12 +291,16 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         words.insert(words.end(), segments[phase].begin(), segments[phase].end());
         words_->instance_count[phase] = static_cast<std::uint32_t>(segments[phase].size());
     }
-    // the dash tables, each run's flags naming its own
+    // the dash tables, each run's flags naming its own; a run whose table begins beyond the flags' reach (2^22 words
+    // on) is drawn solid
     const std::size_t base = words.size();
     words.insert(words.end(), tables.begin(), tables.end());
     for (const auto& [flags, first] : dashed) {
-        ATLAS_ASSERT((base + first) < (std::size_t{1} << (32U - shaders::LINE_DASH_SHIFT)));
-        words[flags] |= static_cast<std::uint32_t>(base + first) << shaders::LINE_DASH_SHIFT;
+        if ((base + first) < (std::size_t{1} << (32U - shaders::LINE_DASH_SHIFT))) {
+            words[flags] |= static_cast<std::uint32_t>(base + first) << shaders::LINE_DASH_SHIFT;
+        } else {
+            words[flags] &= ~shaders::LINE_DASH;
+        }
     }
 }
 
@@ -293,7 +315,9 @@ void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     const auto samples = static_cast<std::uint32_t>(r.frame.pass.spec().config.samples());
-    pc.mode = {frame_.night ? ground_flag::night : 0U, 0U, w.instances[k], samples};
+    // the app's map: a line of a fixed width from the near plane on, as a line in metres
+    pc.mode = {(frame_.night ? ground_flag::night : 0U) | (frame_.grounded ? ground_flag::near_clip : 0U), 0U,
+               w.instances[k], samples};
     // the moment's own sun, by which the tracks' shadows move
     pc.rows = {static_cast<float>(frame_.light[0]), static_cast<float>(frame_.light[1]),
                static_cast<float>(frame_.light[2]), 0.0F};

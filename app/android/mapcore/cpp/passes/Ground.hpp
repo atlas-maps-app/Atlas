@@ -101,7 +101,11 @@ inline constexpr std::uint32_t night = 1;       ///< the night colours
 inline constexpr std::uint32_t water_level = 2; ///< water_vs: the pieces at their level (wclip)
 inline constexpr std::uint32_t visible_all = 4; ///< every fill drawn
 inline constexpr std::uint32_t layer = 8;       ///< into the reflections' layer (Ripple.cpp): upright, own colours
-inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a big road's asphalt as wide as the road (the app's map)
+inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a ribbon's pavement as wide as its way (the app's map)
+inline constexpr std::uint32_t near_clip = 32;  ///< stroke_vs: fixed widths from the near plane on (the app's map)
+/// fill_vs: the streets' own draw (the app's map): each off a bridge as wide as its way, the stencil keeping it off the
+/// water; without it, under `wide`, such a street is left to that draw
+inline constexpr std::uint32_t streets = 64;
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -439,8 +443,11 @@ struct GroundFrame {
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
     /// The app's map (FrameState::grounded): a line px wide and a coaster track's shadow take their width at each of
-    /// their points (LINE_METRES) rather than at their one point, and a big road's asphalt is as wide as the road
-    /// (ground_flag::wide), where the renders' frames lay it half as wide.
+    /// their points (LINE_METRES) rather than at their one point, a line of a fixed width is drawn from the near plane
+    /// on (ground_flag::near_clip), and a street, a big road's asphalt and a runway's or a taxiway's pavement are as
+    /// wide as their way (ground_flag::wide), a street off a bridge kept off the water (ground_flag::streets) and a
+    /// bridge's lines at its street's edges (each run its mirror's words on, from LINE_DASH_SHIFT), where the renders'
+    /// frames leave out a line's segment with an end behind the near plane and lay those pavements half as wide.
     bool grounded = false;
     double radius = 0;
     double target_x = 0;
@@ -903,6 +910,14 @@ private:
     // Water.cpp
     [[nodiscard]] WaterPiece view_water(const view::Camera& cam, const geometry::GroundTile& g, std::uint32_t i);
     void decide_water(const view::Camera& cam);
+    /// The drawn water pieces' fans at the water's slot with `flags`, counted by the bound pipeline.
+    void water_fans(const frame::Recording& r, std::uint32_t flags) const;
+    /// One triangle over the frame at the water's slot with `pipeline`, its rows and colours.
+    void water_screen(const frame::Recording& r, const vk::raii::Pipeline& pipeline, std::array<float, 4> rows,
+                      std::array<std::uint32_t, 4> colour) const;
+    /// The water's rings at the street counted in the stencil (with weather, w0's bit set where the count is not zero),
+    /// before the fills above the water, so that the app's map's streets keep off it (record_fills).
+    void record_water_count(const frame::Recording& r);
     void record_water_opaque(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
     void record_water_end(const frame::Recording& r);
@@ -1118,7 +1133,9 @@ struct Ground::Pipelines {
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
+    vk::raii::Pipeline fill_streets{nullptr}; ///< the app's map's streets: where the stencil holds no water
     vk::raii::Pipeline fill_fading{nullptr};
+    vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
     vk::raii::Pipeline plate{nullptr};
     vk::raii::Pipeline tile_plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};
