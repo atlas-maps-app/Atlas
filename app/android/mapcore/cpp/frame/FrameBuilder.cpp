@@ -264,6 +264,7 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
     quarter_turns_ = quarter_turns_of(output.transform());
     levels_ = levels_of(pass.spec().colour_format);
     depth24_ = pass.spec().depth_stencil == vk::Format::eD24UnormS8Uint;
+    samples_ = static_cast<std::uint32_t>(pass.spec().config.samples());
     configuration_ =
         std::format("{} {}", gpu::name_of(pass.spec().config), gpu::colour_name(pass.spec().colour_format));
     // Every pass prepares on a thread of its own, the calling one among them, as many at once as there are threads
@@ -274,6 +275,8 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
     std::vector<PipelineStats> stats(count);
     std::vector<gpu::Result<void>> made(count);
     std::atomic<std::size_t> next{0};
+    const std::uint32_t cores = options_.threads != 0 ? options_.threads : std::thread::hardware_concurrency();
+    const auto threads = static_cast<std::uint32_t>(std::clamp<std::size_t>(cores, 1, std::max<std::size_t>(count, 1)));
     const auto work = [&] {
         for (;;) {
             const std::size_t p = next.fetch_add(1, std::memory_order_relaxed);
@@ -290,12 +293,11 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
                                       .stats = &stats[p],
                                       .overdraw_module = *overdraw_module_,
                                       .owners = options_.owners,
-                                      .owner_module = *owner_module_};
+                                      .owner_module = *owner_module_,
+                                      .threads = threads};
             made[p] = passes_[p]->prepare(context);
         }
     };
-    const std::uint32_t cores = options_.threads != 0 ? options_.threads : std::thread::hardware_concurrency();
-    const auto threads = static_cast<std::uint32_t>(std::clamp<std::size_t>(cores, 1, std::max<std::size_t>(count, 1)));
     {
         std::vector<std::jthread> helpers;
         helpers.reserve(threads - 1);
@@ -444,7 +446,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (cam.leaves_out(style::camera_part::plinths)) mode |= shaders::FRAME_NO_PLINTHS;
     if (cam.leaves_out(style::camera_part::cornices)) mode |= shaders::FRAME_NO_CORNICES;
     if (no_guesses) mode |= shaders::FRAME_PLAIN_ROOFS;
-    b.info = {mode, 0U, 0U, 0U};
+    b.info = {mode, 0U, 0U, samples_};
     return true;
 }
 

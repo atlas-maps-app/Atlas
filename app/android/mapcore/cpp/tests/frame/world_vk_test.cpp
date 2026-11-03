@@ -966,4 +966,138 @@ TEST_CASE("the countries' fades: a tile kept under one fading in draws no reflec
     fs::remove_all(guard, ec);
 }
 
+TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels with the tile it takes over from, each "
+          "at its own depth, from the stand-ins' picture on to its own") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the standing fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-standing-fade-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        // each fade over 3 s, so that lavapipe's frames, which take a good part of a second here, see it at several of
+        // its steps, as the phone's 0.18 s spans several of its frames
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .fade_seconds = 3.0, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        std::vector<frame::MapPack> packs;
+        packs.push_back(canal_ring(tiles_dir));
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // the ground and what stands up on it: the shadows, the water's light, the night's and the weather's effects
+        // and the labels left out; pitched, so the walls face the eye
+        style::CameraState cam = camera(52.3765, 4.897, 30.0, 45.0, 9'000.0);
+        cam.pack_id = 1;
+        for (unsigned bit = 8; bit <= 23; ++bit) cam.parts |= std::uint64_t{1} << bit;
+        cam.parts |= style::camera_part::labels;
+        // at rest from 9 km over the canal ring's L12 tiles, faded in: nothing dithers
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const scene::Cover& cover = *map.world()->cover();
+        CHECK_FALSE(cover.dithers());
+        CHECK(cover.upright().size() == cover.tiles().size());
+        const auto read = [&] {
+            auto pixels = kept->kept->read(kept->kept->latest());
+            REQUIRE(pixels.has_value());
+            return *std::move(pixels);
+        };
+        const auto mad = [](const gpu::Pixels& a, const gpu::Pixels& b) {
+            double sum = 0;
+            for (std::size_t i = 0; i + 3 < a.rgba.size() && i + 3 < b.rgba.size(); i += 4) {
+                for (std::size_t k = 0; k < 3; ++k) sum += std::abs(int{a.rgba[i + k]} - int{b.rgba[i + k]});
+            }
+            const std::size_t pixels = a.rgba.size() / 4;
+            return sum / static_cast<double>(pixels);
+        };
+        // then 1.2 km: each L14 fades in as it lands over the L12 the frame before drew there (kept under it, or still
+        // drawn for another place), the two tiles' walls, roofs, trees, things, items and doors drawn each on its own
+        // range of the dither
+        cam.distance = 1'200.0;
+        int frames = 0;
+        int drawn = 0;
+        int dithered = 0;
+        std::size_t kept_entries = 0; // upright()'s entries of a tile under one fading in, over the dithered frames
+        std::uint64_t walls = 0;      // the walls' triangles the dithered frames drew
+        std::size_t whole = 0;        // entries of a tile fading in drawn whole, over every frame: none here
+        std::optional<gpu::Pixels> before;
+        std::optional<gpu::Pixels> first;
+        std::vector<double> path; // each dithered frame's distance from the stand-ins' picture
+        const std::string out = environment("ATLAS_LOOK_OUT");
+        std::vector<gpu::Pixels> looks; // with ATLAS_LOOK_OUT, the dithered frames, for the middle one's picture
+        gpu::Pixels last = read();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+        while (std::chrono::steady_clock::now() < until) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            ++frames;
+            drawn += s.drawn ? 1 : 0;
+            const gpu::Pixels now = read();
+            // every tile fading in here takes over from a tile the frame before drew, so none stands whole
+            whole += static_cast<std::size_t>(std::ranges::count_if(cover.upright(), [](const scene::CoverTile& t) {
+                return !t.under && t.fade < 1.0F && t.place.scale.w >= 1.0F;
+            }));
+            if (cover.dithers()) {
+                ++dithered;
+                kept_entries +=
+                    static_cast<std::size_t>(std::ranges::count_if(cover.upright(), &scene::CoverTile::under));
+                walls += drawn_triangles(map, "walls");
+                if (!first) {
+                    before = last; // the stand-ins' picture
+                    first = now;
+                }
+                if (before) path.push_back(mad(now, *before));
+                if (!out.empty()) looks.push_back(now);
+            }
+            last = now;
+            if (map.complete() && frames > 2) break;
+        }
+        MESSAGE(std::format("{} of {} frames drawn, {} of them dithered ({} entries under a fading tile, {} walls' "
+                            "triangles); {} entries of a fading tile drawn whole",
+                            drawn, frames, dithered, kept_entries, walls, whole));
+        CHECK(drawn == frames);
+        CHECK(dithered > 0);
+        CHECK(kept_entries > 0);
+        CHECK(walls > 0);
+        CHECK(whole == 0);
+        // once every fade has ended: the L14 alone, drawn whole, nothing dithered
+        CHECK(map.complete());
+        CHECK_FALSE(cover.dithers());
+        CHECK(cover.upright().size() == cover.tiles().size());
+        // each fade starts from the stand-ins' picture, what stands up of the two tiles included, and ends at the
+        // tiles' own: no frame shows the fading tile's buildings whole over its ground at its first fade, nor leaves
+        // out the buildings of the tile under it
+        if (first && before) {
+            const double start = mad(*first, *before);
+            const double end = mad(last, *before);
+            std::string steps;
+            for (const double d : path) steps += std::format(" {:.3f}", d);
+            MESSAGE(std::format("the first dithered frame {:.3f} from the stand-ins' picture, the last frame {:.3f}; "
+                                "the dithered frames{}",
+                                start, end, steps));
+            CHECK(start < end / 2);
+            for (std::size_t i = 1; i < path.size(); ++i) CHECK(path[i] >= path[i - 1] - 0.05);
+            CHECK(std::ranges::all_of(path, [end](double d) { return d < end; }));
+        }
+        if (!out.empty() && first && before) {
+            CHECK(gpu::write_ppm(*before, (fs::path(out) / "standing_fade_before.ppm").string()));
+            CHECK(gpu::write_ppm(*first, (fs::path(out) / "standing_fade_first.ppm").string()));
+            CHECK(gpu::write_ppm(looks[looks.size() / 2], (fs::path(out) / "standing_fade_middle.ppm").string()));
+            CHECK(gpu::write_ppm(last, (fs::path(out) / "standing_fade_last.ppm").string()));
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
 } // namespace atlas

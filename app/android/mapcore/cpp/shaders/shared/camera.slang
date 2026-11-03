@@ -43,8 +43,11 @@ static const uint CAMERA_PAINTER = 8u;
 /// The scale is the frame's metres per tile metre along x (the ratio of the two frames' kx; 1 in the tile's own frame)
 /// while the frame changes it blends (CP/view/Frames.cpp); z and y keep the metre.
 struct TilePlace {
-    float4 offset; // xyz: the tile's south-west corner at street level minus the eye, frame metres; w: 0
-    float4 scale;  // x: metres of the frame per metre of the tile along x; y, z: 1; w: the tile's fade (0 to 1)
+    float4 offset; // xyz: the tile's south-west corner at street level minus the eye, frame metres; w: where the
+                   // range of the dither's levels that what stands up of it keeps starts (shared/fade.slang): 0 but
+                   // for a tile kept under one fading in (scene/Cover.hpp's upright)
+    float4 scale;  // x: metres of the frame per metre of the tile along x; y, z: 1; w: the tile's fade (0 to 1), where
+                   // that range ends
 };
 
 /// The eye-relative point of a tile-local point.

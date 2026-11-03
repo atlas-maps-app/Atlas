@@ -67,6 +67,10 @@ struct ItemSpec {
     /// else its own); 0 for an item of no building. The building the app asks about is drawn by the items of its key
     /// (frame/Ranks.hpp).
     std::uint64_t building = 0;
+    /// The cell of its tile its feature lies in, as the pack's cell table has it (bit `cell` of a CoverTile's cells):
+    /// what stands up of a tile kept under one fading in draws its cells under that tile alone (scene/Cover.hpp's
+    /// upright).
+    std::uint8_t cell = 0;
 };
 
 /// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in
@@ -123,6 +127,7 @@ public:
     [[nodiscard]] std::span<const std::uint32_t> tile() const noexcept { return tile_; }
     [[nodiscard]] std::span<const std::uint64_t> owner() const noexcept { return owner_; }
     [[nodiscard]] std::span<const std::uint64_t> building() const noexcept { return building_; }
+    [[nodiscard]] std::span<const std::uint8_t> cell() const noexcept { return cell_; }
     [[nodiscard]] std::span<const std::uint8_t> alive_rows() const noexcept { return alive_; }
     /// Row `row`'s slots in band `band`.
     [[nodiscard]] std::uint32_t slots(std::uint32_t row, std::size_t band) const noexcept {
@@ -137,6 +142,7 @@ private:
     std::vector<std::uint32_t> tile_;
     std::vector<std::uint64_t> owner_;
     std::vector<std::uint64_t> building_;
+    std::vector<std::uint8_t> cell_;
     std::vector<std::uint32_t> slots_; // bands per row
     std::vector<std::uint8_t> alive_;
     std::vector<std::uint32_t> free_;

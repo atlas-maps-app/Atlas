@@ -919,6 +919,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
                 reach(out_of);
             }
             item.spec.radius = static_cast<float>(std::sqrt(r2) * 1.0001 + 0.01);
+            item.spec.cell = m.cell;
             made.items.push_back(item);
             made.item_facades.push_back(b.facade);
             spans.push_back(m);

@@ -88,7 +88,8 @@ TileDoors build_doors(const DoorInput& in) {
              .radius = static_cast<float>(reach),
              .tile = 0,
              .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(d.id)),
-             .building = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(d.building))});
+             .building = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(d.building)),
+             .cell = buildings->cell_of(at->second)}); // its building's, whose walls it stands on
         out.doors.push_back(d);
     }
     return out;

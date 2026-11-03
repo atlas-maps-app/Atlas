@@ -232,11 +232,12 @@ bool Buildings::ready_for(const frame::FrameState& last, const shaders::Theme& n
     if (moment_ != 0 && std::ranges::equal(std::as_bytes(std::span(&next, 1)), theme_) && same(palette, palette_)) {
         return true;
     }
-    // the tiles the frame before drew, a tile once though it draws for several (a stand-in ancestor)
+    // the tiles the frame before drew, those kept under ones fading in among them (what stands up of them draws: the
+    // standing fades), a tile once though it draws for several (a stand-in ancestor)
     std::vector<Ahead::Tile> drawn;
     if (last.cover != nullptr) {
         const std::uint32_t me = index();
-        for (const scene::CoverTile& t : last.cover->tiles()) {
+        for (const scene::CoverTile& t : last.cover->upright()) {
             if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
             const scene::PassTile& mine = t.drawn->passes[me];
             const auto* b = mine.cpu_as<BuildingTile>();
