@@ -919,10 +919,11 @@ private class BenchRun(
      * the app draws it (the facts' own configuration, the sunny moment, the haze and the vignette as the Look settings
      * have them; no labels) under scripted paths at its real views
      * ([VkBench.mapViews]): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main
-     * board and its pitch of 70°, turning. Before a view's first path the run waits for its complete picture while the map
-     * makes progress toward it ([VkBench.PictureWait]): the first, at the home just after the map was turned on, is the
-     * map's first picture, its tiles built from the packs. Each path's line ends with how many of its frames were
-     * complete pictures. The map goes off after (the next step's bench call takes the window back).
+     * board, its pitch of 70° and the governor's view of it from 25 km at 72°, turning. Before a view's first path the
+     * run waits for its complete picture while the map makes progress toward it ([VkBench.PictureWait]): the first, at
+     * the home just after the map was turned on, is the map's first picture, its tiles built from the packs. Each path's
+     * line ends with how many of its frames were complete pictures and the triangle governor's bias ([VkBench.governor]).
+     * The map goes off after (the next step's bench call takes the window back).
      */
     private suspend fun mapStage() {
         val surface = switchHost(VkHost.SURFACE, "the map")
@@ -971,7 +972,10 @@ private class BenchRun(
                     val presented = source.presentedCount
                     val complete = source.completeCount
                     val s = measure(label, path, VkBench.View.BOARD, plan.pathSeconds, VkHost.SURFACE, map = view)
-                    val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}"
+                    // the governor's bias as the path ends, the highest any frame had, and what the last frame planned
+                    val governor = VkBench.governor(withContext(Dispatchers.Default) { runCatching { core.stats() }.getOrDefault("") })
+                    val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}" +
+                        if (governor.isEmpty()) "" else " $governor"
                     emit(VkBench.line(label, s, graphicsMb(), nativeMb(), extra))
                 }
             }

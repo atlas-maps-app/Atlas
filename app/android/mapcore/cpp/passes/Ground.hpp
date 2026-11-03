@@ -160,10 +160,16 @@ struct DrawnTile {
     std::optional<sun::TileView> sun;
     std::uint32_t sun_base = 0xFFFF'FFFFU;
     float sun_weight = 1.0F;
+    /// Its fade in (the cover's, 0 to 1; its place's scale.w): below 1 its fills are drawn over what lies under it
+    /// (Ground::record_fading_fills), its lines at that alpha.
+    float fade = 1.0F;
     /// The camera in its own frame, whose metres its points are (GroundFrame::cams): the frame drawn's camera, or for a
     /// tile of another frame (a neighbouring frame cell's, whose origin lies kilometres off) the same camera about its
     /// target taken into that frame. Every decision on its points is made with it.
     const view::Camera* cam = nullptr;
+    /// Kept under a tile fading in and nothing else (scene::CoverTile::under): its fills and lines are drawn, its
+    /// reflections not (the fading tile's are drawn whole at once, as a tile landing without a fade draws them).
+    bool under = false;
 };
 
 /// One element of the quay walls (water_layer's quay walls, in water_edges' order, a piece's in turn), each its own
@@ -314,9 +320,12 @@ struct ReflectionsKept {
         std::vector<std::uint32_t> sides;
         bool used = false;
     };
-    std::vector<const void*> grounds; ///< the drawn tiles' grounds the lists were laid for, in the frame's order
-    std::vector<Tile*> drawn;         ///< each drawn tile's own, in the frame's order
+    /// The drawn tiles' grounds the lists were laid for, in the frame's order, those kept under tiles fading in (which
+    /// come last) left off and null for one before a tile drawn.
+    std::vector<const void*> grounds;
+    std::vector<Tile*> drawn; ///< each drawn tile's own, in the frame's order (`none` for one kept under)
     std::vector<std::unique_ptr<Tile>> tiles;
+    Tile none; ///< a tile kept under one fading in (DrawnTile::under): no mirrors, trees, lamps, roads or water rings
     std::vector<Ref> mirrors; ///< S['buildings'] + S['parts'], each in its source order (a tile's mirror heads)
     std::vector<Ref> trees;   ///< S['trees'] in its source order, those within 9 m of a quay edge
     std::vector<Ref> lamps;   ///< S['nodes']'s street lamps in their order
@@ -889,6 +898,9 @@ private:
     void write_words(const frame::FrameState& state);
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
     void record_fills(const frame::Recording& r, bool above);
+    /// The fills of the tiles fading in (ENGINE.md's fades), coarse to fine, after the opaque phase's: each sample
+    /// takes its tile's topmost fill alone at the tile's fade over what lies under it, written at that fill's depth.
+    void record_fading_fills(const frame::Recording& r);
     void record_plate(const frame::Recording& r);
     /// The filter's 256 results (fx::canopy_table, in the user's woods where the palette changes them) into the
     /// frame's words, then in the app's map (FrameState::grounded) the ground's map its field is read by.
@@ -1126,6 +1138,8 @@ struct Ground::Pipelines {
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
     vk::raii::Pipeline fill_streets{nullptr}; ///< the app's map's streets: where the stencil holds no water
+    vk::raii::Pipeline fill_fading{nullptr};
+    vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
     vk::raii::Pipeline plate{nullptr};
     vk::raii::Pipeline tile_plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};

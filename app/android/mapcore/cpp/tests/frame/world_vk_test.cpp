@@ -4,10 +4,12 @@
 // picture is complete with no country's pack: the app's path beyond 18 km, where the map said "Zoom in to see the map".
 // With ATLAS_LOOK_OUT, each view is written as <out>/world_<distance>.ppm.
 #include "base/pymath/PyMath.hpp"
+#include "frame/Counters.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "passes/Ground.hpp"
 #include "passes/World.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
@@ -36,6 +38,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -262,6 +265,17 @@ struct ScreenQuad {
     return out;
 }
 
+/// The triangles the map's last frame drew of the counters' kind `kind`, across its passes.
+[[nodiscard]] std::uint64_t drawn_triangles(const frame::MapFrame& map, std::string_view kind) {
+    std::uint64_t n = 0;
+    for (const frame::PassCounters& c : map.builder()->counters()) {
+        for (const frame::KindCount& k : c.kinds()) {
+            if (k.kind == kind) n += k.count.triangles;
+        }
+    }
+    return n;
+}
+
 /// Draws `cam` until the map's picture is complete and the world wants no tile (at most four minutes).
 void draw_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& cam) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
@@ -298,7 +312,11 @@ TEST_CASE("the world: a camera over the Netherlands from 18 to 1,000 km draws it
                                        .build = "world-test",
                                        .present = true,
                                        .spirv = 42});
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -390,7 +408,11 @@ TEST_CASE("the hand-over: the canal ring's tiles at 25 km pitched 60 degrees ove
                                        .build = "world-test",
                                        .present = true,
                                        .spirv = 42});
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     passes::World::paint_for_tests(magenta);
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard});
@@ -515,7 +537,11 @@ TEST_CASE("the hand-over: a zoom from 1 to 100 km over the canal ring draws each
     const std::string out = environment("ATLAS_LOOK_OUT");
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-zoom-{}", ::getpid());
     auto started = start_world(guard);
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -604,7 +630,11 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
     ATLAS_REQUIRE(packs.size() > 1);
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-fade-{}", ::getpid());
     auto started = start_world(guard);
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -679,6 +709,258 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
         CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11; }));
         CHECK(map.complete());
         CHECK_FALSE(map.animating());
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame before drew there, its ground by "
+          "alpha, and no frame waits for it") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the countries' fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-tile-fade-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        std::vector<frame::MapPack> packs;
+        packs.push_back(canal_ring(tiles_dir));
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // the ground alone: what stands up, the shadows and the water's effects left out
+        style::CameraState cam = camera(52.3765, 4.897, 0.0, 0.0, 9'000.0);
+        cam.pack_id = 1;
+        for (unsigned bit = 8; bit <= 40; ++bit) cam.parts |= std::uint64_t{1} << bit;
+        cam.parts |= style::camera_part::canopy | style::camera_part::setts | style::camera_part::ground_text |
+                     style::camera_part::quays;
+        // at rest from 9 km over the canal ring's L12 tiles, faded in
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const scene::Cover& cover = *map.world()->cover();
+        CHECK(std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& c) { return c.drawn->key.z == 12; }));
+        CHECK(cover.with_under().size() == cover.tiles().size());
+        const auto read = [&] {
+            auto pixels = kept->kept->read(kept->kept->latest());
+            REQUIRE(pixels.has_value());
+            return *std::move(pixels);
+        };
+        const auto mad = [](const gpu::Pixels& a, const gpu::Pixels& b) {
+            double sum = 0;
+            for (std::size_t i = 0; i + 3 < a.rgba.size() && i + 3 < b.rgba.size(); i += 4) {
+                for (std::size_t k = 0; k < 3; ++k) sum += std::abs(int{a.rgba[i + k]} - int{b.rgba[i + k]});
+            }
+            const std::size_t pixels = a.rgba.size() / 4;
+            return sum / static_cast<double>(pixels);
+        };
+        // then 1.2 km, whose L14 tiles are not resident: the L12 stand in, and each L14 fades in over them as it lands
+        cam.distance = 1'200.0;
+        int drawn = 0;
+        int frames = 0;
+        int fading_frames = 0;
+        std::size_t fading = 0;
+        std::size_t held = 0;
+        std::size_t under = 0;
+        std::uint64_t fading_streets = 0; // the triangles of the fading tiles' streets, drawn in their own run
+        std::optional<gpu::Pixels> before;
+        std::optional<gpu::Pixels> first;
+        std::vector<double> path; // each fading frame's distance from the stand-ins' picture
+        gpu::Pixels last = read();
+        float least = 1.0F;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+        while (std::chrono::steady_clock::now() < until) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            ++frames;
+            drawn += s.drawn ? 1 : 0;
+            const gpu::Pixels now = read();
+            bool fades = false;   // a tile whose fade the picture waits for
+            bool blended = false; // a tile drawn at its fade
+            for (const scene::CoverTile& t : cover.tiles()) {
+                if (t.fade >= 1.0F) continue;
+                fades = true;
+                if (t.place.scale.w >= 1.0F) continue; // drawn whole: it took over from nothing
+                blended = true;
+                ++fading;
+                least = std::min(least, t.place.scale.w);
+                const tiles::TileKey k = t.drawn->key;
+                // its ancestor drawn (a stand-in drawing whole) or kept under it, its cells over it
+                held += std::ranges::any_of(cover.with_under(),
+                                            [&](const scene::CoverTile& a) {
+                                                const tiles::TileKey ak = a.drawn->key;
+                                                if (ak.z >= k.z || a.drawn->pack != t.drawn->pack) return false;
+                                                const auto gap = static_cast<std::uint32_t>(k.z - ak.z);
+                                                if ((k.x >> gap) != ak.x || (k.y >> gap) != ak.y) return false;
+                                                const std::uint64_t over =
+                                                    scene::cells_over(a.drawn->cells_per_side, gap, k.x, k.y);
+                                                return (!a.under && a.key == ak) || (a.cells & over) == over;
+                                            })
+                            ? 1
+                            : 0;
+            }
+            under += cover.with_under().size() - cover.tiles().size();
+            if (fades) {
+                CHECK_FALSE(map.complete());
+                CHECK(map.animating());
+            }
+            if (blended) {
+                ++fading_frames;
+                fading_streets += drawn_triangles(map, "ground fading streets");
+                if (!first) {
+                    before = last; // the stand-ins' picture
+                    first = now;
+                }
+                if (before) path.push_back(mad(now, *before));
+            }
+            last = now;
+            if (map.complete() && frames > 2) break;
+        }
+        MESSAGE(std::format("{} of {} frames drawn, {} of them fading ({} tiles fading, the least fade {:.3f}, {} of "
+                            "them over an ancestor; {} kept under them)",
+                            drawn, frames, fading_frames, fading, least, held, under));
+        CHECK(drawn == frames);
+        CHECK(fading_frames > 0);
+        CHECK(held == fading);
+        CHECK(under > 0);
+        // the app's map's streets off a bridge fade in with the rest of their tile, kept off the water as at rest
+        MESSAGE(std::format("{} triangles of the fading tiles' streets drawn in their own run", fading_streets));
+        CHECK(fading_streets > 0);
+        // once every fade has ended: the L14 alone, nothing kept under them, the picture complete and at rest
+        CHECK(map.complete());
+        CHECK_FALSE(map.animating());
+        CHECK(cover.with_under().size() == cover.tiles().size());
+        CHECK(std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& c) { return c.fade >= 1.0F; }));
+        // each fade starts from the picture before it, the stand-ins', and ends at the tiles' own
+        if (first && before) {
+            const double start = mad(*first, *before);
+            const double end = mad(last, *before);
+            std::string steps;
+            for (const double d : path) steps += std::format(" {:.3f}", d);
+            MESSAGE(std::format("the first fading frame {:.3f} from the stand-ins' picture, the last frame {:.3f}; "
+                                "the fading frames{}",
+                                start, end, steps));
+            CHECK(start < end / 2);
+            // and on through the fade toward the tiles' own, frame by frame
+            for (std::size_t i = 1; i < path.size(); ++i) CHECK(path[i] >= path[i - 1] - 0.05);
+            CHECK(std::ranges::all_of(path, [end](double d) { return d < end; }));
+        }
+        const std::string out = environment("ATLAS_LOOK_OUT");
+        if (!out.empty() && first && before) {
+            CHECK(gpu::write_ppm(*before, (fs::path(out) / "tile_fade_before.ppm").string()));
+            CHECK(gpu::write_ppm(*first, (fs::path(out) / "tile_fade_first.ppm").string()));
+            CHECK(gpu::write_ppm(last, (fs::path(out) / "tile_fade_last.ppm").string()));
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the countries' fades: a tile kept under one fading in draws no reflections, and the fading tile draws its "
+          "own at once") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the countries' fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-tile-fade-mirrors-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        std::vector<frame::MapPack> packs;
+        packs.push_back(canal_ring(tiles_dir));
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<KeptWindow>(), size, why), why);
+        map.set_theme(sunny());
+        // the ground and the walls' and trees' reflections in the water: what stands up, the shadows and the water's
+        // other effects left out; pitched, so the walls along the canals face the eye in the water
+        style::CameraState cam = camera(52.3765, 4.897, 30.0, 45.0, 9'000.0);
+        cam.pack_id = 1;
+        for (unsigned bit = 8; bit <= 40; ++bit) cam.parts |= std::uint64_t{1} << bit;
+        cam.parts &= ~style::camera_part::reflections;
+        cam.parts |= style::camera_part::canopy | style::camera_part::setts | style::camera_part::ground_text;
+        // at rest from 9 km over the canal ring's L12 tiles, faded in
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const passes::Ground* ground = nullptr;
+        for (const std::unique_ptr<frame::Pass>& p : map.builder()->passes()) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "ground" is passes::Ground
+            if (p->name() == "ground") ground = static_cast<const passes::Ground*>(p.get());
+        }
+        ATLAS_REQUIRE(ground != nullptr, "the map has no ground pass");
+        // Each frame until the picture is complete again: whether a fading tile's reflections are drawn, whether a tile
+        // is kept under one fading in and holds mirrored walls, and the reflections of the tiles kept under.
+        struct Leg {
+            int frames = 0;
+            int fading_drawn = 0;
+            int kept = 0;
+            int kept_mirrors = 0;
+            std::size_t reflections = 0;
+            std::size_t of_kept = 0;
+        };
+        const auto mirrors = [](const passes::DrawnTile& t) { return t.under && !t.ground->mirror_heads.empty(); };
+        const auto zoom = [&](double distance) {
+            Leg leg;
+            cam.distance = distance;
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                ++leg.frames;
+                const passes::GroundFrame& f = ground->decided();
+                const auto of_kept = [&f](const passes::Reflection& e) { return f.tiles[e.tile].under; };
+                const auto of_fading = [&f](const passes::Reflection& e) { return f.tiles[e.tile].fade < 1.0F; };
+                leg.reflections += f.reflections.size();
+                leg.of_kept += static_cast<std::size_t>(std::ranges::count_if(f.reflections, of_kept));
+                if (std::ranges::any_of(f.reflections, of_fading)) ++leg.fading_drawn;
+                if (std::ranges::any_of(f.tiles, &passes::DrawnTile::under)) {
+                    ++leg.kept;
+                    if (std::ranges::any_of(f.tiles, mirrors)) ++leg.kept_mirrors;
+                }
+                if (map.complete() && leg.frames > 2) break;
+            }
+            MESSAGE(std::format("to {} m: {} frames, {} drawing a fading tile's reflections, {} with a tile kept under "
+                                "one fading in ({} of them one holding mirrored walls); {} reflections, {} of a tile "
+                                "kept under",
+                                distance, leg.frames, leg.fading_drawn, leg.kept, leg.kept_mirrors, leg.reflections,
+                                leg.of_kept));
+            CHECK(map.complete());
+            return leg;
+        };
+        // then 1.2 km, whose L14 tiles are not resident: each fades in as it lands over the L12 that drew there (which
+        // mirrors no wall), its own reflections drawn from its first frame, whether the L12 is kept under it or still
+        // stands in beside it
+        const Leg in = zoom(1'200.0);
+        CHECK(in.kept > 0);
+        CHECK(in.fading_drawn > 0);
+        CHECK(in.of_kept == 0);
+        CHECK_FALSE(ground->decided().reflections.empty()); // at rest over the L14
+        // and out to 9 km again: the L12 fades in over the L14 kept under it, whose mirrored walls are not drawn
+        const Leg out = zoom(9'000.0);
+        CHECK(out.kept > 0);
+        CHECK(out.kept_mirrors > 0);
+        CHECK(out.of_kept == 0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

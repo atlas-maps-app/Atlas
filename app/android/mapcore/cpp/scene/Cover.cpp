@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -27,6 +28,13 @@ namespace {
     for (const PassTile& p : t.passes) {
         for (const HeapRange& r : p.ranges) n += r.size;
     }
+    return n;
+}
+
+/// The triangles a resident tile draws with every cell drawn: every pass's count (PassTile::triangles).
+[[nodiscard]] std::uint64_t tile_triangles(const ResidentTile& t) noexcept {
+    std::uint64_t n = 0;
+    for (const PassTile& p : t.passes) n += p.triangles;
     return n;
 }
 
@@ -89,6 +97,9 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
 void Cover::update(const view::View& view, const view::Frames& frames, const CoverInputs& in,
                    const Residency& residency, double seconds) {
     tiles_.clear();
+    drawn_tiles_ = 0;
+    drew_before_.swap(drew_);
+    drew_.clear();
     requests_.clear();
     pending_.clear();
     spots_.clear();
@@ -97,6 +108,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     drawn_count_ = 0;
     planned_ = 0;
     coarsened_ = 0;
+    triangles_ = 0;
     holes_ = 0;
     near_holes_ = 0;
     stand_ins_.clear();
@@ -143,11 +155,17 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     }
     if (!spots_.empty()) measure(residency);
     plan(in, residency);
+    if (!spots_.empty()) count_triangles(residency);
     for (std::size_t p = 0; p < drawn_count_; ++p) emit(p, view, frames, frustum, residency, seconds);
+    lay_under(view, frames, frustum, residency, seconds);
     sort_out(residency);
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
-    // stable: tiles at one distance keep the cover's order, on every libc++
-    std::ranges::stable_sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
+    // stable: tiles at one distance keep the cover's order, on every libc++; those kept under after the tiles drawn
+    const auto nearer = [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; };
+    std::ranges::stable_sort(std::span(tiles_).first(drawn_tiles_), nearer);
+    std::ranges::stable_sort(std::span(tiles_).subspan(drawn_tiles_), nearer);
+    for (const CoverTile& t : tiles_) drew_.push_back(t.drawn->handle);
+    std::ranges::sort(drew_);
     std::ranges::sort(requests_, [](const Request& a, const Request& b) {
         return a.lane != b.lane ? a.lane < b.lane : a.priority > b.priority;
     });
@@ -248,9 +266,12 @@ void Cover::walk(const Drawn& drawn, const view::Frames& frames, const Frustum& 
 void Cover::measure(const Residency& residency) {
     std::array<double, 32> heap{};
     std::array<double, 32> raw{};
+    std::array<double, 32> drawn{};
     double all_heap = 0;
     double all_raw = 0;
+    double all_drawn = 0;
     if (bytes_.size() > 8192) bytes_.clear();
+    if (triangles_of_.size() > 8192) triangles_of_.clear();
     for (const std::shared_ptr<const ResidentTile>& t : residency.resident()) {
         const Drawn* by = nullptr;
         for (std::size_t p = 0; p < drawn_count_; ++p) {
@@ -258,19 +279,25 @@ void Cover::measure(const Residency& residency) {
         }
         if (by == nullptr) continue;
         const std::uint64_t bytes = heap_bytes(*t);
+        const std::uint64_t triangles = tile_triangles(*t);
         bytes_[tile_id(t->pack, t->key)] = bytes;
+        triangles_of_[tile_id(t->pack, t->key)] = triangles;
         const tiles::ChunkRef* c = by->pack->pack.chunks().find(t->key);
         if (c == nullptr || c->raw == 0 || t->key.z >= heap.size()) continue;
         heap.at(t->key.z) += static_cast<double>(bytes);
         raw.at(t->key.z) += static_cast<double>(c->raw);
+        drawn.at(t->key.z) += static_cast<double>(triangles);
         all_heap += static_cast<double>(bytes);
         all_raw += static_cast<double>(c->raw);
+        all_drawn += static_cast<double>(triangles);
     }
     for (std::size_t z = 0; z < heap.size(); ++z) {
         if (raw.at(z) > 0) ratio_.at(z) = heap.at(z) / raw.at(z);
+        if (raw.at(z) > 0) triangle_ratio_.at(z) = drawn.at(z) / raw.at(z);
     }
     // a level none of whose tiles was resident yet: the resident tiles' of every level (the far level's come first)
     if (all_raw > 0) any_ = all_heap / all_raw;
+    if (all_raw > 0) triangle_any_ = all_drawn / all_raw;
 }
 
 std::uint64_t Cover::estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const {
@@ -280,6 +307,40 @@ std::uint64_t Cover::estimate(const Drawn& p, const tiles::TileKey& k, const Res
     if (c == nullptr) return 0;
     const double ratio = k.z < ratio_.size() && ratio_.at(k.z) > 0 ? ratio_.at(k.z) : any_;
     return static_cast<std::uint64_t>(static_cast<double>(c->raw) * ratio);
+}
+
+double Cover::estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const {
+    if (const ResidentTile* r = residency.find(k, p.id)) return static_cast<double>(tile_triangles(*r));
+    if (const auto it = triangles_of_.find(tile_id(p.id, k)); it != triangles_of_.end()) {
+        return static_cast<double>(it->second);
+    }
+    const tiles::ChunkRef* c = p.pack->pack.chunks().find(k);
+    if (c == nullptr) return 0;
+    const double ratio =
+        k.z < triangle_ratio_.size() && triangle_ratio_.at(k.z) > 0 ? triangle_ratio_.at(k.z) : triangle_any_;
+    return static_cast<double>(c->raw) * ratio;
+}
+
+void Cover::count_triangles(const Residency& residency) {
+    double sum = 0;
+    // a tile's share reckoned once for a run of its places (the walk gives a tile's places one after another)
+    std::size_t last_pack = drawn_.size();
+    tiles::TileKey last{};
+    double share = 0;
+    for (const Spot& s : spots_) {
+        const std::optional<tiles::TileKey>& k = s.keys.at(s.plan);
+        if (!k) continue;
+        if (s.pack != last_pack || !(*k == last)) {
+            const Drawn& p = drawn_.at(s.pack);
+            // the place's share of its tile: one of its 4^(fine - z) places
+            const int gap = int{p.pack->pack.head()->levels[0]} - int{k->z};
+            share = std::ldexp(estimate_triangles(p, *k, residency), -2 * std::max(gap, 0));
+            last_pack = s.pack;
+            last = *k;
+        }
+        sum += share;
+    }
+    triangles_ = static_cast<std::uint64_t>(sum);
 }
 
 void Cover::plan(const CoverInputs& in, const Residency& residency) {
@@ -453,6 +514,56 @@ void Cover::emit(std::size_t p, const view::View& view, const view::Frames& fram
             keep(r->handle);
         }
         if (pending_[k].planned) planned_handles_.push_back(r->handle);
+    }
+}
+
+void Cover::lay_under(const view::View& view, const view::Frames& frames, const Frustum& frustum,
+                      const Residency& residency, double seconds) {
+    drawn_tiles_ = tiles_.size();
+    const auto drew_before = [this](std::uint32_t handle) { return std::ranges::binary_search(drew_before_, handle); };
+    std::vector<const ResidentTile*> under;
+    // each tile fading in, and those kept under it as they come (one fading in itself keeps its own under it)
+    for (std::size_t i = 0; i < tiles_.size(); ++i) {
+        if (tiles_[i].fade >= 1.0F) continue;
+        const ResidentTile& t = *tiles_[i].drawn;
+        const auto shown = std::ranges::find(shown_, t.handle, &Shown::handle);
+        const bool whole = shown != shown_.end() && shown->whole;
+        under.clear();
+        // its nearest ancestor that the frame before drew (zooming in, or the stand-in it takes over from)
+        for (std::uint32_t up = 1; !whole && up <= t.key.z && under.empty(); ++up) {
+            const tiles::TileKey a(static_cast<std::uint8_t>(t.key.z - up), t.key.x >> up, t.key.y >> up);
+            const ResidentTile* r = residency.find(a, t.pack);
+            if (r != nullptr && drew_before(r->handle)) under.push_back(r);
+        }
+        // else its descendants that it drew (zooming out)
+        if (!whole && under.empty()) {
+            for (const std::shared_ptr<const ResidentTile>& r : residency.resident()) {
+                if (r->key.z <= t.key.z || r->pack != t.pack || !drew_before(r->handle)) continue;
+                const auto up = static_cast<std::uint32_t>(r->key.z - t.key.z);
+                if ((r->key.x >> up) == t.key.x && (r->key.y >> up) == t.key.y) under.push_back(r.get());
+            }
+        }
+        // where the frame before drew nothing it takes over from (the map's first picture, a place panned into view)
+        // it is drawn whole from its first frame on, as before the fades; its fade is still the picture's to wait for
+        if (under.empty()) {
+            if (shown != shown_.end()) shown->whole = true;
+            tiles_[i].place.scale.w = 1.0F;
+            continue;
+        }
+        for (const ResidentTile* r : under) {
+            // an ancestor's cells over the fading tile, a descendant whole
+            const std::uint64_t cells =
+                r->key.z < t.key.z
+                    ? cells_over(r->cells_per_side, static_cast<std::uint32_t>(t.key.z - r->key.z), t.key.x, t.key.y)
+                    : ~std::uint64_t{0};
+            if (const auto it = std::ranges::find(tiles_, r, &CoverTile::drawn); it != tiles_.end()) {
+                if (it->under) it->cells |= cells; // (a tile drawn draws whole)
+                continue;
+            }
+            keep(r->handle);
+            draw(*r, cells, view, frames, frustum, r->key, seconds);
+            tiles_.back().under = true;
+        }
     }
 }
 

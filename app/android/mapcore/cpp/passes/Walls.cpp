@@ -133,6 +133,11 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
                   b.allocate(scene::HeapKind::walls, static_cast<std::uint32_t>(words.size() * sizeof(Words)), 16));
     b.heaps().write(range, std::as_bytes(std::span(words)));
     b.out().ranges[0] = range;
+    // the governor's count: its walls, its roofs and their thin edges, a record a roof (record_walls, record_roofs,
+    // write_jobs); the near cells and the windows draw only near the eye
+    b.out().triangles = (std::uint64_t{layout->edged} * (shaders::BUILDING_EDGED_VERTICES - 2)) +
+                        (std::uint64_t{layout->plain} *
+                         ((shaders::BUILDING_PLAIN_VERTICES - 2) + (shaders::BUILDING_STROKE_VERTICES / 3)));
     layout->cells_per_side = g.cells_per_side;
     layout->ids.reserve(g.items.size());
     layout->owners.reserve(g.items.size());

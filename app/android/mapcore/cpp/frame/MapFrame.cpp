@@ -145,10 +145,17 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     log::info("vk heaps: {} MB budget, {} MB a buffer at most (the device binds {} MB of a storage buffer)",
               heaps.total >> 20U, std::min(heaps.binding, heaps.total) >> 20U,
               device.facts().limits.maxStorageBufferRange >> 20U);
+    // the triangle governor's budget, by the heaps' (ENGINE.md step 5)
+    const std::uint64_t triangles =
+        options_.triangle_budget != 0 ? options_.triangle_budget : scene::triangle_budget(heaps.total);
+    log::info("vk governor: {:.1f} M triangles a frame before the levels come nearer",
+              static_cast<double>(triangles) / 1.0e6);
     auto world = scene::World::create(
         device, (*builder)->passes(),
         {.workers = workers_,
          .levels_far = options_.levels_far != 0 ? options_.levels_far : scene::WorldOptions{}.levels_far,
+         .fade_seconds = options_.fade_seconds != 0 ? options_.fade_seconds : scene::WorldOptions{}.fade_seconds,
+         .triangle_budget = triangles,
          .heaps = heaps,
          .native_budget = static_cast<std::size_t>(heaps.total),
          .resources = options_.resources,

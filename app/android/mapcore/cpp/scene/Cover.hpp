@@ -73,6 +73,12 @@ struct CoverTile {
     /// sample i's in texel sun_base + i / 32, bit i % 32), or no_sun; and how far the swap has faded (old 0, new 1).
     std::uint32_t sun_base = no_sun;
     float sun_weight = 1.0F;
+    /// Kept under a tile fading in (ENGINE.md's fades): what the frame before drew where it lies, its nearest ancestor
+    /// drawn or else its descendants drawn, until its fade ends; `cells` are its cells under the fading tile. The
+    /// ground draws them under the fading tile's ground; Cover::tiles leaves it out, so nothing that stands up does.
+    /// (`fade` is a tile's fade as the picture's completion reckons it; its place's scale.w the fade it is drawn at, 1
+    /// for a tile that took over from nothing.)
+    bool under = false;
 };
 
 /// What the cover is made of for a frame.
@@ -119,6 +125,10 @@ struct CoverInputs {
 /// besides.
 inline constexpr double first_ratio = 16.0;
 
+/// What the governor takes a tile to draw per raw byte of its chunk before any tile was resident, in triangles (the
+/// Noord-Holland levels' and windows' measured, ENGINE.md step 5's governor).
+inline constexpr double first_triangle_ratio = 1.0;
+
 /// The frame's cover.
 class Cover {
 public:
@@ -128,9 +138,11 @@ public:
                 double seconds);
 
     /// The tiles drawn, nearest first.
-    [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return tiles_; }
+    [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return std::span(tiles_).first(drawn_tiles_); }
+    /// The same, then the tiles kept under those fading in (CoverTile::under), nearest first: the ground's.
+    [[nodiscard]] std::span<const CoverTile> with_under() const noexcept { return tiles_; }
     /// The same, for the world to fill their sun (SunGlobals::prepare).
-    [[nodiscard]] std::span<CoverTile> tiles() noexcept { return tiles_; }
+    [[nodiscard]] std::span<CoverTile> with_under() noexcept { return tiles_; }
     /// The requests for the residency (want), by lane and priority.
     [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
     /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).
@@ -153,6 +165,12 @@ public:
     /// the plan gave a coarser level than their distance asks for.
     [[nodiscard]] std::uint64_t planned() const noexcept { return planned_; }
     [[nodiscard]] std::size_t coarsened() const noexcept { return coarsened_; }
+    /// The triangles the tiles the places in view are planned at hold (ENGINE.md step 5, the triangle governor's
+    /// count): each place its share of its tile's (one of a tile's 4^(fine - z) places), a resident tile's as its
+    /// passes count them (PassTile::triangles), one not resident as it was when resident before, else its chunk's raw
+    /// bytes times what its level's resident tiles draw per raw byte (any level's before one of its own was
+    /// resident). With or without a budget for the heaps.
+    [[nodiscard]] std::uint64_t triangles() const noexcept { return triangles_; }
     /// How many places in view nothing draws this frame (neither their tile nor another level's is resident), and how
     /// many of them alpha 23 drew: a window's within fine_far, the reach before the levels.
     [[nodiscard]] std::size_t holes() const noexcept { return holes_; }
@@ -223,6 +241,9 @@ private:
     [[nodiscard]] std::uint64_t estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
     /// The levels within the budget (Spot::plan).
     void plan(const CoverInputs& in, const Residency& residency);
+    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it), and the places' sum of them.
+    [[nodiscard]] double estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
+    void count_triangles(const Residency& residency);
     /// Pack `p`'s places drawn at their planned levels, and what they lack asked for.
     void emit(std::size_t p, const view::View& view, const view::Frames& frames, const Frustum& frustum,
               const Residency& residency, double seconds);
@@ -234,6 +255,8 @@ private:
         std::uint32_t handle = 0;
         double since = 0;
         bool drawn = false; // this frame
+        bool whole =
+            false; // drawn whole from its first frame, the frame before having drawn nothing it takes over from
     };
     /// An ancestor's cells to draw this frame over its missing descendants.
     struct Pending {
@@ -246,8 +269,14 @@ private:
                  std::uint64_t bytes);
     /// The stand-ins and the spare tiles of the frame, once every pack's places are drawn.
     void sort_out(const Residency& residency);
+    /// Under each tile fading in, what the frame before drew where it lies (CoverTile::under), after the tiles drawn.
+    void lay_under(const view::View& view, const view::Frames& frames, const Frustum& frustum,
+                   const Residency& residency, double seconds);
 
     std::vector<CoverTile> tiles_;
+    std::size_t drawn_tiles_ = 0;            // tiles_'s tiles drawn, before those kept under the fading ones
+    std::vector<std::uint32_t> drew_;        // the handles of the tiles drawn this frame, those kept under too (sorted)
+    std::vector<std::uint32_t> drew_before_; // the frame before's
     std::vector<Request> requests_;
     std::vector<Shown> shown_;
     std::vector<Pending> pending_;
@@ -278,6 +307,11 @@ private:
     std::array<double, 32> ratio_{};
     double any_ = first_ratio;
     std::unordered_map<std::uint64_t, std::uint64_t> bytes_;
+    /// The same for the triangles the tiles draw (the governor's).
+    std::uint64_t triangles_ = 0;
+    std::array<double, 32> triangle_ratio_{};
+    double triangle_any_ = first_triangle_ratio;
+    std::unordered_map<std::uint64_t, std::uint64_t> triangles_of_;
 };
 
 } // namespace atlas::scene

@@ -310,6 +310,23 @@ ColourOut colour_fs(FillOut v) {
     return o;
 }
 
+/// A fill of a tile fading in (passes/Ground.cpp's record_fading_fills): fill_vs's, at its tile's fade (its place's
+/// scale.w) as its alpha.
+[shader("vertex")]
+FillOut fill_fading_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    FillOut o = fill_vs(index, tile);
+    o.colour.a = asfloat(tile_word(tile, 7u));
+    return o;
+}
+
+/// colour_fs's colour at the fill's alpha, premultiplied (a tile fading in, blended over what lies under it).
+[shader("fragment")]
+ColourOut colour_fading_fs(FillOut v) {
+    ColourOut o = colour_fs(v);
+    o.colour = float4(o.colour.rgb * o.colour.a, o.colour.a);
+    return o;
+}
+
 /// The ground plate's two triangles: render's rect(-GR, GR, -GR, GR) as unit corners.
 static const float2 plate_corners[6] = {float2(-1.0f, -1.0f), float2(1.0f, -1.0f), float2(1.0f, 1.0f),
                                         float2(-1.0f, -1.0f), float2(1.0f, 1.0f),  float2(-1.0f, 1.0f)};
@@ -1131,7 +1148,8 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float2 css = at / density;
     o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, slot));
     float4 paint = unpack(colour);
-    o.colour = float4(paint.rgb * paint.a, paint.a);
+    // premultiplied, and at its tile's fade (its place's scale.w: 1 but while the tile fades in)
+    o.colour = float4(paint.rgb * paint.a, paint.a) * asfloat(tile_word(tile, 7u));
     o.ab = float4(a, b);
     o.pn = float4(p, n);
     // a sett road's line: the earlier lines it looks back at, its reaches' level for the ground's stretch at its ends

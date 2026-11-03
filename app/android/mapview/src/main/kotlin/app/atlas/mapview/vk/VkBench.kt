@@ -102,6 +102,14 @@ object VkBench {
     const val MAP_FAR = 8000.0
 
     /**
+     * The triangle governor's view (ENGINE.md step 5's step 4): the Main board's target from 25 km at map pitch 72°, the
+     * horizon in view, a frame cell's far level out to the cover's 30 km and the world beyond it (where the phone holds
+     * them), done at p95 ≤ 20 ms with the governor's bias logged.
+     */
+    const val GOVERNOR_DISTANCE = 25000.0
+    const val GOVERNOR_PITCH = 72.0
+
+    /**
      * How long the map may make no progress toward a view's complete picture before VK bench's wait there gives up,
      * seconds ([PictureWait]): no frame presented while none is being drawn, or the view's frames drawn on without the
      * picture growing over that much of their own time.
@@ -228,8 +236,9 @@ object VkBench {
      * The app's map's views over the canal ring CI puts on the device, in the order measured: the Westerkerk home in the
      * living map's frame [living] (the engine's references' home: 10 m west and 30 m north of the Westerkerk, bearing 52°,
      * map pitch 52°, 430 m), still, turning, panning and pinched out to [MAP_FAR] and back; then the Main board, the canal
-     * ring's [board] view in its region's frame [region] (2.3 km at map pitch 46°), turning, and its target at map pitch
-     * 70°, turning. A pack missing leaves its views out.
+     * ring's [board] view in its region's frame [region] (2.3 km at map pitch 46°), turning, its target at map pitch
+     * 70°, turning, and the governor's view of it ([GOVERNOR_DISTANCE] at [GOVERNOR_PITCH]), turning. A pack missing
+     * leaves its views out.
      */
     fun mapViews(living: RegionFrame?, region: RegionFrame?, board: PackList.ViewCamera?): List<MapView> = buildList {
         if (living != null) {
@@ -241,8 +250,21 @@ object VkBench {
             val bearing = LiveCamera.bearing(board.yaw)
             add(MapView("board", lat, lon, bearing, 90.0 - board.pitch, board.distance, listOf(Path.ORBIT)))
             add(MapView("pitch70", lat, lon, bearing, 70.0, board.distance, listOf(Path.ORBIT)))
+            add(MapView("world72", lat, lon, bearing, GOVERNOR_PITCH, GOVERNOR_DISTANCE, listOf(Path.ORBIT)))
         }
     }
+
+    /**
+     * The triangle governor's words in the core's stats ([app.atlas.mapcore.MapCore.stats]: `World::tiles_line`'s
+     * `governor bias <b> most <m> triangles <t> of <budget>`, in millions) for a path's line: `bias <b> most <m>
+     * triangles <t>M of <budget>M` (the bias as the path ends, the highest any frame of the map had, and what the last
+     * frame planned of its budget), or "" where the stats hold none.
+     */
+    fun governor(stats: String): String =
+        Regex("governor bias ([0-9.]+) most ([0-9.]+) triangles ([0-9.]+) of ([0-9.]+)").find(stats)?.let {
+            val (bias, most, planned, budget) = it.destructured
+            "bias $bias most $most triangles ${planned}M of ${budget}M"
+        } ?: ""
 
     /**
      * The camera of [path] about the map's [view], [t] seconds into a run of [period] seconds, written into [out]: a full

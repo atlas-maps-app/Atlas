@@ -589,6 +589,14 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     if (lines_range) b.heaps().write(lines_range, std::as_bytes(std::span(gpu.lines)));
     b.out().ranges[0] = ground_range;
     b.out().ranges[1] = lines_range;
+    // the governor's count: its fills, the canopy, the water's fans and the shadows' triangles (three index words
+    // each), and its lines' segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
+    const std::uint64_t points = gpu.points.count;
+    const std::uint64_t segments = points > ground->polylines.size() ? points - ground->polylines.size() : 0;
+    b.out().triangles = ((std::uint64_t{gpu.above.count} + gpu.below.count + gpu.canopy.count + gpu.fans.count +
+                          gpu.shadow_draw.count + gpu.woods_draw.count) /
+                         3) +
+                        (2 * segments);
     const std::size_t bytes = ground->bytes();
     b.keep(std::shared_ptr<const geo::GroundTile>(std::move(ground)), bytes);
     return {};
@@ -703,19 +711,23 @@ bool Ground::decide(const frame::FrameState& state) {
     // the tile drawing it, so the countries' cover and the world's meet at tile edges and never inside a tile
     const bool tile_plates = state.world != nullptr && !f.out(style::camera_part::ground);
     if (state.cover != nullptr) {
-        for (const scene::CoverTile& c : state.cover->tiles()) {
+        for (const scene::CoverTile& c : state.cover->with_under()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
             const scene::PassTile& p = c.drawn->passes[me];
             const auto* g = p.cpu_as<geo::GroundTile>();
             if (g == nullptr) continue;
             // a tile drawing itself answers for all its cells (the renders' margin tests decide, not the frame's
             // visibility: they draw what lies up to 900 px beyond it, the tram tracks and the bridges' lines
-            // wherever they are ahead); a stand-in ancestor for its wanted tile's cells alone
-            const std::uint64_t cells = c.drawn->key == c.key ? ~std::uint64_t{0} : c.cells;
+            // wherever they are ahead); a stand-in ancestor for its wanted tile's cells alone, and one kept under a
+            // tile fading in for its cells under it (the fading tile's plate is its own)
+            const std::uint64_t cells = !c.under && c.drawn->key == c.key ? ~std::uint64_t{0} : c.cells;
             const auto it = std::ranges::find(f.tiles, c.drawn, &DrawnTile::tile);
-            if (tile_plates) f.tile_plates.push_back(tile_plate(c, static_cast<std::uint32_t>(it - f.tiles.begin())));
+            if (tile_plates && !c.under) {
+                f.tile_plates.push_back(tile_plate(c, static_cast<std::uint32_t>(it - f.tiles.begin())));
+            }
             if (it != f.tiles.end()) {
                 it->cells |= cells;
+                it->under = it->under && c.under;
                 continue;
             }
             f.tiles.push_back({.tile = c.drawn,
@@ -725,7 +737,9 @@ bool Ground::decide(const frame::FrameState& state) {
                                .place = c.place,
                                .sun = c.sun,
                                .sun_base = c.sun_base,
-                               .sun_weight = c.sun_weight});
+                               .sun_weight = c.sun_weight,
+                               .fade = c.place.scale.w,
+                               .under = c.under});
         }
     }
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
@@ -1232,6 +1246,25 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
                        .reference = 0};
     ATLAS_GPU_LET(fs, frame::make_pipeline(context, streets, frame::Overdraw::opaque));
     p.fill_streets = std::move(fs);
+    // a tile's fills while it fades in (ENGINE.md's fades), over what lies under it, top first: each sample takes the
+    // tile's topmost fill alone, at or above what is there (its ancestor's fill of the same place has its slot), at
+    // the tile's fade, and keeps its depth for what is drawn over it
+    gpu::GraphicsDesc fading = ground_desc(context, p, "ground fading fills", "fill_fading_vs", "colour_fading_fs");
+    scene_blend(fading, gpu::Blend::over());
+    fading.depth_test = true;
+    fading.depth_write = true;
+    fading.depth_op = vk::CompareOp::eGreaterOrEqual;
+    ATLAS_GPU_LET(ff, frame::make_pipeline(context, fading, frame::Overdraw::translucent));
+    p.fill_fading = std::move(ff);
+    // and in the app's map its streets off a bridge, kept off the water as at rest where the stencil still says where
+    // it is: with weather w0's bit stands through the opaque phase, while without weather the water's plain draw has
+    // cleared the count, so there a fading street's edge may lie over the water until its fade ends
+    gpu::GraphicsDesc fading_streets = fading;
+    fading_streets.label.name = "ground fading streets";
+    fading_streets.stencil_test = true;
+    fading_streets.stencil = streets.stencil;
+    ATLAS_GPU_LET(ffs, frame::make_pipeline(context, fading_streets, frame::Overdraw::translucent));
+    p.fill_fading_streets = std::move(ffs);
     gpu::GraphicsDesc plate = ground_desc(context, p, "ground plate", "plate_vs", "colour_fs");
     opaque_depth(plate);
     ATLAS_GPU_LET(pl, frame::make_pipeline(context, plate, frame::Overdraw::opaque));
@@ -1488,6 +1521,8 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
             record_sky(r);
             record_sky_layer(r);
         }
+        // and the tiles fading in over all of it
+        if (!frame_.out(style::camera_part::ground)) record_fading_fills(r);
         break;
     case phase_canopy: record_canopy(r); break;
     case phase_water_reflections: record_reflections(r); break;
@@ -1513,7 +1548,8 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
     static_assert(geo::group::road == 8 && geo::group::over == 24 && geo::group::over + 1 == 25 &&
                   geo::group::over + 2 == 26 && geo::aero_sub::pavement == 0);
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-    // the app's map: the streets off a bridge by themselves, after the rest (each fill's painter depth orders them)
+    // the app's map: the streets off a bridge by themselves, after the rest (each fill's painter depth orders them); a
+    // tile fading in after the opaque phase (record_fading_fills)
     for (const bool streets : {false, true}) {
         if (streets && (!above || !frame_.grounded)) break;
         bool bound = false;
@@ -1521,7 +1557,7 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
             const DrawnTile& t = frame_.tiles[i];
             const geo::Words draw =
                 streets ? t.ground->layout.streets : (above ? t.ground->layout.above : t.ground->layout.below);
-            if (draw.count == 0 || !t.pass->ranges[0]) continue;
+            if (draw.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
             if (!bound) {
                 cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
                                  streets ? *pipelines_->fill_streets : *pipelines_->fill);
@@ -1531,6 +1567,50 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
             cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
             r.counters.draw(streets ? "ground streets" : (above ? "ground above" : "ground land"), draw.count / 3);
         }
+    }
+}
+
+void Ground::record_fading_fills(const frame::Recording& r) {
+    // coarse to fine: a tile fading in over one fading in under it
+    std::vector<std::uint32_t> fading;
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        if (frame_.tiles[i].fade < 1.0F && frame_.tiles[i].pass->ranges[0]) {
+            fading.push_back(static_cast<std::uint32_t>(i));
+        }
+    }
+    if (fading.empty()) return;
+    std::ranges::stable_sort(fading, [this](std::uint32_t a, std::uint32_t b) {
+        return frame_.tiles[a].tile->key.z < frame_.tiles[b].tile->key.z;
+    });
+    const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+    // the big roads' asphalt as wide as at rest, and in the app's map the streets off a bridge by their own draw
+    // (record_fills), here in their place among the tile's fills, top first
+    const std::uint32_t wide = frame_.grounded ? ground_flag::wide : 0U;
+    const auto bind = [&](bool streets) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                         streets ? *pipelines_->fill_fading_streets : *pipelines_->fill_fading);
+        push(r, wide | (streets ? ground_flag::streets : 0U), 0);
+    };
+    bind(false);
+    for (const std::uint32_t i : fading) {
+        const DrawnTile& t = frame_.tiles[i];
+        const geo::GroundLayout& l = t.ground->layout;
+        const auto draw = [&](geo::Words w, const char* kind) {
+            if (w.count == 0) return;
+            cmd.draw(w.count, 1, (t.pass->ranges[0].offset / 4) + w.first, i);
+            r.counters.draw(kind, w.count / 3);
+        };
+        // top first: what lies above the water (the streets' run within it), then the land
+        if (frame_.grounded && l.streets.count != 0) {
+            draw({.first = l.above.first, .count = l.streets.first - l.above.first}, "ground fading");
+            bind(true);
+            draw(l.streets, "ground fading streets");
+            bind(false);
+            draw({.first = l.streets.first, .count = l.above.first + l.above.count - l.streets.first}, "ground fading");
+        } else {
+            draw(l.above, "ground fading");
+        }
+        draw(l.below, "ground fading");
     }
 }
 

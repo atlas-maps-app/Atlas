@@ -80,7 +80,7 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     std::erase_if(retired_, [&](const auto& r) { return state.number >= r.second + gpu::Frames::in_flight; });
     texels_.clear();
     fading_ = false;
-    const std::span<CoverTile> drawn = cover.tiles();
+    const std::span<CoverTile> drawn = cover.with_under();
     for (CoverTile& c : drawn) {
         c.sun.reset();
         c.sun_base = no_sun;

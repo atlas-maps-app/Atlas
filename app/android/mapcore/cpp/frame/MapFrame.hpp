@@ -73,6 +73,13 @@ struct MapOptions {
     /// How far the cover reaches at most, metres, instead of the world's (scene::WorldOptions::levels_far): a test's,
     /// to draw as before a frame cell's levels (12 km, the cover's reach until step 7); 0 for the world's.
     double levels_far = 0;
+    /// How long a tile fades in, seconds, instead of the world's (scene::WorldOptions::fade_seconds): a test's, whose
+    /// frames take seconds on lavapipe, to fade over as many of them as the phone's frames a fade spans; 0 for the
+    /// world's.
+    double fade_seconds = 0;
+    /// The triangle governor's budget instead of the device's (scene::triangle_budget): a test's, to set the bias to
+    /// work or to measure a view's triangles with none (a budget no view reaches); 0 for the device's.
+    std::uint64_t triangle_budget = 0;
     /// The frame's clear colour instead of paper's (FrameOptions::clear): a test's, to tell where nothing draws.
     std::optional<std::array<float, 4>> clear;
 };
