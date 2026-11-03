@@ -1,0 +1,567 @@
+# Builds the world's base map (ENGINE.md step 5, "The pipeline") into a draft release world-YYYYMMDD: the packs of L6 to
+# L11 of every L6 block an area of Geofabrik's meets (Europe for now), the globe's L0 to L5, their index and world.json,
+# the app's description of them. A run by hand with publish=<tag> publishes a checked draft instead and points
+# world-latest at it.
+# - plan: the area's polygon from Geofabrik's index, its L6 blocks split into regions of about equal weight (`packer
+#   world-plan`: by the last world's packs' bytes, or for the first by the sizes of the area's own extracts), the tags
+#   the world's profile draws (`packer world-tags`), the draft release;
+# - sources: osmdata's land polygons and Natural Earth's layers, fetched once a run into the draft, so no other job asks
+#   those free hosts again;
+# - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), then
+#   `osmium extract` into every region, five a pass, each region into the draft;
+# - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
+#   (world-mid-<region>.000, …) and its coarse tiles, index and numbers handed on through the draft;
+# - globe: `packer globe`, world-globe.atlas;
+# - assemble: `packer world-assemble`, the coarse packs from every region's coarse tiles (world-coarse.000, …), the
+#   index (world.idx), world.json and the numbers added up (world-stats.json); then every pack of the release fetched
+#   and checked against the index, each decoded by the core's stage P tool (`packer world-check`), and the globe;
+# - publish (only by hand): the draft's scratch deleted, the release published, world-latest's world.json replaced,
+#   and every world release but the last two deleted.
+# Hand-offs go through the draft's assets (scratch-*), as artifacts and the cache are too small. The fine packs stay in
+# the parts their region named; the index names every part. A block at the area's edge holds the area's data alone.
+# world-test, the app's test world, is never a run's.
+name: World
+
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: The Geofabrik extract the world is built from, by its id in Geofabrik's index
+        required: false
+        default: europe
+      regions:
+        description: How many regions the L6 blocks are built in, a job each (1 to 60)
+        required: false
+        default: '20'
+      tag:
+        description: The draft release's tag (empty for world-YYYYMMDD, today's)
+        required: false
+        default: ''
+      publish:
+        description: A checked draft world-YYYYMMDD to publish instead of building one (world-latest then points at it)
+        required: false
+        default: ''
+  # A run of the workflow's own branch before it lands, its inputs in .github/world-run.json
+  push:
+    branches: [worldyml]
+    paths: [.github/world-run.json]
+  # The monthly run (the 3rd at 04:17 UTC, a day after Geofabrik's extracts of the 1st) is off until Europe's first run
+  # has proven itself. To turn it on, restore:
+  # schedule:
+  #   - cron: '17 4 3 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: world
+  cancel-in-progress: false
+
+env:
+  GH_REPO: ${{ github.repository }}
+  USER_AGENT: Atlas-world/1 (+https://github.com/atlas-maps-app/Atlas)
+  PACKER: app/android/packer/build/install/packer/bin/packer
+  RELEASE_NOTES: |
+    The world's base map for Atlas, built by .github/workflows/world.yml: the packs of L6 to L11 of every L6 block the
+    area meets (world-mid-*: a pack per L6 block, its L9 to L11 tiles; world-coarse.*: a pack per L3 block, its L6 to L8
+    tiles), the globe's L0 to L5 (world-globe.atlas), their index (world.idx: each pack's block, levels, file, range,
+    tiles, the box it was built for and its SHA-256) and world.json, which lists the files with their sizes and SHA-256
+    checksums and the time the OpenStreetMap data is current to; world-latest always holds the newest world.json.
+
+    Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
+    https://www.openstreetmap.org/copyright. The world packs are derived databases and are themselves available under
+    the ODbL. Extracts by Geofabrik (https://download.geofabrik.de); land polygons by osmdata.openstreetmap.de, from
+    OpenStreetMap's data; the globe made with Natural Earth (public domain, https://www.naturalearthdata.com).
+
+jobs:
+  plan:
+    # null on a push, which builds
+    if: ${{ github.event.inputs.publish == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.run.outputs.tag }}
+      url: ${{ steps.plan.outputs.url }}
+      bytes: ${{ steps.plan.outputs.bytes }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        # Gradle configures every module of the build, the Android ones too
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: The run
+        id: run
+        env:
+          EVENT: ${{ github.event_name }}
+          AREA: ${{ github.event.inputs.area }}
+          REGIONS: ${{ github.event.inputs.regions }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ]; then
+            # a run of the workflow's own branch: its inputs in the file whose change started it
+            AREA=$(jq -r '.area // ""' .github/world-run.json)
+            REGIONS=$(jq -r '.regions // "" | tostring' .github/world-run.json)
+            TAG=$(jq -r '.tag // ""' .github/world-run.json)
+          fi
+          AREA=${AREA:-europe}
+          REGIONS=${REGIONS:-20}
+          TAG=${TAG:-world-$(date -u +%Y%m%d)}
+          if ! [[ "$AREA" =~ ^[a-z0-9-]+(/[a-z0-9-]+)?$ ]]; then echo "::error::Not an extract's id in Geofabrik's index: $AREA"; exit 1; fi
+          if ! [[ "$REGIONS" =~ ^[0-9]+$ ]] || [ "$REGIONS" -lt 1 ] || [ "$REGIONS" -gt 60 ]; then echo "::error::regions is 1 to 60, not $REGIONS"; exit 1; fi
+          # never world-test (the app's test world) nor world-latest
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::A world's release is world-YYYYMMDD or world-YYYYMMDD-<word>, not $TAG"; exit 1; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
+          { echo "area=$AREA"; echo "regions=$REGIONS"; echo "tag=$TAG"; } >> "$GITHUB_OUTPUT"
+      - name: The plan
+        id: plan
+        env:
+          AREA: ${{ steps.run.outputs.area }}
+          REGIONS: ${{ steps.run.outputs.regions }}
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/plan"
+          mkdir -p "$P" "$RUNNER_TEMP/latest"
+          size() { curl -fsSIL --retry 5 --retry-delay 10 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
+          curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
+          NAME=${AREA//\//-}
+          if ! jq -e --arg a "$AREA" '{type: "FeatureCollection", features: [.features[] | select(.properties.id == $a)]} | select(.features | length == 1)' \
+            "$RUNNER_TEMP/index.json" > "$P/$NAME.geojson"; then
+            echo "::error::Geofabrik's index has no extract $AREA"
+            exit 1
+          fi
+          URL=$(jq -r '.features[0].properties.urls.pbf' "$P/$NAME.geojson")
+          BYTES=$(size "$URL")
+          echo "$AREA: $URL, $BYTES bytes"
+          WEIGHTS=()
+          if gh release download world-latest --pattern world.json --dir "$RUNNER_TEMP/latest" 2> /dev/null; then
+            # the last world's weights: each L6 block's fine pack's bytes
+            LAST=$(jq -r .release "$RUNNER_TEMP/latest/world.json")
+            gh release download "$LAST" --pattern world.idx --dir "$RUNNER_TEMP/latest"
+            WEIGHTS=(--weights-index "$RUNNER_TEMP/latest/world.idx")
+            echo "weights: $LAST's packs"
+          else
+            # the first world's: the sizes of the area's own extracts (Geofabrik's children of it), each over its polygon
+            jq -c --arg a "$AREA" '[.features[] | select(.properties.parent == $a)]' "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
+            if [ "$(jq length "$RUNNER_TEMP/children.json")" -gt 0 ]; then
+              jq -r '.[].properties | [.id, .urls.pbf] | @tsv' "$RUNNER_TEMP/children.json" | while IFS=$'\t' read -r id url; do
+                printf '%s\t%s\n' "$id" "$(size "$url")"
+              done > "$RUNNER_TEMP/sizes.tsv"
+              jq --rawfile s "$RUNNER_TEMP/sizes.tsv" '
+                ($s | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $b
+                | {type: "FeatureCollection", features: [.[] | select(($b[.properties.id] // 0) > 0) | .properties.bytes = $b[.properties.id]]}' \
+                "$RUNNER_TEMP/children.json" > "$RUNNER_TEMP/sizes.geojson"
+              WEIGHTS=(--weights-sizes "$RUNNER_TEMP/sizes.geojson")
+              echo "weights: the sizes of $(jq '.features | length' "$RUNNER_TEMP/sizes.geojson") extracts in $AREA"
+            fi
+          fi
+          "$PACKER" world-plan "$P/$NAME.geojson" "$P" --regions "$REGIONS" --group 5 --margin 0.2 "${WEIGHTS[@]}"
+          "$PACKER" world-tags > "$P/tags.txt"
+          cat "$P/tags.txt"
+          {
+            echo "url=$URL"
+            echo "bytes=$BYTES"
+            echo "matrix=$(jq -c '[.regions[] | {id, blocks, count}]' "$P/regions.json")"
+            echo "count=$(jq '.regions | length' "$P/regions.json")"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### $AREA: $(jq .blocks "$P/regions.json") L6 blocks in $(jq '.regions | length' "$P/regions.json") regions"
+            echo "From $URL ($BYTES bytes)."
+            jq -r '.regions[] | "- \(.id): \(.count) blocks, \(.weight * 1000 | round / 10) % of the weight"' "$P/regions.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: world-plan
+          path: ${{ runner.temp }}/plan
+          retention-days: 14
+          overwrite: true
+      - name: The draft release
+        env:
+          TAG: ${{ steps.run.outputs.tag }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --draft --latest=false --title "World ${TAG#world-}" --notes-file "$RUNNER_TEMP/notes.md" --target "$GITHUB_SHA"
+
+  sources:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: osmdata's land polygons and Natural Earth's layers
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/sources"
+          mkdir -p "$S/naturalearth"
+          get() { curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$2" "$1"; }
+          # the land under the blocks (split, EPSG:4326) and under the globe's L4 and L5 (simplified, EPSG:3857)
+          get https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip "$S/scratch-land-polygons-split-4326.zip"
+          get https://osmdata.openstreetmap.de/download/simplified-land-polygons-complete-3857.zip "$S/scratch-simplified-land-polygons-complete-3857.zip"
+          # the globe's: land at 1:110m and 1:50m, lakes, rivers, glaciers, ice shelves and populated places
+          for f in 110m/physical/ne_110m_land 110m/physical/ne_110m_lakes 110m/physical/ne_110m_rivers_lake_centerlines \
+            110m/physical/ne_110m_glaciated_areas 110m/cultural/ne_110m_populated_places 50m/physical/ne_50m_land \
+            50m/physical/ne_50m_lakes 50m/physical/ne_50m_rivers_lake_centerlines 50m/physical/ne_50m_glaciated_areas \
+            50m/physical/ne_50m_antarctic_ice_shelves_polys 50m/cultural/ne_50m_populated_places; do
+            get "https://naciscdn.org/naturalearth/$f.zip" "$S/naturalearth/${f##*/}.zip"
+          done
+          for z in "$S"/*.zip "$S"/naturalearth/*.zip; do unzip -tq "$z" > /dev/null; done
+          tar -cf "$S/scratch-naturalearth.tar" -C "$S/naturalearth" .
+          ls -l "$S" "$S/naturalearth"
+          gh release upload "$TAG" "$S/scratch-land-polygons-split-4326.zip" "$S/scratch-simplified-land-polygons-complete-3857.zip" "$S/scratch-naturalearth.tar" --clobber
+          { echo "### Sources"; find "$S" -maxdepth 1 -name 'scratch-*' -printf '- %f: %s bytes\n'; } >> "$GITHUB_STEP_SUMMARY"
+
+  filter:
+    needs: plan
+    runs-on: ubuntu-latest
+    # Europe's 35 GB: its download, osmium's filter (two reads of it) and the regions' extracts (a read of the filtered
+    # file every five regions)
+    timeout-minutes: 340
+    outputs:
+      name: ${{ steps.extract.outputs.name }}
+      md5: ${{ steps.extract.outputs.md5 }}
+      timestamp: ${{ steps.extract.outputs.timestamp }}
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      URL: ${{ needs.plan.outputs.url }}
+      BYTES: ${{ needs.plan.outputs.bytes }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: world-plan
+          path: ${{ runner.temp }}/plan
+      - name: Make room, and osmium
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends osmium-tool
+          osmium --version | head -1
+          # the extract on the disk with more room, what is cut from it on the other
+          ROOT="$RUNNER_TEMP/world"
+          mkdir -p "$ROOT"
+          sudo mkdir -p /mnt/world && sudo chown "$(id -u):$(id -g)" /mnt/world
+          if [ "$(df --output=avail -B1 /mnt/world | tail -1)" -gt "$(df --output=avail -B1 "$ROOT" | tail -1)" ]; then BIG=/mnt/world SMALL=$ROOT; else BIG=$ROOT SMALL=/mnt/world; fi
+          df -h / /mnt
+          if [ "$(df --output=avail -B1 "$BIG" | tail -1)" -lt $((BYTES + (2 << 30))) ]; then echo "::error::$BIG has too little room for the extract's $BYTES bytes"; exit 1; fi
+          { echo "BIG=$BIG"; echo "SMALL=$SMALL"; } >> "$GITHUB_ENV"
+      - name: The extract
+        id: extract
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            # Geofabrik sends a -latest extract to its dated file, or a big one to a mirror's copy, which may be a day
+            # older; the MD5 file beside the file served names the dated extract it is (3 November: Europe's -latest
+            # went to ftp5.gwdg.de's of 1 November, and download.geofabrik.de had no europe-latest.osm.pbf.md5)
+            FROM=$(curl -fsSIL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o /dev/null -w '%{url_effective}' "$URL")
+            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$BIG/extract.md5" "$FROM.md5"
+            read -r MD5 NAME < "$BIG/extract.md5" || true
+            if ! [[ "$MD5" =~ ^[0-9a-f]{32}$ && "$NAME" =~ ^[A-Za-z0-9_-]+\.osm\.pbf$ ]]; then echo "::error::$FROM.md5 names no extract"; exit 1; fi
+            RAW="$BIG/$NAME"
+            rm -f "$RAW"
+            # taken up again where a connection drops; the MD5 says whether the whole is the file published
+            curl -fsSL -C - --retry 10 --retry-all-errors --retry-delay 30 -A "$USER_AGENT" -o "$RAW" "$FROM"
+            if [ "$MD5" = "$(md5sum "$RAW" | cut -d' ' -f1)" ]; then break; fi
+            # the extract may have been replaced while it came
+            rm -f "$RAW"
+            if [ "$attempt" = 2 ]; then echo "::error::$FROM does not match its MD5"; exit 1; fi
+            sleep 60
+          done
+          TS=$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$RAW")
+          if [ -z "$TS" ]; then echo "::error::$NAME's header gives no replication time"; exit 1; fi
+          ls -l "$RAW"
+          echo "$NAME: MD5 $MD5, its data of $TS"
+          { echo "name=$NAME"; echo "md5=$MD5"; echo "timestamp=$TS"; } >> "$GITHUB_OUTPUT"
+          echo "RAW=$RAW" >> "$GITHUB_ENV"
+          echo "### $NAME: $(stat -c %s "$RAW") bytes, MD5 $MD5, its data of $TS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Filter
+        env:
+          TS: ${{ steps.extract.outputs.timestamp }}
+        run: |
+          set -euo pipefail
+          # what the world's profile draws, with the nodes and members it refers to; the raw extract then goes
+          time osmium tags-filter "$RAW" -e "$RUNNER_TEMP/plan/tags.txt" -o "$SMALL/filtered.osm.pbf"
+          rm -f "$RAW"
+          if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$SMALL/filtered.osm.pbf")" != "$TS" ]; then echo "::error::The filtered file lost the data's time"; exit 1; fi
+          ls -l "$SMALL/filtered.osm.pbf"
+          echo "- filtered to the world's tags: $(stat -c %s "$SMALL/filtered.osm.pbf") bytes" >> "$GITHUB_STEP_SUMMARY"
+          df -h / /mnt
+      - name: The regions' extracts
+        env:
+          TS: ${{ steps.extract.outputs.timestamp }}
+        run: |
+          set -euo pipefail
+          CUT="$BIG/cut"
+          mkdir -p "$CUT"
+          for cfg in "$RUNNER_TEMP"/plan/extract-*.json; do
+            # each region's box and margin, with whole ways and multipolygons where they cross its edge
+            time osmium extract -c "$cfg" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
+            for f in "$CUT"/scratch-r*.osm.pbf; do
+              if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
+              echo "- ${f##*/}: $(stat -c %s "$f") bytes" >> "$GITHUB_STEP_SUMMARY"
+              # an asset is under 2 GiB: a file goes up in parts (.000, .001, …), joined in order
+              split -b 1900M -d -a 3 "$f" "$f."
+              rm -f "$f"
+            done
+            gh release upload "$TAG" "$CUT"/scratch-r*.osm.pbf.* --clobber
+            rm -f "$CUT"/scratch-r*.osm.pbf.*
+          done
+
+  blocks:
+    needs: [plan, sources, filter]
+    name: ${{ matrix.region.id }} (${{ matrix.region.count }} blocks)
+    runs-on: ubuntu-latest
+    # The runner's limits: 6 hours, 16 GB of memory, 4 cores
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # at most 12 at once, so the other workflows keep runners
+      max-parallel: 12
+      matrix:
+        region: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      ID: ${{ matrix.region.id }}
+      BLOCKS: ${{ matrix.region.blocks }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      # every region's packs name the area's extract and its MD5, so the regions' coarse tiles are of one run
+      SOURCE: ${{ needs.filter.outputs.name }}:${{ needs.filter.outputs.md5 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: Make room
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          # work on whichever disk has more room
+          WORK="$RUNNER_TEMP/world"
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
+            sudo mkdir -p /mnt/world && sudo chown "$(id -u):$(id -g)" /mnt/world && WORK=/mnt/world
+          fi
+          mkdir -p "$WORK/in" "$WORK/out"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt || true
+      - name: The region's extract and the land
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern "scratch-$ID.osm.pbf.*" --pattern scratch-land-polygons-split-4326.zip --dir "$WORK/in"
+          cat "$WORK"/in/scratch-"$ID".osm.pbf.* > "$WORK/$ID.osm.pbf"
+          rm -f "$WORK"/in/scratch-"$ID".osm.pbf.*
+          # the packs name the land polygons by osmdata's own file name
+          mv "$WORK/in/scratch-land-polygons-split-4326.zip" "$WORK/land-polygons-split-4326.zip"
+          ls -l "$WORK"
+      - name: The region's blocks
+        env:
+          # Planetiler's features and the cut tiles in the heap, its node locations in a file
+          JAVA_OPTS: -Xmx10g
+        run: |
+          set -euo pipefail
+          "$PACKER" world "$WORK/$ID.osm.pbf" "$WORK/out" --land "$WORK/land-polygons-split-4326.zip" --block-list "$BLOCKS" \
+            --threads 4 --scratch "$WORK/scratch" --parts "world-mid-$ID" --coarse-tiles "$WORK/out/scratch-$ID.coarse" --source "$SOURCE" |
+            tee "$RUNNER_TEMP/world.txt"
+          mv "$WORK/out/world.idx" "$WORK/out/scratch-$ID.idx"
+          mv "$WORK/out/world-stats.json" "$WORK/out/scratch-$ID.stats.json"
+          ls -l "$WORK/out"
+          { echo "### $ID"; grep -E '^(L[0-9]+:|world:)' "$RUNNER_TEMP/world.txt" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # its parts (none where its blocks are open sea) and what it hands on
+          FILES=("$WORK"/out/world-mid-"$ID".* "$WORK"/out/scratch-"$ID".*)
+          gh release upload "$TAG" "${FILES[@]}" --clobber
+
+  globe:
+    needs: [plan, sources]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: The globe
+        env:
+          JAVA_OPTS: -Xmx8g
+        run: |
+          set -euo pipefail
+          G="$RUNNER_TEMP/globe"
+          mkdir -p "$G/naturalearth" "$G/out"
+          gh release download "$TAG" --pattern scratch-naturalearth.tar --pattern scratch-simplified-land-polygons-complete-3857.zip --dir "$G"
+          tar -xf "$G/scratch-naturalearth.tar" -C "$G/naturalearth"
+          mv "$G/scratch-simplified-land-polygons-complete-3857.zip" "$G/simplified-land-polygons-complete-3857.zip"
+          "$PACKER" globe "$G/naturalearth" "$G/simplified-land-polygons-complete-3857.zip" "$G/out/world-globe.atlas" --threads 4 | tee "$RUNNER_TEMP/globe.txt"
+          ls -l "$G/out"
+          gh release upload "$TAG" "$G/out/world-globe.atlas" --clobber
+          { echo "### The globe"; tail -3 "$RUNNER_TEMP/globe.txt" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+
+  assemble:
+    needs: [plan, blocks, globe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      COUNT: ${{ needs.plan.outputs.count }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37 and the SDK's CMake
+        # the SDK's CMake and Ninja build the core's stage P tool, at the version app/android/mapcore/tools.properties pins
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "cmake;$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: "The core's stage P tool"
+        # The packs are read as the phone's store reads them, by the core's own code (mapcore/cpp/stagep), built alone
+        # (the host-stagep preset) with LLVM's clang and libc++ at core.yml's pin, as packs.yml builds it.
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev
+          cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)/bin"
+          cd app/android/mapcore/cpp
+          CC=clang-$LLVM CXX=clang++-$LLVM CXXFLAGS=-stdlib=libc++ LDFLAGS=-stdlib=libc++ \
+            "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
+          "$cmake_bin/cmake" --build --preset host-stagep
+          echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
+      - name: Make room
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          WORK="$RUNNER_TEMP/world"
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
+            sudo mkdir -p /mnt/world && sudo chown "$(id -u):$(id -g)" /mnt/world && WORK=/mnt/world
+          fi
+          mkdir -p "$WORK/in" "$WORK/out" "$WORK/parts" "$WORK/latest"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt || true
+      - name: Put the regions together
+        env:
+          JAVA_OPTS: -Xmx8g
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern 'scratch-r*.idx' --pattern 'scratch-r*.coarse' --pattern 'scratch-r*.stats.json' --pattern world-globe.atlas --dir "$WORK/in"
+          REGIONS=()
+          for f in "$WORK"/in/scratch-r*.idx; do REGIONS+=("${f%.idx}"); done
+          if [ "${#REGIONS[@]}" -ne "$COUNT" ]; then echo "::error::${#REGIONS[@]} regions handed on, of the plan's $COUNT"; exit 1; fi
+          "$PACKER" world-assemble "$WORK/out" "${REGIONS[@]}" --release "$TAG" \
+            --url "https://github.com/$GH_REPO/releases/download/$TAG" --globe "$WORK/in/world-globe.atlas" | tee "$RUNNER_TEMP/assemble.txt"
+          ls -l "$WORK/out"
+      - name: Check every pack
+        run: |
+          set -euo pipefail
+          # as the phone will fetch them: the regions' parts from the release, the coarse ones made here
+          gh release download "$TAG" --pattern 'world-mid-*' --dir "$WORK/parts"
+          cp "$WORK"/out/world-coarse.* "$WORK/parts/"
+          "$PACKER" world-check "$WORK/out/world.idx" "$WORK/parts" --core "$ATLAS_STAGEP" --threads 4 | tee "$RUNNER_TEMP/check.txt"
+          "$ATLAS_STAGEP" check "$WORK/in/world-globe.atlas" > "$RUNNER_TEMP/globe-check.txt"
+          echo "world-globe.atlas: $(grep -c '^tile ' "$RUNNER_TEMP/globe-check.txt") tiles decoded by the core" | tee -a "$RUNNER_TEMP/check.txt"
+          # a level whose tiles are more than a tenth off the last world's is worth a look
+          if gh release download world-latest --pattern world.json --dir "$WORK/latest" 2> /dev/null; then
+            LAST=$(jq -r .release "$WORK/latest/world.json")
+            if gh release download "$LAST" --pattern world-stats.json --dir "$WORK/latest" 2> /dev/null; then
+              jq -r --arg last "$LAST" --slurpfile now "$WORK/out/world-stats.json" '.levels as $was | $now[0].levels | to_entries[]
+                | select($was[.key] != null) | .value.tiles as $n | $was[.key].tiles as $w
+                | select($w > 0 and (if $n > $w then $n - $w else $w - $n end) * 10 > $w)
+                | "::warning::L\(.key): \($n) tiles, \($w) in \($last)"' "$WORK/latest/world-stats.json"
+            fi
+          fi
+      - name: Upload
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$WORK"/out/world-coarse.* "$WORK/out/world.idx" "$WORK/out/world.json" "$WORK/out/world-stats.json" --clobber
+          {
+            echo "### $TAG: $(jq .packs "$WORK/out/world.json") packs in $(jq '.parts | length' "$WORK/out/world.json") parts, $(jq .bytes "$WORK/out/world.json") bytes in all"
+            echo "The data of $(jq -r .date "$WORK/out/world.json")."
+            grep -E '^(L[0-9]+:|world:)' "$RUNNER_TEMP/assemble.txt" | sed 's/^/- /'
+            sed 's/^/- /' "$RUNNER_TEMP/check.txt"
+            jq -r '.regions | to_entries[] | "- \(.key): \(.value.blocks) blocks, " + ([.value.seconds | to_entries[] | "\(.key) \(.value) s"] | join(", "))' "$WORK/out/world-stats.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    # only by hand, a checked draft named
+    if: ${{ github.event.inputs.publish != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.inputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD, not $TAG"; exit 1; fi
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != true ]; then echo "::error::$TAG is not a draft"; exit 1; fi
+          R="$RUNNER_TEMP/publish"
+          mkdir -p "$R"
+          gh release download "$TAG" --pattern world.json --dir "$R"
+          # every file world.json names is in the release at its size
+          gh release view "$TAG" --json assets -q '.assets[] | "\(.name) \(.size)"' > "$R/assets.txt"
+          jq -r '(.index, .globe, .parts[]) | "\(.name) \(.bytes)"' "$R/world.json" | while read -r line; do
+            if ! grep -qxF "$line" "$R/assets.txt"; then echo "::error::$TAG has no $line bytes"; exit 1; fi
+          done
+          # the run's scratch goes, the release is published and world-latest names it
+          gh release view "$TAG" --json assets -q '.assets[].name | select(startswith("scratch-"))' | while read -r a; do
+            gh release delete-asset "$TAG" "$a" --yes
+          done
+          gh release edit "$TAG" --draft=false --latest=false
+          printf '%s\n' "$RELEASE_NOTES" > "$R/notes.md"
+          if ! gh release view world-latest > /dev/null 2>&1; then
+            gh release create world-latest --title "World: the latest" --notes-file "$R/notes.md" --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release delete-asset world-latest world.json --yes 2> /dev/null || true
+          gh release upload world-latest "$R/world.json"
+          # every world but the last two goes; world-test and world-latest stay
+          gh release list --limit 200 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName' |
+            { grep -E '^world-[0-9]{8}$' || true; } | sort -r | tail -n +3 | while read -r old; do
+            gh release delete "$old" --cleanup-tag --yes
+          done
+          echo "### $TAG published; world-latest names it" >> "$GITHUB_STEP_SUMMARY"

@@ -58,11 +58,20 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${app.atlas.packer.world.WorldTiles.USAGE}
 
-  ${app.atlas.packer.world.Globe.USAGE}"""
+  ${app.atlas.packer.world.Globe.USAGE}
+
+  ${app.atlas.packer.world.WorldPlan.USAGE}
+
+  ${app.atlas.packer.world.WorldFilter.USAGE}
+
+  ${app.atlas.packer.world.WorldAssemble.USAGE}
+
+  ${app.atlas.packer.world.WorldCheck.USAGE}"""
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
- * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`).
+ * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
+ * `world-tags`, `world-assemble` and `world-check`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -193,6 +202,10 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "country" -> return CountryTiles.run(args, out)
         "world" -> return app.atlas.packer.world.WorldTiles.run(args, out)
         "globe" -> return app.atlas.packer.world.Globe.run(args, out)
+        "world-plan" -> return app.atlas.packer.world.WorldPlan.run(args, out)
+        "world-tags" -> return app.atlas.packer.world.WorldFilter.run(args, out)
+        "world-assemble" -> return app.atlas.packer.world.WorldAssemble.run(args, out)
+        "world-check" -> return app.atlas.packer.world.WorldCheck.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()
