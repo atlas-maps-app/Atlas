@@ -10,6 +10,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import kotlin.math.PI
+import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.sinh
+import kotlin.math.tan
 
 /**
  * VK bench's plan and arithmetic (plan-vector K1): the paths (the stand-in's, and the app's map's at its real views), the
@@ -101,6 +112,114 @@ class VkBenchTest {
         assertEquals(listOf("home"), VkBench.mapViews(RegionFrame.living(), null, null).map { it.label })
         assertEquals(listOf("board", "pitch70", "world72"), VkBench.mapViews(null, region, board).map { it.label })
         assertTrue(VkBench.mapViews(null, region, null).isEmpty())
+        // The constants the map stage stands its views by over a phone's own packs are the canal ring's.
+        assertEquals(region, RegionFrame.region(VkBench.BOARD_ORIGIN))
+        assertEquals(listOf(board.x, board.z, board.yaw, board.pitch, board.distance, board.cy), VkBench.BOARD_CAMERA.let { listOf(it.x, it.z, it.yaw, it.pitch, it.distance, it.cy) })
+        // Over the canal ring the lines are CI's as before: no pack named.
+        assertEquals(listOf("home", "board"), views.take(2).map { it.where })
+        assertEquals("map home still", VkBench.mapLabel(home, VkBench.Path.STILL))
+        assertEquals("map world72 orbit", VkBench.mapLabel(far, VkBench.Path.ORBIT))
+    }
+
+    /** Window [z]/[x]/[y] in [dir] as PackList reads one: D1's header and a format-3 manifest with its tile's box, no views. */
+    private fun window(dir: File, z: Int, x: Int, y: Int) {
+        val n = (1 shl z).toDouble()
+        val north = Math.toDegrees(atan(sinh(PI * (1 - 2 * y / n))))
+        val south = Math.toDegrees(atan(sinh(PI * (1 - 2 * (y + 1) / n))))
+        val manifest = """{"format":"atlas-pack","version":3,"layout":"render-tiles","payload":1,"id":"window","profile":"region",""" +
+            """"bbox":{"west":${x / n * 360 - 180},"south":$south,"east":${(x + 1) / n * 360 - 180},"north":$north},""" +
+            """"origin":{"lat":52.3667,"lon":4.8516},"tz":"Europe/Amsterdam","chunks":1,"config":{"views":{}}}"""
+        val bytes = manifest.toByteArray()
+        val out = ByteArrayOutputStream()
+        out.write("ATLASPCK".toByteArray(Charsets.US_ASCII))
+        out.write(byteArrayOf(0, 3, 0, 0))
+        out.write(ByteBuffer.allocate(8).putInt(bytes.size).putInt(0).array())
+        out.write(bytes)
+        out.write(ByteArray(48) { it.toByte() })
+        File(dir, "$z-$x-$y.atlas").writeBytes(out.toByteArray())
+    }
+
+    /** The L14 window holding [lat], [lon]: its x and y. */
+    private fun tileOf(lat: Double, lon: Double): Pair<Int, Int> {
+        val n = 1 shl 14
+        val r = Math.toRadians(lat)
+        return floor((lon + 180) / 360 * n).toInt() to floor((1 - ln(tan(r) + 1 / cos(r)) / PI) / 2 * n).toInt()
+    }
+
+    @Test
+    fun withoutTheCanalRingTheMapIsDrawnOverThePhonesOwnPacksAtItsTargets() {
+        // An alpha on a phone: nothing in /data/local/tmp/atlas, the windows the phone took about the Westerkerk (a block of
+        // nine, and their frame cell's L13 tile).
+        val dir = Files.createTempDirectory("vkbench").toFile()
+        try {
+            val living = RegionFrame.living()
+            val (x, y) = tileOf(living.lat(-10.0, -30.0), living.lon(-10.0, -30.0))
+            for (dx in -1..1) for (dy in -1..1) window(dir, 14, x + dx, y + dy)
+            window(dir, 13, x / 2, y / 2)
+            val packs = PackList(windows = { dir }).also { it.load() }
+            val views = VkBench.installedViews(packs)
+            // the same views and paths at the same targets as over the canal ring
+            val canal = VkBench.mapViews(living, RegionFrame.region(VkBench.BOARD_ORIGIN), VkBench.BOARD_CAMERA)
+            val shape = { v: VkBench.MapView -> listOf(v.label, v.latitude, v.longitude, v.bearing, v.pitch, v.distance, v.paths) }
+            assertEquals(canal.map(shape), views.map(shape))
+            // each over the window the app names at its target, its L14 one
+            assertEquals(views.map { v -> tileOf(v.latitude, v.longitude).let { (tx, ty) -> "window/14/$tx/$ty" } }, views.map { it.over })
+            assertEquals("window/14/$x/$y", views[0].over)
+            // the lines name it, so none is taken for CI's canal ring's
+            assertEquals("home over window/14/$x/$y", views[0].where)
+            assertEquals("map home still over window/14/$x/$y", VkBench.mapLabel(views[0], VkBench.Path.STILL))
+            assertEquals(
+                "vkbench map: no canal ring (CI puts it in /data/local/tmp/atlas), so over the phone's own 10 packs, at the canal ring's targets",
+                VkBench.installedLine(packs, views),
+            )
+            // the camera names the pack as the app does (MapController: PackList.named): past the block's east edge, where
+            // no pack holds the target, the nearest, drawn with its frame cell's pack (the core's own cover), not none
+            val east = packs.packs.first { it.id == "window/14/${x + 1}/$y" }.box
+            val (lat, lon) = east.center.lat to east.east + 0.01
+            val source = BenchSource(CameraState(), ChromeShapes())
+            source.running = true
+            source.widthPx = 1080
+            source.heightPx = 2400
+            source.density = 2.625
+            source.packs = packs
+            source.mapView = VkBench.MapView("home", lat, lon, 52.0, 52.0, 430.0, listOf(VkBench.Path.STILL))
+            val out = CameraWriter.allocate()
+            assertTrue(source.camera(16_666_667L, out))
+            assertEquals(null, packs.choose(lat, lon))
+            assertEquals(packs.named(lat, lon)!!.number, out.getLong(CameraWriter.PACK_ID_AT))
+            assertTrue(out.getLong(CameraWriter.PACK_ID_AT) != 0L)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun whereNoPackOfThePhonesHoldsTheHomeTheViewsStandAboutItsDensestPlace() {
+        // A phone that took windows about Utrecht alone: a lone one, a row of three, and the row's frame cell's L13 tile.
+        val dir = Files.createTempDirectory("vkbench").toFile()
+        try {
+            window(dir, 13, 4212, 2697)
+            window(dir, 14, 8400, 5390)
+            for (x in 8424..8426) window(dir, 14, x, 5394)
+            val packs = PackList(windows = { dir }).also { it.load() }
+            val views = VkBench.installedViews(packs)
+            // all four about the middle of the row's middle window, the place with the most places within a tile of it
+            val middle = packs.packs.first { it.id == "window/14/8425/5394" }.box.center
+            assertEquals(listOf("home", "board", "pitch70", "world72"), views.map { it.label })
+            for (v in views) assertEquals(listOf(middle.lat, middle.lon, "window/14/8425/5394"), listOf(v.latitude, v.longitude, v.over))
+            // at the canal ring's bearings, pitches and distances, with its paths
+            val canal = VkBench.mapViews(RegionFrame.living(), RegionFrame.region(VkBench.BOARD_ORIGIN), VkBench.BOARD_CAMERA)
+            val camera = { v: VkBench.MapView -> listOf(v.bearing, v.pitch, v.distance, v.paths) }
+            assertEquals(canal.map(camera), views.map(camera))
+            assertEquals(
+                "vkbench map: no canal ring (CI puts it in /data/local/tmp/atlas), so over the phone's own 5 packs, about window/14/8425/5394",
+                VkBench.installedLine(packs, views),
+            )
+            // none where the phone lists no pack
+            assertTrue(VkBench.installedViews(PackList(windows = { File(dir, "none") }).also { it.load() }).isEmpty())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
