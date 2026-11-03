@@ -136,17 +136,21 @@ static const uint BUILDING_LEAN_FACE_VECTORS = 1u;
 static const uint BUILDING_LIST_CELLS = 1u;
 static const uint BUILDING_LIST_LEAN = 2u;
 
-// The kept primitives' jobs (passes/Kept.cpp): a header of 4 uint4 (in x, y and z each list's first job, its jobs, its
-// first place among the kept primitives and its first chunk's draw; in w the totals), then each job's 5 uint4 (its
-// tile's push constants as that list's draws have them, then its run: its first primitive in the list, how many, at
-// most 64, and its list). The lists, in the frame's order: the walls (the edged list), the near cells, the roofs (the
-// plain list), each drawn in chunks of the static index buffers' primitives, an indirect draw (5 words) a chunk.
-static const uint BUILDING_KEPT_HEADER = 4u;
+// The kept primitives' jobs (passes/Kept.cpp): a header of 5 uint4 (in x, y and z each list's first job, its jobs, its
+// first place among the kept primitives, its first chunk's draw and its first shape record; in w the totals), then each
+// job's 5 uint4 (its tile's push constants as that list's draws have them, then its run: its first primitive in the
+// list, how many, at most 64, and its list). The lists, in the frame's order: the walls (the edged list), the near
+// cells, the roofs (the plain list), each drawn in chunks of the static index buffers' primitives, an indirect draw (5
+// words) a chunk, after each list's count of kept primitives (BUILDING_KEPT_TOTALS words). An edged list's first kept
+// primitives, as many as its shape records (a whole number of chunks, or all), are drawn from their records, the rest
+// and the roofs decided at each point.
+static const uint BUILDING_KEPT_HEADER = 5u;
 static const uint BUILDING_KEPT_JOB_VECTORS = 5u;
 static const uint BUILDING_KEPT_LISTS = 3u;
 static const uint BUILDING_KEPT_EDGED_CHUNK = 4096u;
 static const uint BUILDING_KEPT_PLAIN_CHUNK = 13107u;
 static const uint BUILDING_KEPT_DRAW_WORDS = 5u;
+static const uint BUILDING_KEPT_TOTALS = 4u;
 // A face the cull leaves out as turned away is one building_shape turns away whatever either stage's float arithmetic
 // rounds or fuses: its facing lies below minus this share (2^-16) of its terms' magnitudes.
 static const float BUILDING_FACING_SLACK = 1.52587890625e-5f;
@@ -1085,4 +1089,93 @@ inline float3 building_colour(uint lit, uint unlit, float amount) {
     float3 u = {float(unlit & 0xFFu), float((unlit >> 8u) & 0xFFu), float((unlit >> 16u) & 0xFFu)};
     float3 c = u + (l - u) * amount;
     return c / 255.0f;
+}
+
+// A kept wall's or near cell's shape record (passes/Kept.cpp; ENGINE.md's gains, 1b): the cull's last stage decides each
+// kept edged primitive once for the frame (shaders/building/draw.slang's kept_shapes_cs) and writes what its 16 points
+// take from its shape into the record, 5 uint4, so the vertex stage only places a point (walls_shape_vs), the same
+// points at the same depths as deciding it at each point places: its header (building_shape_header), its corners (CSS
+// px), its face's plane and the span its outline's reciprocal depths keep within (building_outline and
+// building_plane_recip at each of its 16 points), and its colour at the frame (v4's y, z and w). A shape that draws
+// nothing writes its header alone (0: no corners). The roofs have none: a record would save 4 of a roof's 5 decisions,
+// about what a tiler spends writing and reading its 80 bytes (ENGINE.md).
+static const uint BUILDING_SHAPE_VECTORS = 5u;
+
+struct BuildingShapeRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+    uint4 v4;
+};
+
+/// The header of shape `s`'s record: its corners (bits 0-2), whether its building is the one the app asks about (bit
+/// 3: `asked`), its depth's lead in 2^-16ths (bits 4-9: every lead is a whole number of them below 64, the cells' up to
+/// 15, the roofs' 16, a kit eaves' 32, a kit's band's 8 and its corner board's 10) and its painter slot (bits 10-29).
+inline uint building_shape_header(BuildingShape s, uint asked) {
+    uint lead = uint(s.lead * 65536.0f);
+    return (s.count | (asked << 3u)) | (((lead & 63u) << 4u) | ((s.slot & 0xFFFFFu) << 10u));
+}
+
+/// A header's fields.
+inline uint building_shape_count(uint header) {
+    return header & 7u;
+}
+inline uint building_shape_asked(uint header) {
+    return (header >> 3u) & 1u;
+}
+inline float building_shape_lead(uint header) {
+    return float((header >> 4u) & 63u) * BUILDING_CELL_LEAD;
+}
+inline uint building_shape_slot(uint header) {
+    return (header >> 10u) & 0xFFFFFu;
+}
+
+/// The outline record of edged shape `s`, its colour `colour` and `asked` (building_shape_header's).
+inline BuildingShapeRecord building_outline_record(BuildingShape s, float3 colour, uint asked) {
+    BuildingShapeRecord r;
+    uint4 v0 = {building_shape_header(s, asked), asuint(s.p0.x), asuint(s.p0.y), asuint(s.p1.x)};
+    uint4 v1 = {asuint(s.p1.y), asuint(s.p2.x), asuint(s.p2.y), asuint(s.p3.x)};
+    uint4 v2 = {asuint(s.p3.y), asuint(s.p4.x), asuint(s.p4.y), asuint(s.plane.x)};
+    uint4 v3 = {asuint(s.plane.y), asuint(s.plane.z), asuint(s.plane.w), asuint(s.lo)};
+    uint4 v4 = {asuint(s.hi), asuint(colour.x), asuint(colour.y), asuint(colour.z)};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    r.v4 = v4;
+    return r;
+}
+
+/// The shape an outline record holds, as far as its outline and its depth read it (building_outline,
+/// building_plane_recip, building_depth at camera `cam`): its corners, its plane and span, its lead and its painter
+/// slot's depth.
+inline BuildingShape building_outline_shape(FrameCamera cam, BuildingShapeRecord r) {
+    BuildingShape s = building_nothing();
+    uint header = r.v0.x;
+    s.count = building_shape_count(header);
+    float2 p0 = {asfloat(r.v0.y), asfloat(r.v0.z)};
+    float2 p1 = {asfloat(r.v0.w), asfloat(r.v1.x)};
+    float2 p2 = {asfloat(r.v1.y), asfloat(r.v1.z)};
+    float2 p3 = {asfloat(r.v1.w), asfloat(r.v2.x)};
+    float2 p4 = {asfloat(r.v2.y), asfloat(r.v2.z)};
+    float4 plane = {asfloat(r.v2.w), asfloat(r.v3.x), asfloat(r.v3.y), asfloat(r.v3.z)};
+    s.p0 = p0;
+    s.p1 = p1;
+    s.p2 = p2;
+    s.p3 = p3;
+    s.p4 = p4;
+    s.plane = plane;
+    s.lo = asfloat(r.v3.w);
+    s.hi = asfloat(r.v4.x);
+    s.lead = building_shape_lead(header);
+    s.slot = building_shape_slot(header);
+    s.depth = painter_depth(cam, s.slot);
+    return s;
+}
+
+/// A record's colour.
+inline float3 building_shape_colour(BuildingShapeRecord r) {
+    float3 c = {asfloat(r.v4.y), asfloat(r.v4.z), asfloat(r.v4.w)};
+    return c;
 }

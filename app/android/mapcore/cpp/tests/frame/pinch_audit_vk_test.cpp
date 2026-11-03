@@ -39,12 +39,19 @@
 // their glow, the lamps' pools, the lit windows) or "wet-night" (the same in rain: the rain's streaks, the streets' wet
 // cores, the drizzle's rings on the water) instead of the sunny moment. ATLAS_PINCH_HASH: each frame's decisions of the
 // water's reflections hashed, to hold two builds to the same ones. ATLAS_PINCH_STILL: at each rest, that many frames
-// more, each one logged (stage F's spread at the view). At each rest the frame cells' levels' tiles drawn are logged,
-// the heaps' bytes the resident tiles hold by level and pass, and the buildings' shade by level (of their samples in
-// the cells drawn that face the sun, those in another's shadow). After the pinch (in, held, and out with
-// ATLAS_PINCH_OUTWARD), each part's stage F (median and 95th percentile), its frames that drew no tile, those that left
-// a window's place within 12 km without a tile (what alpha 23 drew) and the most such places a frame, and the tiles
-// built more than once over it or that found no room in the heaps.
+// more, each one logged (stage F's spread at the view). ATLAS_PINCH_SHAPES: the most chunks of the walls' and of the
+// near cells' kept lists a frame draws from shape records (passes/Kept.cpp; 0: every kept primitive decided at each
+// point, as before the records), instead of as many as its frame slot's last frame kept; at each rest the kept
+// triangles are logged, those drawn from records, and the records' bytes. ATLAS_PINCH_SHAPES=cycle: at each rest the
+// ATLAS_PINCH_STILL frames go two at a time (a frame slot each) without the walls and roofs, then decided at each
+// point, then from records, over and over, each line naming its frame and the earlier one its GPU times are
+// (FrameRecord::gpu_frame), so that the three are measured side by side whatever else runs (cycle-alone: the buildings
+// pass alone, beside the composite). At each rest the frame cells' levels' tiles drawn are logged, the heaps' bytes the
+// resident tiles hold by level and pass, and the buildings' shade by level (of their samples in the cells drawn that
+// face the sun, those in another's shadow). After the pinch (in, held, and out with ATLAS_PINCH_OUTWARD), each part's
+// stage F (median and 95th percentile), its frames that drew no tile, those that left a window's place within 12 km
+// without a tile (what alpha 23 drew) and the most such places a frame, and the tiles built more than once over it or
+// that found no room in the heaps.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -53,6 +60,7 @@
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "passes/Ground.hpp"
+#include "passes/Walls.hpp"
 #include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/ItemTable.hpp"
@@ -683,9 +691,31 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             MESSAGE(std::format("parts left out: {:#x}", always_off));
         }
         const Listed* held = nullptr;
+        // the map's buildings pass (none before its first frame)
+        const auto buildings = [&]() -> passes::Buildings* {
+            const frame::FrameBuilder* b = map.builder();
+            if (b == nullptr) return nullptr;
+            for (const std::unique_ptr<frame::Pass>& p : b->passes()) {
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
+                if (p->name() == "buildings") return &static_cast<passes::Buildings&>(*p);
+            }
+            return nullptr;
+        };
+        // the most chunks of the walls' and near cells' lists drawn from shape records (ATLAS_PINCH_SHAPES), else as
+        // the pass sizes them
+        std::optional<std::uint32_t> most_shape_chunks;
+        const bool shapes_alone = environment("ATLAS_PINCH_SHAPES") == "cycle-alone";
+        const bool shapes_cycle = environment("ATLAS_PINCH_SHAPES") == "cycle" || shapes_alone;
+        if (const std::string most = environment("ATLAS_PINCH_SHAPES"); !most.empty() && !shapes_cycle) {
+            std::uint32_t n = 0;
+            std::from_chars(most.data(), most.data() + most.size(), n);
+            most_shape_chunks = n;
+            MESSAGE(std::format("at most {} chunks of the walls' and near cells' lists drawn from shape records", n));
+        }
         // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
         // it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
+            if (passes::Buildings* p = buildings(); p != nullptr) p->most_shape_chunks(most_shape_chunks);
             style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
             c.parts |= off | always_off;
             held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
@@ -707,12 +737,14 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 }
                 MESSAGE(std::format("{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
                                     "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments, {} tiles "
-                                    "fading over {} kept under; {}; {}; {}",
+                                    "fading over {} kept under; {}; {}; {}; gpu before the main pass {:.1f} ms, in it "
+                                    "{:.1f}, after it {:.1f}; frame {}, gpu of frame {}",
                                     tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
                                     b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k, fading,
                                     under, b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
-                                    b != nullptr ? stage_f_parts(*b) : std::string()));
+                                    b != nullptr ? stage_f_parts(*b) : std::string(), s.record.gpu_offscreen_ms,
+                                    s.record.gpu_main_ms, s.record.gpu_after_ms, s.record.frame, s.record.gpu_frame));
                 if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
                     MESSAGE(std::format("{} {:6.0f} m: {}", tag, d, reflections_hash(*b)));
                 }
@@ -1076,6 +1108,19 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (const frame::FrameBuilder* b = map.builder(); b != nullptr) {
                 MESSAGE(std::format("passes at {:.0f} m (rest, complete {}):\n{}", d, map.complete(), pass_counts(*b)));
             }
+            // what the GPU's cull kept of the buildings' triangles, those drawn from shape records and the records'
+            // bytes (passes/Kept.cpp), the frame done
+            if (const passes::Buildings* p = buildings(); p != nullptr) {
+                started->device->wait_idle();
+                const passes::Buildings::KeptCounts k = p->kept_counts();
+                MESSAGE(std::format("kept at {:.0f} m: walls {} of {}, near cells {} of {}, roofs {} of {} triangles; "
+                                    "from shape records {}, {} and {}; {:.2f} MiB of records written and read, their "
+                                    "buffers {:.2f} MiB",
+                                    d, k.kept[0], k.submitted[0], k.kept[1], k.submitted[1], k.kept[2], k.submitted[2],
+                                    k.shaped[0], k.shaped[1], k.shaped[2],
+                                    static_cast<double>(k.shape_bytes) / (1 << 20),
+                                    static_cast<double>(k.shape_memory) / (1 << 20)));
+            }
             // the frame cells' levels' tiles drawn (what a phone takes from the country's tiles for this view)
             if (map.world() != nullptr && map.world()->cover() != nullptr) {
                 std::map<std::tuple<std::uint8_t, std::uint32_t, std::uint32_t>, std::size_t> levels;
@@ -1096,7 +1141,28 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (const std::string still = environment("ATLAS_PINCH_STILL"); !still.empty()) {
                 int count = 0;
                 std::from_chars(still.data(), still.data() + still.size(), count);
-                for (int k = 0; k < count; ++k) (void)draw(std::format("still {:3d}", k), d, true, true);
+                // (ATLAS_PINCH_SHAPES=cycle: without the walls and roofs, decided at each point, from records, two
+                // frames each, so that each frame from records follows one decided at each point in its slot; with
+                // cycle-alone the buildings pass draws alone, beside the composite)
+                constexpr std::array<const char*, 3> modes{"bare", "points", "records"};
+                if (const frame::FrameBuilder* b = map.builder(); shapes_alone && b != nullptr) {
+                    std::uint64_t alone = 0;
+                    for (std::size_t i = 0; i < b->counters().size(); ++i) {
+                        const std::string_view name = b->counters()[i].pass();
+                        if (name == "buildings" || name == "composite") alone |= std::uint64_t{1} << i;
+                    }
+                    map.set_passes(alone);
+                }
+                for (int k = 0; k < count; ++k) {
+                    const std::size_t mode = shapes_cycle ? static_cast<std::size_t>(k / 2) % modes.size() : 2;
+                    if (shapes_cycle) most_shape_chunks = mode == 1 ? std::optional<std::uint32_t>(0) : std::nullopt;
+                    const std::uint64_t bare = mode == 0 ? style::camera_part::walls | style::camera_part::roofs : 0U;
+                    const std::string tag =
+                        shapes_cycle ? std::format("still {:3d} {}", k, modes.at(mode)) : std::format("still {:3d}", k);
+                    (void)draw(tag, d, true, true, bare);
+                }
+                if (shapes_cycle) most_shape_chunks = std::nullopt;
+                if (shapes_alone) map.set_passes(~std::uint64_t{0});
             }
             if (!environment("ATLAS_PINCH_COST").empty()) {
                 const frame::FrameBuilder* b = map.builder();

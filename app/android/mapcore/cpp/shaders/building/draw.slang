@@ -81,12 +81,15 @@ uint4 walls_vector(uint i) {
 // stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
 // list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
 // primitives in their lists' order (a job and a lane each), as the compute stage writes them and as the vertex stage
-// reads them, and the lists' chunks' indirect draws.
+// reads them, the lists' kept counts and chunks' indirect draws, and the kept primitives' shape records
+// (building.slangh's BuildingShapeRecord), as the compute stage writes them and as the vertex stage reads them.
 [[vk::binding(12, 2)]] StructuredBuffer<uint4> kept_jobs;
 [[vk::binding(13, 2)]] RWStructuredBuffer<uint4> kept_counts;
 [[vk::binding(14, 2)]] RWStructuredBuffer<uint> kept_out;
 [[vk::binding(15, 2)]] StructuredBuffer<uint> kept;
 [[vk::binding(16, 2)]] RWStructuredBuffer<uint> kept_draws;
+[[vk::binding(25, 2)]] RWStructuredBuffer<uint4> kept_shapes_out;
+[[vk::binding(26, 2)]] StructuredBuffer<uint4> kept_shapes;
 [[vk::push_constant]] ConstantBuffer<BuildingPush> push;
 
 struct BuildingOut {
@@ -261,6 +264,42 @@ BuildingOut roofs_kept_vs(uint vertex : SV_VulkanVertexID) {
     return roof_vertex(k.push, k.index, vertex - slot * BUILDING_PLAIN_VERTICES);
 }
 
+/// The shape record at `slot` of the kept primitives' records.
+BuildingShapeRecord shape_record_at(uint slot) {
+    uint at = slot * BUILDING_SHAPE_VECTORS;
+    BuildingShapeRecord r;
+    r.v0 = kept_shapes[at];
+    r.v1 = kept_shapes[at + 1u];
+    r.v2 = kept_shapes[at + 2u];
+    r.v3 = kept_shapes[at + 3u];
+    r.v4 = kept_shapes[at + 4u];
+    return r;
+}
+
+/// The kept walls and near cells decided once (kept_shapes_cs): a draw's vertex is point vertex % 16 of the outline
+/// record at vertex / 16 (its chunk's vertex offset is the chunk's first record, times 16), placed as wall_vertex
+/// places it.
+[shader("vertex")]
+BuildingOut walls_shape_vs(uint vertex : SV_VulkanVertexID) {
+    uint slot = vertex / BUILDING_EDGED_VERTICES;
+    uint corner = vertex - slot * BUILDING_EDGED_VERTICES;
+    BuildingOut o;
+    if (building_shape_count(kept_shapes[slot * BUILDING_SHAPE_VECTORS].x) == 0u) {
+        o.position = NOWHERE;
+        o.colour = float3(0.0f);
+        o.asked = 0u;
+        return o;
+    }
+    BuildingShapeRecord r = shape_record_at(slot);
+    BuildingShape s = building_outline_shape(frame.camera, r);
+    float2 css = building_outline(s, corner, 0.5f * frame.strokes.widths.w);
+    float depth = building_depth(frame.camera, s, building_plane_recip(frame.camera, s, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.colour = building_shape_colour(r);
+    o.asked = building_shape_asked(r.v0.x);
+    return o;
+}
+
 /// A stroke job (Buildings::update): a tile's push constants as its plain list's draws have them (4 uint4), then
 /// its run's first primitive in that list, how many (at most 64) and its first record.
 static const uint STROKE_JOB_VECTORS = 5u;
@@ -334,8 +373,9 @@ void kept_cull_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
 }
 
 /// The kept primitives' scan: workgroup l takes list l's jobs in their order and gives each its first place among the
-/// list's kept primitives (kept_counts' w: the candidates of the list's jobs before it), then each of the list's chunks
-/// its indirect draw: as many of the static index buffer's primitives as the chunk keeps, from its first place on.
+/// list's kept primitives (kept_counts' w: the candidates of the list's jobs before it), then the list's count of them
+/// and each of its chunks its indirect draw: as many of the static index buffer's primitives as the chunk keeps, from
+/// its first shape record on where the list's records reach it, else from its first place on.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -344,8 +384,10 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint count = kept_jobs[1][list];
     uint base = kept_jobs[2][list];
     uint draw = kept_jobs[3][list];
-    // the list's places: up to the next list's first (the total after the last)
+    uint record = kept_jobs[4][list];
+    // the list's places and its records: up to the next list's first (the total after the last)
     uint end = list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[2][list + 1u] : kept_jobs[2].w;
+    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[4].w) - record;
     uint chunk = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_KEPT_PLAIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK;
     uint vertices = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_PLAIN_VERTICES : BUILDING_EDGED_VERTICES;
     uint indices = (vertices - 2u) * 3u;
@@ -376,15 +418,21 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         offset += c.x;
     }
     uint total = kept_total;
+    if (thread.x == 0u) {
+        kept_draws[list] = total;
+    }
     uint chunks = (end - base + chunk - 1u) / chunk;
     for (uint k = thread.x; k < chunks; k += 64u) {
         uint n = total > k * chunk ? min(chunk, total - k * chunk) : 0u;
-        uint w = (draw + k) * BUILDING_KEPT_DRAW_WORDS;
-        kept_draws[w] = n * indices;                         // indexCount
-        kept_draws[w + 1u] = 1u;                             // instanceCount
-        kept_draws[w + 2u] = 0u;                             // firstIndex
-        kept_draws[w + 3u] = (base + k * chunk) * vertices;  // vertexOffset
-        kept_draws[w + 4u] = 0u;                             // firstInstance
+        uint w = BUILDING_KEPT_TOTALS + (draw + k) * BUILDING_KEPT_DRAW_WORDS;
+        // a chunk's first primitive: its record's, or its place's (a list's records are a whole number of chunks, or
+        // all its places)
+        uint at = k * chunk < records ? record + k * chunk : base + k * chunk;
+        kept_draws[w] = n * indices;        // indexCount
+        kept_draws[w + 1u] = 1u;            // instanceCount
+        kept_draws[w + 2u] = 0u;            // firstIndex
+        kept_draws[w + 3u] = at * vertices; // vertexOffset
+        kept_draws[w + 4u] = 0u;            // firstInstance
     }
 }
 
@@ -407,6 +455,55 @@ void kept_scatter_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) 
     uint below = countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
     uint list = kept_jobs[BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS + 4u].z;
     kept_out[kept_jobs[2][list] + c.w + below] = (job << 6u) | lane;
+}
+
+/// The kept primitives' scatter where they are decided once (ENGINE.md's gains, 1b): each candidate of a job's run
+/// among its list's records (the walls' and the near cells', none of the roofs') decided for the frame as walls_vs
+/// decides it, into its shape record (its list's first record, then its place in the list: building.slangh's
+/// BuildingShapeRecord); a candidate beyond them into its place as kept_scatter_cs writes it, for the vertex stage to
+/// decide at each point.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint job = group.y * STROKE_JOB_ROW + group.x;
+    if (job >= kept_jobs[0].w) {
+        return;
+    }
+    uint4 c = kept_counts[job];
+    uint lane = thread.x;
+    uint word = lane < 32u ? c.y : c.z;
+    uint bit = lane & 31u;
+    if (((word >> bit) & 1u) == 0u) {
+        return;
+    }
+    uint below = countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
+    uint at = BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS;
+    uint4 span = kept_jobs[at + 4u];
+    uint list = span.z;
+    uint place = c.w + below;
+    uint record = kept_jobs[4][list];
+    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[4].w) - record;
+    if (place >= records) {
+        kept_out[kept_jobs[2][list] + place] = (job << 6u) | lane;
+        return;
+    }
+    BuildingPush p;
+    p.place.offset = asfloat(kept_jobs[at]);
+    p.place.scale = asfloat(kept_jobs[at + 1u]);
+    p.at = kept_jobs[at + 2u];
+    p.sun = kept_jobs[at + 3u];
+    Drawn d = drawn_at(p, span.x + lane);
+    uint out_at = (record + place) * BUILDING_SHAPE_VECTORS;
+    if (d.shape.count == 0u) {
+        kept_shapes_out[out_at] = uint4(0u, 0u, 0u, 0u);
+        return;
+    }
+    BuildingShapeRecord r = building_outline_record(d.shape, colour_at(p, d), (d.rank & RANK_ASKED) != 0u ? 1u : 0u);
+    kept_shapes_out[out_at] = r.v0;
+    kept_shapes_out[out_at + 1u] = r.v1;
+    kept_shapes_out[out_at + 2u] = r.v2;
+    kept_shapes_out[out_at + 3u] = r.v3;
+    kept_shapes_out[out_at + 4u] = r.v4;
 }
 
 /// Vertex `vertex` of the records' strokes: record vertex / 30's segment along its shape's edge (vertex % 30) / 6, if
