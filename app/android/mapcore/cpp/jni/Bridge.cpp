@@ -14,6 +14,7 @@
 #include "base/build_info.hpp"
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
+#include "frame/Cadence.hpp"
 #include "frame/CompositeCheck.hpp"
 #include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
@@ -639,17 +640,12 @@ private:
             session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
             return;
         }
-        // The display's period, from the vsyncs themselves; at most 60 frames a second (D5.8): every vsync at 60 Hz,
-        // every second one at 120 Hz, at 90 Hz every vsync unless the phone runs warm.
-        if (last_vsync_ns_ != 0) {
-            const std::int64_t d = v.frame_ns - last_vsync_ns_;
-            if (d > 4'000'000 && d < 50'000'000) period_ns_ = period_ns_ == 0 ? d : (period_ns_ * 7 + d) / 8;
-        }
-        last_vsync_ns_ = v.frame_ns;
-        const bool every_second =
-            period_ns_ != 0 && (period_ns_ < 10'000'000 || (period_ns_ < 14'000'000 && thermal_.headroom(0) > 0.6F));
-        const std::int64_t min_gap = every_second ? 2 * period_ns_ - 2'000'000 : 0;
-        if (drawn_vsync_ns_ != 0 && v.frame_ns - drawn_vsync_ns_ < min_gap) {
+        // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
+        // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync unless the phone
+        // runs warm.
+        cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
+        const bool every_second = cadence_.every_second([this, &v] { return warm(v.frame_ns); });
+        if (!cadence_.due(v.frame_ns, every_second)) {
             ask_vsync();
             return;
         }
@@ -678,15 +674,25 @@ private:
             rest();
             return;
         }
-        drawn_vsync_ns_ = v.frame_ns;
+        cadence_.drew(v.frame_ns);
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
         // responsive", and more frames despite more stutter is better there. A debug build's switch paces again
         // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
-        const std::int64_t cadence = period_ns_ == 0 ? 0 : (every_second ? 2 * period_ns_ : period_ns_);
+        const std::int64_t cadence = cadence_.cadence_ns(every_second);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
         ask_vsync();
+    }
+
+    /// Whether the phone runs warm (its thermal headroom over 0.6), read at most once a second: each read is a call
+    /// into the system's thermal service, and the NDK asks for no more (faster ones may answer NaN, read as not warm).
+    [[nodiscard]] bool warm(std::int64_t now_ns) {
+        if (headroom_ns_ == 0 || now_ns - headroom_ns_ >= 1'000'000'000) {
+            headroom_ = thermal_.headroom(0);
+            headroom_ns_ = now_ns;
+        }
+        return headroom_ > 0.6F;
     }
 
     /// The presentation a paced frame asks for at vsync `v`: the pacer's timeline where Choreographer offers them (API
@@ -696,8 +702,8 @@ private:
         std::array<frame::Timeline, platform::max_timelines> t{};
         for (std::uint32_t i = 0; i < v.timelines; ++i)
             t.at(i) = {.present_ns = v.presents.at(i), .deadline_ns = v.deadlines.at(i)};
-        const std::size_t pick =
-            pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(), cadence_ns, period_ns_);
+        const std::size_t pick = pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(),
+                                               cadence_ns, cadence_.period_ns());
         return t.at(pick).present_ns;
     }
 
@@ -758,9 +764,9 @@ private:
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
-    std::int64_t last_vsync_ns_ = 0;
-    std::int64_t drawn_vsync_ns_ = 0;
-    std::int64_t period_ns_ = 0;
+    frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
+    float headroom_ = 0.0F;            // the thermal headroom last read (warm), and when
+    std::int64_t headroom_ns_ = 0;
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
