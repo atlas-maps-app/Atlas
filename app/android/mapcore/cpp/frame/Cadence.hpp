@@ -95,6 +95,13 @@ public:
         return step == Step::second ? 2 * period_ns_ : period_ns_;
     }
 
+    /// The frames' interval on the mean, ns (the render thread's ADPF target): two periods where every second vsync
+    /// draws, a sixtieth of a second by the phase, else a period; 0 while unknown.
+    [[nodiscard]] std::int64_t target_ns(Step step) const noexcept {
+        if (period_ns_ == 0) return 0;
+        return step == Step::phase ? sixtieth_ns : cadence_ns(step);
+    }
+
 private:
     std::array<std::int64_t, window> gaps_{};
     std::size_t count_ = 0;

@@ -222,6 +222,7 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     CHECK(c.period_ns() == 0);
     CHECK(c.step([] { return true; }) == Step::every);
     CHECK(c.cadence_ns(Step::every) == 0);
+    CHECK(c.target_ns(Step::every) == 0);
     CHECK(c.due(1'000 * ms, Step::every));
     std::int64_t v = 1'000 * ms;
     const auto p60 = presents_at(v, period60);
@@ -229,6 +230,7 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     CHECK(c.period_ns() == period60);
     CHECK(c.step([] { return true; }) == Step::every);
     CHECK(c.cadence_ns(Step::every) == period60);
+    CHECK(c.target_ns(Step::every) == period60);
     // the display goes to 120 Hz: the next vsync's timelines say so
     v += period60;
     const auto p120 = presents_at(v, period120);
@@ -236,14 +238,17 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     CHECK(c.period_ns() == period120);
     CHECK(c.step([] { return false; }) == Step::second);
     CHECK(c.cadence_ns(Step::second) == 2 * period120);
+    CHECK(c.target_ns(Step::second) == 2 * period120);
     // and to 90 Hz: by the phase where the phone runs warm, else every vsync; the pacer's cadence a period, since by
-    // the phase a frame may follow the last at the next vsync
+    // the phase a frame may follow the last at the next vsync, and ADPF's target the frames' interval on the mean
     v += period120;
     c.at_vsync(v, presents_at(v, period90));
     CHECK(c.period_ns() == period90);
     CHECK(c.step([] { return true; }) == Step::phase);
     CHECK(c.step([] { return false; }) == Step::every);
     CHECK(c.cadence_ns(Step::phase) == period90);
+    CHECK(c.target_ns(Step::phase) == frame::Cadence::sixtieth_ns);
+    CHECK(c.target_ns(Step::every) == period90);
     // timelines no display has (60 ms apart), or one timeline: the shortest of the gaps
     frame::Cadence e;
     v = 1'000 * ms;

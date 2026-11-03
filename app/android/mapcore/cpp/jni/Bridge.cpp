@@ -684,6 +684,9 @@ private:
             return;
         }
         cadence_.drew(v.frame_ns, step);
+        // ADPF's target follows the frames' interval: 11.1 ms at 90 Hz where the phone is cool, 16.7 ms elsewhere (two
+        // periods at 120 Hz, a sixtieth of a second by the phase), told only when it changes.
+        hint_.target(cadence_.target_ns(step));
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less

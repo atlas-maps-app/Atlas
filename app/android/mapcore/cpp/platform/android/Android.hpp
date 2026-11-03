@@ -145,6 +145,9 @@ public:
 
     /// Opens a session for thread `tid` with a target of `target_ns` a frame; false where Android has none.
     bool open(pid_t tid, std::int64_t target_ns) noexcept;
+    /// Moves the target a frame's work is to fit to `target_ns` (APerformanceHint_updateTargetWorkDuration), where it
+    /// differs from the last; asked once a change, the call's answer aside. Not positive, or no session: nothing.
+    void target(std::int64_t target_ns) noexcept;
     /// Reports one frame's work: its CPU time on the render thread and, where known, the GPU's.
     void report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_t gpu_ns) noexcept;
     [[nodiscard]] bool active() const noexcept { return session_ != nullptr; }
@@ -153,6 +156,7 @@ public:
 
 private:
     void* session_ = nullptr;
+    std::int64_t target_ns_ = 0; // the target last asked for
     bool gpu_ = false;
 };
 
