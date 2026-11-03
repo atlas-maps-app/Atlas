@@ -163,6 +163,9 @@ struct DrawnTile {
     /// tile of another frame (a neighbouring frame cell's, whose origin lies kilometres off) the same camera about its
     /// target taken into that frame. Every decision on its points is made with it.
     const view::Camera* cam = nullptr;
+    /// Kept under a tile fading in and nothing else (scene::CoverTile::under): its fills and lines are drawn, its
+    /// reflections not (the fading tile's are drawn whole at once, as a tile landing without a fade draws them).
+    bool under = false;
 };
 
 /// One element of the quay walls (water_layer's quay walls, in water_edges' order, a piece's in turn), each its own
@@ -313,9 +316,12 @@ struct ReflectionsKept {
         std::vector<std::uint32_t> sides;
         bool used = false;
     };
-    std::vector<const void*> grounds; ///< the drawn tiles' grounds the lists were laid for, in the frame's order
-    std::vector<Tile*> drawn;         ///< each drawn tile's own, in the frame's order
+    /// The drawn tiles' grounds the lists were laid for, in the frame's order, those kept under tiles fading in (which
+    /// come last) left off and null for one before a tile drawn.
+    std::vector<const void*> grounds;
+    std::vector<Tile*> drawn; ///< each drawn tile's own, in the frame's order (`none` for one kept under)
     std::vector<std::unique_ptr<Tile>> tiles;
+    Tile none; ///< a tile kept under one fading in (DrawnTile::under): no mirrors, trees, lamps, roads or water rings
     std::vector<Ref> mirrors; ///< S['buildings'] + S['parts'], each in its source order (a tile's mirror heads)
     std::vector<Ref> trees;   ///< S['trees'] in its source order, those within 9 m of a quay edge
     std::vector<Ref> lamps;   ///< S['nodes']'s street lamps in their order

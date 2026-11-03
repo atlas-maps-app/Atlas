@@ -54,11 +54,13 @@ namespace pm = atlas::pymath;
 namespace {
 
 /// near_water(edges, [(x, z)], d) over the drawn tiles' quay edges (water_edges'), each filed by the cells of a grid
-/// that its box widened by the reach meets, so a point reads only the edges near it.
+/// that its box widened by the reach meets, so a point reads only the edges near it. A tile kept under one fading in
+/// has none (its trees and lit roads are not the frame's).
 class EdgeCells {
 public:
     EdgeCells(const GroundFrame& f, double reach) {
         for (const DrawnTile& t : f.tiles) {
+            if (t.under) continue;
             for (const geo::QuayEdge& q : t.ground->quays) {
                 if (!q.drawn) continue;
                 const auto e = static_cast<std::uint32_t>(edges_.size());
@@ -178,6 +180,7 @@ void band_water(const geo::GroundTile& g, ReflectionsKept::Tile& own) {
 /// which only those of z's band can be (a side crosses it only where its ends lie either side of z).
 [[nodiscard]] bool on_water(const GroundFrame& f, const ReflectionsKept& kept, double x, double z) {
     for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
+        if (f.tiles[ti].under) continue;
         const geo::GroundTile& g = *f.tiles[ti].ground;
         const ReflectionsKept::Tile& own = *kept.drawn[ti];
         for (const ReflectionsKept::WaterRing& ring : own.rings) {
@@ -446,15 +449,27 @@ void prepare_reflections(geo::GroundTile& g) {
 void Ground::lay_reflections() {
     const GroundFrame& f = frame_;
     ReflectionsKept& k = reflections_kept_;
-    bool same = k.grounds.size() == f.tiles.size();
-    for (std::size_t i = 0; same && i < f.tiles.size(); ++i) same = k.grounds[i] == f.tiles[i].ground;
-    if (same) return;
+    // a tile kept under one fading in draws none (`none`); those come last, so the lists stand as they come and go
+    std::size_t n = f.tiles.size();
+    while (n > 0 && f.tiles[n - 1].under) --n;
+    const auto ground_of = [&](std::size_t i) -> const void* { return f.tiles[i].under ? nullptr : f.tiles[i].ground; };
+    bool same = k.grounds.size() == n;
+    for (std::size_t i = 0; same && i < n; ++i) same = k.grounds[i] == ground_of(i);
+    if (same) {
+        k.drawn.resize(n);
+        k.drawn.resize(f.tiles.size(), &k.none);
+        return;
+    }
     k.grounds.clear();
-    for (const DrawnTile& t : f.tiles) k.grounds.push_back(t.ground);
+    for (std::size_t i = 0; i < n; ++i) k.grounds.push_back(ground_of(i));
     // each drawn tile's own, kept while it is drawn (its walls' colours, its trees' draws), made for one that lands
     for (const std::unique_ptr<ReflectionsKept::Tile>& own : k.tiles) own->used = false;
     k.drawn.clear();
     for (const DrawnTile& t : f.tiles) {
+        if (t.under) {
+            k.drawn.push_back(&k.none);
+            continue;
+        }
         ReflectionsKept::Tile* own = nullptr;
         for (const std::unique_ptr<ReflectionsKept::Tile>& o : k.tiles) {
             if (o->ground.get() == t.ground) own = o.get();
@@ -506,7 +521,7 @@ void Ground::lay_reflections() {
     };
     merged(&ReflectionsKept::Tile::mirrors_by_order, k.mirrors);
     for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
-        k.drawn[ti]->places.assign(f.tiles[ti].ground->mirror_heads.size(), 0U);
+        if (!f.tiles[ti].under) k.drawn[ti]->places.assign(f.tiles[ti].ground->mirror_heads.size(), 0U);
     }
     for (std::uint32_t m = 0; m < k.mirrors.size(); ++m) k.drawn[k.mirrors[m].tile]->places[k.mirrors[m].index] = m;
     std::vector<ReflectionsKept::Ref> trees;
@@ -525,6 +540,7 @@ void Ground::lay_reflections() {
     // the street lamps (S['nodes']'s order), then the lit roads (S['roads']'s), and which of their points lie near the
     // water
     for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+        if (f.tiles[ti].under) continue;
         const geo::GroundTile& g = *f.tiles[ti].ground;
         ReflectionsKept::Tile& own = *k.drawn[ti];
         own.road_near.assign(g.lit_points.size(), 0U);
@@ -592,7 +608,7 @@ void Ground::decide_reflections(const frame::FrameState& state) {
     for (std::uint32_t ti = 0; mirroring && ti < f.tiles.size(); ++ti) {
         const DrawnTile& t = f.tiles[ti];
         const geo::GroundTile& g = *t.ground;
-        if (g.casters == nullptr) continue;
+        if (t.under || g.casters == nullptr) continue;
         const view::Camera& cam = *t.cam; // in the tile's own frame
         const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
         const double wy = g.water_y;
@@ -799,7 +815,7 @@ void Ground::decide_streaks() {
     if (k.lamps.empty() && k.roads.empty()) return;
     // the drawn tiles' water rings by bands, made the first night each is drawn
     for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
-        if (!kept.drawn[ti]->banded) band_water(*f.tiles[ti].ground, *kept.drawn[ti]);
+        if (!f.tiles[ti].under && !kept.drawn[ti]->banded) band_water(*f.tiles[ti].ground, *kept.drawn[ti]);
     }
     pm::PyRandom rnd(5);
     // streak(x, yl, z, k): where the eye's ray to the mirrored light meets the water, ahead, on the picture and on the

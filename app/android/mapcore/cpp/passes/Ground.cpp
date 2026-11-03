@@ -723,6 +723,7 @@ bool Ground::decide(const frame::FrameState& state) {
             }
             if (it != f.tiles.end()) {
                 it->cells |= cells;
+                it->under = it->under && c.under;
                 continue;
             }
             f.tiles.push_back({.tile = c.drawn,
@@ -733,7 +734,8 @@ bool Ground::decide(const frame::FrameState& state) {
                                .sun = c.sun,
                                .sun_base = c.sun_base,
                                .sun_weight = c.sun_weight,
-                               .fade = c.place.scale.w});
+                               .fade = c.place.scale.w,
+                               .under = c.under});
         }
     }
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's

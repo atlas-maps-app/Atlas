@@ -8,6 +8,7 @@
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "passes/Ground.hpp"
 #include "passes/World.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
@@ -844,6 +845,103 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
             CHECK(gpu::write_ppm(*first, (fs::path(out) / "tile_fade_first.ppm").string()));
             CHECK(gpu::write_ppm(last, (fs::path(out) / "tile_fade_last.ppm").string()));
         }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the countries' fades: a tile kept under one fading in draws no reflections, and the fading tile draws its "
+          "own at once") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the countries' fades are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-tile-fade-mirrors-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        std::vector<frame::MapPack> packs;
+        packs.push_back(canal_ring(tiles_dir));
+        CHECK(map.set_packs(std::move(packs)).find("grachten listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<KeptWindow>(), size, why), why);
+        map.set_theme(sunny());
+        // the ground and the walls' and trees' reflections in the water: what stands up, the shadows and the water's
+        // other effects left out; pitched, so the walls along the canals face the eye in the water
+        style::CameraState cam = camera(52.3765, 4.897, 30.0, 45.0, 9'000.0);
+        cam.pack_id = 1;
+        for (unsigned bit = 8; bit <= 40; ++bit) cam.parts |= std::uint64_t{1} << bit;
+        cam.parts &= ~style::camera_part::reflections;
+        cam.parts |= style::camera_part::canopy | style::camera_part::setts | style::camera_part::ground_text;
+        // at rest from 9 km over the canal ring's L12 tiles, faded in
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const passes::Ground* ground = nullptr;
+        for (const std::unique_ptr<frame::Pass>& p : map.builder()->passes()) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "ground" is passes::Ground
+            if (p->name() == "ground") ground = static_cast<const passes::Ground*>(p.get());
+        }
+        ATLAS_REQUIRE(ground != nullptr, "the map has no ground pass");
+        // Each frame until the picture is complete again: whether a tile is kept under one fading in, whether one kept
+        // under holds mirrored walls, whether a fading tile's reflections are drawn, and those of the tiles kept under.
+        struct Leg {
+            int frames = 0;
+            int kept = 0;
+            int kept_mirrors = 0;
+            int fading_drawn = 0;
+            std::size_t reflections = 0;
+            std::size_t of_kept = 0;
+        };
+        const auto mirrors = [](const passes::DrawnTile& t) { return t.under && !t.ground->mirror_heads.empty(); };
+        const auto zoom = [&](double distance) {
+            Leg leg;
+            cam.distance = distance;
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                ++leg.frames;
+                const passes::GroundFrame& f = ground->decided();
+                const auto of_kept = [&f](const passes::Reflection& e) { return f.tiles[e.tile].under; };
+                const auto of_fading = [&f](const passes::Reflection& e) { return f.tiles[e.tile].fade < 1.0F; };
+                leg.reflections += f.reflections.size();
+                leg.of_kept += static_cast<std::size_t>(std::ranges::count_if(f.reflections, of_kept));
+                if (std::ranges::any_of(f.tiles, &passes::DrawnTile::under)) {
+                    ++leg.kept;
+                    if (std::ranges::any_of(f.tiles, mirrors)) ++leg.kept_mirrors;
+                    if (std::ranges::any_of(f.reflections, of_fading)) ++leg.fading_drawn;
+                }
+                if (map.complete() && leg.frames > 2) break;
+            }
+            MESSAGE(std::format("to {} m: {} frames, {} with a tile kept under one fading in ({} of them one holding "
+                                "mirrored walls, {} drawing a fading tile's reflections); {} reflections, {} of a tile "
+                                "kept under",
+                                distance, leg.frames, leg.kept, leg.kept_mirrors, leg.fading_drawn, leg.reflections,
+                                leg.of_kept));
+            CHECK(map.complete());
+            return leg;
+        };
+        // then 1.2 km, whose L14 tiles are not resident: each fades in as it lands over the L12 that drew there (which
+        // mirrors no wall), its own reflections drawn from its first frame
+        const Leg in = zoom(1'200.0);
+        CHECK(in.kept > 0);
+        CHECK(in.fading_drawn > 0);
+        CHECK(in.of_kept == 0);
+        CHECK_FALSE(ground->decided().reflections.empty()); // at rest over the L14
+        // and out to 9 km again: the L12 fades in over the L14 kept under it, whose mirrored walls are not drawn
+        const Leg out = zoom(9'000.0);
+        CHECK(out.kept > 0);
+        CHECK(out.kept_mirrors > 0);
+        CHECK(out.of_kept == 0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);
