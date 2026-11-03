@@ -151,6 +151,8 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     vk::PhysicalDeviceDynamicRenderingLocalReadFeatures local_read{};
     vk::PhysicalDeviceShaderFmaFeaturesKHR fma{};
     vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain1{};
+    vk::PhysicalDeviceImageCompressionControlFeaturesEXT compression{};
+    vk::PhysicalDeviceImageCompressionControlSwapchainFeaturesEXT compression_swapchain{};
     vk::PhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT raster_order{};
     vk::PhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT to_single{};
     auto has = [&](std::string_view name) { return facts.has_extension(name); };
@@ -180,6 +182,10 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     if (has(vk::KHRShaderFmaExtensionName)) link(fma);
     if (has(vk::KHRSwapchainMaintenance1ExtensionName) || has(vk::EXTSwapchainMaintenance1ExtensionName))
         link(swapchain1);
+    if (has(vk::EXTImageCompressionControlExtensionName) && has(vk::EXTImageCompressionControlSwapchainExtensionName)) {
+        link(compression);
+        link(compression_swapchain);
+    }
     if (has(vk::EXTRasterizationOrderAttachmentAccessExtensionName) ||
         has(vk::ARMRasterizationOrderAttachmentAccessExtensionName)) {
         link(raster_order);
@@ -250,6 +256,8 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     }
     out.shader_fma32 = fma.shaderFmaFloat32 == vk::True;
     out.swapchain_maintenance1 = swapchain1.swapchainMaintenance1 == vk::True;
+    out.swapchain_compression_control = compression.imageCompressionControl == vk::True &&
+                                        compression_swapchain.imageCompressionControlSwapchain == vk::True;
     out.rasterization_order = raster_order.rasterizationOrderColorAttachmentAccess == vk::True;
     out.multisampled_to_single = to_single.multisampledRenderToSingleSampled == vk::True;
 }
@@ -786,6 +794,11 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("hardware: {}",
          f.hardware ? "yes" : "no (a CPU implementation: Android's design notes advise against software Vulkan)");
     line("tiler: {} ({})", yes_no(f.tiler), f.tiler_reason);
+    // The driver's own unless the Map look's switch turns it off, which only a driver with the swapchain's control
+    // obeys.
+    line("swapchain.compression: {}", f.features.swapchain_compression_control
+                                          ? "the driver's; the Map look's switch can turn it off"
+                                          : "the driver's; no switch (no VK_EXT_image_compression_control_swapchain)");
     line("lazily.allocated.memory: {}", yes_no(f.lazy_memory));
     line("host.visible.device.local: {}", yes_no(f.host_visible_device_local));
     // A device for offscreen work says so (it needs no VK_KHR_swapchain); the phone's device presents.
@@ -862,6 +875,7 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("feature.timelineSemaphore: {}", yes_no(x.timeline_semaphore));
     line("feature.shaderFmaFloat32: {}", yes_no(x.shader_fma32));
     line("feature.swapchainMaintenance1: {}", yes_no(x.swapchain_maintenance1));
+    line("feature.imageCompressionControlSwapchain: {}", yes_no(x.swapchain_compression_control));
     line("feature.pipelineCreationCacheControl: {}", yes_no(x.pipeline_cache_control));
     line("feature.shaderClipDistance: {}", yes_no(x.clip_distance));
     line("feature.sampleRateShading: {}", yes_no(x.sample_rate_shading));
@@ -894,6 +908,8 @@ std::vector<std::string> facts_lines(const Facts& f) {
                              vk::KHRIncrementalPresentExtensionName,
                              vk::KHRSwapchainMaintenance1ExtensionName,
                              vk::EXTSwapchainMaintenance1ExtensionName,
+                             vk::EXTImageCompressionControlExtensionName,
+                             vk::EXTImageCompressionControlSwapchainExtensionName,
                              vk::KHRDriverPropertiesExtensionName,
                              vk::KHRCalibratedTimestampsExtensionName,
                              vk::EXTCalibratedTimestampsExtensionName,

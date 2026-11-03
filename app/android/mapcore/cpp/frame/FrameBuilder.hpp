@@ -32,6 +32,7 @@
 #include "gpu/Frames.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "style/CameraState.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
@@ -123,6 +124,8 @@ struct FrameState {
     /// What the frame draws of the world beyond the countries' tiles (ENGINE.md step 5; the world pass's), or null: up
     /// to 18 km from the target, and without the world's packs, nothing.
     const scene::WorldFrame* world = nullptr;
+    /// The user's palette (FrameInputs::palette; null: today's), which the passes that draw by it read.
+    const style::PaletteBlock* palette = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
@@ -229,6 +232,8 @@ struct FrameInputs {
     const routes::RouteSet* routes = nullptr;
     /// The building the app asks about (MapCore.ask), if any: the ranks and the buildings pass draw it as asked.
     std::optional<AskedBuilding> asked;
+    /// The user's palette (MapCore.palette; null: today's).
+    const style::PaletteBlock* palette = nullptr;
 };
 
 /// The map's frame.

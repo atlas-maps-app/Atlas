@@ -392,6 +392,57 @@ TEST_CASE("the twin's light is the port's, bit for bit, over 100,000 random surf
     CHECK(bytes_differ == 0);
 }
 
+TEST_CASE("the user's TONE strength of 1 lights as the renders' TONE, bit for bit; others ease highlights by it") {
+    // the Map look's Tone: a block with tone_strength at 1 (as Kotlin writes none) is the renders' light, exact and in
+    // binary32; 2 eases a bright channel more than 1, 0.5 less, and a channel under every knee stays as it was
+    const Case& c = the_case();
+    std::size_t toned = 0;
+    std::size_t differ = 0;
+    for (std::size_t i = 0; i < c.inputs.size(); ++i) {
+        const LightInput& p = c.inputs[i];
+        const ThemeBlock& block = c.blocks.at(p.theme);
+        if (!block.has(flag::tone) || block.has(flag::night)) continue;
+        ThemeBlock one = block;
+        one.flags |= flag::tone_strength;
+        one.tone = 1.0F;
+        const atlas::shaders::Theme t = atlas::style::shader_theme(block);
+        const atlas::shaders::Theme t1 = atlas::style::shader_theme(one);
+        const atlas::shaders::double3 base = {p.base[0], p.base[1], p.base[2]};
+        const atlas::shaders::double3 n = {p.normal[0], p.normal[1], p.normal[2]};
+        const atlas::shaders::double3 a = atlas::shaders::light(t, base, n, p.lit != 0U);
+        const atlas::shaders::double3 b = atlas::shaders::light(t1, base, n, p.lit != 0U);
+        const atlas::shaders::float3 fb = {static_cast<float>(base.x), static_cast<float>(base.y),
+                                           static_cast<float>(base.z)};
+        const atlas::shaders::float3 fn = {static_cast<float>(n.x), static_cast<float>(n.y), static_cast<float>(n.z)};
+        const atlas::shaders::float3 fa = atlas::shaders::light_f32(t, fb, fn, p.lit != 0U);
+        const atlas::shaders::float3 fo = atlas::shaders::light_f32(t1, fb, fn, p.lit != 0U);
+        ++toned;
+        differ += (!same_bits(a.x, b.x) || !same_bits(a.y, b.y) || !same_bits(a.z, b.z) || fa.x != fo.x ||
+                   fa.y != fo.y || fa.z != fo.z)
+                      ? 1U
+                      : 0U;
+    }
+    MESSAGE(toned << " TONE surfaces lit at strength 1: " << differ << " differ from the renders' TONE");
+    CHECK(toned > 1000);
+    CHECK(differ == 0);
+    // the shoulder itself: 250 eases to 234.7 at 1, less at 0.5 (knee 230), more at 2 (knee 155); 150 stays
+    const auto at = [](double v, double s) {
+        ThemeBlock k = the_case().blocks.front();
+        k.flags |= flag::tone | flag::tone_strength;
+        k.tone = static_cast<float>(s);
+        const atlas::shaders::Theme t = atlas::style::shader_theme(k);
+        return atlas::shaders::tone_shoulder_at(v, atlas::shaders::tone_strength(t),
+                                                atlas::shaders::tone_reciprocal(t));
+    };
+    CHECK(at(250.0, 1.0) == atlas::shaders::tone_shoulder(250.0));
+    CHECK(at(250.0, 2.0) < atlas::shaders::tone_shoulder(250.0));
+    CHECK(at(250.0, 0.5) > atlas::shaders::tone_shoulder(250.0));
+    CHECK(at(150.0, 2.0) == 150.0);
+    CHECK(at(250.0, 0.0) == 250.0);
+    CHECK(atlas::shaders::tone_amb_mix(1.0) == 0.26);
+    CHECK(atlas::shaders::tone_amb_mix(2.0) < 0.26);
+}
+
 TEST_CASE("tohex rounds as Python's round: half to even, the largest double under a half down") {
     for (const double v : {0.49999999999999994, 0.5, 1.5, 2.5, 24.5, 24.500000000000004, 254.5, 255.5,
                            255.49999999999997, -0.0, -0.4, -0.5, -0.6, 300.0, 1e15}) {
@@ -440,6 +491,46 @@ TEST_CASE("the exact light on the host's Vulkan device is the port's, bit for bi
     }
     CHECK(values_differ == 0);
     CHECK(bytes_differ == 0);
+}
+
+TEST_CASE("the user's TONE strength lights on the host's Vulkan device as in C++, bit for bit") {
+    // the shoulder's quotient on the GPU (light_quotient by the theme's reciprocal, flags.zw) against the CPU's IEEE
+    // division: every surface of the case, its theme at 0.05, 0.35, 0.8, 1.55 or 2
+    const Case& c = the_case();
+    constexpr std::array strengths = {0.05F, 0.35F, 0.8F, 1.55F, 2.0F};
+    std::vector<atlas::shaders::Theme> themes;
+    for (std::size_t t = 0; t < c.blocks.size(); ++t) {
+        ThemeBlock b = c.blocks[t];
+        b.flags |= flag::tone_strength;
+        b.tone = strengths.at(t % strengths.size());
+        themes.push_back(atlas::style::shader_theme(read_back(b)));
+    }
+    auto out = atlas::style::run_light_probe(c.inputs, themes);
+    if (!out) {
+        not_run(out.error());
+        return;
+    }
+    ATLAS_REQUIRE(out->bytes.size() == c.inputs.size() && out->values.size() == 3 * c.inputs.size(),
+                  out->bytes.size() << " bytes and " << out->values.size() << " values for " << c.inputs.size()
+                                    << " surfaces");
+    std::size_t toned = 0;
+    std::size_t differ = 0;
+    for (std::size_t i = 0; i < c.inputs.size(); ++i) {
+        const LightInput& p = c.inputs[i];
+        const ThemeBlock& block = c.blocks.at(p.theme);
+        const atlas::shaders::double3 base = {p.base[0], p.base[1], p.base[2]};
+        const atlas::shaders::double3 n = {p.normal[0], p.normal[1], p.normal[2]};
+        const atlas::shaders::double3 want = atlas::shaders::light(themes.at(p.theme), base, n, p.lit != 0U);
+        toned += block.has(flag::tone) && !block.has(flag::night) ? 1U : 0U;
+        const bool same = same_bits(out->values[3 * i], want.x) && same_bits(out->values[(3 * i) + 1], want.y) &&
+                          same_bits(out->values[(3 * i) + 2], want.z) &&
+                          unpack(out->bytes[i]) == port_bytes(Rgb{want.x, want.y, want.z});
+        differ += same ? 0U : 1U;
+    }
+    MESSAGE("GPU on " << out->device << ": " << toned << " TONE surfaces at the user's strengths, " << differ << " of "
+                      << c.inputs.size() << " surfaces differ from C++");
+    CHECK(toned > 1000);
+    CHECK(differ == 0);
 }
 
 TEST_CASE("the GPU's exact exp and divisions are StrictMath.exp's and IEEE division's bits") {

@@ -1,5 +1,10 @@
 package app.atlas.tiles
 
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
@@ -62,6 +67,64 @@ class WorldFetch(
         }
     }
 
+    /** A place a map looks at: its target's latitude and longitude. */
+    data class Place(val lat: Double, val lon: Double)
+
+    /**
+     * The world's fetch for the life of the process: [start] once the phone is [online], then [enter] for each place a
+     * map looks at from beyond 18 km ([places], null before the first), the latest only while a part comes. What failed
+     * is tried again, for the latest place, once the phone is online: [firstWait] on, doubling to [longestWait] while it
+     * fails, or at once where the phone loses its network and comes back meanwhile; a place moved to meanwhile waits
+     * too, so a pan asks nothing at each frame. A phone's network goes now and then: on 1 November CI's emulator moved
+     * from its Wi-Fi to its mobile network as the first part was asked for, and the ten minutes then left without a try
+     * kept the world phase's parts from coming. [said] gets the `vk world` lines (CI's world phase reads them), [landed]
+     * is called as each file is in place. Blocking calls: run it off the main thread. Never returns.
+     */
+    suspend fun follow(
+        places: StateFlow<Place?>,
+        online: StateFlow<Boolean>,
+        said: (String) -> Unit,
+        landed: () -> Unit,
+        firstWait: Long = FIRST_WAIT_MS,
+        longestWait: Long = LONGEST_WAIT_MS,
+    ): Nothing {
+        var wait = firstWait
+        suspend fun again() {
+            withTimeoutOrNull(wait) {
+                online.first { !it }
+                online.first { it }
+            }
+            wait = (wait * 2).coerceAtMost(longestWait)
+        }
+        while (true) {
+            online.first { it }
+            val started = runCatching { start() }
+            if (started.isSuccess) break
+            said("not on the phone yet: ${started.exceptionOrNull()?.message}")
+            again()
+        }
+        said("$INDEX (${index?.entries?.size ?: 0} packs) and $GLOBE on the phone")
+        landed()
+        wait = firstWait
+        var done: Place? = null
+        while (true) {
+            val p = combine(places, online) { place, on -> place?.takeIf { on && it != done } }.filterNotNull().first()
+            val got = runCatching { enter(p.lat, p.lon) }
+            val parts = got.getOrNull()
+            if (parts == null) {
+                said("a block's packs not fetched: ${got.exceptionOrNull()?.message}")
+                again()
+                continue
+            }
+            done = p
+            wait = firstWait
+            if (parts.isNotEmpty()) {
+                said("parts ${parts.joinToString()} on the phone")
+                landed()
+            }
+        }
+    }
+
     /** Fetches [name] of the release into [target] by way of `<target>.download`, moved into place once [check] passes. */
     private fun fetch(name: String, target: File, check: (File) -> Unit) {
         val partial = File(target.path + ".download")
@@ -113,6 +176,10 @@ class WorldFetch(
         const val GLOBE = "world-globe.atlas"
 
         private const val BUFFER = 1 shl 16
+
+        /** [follow]'s first wait after a failure, and its longest. */
+        const val FIRST_WAIT_MS = 15_000L
+        const val LONGEST_WAIT_MS = 600_000L
 
         /**
          * The parts of [index] holding the packs of the place at [lat], [lon] (its L6 tile's fine pack, its L3 tile's

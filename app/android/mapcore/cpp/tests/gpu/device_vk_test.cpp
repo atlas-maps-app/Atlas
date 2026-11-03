@@ -101,6 +101,10 @@ TEST_CASE("a device that presents opens with the swapchain where the host's Vulk
     CHECK(std::ranges::find(lines, "requirements: all met") != lines.end()); // as the phone's facts say it
     CHECK(std::ranges::find(lines, "ext.VK_KHR_swapchain: yes") != lines.end());
     CHECK(s.device->enabled().swapchain);
+    // The screen's compression is the driver's, with the Map look's switch exactly where the driver lets an app ask.
+    CHECK(s.device->enabled().swapchain_compression_control ==
+          s.device->facts().features.swapchain_compression_control);
+    CHECK(has_line(lines, "swapchain.compression: the driver's; "));
     CHECK(s.take_messages().empty());
 }
 
@@ -210,6 +214,7 @@ TEST_CASE("without a window system an offscreen device opens, and one that prese
     CHECK_FALSE(s.device->enabled().swapchain_maintenance1);
     CHECK_FALSE(s.device->enabled().display_timing);
     CHECK_FALSE(s.device->enabled().incremental_present);
+    CHECK_FALSE(s.device->enabled().swapchain_compression_control);
     // VkFacts still says whether the device has the swapchain, and what the tests hid.
     const std::vector<std::string> lines = gpu::facts_lines(facts);
     CHECK(std::ranges::find(lines, "requirements: all met (offscreen)") != lines.end());

@@ -79,6 +79,13 @@ enum class Depth : std::uint8_t { deepest, eight };
 /// until a later alpha's evidence shows 10 safe (the file's head).
 inline constexpr Depth default_depth = Depth::eight;
 
+/// The swapchain's images with the driver's own framebuffer compression (its default: lossless, wherever it has one) or
+/// without it, where the driver lets an app ask (VK_EXT_image_compression_control_swapchain: Enabled's
+/// swapchain_compression_control): the Map look's switch (the user, 2 November: the driver's by default). Off, the
+/// user's Pixel 10 (PowerVR, 25.3) shows none of the flicker and broken blocks of busy frames, such as the overcast
+/// sky's, that it showed only where the display read the frames itself; but heavy frames jiggle more.
+enum class Compression : std::uint8_t { driver, off };
+
 /// What the device does with one of the frame's colour formats (Facts::colour_formats).
 struct ColourFormat {
     vk::Format format = vk::Format::eUndefined;
@@ -151,6 +158,9 @@ struct FeatureFacts {
     bool maintenance4 = false;
     bool shader_fma32 = false;
     bool swapchain_maintenance1 = false;
+    /// VK_EXT_image_compression_control_swapchain's feature (with VK_EXT_image_compression_control's): a swapchain can
+    /// be made without the driver's framebuffer compression (Compression::off).
+    bool swapchain_compression_control = false;
     bool rasterization_order = false;
     bool multisampled_to_single = false;
 

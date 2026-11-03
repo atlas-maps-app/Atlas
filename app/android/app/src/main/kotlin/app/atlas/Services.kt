@@ -395,12 +395,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     private val localDataLazy = lazy {
         val shelf = app.atlas.services.PackShelf({ mapData.packs.local().map { it.file } })
+        // what's here where nothing on the phone holds the point: the map's window data, kept, else from Atlas's packs
+        val windows = app.atlas.services.HereWindows(
+            kept = { x, y -> app.atlas.mapview.MapEngine.windowsDir()?.let { File(it, "${app.atlas.tiles.WindowPacks.LEVEL}-$x-$y.json.gz") } },
+            packed = { x, y -> if (config.offline || !connectivity.online.value) null else mapData.packedWindow(x, y) },
+        )
         app.atlas.services.LocalData(
             stores = { placeStores },
             packs = shelf,
             overpass = { if (config.offline) null else overpass },
             isOnline = { !config.offline && connectivity.online.value },
             onClose = shelf::close,
+            windows = { at, radiusM -> windows.around(at, radiusM, HERE_WINDOW_MS) },
         )
     }
 
@@ -463,5 +469,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
         /** The longest the EV planner waits for one charger source along a route: the others' chargers plan without it. */
         val CHARGERS_ALONG_DEADLINE = 90.seconds
+
+        /** What's here: the longest a window's data from Atlas's packs is waited on (its index first, once), ms. */
+        const val HERE_WINDOW_MS = 15_000L
     }
 }

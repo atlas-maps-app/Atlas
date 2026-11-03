@@ -399,7 +399,8 @@ void SunGlobals::work(const std::stop_token& stop) {
     }
 }
 
-std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level) {
+std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t zoom,
+                                       std::uint8_t level) {
     // The same pack by ownership, never by its identity (the APK's packs have none) or address (a pack let go of and
     // another opened where it was are two).
     const auto same = [&pack](const Tallest& t) { return !t.pack.owner_before(pack) && !pack.owner_before(t.pack); };
@@ -407,16 +408,17 @@ std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StoreP
         const std::scoped_lock lock(mutex_);
         std::erase_if(maxh_, [](const Tallest& t) { return t.pack.expired(); });
         for (const Tallest& t : maxh_) {
-            if (t.level == level && same(t)) return t.h;
+            if (t.zoom == zoom && t.level == level && same(t)) return t.h;
         }
     }
-    const auto h = sun::scene_maxh(pack->pack, level);
+    const auto h = sun::scene_maxh(pack->pack, level, zoom);
     if (!h) {
-        log::warn("vk sun: the tallest solid of {} at level {}: {}", pack->id, level, tiles::describe(h.error()));
+        log::warn("vk sun: the tallest solid of {} at L{} and level {}: {}", pack->id, zoom, level,
+                  tiles::describe(h.error()));
         return std::nullopt;
     }
     const std::scoped_lock lock(mutex_);
-    maxh_.push_back({.pack = pack, .level = level, .h = *h});
+    maxh_.push_back({.pack = pack, .zoom = zoom, .level = level, .h = *h});
     return *h;
 }
 
@@ -466,18 +468,23 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     std::vector<sun::SunTile> made;
     std::vector<tiles::Sha256Digest> chunks;
     double tallest = 0.0;
-    std::vector<std::uint8_t> levels;
+    std::vector<std::pair<std::uint8_t, std::uint8_t>> levels; // each zoom and ladder level its tiles are made at
     for (const Asked& t : b.tiles) {
         const tiles::TileKey key = tiles::TileKey::unpack(t.key);
         const auto tile = decode(key);
         if (!tile) return nullptr;
         made.push_back(sun::make_tile(*tile, *head, region, t.level, decks, t.live));
         chunks.push_back(p.chunks().find(key)->sha256);
-        if (std::ranges::find(levels, t.level) == levels.end()) levels.push_back(t.level);
+        const std::pair<std::uint8_t, std::uint8_t> at{key.z, t.level};
+        if (std::ranges::find(levels, at) == levels.end()) levels.push_back(at);
     }
-    // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds.
-    for (const std::uint8_t level : levels) {
-        const auto h = maxh(b.pack, level);
+    // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds, at
+    // each zoom it holds tiles of. A frame cell's L13 holds its places' records as stage P derived them from all the
+    // cell's windows (without their variants), whether or not the pack holds those windows: the levels come before the
+    // windows and stay when the windows' budget trims one, so a tower whose window is not on the phone stands in the
+    // L13 alone, and the windows' tallest would end a march below it (sun::Grid refuses such a scene).
+    for (const auto& [zoom, level] : levels) {
+        const auto h = maxh(b.pack, zoom, level);
         if (!h) return nullptr;
         tallest = pymath::max(tallest, *h);
     }

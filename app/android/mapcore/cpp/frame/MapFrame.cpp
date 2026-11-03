@@ -35,7 +35,9 @@ void close_owned(tiles::PackRef& ref) noexcept {
 } // namespace
 
 style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) noexcept {
-    if (profile == tiles::Profile::living) {
+    // the user's Tone switched off (a strength of 0, the Map look's setting) lights every pack without it
+    const bool off = theme.has(style::theme_flag::tone_strength) && theme.tone <= 0.0F;
+    if (profile == tiles::Profile::living || off) {
         theme.flags &= ~style::theme_flag::tone;
     } else {
         theme.flags |= style::theme_flag::tone;
@@ -249,7 +251,8 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .labels = labels_.get(),
                           .markers = markers_.get(),
                           .routes = routes_.get(),
-                          .asked = asked_});
+                          .asked = asked_,
+                          .palette = &palette_});
 }
 
 std::optional<scene::Picked> MapFrame::pick(double x, double y) {
@@ -293,13 +296,14 @@ bool MapFrame::complete() const noexcept {
     // and has faded in (no frame waits for one meanwhile: its ancestors draw, down to the globe's resident levels)
     const scene::WorldFrame* w = world_->world_frame();
     const bool world_final = w == nullptr || (w->wanted == 0 && !w->fading);
-    if (world_->active() == nullptr && world_->incoming() == nullptr) {
-        return w != nullptr && !w->draws.empty() && world_final;
-    }
+    const bool world_draws = w != nullptr && !w->draws.empty();
+    if (world_->active() == nullptr && world_->incoming() == nullptr) return world_draws && world_final;
     // a switch waiting for the named pack's tiles (scene::World::incoming) is not the camera's final picture yet
     if (world_->active() == nullptr || world_->incoming() != nullptr || !world_final) return false;
+    // a cover of no tile is final only where it wants none and the world draws the camera: beyond the countries' reach
+    // (100 km over the canal ring, whose pack still holds the target) the world's picture is the whole one
     const scene::Cover& cover = *world_->cover();
-    if (cover.tiles().empty() || cover.missing() > 0 || cover.fading()) return false;
+    if ((cover.tiles().empty() && !world_draws) || cover.missing() > 0 || cover.fading()) return false;
     return world_->frames().weight(now()) >= 1.0;
 }
 

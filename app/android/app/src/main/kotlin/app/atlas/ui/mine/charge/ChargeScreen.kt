@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -55,11 +56,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.UserLocation
@@ -73,6 +72,10 @@ import app.atlas.services.Units
 import app.atlas.ui.go.GoFormat
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.search.BrandLogo
+import app.atlas.ui.search.OverStageMap
+import app.atlas.ui.search.bandBetween
+import app.atlas.ui.search.centre
+import app.atlas.ui.search.rememberOverMap
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
@@ -142,8 +145,8 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
     val shown = remember(all, ports, minStep, availableOnly) { ChargeModel.filter(all, ports, ChargeModel.MIN_KW_STEPS[minStep], availableOnly) }
     // "nearest" (the CI's way to open a card) means the closest station that passes the filters.
     val pick = if (selected == "nearest") shown.firstOrNull() else shown.firstOrNull { it.key == selected } ?: all.firstOrNull { it.key == selected }
-    val map = remember(centre) { MapState(CameraPosition(centre, 15.6, 0.0, 40.0)) }
-    LaunchedEffect(pick?.key) { pick?.let { map.animateTo(CameraPosition(it.place.location, 16.6, 0.0, 40.0), 500) } }
+    // the map on screen, as the user left it; a chosen site glides into the band between the top and its card
+    val over = rememberOverMap(centre) { CameraPosition(centre, 15.6, 0.0, 40.0) }
     val markers = remember(shown, pick) {
         shown.take(60).mapIndexed { i, c ->
             Marker(
@@ -154,11 +157,13 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
             )
         }
     }
-    Box(Modifier.fillMaxSize()) {
-        StageMap(
-            state = map, modifier = Modifier.fillMaxSize(), background = Color(0xFFF4F1EA),
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val band = bandBetween(200.dp, 380.dp)
+        LaunchedEffect(pick?.key) { pick?.let { over.centre(it.place.location, band, CameraPosition(it.place.location, 16.6, 0.0, 40.0), 500) } }
+        OverStageMap(
+            over, modifier = Modifier.fillMaxSize(), background = Color(0xFFF4F1EA),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
-            contentPadding = PaddingValues(top = 200.dp, bottom = 380.dp),
+            ownPadding = PaddingValues(top = 200.dp, bottom = 380.dp),
             onTap = { hit -> if (hit is MapHit.OnMarker) selected = hit.marker.id else if (hit is MapHit.Empty) selected = null },
         )
         // the board's wash over the map's top: the paper at 90 % fading out over 190 px

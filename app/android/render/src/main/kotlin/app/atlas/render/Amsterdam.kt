@@ -80,6 +80,11 @@ data class RenderOptions(
      * (frame/MapFrame.hpp's with_pack), where today's map still draws there (MapEngine.optionsFor).
      */
     val tone: Boolean? = null,
+    /**
+     * The user's strength of the light's TONE ([Amsterdam.TONE_STRENGTH], the Map look's Tone: 0 lights as without it,
+     * 1 the renders', up to 2), read as the frame is drawn, as the core's light reads it (shaders/shared/light.slang).
+     */
+    val toneStrength: Double = 1.0,
 )
 
 /** The living map of render/amsterdam.py. Buildings, roads, nodes and the scene `S` are Python-like dicts, as Generic and Closeup read them. */
@@ -574,6 +579,8 @@ object Amsterdam {
     var QUAY_COURSE: Double? = 0.0625
     /** A soft shoulder on highlights, so pale stone in sun stays cream instead of clipping to white. */
     var TONE = false
+    /** The light's share of [TONE]: the user's strength of it (RenderOptions.toneStrength), the renders' 1 by default. */
+    var TONE_STRENGTH = 1.0
     /** 'paris': stone fronts get tall French windows in bays of about 2.9 m, dark glass. */
     var WIN_STYLE: String? = null
 
@@ -675,7 +682,8 @@ object Amsterdam {
             return if (truthy(hz)) mix(c, hx(th["haze"] as String), d(hz)) else c
         }
         val ambK = d(th["amb_k"])
-        val amb = mix(mulc(base, ambK), mulc(hx(th["amb"] as String), ambK * 0.55), if (TONE) 0.26 else 0.35)
+        val s = TONE_STRENGTH
+        val amb = mix(mulc(base, ambK), mulc(hx(th["amb"] as String), ambK * 0.55), if (!TONE) 0.35 else if (s == 1.0) 0.26 else 0.26 + 0.09 * (1 - s))
         val lam = if (lit) pmax(0.0, vdot(n, L)) else 0.0
         val sky = (0.18 + 0.12 * pmax(0.0, n[1])) * (if ("sky_k" in th) d(th["sky_k"]) else 1.0)
         val sunK = d(th["sun_k"]); val sun = hx(th["sun"] as String)
@@ -684,8 +692,14 @@ object Amsterdam {
             amb[1] + base[1] * sky + base[1] * lam * 1.05 * sunK * sun[1] / 255,
             amb[2] + base[2] * sky + base[2] * lam * 1.05 * sunK * sun[2] / 255,
         )
-        if (TONE) {
+        if (TONE && s == 1.0) {
             fun t(v: Double) = if (v < 205) v else 205 + 50 * (1 - PyMath.exp(-(v - 205) / 50))
+            c = V3(t(c.x), t(c.y), t(c.z))
+        } else if (TONE && s > 0.0) {
+            // the shoulder at the user's strength, as light.slang's tone_shoulder_at: from 255 - 50 s, over 50 s
+            val scale = 50 * s
+            val knee = 255 - scale
+            fun t(v: Double) = if (v < knee) v else knee + scale * (1 - PyMath.exp(-(v - knee) / scale))
             c = V3(t(c.x), t(c.y), t(c.z))
         }
         return if (truthy(hz)) mix(c, hx(th["haze"] as String), d(hz)) else c

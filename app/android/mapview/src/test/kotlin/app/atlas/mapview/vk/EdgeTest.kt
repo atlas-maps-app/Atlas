@@ -156,13 +156,16 @@ class EdgeTest {
         assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 40.0, -30.0, 1_000_000.0))
         // within it, as before: no window at Lille, today's map
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH))
-        // the world is no pack a camera names
+        // the world is no pack a camera names; beyond the levels' reach it draws, so no window is on its way there
         assertNull(list.named(50.6292, 3.0573))
+        assertTrue(list.worldDraws(PackList.LEVELS_REACH + 1))
+        assertFalse(list.worldDraws(PackList.LEVELS_REACH))
         // a part shorter than its pack's range leaves the pack out; without the globe, the world is gone
         File(world, "world-mid.000").writeBytes(ByteArray(90))
         File(world, PackList.WORLD_GLOBE).delete()
         list.load()
         assertFalse(list.hasWorld)
+        assertFalse(list.worldDraws(PackList.LEVELS_REACH + 1))
         assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
     }
 

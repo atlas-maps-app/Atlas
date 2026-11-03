@@ -41,8 +41,9 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
-                                                                   const gpu::Output* /*old*/,
-                                                                   gpu::Depth depth) override {
+                                                                   const gpu::Output* /*old*/, gpu::Depth depth,
+                                                                   gpu::Compression compression) override {
+        compression_ = compression;
         auto made = offscreen_output(device, wanted, depth, refuse_, ten_only_);
         if (made) ++made_;
         return made;
@@ -51,11 +52,14 @@ public:
     void refuse(int n) noexcept { refuse_ = n; }
     /// How many outputs it made (the swapchains a phone's window would have had made).
     [[nodiscard]] int made() const noexcept { return made_; }
+    /// The compression the last output was asked for (a phone's swapchain's images).
+    [[nodiscard]] gpu::Compression compression() const noexcept { return compression_; }
 
 private:
     int refuse_ = 0;
     bool ten_only_ = false;
     int made_ = 0;
+    gpu::Compression compression_ = gpu::Compression::driver;
 };
 
 /// A window on a headless surface: the surface and its queries are real; its output a swapchain where `swapchains`,
@@ -69,8 +73,9 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device, vk::SurfaceKHR surface,
                                                                    vk::Extent2D wanted, const gpu::Output* old,
-                                                                   gpu::Depth depth) override {
-        if (swapchains_) return SessionWindow::output(device, surface, wanted, old, depth);
+                                                                   gpu::Depth depth,
+                                                                   gpu::Compression compression) override {
+        if (swapchains_) return SessionWindow::output(device, surface, wanted, old, depth, compression);
         int refuse = 0;
         return offscreen_output(device, wanted, depth, refuse);
     }

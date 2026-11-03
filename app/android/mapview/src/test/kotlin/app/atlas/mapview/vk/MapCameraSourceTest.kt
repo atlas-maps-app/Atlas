@@ -95,6 +95,22 @@ class MapCameraSourceTest {
         assertFalse(s.camera(5_000L, out))
     }
 
+    /** The user, 1 November: "when you exit the app and come back its black until you move it". */
+    @Test
+    fun aWindowThatShowsNothingGetsTheStillCameraOnceMore() {
+        val s = MapCameraSource()
+        s.redraw()
+        assertFalse("nothing published yet", s.camera(1_000L, out))
+        s.publish(samples(1, t0 = 1_000L))
+        assertTrue(s.camera(2_000L, out))
+        assertFalse(s.camera(3_000L, out))
+        s.redraw()
+        assertTrue("a new window, or the app back: the same camera once more", s.camera(4_000L, out))
+        assertEquals(52.37, out.getDouble(CameraWriter.LATITUDE_AT), 0.0)
+        assertEquals(CameraWriter.REST, out.getInt(CameraWriter.FLAGS_AT) and CameraWriter.REST)
+        assertFalse(s.camera(5_000L, out))
+    }
+
     @Test
     fun anAnimationIsEvaluatedAtTheVsyncAFrameBeyondItsSamplesAndNoFurther() {
         val s = MapCameraSource()

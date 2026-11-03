@@ -201,6 +201,16 @@ object Native {
      */
     @JvmStatic external fun setPacing(handle: Long, on: Boolean)
 
+    /**
+     * The Map look's switch of the screen's compression: on, the swapchain's images with the driver's own framebuffer
+     * compression (its default); off, without it where the driver lets an app ask ([compressionSwitch]). The swapchain
+     * is made again with it, and drawn. Any thread; it waits for the render thread.
+     */
+    @JvmStatic external fun setCompression(handle: Long, on: Boolean)
+
+    /** Whether the driver lets the app make the screen's images without its compression ([setCompression]'s off). */
+    @JvmStatic external fun compressionSwitch(handle: Long): Boolean
+
     @JvmStatic external fun trimMemory(handle: Long, level: Int)
 
     /**
@@ -242,6 +252,9 @@ object Native {
 
     /** The moment's theme for the map (`state.ThemeBlock`'s 256 bytes in a direct buffer); "" or why it was refused. */
     @JvmStatic external fun moment(handle: Long, theme: ByteBuffer): String
+
+    /** The user's palette for the map (`state.PaletteBlock`'s 1,040 bytes in a direct buffer); "" or why it was refused. */
+    @JvmStatic external fun palette(handle: Long, palette: ByteBuffer): String
 
     /** The windows the map wants built, nearest first, each its tile's key packed as `z shl 48 or x shl 24 or y`. */
     @JvmStatic external fun wantedWindows(handle: Long): LongArray

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,12 +27,11 @@ import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.Follow
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapPick
-import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.UserLocation
 import app.atlas.model.Place
 import app.atlas.nav.LocalServices
@@ -64,20 +62,26 @@ internal fun OnTheMap(
 ) {
     val services = LocalServices.current
     val c = Atlas.colors
-    val map = remember { MapState(CameraPosition(here, 15.5)) }
+    // the map on screen, as the user left it; the places glide into the band over the sheet
+    val over = rememberOverMap(Unit) { CameraPosition(here, 15.5) }
+    val map = over.state
     val sheetState = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
-    LaunchedEffect(fit) {
-        // The camera can be fitted once the view knows its size: after its first frame.
-        snapshotFlow { map.visibleBounds }.first { it != null }
-        BBox.of(fit + here)?.let { b -> runCatching { map.fit(b.buffer(60.0), 36) } }
-    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        StageMap(
-            state = map,
+        val band = bandBetween(84.dp, maxHeight * HALF)
+        LaunchedEffect(fit) {
+            // The camera can be fitted once the view knows its size: after its first frame.
+            snapshotFlow { map.visibleBounds }.first { it != null }
+            BBox.of(fit + here)?.let { b ->
+                map.follow = Follow.NONE
+                runCatching { map.fit(b.buffer(60.0), 36, band) }
+            }
+        }
+        OverStageMap(
+            over,
             modifier = Modifier.fillMaxSize(),
             background = c.paper,
             overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
-            contentPadding = PaddingValues(top = 84.dp, bottom = maxHeight * HALF),
+            ownPadding = PaddingValues(top = 84.dp, bottom = maxHeight * HALF),
             onTap = { hit ->
                 when (hit) {
                     is MapHit.OnMarker -> hit.marker.place

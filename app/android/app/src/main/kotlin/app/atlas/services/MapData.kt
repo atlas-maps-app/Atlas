@@ -10,6 +10,8 @@ import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteCode
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
 import app.atlas.providers.SwitchedOffException
@@ -31,8 +33,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -122,6 +122,13 @@ class MapData(private val services: Services) {
     private val windowPacks: WindowPacks by lazy {
         WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
     }
+
+    /**
+     * Window ([x], [y])'s data in Atlas's own packs (Overpass's answer for its box, gzipped), for "What's here" where the
+     * phone holds nothing for a point: null where no pack holds it. Blocks; throws IOException where its bytes did not
+     * come whole.
+     */
+    fun packedWindow(x: Int, y: Int): ByteArray? = windowPacks.window(WindowPacks.LEVEL, x, y, null)?.gz
 
     /**
      * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
@@ -250,13 +257,31 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
+        // the Map look's Tone, as the user set it (on at the renders' 1 when unset; off is 0)
+        services.scope.launch {
+            services.settings.data
+                .map { if (it[SettingsKeys.MAP_TONE_ON] ?: true) it[SettingsKeys.MAP_TONE] ?: 1f else 0f }
+                .distinctUntilChanged()
+                .collect { s -> MapEngine.tone(s) }
+        }
+        // the Map look's palette, as the user picked it (today's look when unset or unreadable)
+        services.scope.launch {
+            services.settings.flow(SettingsKeys.MAP_PALETTE).collect { code ->
+                val read = code?.let(PaletteCode::read)
+                MapEngine.palette((read as? PaletteCode.Read.Ok)?.palette ?: Palette())
+            }
+        }
         // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_PACING, false).collect { on -> MapEngine.pacing(on) }
         }
+        // a debug build's screen compression, as the Look settings have it (the driver's when unset)
+        services.scope.launch {
+            services.settings.flow(SettingsKeys.MAP_COMPRESSION, true).collect { on -> MapEngine.compression(on) }
+        }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: every part drawn when unset (MapParts.byDefault); set before the settings are read, so the first frame
-        // draws what the defaults say
+        // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
+        // are read, so the first frame draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }
@@ -264,43 +289,17 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * The world's fetch, once a launch of the map allows it (Services.worldFetch: not CI's runs but its world phase): the
-     * first start's index and globe as soon as the phone is online, asked again every ten minutes while they cannot be
-     * had (world-test not published); then each place a map looks at from beyond 18 km, the latest only while a part
-     * comes, and after a failure nothing for ten minutes. `vk world` lines say what came (CI's world phase reads them).
+     * The world's fetch, once a launch of the map allows it (Services.worldFetch: not CI's runs but its world phase):
+     * the first start's index and globe as soon as the phone is online, then each place a map looks at from beyond
+     * 18 km, the latest only while a part comes; what failed is tried again soon, at rest too (WorldFetch.follow).
+     * `vk world` lines say what came (CI's world phase reads them).
      */
     private fun wireWorld(world: WorldFetch) {
-        val place = MutableStateFlow<LatLon?>(null)
-        MapEngine.worldPlace = { lat, lon -> place.value = LatLon(lat, lon) }
+        val place = MutableStateFlow<WorldFetch.Place?>(null)
+        MapEngine.worldPlace = { lat, lon -> place.value = WorldFetch.Place(lat, lon) }
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
-            while (true) {
-                services.connectivity.online.first { it }
-                val started = runCatching { world.start() }
-                if (started.isSuccess) break
-                android.util.Log.i("AtlasMap", "vk world: not on the phone yet: ${started.exceptionOrNull()?.message}")
-                delay(WORLD_RETRY_MS)
-            }
-            android.util.Log.i(
-                "AtlasMap",
-                "vk world: ${WorldFetch.INDEX} (${world.index?.entries?.size ?: 0} packs) and ${WorldFetch.GLOBE} on the phone",
-            )
-            MapEngine.invalidate()
-            var failedAt = 0L
-            place.filterNotNull().collect { p ->
-                if (!online() || System.currentTimeMillis() - failedAt < WORLD_RETRY_MS) return@collect
-                runCatching { world.enter(p.lat, p.lon) }
-                    .onSuccess { parts ->
-                        if (parts.isNotEmpty()) {
-                            android.util.Log.i("AtlasMap", "vk world: parts ${parts.joinToString()} on the phone")
-                            MapEngine.invalidate()
-                        }
-                    }
-                    .onFailure {
-                        failedAt = System.currentTimeMillis()
-                        android.util.Log.i("AtlasMap", "vk world: a block's packs not fetched: ${it.message}")
-                    }
-            }
+            world.follow(place, services.connectivity.online, said = { android.util.Log.i("AtlasMap", "vk world: $it") }, landed = MapEngine::invalidate)
         }
     }
 
@@ -345,6 +344,5 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
-        private const val WORLD_RETRY_MS = 600_000L
     }
 }

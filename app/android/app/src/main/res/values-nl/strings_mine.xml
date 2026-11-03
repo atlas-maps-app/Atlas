@@ -359,9 +359,15 @@
     <string name="mine_layers_vignette">Vignet</string>
     <string name="mine_layers_grain">Korrel</string>
     <string name="mine_layers_glass">Matglas</string>
+    <string name="mine_layers_tone">Toon</string>
+    <string name="mine_layers_tone_today">%1$d %% · vandaag</string>
+    <string name="mine_layers_tone_value">%1$d %%</string>
+    <string name="mine_layers_tone_off">Uit</string>
+    <string name="mine_layers_tone_cd">Toon %1$d %%</string>
     <string name="mine_layers_parts">Engine-onderdelen (debug)</string>
     <string name="mine_part_timings">Beeldtijden</string>
     <string name="mine_part_pacing">Beeldritme</string>
+    <string name="mine_part_compression">Compressie</string>
     <string name="mine_layers_cloud_shadows">Wolkschaduwen</string>
     <string name="mine_layers_water_light">Waterlicht</string>
     <string name="mine_layers_facades">Geveldetails</string>
@@ -379,6 +385,8 @@
     <string name="mine_part_setts">Klinkers</string>
     <string name="mine_part_ground_text">Grachtnamen</string>
     <string name="mine_part_quays">Kademuren</string>
+    <string name="mine_part_quay_waterlines">Waterlijnen langs kades</string>
+    <string name="mine_part_quay_tops">Kaderanden</string>
     <string name="mine_part_sky">Lucht</string>
     <string name="mine_part_building_shadows">Gebouwschaduwen</string>
     <string name="mine_part_shadow_blur">Zachte schaduwen</string>
@@ -403,7 +411,9 @@
     <string name="mine_part_roof_edges">Dakranden</string>
     <string name="mine_part_windows">Ramen</string>
     <string name="mine_part_window_depth">Raamdiepte</string>
-    <string name="mine_part_flat_detail">Etalages en plinten</string>
+    <string name="mine_part_shop_glazing">Etalages</string>
+    <string name="mine_part_plinths">Plinten</string>
+    <string name="mine_part_cornices">Kroonlijsten</string>
     <string name="mine_part_church_windows">Kerkramen</string>
     <string name="mine_part_material_faces">Gevelmaterialen</string>
     <string name="mine_part_hoist_beams">Hijsbalken</string>

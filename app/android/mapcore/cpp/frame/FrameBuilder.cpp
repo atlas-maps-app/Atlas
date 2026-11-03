@@ -377,6 +377,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.markers = inputs_.markers;
     state_.routes = inputs_.routes;
     state_.asked = inputs_.asked;
+    state_.palette = inputs_.palette;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
@@ -434,6 +435,9 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (state_.theme.has(style::theme_flag::night)) mode |= shaders::FRAME_NIGHT;
     if (!options_.grain) mode |= shaders::FRAME_NO_GRAIN;
     if (cam.leaves_out(style::camera_part::leaf_filters)) mode |= shaders::FRAME_NO_CROWNS;
+    if (cam.leaves_out(style::camera_part::shop_glazing)) mode |= shaders::FRAME_NO_GLAZING;
+    if (cam.leaves_out(style::camera_part::plinths)) mode |= shaders::FRAME_NO_PLINTHS;
+    if (cam.leaves_out(style::camera_part::cornices)) mode |= shaders::FRAME_NO_CORNICES;
     b.info = {mode, 0U, 0U, 0U};
     return true;
 }

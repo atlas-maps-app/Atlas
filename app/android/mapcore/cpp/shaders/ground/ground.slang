@@ -7,7 +7,8 @@
 //     the tile's place in the frame's tile table), each vertex placed by its tile, projected as camera.slang projects
 //     (snapped at rest), at its fill's painter depth: its group's base and stride from the frame's slot table, its
 //     order and sub-element (geometry/Ground.hpp), in its day or night colour or the theme's. A fill the frame does not
-//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away.
+//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away. In the app's map a big road's
+//     asphalt is as wide as the road (GROUND_WIDE), where the renders lay it half as wide.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
@@ -104,6 +105,10 @@ static const uint GROUND_NIGHT = 1u;       // the night colours
 static const uint GROUND_WATER_LEVEL = 2u; // water_vs: the pieces at their water level (wclip), else at the street (w0)
 static const uint GROUND_VISIBLE_ALL = 4u; // every fill drawn (the frame's decisions not applied)
 static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Ripple.cpp): the upright view, its own colours
+static const uint GROUND_WIDE = 16u;       // fill_vs: a big road's asphalt as wide as the road (the app's map)
+
+/// draw_over's big roads' painter group (geometry::group::over + 1): their asphalt is its one fill.
+static const uint GROUP_BIG = 25u;
 
 /// A tile's record in the tile table: 20 words.
 static const uint TILE_WORDS = 20u;
@@ -146,6 +151,28 @@ float4 paint_of(uint c) {
     return unpack(c);
 }
 
+/// A fill's colour word as the user's palette has it (passes/Ground.cpp's ground_palette): the table's first word is
+/// the theme colours' fourth (0: none), 256 pairs of a colour today and the user's, a colour's at its hash
+/// (palette_hash) or in the first pairs after it, an empty pair ending the search. A theme colour's word is not in it.
+uint repainted(uint c) {
+    uint at = words[push.at.z + 3u];
+    if (at == 0u || (c >> 24u) == 0u) {
+        return c;
+    }
+    uint h = (c * 2654435761u) >> 24u;
+    for (uint k = 0u; k < 256u; k++) {
+        uint i = at + 2u * ((h + k) & 255u);
+        uint from = words[i];
+        if (from == c) {
+            return words[i + 1u];
+        }
+        if (from == 0u) {
+            return c;
+        }
+    }
+    return c;
+}
+
 /// A painter slot: its group's base (a signed word) and stride from the slot table, the order and the sub-element.
 uint slot_of(uint group, uint sub, uint order) {
     int base = int(words[push.at.y + 2u * group]);
@@ -186,6 +213,24 @@ bool in_mat(uint group) {
     return group == 4u || (group >= 8u && group < 32u) || group >= 64u;
 }
 
+/// A big road's asphalt's vertex v at (x, z), as wide as the road (GROUND_WIDE): render's ribbon(pts, w / 2) lays its
+/// sides w / 4 from the centreline, where the road's edge lines lie at w / 2 - 0.5, so each side point moves twice as
+/// far from the centreline, the middle of it and its mirror on the other side. The ribbon's vertices are its left side,
+/// then its right side reversed, so a point and its mirror sum to the same s throughout; its quads are the triangles
+/// (l, l + 1, s - l - 1) and (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle tells s, the first
+/// kind where its second corner follows its first. The tile's triangle lists follow its vertices' words, 3 a vertex,
+/// and hold whole triangles, so a word's corner is its place past the tile's first word, mod 3.
+float2 wide_point(uint tile, uint index, uint v, float2 p) {
+    uint base = tile_word(tile, 8u);
+    uint t0 = index - (index - base) % 3u;
+    uint a = ground_word(t0);
+    uint b = ground_word(t0 + 1u);
+    uint s = ground_word(t0 + 2u) + (b == a + 1u ? b : a);
+    uint at = base + tile_word(tile, 9u) + 3u * (s - v);
+    float2 m = float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+    return 2.0f * p - 0.5f * (p + m);
+}
+
 /// A fill's vertex: its index from the ground heap at word `index` (the draw's firstVertex counts the words), its tile
 /// the instance (the draw's firstInstance).
 [shader("vertex")]
@@ -209,7 +254,12 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     // its order in its group: its scene's, or where the frame draws tiles of more than one scene its rank across them
     uint ranks = tile_word(tile, 19u);
     uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
-    uint c = (push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u);
+    uint c = repainted((push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u));
+    if ((push.mode.x & GROUND_WIDE) != 0u && (gs & 0xFFFFu) == GROUP_BIG) {
+        float2 w = wide_point(tile, index, v, float2(x, z));
+        x = w.x;
+        z = w.y;
+    }
     o.position = place(tile, float3(x, y, z), slot_of(gs & 0xFFFFu, gs >> 16u, order));
     float4 p = paint_of(c);
     // a translucent fill (the canopy's union is composited instead): premultiplied by the screen pass's opacity
@@ -796,6 +846,15 @@ ColourOut soft_fs(ScreenOut v) {
 // coverage (the strip's area times the pixel box's along it, trimmed at the bisectors with its neighbours, the join's
 // wedge drawn by the segment that ends there), a wider one by the samples inside its shape (the standard sample
 // positions). A run's points behind the near plane end it (line_d's runs): a segment with an end there folds away.
+//
+// A run in metres (LINE_METRES: the app's map's markings, a taxiway's line, a big road's) is a painted line on the
+// ground: each end of a segment px at its own depth, max(0.25, w · focal / depth), the half width between them along
+// it (as 1 / depth goes on the screen), so it is never wider than it lies wherever the renders' one point of the line
+// (its middle) is, even behind the camera. Its segments are kept between the near plane and the depth where the px
+// reaches its cut (a big road's lines' 0.3), an end beyond either moved along it to that depth, a free end there. A
+// pixel of it takes the coverage of the width it is drawn at there (a hairline's, the exact area's or the samples').
+// A coaster track's shadow in the app's map is such a run too, its points moved by the sun: 1.1 m (a post's 0.5 m), at
+// least 0.5 px as coasters.draw's are, without a cut.
 
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
@@ -805,11 +864,14 @@ struct StrokeOut {
     nointerpolation float4 colour : COLOR0; // the paint, premultiplied
     nointerpolation float4 ab : TEXCOORD0;  // its ends a and b, device px of the view
     nointerpolation float4 pn : TEXCOORD1;  // the point before a and the point after b (where LINE_HAS_PREV, _NEXT)
-    nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px) as bits; z: the
-                                            // run's LINE_ flags, and from bit 16 a layer run's line's reach (how many
-                                            // lines before it it looks back at); w: its instance word (run << 14 | segment)
+    nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px, at a) as bits;
+                                            // z: the run's LINE_ flags, and from bit 16 a layer run's line's reach
+                                            // (how many lines before it it looks back at); w: its instance word
+                                            // (run << 14 | segment)
     nointerpolation float4 dash : TEXCOORD3; // a dashed run's (in_dash): its start's place in the pattern, the dash and
                                              // the period (device px), 1; else 0
+    nointerpolation float taper : TEXCOORD4; // a run in metres': how much the half width grows a device px along it
+                                             // (Seg.dw); else 0
 };
 
 /// A run's point k in its tile's metres, at height y.
@@ -854,6 +916,17 @@ float2 device_of(float3 k) {
 static const float2 quad_corners[6] = {float2(-1.0f, -1.0f), float2(1.0f, -1.0f), float2(1.0f, 1.0f),
                                        float2(-1.0f, -1.0f), float2(1.0f, 1.0f),  float2(-1.0f, 1.0f)};
 
+/// The point of the segment from camera coordinates k0 to k1 at depth z (k0's depth differing from k1's).
+float3 at_depth(float3 k0, float3 k1, float z) {
+    return k0 + (k1 - k0) * ((z - k0.z) / (k1.z - k0.z));
+}
+
+/// A run in metres' neighbour k of its end `end`: k, or where the segment from `end` to k passes the near plane (a
+/// point behind it has no place on the screen; any point of the segment ahead of it gives the join's direction).
+float3 ahead_toward(float3 end, float3 k, float near) {
+    return k.z < near ? at_depth(end, k, near) : k;
+}
+
 [shader("vertex")]
 StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
     uint word = words[push.mode.z + instance];
@@ -874,6 +947,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     o.pn = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.info = uint4(0u, 0u, 0u, 0u);
     o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.taper = 0.0f;
     // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours; a post's shadow its point's
     // foot to the point moved
     bool pairs = (flags & LINE_PAIRS) != 0u;
@@ -883,8 +957,42 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow);
     float3 kb = post ? local_camera(tile, shadow_local(first, 0u, y, true))
                      : stroke_point(tile, first, ia + 1u, y, shadow);
-    // a segment with an end behind the near plane is no part of a run
-    if (ka.z < frame.camera.frame.w || kb.z < frame.camera.frame.w) {
+    float near = frame.camera.frame.w;
+    float focal = frame.camera.forward.w;
+    // a run in metres: the part of the segment between the near plane and the depth where its px is its cut (none:
+    // as far as it goes), each end beyond them moved to the depth it passes and free there
+    bool metres = (flags & LINE_METRES) != 0u;
+    float cut = float(table) * 0.01f;
+    float far = metres && cut > 0.0f ? width * focal / cut : 3.0e38f;
+    bool free_a = false;
+    bool free_b = false;
+    if (metres) {
+        float lo = 0.0f;
+        float hi = 1.0f;
+        float dz = kb.z - ka.z;
+        if (dz != 0.0f) {
+            float tn = (near - ka.z) / dz;
+            float tf = (far - ka.z) / dz;
+            lo = max(lo, min(tn, tf));
+            hi = min(hi, max(tn, tf));
+        } else if (ka.z < near || ka.z > far) {
+            hi = -1.0f;
+        }
+        if (!(lo < hi)) {
+            o.position = FOLDED;
+            return o;
+        }
+        float3 k0 = ka;
+        if (lo > 0.0f) {
+            ka = k0 + (kb - k0) * lo;
+            free_a = true;
+        }
+        if (hi < 1.0f) {
+            kb = k0 + (kb - k0) * hi;
+            free_b = true;
+        }
+    } else if (ka.z < near || kb.z < near) {
+        // a segment with an end behind the near plane is no part of a run
         o.position = FOLDED;
         return o;
     }
@@ -893,23 +1001,32 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint info = 0u;
     float2 p = a;
     float2 n = b;
-    if (!pairs && !post && seg > 0u) {
+    if (!pairs && !post && seg > 0u && !free_a) {
         float3 kp = stroke_point(tile, first, seg - 1u, y, shadow);
-        if (kp.z >= frame.camera.frame.w) {
+        if (metres) kp = ahead_toward(ka, kp, near);
+        if (metres || kp.z >= near) {
             p = device_of(kp);
             info |= LINE_HAS_PREV;
         }
     }
-    if (!pairs && !post && seg + 2u < count) {
+    if (!pairs && !post && seg + 2u < count && !free_b) {
         float3 kn = stroke_point(tile, first, seg + 2u, y, shadow);
-        if (kn.z >= frame.camera.frame.w) {
+        if (metres) kn = ahead_toward(kb, kn, near);
+        if (metres || kn.z >= near) {
             n = device_of(kn);
             info |= LINE_HAS_NEXT;
         }
     }
     float density = frame.camera.frame.z;
     float hw = width * density * 0.5f;
-    float wide = 2.0f * hw;
+    float hb = hw;
+    if (metres) {
+        // px at each end's own depth, regions.py's rule a point at a time (a track's shadow's least coasters.draw's)
+        float least = shadow ? LINE_SHADOW_PX_LEAST : LINE_PX_LEAST;
+        hw = max(least, width * focal / ka.z) * density * 0.5f;
+        hb = max(least, width * focal / kb.z) * density * 0.5f;
+    }
+    float wide = 2.0f * max(hw, hb);
     // a dashed run by its samples whatever its width (a park's edge is wider than two pixels anyway)
     bool dashed = (flags & LINE_DASH) != 0u;
     info |= dashed ? LINE_SAMPLES : (wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES));
@@ -924,10 +1041,29 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float len = length(d);
     float2 u = len > 1e-6f ? d / len : float2(1.0f, 0.0f);
     float2 v = float2(-u.y, u.x);
-    float reach = hw * 4.0f + 2.0f;
     float2 c = quad_corners[vertex];
-    // around a join the wedge stands out across too (a miter reaches four half widths): the quad as wide as it is long
-    float2 at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
+    float2 at;
+    if (!metres) {
+        float reach = hw * 4.0f + 2.0f;
+        // around a join the wedge stands out across too (a miter reaches four half widths): the quad as wide as it is
+        // long
+        at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
+    } else {
+        // each end's reach as above, the quad about the two discs of them: bounded by their outer tangents (whose
+        // sine is the reaches' difference over the length) and beyond each end by its reach, or where one disc all
+        // but holds the other, the box of both
+        float ra = hw * 4.0f + 2.0f;
+        float rb = hb * 4.0f + 2.0f;
+        float s = (rb - ra) / max(len, 1e-6f);
+        if (abs(s) < 0.8f) {
+            float k = 1.0f / sqrt(1.0f - s * s);
+            at = c.x < 0.0f ? a - u * ra + v * (c.y * ra * (1.0f - s) * k) : b + u * rb + v * (c.y * rb * (1.0f + s) * k);
+        } else {
+            float r = max(ra, rb);
+            at = a + u * (c.x < 0.0f ? min(-ra, len - rb) : max(ra, len + rb)) + v * (c.y * r);
+        }
+        o.taper = len > 1e-6f ? (hb - hw) / len : 0.0f;
+    }
     float2 css = at / density;
     o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, slot));
     float4 paint = unpack(colour);
@@ -944,9 +1080,12 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     return o;
 }
 
-/// A fragment's segment: its ends and neighbours as the vertex stage found them.
+/// A fragment's segment: its ends and neighbours as the vertex stage found them, its half width growing along it as
+/// the vertex stage tapered it.
 Seg seg_of(StrokeOut s) {
-    return seg_make(s.ab.xy, s.ab.zw, s.pn.xy, s.pn.zw, s.info.x, asfloat(s.info.y), s.info.z);
+    Seg g = seg_make(s.ab.xy, s.ab.zw, s.pn.xy, s.pn.zw, s.info.x, asfloat(s.info.y), s.info.z);
+    g.dw = s.taper;
+    return g;
 }
 
 /// A pair run (a sett road's courses) as setts.slangh reads it: its tile, its points' first word, their count and their
@@ -1036,6 +1175,13 @@ StrokeOutput stroke_fs(StrokeOut s) {
     uint n = push.mode.w;
     StrokeOutput o;
     uint mode = s.info.x & 3u;
+    if (s.taper != 0.0f) {
+        // a run in metres tapers: the mode of its width at the pixel's place along it, so its thin far end is drawn as
+        // a line that thin is (by its area or as a hairline) and its wide near end by its samples
+        float2 at = device_at(corner + 0.5f);
+        float wide = 2.0f * seg_hw(g, dot(at - g.a, g.u));
+        mode = wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES);
+    }
     // a sett road's courses: one layer at the paint's alpha (ground/setts.slangh), each line's share of it
     bool layer = (s.info.z & LINE_LAYER) != 0u;
     SettRun run = {0u, 0u, 0u, 0.0f};
@@ -1065,8 +1211,9 @@ StrokeOutput stroke_fs(StrokeOut s) {
     float2 centre = device_at(corner + 0.5f);
     float cov;
     if (mode == LINE_HAIR) {
-        // the pixel of the view's device grid the output's pixel is (a turned output keeps the grid)
-        cov = hair_coverage(g, floor(centre), 2.0f * g.hw);
+        // the pixel of the view's device grid the output's pixel is (a turned output keeps the grid), its alpha the
+        // width at the pixel's place along it
+        cov = hair_coverage(g, floor(centre), 2.0f * seg_hw(g, dot(centre - g.a, g.u)));
     } else {
         cov = g.len < 1e-9f ? 0.0f : seg_coverage(g, centre);
     }
@@ -1688,6 +1835,7 @@ StrokeOut lit_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInsta
     o.pn = float4(p, n);
     o.info = uint4(info, asuint(hw), LINE_CAP_ROUND | LINE_JOIN_ROUND, word);
     o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.taper = 0.0f;
     return o;
 }
 

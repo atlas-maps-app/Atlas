@@ -1,7 +1,10 @@
 package app.atlas.mapcorecheck.style
 
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.palette.PaletteFlags
+import app.atlas.mapview.palette.Slot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,6 +61,7 @@ class LayoutTest {
         put("ThemeBlock.WET_SET", ThemeBlock.WET_SET)
         put("ThemeBlock.GOLDEN", ThemeBlock.GOLDEN)
         put("ThemeBlock.TONE", ThemeBlock.TONE)
+        put("ThemeBlock.TONE_STRENGTH", ThemeBlock.TONE_STRENGTH)
         for ((i, name) in ThemeBlock.MOMENTS.withIndex()) put("ThemeBlock.MOMENTS[$name]", i)
         put("CameraWriter.VERSION", CameraWriter.VERSION)
         put("CameraWriter.SIZE", CameraWriter.SIZE)
@@ -98,7 +102,7 @@ class LayoutTest {
         put("CameraWriter.PART_ROOF_EDGES", CameraWriter.PART_ROOF_EDGES)
         put("CameraWriter.PART_WINDOWS", CameraWriter.PART_WINDOWS)
         put("CameraWriter.PART_WINDOW_DEPTH", CameraWriter.PART_WINDOW_DEPTH)
-        put("CameraWriter.PART_FLAT_DETAIL", CameraWriter.PART_FLAT_DETAIL)
+        put("CameraWriter.PART_SHOP_GLAZING", CameraWriter.PART_SHOP_GLAZING)
         put("CameraWriter.PART_CHURCH_WINDOWS", CameraWriter.PART_CHURCH_WINDOWS)
         put("CameraWriter.PART_MATERIAL_FACES", CameraWriter.PART_MATERIAL_FACES)
         put("CameraWriter.PART_HOIST_BEAMS", CameraWriter.PART_HOIST_BEAMS)
@@ -117,12 +121,33 @@ class LayoutTest {
         put("CameraWriter.PART_SHADOW_BLUR", CameraWriter.PART_SHADOW_BLUR)
         put("CameraWriter.PART_NEAR_CELLS", CameraWriter.PART_NEAR_CELLS)
         put("CameraWriter.PART_KEPT_CULL", CameraWriter.PART_KEPT_CULL)
+        put("CameraWriter.PART_PLINTHS", CameraWriter.PART_PLINTHS)
+        put("CameraWriter.PART_CORNICES", CameraWriter.PART_CORNICES)
+        put("CameraWriter.PART_QUAY_WATERLINES", CameraWriter.PART_QUAY_WATERLINES)
+        put("CameraWriter.PART_QUAY_TOPS", CameraWriter.PART_QUAY_TOPS)
         put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)
         put("CameraWriter.PROFILE_REGION", CameraWriter.PROFILE_REGION)
         put("CameraWriter.PROFILE_WILLIAMSBURG", CameraWriter.PROFILE_WILLIAMSBURG)
         put("CameraWriter.PROFILE_WORLD_BASE", CameraWriter.PROFILE_WORLD_BASE)
+        put("PaletteBlock.VERSION", PaletteBlock.VERSION)
+        put("PaletteBlock.SIZE", PaletteBlock.SIZE)
+        put("PaletteFlags.NO_GUESSES", PaletteFlags.NO_GUESSES)
+        put("PaletteFlags.GRASS", PaletteFlags.GRASS)
+        put("PaletteFlags.MAPPED_FOLLOW", PaletteFlags.MAPPED_FOLLOW)
+        put("PaletteFlags.FLAT_GREYS", PaletteFlags.FLAT_GREYS)
+        // the slots the core's passes draw by
+        val drawn = listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK, Slot.WOODS, Slot.BENCHES, Slot.LAMP_POSTS, Slot.BOLLARDS, Slot.TURBINES, Slot.PYLONS) +
+            listOf(Slot.PAPER, Slot.LAWN, Slot.SQUARES, Slot.PARKING, Slot.PLAYGROUND, Slot.MEMORIAL, Slot.BRIDGE_DECK) +
+            listOf(Slot.QUAY_WALLS) +
+            listOf(Slot.ASPHALT, Slot.PAVING_STONES, Slot.SETTS, Slot.CONCRETE_PAVING, Slot.BRICK_PAVING, Slot.BOARDWALK)
+        for (slot in drawn) {
+            put("Slot.${slot.name}", slot.code)
+        }
+        put("Slot.WOODS.today", Slot.WOODS.today)
+        put("Slot.PAPER.today", Slot.PAPER.today)
+        put("Slot.QUAY_WALLS.today", Slot.QUAY_WALLS.today)
     }
 
     @Test

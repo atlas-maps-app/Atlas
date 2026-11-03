@@ -206,6 +206,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** A debug build's frame pacing on or off ([Native.setPacing]). */
     fun setPacing(on: Boolean) = core.call(Unit) { Native.setPacing(it, on) }
 
+    /** The Map look's switch of the screen's compression ([Native.setCompression]): off the main thread. */
+    fun setCompression(on: Boolean) = core.call(Unit) { Native.setCompression(it, on) }
+
+    /** Whether the driver obeys [setCompression]'s off ([Native.compressionSwitch]). */
+    val compressionSwitch: Boolean by lazy { core.call(false) { Native.compressionSwitch(it) } }
+
     /**
      * The app went to the background or memory is short ([level], ComponentCallbacks2's): from TRIM_MEMORY_UI_HIDDEN
      * the frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it and VK bench's
@@ -274,6 +280,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /** The moment's theme for the map from now on (`state.ThemeBlock`'s block, about once a minute); "" or why refused. */
     fun moment(theme: ByteBuffer): String = core.call("the core is closed") { Native.moment(it, theme) }
+
+    /** The user's palette for the map from now on (`state.PaletteBlock`'s block), drawn at once; "" or why refused. */
+    fun palette(block: ByteBuffer): String = core.call("the core is closed") { Native.palette(it, block) }
 
     /**
      * The map's labels from now on, as `state.LabelBlock` writes them (each label's sprite, drawn once by the app at its

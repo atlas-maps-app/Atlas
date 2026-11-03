@@ -146,10 +146,28 @@ TEST_CASE("a theme block the port could not have made is refused, with the reaso
     const double inf = std::numeric_limits<double>::infinity();
     const std::vector<Breakage> breakages = {
         {"version 2", [](ThemeBlock& b) { b.version = 2; }, ThemeError::version},
-        {"an unknown flag", [](ThemeBlock& b) { b.flags |= 1U << 11U; }, ThemeError::flags},
+        {"an unknown flag", [](ThemeBlock& b) { b.flags |= 1U << 12U; }, ThemeError::flags},
         {"wet without wet_set", [](ThemeBlock& b) { b.flags = (b.flags | flag::wet) & ~flag::wet_set; },
          ThemeError::flags},
-        {"reserved0", [](ThemeBlock& b) { b.reserved0 = 1; }, ThemeError::reserved},
+        {"a TONE strength without its flag", [](ThemeBlock& b) { b.tone = 1.5F; }, ThemeError::reserved},
+        {"a TONE strength past 2",
+         [](ThemeBlock& b) {
+             b.flags |= flag::tone_strength;
+             b.tone = 2.5F;
+         },
+         ThemeError::value},
+        {"a TONE strength under 0",
+         [](ThemeBlock& b) {
+             b.flags |= flag::tone_strength;
+             b.tone = -0.5F;
+         },
+         ThemeError::value},
+        {"a NaN TONE strength",
+         [](ThemeBlock& b) {
+             b.flags |= flag::tone_strength;
+             b.tone = std::numeric_limits<float>::quiet_NaN();
+         },
+         ThemeError::value},
         {"reserved1", [](ThemeBlock& b) { b.reserved1 = 1; }, ThemeError::reserved},
         {"month 0", [](ThemeBlock& b) { b.month = 0; }, ThemeError::date},
         {"month 13", [](ThemeBlock& b) { b.month = 13; }, ThemeError::date},
@@ -270,6 +288,24 @@ TEST_CASE("the shaders' theme carries the block's colours, values, flags and the
     b.sky_k = 1.7;
     CHECK(atlas::style::shader_theme(b).light.w == static_cast<float>(1.7));
     CHECK(atlas::shaders::theme_sky_k(atlas::style::shader_theme(b)) == 1.7);
+    // the user's TONE strength rides in flags.y with its flag, and only then
+    CHECK(atlas::style::shader_theme(b).flags.y == 0U);
+    CHECK(atlas::style::shader_theme(b).flags.z == 0U);
+    CHECK(atlas::style::shader_theme(b).flags.w == 0U);
+    CHECK(atlas::shaders::tone_strength(atlas::style::shader_theme(b)) == 1.0);
+    b.flags |= flag::tone_strength;
+    b.tone = 0.5F;
+    CHECK(atlas::style::shader_theme(b).flags.y == std::bit_cast<std::uint32_t>(0.5F));
+    CHECK(atlas::shaders::tone_strength(atlas::style::shader_theme(b)) == 0.5);
+    // with the shoulder's reciprocal beside it, the nearest double to 1 / (50 s)
+    CHECK(atlas::shaders::tone_reciprocal(atlas::style::shader_theme(b)) == 1.0 / 25.0);
+    b.tone = 1.0F;
+    CHECK(atlas::shaders::tone_reciprocal(atlas::style::shader_theme(b)) == 1.0 / 50.0);
+    b.tone = 0.0F;
+    CHECK(atlas::shaders::tone_reciprocal(atlas::style::shader_theme(b)) == 0.0);
+    b.tone = 0.5F;
+    const auto raw = bytes(b);
+    CHECK(atlas::style::read_theme_block(raw).has_value());
 }
 
 TEST_CASE("the dump names every field, colours by hex and doubles by their bits") {

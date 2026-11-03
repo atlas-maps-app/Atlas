@@ -15,6 +15,7 @@
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
 #include "frame/CompositeCheck.hpp"
+#include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
@@ -35,6 +36,7 @@
 #include "routes/Routes.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
@@ -180,6 +182,8 @@ public:
             return nullptr;
         }
         std::unique_ptr<Core> core(new Core(options, std::move(*started))); // NOLINT(cppcoreguidelines-owning-memory)
+        core->compression_switch_ =
+            core->started_.device != nullptr && core->started_.device->enabled().swapchain_compression_control;
         if (!core->started_.guard_line.empty()) log::warn("{}", core->started_.guard_line);
 #if defined(__ANDROID__)
         env->GetJavaVM(&core->vm_);
@@ -304,10 +308,21 @@ public:
         return on_session([this] { return map_->levels_in_view(); });
     }
 
-    /// The moment's theme for the map from now on.
+    /// The moment's theme for the map from now on, drawn with the next frame. At rest it asks for none of its own, as
+    /// before: the light moves on in steps of five minutes (MapController.MOMENT_STEP_S), and each step's frames would
+    /// come while the map lies still, at any time of the five minutes (on CI's emulator too, whose clock is the
+    /// wall's).
     void moment(const style::ThemeBlock& theme) {
         on_session([this, &theme] {
             map_->set_theme(theme);
+            ask_camera();
+        });
+    }
+
+    /// The user's palette for the map from now on (the Map look), drawn at once, at rest too.
+    void palette(const style::PaletteBlock& palette) {
+        on_session([this, &palette] {
+            map_->set_palette(palette);
             ask_frame();
         });
     }
@@ -423,6 +438,20 @@ public:
     /// since alpha 16) instead of as soon as it is ready. Any thread; the next frame takes it.
     void set_pacing(bool on) noexcept { pacing_.store(on, std::memory_order_relaxed); }
 
+    /// The Map look's switch of the screen's compression: on, the swapchain's images with the driver's own framebuffer
+    /// compression (its default); off, without it where the driver lets an app ask (gpu::Compression). The swapchain
+    /// is made again with it on the render thread, and drawn.
+    void compression(bool on) {
+        on_session([this, on] {
+            session_->set_compression(on ? gpu::Compression::driver : gpu::Compression::off);
+            ask_frame();
+        });
+    }
+
+    /// Whether the driver lets an app make the swapchain's images without its compression: the switch's off acts only
+    /// there. Any thread: read as the core starts (a device made again after a loss is the same driver's).
+    [[nodiscard]] bool compression_switch() const noexcept { return compression_switch_; }
+
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
         if (camera == nullptr || env->GetDirectBufferAddress(camera) == nullptr ||
@@ -457,6 +486,7 @@ public:
         return on_session([&] {
             release_refs();
             requested_ = false;
+            due_.attached();
             if (!session_->attach(std::make_unique<AndroidWindow>(std::move(window)), size, why)) {
                 // Nothing of a refused attach is held: the session let go of what it made, and the refs go too.
                 render_env_->DeleteGlobalRef(source_ref);
@@ -544,14 +574,24 @@ private:
     std::unique_ptr<frame::MapFrame> map_;
     bool map_on_ = false;
     std::atomic<bool> pacing_{false}; // set_pacing
+    bool compression_switch_ = false; // set as the core starts, read only after
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
 
-    /// A frame is asked for (render thread): the next paced vsync asks Kotlin for the camera.
-    void ask_frame() {
+    /// A frame is asked for (render thread): the next paced vsync asks Kotlin for the camera, and draws if it moved.
+    void ask_camera() {
         requested_ = true;
         ask_vsync();
+    }
+
+    /// The map's picture changed at the same camera (render thread): what the app handed it (the labels, the markers,
+    /// the routes, the building asked about, the screen's effects, the packs) or a tile of its world. The next paced
+    /// vsync draws it, at rest too, at the camera Kotlin last wrote, where Kotlin's own answer is that nothing moved
+    /// (frame/Due.hpp).
+    void ask_frame() {
+        due_.changed();
+        ask_camera();
     }
 
     /// A tile of the map's world was published (on a worker, World::set_wake): the next vsync draws it, at rest too.
@@ -559,7 +599,6 @@ private:
         if (closing_.load()) return;
         loop_->post([this] {
             if (closing_.load()) return;
-            woken_ = true;
             ask_frame();
         });
     }
@@ -620,12 +659,11 @@ private:
             rest();
             return;
         }
-        // The map's picture may change at the same camera: a tile landed (the world's wake) or a fade or the frame's
-        // blend is under way, and the frame is drawn again at the camera Kotlin last wrote.
-        const bool due = map_on_ && (woken_ || map_->animating());
-        woken_ = false;
-        if (more != JNI_TRUE && !due) {
-            rest(); // nothing changed: no frame, and no more vsyncs until requestFrame (or the map's wake)
+        // The map's picture may change at the same camera: the app handed it something new, a tile landed (the world's
+        // wake) or a fade or the frame's blend is under way, and the frame is drawn again at the camera Kotlin last
+        // wrote.
+        if (!due_.at_vsync(more == JNI_TRUE, map_on_, map_on_ && map_->animating())) {
+            rest(); // nothing changed: no frame, and no more vsyncs until one is asked for again
             return;
         }
         const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
@@ -688,6 +726,12 @@ private:
                                     complete ? JNI_TRUE : JNI_FALSE);
         if (render_env_->ExceptionCheck() == JNI_TRUE) render_env_->ExceptionClear();
         if (d.stale) session_->remake();
+        // A frame the swapchain did not show (out of date, as the first after the app comes back from the background
+        // can be, or its image did not come) is drawn again at the next vsync, at the same camera and at rest too, up
+        // to 8 in a row (the user, 1 November: "when you exit the app and come back its black until you move it").
+        const bool skipped = (r.flags & standin::frame_flag::skipped) != 0;
+        skipped_in_row_ = skipped ? skipped_in_row_ + 1 : 0;
+        if (skipped && skipped_in_row_ <= 8) due_.changed();
     }
 
     // Declared after session_, so that the render thread (whose last task closed the session) goes before it.
@@ -705,7 +749,8 @@ private:
     bool off_told_ = false;
     bool requested_ = false;
     bool camera_warned_ = false;
-    bool woken_ = false;               // the map's world published a tile since the last vsync
+    frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
+    int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     std::int64_t last_vsync_ns_ = 0;
@@ -714,6 +759,7 @@ private:
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
+    void ask_camera() noexcept {}
     void ask_frame() noexcept {}
 
     std::mutex session_mutex_;
@@ -810,6 +856,15 @@ jstring native_health(JNIEnv* env, jclass /*cls*/, jlong handle) {
 
 void native_set_pacing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
     if (Core* core = core_of(handle); core != nullptr) core->set_pacing(on == JNI_TRUE);
+}
+
+void native_set_compression(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->compression(on == JNI_TRUE);
+}
+
+jboolean native_compression_switch(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    const Core* core = core_of(handle);
+    return core != nullptr && core->compression_switch() ? JNI_TRUE : JNI_FALSE;
 }
 
 jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
@@ -1105,6 +1160,23 @@ jboolean native_edit_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y,
     return JNI_TRUE;
 }
 
+/// The user's palette for the map (MK/state/PaletteBlock.kt's 1,040 bytes in a direct buffer); "" or why it was
+/// refused.
+jstring native_palette(JNIEnv* env, jclass /*cls*/, jlong handle, jobject palette) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = palette == nullptr ? nullptr : env->GetDirectBufferAddress(palette);
+    const jlong capacity = palette == nullptr ? 0 : env->GetDirectBufferCapacity(palette);
+    if (address == nullptr || std::cmp_less(capacity, style::palette_block_size)) {
+        return java(env, "the palette must be a direct buffer of 1,040 bytes");
+    }
+    const auto block =
+        style::read_palette_block(std::span(static_cast<const std::byte*>(address), style::palette_block_size));
+    if (!block) return java(env, std::format("the palette was refused: {}", style::name_of(block.error())));
+    core->palette(*block);
+    return java(env, "");
+}
+
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
 jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) {
     Core* core = core_of(handle);
@@ -1374,8 +1446,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 50>& methods() {
-    static const std::array<JNINativeMethod, 50> table{{
+const std::array<JNINativeMethod, 53>& methods() {
+    static const std::array<JNINativeMethod, 53> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1396,6 +1468,8 @@ const std::array<JNINativeMethod, 50>& methods() {
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
         method("health", "(J)Ljava/lang/String;", fn(&native_health)),
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
+        method("setCompression", "(JZ)V", fn(&native_set_compression)),
+        method("compressionSwitch", "(J)Z", fn(&native_compression_switch)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),
@@ -1424,6 +1498,7 @@ const std::array<JNINativeMethod, 50>& methods() {
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
+        method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),

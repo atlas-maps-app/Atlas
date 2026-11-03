@@ -32,6 +32,7 @@
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/BitTiles.hpp"
 #include "twin/Emit.hpp"
@@ -100,6 +101,7 @@ inline constexpr std::uint32_t night = 1;       ///< the night colours
 inline constexpr std::uint32_t water_level = 2; ///< water_vs: the pieces at their level (wclip)
 inline constexpr std::uint32_t visible_all = 4; ///< every fill drawn
 inline constexpr std::uint32_t layer = 8;       ///< into the reflections' layer (Ripple.cpp): upright, own colours
+inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a big road's asphalt as wide as the road (the app's map)
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -389,7 +391,9 @@ inline constexpr std::uint8_t level = 2;
 
 /// One element of the coaster tracks' shadows (draw_over's, in coasters.draw's order), each its own path: a post's,
 /// from its foot along the ground (its track's point `first`), or a run of its track's points' shadows ahead of the
-/// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest).
+/// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest). In
+/// the app's map (GroundFrame::grounded) the run is all its track's points, from the near plane on, and the width its
+/// metres on the ground, each point px at its own depth (LINE_METRES).
 struct TrackShadow {
     std::uint32_t tile = 0;
     std::uint32_t track = 0;
@@ -428,6 +432,10 @@ struct GroundFrame {
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
+    /// The app's map (FrameState::grounded): a line px wide and a coaster track's shadow take their width at each of
+    /// their points (LINE_METRES) rather than at their one point, and a big road's asphalt is as wide as the road
+    /// (ground_flag::wide), where the renders' frames lay it half as wide.
+    bool grounded = false;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;
@@ -609,6 +617,16 @@ private:
 /// How lit sample `i` of a drawn tile draws now (K8's lit_amount: its bits before and now, the tile's fade).
 [[nodiscard]] double sun_amount(const DrawnTile& t, std::uint32_t i) noexcept;
 
+/// A quay's colours before the light (0xRRGGBB): its wall's, its waterline's for the frame's day or night and its
+/// coping's, the tile's own moved with the user's palette's quay walls (style::paint; null: today's, the tile's own).
+struct QuayColours {
+    tiles::StyleRgb wall = 0;
+    tiles::StyleRgb waterline = 0;
+    tiles::StyleRgb coping = 0;
+};
+[[nodiscard]] QuayColours quay_colours(const geometry::GroundTile& g, const style::PaletteBlock* palette,
+                                       bool night) noexcept;
+
 /// A colour between unlit and lit (0xRRGGBB) by `k`, as building_colour mixes them, packed RGBA8 opaque (r in the low
 /// byte).
 [[nodiscard]] std::uint32_t lit_mix(std::uint32_t lit, std::uint32_t unlit, double k) noexcept;
@@ -700,6 +718,17 @@ struct SoftShadows; // below
 [[nodiscard]] std::array<gpu::Binding, 4> soft_blur_bindings() noexcept;
 struct RippleLayer; // below
 struct GlowLayer;   // below
+
+/// The user's palette's table for the fills (ground.slang's repainted): `palette_pairs` pairs of a fill's colour word
+/// today and the user's, each at its colour's hash (palette_hash) or the first free pair after it, for the frame's day
+/// or night: each land kind's, area kind's and mapped surface's colour of `style` whose slot `palette` changes (with
+/// the big roads' asphalt, the asphalt's), moved with its slot (style::paint), and at night the same five and a half
+/// and five times darker, as the fills' night colours are. Empty where `palette` (null: today's) changes none.
+inline constexpr std::uint32_t palette_pairs = 256;
+[[nodiscard]] std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style::PaletteBlock* palette,
+                                                        bool night);
+/// The pair a colour word's search starts at (ground.slang's repainted).
+[[nodiscard]] constexpr std::uint32_t palette_hash(std::uint32_t c) noexcept { return (c * 2654435761U) >> 24U; }
 
 class Ground final : public frame::Pass {
 public:
@@ -856,9 +885,12 @@ private:
     /// takes its tile's topmost fill alone at the tile's fade over what lies under it, written at that fill's depth.
     void record_fading_fills(const frame::Recording& r);
     void record_plate(const frame::Recording& r);
-    /// The filter's 256 results (fx::canopy_table) into the frame's words, then in the app's map
-    /// (FrameState::grounded) the ground's map its field is read by.
+    /// The filter's 256 results (fx::canopy_table, in the user's woods where the palette changes them) into the
+    /// frame's words, then in the app's map (FrameState::grounded) the ground's map its field is read by.
     void write_canopy(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    /// The user's palette's table for the fills (ground_palette, kept while the palette, the style and the night
+    /// stay) into the frame's words, its first word the theme colours' fourth (0: none).
+    void write_palette(std::vector<std::uint32_t>& words, const frame::FrameState& state);
     void record_canopy(const frame::Recording& r);
     // Roads.cpp: the fills' and the plate's twin
     void emit_fills(const frame::FrameState& state, twin::Stream& out, std::int32_t mat, std::int32_t above) const;
@@ -1051,6 +1083,11 @@ private:
     ReflectionsKept reflections_kept_;
     std::unique_ptr<Pipelines> pipelines_;
     std::unique_ptr<Words> words_;
+    /// The last palette table (write_palette) and what it was made of.
+    std::vector<std::uint32_t> palette_table_;
+    style::PaletteBlock palette_of_{};
+    const tiles::Style* palette_style_ = nullptr;
+    bool palette_night_ = false;
     // scratch, reused frame to frame
     std::vector<view::Vec3> cam_;
     std::vector<view::Vec2> sp_;

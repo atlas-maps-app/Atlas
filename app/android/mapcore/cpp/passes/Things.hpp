@@ -17,6 +17,7 @@
 #include "frame/Pass.hpp"
 #include "geometry/Things.hpp"
 #include "gpu/Memory.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tiles/Style.hpp"
 
@@ -70,8 +71,9 @@ struct ThingChoice {
 
 /// The moment's colours (things.slangh's table, 0xBBGGRR; then the glint's and the head's opacities and the racks'
 /// width, their floats' bits; then the railings'): the port's by day or at night, a box's at night 0.3 of its colour,
-/// its leg 0.8 of it.
-[[nodiscard]] std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style);
+/// its leg 0.8 of it. The user's `palette` (null: today's) colours the lamp posts, the benches and the bollards.
+[[nodiscard]] std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style,
+                                                        const style::PaletteBlock* palette = nullptr);
 
 /// The first of a tile's items that are things.
 [[nodiscard]] std::uint32_t first_thing(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;

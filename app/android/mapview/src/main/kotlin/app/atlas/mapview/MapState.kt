@@ -5,6 +5,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Rect
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import java.time.Instant
@@ -55,7 +56,7 @@ class MapState(initial: CameraPosition) {
     var chosenTilt: Double? by mutableStateOf(null)
 
     internal var animator: (suspend (CameraPosition, Int) -> Unit)? = null
-    internal var fitter: (suspend (BBox, Int) -> Unit)? = null
+    internal var fitter: (suspend (BBox, Int, Rect?) -> Unit)? = null
     internal var projector: Projector? = null
 
     /** The view drawing this state, while it is on screen. */
@@ -65,9 +66,12 @@ class MapState(initial: CameraPosition) {
         animator?.invoke(target, durationMs) ?: run { camera = target }
     }
 
-    /** Moves the camera so [box] fills the view inside its content padding, plus [paddingPx]. */
-    suspend fun fit(box: BBox, paddingPx: Int = 48) {
-        fitter?.invoke(box, paddingPx) ?: run { camera = camera.copy(target = box.center) }
+    /**
+     * Moves the camera so [box] fills the view inside its content padding, plus [paddingPx]; or, given [within] (screen
+     * px), inside that: the band of a screen that took on a map padded for another (the map on screen, [MapStage.shown]).
+     */
+    suspend fun fit(box: BBox, paddingPx: Int = 48, within: Rect? = null) {
+        fitter?.invoke(box, paddingPx, within) ?: run { camera = camera.copy(target = box.center) }
     }
 
     /** Screen pixel to ground, or null off the ground (above the horizon) or before the first frame. */
@@ -76,9 +80,16 @@ class MapState(initial: CameraPosition) {
     /** Ground to screen pixel, or null when behind the camera. */
     fun latLonToScreen(p: LatLon): Pair<Float, Float>? = projector?.toScreen(p)
 
-    /** What the view registers so [screenToLatLon] and [latLonToScreen] work. */
+    /**
+     * [from] moved, its zoom, bearing and tilt kept, so the ground at [anchor] lands under pixel ([x], [y]) of this view:
+     * where a camera at another zoom puts a place above a sheet. Null before the first frame.
+     */
+    fun placing(anchor: LatLon, x: Float, y: Float, from: CameraPosition = camera): CameraPosition? = projector?.place(from, anchor, x, y)
+
+    /** What the view registers so [screenToLatLon], [latLonToScreen] and [placing] work. */
     interface Projector {
         fun toLatLon(x: Float, y: Float): LatLon?
         fun toScreen(p: LatLon): Pair<Float, Float>?
+        fun place(from: CameraPosition, anchor: LatLon, x: Float, y: Float): CameraPosition?
     }
 }

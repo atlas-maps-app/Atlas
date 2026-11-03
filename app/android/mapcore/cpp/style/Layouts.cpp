@@ -3,6 +3,7 @@
 
 #include "style/CameraState.hpp"
 #include "style/Light.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 
 #include <array>
@@ -46,7 +47,7 @@ constexpr std::array theme_block_table = {
     ATLAS_FIELD("water_top", ThemeBlock, water_top),
     ATLAS_FIELD("water_bot", ThemeBlock, water_bottom),
     ATLAS_FIELD("shadow", ThemeBlock, shadow),
-    ATLAS_FIELD("reserved0", ThemeBlock, reserved0),
+    ATLAS_FIELD("tone", ThemeBlock, tone),
     ATLAS_FIELD("haze_max", ThemeBlock, haze_max),
     ATLAS_FIELD("sun_k", ThemeBlock, sun_k),
     ATLAS_FIELD("amb_k", ThemeBlock, amb_k),
@@ -175,6 +176,7 @@ constexpr std::array constants_table = {
     Constant{.name = "ThemeBlock.WET_SET", .value = theme_flag::wet_set},
     Constant{.name = "ThemeBlock.GOLDEN", .value = theme_flag::golden},
     Constant{.name = "ThemeBlock.TONE", .value = theme_flag::tone},
+    Constant{.name = "ThemeBlock.TONE_STRENGTH", .value = theme_flag::tone_strength},
     Constant{.name = "ThemeBlock.MOMENTS[]", .value = moment(MomentName::other)},
     Constant{.name = "ThemeBlock.MOMENTS[sunny]", .value = moment(MomentName::sunny)},
     Constant{.name = "ThemeBlock.MOMENTS[grey]", .value = moment(MomentName::grey)},
@@ -222,7 +224,7 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.PART_ROOF_EDGES", .value = part(camera_part::roof_edges)},
     Constant{.name = "CameraWriter.PART_WINDOWS", .value = part(camera_part::windows)},
     Constant{.name = "CameraWriter.PART_WINDOW_DEPTH", .value = part(camera_part::window_depth)},
-    Constant{.name = "CameraWriter.PART_FLAT_DETAIL", .value = part(camera_part::flat_detail)},
+    Constant{.name = "CameraWriter.PART_SHOP_GLAZING", .value = part(camera_part::shop_glazing)},
     Constant{.name = "CameraWriter.PART_CHURCH_WINDOWS", .value = part(camera_part::church_windows)},
     Constant{.name = "CameraWriter.PART_MATERIAL_FACES", .value = part(camera_part::material_faces)},
     Constant{.name = "CameraWriter.PART_HOIST_BEAMS", .value = part(camera_part::hoist_beams)},
@@ -241,12 +243,48 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.PART_SHADOW_BLUR", .value = part(camera_part::shadow_blur)},
     Constant{.name = "CameraWriter.PART_NEAR_CELLS", .value = part(camera_part::near_cells)},
     Constant{.name = "CameraWriter.PART_KEPT_CULL", .value = part(camera_part::kept_cull)},
+    Constant{.name = "CameraWriter.PART_PLINTHS", .value = part(camera_part::plinths)},
+    Constant{.name = "CameraWriter.PART_CORNICES", .value = part(camera_part::cornices)},
+    Constant{.name = "CameraWriter.PART_QUAY_WATERLINES", .value = part(camera_part::quay_waterlines)},
+    Constant{.name = "CameraWriter.PART_QUAY_TOPS", .value = part(camera_part::quay_tops)},
     Constant{.name = "CameraWriter.PARTS", .value = part(camera_part::known + 1U)},
     Constant{.name = "CameraWriter.PROFILE_NONE", .value = profile(Profile::none)},
     Constant{.name = "CameraWriter.PROFILE_LIVING", .value = profile(Profile::living)},
     Constant{.name = "CameraWriter.PROFILE_REGION", .value = profile(Profile::region)},
     Constant{.name = "CameraWriter.PROFILE_WILLIAMSBURG", .value = profile(Profile::williamsburg)},
     Constant{.name = "CameraWriter.PROFILE_WORLD_BASE", .value = profile(Profile::world_base)},
+    Constant{.name = "PaletteBlock.VERSION", .value = palette_block_version},
+    Constant{.name = "PaletteBlock.SIZE", .value = static_cast<std::uint32_t>(palette_block_size)},
+    Constant{.name = "PaletteFlags.NO_GUESSES", .value = palette_flag::no_guesses},
+    Constant{.name = "PaletteFlags.GRASS", .value = palette_flag::grass},
+    Constant{.name = "PaletteFlags.MAPPED_FOLLOW", .value = palette_flag::mapped_follow},
+    Constant{.name = "PaletteFlags.FLAT_GREYS", .value = palette_flag::flat_greys},
+    Constant{.name = "Slot.LEAVES", .value = static_cast<std::uint32_t>(palette_slot::leaves)},
+    Constant{.name = "Slot.EVERGREEN", .value = static_cast<std::uint32_t>(palette_slot::evergreen)},
+    Constant{.name = "Slot.BARK", .value = static_cast<std::uint32_t>(palette_slot::bark)},
+    Constant{.name = "Slot.WOODS", .value = static_cast<std::uint32_t>(palette_slot::woods)},
+    Constant{.name = "Slot.BENCHES", .value = static_cast<std::uint32_t>(palette_slot::benches)},
+    Constant{.name = "Slot.LAMP_POSTS", .value = static_cast<std::uint32_t>(palette_slot::lamp_posts)},
+    Constant{.name = "Slot.BOLLARDS", .value = static_cast<std::uint32_t>(palette_slot::bollards)},
+    Constant{.name = "Slot.TURBINES", .value = static_cast<std::uint32_t>(palette_slot::turbines)},
+    Constant{.name = "Slot.PYLONS", .value = static_cast<std::uint32_t>(palette_slot::pylons)},
+    Constant{.name = "Slot.WOODS.today", .value = woods_own},
+    Constant{.name = "Slot.PAPER.today", .value = paper_own},
+    Constant{.name = "Slot.PAPER", .value = static_cast<std::uint32_t>(palette_slot::paper)},
+    Constant{.name = "Slot.LAWN", .value = static_cast<std::uint32_t>(palette_slot::lawn)},
+    Constant{.name = "Slot.SQUARES", .value = static_cast<std::uint32_t>(palette_slot::squares)},
+    Constant{.name = "Slot.PARKING", .value = static_cast<std::uint32_t>(palette_slot::parking)},
+    Constant{.name = "Slot.PLAYGROUND", .value = static_cast<std::uint32_t>(palette_slot::playground)},
+    Constant{.name = "Slot.MEMORIAL", .value = static_cast<std::uint32_t>(palette_slot::memorial)},
+    Constant{.name = "Slot.BRIDGE_DECK", .value = static_cast<std::uint32_t>(palette_slot::bridge_deck)},
+    Constant{.name = "Slot.QUAY_WALLS", .value = static_cast<std::uint32_t>(palette_slot::quay_walls)},
+    Constant{.name = "Slot.QUAY_WALLS.today", .value = quay_walls_own},
+    Constant{.name = "Slot.ASPHALT", .value = static_cast<std::uint32_t>(palette_slot::asphalt)},
+    Constant{.name = "Slot.PAVING_STONES", .value = static_cast<std::uint32_t>(palette_slot::paving_stones)},
+    Constant{.name = "Slot.SETTS", .value = static_cast<std::uint32_t>(palette_slot::setts)},
+    Constant{.name = "Slot.CONCRETE_PAVING", .value = static_cast<std::uint32_t>(palette_slot::concrete_paving)},
+    Constant{.name = "Slot.BRICK_PAVING", .value = static_cast<std::uint32_t>(palette_slot::brick_paving)},
+    Constant{.name = "Slot.BOARDWALK", .value = static_cast<std::uint32_t>(palette_slot::boardwalk)},
 };
 
 // Each table spans its struct without gaps or overlaps (fields in order, each starting where the last ended).
@@ -268,7 +306,8 @@ static_assert(tiles(shader_theme_table, size_of<shaders::Theme>(), shader_theme_
 // The flag bits are the known ones, each once.
 static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme_flag::overcast |
                theme_flag::shadow_blur | theme_flag::cloud_shadows | theme_flag::water_gradient | theme_flag::dusk |
-               theme_flag::wet_set | theme_flag::golden | theme_flag::tone) == theme_flag::known);
+               theme_flag::wet_set | theme_flag::golden | theme_flag::tone | theme_flag::tone_strength) ==
+              theme_flag::known);
 static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
                camera_flag::location | camera_flag::heading) == camera_flag::known);
 // The parts are the known ones, each once, in the order of their bits.
@@ -301,7 +340,7 @@ constexpr std::array part_bits{camera_part::ground,
                                camera_part::roof_edges,
                                camera_part::windows,
                                camera_part::window_depth,
-                               camera_part::flat_detail,
+                               camera_part::shop_glazing,
                                camera_part::church_windows,
                                camera_part::material_faces,
                                camera_part::hoist_beams,
@@ -319,7 +358,11 @@ constexpr std::array part_bits{camera_part::ground,
                                camera_part::frosted,
                                camera_part::shadow_blur,
                                camera_part::near_cells,
-                               camera_part::kept_cull};
+                               camera_part::kept_cull,
+                               camera_part::plinths,
+                               camera_part::cornices,
+                               camera_part::quay_waterlines,
+                               camera_part::quay_tops};
 constexpr bool parts_in_order() noexcept {
     std::uint64_t all = 0;
     for (std::size_t i = 0; i < part_bits.size(); ++i) {

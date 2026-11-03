@@ -51,8 +51,8 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
-                                                                   const gpu::Output* /*old*/,
-                                                                   gpu::Depth depth) override {
+                                                                   const gpu::Output* /*old*/, gpu::Depth depth,
+                                                                   gpu::Compression /*compression*/) override {
         auto images = gpu::Offscreen::create(device, wanted, 3, depth);
         if (!images) return std::unexpected(images.error());
         kept = images->get();

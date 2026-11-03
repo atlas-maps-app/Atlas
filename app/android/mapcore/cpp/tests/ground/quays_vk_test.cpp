@@ -5,7 +5,9 @@
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Ground.hpp"
 #include "passes/Ground.hpp"
+#include "style/Palette.hpp"
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
 #include "twin/Twin.hpp"
@@ -80,6 +82,40 @@ bool covers(const std::vector<std::array<double, 2>>& p, double hw, double x, do
 }
 
 } // namespace
+
+TEST_CASE("ground: a quay's wall, waterline and coping move with the user's quay walls, today's palette none") {
+    geometry::GroundTile g;
+    g.quay_colour = style::quay_walls_own;
+    g.quay_coping = 0xB8B0A2U;
+    g.quay_waterline = {.day = 0x2C2A22U, .night = 0x06070AU};
+    const style::PaletteBlock none{};
+    for (const bool night : {false, true}) {
+        CAPTURE(night);
+        for (const style::PaletteBlock* today : {static_cast<const style::PaletteBlock*>(nullptr), &none}) {
+            const passes::QuayColours c = passes::quay_colours(g, today, night);
+            CHECK(c.wall == g.quay_colour);
+            CHECK(c.waterline == (night ? g.quay_waterline.night : g.quay_waterline.day));
+            CHECK(c.coping == g.quay_coping);
+        }
+    }
+    // the sum of a colour's channels: a lighter tone's is more
+    const auto sum = [](std::uint32_t c) { return ((c >> 16U) & 0xFFU) + ((c >> 8U) & 0xFFU) + (c & 0xFFU); };
+    style::PaletteBlock blue{};
+    blue.colours.at(style::palette_slot::quay_walls) = 0x01405C80U;
+    const passes::QuayColours b = passes::quay_colours(g, &blue, false);
+    // the wall takes the user's colour exactly, its coping a lighter tone of it and its waterline a darker one
+    CHECK(b.wall == 0x405C80U);
+    CHECK(b.coping != g.quay_coping);
+    CHECK(sum(b.coping) > sum(b.wall));
+    CHECK(b.waterline != g.quay_waterline.day);
+    CHECK(sum(b.waterline) < sum(b.wall));
+    CHECK((b.coping & 0xFFU) > ((b.coping >> 16U) & 0xFFU)); // bluer than red, as the wall
+    // another region's walls (Bergen's cut stone) move with them, as a tone of the user's
+    g.quay_colour = 0x7F796EU;
+    const std::uint32_t stone = passes::quay_colours(g, &blue, false).wall;
+    CHECK(stone != g.quay_colour);
+    CHECK(stone != b.wall);
+}
 
 TEST_CASE("ground: the quay walls are the twin's faces, grown by their strokes, sample for sample") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");

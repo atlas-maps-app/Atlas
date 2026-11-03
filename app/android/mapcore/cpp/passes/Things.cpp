@@ -130,13 +130,21 @@ ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double d
     return c;
 }
 
-std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style) {
+std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style,
+                                          const style::PaletteBlock* palette) {
     static_assert(shaders::THING_TONES == 17);
     std::array<std::uint32_t, 17> out{};
     const auto pick = [night](const tiles::DayNight& c) { return bgr(night ? c.night : c.day); };
-    out[shaders::THING_TONE_MAST] = pick(style.mast);
-    out[shaders::THING_TONE_LANTERN] = pick(style.lantern);
-    out[shaders::THING_TONE_CAP] = pick(style.cap);
+    // the user's palette: the lamp posts' slot (a mast, its lantern by day and its cap), the benches' (a seat and its
+    // back) and the bollards' (the post and its head), each with what goes with it; a lantern's light at night, a
+    // basket, a rack and a railing keep the style's
+    namespace slot = style::palette_slot;
+    const auto lamp = [&](const tiles::DayNight& c) {
+        return bgr(style::paint(palette, slot::lamp_posts, style.mast.day, night ? c.night : c.day));
+    };
+    out[shaders::THING_TONE_MAST] = lamp(style.mast);
+    out[shaders::THING_TONE_LANTERN] = night ? pick(style.lantern) : lamp(style.lantern);
+    out[shaders::THING_TONE_CAP] = lamp(style.cap);
     out[shaders::THING_TONE_GLINT] = bgr(style.glint);
     // draw_box: c = hx(col) if not night else mulc(hx(col), 0.3), its top tohex(c), its leg tohex(mulc(c, 0.8))
     const auto box = [&](std::uint32_t at, tiles::StyleRgb col) {
@@ -148,11 +156,12 @@ std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& 
         out[at] = hex_bgr(c);
         out[at + 1] = hex_bgr({.x = c.x * 0.8, .y = c.y * 0.8, .z = c.z * 0.8});
     };
-    box(shaders::THING_TONE_BENCH, style.bench);
-    box(shaders::THING_TONE_BACK, style.bench_back);
+    box(shaders::THING_TONE_BENCH, style::paint(palette, slot::benches, style.bench, style.bench));
+    box(shaders::THING_TONE_BACK, style::paint(palette, slot::benches, style.bench, style.bench_back));
     box(shaders::THING_TONE_BASKET, style.basket);
-    out[shaders::THING_TONE_BOLLARD] = pick(style.bollard);
-    out[shaders::THING_TONE_HEAD] = bgr(style.bollard_head);
+    const auto bollard = [&](std::uint32_t c) { return style::paint(palette, slot::bollards, style.bollard.day, c); };
+    out[shaders::THING_TONE_BOLLARD] = bgr(bollard(night ? style.bollard.night : style.bollard.day));
+    out[shaders::THING_TONE_HEAD] = bgr(bollard(style.bollard_head));
     out[shaders::THING_TONE_RACK] = pick(style.rack);
     out[shaders::THING_TONE_GLINT_OPACITY] = bits(style.glint_opacity);
     out[shaders::THING_TONE_HEAD_OPACITY] = bits(style.bollard_head_opacity);
@@ -409,7 +418,7 @@ void Things::update(const frame::FrameState& state) {
     }
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::THING_JOB_VECTORS));
     if (jobs == 0) return;
-    const std::array<std::uint32_t, 17> tones = thing_tones(night, style->things);
+    const std::array<std::uint32_t, 17> tones = thing_tones(night, style->things, state.palette);
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     using B = vk::BufferUsageFlagBits;

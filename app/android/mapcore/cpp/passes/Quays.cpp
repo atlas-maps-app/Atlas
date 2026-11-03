@@ -15,6 +15,7 @@
 #include "passes/Ground.hpp"
 #include "scene/Residency.hpp"
 #include "style/Light.hpp"
+#include "style/Palette.hpp"
 
 #include <algorithm>
 #include <array>
@@ -130,8 +131,12 @@ namespace {
 void Ground::decide_quays(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.quays.clear();
-    // `if th.get('wx')`: without weather the water is flat and has no walls
-    if (!f.weather || no_quays_ || f.out(style::camera_part::quays)) return;
+    // `if th.get('wx')`: without weather the water is flat and has no walls; and each of a wall's faces the map leaves
+    // out (style::camera_part's quays, quay_waterlines, quay_tops: each its own switch) is not decided
+    const bool walls = !f.out(style::camera_part::quays);
+    const bool waterlines = !f.out(style::camera_part::quay_waterlines);
+    const bool tops = !f.out(style::camera_part::quay_tops);
+    if (!f.weather || no_quays_ || (!walls && !waterlines && !tops)) return;
     const shaders::Theme& theme = state.block.theme;
     const std::array<double, 3>& light = f.light;
     // every piece of the drawn tiles, in water_edges' order: the sun's pieces where its bits have come, else each
@@ -212,8 +217,9 @@ void Ground::decide_quays(const frame::FrameState& state) {
         if ((q.nx * (eye.x - mx)) + (q.nz * (eye.z - mz)) <= 0) continue;
         const bool toward = !f.night && ((q.nx * light[0]) + (q.nz * light[2])) > 0;
         const bool lit = toward && p.sampled && sun_bit(t, p.sample);
-        const std::uint32_t wall_lit = lit_colour(theme, g.quay_colour, q.nx, q.nz, toward);
-        const std::uint32_t wall_unlit = lit_colour(theme, g.quay_colour, q.nx, q.nz, false);
+        const QuayColours colours = quay_colours(g, state.palette, f.night);
+        const std::uint32_t wall_lit = lit_colour(theme, colours.wall, q.nx, q.nz, toward);
+        const std::uint32_t wall_unlit = lit_colour(theme, colours.wall, q.nx, q.nz, false);
         QuayFace face{.kind = QuayFace::Kind::wall,
                       .tile = p.tile,
                       .edge = p.edge,
@@ -229,7 +235,7 @@ void Ground::decide_quays(const frame::FrameState& state) {
                       .sample = p.sample,
                       .sampled = toward && p.sampled};
         const auto wall = face_of(face, wy);
-        const bool f1 = face_kept(cam, wall, 300, 0.12, false, cs);
+        const bool f1 = walls && face_kept(cam, wall, 300, 0.12, false, cs);
         if (f1 && g.tone && toward && wy < -2 && p.sampled && p.columns > 0) {
             // a tall quay wall in sun: its lit bands' path, then its unlit ones'
             for (const bool want : {true, false}) {
@@ -253,17 +259,26 @@ void Ground::decide_quays(const frame::FrameState& state) {
         }
         QuayFace waterline = face;
         waterline.kind = QuayFace::Kind::waterline;
-        waterline.colour = f.night ? g.quay_waterline.night : g.quay_waterline.day;
+        waterline.colour = colours.waterline;
         waterline.lit = waterline.unlit = waterline.colour;
         waterline.sampled = false;
-        if (face_kept(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
+        if (waterlines && face_kept(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
         QuayFace coping = face;
         coping.kind = QuayFace::Kind::coping;
-        coping.lit = lit_colour(theme, g.quay_coping, q.nx, q.nz, toward);
-        coping.unlit = lit_colour(theme, g.quay_coping, q.nx, q.nz, false);
+        coping.lit = lit_colour(theme, colours.coping, q.nx, q.nz, toward);
+        coping.unlit = lit_colour(theme, colours.coping, q.nx, q.nz, false);
         coping.colour = lit ? coping.lit : coping.unlit;
-        if (face_kept(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
+        if (tops && face_kept(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
     }
+}
+
+QuayColours quay_colours(const geo::GroundTile& g, const style::PaletteBlock* palette, bool night) noexcept {
+    const auto walls = [palette](tiles::StyleRgb c) {
+        return style::paint(palette, style::palette_slot::quay_walls, style::quay_walls_own, c);
+    };
+    return {.wall = walls(g.quay_colour),
+            .waterline = walls(night ? g.quay_waterline.night : g.quay_waterline.day),
+            .coping = walls(g.quay_coping)};
 }
 
 double sun_amount(const DrawnTile& t, std::uint32_t i) noexcept {

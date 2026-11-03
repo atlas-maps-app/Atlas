@@ -2,12 +2,13 @@ package app.atlas.services
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.atlas.providers.OsmAuth
+import app.atlas.testing.HeldWrites
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -86,7 +87,8 @@ class OsmAccountTest {
         // the verifier sent proves the challenge the page carried
         assertEquals(page.queryParameter("code_challenge"), OsmAuth.challenge(osm.verifier!!))
         assertEquals("tok-1", a.token())
-        assertEquals("Erika", a.user.filterNotNull().first())
+        // the name shows as the sign-in finishes
+        assertEquals("Erika", a.user.value)
         // the token is kept sealed, never as its text
         val kept = File(dir.root, "osm.preferences_pb").readBytes().toString(Charsets.ISO_8859_1)
         assertFalse(kept.contains("tok-1"))
@@ -134,10 +136,11 @@ class OsmAccountTest {
         val osm = FakeOsm()
         val a = account(osm)
         var state = a.begin()!!.toHttpUrl().queryParameter("state")!!
-        withTimeout(5_000) { a.waiting.first { it } }
+        // under way as soon as it begins, over as soon as it ends
+        assertTrue(a.waiting.value)
         assertFalse(a.finish("${OsmAccount.REDIRECT}?error=access_denied&error_description=The+resource+owner+denied&state=$state"))
         assertEquals(OsmAccount.Failure(declined = true, why = "The resource owner denied"), a.failure.value)
-        withTimeout(5_000) { a.waiting.first { w -> !w } }
+        assertFalse(a.waiting.value)
         // a new sign-in clears it; OpenStreetMap out of reach for the token says so
         state = a.begin()!!.toHttpUrl().queryParameter("state")!!
         assertNull(a.failure.value)
@@ -145,6 +148,36 @@ class OsmAccountTest {
         assertFalse(a.finish("${OsmAccount.REDIRECT}?code=c&state=$state"))
         assertEquals(OsmAccount.Failure(declined = false, why = "OpenStreetMap could not be reached"), a.failure.value)
         assertNull(a.token())
+    }
+
+    @Test
+    fun aSignInFinishedAsTheAppStartsOnItsRedirectShowsTheUser() = runBlocking {
+        val store = PreferenceDataStoreFactory.create(scope = scope) { File(dir.root, "osm.preferences_pb") }
+        val state = OsmAccount(store, sealer, FakeOsm(), scope).begin()!!.toHttpUrl().queryParameter("state")!!
+        // the app ended while the user was in the browser, and the redirect starts it again
+        val a = OsmAccount(store, sealer, FakeOsm(), scope)
+        assertTrue(a.awaits("${OsmAccount.REDIRECT}?code=c&state=$state"))
+        assertTrue(a.finish("${OsmAccount.REDIRECT}?code=c&state=$state"))
+        assertEquals("Erika", a.user.value)
+        assertFalse(a.waiting.value)
+    }
+
+    @Test
+    fun aSignInBegunFromAScreenThatGoesAsTheFileTakesItShowsAsUnderWay() = runBlocking {
+        val file = HeldWrites(File(dir.root, "osm.preferences_pb"))
+        val store = PreferenceDataStoreFactory.create(file, scope = scope)
+        val a = OsmAccount(store, sealer, FakeOsm(), scope)
+        // the sign-in's write held where DataStore has taken its change and the file has not yet
+        file.hold()
+        val screen = launch(Dispatchers.IO) { a.begin() }
+        file.waiting.await()
+        // the screen that began it goes, and the file takes the write all the same
+        screen.cancel()
+        file.release()
+        screen.join()
+        assertTrue(withTimeout(5_000) { OsmAccount(store, sealer, FakeOsm(), scope).waiting.first { it } })
+        // so the account has it too
+        assertTrue(a.waiting.value)
     }
 
     @Test

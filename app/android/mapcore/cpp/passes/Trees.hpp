@@ -19,6 +19,7 @@
 #include "frame/Pass.hpp"
 #include "geometry/Trees.hpp"
 #include "gpu/Memory.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tiles/Style.hpp"
 #include "view/Camera.hpp"
@@ -77,9 +78,12 @@ struct TreeChoice {
 [[nodiscard]] bool tree_side_right(const shaders::Theme& theme, const view::Camera& camera) noexcept;
 
 /// The moment's tones (tree.slangh's table, 0xBBGGRR, the last the sunlit side's opacity's bits): the port's light of
-/// each, in binary64 through tohex, for the date's autumn tint and for an evergreen's.
+/// each, in binary64 through tohex, for the date's autumn tint and for an evergreen's. The user's `palette` (null:
+/// today's) colours the leaves, the evergreens and the bark (their slots), and with each what goes with it: the leaves'
+/// autumn and the generic tree's crown, the bark's night, its sunlit side and the generic tree's trunk.
 [[nodiscard]] std::array<std::uint32_t, 25> tree_tones(const shaders::Theme& theme, const style::ThemeBlock& block,
-                                                       const tiles::TreesStyle& style);
+                                                       const tiles::TreesStyle& style,
+                                                       const style::PaletteBlock* palette = nullptr);
 
 /// autumn's tint of a deciduous tree at the moment's date: max(0, min(0.7, ((m - 1) · 30.5 + dd - 258) / 75)).
 [[nodiscard]] double tree_tint(const style::ThemeBlock& block) noexcept;

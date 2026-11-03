@@ -40,11 +40,11 @@ class MainActivityTest {
     @Test
     fun linksAndSharedText() {
         val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:52.37452,4.88377"))
-        assertEquals(Dest.WhatsHere(52.37452, 4.88377), MainActivity.stackFor(geo)!!.last())
+        assertEquals(Dest.WhatsHere(52.37452, 4.88377, go = true), MainActivity.stackFor(geo)!!.last())
         val osm = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/way/99205257"))
         assertEquals(Dest.Place(osmId = "w99205257"), MainActivity.stackFor(osm)!!.last())
         val text = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "52.3745, 4.8838")
-        assertEquals(Dest.WhatsHere(52.3745, 4.8838), MainActivity.stackFor(text)!!.last())
+        assertEquals(Dest.WhatsHere(52.3745, 4.8838, go = true), MainActivity.stackFor(text)!!.last())
         assertNull(MainActivity.stackFor(Intent(Intent.ACTION_MAIN)))
     }
 

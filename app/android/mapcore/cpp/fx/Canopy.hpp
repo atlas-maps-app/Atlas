@@ -30,4 +30,8 @@ inline constexpr float canopy_opacity = 0.55F;
 /// b).
 [[nodiscard]] const std::array<Argb, 256>& canopy_table() noexcept;
 
+/// canopy_table for the canopy in `rgb` (0xRRGGBB, the user's woods) instead of the matrix's .16 .24 .12: the matrix
+/// with `rgb` in linear light as its colour rows' constants, its alpha row as it is.
+[[nodiscard]] std::array<Argb, 256> canopy_table_of(std::uint32_t rgb) noexcept;
+
 } // namespace atlas::fx

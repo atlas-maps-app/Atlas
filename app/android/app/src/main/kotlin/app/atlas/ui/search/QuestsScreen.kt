@@ -1,6 +1,6 @@
 package app.atlas.ui.search
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,7 +30,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -46,11 +59,12 @@ import app.atlas.R
 import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
-import app.atlas.mapview.AtlasMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
+import app.atlas.mapview.MapStyle
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.UserLocation
@@ -164,7 +178,13 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
     val thisMonth = answers.count { YearMonth.from(it.at.atZone(zone)) == month }
     val openPlace: (app.atlas.model.Place) -> Unit = { p -> services.remember(p); nav.go(Dest.Place.of(p)) }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(PAGE))) {
+    // the one map shows through the page at the street card ([QuestMap]): the page is painted around the card
+    var hole by remember { mutableStateOf<Rect?>(null) }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }
+            .drawBehind { paintAround(hole?.translate(-origin), Color(PAGE), MAP_CORNER.toPx()) },
+    ) {
         val page = maxHeight
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).heightIn(min = page)
@@ -181,7 +201,7 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
                     BoardLine(answers.size.toString(), boardText(12f, 900, 15.5f, tnum = true), AMBER)
                 }
             }
-            QuestMap(here, state, onPlace = openPlace, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
+            QuestMap(here, state, onPlace = openPlace, onBounds = { hole = it }, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
             val q = state.current
             val card = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp)
             when {
@@ -221,9 +241,14 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
     }
 }
 
-/** The board's street card (380 × 230, corners 24, #E8EDE0) as the live map: a pin at each question, the current one large. */
+/**
+ * The board's street card (380 × 230, corners 24, #E8EDE0) as the live map: a pin at each question, the current one large.
+ * It is the app's one map (StageMap: the map under every screen, at the card's place with the card's own camera), so
+ * no second map is built (the user, 1 November: "There is too much re loading the map"); [onBounds] tells the page
+ * where to leave it open.
+ */
 @Composable
-private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model.Place) -> Unit, modifier: Modifier) {
+private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model.Place) -> Unit, onBounds: (Rect) -> Unit, modifier: Modifier) {
     val services = LocalServices.current
     val map = remember { MapState(CameraPosition(here, 16.2)) }
     val current = state.current
@@ -241,13 +266,25 @@ private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model
         snapshotFlow { map.visibleBounds }.first { it != null }
         BBox.of(pts + here)?.let { runCatching { map.fit(it.buffer(40.0), 24) } }
     }
-    Box(modifier.fillMaxWidth().height(230.dp).boardBox(0xFFE8EDE0, round(24f))) {
-        AtlasMap(
-            map, Modifier.fillMaxWidth().height(230.dp),
-            overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
-            onTap = { hit -> (hit as? MapHit.OnMarker)?.marker?.place?.let(onPlace) },
-        )
-    }
+    val corners = RoundedCornerShape(MAP_CORNER)
+    StageMap(
+        map, modifier.fillMaxWidth().height(230.dp).clip(corners).onGloballyPositioned { onBounds(it.boundsInRoot()) },
+        style = userLook().copy(layers = MapStyle().layers),
+        overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
+        onTap = { hit -> (hit as? MapHit.OnMarker)?.marker?.place?.let(onPlace) },
+        background = Color(0xFFE8EDE0),
+        hostModifier = Modifier.clip(corners),
+    )
+}
+
+/** The street card's corners. */
+private val MAP_CORNER = 24.dp
+
+/** [colour] over the whole page but [hole] (rounded by [corner]), where the map under the screen shows. */
+private fun DrawScope.paintAround(hole: Rect?, colour: Color, corner: Float) {
+    if (hole == null) return drawRect(colour)
+    val open = Path().apply { addRoundRect(RoundRect(hole, CornerRadius(corner))) }
+    clipPath(open, ClipOp.Difference) { drawRect(colour) }
 }
 
 /**

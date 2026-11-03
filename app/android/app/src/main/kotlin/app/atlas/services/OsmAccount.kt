@@ -3,19 +3,24 @@ package app.atlas.services
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.atlas.providers.OsmAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
 import java.security.KeyStore
@@ -68,17 +73,61 @@ class OsmAccount(
 
     private val failures = MutableStateFlow<Failure?>(null)
 
+    /**
+     * The account as its file holds it, null until read: [read] and [edit] keep it, one at a time, and [user] and
+     * [waiting] follow it as each returns. This class is the file's only writer, so it never lags a write, where
+     * DataStore's data flow can for good: a collector whose first read meets a write reads the old file under the
+     * version the write has already raised (DataStore 1.2.1 raises it before writing, and a read that cannot take the
+     * write's lock reads without it), then drops the write's own update as no newer and shows nothing until the next
+     * write. A sign-in finished as the app starts on its redirect could stay "not signed in" so.
+     */
+    private var held: Preferences? = null
+    private val keeping = Mutex()
+    private val users = MutableStateFlow<String?>(null)
+    private val pending = MutableStateFlow(false)
+
     /** Whether the app can sign in at all. */
     val available: Boolean get() = signIn != null
 
     /** The signed-in user's name, null while signed out (or before the file was read). */
-    val user: StateFlow<String?> = store.data.map { it[USER] }.stateIn(scope, SharingStarted.Eagerly, null)
+    val user: StateFlow<String?> = users.asStateFlow()
 
     /** Whether a sign-in begun in the browser has not come back yet. */
-    val waiting: StateFlow<Boolean> = store.data.map { it[VERIFIER] != null }.stateIn(scope, SharingStarted.Eagerly, false)
+    val waiting: StateFlow<Boolean> = pending.asStateFlow()
 
     /** Why the last sign-in did not finish, until another begins; null when none failed. */
     val failure: StateFlow<Failure?> = failures.asStateFlow()
+
+    init {
+        // read at once for the boards; a file that cannot be read now is read again when next asked for
+        scope.launch {
+            try {
+                read()
+            } catch (_: IOException) {
+            }
+        }
+    }
+
+    /** The account as its file holds it, read the first time. */
+    private suspend fun read(): Preferences = keeping.withLock { held ?: keep(store.data.first()) }
+
+    /**
+     * Writes [change] to the file, the account then as it holds it, as SettingsStore.edit does: on IO, so it lets go of
+     * the lock even while its caller's thread is blocked, and once begun the write is kept though its caller is
+     * cancelled (a screen left), as the file takes it all the same.
+     */
+    private suspend fun edit(change: (MutablePreferences) -> Unit) {
+        withContext(Dispatchers.IO) {
+            keeping.withLock { withContext(NonCancellable) { keep(store.edit { change(it) }) } }
+        }
+    }
+
+    private fun keep(p: Preferences): Preferences {
+        held = p
+        users.value = p[USER]
+        pending.value = p[VERIFIER] != null
+        return p
+    }
 
     /**
      * Starts a sign-in: the page to open in the browser, its verifier and state kept until the redirect comes back.
@@ -88,7 +137,7 @@ class OsmAccount(
         val s = signIn ?: return null
         val verifier = OsmAuth.verifier()
         val state = OsmAuth.verifier().take(STATE_LENGTH)
-        store.edit {
+        edit {
             it[VERIFIER] = verifier
             it[STATE] = state
         }
@@ -100,7 +149,7 @@ class OsmAccount(
     suspend fun awaits(uri: String): Boolean {
         val s = signIn ?: return false
         if (uri != s.redirectUri && !uri.startsWith(s.redirectUri + "?")) return false
-        val state = store.data.first()[STATE] ?: return false
+        val state = read()[STATE] ?: return false
         return query(uri)["state"] == state
     }
 
@@ -113,7 +162,7 @@ class OsmAccount(
         val s = signIn ?: return false
         if (uri != s.redirectUri && !uri.startsWith(s.redirectUri + "?")) return false
         val query = query(uri)
-        val kept = store.data.first()
+        val kept = read()
         val verifier = kept[VERIFIER] ?: return false
         val code = query["code"]
         val signedIn = if (query["state"] != kept[STATE] || code == null) {
@@ -131,7 +180,7 @@ class OsmAccount(
             }
         }
         val sealed = signedIn?.let { (token, _) -> Base64.getEncoder().encodeToString(sealer.seal(token.toByteArray(Charsets.UTF_8))) }
-        store.edit {
+        edit {
             it.remove(VERIFIER)
             it.remove(STATE)
             if (signedIn != null && sealed != null) {
@@ -144,7 +193,7 @@ class OsmAccount(
 
     /** The token edits are sent with, or null while signed out (or where the platform's key is gone). */
     suspend fun token(): String? {
-        val sealed = store.data.first()[TOKEN] ?: return null
+        val sealed = read()[TOKEN] ?: return null
         return runCatching { String(sealer.open(Base64.getDecoder().decode(sealed)), Charsets.UTF_8) }.getOrNull()
     }
 
@@ -155,7 +204,7 @@ class OsmAccount(
      */
     suspend fun signOut(withdraw: Boolean = true) {
         val token = if (withdraw) token() else null
-        store.edit {
+        edit {
             it.remove(TOKEN)
             it.remove(USER)
         }

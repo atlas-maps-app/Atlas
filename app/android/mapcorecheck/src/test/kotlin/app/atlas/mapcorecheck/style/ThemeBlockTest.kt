@@ -174,4 +174,26 @@ class ThemeBlockTest {
         fresh()
         assertTrue("error" !in parse(StyleHost.themeDump(b)))
     }
+
+    @Test
+    fun theUsersToneStrengthRidesWithItsFlag() {
+        // the Map look's Tone: the renders' 1 writes the block as before (no flag, the field 0); any other strength sets
+        // TONE_STRENGTH and the float, which the core takes; a strength without its flag is refused
+        val th = Amsterdam.THEMES.getValue("sunny")
+        val (az, el, L) = Amsterdam.sunOf(th)
+        val b = ThemeBlock.allocate()
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, true, toneStrength = 1f)
+        assertEquals(0, b.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.TONE_STRENGTH)
+        assertEquals(0, b.getInt(ThemeBlock.TONE_AT))
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, true, toneStrength = 0.5f)
+        assertEquals(ThemeBlock.TONE_STRENGTH, b.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.TONE_STRENGTH)
+        assertEquals(0.5f, b.getFloat(ThemeBlock.TONE_AT))
+        val dump = parse(StyleHost.themeDump(b))
+        assertTrue(dump.toString(), "error" !in dump)
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, true, toneStrength = 0f)
+        assertTrue("error" !in parse(StyleHost.themeDump(b)))
+        b.putInt(ThemeBlock.FLAGS_AT, b.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.TONE_STRENGTH.inv())
+        b.putFloat(ThemeBlock.TONE_AT, 1.5f)
+        assertEquals("reserved", parse(StyleHost.themeDump(b))["error"])
+    }
 }

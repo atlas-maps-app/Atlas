@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ import app.atlas.R
 import app.atlas.geo.Sun
 import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapPart
@@ -79,6 +81,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /**
  * The map's look: the real map behind a sheet, so every switch shows at once. Theme chips along the top (auto day and
@@ -101,8 +104,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, true).collectAsStateWithLifecycle(true)
+    val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
+    val compression by settings.flow(SettingsKeys.MAP_COMPRESSION, true).collectAsStateWithLifecycle(true)
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
@@ -169,11 +175,24 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
                     onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
                 )
+                ToneRow(
+                    toneOn, tone,
+                    onOn = { on -> scope.launch { settings.set(SettingsKeys.MAP_TONE_ON, on) } },
+                    onStrength = { s ->
+                        scope.launch {
+                            settings.set(SettingsKeys.MAP_TONE, s)
+                            settings.set(SettingsKeys.MAP_TONE_ON, true)
+                        }
+                    },
+                )
                 if (app.atlas.BuildConfig.TIMINGS) {
                     PartChips(
                         partsOff, pacing, timings,
+                        // only where the driver obeys its off: elsewhere the screen's compression is the driver's alone
+                        compression = compression.takeIf { MapEngine.compressionSwitch },
                         onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } },
                         onTimings = { on -> scope.launch { settings.set(SettingsKeys.MAP_TIMINGS, on) } },
+                        onCompression = { on -> scope.launch { settings.set(SettingsKeys.MAP_COMPRESSION, on) } },
                     ) { off ->
                         scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
                     }
@@ -270,7 +289,9 @@ private fun ScreenChips(
  * phone what the part costs. A row a group: its own chip first, which turns all of its parts off while any is drawn and
  * on again when none is (dark when all are drawn, grey when some), then the parts listed under it. The map's own layers
  * (the trees, the soft shadows) leave theirs out too. Last, the frame pacing (dark when on, off by default): each frame
- * presented at a timeline its work can make, as alpha 15 drew.
+ * presented at a timeline its work can make, as alpha 15 drew; the frame timings; and the screen's [compression] (dark
+ * when on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
+ * images are made without the driver's framebuffer compression.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -278,8 +299,10 @@ private fun PartChips(
     off: Set<MapPart>,
     pacing: Boolean,
     timings: Boolean,
+    compression: Boolean?,
     onPacing: (Boolean) -> Unit,
     onTimings: (Boolean) -> Unit,
+    onCompression: (Boolean) -> Unit,
     onChange: (Set<MapPart>) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -306,9 +329,10 @@ private fun PartChips(
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((label, on, onToggle) in listOf(
+            for ((label, on, onToggle) in listOfNotNull(
                 Triple(stringResource(R.string.mine_part_pacing), pacing, onPacing),
                 Triple(stringResource(R.string.mine_part_timings), timings, onTimings),
+                compression?.let { Triple(stringResource(R.string.mine_part_compression), it, onCompression) },
             )) {
                 TextPill(
                     label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
@@ -340,6 +364,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.SETTS -> R.string.mine_part_setts
     MapPart.GROUND_TEXT -> R.string.mine_part_ground_text
     MapPart.QUAYS -> R.string.mine_part_quays
+    MapPart.QUAY_WATERLINES -> R.string.mine_part_quay_waterlines
+    MapPart.QUAY_TOPS -> R.string.mine_part_quay_tops
     MapPart.SKY -> R.string.mine_part_sky
     MapPart.BUILDING_SHADOWS -> R.string.mine_part_building_shadows
     MapPart.SHADOW_BLUR -> R.string.mine_part_shadow_blur
@@ -365,7 +391,9 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.ROOF_EDGES -> R.string.mine_part_roof_edges
     MapPart.WINDOWS -> R.string.mine_part_windows
     MapPart.WINDOW_DEPTH -> R.string.mine_part_window_depth
-    MapPart.FLAT_DETAIL -> R.string.mine_part_flat_detail
+    MapPart.SHOP_GLAZING -> R.string.mine_part_shop_glazing
+    MapPart.PLINTHS -> R.string.mine_part_plinths
+    MapPart.CORNICES -> R.string.mine_part_cornices
     MapPart.CHURCH_WINDOWS -> R.string.mine_part_church_windows
     MapPart.MATERIAL_FACES -> R.string.mine_part_material_faces
     MapPart.HOIST_BEAMS -> R.string.mine_part_hoist_beams
@@ -440,6 +468,72 @@ private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Bo
             MiniButton(stringResource(R.string.mine_layers_noon), { onChange(sun.second) }, primary = false, symbol = "weather.sun")
             sun.third?.let { MiniButton(stringResource(R.string.mine_layers_sunset), { onChange(it) }, primary = false, symbol = "weather.sunset.3") }
             MiniButton(stringResource(R.string.mine_layers_now), onNow)
+        }
+    }
+}
+
+/**
+ * The Map look's Tone (the Map look board's Tone card): the switch, and the strength from off to 2× in steps of 5 % on a
+ * track with today's 100 % marked, its value at the right. A drag shows on the map behind as it moves and is kept when
+ * the finger lifts; setting a strength turns Tone on, and off keeps the strength for when it is on again.
+ */
+@Composable
+private fun ToneRow(on: Boolean, strength: Float, onOn: (Boolean) -> Unit, onStrength: (Float) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    // the drag's handlers outlive a recomposition: what a cancelled drag returns the map to is the latest kept
+    val kept by rememberUpdatedState(if (on) strength else 0f)
+    val shown = dragging ?: strength
+    val percent = (shown * 100).roundToInt()
+    val lit = on || dragging != null
+    val value = when {
+        !lit || percent == 0 -> stringResource(R.string.mine_layers_tone_off)
+        percent == 100 -> stringResource(R.string.mine_layers_tone_today, percent)
+        else -> stringResource(R.string.mine_layers_tone_value, percent)
+    }
+    val name = stringResource(R.string.mine_layers_tone)
+    val description = stringResource(R.string.mine_layers_tone_cd, percent)
+    // 0 to 2 in steps of 5 %, so today's 1 is a step
+    fun at(x: Float, width: Float) = (x / width * 40f).roundToInt().coerceIn(0, 40) / 20f
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CardLabel(name, Modifier.weight(1f))
+            BText(value, bt(14f, 800, 18f, tnum = true), INK)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            MineSwitch(on, onOn, name, onColour = INK)
+            Canvas(
+                Modifier.weight(1f).height(34.dp).semantics {
+                    contentDescription = description
+                    progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(shown, 0f..2f, 39)
+                    setProgress { v -> onStrength(((v * 20f).roundToInt() / 20f).coerceIn(0f, 2f)); true }
+                }
+                    .pointerInput(Unit) { detectTapGestures { p -> onStrength(at(p.x, size.width.toFloat())) } }
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = { dragging?.let(onStrength); dragging = null },
+                            onDragCancel = { dragging = null; MapEngine.tone(kept) },
+                        ) { change, _ ->
+                            val s = at(change.position.x, size.width.toFloat())
+                            if (s != dragging) {
+                                dragging = s
+                                MapEngine.tone(s)
+                            }
+                        }
+                    },
+            ) {
+                val r = 12.dp.toPx()
+                val y = size.height / 2
+                val track = 6.dp.toPx()
+                val left = r
+                val width = size.width - 2 * r
+                fun x(s: Float) = left + s / 2f * width
+                drawRoundRect(Color(0xFFE6E8EC), Offset(left, y - track / 2), Size(width, track), CornerRadius(track / 2))
+                if (lit) drawRoundRect(Color(INK), Offset(left, y - track / 2), Size(x(shown) - left, track), CornerRadius(track / 2))
+                // today's 100 %
+                drawLine(Color(0xFF8A8F99), Offset(x(1f), y - 9.dp.toPx()), Offset(x(1f), y + 9.dp.toPx()), 2.dp.toPx())
+                drawCircle(Color.White, r, Offset(x(shown), y))
+                drawCircle(Color(if (lit) INK else 0xFFB8BCC4), r, Offset(x(shown), y), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            }
         }
     }
 }

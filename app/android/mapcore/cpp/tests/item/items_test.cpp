@@ -13,6 +13,8 @@
 #include "load/Regions.hpp"
 #include "load/Window.hpp"
 #include "passes/Items.hpp"
+#include "style/Palette.hpp"
+#include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
@@ -403,6 +405,40 @@ TEST_CASE("items: the render thread's choices, as draw_items compares and prints
     CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::crane), 1500.0, focal, false).a == 0.5F);
     // a tower always
     CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::tower), 9000.0, focal, false).drawn);
+}
+
+TEST_CASE("items: the user's palette colours the turbines, the pylons and the woods' greens, today's none") {
+    const tl::Style style = test_style();
+    atlas::style::ThemeBlock day{};
+    day.shadow = {.r = 0x27, .g = 0x30, .b = 0x5A, .a = 0};
+    day.sun = {.r = 255, .g = 235, .b = 203, .a = 255};
+    day.ambient = {.r = 147, .g = 166, .b = 204, .a = 255};
+    day.sun_k = 0.8;
+    day.amb_k = 0.6;
+    day.sun_vector = {0.3, 0.8, 0.5};
+    const atlas::shaders::Theme th = atlas::style::shader_theme(day);
+    const auto today = atlas::passes::item_tones(day, th, style.items);
+    const atlas::style::PaletteBlock none{};
+    CHECK(atlas::passes::item_tones(day, th, style.items, &none) == today);
+    namespace slot = atlas::style::palette_slot;
+    atlas::style::PaletteBlock p{};
+    p.colours.at(slot::turbines) = 0x01C04040U;
+    p.colours.at(slot::pylons) = 0x01303030U;
+    p.colours.at(slot::woods) = 0x01405060U;
+    const auto t = atlas::passes::item_tones(day, th, style.items, &p);
+    // a slot's own colour is the user's (0xBBGGRR); its blades, edges, hub and conductors move with it
+    CHECK(t[atlas::shaders::ITEM_TONE_TURBINE] == 0x4040C0U);
+    CHECK(t[atlas::shaders::ITEM_TONE_POWER] == 0x303030U);
+    for (const std::uint32_t k : {1U, 2U, 3U})
+        CHECK(t.at(atlas::shaders::ITEM_TONE_TURBINE + k) != today.at(atlas::shaders::ITEM_TONE_TURBINE + k));
+    CHECK(t[atlas::shaders::ITEM_TONE_POWER + 1] != today[atlas::shaders::ITEM_TONE_POWER + 1]);
+    for (std::size_t k = 0; k < 15; ++k)
+        CHECK(t.at(atlas::shaders::ITEM_TONE_WOODS + k) != today.at(atlas::shaders::ITEM_TONE_WOODS + k));
+    // a turbine's light, the towers, the steel and the coasters keep the style's
+    CHECK(t[atlas::shaders::ITEM_TONE_TURBINE + 4] == today[atlas::shaders::ITEM_TONE_TURBINE + 4]);
+    CHECK(t[atlas::shaders::ITEM_TONE_TOWER] == today[atlas::shaders::ITEM_TONE_TOWER]);
+    CHECK(t[atlas::shaders::ITEM_TONE_STEEL] == today[atlas::shaders::ITEM_TONE_STEEL]);
+    CHECK(t[atlas::shaders::ITEM_TONE_COASTER] == today[atlas::shaders::ITEM_TONE_COASTER]);
 }
 
 TEST_CASE("items: the moment's tones, the port's colours by day and at night") {

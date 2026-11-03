@@ -14,7 +14,7 @@
 //             ground, road, water, water_top,
 //             water_bot, shadow (a: 255 where the
 //             theme has the colour, else 0)
-//    60  u32  reserved (0)
+//    60  f32  the user's TONE strength (0-2) with tone_strength, else 0
 //
 // The reader accepts a block only as the port makes one:
 // - a real date in the years 1900-2200 and a time of day; a moment name it knows;
@@ -61,8 +61,9 @@ inline constexpr std::uint32_t dusk = shaders::THEME_DUSK;
 inline constexpr std::uint32_t wet_set = shaders::THEME_WET_SET;
 inline constexpr std::uint32_t golden = shaders::THEME_GOLDEN;
 inline constexpr std::uint32_t tone = shaders::THEME_TONE;
+inline constexpr std::uint32_t tone_strength = shaders::THEME_TONE_STRENGTH;
 /// Every bit version 1 knows; a block with another is refused.
-inline constexpr std::uint32_t known = 0x7FFU;
+inline constexpr std::uint32_t known = 0xFFFU;
 } // namespace theme_flag
 
 /// The moment's name (th['name']) as a number (ThemeBlock.MOMENTS); a region's own moments and the live moment's other
@@ -109,7 +110,7 @@ struct ThemeBlock {
     Rgb8 water_top;
     Rgb8 water_bottom;
     Rgb8 shadow;
-    std::uint32_t reserved0;
+    float tone; ///< the user's TONE strength with theme_flag::tone_strength (0-2), else 0
     double haze_max;
     double sun_k;
     double amb_k;
@@ -139,7 +140,7 @@ struct ThemeBlock {
 static_assert(sizeof(ThemeBlock) == theme_block_size);
 static_assert(offsetof(ThemeBlock, moment) == 14 && offsetof(ThemeBlock, weather_code) == 15);
 static_assert(offsetof(ThemeBlock, sky_top) == 16 && offsetof(ThemeBlock, shadow) == 56 &&
-              offsetof(ThemeBlock, reserved0) == 60);
+              offsetof(ThemeBlock, tone) == 60);
 static_assert(offsetof(ThemeBlock, haze_max) == 64 && offsetof(ThemeBlock, dusk) == 120);
 static_assert(offsetof(ThemeBlock, sun_vector) == 128 && offsetof(ThemeBlock, sun_azimuth) == 152);
 static_assert(offsetof(ThemeBlock, cloud) == 168 && offsetof(ThemeBlock, humidity) == 240 &&
@@ -150,12 +151,12 @@ enum class ThemeError : std::uint8_t {
     size,       // not 256 bytes
     version,    // another layout version
     flags,      // a flag bit version 1 does not know, or wet without wet_set
-    reserved,   // a reserved field that is not 0, or an absent colour that is not all 0
+    reserved,   // a reserved field that is not 0, a TONE strength without its flag, or an absent colour not all 0
     date,       // not a real date and time of day in 1900-2200
     moment,     // a moment name past the known ones
     not_finite, // a NaN or an infinity among the doubles
     colour,     // a colour every theme has is missing, or water_top and water_bot disagree with water_gradient
-    value,      // haze_max, sun_k, amb_k, sky_k, shadow_op, shadow_blur, cloud_shadows or _dusk out of range
+    value,      // haze_max, sun_k, amb_k, sky_k, shadow_op, shadow_blur, cloud_shadows, _dusk or tone out of range
     sun, // the sun vector is not a unit vector or disagrees with the elevation, or the sun's position is out of range
     weather, // the hour's weather out of range, or weather without the weather flag
 };

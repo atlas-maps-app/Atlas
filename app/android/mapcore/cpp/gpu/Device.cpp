@@ -183,6 +183,10 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
             on.swapchain_maintenance1 = enable(vk::EXTSwapchainMaintenance1ExtensionName);
         }
     }
+    if (on.swapchain && facts.features.swapchain_compression_control) {
+        on.swapchain_compression_control = enable(vk::EXTImageCompressionControlExtensionName) &&
+                                           enable(vk::EXTImageCompressionControlSwapchainExtensionName);
+    }
     if (on.swapchain) {
         on.display_timing = enable(vk::GOOGLEDisplayTimingExtensionName);
         on.incremental_present = enable(vk::KHRIncrementalPresentExtensionName);
@@ -216,6 +220,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     vk::PhysicalDeviceDynamicRenderingLocalReadFeatures local_read{.dynamicRenderingLocalRead = vk::True};
     vk::PhysicalDeviceShaderFmaFeaturesKHR fma{.shaderFmaFloat32 = vk::True};
     vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain1{.swapchainMaintenance1 = vk::True};
+    vk::PhysicalDeviceImageCompressionControlFeaturesEXT compression{.imageCompressionControl = vk::True};
+    vk::PhysicalDeviceImageCompressionControlSwapchainFeaturesEXT compression_swapchain{
+        .imageCompressionControlSwapchain = vk::True};
     if (version >= VK_API_VERSION_1_3) {
         v13.dynamicRendering = on.dynamic_rendering ? vk::True : vk::False;
         v13.synchronization2 = on.synchronization2 ? vk::True : vk::False;
@@ -234,6 +241,10 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     }
     if (on.shader_fma) link(fma);
     if (on.swapchain_maintenance1) link(swapchain1);
+    if (on.swapchain_compression_control) {
+        link(compression);
+        link(compression_swapchain);
+    }
 
     const float priority = 1.0F;
     const vk::DeviceQueueCreateInfo queue{.queueFamilyIndex = *family, .queueCount = 1, .pQueuePriorities = &priority};

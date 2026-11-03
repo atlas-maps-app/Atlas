@@ -272,6 +272,14 @@ TEST_CASE("the theme takes the profile's rules: TONE off for the living map, on 
     const style::ThemeBlock t = sunny();
     CHECK((frame::with_profile(t, tiles::Profile::living).flags & flag::tone) == 0);
     CHECK((frame::with_profile(t, tiles::Profile::region).flags & flag::tone) != 0);
+    // the user's Tone off (a strength of 0) lights every profile without TONE; any other strength keeps the rule
+    style::ThemeBlock off = t;
+    off.flags |= flag::tone_strength;
+    off.tone = 0.0F;
+    CHECK((frame::with_profile(off, tiles::Profile::region).flags & flag::tone) == 0);
+    off.tone = 0.5F;
+    CHECK((frame::with_profile(off, tiles::Profile::region).flags & flag::tone) != 0);
+    CHECK((frame::with_profile(off, tiles::Profile::living).flags & flag::tone) == 0);
     CHECK((frame::with_profile(t, tiles::Profile::world_base).flags & flag::tone) != 0);
     style::ThemeBlock toned = t;
     toned.flags |= flag::tone;
@@ -587,7 +595,10 @@ const std::vector<Part>& every_part() {
          .needs = part::ground},
         {.name = "cobblestones", .bit = part::setts, .shared = {"ground marks"}, .needs = part::ground},
         {.name = "canal names", .bit = part::ground_text, .own = {"canal names", "runway designators"}},
-        {.name = "quay walls", .bit = part::quays, .own = {"ground quays"}},
+        // (a quay wall's faces in one draw: told apart by its triangles)
+        {.name = "quay walls", .bit = part::quays, .shared = {"ground quays"}},
+        {.name = "quay waterlines", .bit = part::quay_waterlines, .shared = {"ground quays"}},
+        {.name = "quay tops", .bit = part::quay_tops, .shared = {"ground quays"}},
         {.name = "sky",
          .bit = part::sky,
          .own = {"ground sky", "ground sun glow", "ground sun disc", "ground city glow"}},
@@ -645,10 +656,19 @@ const std::vector<Part>& every_part() {
         {.name = "roof edges", .bit = part::roof_edges, .own = {"roof strokes"}},
         {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
         {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
-        {.name = "shopfronts and plinths",
-         .bit = part::flat_detail,
-         .own = {"window facades", "facades"},
-         .shared = {"window frames", "window glass"}},
+        // (the flat detail's stage and draws run while any of its parts is drawn: each told by its mode bit)
+        {.name = "shopfronts",
+         .bit = part::shop_glazing,
+         .shared = {"window facades", "window frames", "window glass"},
+         .mode_bit = shaders::FRAME_NO_GLAZING},
+        {.name = "plinths",
+         .bit = part::plinths,
+         .shared = {"window facades", "facades"},
+         .mode_bit = shaders::FRAME_NO_PLINTHS},
+        {.name = "cornices",
+         .bit = part::cornices,
+         .shared = {"window facades", "facades"},
+         .mode_bit = shaders::FRAME_NO_CORNICES},
         {.name = "church windows", .bit = part::church_windows, .own = {"window churches", "church windows"}},
         {.name = "wall materials",
          .bit = part::material_faces,
@@ -1133,8 +1153,14 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         if (work_of(*map.builder(), *std::ranges::find(parts, kept, &Part::bit)).any()) drawn_there.push_back(kept);
     }
     CHECK(drawn_there.size() >= 2);
+    // the flat detail's stage and draws, which its three parts share: none with all three left out
+    const Part flat{.name = "flat detail",
+                    .bit = part::shop_glazing | part::plinths | part::cornices,
+                    .own = {"window facades", "facades"}};
+    CHECK(work_of(*map.builder(), flat).own > 0U);
     for (const std::uint64_t group : {part::facade_detail | part::water_light, part::buildings | part::doors}) {
         CHECK(draw(doors, group));
+        CHECK(work_of(*map.builder(), flat).own == 0U);
         for (const Part& p : parts) {
             if ((p.bit & group) == 0U) continue;
             const std::string_view part_name = p.name;
@@ -1169,8 +1195,8 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
-                                                                   const gpu::Output* /*old*/,
-                                                                   gpu::Depth depth) override {
+                                                                   const gpu::Output* /*old*/, gpu::Depth depth,
+                                                                   gpu::Compression /*compression*/) override {
         auto images = gpu::Offscreen::create(device, wanted, 3, depth);
         if (!images) return std::unexpected(images.error());
         kept = images->get();

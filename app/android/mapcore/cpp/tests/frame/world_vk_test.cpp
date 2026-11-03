@@ -59,8 +59,8 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
-                                                                   const gpu::Output* /*old*/,
-                                                                   gpu::Depth depth) override {
+                                                                   const gpu::Output* /*old*/, gpu::Depth depth,
+                                                                   gpu::Compression /*compression*/) override {
         auto images = gpu::Offscreen::create(device, wanted, 3, depth);
         if (!images) return std::unexpected(images.error());
         kept = images->get();
@@ -581,6 +581,13 @@ TEST_CASE("the hand-over: a zoom from 1 to 100 km over the canal ring draws each
         CHECK(beyond > 20);
         CHECK(clear_beyond == 0);
         CHECK(bare == 0);
+        // at rest at 100 km the canal ring's pack still holds the target, its cover no tile: the world's picture is
+        // the camera's final one (CI's world phase found the map loading there for ten minutes, 1 November)
+        cam.flags = style::camera_flag::rest;
+        draw_complete(session, map, cam);
+        CHECK(map.drawn_pack() == "grachten");
+        CHECK(map.world()->cover()->tiles().empty());
+        CHECK(map.complete());
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

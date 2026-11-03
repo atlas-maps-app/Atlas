@@ -42,6 +42,9 @@ struct Enabled {
     bool synchronization2 = false;
     bool create_renderpass2 = false;
     bool swapchain_maintenance1 = false;
+    /// The swapchain's images can be made without the driver's framebuffer compression (Compression::off: the Map
+    /// look's switch), wherever the driver offers VK_EXT_image_compression_control_swapchain's feature.
+    bool swapchain_compression_control = false;
     bool display_timing = false;
     bool incremental_present = false;
     bool calibrated_timestamps = false;

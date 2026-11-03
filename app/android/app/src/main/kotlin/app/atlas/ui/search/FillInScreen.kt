@@ -61,6 +61,7 @@ import app.atlas.R
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
+import app.atlas.mapview.MapStyle
 import app.atlas.mapview.StageMap
 import app.atlas.model.OsmId
 import app.atlas.nav.Dest
@@ -109,7 +110,9 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
     val element = (load as? FillInLoad.Read)?.element
     val asks = remember(element) { element?.let { FillIn.asks(it.tags) }.orEmpty() }
     var state by rememberSaveable(asks, stateSaver = stateSaver(asks)) { mutableStateOf(FillInState(asks)) }
+    // its own view of the building, on the one map (nothing rebuilt), in the user's look with the layers that view needs
     val map = remember(args) { MapState(CameraPosition(args.at, 18.2, bearing = 0.0, pitch = 55.0)) }
+    val look = userLook().copy(layers = MapStyle().layers)
     var pin by remember { mutableStateOf<Offset?>(null) }
     // the building asked about as the board draws it, where the core draws the map (ENGINE.md step 6)
     val asked = buildingId(type, args.id)?.let { state.asked(it) }
@@ -119,7 +122,7 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(argb(0xFF0B0D14))) {
-        StageMap(state = map, modifier = Modifier.fillMaxSize(), overlays = overlays, background = argb(0xFF0B0D14))
+        StageMap(state = map, modifier = Modifier.fillMaxSize(), style = look, overlays = overlays, background = argb(0xFF0B0D14))
         // the board's px for the projected point: the board is the screen's width
         val boardPerPx = 412f / (constraints.maxWidth.toFloat().coerceAtLeast(1f))
         BoardScale {

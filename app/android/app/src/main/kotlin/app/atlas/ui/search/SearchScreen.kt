@@ -199,7 +199,7 @@ fun SearchScreen(args: Dest.Search, nav: Navigator) {
                     recents = recents.take(8),
                     onText = { t -> field = t; vm.onText(t) },
                     onPlace = openPlace,
-                    onPoint = { p -> nav.go(Dest.WhatsHere(p.lat, p.lon)) },
+                    onPoint = { p -> nav.go(Dest.WhatsHere(p.lat, p.lon, go = true)) },
                     onClear = { services.scope.launch(Dispatchers.IO) { runCatching { services.saved.clearRecents() } } },
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp),
                 )
@@ -385,7 +385,7 @@ private fun SearchItemRow(
                 tile = Color(0xFF6B7282),
                 trailingSymbol = "ui-arrow-right",
                 trailingColour = Color(INK),
-                onClick = { onQuery(); nav.go(Dest.WhatsHere(item.location.lat, item.location.lon)) },
+                onClick = { onQuery(); nav.go(Dest.WhatsHere(item.location.lat, item.location.lon, go = true)) },
             )
         }
         is SearchItem.Recent -> Unit

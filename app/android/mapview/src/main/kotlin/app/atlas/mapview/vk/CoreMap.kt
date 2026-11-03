@@ -10,6 +10,7 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.MarkerBlock
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
 import app.atlas.mapview.EngineFrames
@@ -24,6 +25,8 @@ import app.atlas.mapview.MarkerPainter
 import app.atlas.mapview.MarkerSprites
 import app.atlas.mapview.OverlayPainter
 import app.atlas.mapview.RouteChips
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.Slot
 import app.atlas.model.OsmType
 import app.atlas.render.live.Moment
 import java.time.ZoneId
@@ -99,8 +102,11 @@ internal class CoreMap(
     )
 
     private val theme = ThemeBlock.allocate()
+    private val paletteBlock = PaletteBlock.allocate()
     private var lastMoment: Moment? = null
     private var lastZone: ZoneId? = null
+    private var lastTone = 1f
+    private var lastPalette = Palette()
     private var packsRevision = -1
     private val records = FrameRecords.allocate(RECORDS)
     private val intervals = DoubleArray(WINDOW)
@@ -148,14 +154,23 @@ internal class CoreMap(
      * changed (off the main thread). "" or why it was not.
      */
     fun moment(moment: Moment, zone: ZoneId, daylight: Boolean): String {
-        if (moment == lastMoment && zone == lastZone) return ""
+        val tone = MapEngine.tone
+        val palette = MapEngine.palette
+        if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette) return ""
         val why = runCatching {
-            CoreMoment.write(theme, moment, zone, daylight)
+            if (palette != lastPalette) {
+                // the colours the theme does not carry (buildings, trees, surfaces), drawn by the core's passes
+                PaletteBlock.write(paletteBlock, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
+                core.palette(paletteBlock).takeIf { it.isNotEmpty() }?.let { error(it) }
+            }
+            CoreMoment.write(theme, moment, zone, daylight, tone, palette)
             core.moment(theme)
         }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
         if (why.isEmpty()) {
             lastMoment = moment
             lastZone = zone
+            lastTone = tone
+            lastPalette = palette
             night = theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0
         } else {
             Log.w(EngineFrames.TAG, "vk moment: $why")

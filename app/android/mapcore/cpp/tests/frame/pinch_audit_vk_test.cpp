@@ -118,8 +118,8 @@ public:
     }
     [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
-                                                                   const gpu::Output* /*old*/,
-                                                                   gpu::Depth depth) override {
+                                                                   const gpu::Output* /*old*/, gpu::Depth depth,
+                                                                   gpu::Compression /*compression*/) override {
         auto images = gpu::Offscreen::create(device, wanted, 3, depth);
         if (!images) return std::unexpected(images.error());
         kept = images->get();
@@ -623,19 +623,20 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                   std::pair{"facades", part::facade_detail}}) {
                 if (named.find(std::format(",{},", name)) != std::string::npos) always_off |= bits;
             }
-            // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, flat_detail ...;
+            // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, plinths ...;
             // the water's surface as water_surface, as "water" names the water's light (alpha 19's defaults above)
-            constexpr std::array<const char*, 48> each{
-                "ground",         "water_surface",  "canopy",       "ground_lines",     "setts",
-                "ground_text",    "quays",          "sky",          "building_shadows", "park_shadows",
-                "cloud_shadows",  "reflections",    "ripple",       "glitter",          "rings",
-                "glints",         "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
-                "lamp_halos",     "lamp_streaks",   "rain",         "golden_wash",      "walls",
-                "roofs",          "roof_edges",     "windows",      "window_depth",     "flat_detail",
-                "church_windows", "material_faces", "hoist_beams",  "kit_details",      "doors",
-                "house_numbers",  "trees",          "leaf_filters", "furniture",        "region_items",
-                "labels",         "routes",         "markers",      "location",         "frosted",
-                "shadow_blur",    "near_cells",     "kept_cull"};
+            constexpr std::array<const char*, 52> each{
+                "ground",          "water_surface",  "canopy",       "ground_lines",     "setts",
+                "ground_text",     "quays",          "sky",          "building_shadows", "park_shadows",
+                "cloud_shadows",   "reflections",    "ripple",       "glitter",          "rings",
+                "glints",          "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
+                "lamp_halos",      "lamp_streaks",   "rain",         "golden_wash",      "walls",
+                "roofs",           "roof_edges",     "windows",      "window_depth",     "shop_glazing",
+                "church_windows",  "material_faces", "hoist_beams",  "kit_details",      "doors",
+                "house_numbers",   "trees",          "leaf_filters", "furniture",        "region_items",
+                "labels",          "routes",         "markers",      "location",         "frosted",
+                "shadow_blur",     "near_cells",     "kept_cull",    "plinths",          "cornices",
+                "quay_waterlines", "quay_tops"};
             for (std::size_t i = 0; i < each.size(); ++i) {
                 if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
             }
