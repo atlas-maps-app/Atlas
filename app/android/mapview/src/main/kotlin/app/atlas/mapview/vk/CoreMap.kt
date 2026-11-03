@@ -14,6 +14,7 @@ import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
 import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.GroundPick
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
@@ -249,6 +250,12 @@ internal class CoreMap(
      * map). Off the main thread: it waits for the render thread.
      */
     fun pick(x: Float, y: Float): MapPick? = MapPick.parse(core.pick(x, y))
+
+    /**
+     * What the view's device point ([x], [y]) shows of the ground as the core's last frame drew it, or null (nothing
+     * drawn there, or no map); a building before it is [pick]'s. Off the main thread: it waits for the render thread.
+     */
+    fun pickGround(x: Float, y: Float): GroundPick? = GroundPick.parse(core.pickGround(x, y))
 
     private val askLock = Any()
     private var askedRevision = 0L

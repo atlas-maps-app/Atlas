@@ -160,6 +160,10 @@ public:
     /// the last frame's eye through that point, among the buildings of the packs its resident tiles came from), or
     /// none.
     [[nodiscard]] std::optional<scene::Picked> pick(double x, double y);
+    /// What the view's device point (`x`, `y`) shows of the ground as the last frame drew it, from that frame's own
+    /// decisions (passes::Ground::pick: the ray from its eye through that point), or none. A building or an item may
+    /// stand before it: the app asks pick first.
+    [[nodiscard]] std::optional<scene::PickedGround> pick_ground(double x, double y);
     /// The world, while made (tests).
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).

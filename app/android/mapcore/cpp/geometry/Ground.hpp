@@ -636,4 +636,19 @@ inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
 [[nodiscard]] GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style,
                                       std::uint8_t level, P2 origin);
 
+/// A colour of a style the ground paints that a slot of the user's palette moves (style/Palette.hpp's codes), and the
+/// slot's own colour in the style, which the palette's colour of it is a move from.
+struct GroundSlot {
+    std::size_t code = 0;
+    std::uint32_t own = 0;
+    tiles::StyleRgb colour = 0;
+    /// Whether the fills darken it at night (the big roads' asphalt has a night colour of its own).
+    bool darkens = true;
+};
+
+/// The colours of `style` the ground paints that slots of the palette move, by day or at night, in the order of the
+/// fills' palette (passes::ground_palette): the areas' by kind, the squares' other, the mapped surfaces', the land
+/// kinds', then the big roads' asphalt. Where two share a colour, the first moves it.
+[[nodiscard]] std::vector<GroundSlot> ground_slots(const tiles::Style& style, bool night);
+
 } // namespace atlas::geometry

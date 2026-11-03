@@ -15,11 +15,13 @@
 // without meeting its slopes still names it.
 #pragma once
 
+#include "geometry/Ground.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "tiles/Chunks.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -48,6 +50,26 @@ struct Picked {
     std::uint32_t slot = 0;
     /// Its base colour, 0xRRGGBB before light: the tiles' roof_rgb or wall_rgb.
     std::uint32_t rgb = 0;
+};
+
+/// What a ray from the eye meets on the ground as a frame drew it (passes::Ground::pick: Colour the map's taps on the
+/// ground).
+struct PickedGround {
+    enum class What : std::uint8_t {
+        plate, ///< the bare ground under everything (th['ground'])
+        fill,  ///< a fill of a drawn tile: `kind`, in `group`
+        water, ///< the water's surface
+        quay,  ///< a quay's wall, its waterline or its coping
+    };
+    What what = What::plate;
+    geometry::FillKind kind = geometry::FillKind::land;
+    std::uint16_t group = 0;
+    /// The slot of the user's palette that paints it (style::palette_slot's codes: mapview's Slot), 0 where none does
+    /// (a colour of the style no slot moves: sand, rock, a cycleway's red).
+    std::size_t slot = 0;
+    /// Where the ray met it.
+    double latitude = 0.0;
+    double longitude = 0.0;
 };
 
 /// A pack a pick looks in: its id and the zoom of its chunks the map draws.

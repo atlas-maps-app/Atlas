@@ -32,6 +32,7 @@
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
+#include "scene/Pick.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/BitTiles.hpp"
@@ -747,6 +748,15 @@ inline constexpr std::uint32_t palette_pairs = 256;
 /// The pair a colour word's search starts at (ground.slang's repainted).
 [[nodiscard]] constexpr std::uint32_t palette_hash(std::uint32_t c) noexcept { return (c * 2654435761U) >> 24U; }
 
+/// The slot of `palette` (null: today's) that paints a fill of `paint` by day or at `night` as the frame draws it: a
+/// theme colour's as the theme carries it (mapview's PaletteTheme: the bare ground the paper's by day, the lawns' with
+/// `grass` on, the night ground's at night; a road without a mapped surface the street's; the flat water the water's,
+/// the night water's at night), and a colour of `style` (null: none) by its day colour, as ground_palette moves it: of
+/// the slots it goes with (geometry::ground_slots, in their order) the first the palette changes, else the first; 0
+/// where it goes with none.
+[[nodiscard]] std::size_t ground_slot_of(const geometry::Paint& paint, const tiles::Style* style,
+                                         const style::PaletteBlock* palette, bool night, bool grass);
+
 class Ground final : public frame::Pass {
 public:
     Ground();
@@ -781,6 +791,17 @@ public:
     /// draws tiles of more than one scene, its rank across them (GroundFrame::mixed).
     [[nodiscard]] std::uint32_t fill_order(const DrawnTile& t, std::uint32_t i) const noexcept;
     [[nodiscard]] std::uint32_t stroke_order(const DrawnTile& t, std::uint32_t i) const noexcept;
+
+    /// What a tap at the view's device point (`x`, `y`, device px) meets on the ground as the last frame drew it, from
+    /// that frame's decisions (passes/GroundPick.cpp), along the ray from the eye (scene::ray_of): a quay's face it
+    /// meets, drawn after the rest, else what the frame drew last (the painter's slot) of the plate, the water and the
+    /// drawn fills (the canopy's among them) whose rings hold the ray's point at their heights, each tile's in its own
+    /// frame; the app's map's streets as wide as their ways, off the water but on a bridge. The lines, the shadows and
+    /// the night's light are not met: each lies on a fill. The water with weather is named by its gradient's end nearer
+    /// the tap's row (Water, sky above its middle, Water, deep below), whose colours its surface is drawn in, the
+    /// water's own only its tint. None where the ray does not fall to the ground or meets nothing drawn. `state` is
+    /// that frame's.
+    [[nodiscard]] std::optional<scene::PickedGround> pick(const frame::FrameState& state, double x, double y) const;
 
     /// The tests' look at the soft shadows: from the next prepare on, their grid and blurred mask lie in memory the
     /// CPU reads, and each frame copies the resolved mask there too (SoftShadows::mask_copy).
@@ -879,7 +900,8 @@ private:
     /// draw_over's runway_ends' designations at the drawn runways' ends, laid on the ground for the ground's text pass
     /// (FrameState::ground_runs) at their slots.
     void lay_designators(const frame::FrameState& state) const;
-    /// The frame's decisions; false when they are the last frame's (kept at rest), so the slots stay as laid out.
+    /// The frame's decisions; false when they are the last frame's (kept at rest) and the quays' faces as many, so the
+    /// slots stay as laid out.
     [[nodiscard]] bool decide(const frame::FrameState& state);
     void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);
     void lay_out();
@@ -952,6 +974,10 @@ private:
     /// water_layer's quay walls at the frame: each piece facing the camera within the radius cut, its wall lit by its
     /// sample, its bands, its waterline and its coping, as face() keeps them (frame_.quays).
     void decide_quays(const frame::FrameState& state);
+    /// What the quays' faces' colours are made of at the frame: the moment's light (its theme block and the sun's
+    /// direction) and the palette's quay walls.
+    using QuaysMoment = std::array<std::uint8_t, sizeof(shaders::Theme) + (3 * sizeof(double)) + sizeof(std::uint32_t)>;
+    [[nodiscard]] QuaysMoment quays_moment(const frame::FrameState& state) const;
     void emit_quays(const frame::FrameState& state, twin::Stream& out) const;
     /// The quay walls' faces' records into the frame's words (each band of a bands' path its own), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
@@ -1104,6 +1130,9 @@ private:
     /// come with them).
     std::vector<std::pair<const void*, std::uint64_t>> last_tiles_;
     std::vector<const void*> last_suns_;
+    /// The moment the quays' faces were decided in (decide_quays): a frame at rest decides them again where it moved,
+    /// so that the user's quay walls, or the moment's next step, show without the camera moving.
+    QuaysMoment quays_made_{};
     /// The reflections' work that does not move with the camera (Reflections.cpp).
     ReflectionsKept reflections_kept_;
     std::unique_ptr<Pipelines> pipelines_;

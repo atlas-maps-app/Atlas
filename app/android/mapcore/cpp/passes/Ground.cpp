@@ -807,10 +807,15 @@ bool Ground::decide(const frame::FrameState& state) {
         last_suns_.push_back(sun_of(t));
     }
     if (same) {
-        // the same camera over the same tiles: every decision and slot as the last frame's
+        // the same camera over the same tiles: every decision and slot as the last frame's, but the quays' faces where
+        // what their colours are made of moved (the palette's quay walls, the moment's light), decided again and laid
+        // out again where they are not as many
         for (DrawnTile& t : f.tiles) t.decided = find(t);
         f.kept = true;
-        return false;
+        if (quays_moment(state) == quays_made_) return false;
+        const std::size_t faces = f.quays.size();
+        decide_quays(state);
+        return f.quays.size() != faces;
     }
     // the kept decisions this frame uses, then the others decided (into what is not kept)
     for (const std::unique_ptr<TileDecisions>& d : decisions_) {
@@ -1702,53 +1707,22 @@ std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style
             }
         }
     };
-    // a colour of the style and its move with its slot, by day, or at night as the fills darken it (lawns and areas
-    // .18, the rest .2)
-    const auto add = [&](std::optional<std::size_t> code, std::uint32_t own, tiles::StyleRgb c) {
-        if (!code) return;
-        const std::uint32_t to = style::paint(palette, *code, own, c);
-        if (to == c) return;
+    // each colour of the style a slot moves, with its move, by day, or at night as the fills darken it (lawns and
+    // areas .18, the rest .2); the big roads' asphalt by day or at night as the style has it
+    for (const geo::GroundSlot& s : geo::ground_slots(style, night)) {
+        if (!s.darkens) {
+            const std::uint32_t moved = style::paint(palette, s.code, s.own, s.colour);
+            if (s.own != 0U && moved != s.colour) put(geo::rgba(s.colour), geo::rgba(moved));
+            continue;
+        }
+        const std::uint32_t to = style::paint(palette, s.code, s.own, s.colour);
+        if (to == s.colour) continue;
         if (!night) {
-            put(geo::rgba(c), geo::rgba(to));
-            return;
+            put(geo::rgba(s.colour), geo::rgba(to));
+            continue;
         }
-        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(c), k), geo::darken(geo::rgba(to), k));
-    };
-    // each slot's own colour in the style
-    namespace slot = style::palette_slot;
-    const auto own = [&style](std::size_t code) -> std::uint32_t {
-        switch (code) {
-        case slot::paper: return style::paper_own;
-        case slot::woods: return style::woods_own;
-        case slot::lawn: return style.area_colour("park");
-        case slot::squares: return style.area_colour("square");
-        case slot::parking: return style.area_colour("parking");
-        case slot::playground: return style.area_colour("playground");
-        case slot::memorial: return style.area_colour("memorial");
-        case slot::bridge_deck: return style.area_colour("bridge");
-        case slot::asphalt: return style.surface("asphalt").value_or(0U);
-        case slot::paving_stones: return style.surface("paving_stones").value_or(0U);
-        case slot::setts: return style.surface("sett").value_or(0U);
-        case slot::concrete_paving: return style.surface("concrete").value_or(0U);
-        case slot::brick_paving: return style.surface("bricks").value_or(0U);
-        case slot::boardwalk: return style.surface("wood").value_or(0U);
-        default: return 0U;
-        }
-    };
-    const auto of = [&](std::optional<std::size_t> code, tiles::StyleRgb c) {
-        if (code) add(code, own(*code), c);
-    };
-    for (const auto& [kind, c] : style.areas) of(style::area_slot(kind), c);
-    of(slot::squares, style.area_other);
-    for (const auto& [name, c] : style.surfaces) of(style::surface_slot(name), c);
-    for (std::size_t k = 0; k < style.land_kinds.size() && k < style.land_colours.size(); ++k) {
-        of(style::land_slot(style.land_kinds[k]), style.land_colours[k]);
+        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(s.colour), k), geo::darken(geo::rgba(to), k));
     }
-    // the big roads' asphalt, by day or at night as the style has it
-    const std::uint32_t asphalt = own(slot::asphalt);
-    const tiles::StyleRgb big = night ? style.asphalt.night : style.asphalt.day;
-    const std::uint32_t moved = style::paint(palette, slot::asphalt, asphalt, big);
-    if (asphalt != 0U && moved != big) put(geo::rgba(big), geo::rgba(moved));
     return table;
 }
 

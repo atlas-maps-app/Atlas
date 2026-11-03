@@ -167,6 +167,36 @@ data class MapPick(
     }
 }
 
+/**
+ * What a point of the map shows of the ground as the core drew it (`MapCore.pickGround`): what the finger's ray met
+ * ([what]), the slot of the user's palette that paints it ([slot]: palette.Slot's code, 0 where none does: sand, rock,
+ * a cycleway's red) and where ([at]).
+ */
+@Immutable
+data class GroundPick(val what: What, val slot: Int, val at: LatLon) {
+    /** The bare ground under everything, a fill of the ground (a land's, an area's, a road's), the water, a quay's wall. */
+    enum class What { PLATE, FILL, WATER, QUAY }
+
+    companion object {
+        /** The core's line of a ground pick (`MapCore.pickGround`: "water 16 52.3745 4.8838"), or null for none. */
+        fun parse(line: String): GroundPick? {
+            val parts = line.split(' ')
+            if (parts.size != 4) return null
+            val what = when (parts[0]) {
+                "plate" -> What.PLATE
+                "fill" -> What.FILL
+                "water" -> What.WATER
+                "quay" -> What.QUAY
+                else -> return null
+            }
+            val slot = parts[1].toIntOrNull() ?: return null
+            val lat = parts[2].toDoubleOrNull() ?: return null
+            val lon = parts[3].toDoubleOrNull() ?: return null
+            return GroundPick(what, slot, LatLon(lat, lon))
+        }
+    }
+}
+
 /** What a tap found. */
 sealed interface MapHit {
     val at: LatLon
