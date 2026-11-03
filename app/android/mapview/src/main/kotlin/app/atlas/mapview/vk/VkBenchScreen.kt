@@ -1000,17 +1000,24 @@ private class BenchRun(
         source.running = true
         val away = awayNs
         drain() // the frames finished before the view's
-        val wait = VkBench.PictureWait(activeNs())
+        val wait = VkBench.PictureWait(activeNs(), from, base)
+        var back = awayNs
         while (true) {
             if (!paused) core.requestFrame()
             delay(50)
             val now = activeNs()
-            for (r in drain()) wait.frame(now, r.cpuMs, r.draws, r.trianglesK, ours = r.startNs >= from && !r.skipped)
+            val drawing = VkBench.drawingMs(core.health())
+            wait.tick(now, source.presentedCount, drawing)
+            for (r in drain()) if (r.startNs >= from && !r.skipped) wait.frame(r.endNs, r.cpuMs, r.draws, r.trianglesK)
             if (paused) continue
+            if (awayNs != back) {
+                back = awayNs
+                wait.cameBack(System.nanoTime())
+            }
             if (source.completeIndex > base + VkBench.IN_FLIGHT) {
                 return VkBench.mapPictureLine(view.label, (source.completeAtNs - from - (awayNs - away)) / 1e9, first, wait.said())
             }
-            val stalled = wait.stall(now, VkBench.drawingMs(core.health())) ?: continue
+            val stalled = wait.stall(now, drawing) ?: continue
             return VkBench.mapPictureLine(view.label, (System.nanoTime() - from - (awayNs - away)) / 1e9, first, wait.said(), stalled)
         }
     }
