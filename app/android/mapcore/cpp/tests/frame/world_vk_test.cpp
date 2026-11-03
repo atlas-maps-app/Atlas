@@ -298,7 +298,11 @@ TEST_CASE("the world: a camera over the Netherlands from 18 to 1,000 km draws it
                                        .build = "world-test",
                                        .present = true,
                                        .spirv = 42});
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -390,7 +394,11 @@ TEST_CASE("the hand-over: the canal ring's tiles at 25 km pitched 60 degrees ove
                                        .build = "world-test",
                                        .present = true,
                                        .spirv = 42});
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     passes::World::paint_for_tests(magenta);
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard});
@@ -515,7 +523,11 @@ TEST_CASE("the hand-over: a zoom from 1 to 100 km over the canal ring draws each
     const std::string out = environment("ATLAS_LOOK_OUT");
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-zoom-{}", ::getpid());
     auto started = start_world(guard);
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -604,7 +616,11 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
     ATLAS_REQUIRE(packs.size() > 1);
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-fade-{}", ::getpid());
     auto started = start_world(guard);
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
@@ -694,7 +710,11 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
     if (!test::open_session()) return;
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-tile-fade-{}", ::getpid());
     auto started = start_world(guard);
-    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
