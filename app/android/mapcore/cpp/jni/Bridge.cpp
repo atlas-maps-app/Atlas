@@ -644,7 +644,8 @@ private:
         // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync unless the phone
         // runs warm.
         cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
-        const bool every_second = cadence_.every_second([this, &v] { return warm(v.frame_ns); });
+        const bool every_second = cadence_.every_second(
+            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
         if (!cadence_.due(v.frame_ns, every_second)) {
             ask_vsync();
             return;
@@ -683,16 +684,6 @@ private:
         const std::int64_t cadence = cadence_.cadence_ns(every_second);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
         ask_vsync();
-    }
-
-    /// Whether the phone runs warm (its thermal headroom over 0.6), read at most once a second: each read is a call
-    /// into the system's thermal service, and the NDK asks for no more (faster ones may answer NaN, read as not warm).
-    [[nodiscard]] bool warm(std::int64_t now_ns) {
-        if (headroom_ns_ == 0 || now_ns - headroom_ns_ >= 1'000'000'000) {
-            headroom_ = thermal_.headroom(0);
-            headroom_ns_ = now_ns;
-        }
-        return headroom_ > 0.6F;
     }
 
     /// The presentation a paced frame asks for at vsync `v`: the pacer's timeline where Choreographer offers them (API
@@ -771,8 +762,7 @@ private:
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
-    float headroom_ = 0.0F;            // the thermal headroom last read (warm), and when
-    std::int64_t headroom_ns_ = 0;
+    frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.

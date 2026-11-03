@@ -6,11 +6,12 @@
 // frame longer than a refresh the loop's next vsync comes two periods on, so at 120 Hz the mean settled at 11 to 12 ms,
 // and on a warm phone the limit took that for 90 Hz and kept the frames 22 ms apart, past the vsync at 16.7 ms: frames
 // of 7 to 11 ms showed at 40 to 52 a second instead of 60 (the stutter review of 3 November). Portable and pure, so the
-// hosts test it; the frame loop (jni/Bridge.cpp) asks it at each vsync.
+// hosts test it; the frame loop (jni/Bridge.cpp) asks it at each vsync, and Warmth whether the phone runs warm.
 #pragma once
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -84,6 +85,33 @@ private:
     std::int64_t last_ns_ = 0;
     std::int64_t drawn_ns_ = 0;
     std::int64_t period_ns_ = 0;
+};
+
+/// Whether the phone runs warm, for the limit at 90 Hz: its thermal headroom over 0.6 (the share of its thermal
+/// envelope in use, 1.0 at severe throttling). It is read at most once a second, each read a call into the system's
+/// thermal service: the NDK's header asks for no more, though AOSP's own code has no such limit (Java's PowerManager
+/// alone answers NaN to a read within 500 ms), so this is a hedge. A reading that is not a number (none on this
+/// device, or one refused) keeps the last that was, and a phone never read is taken for cool.
+class Warmth {
+public:
+    static constexpr std::int64_t every_ns = 1'000'000'000;
+    static constexpr float warm_over = 0.6F;
+
+    /// At `now_ns`: whether the phone runs warm, `read()` giving the headroom where a second has gone by since the
+    /// last read, or none was made.
+    template <class Read>
+    [[nodiscard]] bool warm(std::int64_t now_ns, const Read& read) {
+        if (read_ns_ == 0 || now_ns - read_ns_ >= every_ns) {
+            const float headroom = read();
+            if (!std::isnan(headroom)) headroom_ = headroom;
+            read_ns_ = now_ns;
+        }
+        return headroom_ > warm_over;
+    }
+
+private:
+    float headroom_ = 0.0F; // the last reading that was a number (cool until one is)
+    std::int64_t read_ns_ = 0;
 };
 
 } // namespace atlas::frame

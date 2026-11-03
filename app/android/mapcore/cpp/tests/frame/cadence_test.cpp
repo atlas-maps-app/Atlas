@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -221,4 +222,37 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     CHECK_FALSE(d.due((2'000 * ms) + period120, true));
     CHECK(d.due((2'000 * ms) + (2 * period120) - frame::Cadence::slack_ns, true));
     CHECK(d.due((2'000 * ms) + period120, false));
+}
+
+TEST_CASE("cadence: the headroom read at most once a second, the last number kept, a phone never read cool") {
+    frame::Warmth w;
+    int reads = 0;
+    float headroom = std::numeric_limits<float>::quiet_NaN();
+    const auto read = [&] {
+        ++reads;
+        return headroom;
+    };
+    const std::int64_t s = 1'000 * ms;
+    // never read, then not a number (no headroom on this device, or a read refused): cool
+    CHECK_FALSE(w.warm(s, read));
+    CHECK(reads == 1);
+    // within the second: no read
+    headroom = 0.7F;
+    CHECK_FALSE(w.warm(s + (500 * ms), read));
+    CHECK(reads == 1);
+    CHECK(w.warm(2 * s, read));
+    CHECK(reads == 2);
+    // a reading that is not a number keeps the last that was, warm or cool
+    headroom = std::numeric_limits<float>::quiet_NaN();
+    CHECK(w.warm(3 * s, read));
+    CHECK(w.warm((4 * s) - ms, read));
+    CHECK(reads == 3);
+    headroom = 0.5F;
+    CHECK_FALSE(w.warm(4 * s, read));
+    headroom = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(w.warm(5 * s, read));
+    // 0.6 is not over it
+    headroom = 0.6F;
+    CHECK_FALSE(w.warm(6 * s, read));
+    CHECK(reads == 6);
 }
