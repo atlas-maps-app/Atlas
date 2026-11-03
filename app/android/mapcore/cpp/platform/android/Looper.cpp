@@ -1,4 +1,4 @@
-// The render thread and Choreographer's vsync (platform/android/Android.hpp, plan-vector D5.8, T8).
+// The render thread, Choreographer's vsync and the thread's timer (platform/android/Android.hpp, plan-vector D5.8, T8).
 #if defined(__ANDROID__)
 
 #include "base/log.hpp"
@@ -9,10 +9,13 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <ctime>
 #include <pthread.h>
 #include <sys/eventfd.h>
 #include <sys/resource.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
+#include <utility>
 
 namespace atlas::platform {
 
@@ -59,7 +62,8 @@ const Timelines& timelines() {
 } // namespace
 
 RenderLoop::RenderLoop(std::function<void()> on_start, std::function<void()> on_stop)
-    : on_start_(std::move(on_start)), on_stop_(std::move(on_stop)), wake_fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
+    : on_start_(std::move(on_start)), on_stop_(std::move(on_stop)), wake_fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)),
+      timer_fd_(::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)) {
     std::mutex started_mutex;
     std::condition_variable started;
     bool ready = false;
@@ -83,6 +87,7 @@ RenderLoop::~RenderLoop() {
     if (wake_fd_ >= 0) (void)::write(wake_fd_, &one, sizeof one);
     if (thread_.joinable()) thread_.join();
     if (wake_fd_ >= 0) ::close(wake_fd_);
+    if (timer_fd_ >= 0) ::close(timer_fd_);
 }
 
 void RenderLoop::loop(const std::stop_token& stop) {
@@ -94,13 +99,20 @@ void RenderLoop::loop(const std::stop_token& stop) {
     looper_ = ALooper_prepare(0);
     ALooper_acquire(looper_);
     ALooper_addFd(looper_, wake_fd_, ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, &RenderLoop::on_wake, this);
+    if (timer_fd_ >= 0) {
+        ALooper_addFd(looper_, timer_fd_, ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, &RenderLoop::on_timer, this);
+    } else {
+        log::warn("vk render thread: no timer (timerfd refused), so its tasks run at once");
+    }
     choreographer_ = AChoreographer_getInstance();
     if (on_start_) on_start_();
     while (!stop.stop_requested()) {
         (void)ALooper_pollOnce(-1, nullptr, nullptr, nullptr);
     }
     drain_tasks();
+    timer_task_ = nullptr;
     if (on_stop_) on_stop_();
+    if (timer_fd_ >= 0) ALooper_removeFd(looper_, timer_fd_);
     ALooper_removeFd(looper_, wake_fd_);
     ALooper_release(looper_);
 }
@@ -110,6 +122,38 @@ int RenderLoop::on_wake(int fd, int /*events*/, void* data) {
     (void)::read(fd, &count, sizeof count);
     static_cast<RenderLoop*>(data)->drain_tasks();
     return 1; // keep the descriptor registered
+}
+
+int RenderLoop::on_timer(int fd, int /*events*/, void* data) {
+    // A timer set again or called off since it expired has nothing to read (timerfd_settime clears its expiries), as
+    // where the vsync's callback called it off before this one ran on the same wake: its task is not this expiry's.
+    std::uint64_t expiries = 0;
+    if (::read(fd, &expiries, sizeof expiries) != static_cast<ssize_t>(sizeof expiries) || expiries == 0) return 1;
+    auto* self = static_cast<RenderLoop*>(data);
+    const std::function<void()> task = std::exchange(self->timer_task_, nullptr);
+    if (task && !self->stopping_) task();
+    return 1; // keep the descriptor registered
+}
+
+void RenderLoop::set_timer(std::int64_t at_ns, std::function<void()> task) {
+    if (timer_fd_ < 0) {
+        post(std::move(task));
+        return;
+    }
+    timer_task_ = std::move(task);
+    // A time that has passed expires at once; 0 would call the timer off.
+    const std::int64_t at = std::max<std::int64_t>(at_ns, 1);
+    itimerspec when{};
+    when.it_value.tv_sec = static_cast<decltype(when.it_value.tv_sec)>(at / 1'000'000'000);
+    when.it_value.tv_nsec = static_cast<decltype(when.it_value.tv_nsec)>(at % 1'000'000'000);
+    if (::timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &when, nullptr) != 0) post(std::exchange(timer_task_, nullptr));
+}
+
+void RenderLoop::cancel_timer() noexcept {
+    timer_task_ = nullptr;
+    if (timer_fd_ < 0) return;
+    const itimerspec off{};
+    (void)::timerfd_settime(timer_fd_, 0, &off, nullptr);
 }
 
 void RenderLoop::drain_tasks() {

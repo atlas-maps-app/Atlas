@@ -80,7 +80,8 @@ struct Vsync {
     std::uint32_t preferred = 0;
 };
 
-/// The render thread: a thread with an ALooper, woken by posted tasks and by Choreographer's vsync callbacks.
+/// The render thread: a thread with an ALooper, woken by posted tasks, by Choreographer's vsync callbacks and by its
+/// timer.
 class RenderLoop {
 public:
     /// Starts the thread; `on_start` runs on it first (attaching it to the JVM), `on_stop` last.
@@ -98,6 +99,11 @@ public:
     void run(std::function<void()> task);
     /// Asks Choreographer for the next vsync; `on_vsync` gets it on the render thread (render thread only).
     void request_vsync(std::function<void(const Vsync&)> on_vsync);
+    /// The render thread's one timer: runs `task` on it at `at_ns` (now_ns's clock), in place of a task set before that
+    /// has not run; at once where that time has passed, or where the thread has no timer (render thread only).
+    void set_timer(std::int64_t at_ns, std::function<void()> task);
+    /// Calls off the timer's task, where one is set and has not run (render thread only).
+    void cancel_timer() noexcept;
     [[nodiscard]] bool on_thread() const noexcept { return std::this_thread::get_id() == thread_id_.load(); }
     [[nodiscard]] pid_t tid() const noexcept { return tid_.load(); }
 
@@ -105,6 +111,7 @@ private:
     void loop(const std::stop_token& stop);
     void drain_tasks();
     static int on_wake(int fd, int events, void* data);
+    static int on_timer(int fd, int events, void* data);
     static void on_frame64(std::int64_t frame_ns, void* data);
     static void on_vsync33(const ::AChoreographerFrameCallbackData* data, void* self);
 
@@ -115,6 +122,8 @@ private:
     std::function<void(const Vsync&)> vsync_;
     bool vsync_pending_ = false;
     int wake_fd_ = -1;
+    int timer_fd_ = -1; // the timer (a timerfd); -1 where none could be made
+    std::function<void()> timer_task_;
     std::atomic<std::thread::id> thread_id_;
     std::atomic<pid_t> tid_{0};
     std::atomic<bool> stopping_{false};

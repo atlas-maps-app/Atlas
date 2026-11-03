@@ -18,6 +18,7 @@
 #include "frame/CompositeCheck.hpp"
 #include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Motion.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
@@ -629,9 +630,13 @@ private:
         requested_ = false;
         pacer_.rest();
         session_->rest();
-        // At rest the window's frames come at 60 a second again, where they came at 120 while the map moved.
-        session_->set_moving(false);
-        moved_since_rest_ = 0;
+        // The window's frames come at 60 a second again once the map has been still for a second since it moved
+        // (frame/Motion.hpp): the render thread's timer says so then, unless the map moves again first.
+        if (motion_.rested(platform::now_ns())) {
+            loop_->set_timer(motion_.drop_ns(), [this] {
+                if (!closing_.load() && motion_.drop()) session_->set_moving(false);
+            });
+        }
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
@@ -687,10 +692,14 @@ private:
         const std::int64_t cadence = cadence_.cadence_ns(every_second);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
         // The map moves from its second new camera since the loop last rested: the window's frames are said to come at
-        // 120 a second until it rests again, so that the display stays at 120 Hz where it has it, through a fling's
-        // tail and the camera's animations as under the finger (ENGINE.md gain 11). Said once the frame is out, so
-        // that no frame waits for it; one camera alone, or a tile or a fade at rest, moves nothing.
-        if (more == JNI_TRUE && moved_since_rest_ < 2 && ++moved_since_rest_ == 2) session_->set_moving(true);
+        // 120 a second until it has rested a second (frame/Motion.hpp), so that the display stays at 120 Hz where it
+        // has it, through a fling's tail and the camera's animations as under the finger, and pan, lift and pan again
+        // does not switch it at each rest (ENGINE.md gain 11); a drop to 60 to come is off. Said once the frame is out,
+        // so that no frame waits for it; one camera alone, or a tile or a fade at rest, moves nothing.
+        if (motion_.drew(more == JNI_TRUE)) {
+            loop_->cancel_timer();
+            session_->set_moving(true);
+        }
         ask_vsync();
     }
 
@@ -771,7 +780,7 @@ private:
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
     frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
-    int moved_since_rest_ = 0;         // new cameras drawn since the frame loop last rested (from two the map moves)
+    frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
