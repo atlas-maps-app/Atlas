@@ -125,6 +125,10 @@ struct CoverInputs {
 /// besides.
 inline constexpr double first_ratio = 16.0;
 
+/// What the governor takes a tile to draw per raw byte of its chunk before any tile was resident, in triangles (the
+/// Noord-Holland levels' and windows' measured, ENGINE.md step 5's governor).
+inline constexpr double first_triangle_ratio = 1.0;
+
 /// The frame's cover.
 class Cover {
 public:
@@ -161,6 +165,12 @@ public:
     /// the plan gave a coarser level than their distance asks for.
     [[nodiscard]] std::uint64_t planned() const noexcept { return planned_; }
     [[nodiscard]] std::size_t coarsened() const noexcept { return coarsened_; }
+    /// The triangles the tiles the places in view are planned at hold (ENGINE.md step 5, the triangle governor's
+    /// count): each place its share of its tile's (one of a tile's 4^(fine - z) places), a resident tile's as its
+    /// passes count them (PassTile::triangles), one not resident as it was when resident before, else its chunk's raw
+    /// bytes times what its level's resident tiles draw per raw byte (any level's before one of its own was
+    /// resident). With or without a budget for the heaps.
+    [[nodiscard]] std::uint64_t triangles() const noexcept { return triangles_; }
     /// How many places in view nothing draws this frame (neither their tile nor another level's is resident), and how
     /// many of them alpha 23 drew: a window's within fine_far, the reach before the levels.
     [[nodiscard]] std::size_t holes() const noexcept { return holes_; }
@@ -231,6 +241,9 @@ private:
     [[nodiscard]] std::uint64_t estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
     /// The levels within the budget (Spot::plan).
     void plan(const CoverInputs& in, const Residency& residency);
+    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it), and the places' sum of them.
+    [[nodiscard]] double estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
+    void count_triangles(const Residency& residency);
     /// Pack `p`'s places drawn at their planned levels, and what they lack asked for.
     void emit(std::size_t p, const view::View& view, const view::Frames& frames, const Frustum& frustum,
               const Residency& residency, double seconds);
@@ -294,6 +307,11 @@ private:
     std::array<double, 32> ratio_{};
     double any_ = first_ratio;
     std::unordered_map<std::uint64_t, std::uint64_t> bytes_;
+    /// The same for the triangles the tiles draw (the governor's).
+    std::uint64_t triangles_ = 0;
+    std::array<double, 32> triangle_ratio_{};
+    double triangle_any_ = first_triangle_ratio;
+    std::unordered_map<std::uint64_t, std::uint64_t> triangles_of_;
 };
 
 } // namespace atlas::scene

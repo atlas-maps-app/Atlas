@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -27,6 +28,13 @@ namespace {
     for (const PassTile& p : t.passes) {
         for (const HeapRange& r : p.ranges) n += r.size;
     }
+    return n;
+}
+
+/// The triangles a resident tile draws with every cell drawn: every pass's count (PassTile::triangles).
+[[nodiscard]] std::uint64_t tile_triangles(const ResidentTile& t) noexcept {
+    std::uint64_t n = 0;
+    for (const PassTile& p : t.passes) n += p.triangles;
     return n;
 }
 
@@ -100,6 +108,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     drawn_count_ = 0;
     planned_ = 0;
     coarsened_ = 0;
+    triangles_ = 0;
     holes_ = 0;
     near_holes_ = 0;
     stand_ins_.clear();
@@ -146,6 +155,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     }
     if (!spots_.empty()) measure(residency);
     plan(in, residency);
+    if (!spots_.empty()) count_triangles(residency);
     for (std::size_t p = 0; p < drawn_count_; ++p) emit(p, view, frames, frustum, residency, seconds);
     lay_under(view, frames, frustum, residency, seconds);
     sort_out(residency);
@@ -256,9 +266,12 @@ void Cover::walk(const Drawn& drawn, const view::Frames& frames, const Frustum& 
 void Cover::measure(const Residency& residency) {
     std::array<double, 32> heap{};
     std::array<double, 32> raw{};
+    std::array<double, 32> drawn{};
     double all_heap = 0;
     double all_raw = 0;
+    double all_drawn = 0;
     if (bytes_.size() > 8192) bytes_.clear();
+    if (triangles_of_.size() > 8192) triangles_of_.clear();
     for (const std::shared_ptr<const ResidentTile>& t : residency.resident()) {
         const Drawn* by = nullptr;
         for (std::size_t p = 0; p < drawn_count_; ++p) {
@@ -266,19 +279,25 @@ void Cover::measure(const Residency& residency) {
         }
         if (by == nullptr) continue;
         const std::uint64_t bytes = heap_bytes(*t);
+        const std::uint64_t triangles = tile_triangles(*t);
         bytes_[tile_id(t->pack, t->key)] = bytes;
+        triangles_of_[tile_id(t->pack, t->key)] = triangles;
         const tiles::ChunkRef* c = by->pack->pack.chunks().find(t->key);
         if (c == nullptr || c->raw == 0 || t->key.z >= heap.size()) continue;
         heap.at(t->key.z) += static_cast<double>(bytes);
         raw.at(t->key.z) += static_cast<double>(c->raw);
+        drawn.at(t->key.z) += static_cast<double>(triangles);
         all_heap += static_cast<double>(bytes);
         all_raw += static_cast<double>(c->raw);
+        all_drawn += static_cast<double>(triangles);
     }
     for (std::size_t z = 0; z < heap.size(); ++z) {
         if (raw.at(z) > 0) ratio_.at(z) = heap.at(z) / raw.at(z);
+        if (raw.at(z) > 0) triangle_ratio_.at(z) = drawn.at(z) / raw.at(z);
     }
     // a level none of whose tiles was resident yet: the resident tiles' of every level (the far level's come first)
     if (all_raw > 0) any_ = all_heap / all_raw;
+    if (all_raw > 0) triangle_any_ = all_drawn / all_raw;
 }
 
 std::uint64_t Cover::estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const {
@@ -288,6 +307,40 @@ std::uint64_t Cover::estimate(const Drawn& p, const tiles::TileKey& k, const Res
     if (c == nullptr) return 0;
     const double ratio = k.z < ratio_.size() && ratio_.at(k.z) > 0 ? ratio_.at(k.z) : any_;
     return static_cast<std::uint64_t>(static_cast<double>(c->raw) * ratio);
+}
+
+double Cover::estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const {
+    if (const ResidentTile* r = residency.find(k, p.id)) return static_cast<double>(tile_triangles(*r));
+    if (const auto it = triangles_of_.find(tile_id(p.id, k)); it != triangles_of_.end()) {
+        return static_cast<double>(it->second);
+    }
+    const tiles::ChunkRef* c = p.pack->pack.chunks().find(k);
+    if (c == nullptr) return 0;
+    const double ratio =
+        k.z < triangle_ratio_.size() && triangle_ratio_.at(k.z) > 0 ? triangle_ratio_.at(k.z) : triangle_any_;
+    return static_cast<double>(c->raw) * ratio;
+}
+
+void Cover::count_triangles(const Residency& residency) {
+    double sum = 0;
+    // a tile's share reckoned once for a run of its places (the walk gives a tile's places one after another)
+    std::size_t last_pack = drawn_.size();
+    tiles::TileKey last{};
+    double share = 0;
+    for (const Spot& s : spots_) {
+        const std::optional<tiles::TileKey>& k = s.keys.at(s.plan);
+        if (!k) continue;
+        if (s.pack != last_pack || !(*k == last)) {
+            const Drawn& p = drawn_.at(s.pack);
+            // the place's share of its tile: one of its 4^(fine - z) places
+            const int gap = int{p.pack->pack.head()->levels[0]} - int{k->z};
+            share = std::ldexp(estimate_triangles(p, *k, residency), -2 * std::max(gap, 0));
+            last_pack = s.pack;
+            last = *k;
+        }
+        sum += share;
+    }
+    triangles_ = static_cast<std::uint64_t>(sum);
 }
 
 void Cover::plan(const CoverInputs& in, const Residency& residency) {

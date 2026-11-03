@@ -662,11 +662,33 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
         if (wake_) world_tiles_->set_wake(wake_);
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
-    world_tiles_->update(state.view->camera(), frame, distance, state.number, seconds);
+    // each level from its start moved nearer by the governor's bias
+    world_tiles_->update(state.view->camera(), frame, distance, state.number, seconds, governor_.near(1.0));
+}
+
+double World::reach_of(double distance) const noexcept {
+    const double far = far_of(distance);
+    return world_tiles_ && distance > world_from ? governor_.near(far) : far;
+}
+
+void World::govern(bool moved) {
+    std::uint64_t planned = cover_.triangles();
+    // the world's tiles drawn, each whole as its pass draws it (its cells are the fragments' to keep)
+    if (const WorldFrame* w = world_frame(); w != nullptr) {
+        for (const WorldDraw& d : w->draws) planned += d.tile->triangles + (2ULL * d.tile->segments);
+    }
+    planned_triangles_ = planned;
+    frame_steps_ = governor_.steps();
+    most_steps_ = std::max(most_steps_, frame_steps_);
+    governor_.update(planned, options_.triangle_budget, moved);
 }
 
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
+    const std::array<double, 5> camera{state.camera.latitude, state.camera.longitude, state.camera.bearing,
+                                       state.camera.pitch, state.camera.distance};
+    const bool moved = last_camera_ != camera;
+    last_camera_ = camera;
     // what the last frame's make_room let go of, before any cover of this frame can draw it
     for (const auto& [key, pack] : going_) {
         if (const ResidentTile* t = residency_->find(key, pack)) {
@@ -696,10 +718,11 @@ void World::update(const frame::FrameState& state) {
             want_windows(*state.view, state.camera, view::frame_of(centred), seconds);
             update_world(state, view::frame_of(centred), seconds);
         }
+        govern(moved);
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
         release_idle(seconds, state.number);
-        animating_ = frames_.weight(seconds) < 1.0 || world_fading();
+        animating_ = frames_.weight(seconds) < 1.0 || world_fading() || governor_.changed();
         return;
     }
     const tiles::RenderHead& head = *active_->pack.head();
@@ -730,13 +753,14 @@ void World::update(const frame::FrameState& state) {
             neighbour_tolerances.at(i) = n->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0});
         }
     }
+    // the levels' reaches and the countries' reach nearer by the governor's bias (the same at bias 0)
     const CoverInputs in{
         .pack = active_.get(),
         .pinned = snapped.has_value(),
         .tolerance = head.tolerance_of(snapped, dist).value_or(0),
-        .fine_reach = options_.fine_reach,
-        .coarse_reach = options_.coarse_reach,
-        .far = far_,
+        .fine_reach = governor_.near(options_.fine_reach),
+        .coarse_reach = governor_.near(options_.coarse_reach),
+        .far = reach_of(dist),
         .fine_far = options_.far,
         .margin_px = 40.0,
         .fade_seconds = options_.fade_seconds,
@@ -752,6 +776,7 @@ void World::update(const frame::FrameState& state) {
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
     update_world(state, frames_.current().value_or(view::frame_of(head.frame)), seconds);
+    govern(moved);
     // The sun of the pack drawn, of the coarser pack around it and of the neighbours beside it, each in its own lane.
     if (sun_) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbours_,
@@ -767,9 +792,9 @@ void World::update(const frame::FrameState& state) {
             const CoverInputs incoming_in{.pack = incoming_.get(),
                                           .tolerance =
                                               incoming_head->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0}),
-                                          .fine_reach = options_.fine_reach,
-                                          .coarse_reach = options_.coarse_reach,
-                                          .far = far_,
+                                          .fine_reach = in.fine_reach,
+                                          .coarse_reach = in.coarse_reach,
+                                          .far = in.far,
                                           .fine_far = options_.far,
                                           .margin_px = in.margin_px,
                                           .fade_seconds = in.fade_seconds};
@@ -799,7 +824,7 @@ void World::update(const frame::FrameState& state) {
         CoverInputs landing_in = in;
         landing_in.pinned = placed.view().has_value();
         landing_in.tolerance = head.tolerance_of(placed.view(), placed.dist()).value_or(0);
-        landing_in.far = far_of(placed.dist());
+        landing_in.far = reach_of(placed.dist());
         landing_cover_.update(view::View(placed.camera(), state.view->device()), frames_, landing_in, *residency_,
                               seconds);
         const std::size_t own = asked_.size();
@@ -832,9 +857,10 @@ void World::update(const frame::FrameState& state) {
         for (const CoverTile& t : incoming_cover_.tiles()) touch(t.drawn->handle);
     }
     release_idle(seconds, state.number);
-    // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds)
+    // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds), and a bias that
+    // moved until it holds
     animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr ||
-                 world_fading();
+                 world_fading() || governor_.changed();
 }
 
 void World::make_room() {
@@ -1125,6 +1151,11 @@ std::string World::tiles_line() const {
         static_cast<double>(cover_.planned()) / 1.0e6, cover_.coarsened(), cover_.holes(), r.built, r.failed);
     // where the world draws (beyond 18 km, ENGINE.md step 5): its tiles drawn and the finest level among them, the
     // tiles its cover wants that are not resident yet and the cells in view no resident tile holds (CI's world phase)
+    // the triangle governor's bias, the highest any frame had, and the triangles the frame planned of its budget
+    // (millions; ENGINE.md step 5: VK bench logs the bias)
+    line += std::format(" governor bias {:.2f} most {:.2f} triangles {:.2f} of {:.2f}", frame_bias(), most_bias(),
+                        static_cast<double>(planned_triangles_) / 1.0e6,
+                        static_cast<double>(options_.triangle_budget) / 1.0e6);
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;
         for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));

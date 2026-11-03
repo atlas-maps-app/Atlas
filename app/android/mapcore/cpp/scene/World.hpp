@@ -19,6 +19,7 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/Globals.hpp"
 #include "scene/Cover.hpp"
+#include "scene/Governor.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
@@ -73,6 +74,9 @@ struct WorldOptions {
     double plan_fraction = 0.7;
     /// How long a tile fades in, seconds (D3 "Transitions": 150-200 ms; ENGINE.md's fades).
     double fade_seconds = 0.18;
+    /// The triangles the frame's tiles may plan before the triangle governor's bias moves the levels nearer
+    /// (scene/Governor.hpp; 0: no governor, the bias 0). MapFrame sets it per device.
+    std::uint64_t triangle_budget = 0;
     HeapBudget heaps;
     /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
     /// data), §3's decoded tiles.
@@ -221,6 +225,14 @@ public:
     [[nodiscard]] const view::Frames& frames() const noexcept { return frames_; }
     /// The resident tiles and the heaps' use, for the `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
     [[nodiscard]] std::string tiles_line() const;
+    /// The triangle governor (ENGINE.md step 5), as the next frame takes it; the bias this frame was planned at, the
+    /// triangles it planned at it (the cover's tiles' and the world's: govern), and the highest bias any frame had.
+    [[nodiscard]] const Governor& governor() const noexcept { return governor_; }
+    [[nodiscard]] double frame_bias() const noexcept { return governor_step * frame_steps_; }
+    [[nodiscard]] std::uint64_t planned_triangles() const noexcept { return planned_triangles_; }
+    [[nodiscard]] double most_bias() const noexcept { return governor_step * most_steps_; }
+    /// Its budget (WorldOptions::triangle_budget).
+    [[nodiscard]] std::uint64_t triangle_budget() const noexcept { return options_.triangle_budget; }
 
 private:
     explicit World(WorldOptions options) noexcept : options_(std::move(options)) {}
@@ -278,6 +290,13 @@ private:
     void update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds);
     /// Whether a world tile drawn is still fading in (ENGINE.md step 5's fades).
     [[nodiscard]] bool world_fading() const noexcept;
+    /// The cover's reach for a camera `distance` metres from its target under the governor's bias: far_of, nearer by
+    /// the bias only where the world draws beyond it (up to world_from nothing does, and a nearer reach would leave the
+    /// paper there).
+    [[nodiscard]] double reach_of(double distance) const noexcept;
+    /// The governor after the frame's covers: the triangles they planned (the countries' tiles', Cover::triangles,
+    /// and the world's tiles drawn) and whether the camera moved.
+    void govern(bool moved);
 
     WorldOptions options_;
     std::vector<std::string_view> pass_names_; ///< the passes that build its tiles and packs, in their order
@@ -342,6 +361,12 @@ private:
     /// Per resident tile (its handle): when the cover last drew it.
     std::vector<std::pair<std::uint32_t, double>> last_drawn_;
     bool animating_ = false;
+    Governor governor_;
+    std::uint64_t planned_triangles_ = 0;
+    int frame_steps_ = 0;
+    int most_steps_ = 0;
+    /// The last frame's camera (its target, bearing, pitch and distance): whether the camera moved (govern).
+    std::optional<std::array<double, 5>> last_camera_;
 };
 
 } // namespace atlas::scene

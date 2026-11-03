@@ -59,6 +59,10 @@ struct PassTile {
     std::vector<std::uint32_t> cell_first;
     /// Its own numbers (ground slots, counts), the pass's to define.
     std::array<std::uint32_t, 8> values{};
+    /// The triangles its draws hold with every cell drawn, as the frame counts them (frame::Counters): the triangle
+    /// governor's (Cover::triangles). Set by the passes whose draws are the tile's bulk (the buildings', the ground's);
+    /// 0 for the rest, whose draws are few beside them.
+    std::uint64_t triangles = 0;
     /// The pass's own CPU-side data for the tile (the ground's rings in double, which it decides per frame as the port
     /// does), of the pass's own type (cpu_as). Made in stage T on a worker (TileBuild::keep); const once the tile is
     /// published, from then on read on the render thread (or any other) and never written; freed with the tile, when

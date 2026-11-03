@@ -169,7 +169,7 @@ double world_far(double distance, double height) noexcept {
 }
 
 std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFrame& frame,
-                                  const std::function<bool(const tl::TileKey&)>& held) {
+                                  const std::function<bool(const tl::TileKey&)>& held, double reach) {
     std::vector<WorldLeaf> out;
     struct Node {
         tl::TileKey key;
@@ -187,7 +187,7 @@ std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFram
             n.held = true;
         }
         const double d = frustum.distance(box);
-        if (n.key.z < world_finest && d < world_level_start(n.key.z)) {
+        if (n.key.z < world_finest && d < reach * world_level_start(n.key.z)) {
             // the children in reverse, so the walk takes them north-west first
             const auto z = static_cast<std::uint8_t>(n.key.z + 1);
             for (std::uint32_t k = 4; k-- > 0;) {
@@ -448,7 +448,7 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
 }
 
 void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& frame, double distance,
-                        std::uint64_t number, double seconds) {
+                        std::uint64_t number, double seconds, double reach) {
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
     take_style();
@@ -493,7 +493,7 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             if (fresh) it->second = world_hit(store_, key).has_value();
             return it->second;
         };
-        const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held);
+        const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held, reach);
         std::map<std::uint64_t, std::uint64_t> cells; // by packed key: coarse to fine, then by column and row
         std::vector<std::pair<double, tl::TileKey>> asked;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the

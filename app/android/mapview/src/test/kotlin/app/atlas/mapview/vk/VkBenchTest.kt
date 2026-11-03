@@ -81,8 +81,8 @@ class VkBenchTest {
         val region = RegionFrame.region(LatLon(52.372, 4.891))
         val board = PackList.ViewCamera(-177.0, -521.0, 52.0, 44.0, 2300.0, 440.0)
         val views = VkBench.mapViews(RegionFrame.living(), region, board)
-        assertEquals(listOf("home", "board", "pitch70"), views.map { it.label })
-        val (home, main, steep) = views
+        assertEquals(listOf("home", "board", "pitch70", "world72"), views.map { it.label })
+        val (home, main, steep, far) = views
         // The home: 10 m west and 30 m north of the Westerkerk, bearing 52°, map pitch 52°, 430 m (RenderTool's `home`).
         assertEquals(RegionFrame.living().lat(-10.0, -30.0), home.latitude, 0.0)
         assertEquals(RegionFrame.living().lon(-10.0, -30.0), home.longitude, 0.0)
@@ -94,10 +94,22 @@ class VkBenchTest {
         assertEquals(region.lon(-177.0, -521.0), main.longitude, 0.0)
         assertEquals(listOf(52.0, 46.0, 2300.0), listOf(main.bearing, main.pitch, main.distance))
         assertEquals(listOf(main.latitude, main.longitude, main.bearing, 70.0, 2300.0), listOf(steep.latitude, steep.longitude, steep.bearing, steep.pitch, steep.distance))
+        // The governor's view: the board's target from 25 km at 72°, turning.
+        assertEquals(listOf(main.latitude, main.longitude, main.bearing, 72.0, 25000.0), listOf(far.latitude, far.longitude, far.bearing, far.pitch, far.distance))
+        assertEquals(listOf(VkBench.Path.ORBIT), far.paths)
         // A pack missing leaves its views out.
         assertEquals(listOf("home"), VkBench.mapViews(RegionFrame.living(), null, null).map { it.label })
-        assertEquals(listOf("board", "pitch70"), VkBench.mapViews(null, region, board).map { it.label })
+        assertEquals(listOf("board", "pitch70", "world72"), VkBench.mapViews(null, region, board).map { it.label })
         assertTrue(VkBench.mapViews(null, region, null).isEmpty())
+    }
+
+    @Test
+    fun aMapPathsLineCarriesTheGovernorsBias() {
+        val stats = "vk session: on; vk tiles 19 resident 144.1 of 256 build 88.9 waiting 0 planned 144.1 coarser 0 holes 0 built 49 failed 0 " +
+            "governor bias 0.30 most 1.50 triangles 13.61 of 16.00 world 6 drawn finest 11 wanted 0 bare 0"
+        assertEquals("bias 0.30 most 1.50 triangles 13.61M of 16.00M", VkBench.governor(stats))
+        // a core whose stats hold none (the map off): nothing
+        assertEquals("", VkBench.governor("vk session: on"))
     }
 
     @Test

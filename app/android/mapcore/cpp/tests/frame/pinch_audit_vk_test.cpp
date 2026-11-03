@@ -16,7 +16,11 @@
 // heaps' budget in MB instead of the device's; ATLAS_PINCH_FAR: the cover's farthest reach in km instead of the
 // world's (12: as before a frame cell's levels); ATLAS_PINCH_FADE: how long a tile fades in, seconds, instead of the
 // cover's 0.18 (a frame here takes seconds, the phone's 16.7 ms, so the cover's fade ends within one of these frames
-// and a longer one spans as many as the phone's does); ATLAS_PINCH_OUTWARD: the pinch back out to the start after;
+// and a longer one spans as many as the phone's does); ATLAS_PINCH_WORLD: a folder of the world's packs (world.idx, its
+// parts and world-globe.atlas, world_vk_test's ATLAS_WORLD_DIR) listed after the rest, drawn beyond 18 km;
+// ATLAS_PINCH_BUDGET: the triangle governor's budget in millions of triangles a frame instead of the device's (a budget
+// no view meets, 1000, measures each frame's plan with the bias 0); ATLAS_PINCH_OUTWARD: the pinch back out to the
+// start after;
 // ATLAS_PINCH_CYCLES: that many pinches there and back, each summed up, at rest at the start between them (the frame
 // complete, no tile waiting for room).
 //
@@ -56,11 +60,13 @@
 #include "standin/Session.hpp"
 #include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
+#include "tests/base/require.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
 #include "tests/ground/ground_support.hpp"
 #include "tests/load/query.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/WorldIndex.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTile.hpp"
@@ -77,6 +83,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -549,6 +556,32 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
     std::vector<frame::MapPack> packs;
     packs.reserve(listed.size());
     for (const Listed& l : listed) packs.push_back(l.pack);
+    // ATLAS_PINCH_WORLD: the world's packs as the app lists them (ranges of their parts, and the globe), after the rest
+    if (const std::string world = environment("ATLAS_PINCH_WORLD"); !world.empty()) {
+        std::ifstream in(fs::path(world) / "world.idx", std::ios::binary);
+        const std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::vector<std::byte> bytes(raw.size());
+        for (std::size_t i = 0; i < raw.size(); ++i) bytes[i] = static_cast<std::byte>(raw[i]);
+        const std::optional<tiles::WorldIndex> index = tiles::read_world_index(bytes);
+        ATLAS_REQUIRE(index.has_value(), std::format("{}/world.idx is not the world's index", world));
+        for (const tiles::WorldEntry& e : index->entries) {
+            frame::MapPack p;
+            p.number = ++number;
+            p.ref.id = tiles::world_pack_id(e);
+            p.ref.kind = tiles::PackKind::world_mid;
+            p.ref.path = (fs::path(world) / index->parts.at(e.part).first).string();
+            p.ref.offset = e.offset;
+            p.ref.length = e.length;
+            packs.push_back(std::move(p));
+        }
+        frame::MapPack globe;
+        globe.number = ++number;
+        globe.ref.id = std::string(tiles::world_globe_id);
+        globe.ref.kind = tiles::PackKind::world_base;
+        globe.ref.path = (fs::path(world) / tiles::world_globe_file).string();
+        packs.push_back(std::move(globe));
+        MESSAGE(std::format("{} world packs and the globe listed from {}", index->entries.size(), world));
+    }
 
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-pinch-{}", ::getpid());
     fs::create_directories(guard);
@@ -569,11 +602,14 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         const std::string heaps_mb = environment("ATLAS_PINCH_HEAPS");
         const std::string far_km = environment("ATLAS_PINCH_FAR");
         const std::string fade = environment("ATLAS_PINCH_FADE");
-        frame::MapFrame map(2, [] {},
-                            {.cache_dir = guard,
-                             .heaps_total = heaps_mb.empty() ? 0U : std::stoull(heaps_mb) << 20U,
-                             .levels_far = far_km.empty() ? 0.0 : 1000.0 * std::stod(far_km),
-                             .fade_seconds = fade.empty() ? 0.0 : std::stod(fade)});
+        const std::string budget = environment("ATLAS_PINCH_BUDGET");
+        frame::MapFrame map(
+            2, [] {},
+            {.cache_dir = guard,
+             .heaps_total = heaps_mb.empty() ? 0U : std::stoull(heaps_mb) << 20U,
+             .levels_far = far_km.empty() ? 0.0 : 1000.0 * std::stod(far_km),
+             .fade_seconds = fade.empty() ? 0.0 : std::stod(fade),
+             .triangle_budget = budget.empty() ? 0U : static_cast<std::uint64_t>(1.0e6 * std::stod(budget))});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
         MESSAGE(map.set_packs(packs));
         CHECK(session.map(&map).empty());

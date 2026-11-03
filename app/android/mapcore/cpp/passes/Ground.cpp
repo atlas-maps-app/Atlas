@@ -587,6 +587,14 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     if (lines_range) b.heaps().write(lines_range, std::as_bytes(std::span(gpu.lines)));
     b.out().ranges[0] = ground_range;
     b.out().ranges[1] = lines_range;
+    // the governor's count: its fills, the canopy, the water's fans and the shadows' triangles (three index words
+    // each), and its lines' segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
+    const std::uint64_t points = gpu.points.count;
+    const std::uint64_t segments = points > ground->polylines.size() ? points - ground->polylines.size() : 0;
+    b.out().triangles = ((std::uint64_t{gpu.above.count} + gpu.below.count + gpu.canopy.count + gpu.fans.count +
+                          gpu.shadow_draw.count + gpu.woods_draw.count) /
+                         3) +
+                        (2 * segments);
     const std::size_t bytes = ground->bytes();
     b.keep(std::shared_ptr<const geo::GroundTile>(std::move(ground)), bytes);
     return {};

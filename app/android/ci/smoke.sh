@@ -45,7 +45,8 @@
 # failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a `vk guard` line outside the planted-crash case (a marker the guard
 # discarded because its process was stopped, not crashed, `vk guard: … not counted`, is reported, not failed), a guest
 # without a Vulkan device, a VK bench that does not finish within 900 s, exceeds configuration C's graphics ceiling,
-# loses its window in the colour stage for good, leaves the guard's marker behind, has a colour stage that ended early
+# lacks a line for a path of the map or the triangle governor's bias 0 on one (world72's bias, whatever it is), loses its
+# window in the colour stage for good, leaves the guard's marker behind, has a colour stage that ended early
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
@@ -563,9 +564,15 @@ vk_phase() {
     grep '^vkbench map' "$OUT/vkbench.txt" || true
     grep -q '^vkbench map first picture: complete after ' "$OUT/vkbench.txt" ||
       { echo "VK BENCH FAILED: the map's first picture was not complete (no 'vkbench map first picture: complete after' line)"; FAIL=1; }
-    for p in 'home still' 'home orbit' 'home pan' 'home pinch' 'board orbit' 'pitch70 orbit'; do
+    for p in 'home still' 'home orbit' 'home pan' 'home pinch' 'board orbit' 'pitch70 orbit' 'world72 orbit'; do
       grep -q "^vkbench map $p: p50 " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for the map's $p"; FAIL=1; }
     done
+    # The triangle governor (ENGINE.md step 5): its bias 0 on every path of the map up to the governor's own view, as
+    # each line says (the bias as the path ends and the highest any frame of the map had); world72, the view the
+    # governor answers for (measured last), logs its bias, whatever it is.
+    awk '/^vkbench map [a-z0-9]+ [a-z]+: p50 / && !/^vkbench map world72 / && !/ bias 0\.00 most 0\.00 / { print; bad = 1 }
+         /^vkbench map world72 [a-z]+: p50 / && !/ bias [0-9.]+ most [0-9.]+ triangles / { print; bad = 1 } END { exit bad }' "$OUT/vkbench.txt" ||
+      { echo "VK BENCH FAILED: a path of the map without the governor's bias 0 (its 'bias 0.00 most 0.00'), or world72's line without its bias"; FAIL=1; }
     # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
     awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: graphics memory above configuration C's 225 MB"; FAIL=1; }

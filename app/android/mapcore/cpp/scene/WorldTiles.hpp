@@ -72,9 +72,11 @@ struct WorldLeaf {
 };
 
 /// The cover's walk (the file's head): every tile it ends at, in the walk's order; `held` says whether the store holds
-/// a world tile. Ends at none without a held ancestor.
+/// a world tile. Ends at none without a held ancestor. Each level starts at `reach` times its start (the triangle
+/// governor's 2^−bias, scene/Governor.hpp; 1 at bias 0).
 [[nodiscard]] std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFrame& frame,
-                                                const std::function<bool(const tiles::TileKey&)>& held);
+                                                const std::function<bool(const tiles::TileKey&)>& held,
+                                                double reach = 1.0);
 
 /// The colours a world tile's primitives name: the world pass's palette, from the moment's theme and the world's
 /// style (passes/World.cpp).
@@ -169,10 +171,11 @@ public:
     void set_wake(std::function<void()> wake);
 
     /// Frame `number`'s world at `seconds` (the frame's clock): its cover for `camera` (in `frame`'s metres)
-    /// `distance` metres from its target, the tiles it draws and those it wants, the tiles built since the last frame
-    /// taken in and room made. Nothing is drawn up to world_from, or without a world pack in the store. Render thread.
+    /// `distance` metres from its target, each level from `reach` times its start (walk_world), the tiles it draws and
+    /// those it wants, the tiles built since the last frame taken in and room made. Nothing is drawn up to world_from,
+    /// or without a world pack in the store. Render thread.
     void update(const view::Camera& camera, const view::GroundFrame& frame, double distance, std::uint64_t number,
-                double seconds);
+                double seconds, double reach = 1.0);
 
     /// The last update's frame, or null where it draws nothing.
     [[nodiscard]] const WorldFrame* frame() const noexcept { return drawing_ ? &frame_ : nullptr; }
