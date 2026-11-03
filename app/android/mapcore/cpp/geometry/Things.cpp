@@ -1,6 +1,5 @@
 #include "geometry/Things.hpp"
 
-#include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Ribbons.hpp"
 #include "geometry/Trees.hpp"
@@ -36,8 +35,8 @@ namespace tl = atlas::tiles;
 constexpr std::uint8_t owner_way = 2;
 
 /// amsterdam.py's railing: each segment of `line` cut into pieces of 2 m, each one a thing at its ends with its posts'
-/// gaps, numbered in the road's order; the renders' (`app` false) or the app's map's, their items flagged so that a
-/// frame ranks the one set it draws.
+/// gaps, numbered in the road's order (the pieces of a side past its 16,383rd, 32.8 km on, share the last number); the
+/// renders' (`app` false) or the app's map's, their items flagged so that a frame ranks the one set it draws.
 void railing_pieces(std::span<const P2> line, std::int64_t id, std::uint32_t road, std::uint32_t side, bool app,
                     std::uint16_t kind, TileThings& out) {
     std::uint32_t piece = 0;
@@ -64,25 +63,24 @@ void railing_pieces(std::span<const P2> line, std::int64_t id, std::uint32_t roa
             // its item: c = cam.cam((sx, y0 + 0.5, sz)), from 0.8 m, no radius cut
             const double sx = (t.x + t.bx) / 2;
             const double sz = (t.z + t.bz) / 2;
-            out.items.push_back(
-                {.x = sx,
-                 .y = railing_foot + 0.5,
-                 .z = sz,
-                 .offset = 0.0,
-                 .cut_x = sx,
-                 .cut_z = sz,
-                 .order = scene::order_of(railings_list, (std::uint64_t{road} << 16U) | (std::uint64_t{side} << 15U) |
-                                                             (app ? 1U << 14U : 0U) | piece),
-                 .kind = kind,
-                 .flags = app ? scene::item_flag::app : scene::item_flag::renders,
-                 .slots = {1, 1, 1, 1},
-                 .min_depth = 0.8F,
-                 .radius = static_cast<float>(pymath::hypot((k2 - k) / 2, 0.6) + 0.01),
-                 .tile = 0,
-                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id))});
+            out.items.push_back({.x = sx,
+                                 .y = railing_foot + 0.5,
+                                 .z = sz,
+                                 .offset = 0.0,
+                                 .cut_x = sx,
+                                 .cut_z = sz,
+                                 .order = scene::order_of(
+                                     railings_list, (std::uint64_t{road} << 16U) | (std::uint64_t{side} << 15U) |
+                                                        (app ? 1U << 14U : 0U) | std::min(piece, (1U << 14U) - 1U)),
+                                 .kind = kind,
+                                 .flags = app ? scene::item_flag::app : scene::item_flag::renders,
+                                 .slots = {1, 1, 1, 1},
+                                 .min_depth = 0.8F,
+                                 .radius = static_cast<float>(pymath::hypot((k2 - k) / 2, 0.6) + 0.01),
+                                 .tile = 0,
+                                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id))});
             out.things.push_back(t);
             ++piece;
-            ATLAS_ASSERT(piece < (1U << 14U));
             k = k2;
         }
     }

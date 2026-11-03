@@ -18,16 +18,14 @@ static const uint LINE_POST = 256u;   // a post's shadow: its one point's foot t
 /// Its width (a run's word 4) in metres on the ground, each point px at its own depth (the app's map): a painted line
 /// as wide as it lies wherever it lies, from the near plane on (stroke_vs).
 static const uint LINE_METRES = 512u;
-/// Its points each the mirror of a point of another run, the signed words on its flags word holds from LINE_DASH_SHIFT
-/// (a bridge's lines, each point's mirror about its street's centreline at the same place): in the app's map each point
-/// lies twice as far from the middle of it and its mirror, at the edge of its street as wide as its way (stroke_vs;
-/// ground.slang's GROUND_WIDE).
-static const uint LINE_WIDE = 1024u;
 /// A dashed run's flags word holds its dash table's first word in the frame's words from this bit; a run in metres
 /// (never dashed) the px it is drawn over there, in hundredths of a CSS px (a big road's lines' 0.3; 0: everywhere); a
-/// wide run (neither) its mirror's words on.
-static const uint LINE_DASH_SHIFT = 11u;
-static const uint LINE_FLAG_BITS = 0x7FFu;
+/// run neither, signed, the words on of the run whose points are its points' mirrors (0: none): a bridge's lines in the
+/// app's map, each point's mirror about its street's centreline at the same place on the other line, each point lying
+/// twice as far from the middle of it and its mirror, at the edge of its street as wide as its way (stroke_vs;
+/// ground.slang's GROUND_WIDE).
+static const uint LINE_DASH_SHIFT = 10u;
+static const uint LINE_FLAG_BITS = 0x3FFu;
 /// px's least width (render/regions.py's px: max(0.25, w · focal / depth)), CSS px.
 static const float LINE_PX_LEAST = 0.25f;
 /// A coaster track's shadow's (coasters.draw's: max(0.5, w)), CSS px.

@@ -437,8 +437,8 @@ struct GroundFrame {
     /// their points (LINE_METRES) rather than at their one point, a line of a fixed width is drawn from the near plane
     /// on (ground_flag::near_clip), and a street, a big road's asphalt and a runway's or a taxiway's pavement are as
     /// wide as their way (ground_flag::wide), a street off a bridge kept off the water (ground_flag::streets) and a
-    /// bridge's lines at its street's edges (LINE_WIDE), where the renders' frames leave out a line's segment with an
-    /// end behind the near plane and lay those pavements half as wide.
+    /// bridge's lines at its street's edges (each run its mirror's words on, from LINE_DASH_SHIFT), where the renders'
+    /// frames leave out a line's segment with an end behind the near plane and lay those pavements half as wide.
     bool grounded = false;
     double radius = 0;
     double target_x = 0;

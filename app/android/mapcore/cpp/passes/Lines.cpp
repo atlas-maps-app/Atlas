@@ -27,7 +27,7 @@
 // plane on as well (ground_flag::near_clip), where the renders leave out a segment with an end behind it, so such a
 // line stopped short of the screen's bottom edge wherever it passed under the camera. A bridge's lines lie at the edges
 // of its street, which the app's map lays as wide as its way (ground_flag::wide): each point twice as far from the
-// middle of it and its mirror on the other line (LINE_WIDE).
+// middle of it and its mirror on the other line (its words on where a dashed run's table would be).
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -263,7 +263,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             // path's opacity a layer (the paint's alpha); a park's edge dashed along the screen
             std::uint32_t flags = (pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U) | in_metres;
             // the app's map: a bridge's lines at the edges of its street as wide as its way, each point twice as far
-            // from the middle of it and its mirror on the other line (LINE_WIDE: its words on where the table would be)
+            // from the middle of it and its mirror on the other line (its words on, signed, where the table would be:
+            // the line is neither dashed nor in metres; its mirror's polyline follows or precedes its own, as long)
             if (frame_.grounded && s.mirror != 0) {
                 ATLAS_ASSERT(!metres && s.dash[0] == 0 && s.count == 1);
                 const std::int64_t mirror =
@@ -272,8 +273,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                     static_cast<std::int64_t>(g.polyline_words[p]);
                 ATLAS_ASSERT(mirror != 0 && mirror > -(std::int64_t{1} << (31U - shaders::LINE_DASH_SHIFT)) &&
                              mirror < (std::int64_t{1} << (31U - shaders::LINE_DASH_SHIFT)));
-                flags |= shaders::LINE_WIDE |
-                         (static_cast<std::uint32_t>(static_cast<std::int32_t>(mirror)) << shaders::LINE_DASH_SHIFT);
+                flags |= static_cast<std::uint32_t>(static_cast<std::int32_t>(mirror)) << shaders::LINE_DASH_SHIFT;
             }
             if (s.dash[0] > 0 && placer) {
                 flags |= shaders::LINE_DASH;
@@ -291,12 +291,16 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         words.insert(words.end(), segments[phase].begin(), segments[phase].end());
         words_->instance_count[phase] = static_cast<std::uint32_t>(segments[phase].size());
     }
-    // the dash tables, each run's flags naming its own
+    // the dash tables, each run's flags naming its own; a run whose table begins beyond the flags' reach (2^22 words
+    // on) is drawn solid
     const std::size_t base = words.size();
     words.insert(words.end(), tables.begin(), tables.end());
     for (const auto& [flags, first] : dashed) {
-        ATLAS_ASSERT((base + first) < (std::size_t{1} << (32U - shaders::LINE_DASH_SHIFT)));
-        words[flags] |= static_cast<std::uint32_t>(base + first) << shaders::LINE_DASH_SHIFT;
+        if ((base + first) < (std::size_t{1} << (32U - shaders::LINE_DASH_SHIFT))) {
+            words[flags] |= static_cast<std::uint32_t>(base + first) << shaders::LINE_DASH_SHIFT;
+        } else {
+            words[flags] &= ~shaders::LINE_DASH;
+        }
     }
 }
 

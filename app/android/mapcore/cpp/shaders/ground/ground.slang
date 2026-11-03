@@ -868,9 +868,9 @@ ColourOut soft_fs(ScreenOut v) {
 // least 0.5 px as coasters.draw's are, without a cut. A line of a fixed width in the app's map (GROUND_NEAR_CLIP) is
 // kept from the near plane on too, so it reaches the screen's bottom edge where it passes under the camera: a sett
 // road's course where one of its ends is ahead (sett_line alike), a dashed run's pattern reaching the first point ahead
-// as there. A bridge's lines in the app's map (LINE_WIDE) lie at the edges of its street, which is as wide as its way
-// there: each point twice as far from the middle of it and its mirror on the other line, the renders' ribbon(pts, w / 2
-// + 0.3) moved as fill_vs moves the street's.
+// as there. A bridge's lines in the app's map lie at the edges of its street, which is as wide as its way there: each
+// point twice as far from the middle of it and its mirror on the other line (its words on from LINE_DASH_SHIFT), the
+// renders' ribbon(pts, w / 2 + 0.3) moved as fill_vs moves the street's.
 
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
@@ -918,8 +918,8 @@ float3 shadow_local(uint first, uint k, float y, bool moved) {
     return float3(x - sun.x / sun.y * h, y, z - sun.z / sun.y * h);
 }
 
-/// A wide run's point k (LINE_WIDE) in its tile's metres at height y: twice as far from the middle of it and its mirror,
-/// `mirror` words on, as wide_point lays a ribbon's vertex.
+/// A wide run's point k in its tile's metres at height y: twice as far from the middle of it and its mirror, the run
+/// `mirror` words on (LINE_DASH_SHIFT), as wide_point lays a ribbon's vertex.
 float3 wide_local(uint first, uint k, float y, int mirror) {
     float3 p = run_local(first, k, y);
     float3 m = run_local(uint(int(first) + mirror), k, y);
@@ -977,7 +977,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint slot = words[run + 6u];
     uint flags = words[run + 7u] & LINE_FLAG_BITS;
     uint table = words[run + 7u] >> LINE_DASH_SHIFT;
-    int mirror = (flags & LINE_WIDE) != 0u ? asint(words[run + 7u]) >> int(LINE_DASH_SHIFT) : 0;
+    int mirror = (flags & (LINE_DASH | LINE_METRES)) == 0u ? asint(words[run + 7u]) >> int(LINE_DASH_SHIFT) : 0;
     StrokeOut o;
     o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.ab = float4(0.0f, 0.0f, 0.0f, 0.0f);

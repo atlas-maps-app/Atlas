@@ -17,10 +17,10 @@
 // along a canal as wide as its way on the land and not over the water (the streets' own draw, GROUND_STREETS: where
 // the stencil holds no water, with weather and without), its bridge across the canal as wide as its way over it. A
 // sett bridge passing under the camera has its lines (by day without weather, a fixed width) at the edges of its street
-// as wide as its way there (LINE_WIDE) and from the frame's bottom edge on, their segments through the near plane kept
-// (GROUND_NEAR_CLIP), where engine mode lays them at the edges of the renders' street and leaves those segments out, as
-// the renders' path does; and its railings stand (with weather) at its street's edges in either kind of frame, though
-// the window holds no street furniture (geometry/Things.cpp's build_things).
+// as wide as its way there (each its mirror's words on) and from the frame's bottom edge on, their segments through the
+// near plane kept (GROUND_NEAR_CLIP), where engine mode lays them at the edges of the renders' street and leaves those
+// segments out, as the renders' path does; and its railings stand (with weather) at its street's edges in either kind
+// of frame, though the window holds no street furniture (geometry/Things.cpp's build_things).
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"

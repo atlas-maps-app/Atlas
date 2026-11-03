@@ -298,7 +298,8 @@ struct Stroke {
     /// Its place in the ground's order across scenes (its feature's).
     OrderKey key;
     /// A bridge's line: its other line's polyline, so many polylines on (1 or -1), whose points are its points' mirrors
-    /// about the street's centreline (the line stage's LINE_WIDE); 0 for every other stroke.
+    /// about the street's centreline (the line stage's run neither dashed nor in metres holds its words on from
+    /// LINE_DASH_SHIFT); 0 for every other stroke.
     std::int32_t mirror = 0;
 };
 
