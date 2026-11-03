@@ -149,6 +149,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
         device, (*builder)->passes(),
         {.workers = workers_,
          .levels_far = options_.levels_far != 0 ? options_.levels_far : scene::WorldOptions{}.levels_far,
+         .fade_seconds = options_.fade_seconds != 0 ? options_.fade_seconds : scene::WorldOptions{}.fade_seconds,
          .heaps = heaps,
          .native_budget = static_cast<std::size_t>(heaps.total),
          .resources = options_.resources,

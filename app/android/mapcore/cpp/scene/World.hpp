@@ -71,6 +71,8 @@ struct WorldOptions {
     /// Of the heaps' budget, what the tiles the cover asks for may take (Cover's plan): below keep_fraction, so a tile
     /// planned has room while the ones no longer drawn wait to go, and the heaps' free ranges need not be one.
     double plan_fraction = 0.7;
+    /// How long a tile fades in, seconds (D3 "Transitions": 150-200 ms; ENGINE.md's fades).
+    double fade_seconds = 0.18;
     HeapBudget heaps;
     /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
     /// data), §3's decoded tiles.

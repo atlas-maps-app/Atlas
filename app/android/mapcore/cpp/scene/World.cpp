@@ -739,7 +739,7 @@ void World::update(const frame::FrameState& state) {
         .far = far_,
         .fine_far = options_.far,
         .margin_px = 40.0,
-        .fade_seconds = 0.18,
+        .fade_seconds = options_.fade_seconds,
         .coarser = coarser_.get(),
         .coarser_tolerance = coarser_
                                  ? coarser_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
