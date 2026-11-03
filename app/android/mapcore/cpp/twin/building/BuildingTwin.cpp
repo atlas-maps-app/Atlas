@@ -37,7 +37,7 @@ using Words = std::array<std::uint32_t, 4>;
     return t / 2 < words.size() ? static_cast<std::uint32_t>(words[t / 2] >> (32U * (t % 2))) : 0U;
 }
 
-/// The n-gon whose triangles begin at or before plain primitive `prim` (the rings are in their triangles' order), or
+/// The n-gon whose pieces begin at or before plain primitive `prim` (the rings are in their pieces' order), or
 /// rings.size().
 [[nodiscard]] std::size_t ring_of(std::span<const passes::BuildingRing> rings, std::uint32_t prim) noexcept {
     const auto it = std::ranges::upper_bound(rings, prim, {}, &passes::BuildingRing::prim);
@@ -55,7 +55,7 @@ using Words = std::array<std::uint32_t, 4>;
     return 0xFF00'0000U | (level(c.x) << 16U) | (level(c.y) << 8U) | level(c.z);
 }
 
-/// An n-gon's ring as the frame draws its triangles' corners (the vertex stage's float maths: each point placed and
+/// An n-gon's ring as the frame draws its pieces' corners (the vertex stage's float maths: each point placed and
 /// turned to the camera, the near plane's cut along each edge in the ring's order, the CSS point, snapped at rest),
 /// into `out`: the polygon the port's cam.poly gives face().
 void project_ring(const shaders::FrameCamera& cam, const shaders::TilePlace& place, std::span<const float> xyz,
@@ -96,6 +96,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     const shaders::FrameCamera& cam = block_.camera;
     const shaders::Theme& theme = block_.theme;
     const std::uint32_t theme_flags = theme.flags.x;
+    const std::uint32_t mode = block_.info.x;
     items_.assign(b.items, none);
     ring_done_.assign(b.rings.size(), 0);
     // the frame's strokes (its pack's style): the roofs' edge colour (draw_building's `edge`), by day and at night
@@ -170,21 +171,22 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                 if (p.item >= rows.size()) continue;
                 const std::uint32_t row = rows[p.item];
                 const std::uint32_t rank = row < table.size() ? table[row] : shaders::RANK_NONE;
-                shaders::BuildingShape s = shaders::building_shape(cam, theme_flags, place, p, f, rank);
-                // an n-gon's triangles: the n-gon once, whole, as face() gets it, when the frame draws any of them
+                shaders::BuildingShape s = shaders::building_shape(cam, theme_flags, mode, place, p, f, rank);
+                // an n-gon's pieces: the n-gon once, whole, as face() gets it, when the frame draws any of them
                 std::size_t ring = b.rings.size();
                 if (!edged && (p.flags & shaders::BUILDING_POLYGON) != 0U) {
                     ring = ring_of(b.rings, i);
                     if (ring >= b.rings.size() || ring_done_[ring] != 0) continue;
                     ring_done_[ring] = 1;
                     const passes::BuildingRing& r = b.rings[ring];
-                    triangles_.clear();
+                    pieces_.clear();
                     for (std::uint32_t k = r.prim; k < r.prim + r.prims; ++k) {
                         const shaders::BuildingPrim t = prim_at(list_at + (std::size_t{k} * vectors));
-                        const shaders::BuildingShape ts = shaders::building_shape(cam, theme_flags, place, t, f, rank);
+                        const shaders::BuildingShape ts =
+                            shaders::building_shape(cam, theme_flags, mode, place, t, f, rank);
                         if (ts.count == 0) continue;
                         if (s.count == 0) s = ts;
-                        triangles_.push_back(ts);
+                        pieces_.push_back(ts);
                     }
                 }
                 if (s.count == 0) continue;
@@ -213,8 +215,8 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                 }
                 out_.path(style_of(p.flags, argb), points_, true);
                 if (depths_ != nullptr) {
-                    depths_->push_back({.shape = s, .edged = edged, .triangles = {}, .tile = tile_});
-                    if (ring < b.rings.size()) depths_->back().triangles = triangles_;
+                    depths_->push_back({.shape = s, .edged = edged, .pieces = {}, .tile = tile_});
+                    if (ring < b.rings.size()) depths_->back().pieces = pieces_;
                 }
                 ++elements_;
             }
@@ -320,7 +322,10 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             if (wall.item != facade_item) flush_facades();
             const std::uint32_t row = rows[wall.item];
             const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
-            const bool windows_drawn = shaders::building_windows_drawn(theme_flags, place, w, f, rank);
+            // a cabin's panes the jobs leave out with the windows (their reach is a church's own windows')
+            const bool cabin_out = w.style == shaders::BUILDING_WINDOW_CABIN && left_out_.windows &&
+                                   (w.flags & shaders::BUILDING_WINDOW_GLAZING) == 0U;
+            const bool windows_drawn = !cabin_out && shaders::building_windows_drawn(theme_flags, place, w, f, rank);
             const bool facades = shaders::building_facades_drawn(theme_flags, place, f, rank);
             const bool materials = w.material != shaders::BUILDING_MATERIAL_NONE &&
                                    shaders::building_materials_drawn(theme_flags, place, f, rank);
@@ -423,7 +428,8 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             }
             // a church's own windows, with weather nearer than 520 m (none of its plain ones then)
             const std::uint32_t church = i < b.window_churches.size() ? b.window_churches[i] : 0U;
-            if (church != 0U && shaders::building_church_drawn(theme_flags, place, w, f, rank)) {
+            if (church != 0U && !left_out_.church_windows &&
+                shaders::building_church_drawn(theme_flags, place, w, f, rank)) {
                 church_windows(wall, f, place, wall_plane, church, window_slot, item_of(b, wall.item), reveals_[i],
                                row < distances_.depth.size() ? distances_.depth[row] : 0.0);
                 continue;
@@ -919,7 +925,10 @@ void BuildingTwin::roof_lines(const passes::BuildingTile& b, std::span<const std
                               const shaders::TilePlace& place) {
     const shaders::FrameCamera& cam = block_.camera;
     const std::uint32_t theme_flags = block_.theme.flags.x;
-    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U) return;
+    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U ||
+        left_out_.kit_details) {
+        return;
+    }
     const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
     const auto offset = std::bit_cast<hlsl::uint4>(place.offset);
     const auto scale = std::bit_cast<hlsl::uint4>(place.scale);
@@ -1007,7 +1016,10 @@ void BuildingTwin::kit_walls(const passes::BuildingTile& b, std::span<const std:
                              const shaders::TilePlace& place) {
     const shaders::FrameCamera& cam = block_.camera;
     const std::uint32_t theme_flags = block_.theme.flags.x;
-    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U) return;
+    if ((theme_flags & shaders::THEME_WEATHER) == 0U || (theme_flags & shaders::THEME_NIGHT) != 0U ||
+        left_out_.kit_details) {
+        return;
+    }
     const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
     const auto offset = std::bit_cast<hlsl::uint4>(place.offset);
     const auto scale = std::bit_cast<hlsl::uint4>(place.scale);

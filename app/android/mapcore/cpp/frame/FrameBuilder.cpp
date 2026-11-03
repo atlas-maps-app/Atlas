@@ -379,10 +379,10 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.routes = inputs_.routes;
     state_.asked = inputs_.asked;
     state_.palette = inputs_.palette;
-    // Atlas's guesses off (the user's palette): the map leaves out the buildings' parts it guesses
-    if (state_.palette != nullptr && state_.palette->has(style::palette_flag::no_guesses)) {
-        state_.camera.parts |= style::camera_part::guessed;
-    }
+    // Atlas's guesses off (the user's palette): the map leaves out the buildings' parts it guesses, and draws a guessed
+    // roof's shape as the plain box in its place (FRAME_PLAIN_ROOFS)
+    const bool no_guesses = state_.palette != nullptr && state_.palette->has(style::palette_flag::no_guesses);
+    if (no_guesses) state_.camera.parts |= style::camera_part::guessed;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
@@ -443,6 +443,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (cam.leaves_out(style::camera_part::shop_glazing)) mode |= shaders::FRAME_NO_GLAZING;
     if (cam.leaves_out(style::camera_part::plinths)) mode |= shaders::FRAME_NO_PLINTHS;
     if (cam.leaves_out(style::camera_part::cornices)) mode |= shaders::FRAME_NO_CORNICES;
+    if (no_guesses) mode |= shaders::FRAME_PLAIN_ROOFS;
     b.info = {mode, 0U, 0U, 0U};
     return true;
 }

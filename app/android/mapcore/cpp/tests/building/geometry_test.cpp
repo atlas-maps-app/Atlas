@@ -20,12 +20,14 @@
 #include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/layers/Buildings.hpp"
+#include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTile.hpp"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -73,6 +75,7 @@ struct Fixture {
     case gm::PrimKind::mansard: return K::mansard;
     case gm::PrimKind::mansard_top: return K::mansard_top;
     case gm::PrimKind::band: return K::band;
+    case gm::PrimKind::plain_top: return K::plain_top;
     case gm::PrimKind::deck:
     case gm::PrimKind::cabin_roof:
     case gm::PrimKind::corner_board: break;
@@ -206,7 +209,7 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
             CHECK(g.window_walls[i].cell == k);
         }
     }
-    // an n-gon's triangles are its polygon's
+    // an n-gon's pieces are its polygon's
     for (std::size_t k = 0; k < g.polygons.size(); ++k) {
         const gm::Polygon& poly = g.polygons[k];
         for (std::uint32_t i = poly.first; i < poly.first + poly.count; ++i) {
@@ -214,11 +217,27 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
             CHECK(g.plain[i].polygon == k);
         }
     }
-    // an n-gon's triangles' edges on its ring (prim_flag::outline << k for edge k), which its stroke follows: each edge
-    // between two of the ring's points its triangles use that follow each other there (earcut drops a ring's duplicate
-    // and collinear points, and an edge runs over them), and the ring's every such edge once
+    // an n-gon's pieces: earcut's triangles, two that share an edge as their quad where it is convex (each corner
+    // turning as the others, for the vertex stage's fan from its first), so they fill what the triangles fill; and
+    // their edges on its ring (prim_flag::outline << k for edge k, a quad's fourth outline_last), which its stroke
+    // follows: each edge between two of the ring's points its pieces use that follow each other there (earcut drops a
+    // ring's duplicate and collinear points, and an edge runs over them), and the ring's every such edge once
+    std::vector<gm::V2> plan;
+    std::vector<std::uint32_t> triangles;
     for (const gm::Polygon& poly : g.polygons) {
         const std::size_t n = poly.ring.size();
+        plan.clear();
+        for (const gm::V3& v : poly.ring) plan.emplace_back(v.x, v.z);
+        gm::triangulate(plan, triangles);
+        const auto turn = [](const gm::V3& o, const gm::V3& a, const gm::V3& b) {
+            return ((a.x - o.x) * (b.z - o.z)) - ((b.x - o.x) * (a.z - o.z));
+        };
+        double filled = 0.0;
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            filled += std::abs(turn(poly.ring[triangles[t]], poly.ring[triangles[t + 1]], poly.ring[triangles[t + 2]]));
+        }
+        CHECK(poly.count >= (triangles.size() / 3 + 1) / 2);
+        CHECK(poly.count <= triangles.size() / 3);
         bool unique = true;
         const auto index_of = [&](const gm::V3& v) {
             std::size_t found = n;
@@ -230,19 +249,31 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
             return found;
         };
         std::vector<std::uint8_t> used(n, 0);
-        std::vector<std::array<std::size_t, 3>> corners;
+        std::vector<std::array<std::size_t, 4>> corners;
+        double pieces = 0.0;
         for (std::uint32_t t = poly.first; t < poly.first + poly.count; ++t) {
             const gm::Prim& p = g.plain[t];
-            const std::array<std::size_t, 3> at{index_of(p.p[0]), index_of(p.p[1]), index_of(p.p[2])};
-            for (const std::size_t i : at) {
-                REQUIRE(i < n);
-                used[i] = 1;
+            const std::uint32_t m = (p.flags & gm::prim_flag::triangle) != 0 ? 3 : 4;
+            const std::array<std::size_t, 4> at{index_of(p.p[0]), index_of(p.p[1]), index_of(p.p[2]), index_of(p.p[3])};
+            for (std::uint32_t k = 0; k < m; ++k) {
+                REQUIRE(at.at(k) < n);
+                used[at.at(k)] = 1;
             }
+            int left = 0;
+            int right = 0;
+            for (std::uint32_t k = 0; k < m; ++k) {
+                const double z = turn(p.p.at(k), p.p.at((k + 1) % m), p.p.at((k + 2) % m));
+                left += z > 0.0 ? 1 : 0;
+                right += z < 0.0 ? 1 : 0;
+                if (k > 0) pieces += std::abs(turn(p.p[0], p.p.at(k), p.p.at((k + 1) % m)));
+            }
+            if (m == 4) CHECK((left == 4 || right == 4));
             corners.push_back(at);
         }
+        CHECK(pieces == doctest::Approx(filled).epsilon(1e-9));
         if (!unique) continue; // a ring through one point twice: its corners' places on it are not known
         // a ring that crosses itself (bad data, a window's among them): earcut fills what it can of it, so not every
-        // edge between its used points is a triangle's
+        // edge between its used points is a piece's
         bool crosses = false;
         for (std::size_t i = 0; i < n && !crosses; ++i) {
             const gm::V3& a = poly.ring[i];
@@ -266,11 +297,14 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
         std::size_t marked = 0;
         for (std::size_t t = 0; t < corners.size(); ++t) {
             const std::uint16_t flags = g.plain[poly.first + t].flags;
-            for (std::uint32_t k = 0; k < 3; ++k) {
-                const std::size_t u = corners[t][k];
-                const std::size_t v = corners[t][(k + 1) % 3];
+            const std::uint32_t m = (flags & gm::prim_flag::triangle) != 0 ? 3 : 4;
+            for (std::uint32_t k = 0; k < m; ++k) {
+                const std::size_t u = corners[t].at(k);
+                const std::size_t v = corners[t].at((k + 1) % m);
                 const bool ring = next_used(u) == v || next_used(v) == u;
-                const bool outline = (flags & (std::uint32_t{gm::prim_flag::outline} << k)) != 0;
+                const std::uint32_t bit =
+                    k < 3 ? std::uint32_t{gm::prim_flag::outline} << k : std::uint32_t{gm::prim_flag::outline_last};
+                const bool outline = (flags & bit) != 0;
                 CHECK(ring == outline);
                 if (outline) ++marked;
             }
@@ -358,6 +392,9 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
     CHECK(kinds[gm::PrimKind::deck] == 1);
     CHECK(kinds[gm::PrimKind::cabin_roof] == 1);
     CHECK(kinds[gm::PrimKind::skillion_wall] >= 1);
+    // no shape guessed: every face drawn either way, and no plain box
+    for (const gm::Face& face : g.faces) CHECK(face.shape == gm::ShapeGuess::any);
+    CHECK(kinds[gm::PrimKind::plain_top] == 0);
     // the flat house (12 m, 10 × 20 m): its first wall's one cell, corner for corner the port's quadAt
     const tl::Frame& fr = f.head.frame;
     const gm::V2 a{fr.x(w0), fr.z(s0)};
@@ -387,6 +424,199 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
         CHECK(p.p[0].y == -1.5 - 0.15);
         CHECK(p.p[2].y == -1.5 + 0.7);
         CHECK(g.faces[p.face].base == 0x112233U);
+    }
+}
+
+TEST_CASE("buildings: a guessed roof's shape, drawn while Atlas's guesses are on, and the plain box in its place, "
+          "held to K8's samples") {
+    namespace fx = atlas::test::building;
+    namespace col = atlas::test::columns;
+    const std::string shape(tl::building::guessed_roof_shape);
+    const std::vector<std::string> guessed{shape, "roof:height"};
+    // the synthetic tile with every roof's shape guessed but the houseboat's (the flat house's too, which stays flat),
+    // and the kit's with all of theirs
+    Fixture f;
+    f.t.layers[0].columns.push_back(
+        {"guessed", tl::Codec::strs,
+         col::strs(f.t, {std::vector<std::string>{shape}, guessed, guessed, guessed, guessed, guessed, std::nullopt})});
+    Fixture k;
+    k.t = fx::kit_tile();
+    k.t.layers[0].columns.push_back(
+        {"guessed", tl::Codec::strs, col::strs(k.t, {guessed, guessed, guessed, guessed, guessed})});
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, guessed shapes");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = f.t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile,
+                                                     .head = &f.head,
+                                                     .level = 0,
+                                                     .region = {.water_y = -1.5, .hull = 0x112233, .deck = 0x445566},
+                                                     .kind = 7});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    const auto roof_kind = [](gm::PrimKind p) {
+        return p == gm::PrimKind::slope || p == gm::PrimKind::gable || p == gm::PrimKind::hip ||
+               p == gm::PrimKind::pyramid || p == gm::PrimKind::skillion || p == gm::PrimKind::skillion_wall ||
+               p == gm::PrimKind::mansard || p == gm::PrimKind::mansard_top;
+    };
+    // each record's shape faces, its walls and its plain top (an n-gon, a rectangle's one quad): every face the
+    // guess's where it is a pitched shape's, the plain top's where it is that, a box wall's where it is a wall of a
+    // pitched guessed shape's building (its roof's top kept for the vertex stage), else drawn either way
+    const std::array<double, 7> h{12.0, 15.0, 14.0, 11.0, 9.5, 18.0, 2.5};
+    const std::array<double, 7> rh{0.0, 5.0, 4.0, 3.5, 2.0, 4.0, 0.0};
+    const std::array<std::uint32_t, 7> wall_rgb{0x8E5A46, 0xA27A62, 0x74402F, 0xE6DFD1, 0x7A624C, 0xD8CCB2, 0xFFFFFF};
+    const std::array<std::uint32_t, 7> roof_rgb{0x56585C, 0x9E5038, 0x535C66, 0x737E88, 0x56585C, 0x8C969E, 0x9C988F};
+    // a wall's cell of a building whose roof is pitched (`pitched`: its tile's roof heights by record)
+    const auto boxed = [](const gm::TileBuildings& tb, const gm::Prim& p, std::span<const double> pitched) {
+        const gm::BuildingItem& item = tb.items[p.item];
+        return p.kind == gm::PrimKind::cell && item.source == gm::Source::building && item.record < pitched.size() &&
+               pitched[item.record] != 0.0;
+    };
+    std::array<int, 7> shaped{};
+    std::array<std::vector<std::uint32_t>, 7> walls{};
+    std::array<int, 7> tops{};
+    for (const auto* list : {&g.edged, &g.plain}) {
+        for (const gm::Prim& p : *list) {
+            const gm::Face& face = g.faces[p.face];
+            const gm::ShapeGuess want = roof_kind(p.kind)                   ? gm::ShapeGuess::guessed
+                                        : p.kind == gm::PrimKind::plain_top ? gm::ShapeGuess::plain
+                                        : boxed(g, p, rh)                   ? gm::ShapeGuess::box_wall
+                                                                            : gm::ShapeGuess::any;
+            CHECK(face.shape == want);
+            const gm::BuildingItem& item = g.items[p.item];
+            if (item.source != gm::Source::building) continue;
+            const std::uint32_t r = item.record;
+            if (roof_kind(p.kind)) ++shaped.at(r);
+            if (want == gm::ShapeGuess::box_wall) {
+                // its cells up to the eaves, its face's top the roof's: the vertex stage raises its top row to it
+                walls.at(r).push_back(p.face);
+                CHECK(face.top == h.at(r));
+                CHECK(face.base == wall_rgb.at(r));
+                for (const gm::V3& v : p.p) CHECK(v.y <= h.at(r) - rh.at(r));
+            } else {
+                CHECK(face.top == 0.0);
+            }
+            if (p.kind == gm::PrimKind::plain_top) {
+                // a flat top at the roof's top, in the roof's colour with a flat roof's slot
+                for (const gm::V3& v : p.p) CHECK(v.y == h.at(r));
+                CHECK(face.base == roof_rgb.at(r));
+                CHECK(face.slot == atlas::style::flat_roof_slot(0, 100 + static_cast<std::int64_t>(r)));
+                CHECK(face.normal.y == 1.0);
+                CHECK((p.flags & gm::prim_flag::stroke_wide) != 0);
+            }
+        }
+    }
+    for (const gm::Polygon& poly : g.polygons) {
+        const gm::BuildingItem& item = g.items[poly.item];
+        if (item.source != gm::Source::building || poly.kind != gm::PrimKind::plain_top) continue;
+        ++tops.at(item.record);
+        // the rectangle's two triangles as one convex quad, every edge of it on the ring
+        CHECK(poly.ring.size() == 4);
+        CHECK(poly.count == 1);
+        const std::uint16_t flags = g.plain[poly.first].flags;
+        CHECK((flags & gm::prim_flag::triangle) == 0);
+        const std::uint32_t ring = gm::prim_flag::outline | (gm::prim_flag::outline << 1U) |
+                                   (gm::prim_flag::outline << 2U) | gm::prim_flag::outline_last;
+        CHECK((flags & ring) == ring);
+    }
+    // the flat house has no shape to leave out, the houseboat's is mapped; each pitched one its box: its four walls,
+    // a top
+    for (std::vector<std::uint32_t>& faces : walls) {
+        std::ranges::sort(faces);
+        faces.erase(std::ranges::unique(faces).begin(), faces.end());
+    }
+    CHECK(shaped[0] == 0);
+    CHECK(walls[0].empty());
+    CHECK(tops[0] == 0);
+    for (std::size_t r = 1; r <= 5; ++r) {
+        CAPTURE(r);
+        CHECK(shaped.at(r) > 0);
+        CHECK(walls.at(r).size() == 4);
+        CHECK(tops.at(r) == 1);
+    }
+    CHECK(shaped[6] == 0);
+    CHECK(walls[6].empty());
+    CHECK(tops[6] == 0);
+    // the gabled house's first wall: its one cell corner for corner the port's quadAt from the ground to the eaves, its
+    // face's top the ridge's
+    const tl::Frame& fr = f.head.frame;
+    const gm::V2 a{fr.x(w0 + 3000), fr.z(s0)};
+    const gm::V2 b{fr.x(w0 + 3000 + 1176), fr.z(s0)};
+    bool found = false;
+    for (const gm::Prim& p : g.edged) {
+        if (p.kind != gm::PrimKind::cell || (p.flags & gm::prim_flag::far) == 0 || g.items[p.item].record != 1 ||
+            p.edge != 0) {
+            continue;
+        }
+        CHECK(p.p == gm::quad_at(a, b, 0.0, 10.0, 0.0, 1.0));
+        CHECK(g.faces[p.face].top == 15.0);
+        found = true;
+    }
+    CHECK(found);
+    // the walls heap: a box wall's face with its flag and the roof's top in its area's word, the plain top's with its
+    // flag and its area
+    atlas::passes::BuildingTile layout;
+    const std::vector<std::array<std::uint32_t, 4>> words = atlas::passes::heap_words(g, 0.0, 0.0, layout);
+    REQUIRE(!layout.lean);
+    for (std::uint32_t i = 0; i < g.faces.size(); ++i) {
+        const gm::Face& face = g.faces[i];
+        const std::array<std::uint32_t, 4>& geometry = words.at(layout.faces_at + (std::size_t{i} * 2));
+        const std::uint32_t flags = words.at(layout.faces_at + (std::size_t{i} * 2) + 1)[3];
+        CHECK(((flags & atlas::shaders::BUILDING_FACE_BOX_WALL) != 0) == (face.shape == gm::ShapeGuess::box_wall));
+        CHECK(((flags & atlas::shaders::BUILDING_FACE_SHAPE_PLAIN) != 0) == (face.shape == gm::ShapeGuess::plain));
+        CHECK(((flags & atlas::shaders::BUILDING_FACE_SHAPE_GUESSED) != 0) == (face.shape == gm::ShapeGuess::guessed));
+        if (face.shape == gm::ShapeGuess::box_wall) {
+            CHECK(std::bit_cast<float>(geometry[3]) == static_cast<float>(face.top));
+        }
+    }
+    // the plain top's sample, after each roof's: 0.05 m over its centroid; its walls take their cells'
+    std::map<atlas::sun::Kind, int> by_kind;
+    for (const atlas::sun::Kind kind : st.samples.kind) ++by_kind[kind];
+    CHECK(by_kind[atlas::sun::Kind::plain_top] == 5);
+    for (std::uint32_t i = 0; i < st.samples.size(); ++i) {
+        if (st.samples.kind[i] != atlas::sun::Kind::plain_top) continue;
+        const std::uint32_t r = st.samples.owner[i];
+        CHECK(st.samples.y[i] == h.at(r) + 0.05);
+        CHECK(st.samples.face[i] == atlas::sun::no_face);
+    }
+    // a kit's roofs, with weather (its own) and without (the plain one): every face of either the guess's, and the
+    // plain top after both and the box walls, drawn either way of the moment
+    const std::vector<std::byte> kit_raw = k.t.encode();
+    auto kit = decoder.decode(kit_raw, arena);
+    ATLAS_REQUIRE(kit.has_value(), tl::describe(kit.error()));
+    const gm::TileBuildings kg = gm::build_buildings(
+        {.tile = &*kit, .head = &k.head, .level = 0, .region = {.kit_eaves = fx::kit_eaves}, .kind = 0});
+    const atlas::sun::SunTile kst =
+        atlas::sun::make_tile(*kit, k.head, atlas::sun::Region{.kit_eaves = fx::kit_eaves}, 0, {});
+    const Checked kc = check_tile(kg, kst);
+    CHECK_MESSAGE(kc.wrong == 0, kc.first_wrong);
+    const std::array<double, 5> kit_rh{5.0, 4.0, 5.0, 4.0, 3.0}; // the kit tile's roof_h: every roof pitched
+    std::array<int, 5> kit_shaped{};
+    std::array<int, 5> kit_tops{};
+    std::array<int, 5> kit_walls{};
+    for (const auto* list : {&kg.edged, &kg.plain}) {
+        for (const gm::Prim& p : *list) {
+            const gm::Face& face = kg.faces[p.face];
+            const gm::ShapeGuess want = roof_kind(p.kind)                   ? gm::ShapeGuess::guessed
+                                        : p.kind == gm::PrimKind::plain_top ? gm::ShapeGuess::plain
+                                        : boxed(kg, p, kit_rh)              ? gm::ShapeGuess::box_wall
+                                                                            : gm::ShapeGuess::any;
+            CHECK(face.shape == want);
+            if (roof_kind(p.kind) && (p.flags & gm::prim_flag::weather) != 0) ++kit_shaped.at(kg.items[p.item].record);
+            if (want == gm::ShapeGuess::plain || want == gm::ShapeGuess::box_wall) {
+                ++(want == gm::ShapeGuess::plain ? kit_tops : kit_walls).at(kg.items[p.item].record);
+                CHECK((p.flags & (gm::prim_flag::weather | gm::prim_flag::dry)) == 0);
+            }
+        }
+    }
+    for (std::size_t r = 0; r < 5; ++r) {
+        CAPTURE(r);
+        // the kit's roof in the four houses of the kit; the plain top and the box walls' cells in every one
+        CHECK((kit_shaped.at(r) > 0) == (r != 2));
+        CHECK(kit_tops.at(r) >= 1);
+        CHECK(kit_walls.at(r) >= 4);
     }
 }
 

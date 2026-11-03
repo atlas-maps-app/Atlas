@@ -1,7 +1,7 @@
 // The buildings' scene pipelines (plan-vector D10, K10; CP/passes/Walls.cpp): walls_vs draws a wall (as one cell, or a
 // skillion's or a houseboat's wall), or a near cell cut from its wall's record, as its outline dilated by the
 // same-colour 0.3 px edge, 16 points through the static fan of its index buffer; roofs_vs draws a roof's face or an
-// n-gon's triangle as its polygon (or a kit's band or corner board on a wall), 5 points through a fan of 3 triangles
+// n-gon's piece as its polygon (or a kit's band or corner board on a wall), 5 points through a fan of 3 triangles
 // (the corners a near plane's cut may leave, repeated where there are fewer). Both read their primitive, face and
 // colours from the walls heap (set 1, binding 1; the colours the CPU's light, per tile and moment) and their building's
 // rank entry through the tile's rows (set 0, binding 1), decide it as shaders/building/building.slangh does, and write
@@ -151,7 +151,7 @@ Drawn drawn_at(BuildingPush p, uint index) {
     Drawn d;
     d.prim = f.prim;
     d.face = f.face;
-    d.shape = building_shape(frame.camera, frame.theme.flags.x, p.place, d.prim, d.face, f.rank);
+    d.shape = building_shape(frame.camera, frame.theme.flags.x, frame.info.x, p.place, d.prim, d.face, f.rank);
     d.rank = f.rank;
     return d;
 }
@@ -253,7 +253,7 @@ BuildingOut walls_kept_vs(uint vertex : SV_VulkanVertexID) {
     return wall_vertex(k.push, k.index, vertex - slot * BUILDING_EDGED_VERTICES);
 }
 
-/// The kept roofs' faces and n-gons' triangles, as roofs_vs decides them.
+/// The kept roofs' faces and n-gons' pieces, as roofs_vs decides them.
 [shader("vertex")]
 BuildingOut roofs_kept_vs(uint vertex : SV_VulkanVertexID) {
     uint slot = vertex / BUILDING_PLAIN_VERTICES;
@@ -321,7 +321,7 @@ void kept_cull_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         p.at = kept_jobs[at + 2u];
         p.sun = kept_jobs[at + 3u];
         Fetched f = fetched_at(p, span.x + thread.x);
-        if (building_may_draw(frame.theme.flags.x, p.place, f.prim, f.face, f.rank)) {
+        if (building_may_draw(frame.theme.flags.x, frame.info.x, p.place, f.prim, f.face, f.rank)) {
             InterlockedOr(kept_mask[thread.x >> 5u], 1u << (thread.x & 31u));
         }
     }

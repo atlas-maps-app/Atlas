@@ -61,10 +61,11 @@ inline constexpr double pick_top = 350.0;
 
 /// The building the ray from `eye` along `ray` (the frame metres of `ground`; `ray` need not be of unit length) meets
 /// first among those of the chunks of `packs` in `store` whose reach meets the ray's track; none where the ray does not
-/// fall to the street or meets none.
+/// fall to the street or meets none. `plain_roofs`: the map draws a guessed roof's shape as the plain box in its place
+/// (the user's palette has Atlas's guesses off), so a ray meets such a building as a flat one.
 [[nodiscard]] std::optional<Picked> pick_building(const tiles::Store& store, std::span<const PickPack> packs,
                                                   const view::GroundFrame& ground, const view::Vec3& eye,
-                                                  const view::Vec3& ray);
+                                                  const view::Vec3& ray, bool plain_roofs = false);
 
 /// A building's roof as the tiles hold it, for in_walls_colour: its shape (`roof`), height (`roof_h`), along or across
 /// its longest side (roof:orientation=across) and downhill direction (roof:direction).

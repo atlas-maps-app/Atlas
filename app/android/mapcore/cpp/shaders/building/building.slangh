@@ -5,14 +5,17 @@
 // shared/frame.slang.
 //
 // A primitive is one polygon the port fills with face() (geometry/Walls.hpp): a wall's cell, the wall up to a skillion
-// slope, a houseboat's wall, a roof's face, or one triangle of an n-gon. Per frame the vertex stage decides it as the
-// port does at that camera:
+// slope, a houseboat's wall, a roof's face, or one piece of an n-gon (a triangle, or two as a convex quad). Per frame
+// the vertex stage decides it as the port does at that camera:
 //   - its building's item is drawn (the rank table's entry), in the variant of its detail (cells nearer than 460 m:
 //     the detail's near bit, which the ranks chose in double), and a houseboat as a boat only with weather;
+//   - a guessed roof's shape where the frame keeps Atlas's guesses, the plain box in its place where it leaves them
+//     out (the face's BUILDING_FACE_SHAPE_ flags and the frame's FRAME_PLAIN_ROOFS): its flat top, and its building's
+//     walls (BUILDING_FACE_BOX_WALL) up to the roof's top, their top cells raised to it;
 //   - its face turns to the eye: vdot(n, C - p) > 0 at the port's test point (a deck is drawn from either side);
 //   - its corners are clipped at the near plane as City.Camera.poly clips them (t = (near - a.z) / (b.z - a.z)),
 //     projected as Camera.pc projects them, kept only if their box reaches within 300 px of the frame
-//     (`cam.poly(q, margin=300)`) and their area is 0.12 px² or more (face(); an n-gon's triangles share their
+//     (`cam.poly(q, margin=300)`) and their area is 0.12 px² or more (face(); an n-gon's pieces share their
 //     polygon's estimated area), and snapped to the SVG's 0.1 px at rest;
 //   - it draws at its true depth (painter.slang): each corner's reciprocal depth near / k.z, interpolated over a plain
 //     polygon's fan (exact over each triangle), and over an edged one's outline the reciprocal depth of its face's
@@ -38,21 +41,28 @@ static const uint BUILDING_WEATHER = 4u;  // drawn only when the moment has weat
 static const uint BUILDING_DRY = 8u;      // drawn only without weather (a houseboat as a building)
 static const uint BUILDING_EDGE = 16u;    // with its same-colour 0.3 px edge
 static const uint BUILDING_TRIANGLE = 32u; // three corners
-static const uint BUILDING_POLYGON = 64u; // one triangle of an n-gon: its area is the polygon's
+static const uint BUILDING_POLYGON = 64u; // one piece of an n-gon: its area is the polygon's
 // Its thin stroke in the port's attributes (the objects' thin strokes draw it, K17a; the twin emits it): .25 px in the
 // roofs' edge colour, .45 px in it, .4 px #2A2C30 (a houseboat's cabin roof).
 static const uint BUILDING_STROKE_FINE = 128u;
 static const uint BUILDING_STROKE_WIDE = 256u;
 static const uint BUILDING_STROKE_CABIN = 512u;
 static const uint BUILDING_STROKES = BUILDING_STROKE_FINE | BUILDING_STROKE_WIDE | BUILDING_STROKE_CABIN;
-// An n-gon's triangle's edges on its polygon's ring, which its stroke follows: BUILDING_OUTLINE << k for edge k (corner
-// k to k + 1, the third back to the first). The cuts between its triangles have none.
+// An n-gon's piece's edges on its polygon's ring, which its stroke follows: BUILDING_OUTLINE << k for edge k (corner k
+// to k + 1, a triangle's third back to the first), a quad's fourth (corner 3 back to the first) BUILDING_OUTLINE_LAST
+// (building_outline_bit). The cuts between its pieces have none.
 static const uint BUILDING_OUTLINE = 1024u;
 // A kit roof's slope or hip that overhangs its walls (its eaves): its depth's lead BUILDING_EAVES_LEAD.
 static const uint BUILDING_EAVES = 8192u;
 // A wall with a kit's details on it (its band, its boards, its eaves' shadow): its near cells' leads count modulo
 // BUILDING_KIT_CELL_LEADS, under the details' leads.
 static const uint BUILDING_KIT = 16384u;
+static const uint BUILDING_OUTLINE_LAST = 32768u;
+
+/// The flag of an n-gon's piece's edge k on its polygon's ring.
+inline uint building_outline_bit(uint k) {
+    return k < 3u ? BUILDING_OUTLINE << k : BUILDING_OUTLINE_LAST;
+}
 
 // A face's flags.
 static const uint BUILDING_FACE_DAY = 1u;  // lit whenever the sun is up, not by a sample (a deck, a cabin's roof)
@@ -65,6 +75,14 @@ static const uint BUILDING_FACE_CORNER = 8u;
 // A frame cell's level's face: lit by its sample's bit where its tile has bits, else whenever the sun is up (its
 // facing alone, as BUILDING_FACE_DAY).
 static const uint BUILDING_FACE_LEVEL = 16u;
+// A face of a guessed roof's shape (its slopes, gables, hips, pyramid's, skillion's and mansard's faces, a skillion's
+// walls up to its slope), drawn where the frame keeps Atlas's guesses; or the plain box's flat top in its place at the
+// roof's top, drawn where it leaves them out (FRAME_PLAIN_ROOFS).
+static const uint BUILDING_FACE_SHAPE_GUESSED = 32u;
+static const uint BUILDING_FACE_SHAPE_PLAIN = 64u;
+// A wall of such a building, drawn either way: where the frame leaves the guesses out, its top (its one cell's, its top
+// row's near cells') at the roof's top, which its face holds in its area's place (BuildingFace.area).
+static const uint BUILDING_FACE_BOX_WALL = 128u;
 
 // No sample, and no sun bits for the tile yet.
 static const uint BUILDING_NO_SAMPLE = 0xFFFFFFFFu;
@@ -175,6 +193,7 @@ struct BuildingPrim {
     uint far_slot;
     uint lead;      // a near cell's row plus its column on its wall, modulo BUILDING_CELL_LEADS (its depth's lead,
                     // BUILDING_CELL_LEAD each); else 0
+    bool reaches_top; // its top is its wall's (a wall's one cell, a near cell of its wall's top row)
 };
 
 inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
@@ -194,6 +213,7 @@ inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
     p.near_slot = d.w & 0xFFFFu;
     p.far_slot = d.w >> 16u;
     p.lead = 0u;
+    p.reaches_top = true;
     return p;
 }
 
@@ -225,6 +245,7 @@ inline BuildingPrim building_lean_prim(uint4 grid, uint4 a, uint4 b, uint4 c) {
     p.near_slot = c.y & 0xFFFFu;
     p.far_slot = c.y >> 16u;
     p.lead = 0u;
+    p.reaches_top = true;
     return p;
 }
 
@@ -268,13 +289,14 @@ inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
     p.near_slot = wall.near_slot + k;
     p.far_slot = 0u;
     p.lead = (r + c) % ((wall.flags & BUILDING_KIT) != 0u ? BUILDING_KIT_CELL_LEADS : BUILDING_CELL_LEADS);
+    p.reaches_top = r + 1u == nrow;
     return p;
 }
 
 /// A face's geometry as the vertex stage reads it.
 struct BuildingFace {
     float3 normal; // the port's unit normal
-    float area;    // an n-gon's area in space, m² (its triangles' area test)
+    float area;    // an n-gon's area in space, m² (its pieces' area test); a box wall's roof's top, tile-local metres
     float3 test;   // the point the port tests facing at, tile-local metres
     uint flags;
 };
@@ -323,7 +345,7 @@ struct BuildingShape {
     float depth;   // its painter depth (painter.slang)
     uint slot;     // its painter slot
     uint strokes;  // the edges its thin stroke follows (bit k: corner k to k + 1, the last back to the first): every
-                   // edge of a primitive with one, an n-gon's triangle's only along its polygon's ring, and the near
+                   // edge of a primitive with one, an n-gon's piece's only along its polygon's ring, and the near
                    // plane's cut wherever it cut the shape (the port strokes the polygon Camera.poly gives it)
     bool on_plane; // its depth its face plane's at each point (a kit's band or corner board, on its wall's plane), a
                    // plain polygon's though it is: not its corners' over its fan
@@ -426,10 +448,10 @@ inline BuildingShape building_nothing() {
     return s;
 }
 
-/// The primitive as the frame draws it at its camera (see the file's head), for its item's rank table entry `rank`
-/// and the moment's theme flags `theme_flags`.
-inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace place, BuildingPrim p, BuildingFace f,
-                                    uint rank) {
+/// The primitive as the frame draws it at its camera (see the file's head), for its item's rank table entry `rank`,
+/// the moment's theme flags `theme_flags` and the frame's mode `mode` (FrameBlock.info.x).
+inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, uint mode, TilePlace place, BuildingPrim p,
+                                    BuildingFace f, uint rank) {
     BuildingShape s = building_nothing();
     if (rank == RANK_NONE) {
         return s;
@@ -444,6 +466,17 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     }
     if ((p.flags & BUILDING_DRY) != 0u && weather) {
         return s;
+    }
+    // a guessed roof's shape, or the plain box in its place, as the frame's mode says: its flat top, and its building's
+    // walls up to the roof's top
+    bool plain = (mode & FRAME_PLAIN_ROOFS) != 0u;
+    if ((f.flags & (plain ? BUILDING_FACE_SHAPE_GUESSED : BUILDING_FACE_SHAPE_PLAIN)) != 0u) {
+        return s;
+    }
+    BuildingPrim drawn = p;
+    if (plain && (f.flags & BUILDING_FACE_BOX_WALL) != 0u && p.reaches_top) {
+        drawn.c2.y = f.area;
+        drawn.c3.y = f.area;
     }
     // a kit's corner board where the view resolves it (`ppm * 0.16 > 0.5`)
     if ((f.flags & BUILDING_FACE_CORNER) != 0u && (rank_detail(rank) & BUILDING_DETAIL_CORNERS) == 0u) {
@@ -469,11 +502,11 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     bool outlined = (p.flags & BUILDING_POLYGON) != 0u;
     uint strokes = 0u;
     for (uint i = 0u; i < n; ++i) {
-        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(p, i)));
-        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(p, (i + 1u) % n)));
+        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(drawn, i)));
+        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(drawn, (i + 1u) % n)));
         bool ai = a.z >= near_z;
         bool bi = b.z >= near_z;
-        bool along = stroked && (!outlined || (p.flags & (BUILDING_OUTLINE << i)) != 0u);
+        bool along = stroked && (!outlined || (p.flags & building_outline_bit(i)) != 0u);
         if (ai) {
             c[m] = a;
             strokes = along ? strokes | (1u << m) : strokes;
@@ -583,12 +616,12 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     return s;
 }
 
-/// Whether primitive `p` of face `f`, for its item's rank table entry `rank` and the moment's theme flags `theme_flags`,
-/// may draw at the frame placed by `place`: building_shape's own first tests (its rank, its detail variant, the
-/// moment's weather) and its facing test with a margin (BUILDING_FACING_SLACK), so that false means building_shape
-/// draws nothing, whatever either stage's float arithmetic does. The cull (passes/Kept.cpp) leaves such a primitive
-/// out; whatever it keeps, the vertex stage decides as before.
-inline bool building_may_draw(uint theme_flags, TilePlace place, BuildingPrim p, BuildingFace f, uint rank) {
+/// Whether primitive `p` of face `f`, for its item's rank table entry `rank`, the moment's theme flags `theme_flags`
+/// and the frame's mode `mode`, may draw at the frame placed by `place`: building_shape's own first tests (its rank,
+/// its detail variant, the moment's weather, the roof's way of drawing) and its facing test with a margin
+/// (BUILDING_FACING_SLACK), so that false means building_shape draws nothing, whatever either stage's float arithmetic
+/// does. The cull (passes/Kept.cpp) leaves such a primitive out; whatever it keeps, the vertex stage decides as before.
+inline bool building_may_draw(uint theme_flags, uint mode, TilePlace place, BuildingPrim p, BuildingFace f, uint rank) {
     if (rank == RANK_NONE) {
         return false;
     }
@@ -601,6 +634,9 @@ inline bool building_may_draw(uint theme_flags, TilePlace place, BuildingPrim p,
         return false;
     }
     if ((p.flags & BUILDING_DRY) != 0u && weather) {
+        return false;
+    }
+    if ((f.flags & ((mode & FRAME_PLAIN_ROOFS) != 0u ? BUILDING_FACE_SHAPE_GUESSED : BUILDING_FACE_SHAPE_PLAIN)) != 0u) {
         return false;
     }
     if ((f.flags & BUILDING_FACE_CORNER) != 0u && (rank_detail(rank) & BUILDING_DETAIL_CORNERS) == 0u) {

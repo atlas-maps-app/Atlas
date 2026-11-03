@@ -3,7 +3,7 @@
 // bit).
 //   - Stage T (build, on a worker): geometry/Walls.hpp's primitives, faces and items of the tile at its level, written
 //     into one range of the walls heap (twin/building/BuildingTile.hpp): the primitives (4 × uint4: a wall as one cell,
-//     a skillion's or a houseboat's wall, a roof's face, an n-gon's triangle), the near cells (two words each, cut from
+//     a skillion's or a houseboat's wall, a roof's face, an n-gon's piece), the near cells (two words each, cut from
 //     their wall in the vertex stage), each face's geometry (2 × uint4), two areas of its colours, and the tile's rows
 //     (one per item, written once the tile is taken). The items join the item table; the pass keeps each tile's counts,
 //     its cells' ranges and its faces' light inputs (PassTile::cpu).

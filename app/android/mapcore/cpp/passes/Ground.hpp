@@ -487,6 +487,9 @@ struct GroundFrame {
     /// (their trees' bits among each tile's shadows'), a union of its own; the coaster tracks', element by element.
     bool park_sun = false;
     bool planted = true; ///< the woods' planted trees drawn, and so their shadows (the palette's guesses on)
+    /// A guessed roof's shape drawn as the plain box in its place (the palette's guesses off: FRAME_PLAIN_ROOFS), so
+    /// mirrored so in the water.
+    bool plain_roofs = false;
     std::array<double, 3> light{};
     bool woods = false;
     std::vector<TrackShadow> track_shadows;

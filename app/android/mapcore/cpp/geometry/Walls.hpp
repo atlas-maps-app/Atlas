@@ -7,7 +7,8 @@
 //     the triangle of wall up to a skillion slope;
 //   - the roofs (geometry/Roofs.cpp): by shape after CLOSEST (and quadruple_saltbox as hipped): a gable roof's ridge,
 //     gable ends and slopes, a hip's ends, a pyramid's faces, a skillion's slope, a mansard's brisis faces and top, and
-//     a flat top (drawn when the eye is above it);
+//     a flat top (drawn when the eye is above it); a guessed shape's plain box in its place (its walls up to the roof's
+//     top and a flat top there), which the frame draws instead while the user's palette has Atlas's guesses off;
 //   - a houseboat drawn as a boat when the moment has weather (geometry/Houseboats.cpp), as a building when not;
 //   - a tradition's kit's walls (trad_wall, with weather): a stucco ground floor's band and timber boards' corner
 //     boards on each wall, its boards' lines and the shadow of its eaves (KitWall, which the frame lays each frame).
@@ -27,8 +28,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::geometry {
@@ -76,6 +79,13 @@ enum class Lit : std::uint8_t { sun = 0, day = 1, level = 2 };
 /// over the wall's cells, a corner board only where the view resolves it (focal / d · 0.16 > 0.5).
 enum class KitPart : std::uint8_t { none = 0, band = 1, corner = 2 };
 
+/// Which way of drawing a building's roof a face belongs to, as the frame chooses by the user's palette (FrameBuilder's
+/// FRAME_PLAIN_ROOFS): any (drawn either way); a guessed roof's shape (its slopes, gables, hips, pyramid's, skillion's
+/// and mansard's faces, a skillion's walls up to its slope), drawn while Atlas's guesses are on; the plain box's flat
+/// top in its place, drawn while they are off; or a wall of such a building, drawn either way: up to its eaves while
+/// the guesses are on, up to the roof's top (Face::top) while they are off, the vertex stage raising its top cells'.
+enum class ShapeGuess : std::uint8_t { any = 0, guessed = 1, plain = 2, box_wall = 3 };
+
 /// What lights a face (light.slang's light(): the base colour and the normal), and the point its facing is tested at.
 struct Face {
     std::uint32_t base = 0; ///< 0xRRGGBB, surface_colour's (wall_rgb, roof_rgb) or the boat's own
@@ -87,6 +97,8 @@ struct Face {
     /// The user's palette's slot word its base goes with: its building's wall_slot or roof_slot (0 none, +256 mapped,
     /// +512 guessed with no slot), and a guessed flat roof's mid grey above them (style::slot_grey_shift)
     std::uint16_t slot = 0;
+    ShapeGuess shape = ShapeGuess::any;
+    double top = 0.0; ///< a box wall's (ShapeGuess::box_wall): its building's roof's top, h
 };
 
 /// What a primitive is, as the port draws it.
@@ -107,6 +119,7 @@ enum class PrimKind : std::uint8_t {
     cabin_roof,    ///< a houseboat's cabin roof
     band,          ///< a kit's stucco ground floor on a wall (trad_wall's band)
     corner_board,  ///< a kit's corner board at either end of a wall
+    plain_top,     ///< the plain box's flat top at a guessed roof's top, when the eye is above it (ShapeGuess::plain)
 };
 
 /// The kind's name, for tests and logs.
@@ -120,7 +133,7 @@ inline constexpr std::uint16_t weather = 4;   ///< drawn only when the moment ha
 inline constexpr std::uint16_t dry = 8;       ///< drawn only when it has none (a houseboat as a building)
 inline constexpr std::uint16_t edge = 16;     ///< with its same-colour 0.3 px edge (stroke-width .3 in its fill)
 inline constexpr std::uint16_t triangle = 32; ///< three corners (the fourth repeats the third)
-inline constexpr std::uint16_t polygon = 64;  ///< one triangle of an n-gon: its area is the polygon's
+inline constexpr std::uint16_t polygon = 64;  ///< one piece of an n-gon: its area is the polygon's
 /// Its stroke in the port's attributes, beside a cell's same-colour edge: the roofs' fine edge (.25 px in the edge
 /// colour: a gable roof's slopes, gable ends and hip ends, a mansard's brisis faces), their wide one (.45 px: a flat
 /// top, a skillion roof, a mansard's top), a houseboat's cabin roof (.4 px #2A2C30), each in the pack's style (the
@@ -128,14 +141,17 @@ inline constexpr std::uint16_t polygon = 64;  ///< one triangle of an n-gon: its
 inline constexpr std::uint16_t stroke_fine = 128;
 inline constexpr std::uint16_t stroke_wide = 256;
 inline constexpr std::uint16_t stroke_cabin = 512;
-/// An n-gon's triangle's edges that lie on its polygon's ring, which its stroke follows: its first edge (corner 0 to
-/// 1), its second (1 to 2), its third (2 back to 0); outline << k for edge k. The cuts between its triangles have none.
+/// An n-gon's piece's edges that lie on its polygon's ring, which its stroke follows: its first edge (corner 0 to 1),
+/// its second (1 to 2), its third (2 to 3, a triangle's back to 0); outline << k for edge k, and a quad's fourth (3
+/// back to 0) outline_last. The cuts between its pieces have none.
 inline constexpr std::uint16_t outline = 1024;
 /// A kit roof's slope or hip that overhangs its walls (its eaves): its depth leads them where it passes their top.
 inline constexpr std::uint16_t eaves = 8192;
 /// A wall with a kit's details on it (its band, its boards, its eaves' shadow): its near cells' depth leads count
 /// modulo 8, under the details' leads.
 inline constexpr std::uint16_t kit = 16384;
+/// A quad piece's fourth edge on its n-gon's ring (outline's).
+inline constexpr std::uint16_t outline_last = 32768;
 /// Every variant: drawn at any distance.
 inline constexpr std::uint16_t any = near | far;
 } // namespace prim_flag
@@ -143,7 +159,7 @@ inline constexpr std::uint16_t any = near | far;
 /// The port's thin stroke of a plain primitive of `kind` (prim_flag's stroke_fine, stroke_wide, stroke_cabin, or 0).
 [[nodiscard]] std::uint16_t stroke_of(PrimKind kind) noexcept;
 
-/// One polygon the port fills with face() (or one triangle of an n-gon it fills), with everything the frame needs.
+/// One polygon the port fills with face() (or one piece of an n-gon it fills), with everything the frame needs.
 struct Prim {
     std::array<V3, 4> p{}; ///< its corners in the port's order and arithmetic (frame metres); a triangle repeats p[2]
     PrimKind kind = PrimKind::cell;
@@ -152,7 +168,7 @@ struct Prim {
     std::uint32_t face = 0;             ///< its Face in the tile's list
     std::uint32_t sample = no_sample;   ///< its sun sample in the tile's samples (K8's order)
     std::uint32_t item = 0;             ///< its building's item among the tile's building items
-    std::uint32_t polygon = no_polygon; ///< the n-gon a triangle fills
+    std::uint32_t polygon = no_polygon; ///< the n-gon a piece fills
     std::uint16_t near_slot = 0;        ///< its painter slot within the item when the item is near, and when far
     std::uint16_t far_slot = 0;
     std::uint16_t edge = 0; ///< the footprint edge (or side) it stands on, as K8's sample names it
@@ -312,9 +328,9 @@ struct Polygon {
     std::vector<V3> ring; ///< its corners in the port's order and arithmetic
     double area = 0.0;    ///< its area in space, m² (its projected area at a camera is estimated from it)
     std::uint32_t face = 0;
-    std::uint32_t first = 0; ///< its triangles: plain primitives [first, first + count)
+    std::uint32_t first = 0; ///< its pieces: plain primitives [first, first + count)
     std::uint32_t count = 0;
-    std::uint32_t item = 0; ///< its building's item, its kind and its triangles' conditions (as theirs)
+    std::uint32_t item = 0; ///< its building's item, its kind and its pieces' conditions (as theirs)
     PrimKind kind = PrimKind::top;
     std::uint16_t flags = 0;
 };
@@ -347,7 +363,7 @@ struct TileBuildings {
     /// Quads drawn with their same-colour edge: walls' cells, skillion walls, a houseboat's walls.
     std::vector<Prim> edged;
     std::vector<std::uint32_t> edged_first;
-    /// Polygons drawn without one: roof faces and the triangles of n-gons.
+    /// Polygons drawn without one: roof faces and the pieces of n-gons.
     std::vector<Prim> plain;
     std::vector<std::uint32_t> plain_first;
     std::vector<Face> faces;
@@ -437,6 +453,7 @@ struct Values {
     bool no_win = false;                       ///< no window rows (halls, tanks, glass walls)
     std::int64_t year = 0;                     ///< the year start_date begins with (0: none)
     std::optional<std::string_view> rmat_draw; ///< the roof material drawn (a kit roof's tile courses)
+    bool shape_guessed = false;                ///< the loader guessed the roof's shape (`guessed` holds roof:shape)
 };
 
 /// trad['eaves'] of a building with values `v` in a kit of eaves `eaves`: the kit's where the loader's roof (the
@@ -465,6 +482,10 @@ struct Building {
     V2 dirv;                              ///< its downhill direction
     double p0 = 0.0; ///< the least projection of the footprint on it, and the slope's span (at least 0.5)
     double span = 1.0;
+    /// Its roof's shape is a guess drawn pitched (Values::shape_guessed where rh is not 0): its faces are
+    /// ShapeGuess::guessed, its walls' ShapeGuess::box_wall, and the plain box's flat top stands in the shape's place
+    /// (ShapeGuess::plain).
+    bool guessed_shape = false;
 
     /// A skillion's top above footprint point p: h - rh * ((p · dirv) - p0) / span.
     [[nodiscard]] double sk_top(const V2& p) const noexcept;
@@ -473,7 +494,12 @@ struct Building {
 /// Appends one tile's primitives, faces and n-gons, with the current building's cell, item, sun sample and slots.
 class Builder {
 public:
-    explicit Builder(TileBuildings& o) noexcept : out(o) {}
+    explicit Builder(TileBuildings& o);
+    Builder(const Builder&) = delete;
+    Builder(Builder&&) = delete;
+    Builder& operator=(const Builder&) = delete;
+    Builder& operator=(Builder&&) = delete;
+    ~Builder();
 
     /// A face; its index.
     std::uint32_t face(const Face& f);
@@ -490,7 +516,9 @@ public:
     /// A face of three or four corners drawn without one.
     void plain(const std::array<V3, 4>& p, std::uint8_t corners, PrimKind kind, std::uint16_t flags, std::uint32_t face,
                std::uint32_t sun, std::uint16_t near, std::uint16_t far, At at);
-    /// An n-gon `ring` (its plan `plan`, the same corners on the ground) filled as its triangles, of area `area`.
+    /// An n-gon `ring` (its plan `plan`, the same corners on the ground) filled as its pieces, of area `area`: its
+    /// triangles in their order, two that share an edge and make a convex quad as that quad at the first's place
+    /// (fanned from a corner on their edge, it fills the same two triangles), each triangle in one piece.
     void polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind kind, std::uint16_t flags, std::uint32_t face,
                  std::uint32_t sun, std::uint16_t near, std::uint16_t far, double area);
     /// A painter slot within an item, checked to fit the primitives' 16 bits.
@@ -509,6 +537,8 @@ public:
     std::optional<tiles::KitBand> kit_band; ///< and its band and boards, where it has them
     std::optional<tiles::KitBoards> kit_boards;
     std::uint32_t facade = 0; ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
+    /// The way of drawing the roof the faces it makes belong to (Face::shape), where a face names none of its own.
+    ShapeGuess shape = ShapeGuess::any;
     /// A level's tile (a frame cell's L13 or L12, a region's L12): drawn beyond the finest level's reach (4.7 km), so
     /// its walls are one cell each, without the near cells (drawn within 460 m) nor the windowed walls (the windows,
     /// shop glazing, plinths and cornices, a church's windows and the material faces) and a kit's details on them
@@ -516,8 +546,18 @@ public:
     bool lean = false;
 
 private:
+    struct Earcut; ///< earcut's state, whose memory serves each n-gon of the walk in turn
+    std::unique_ptr<Earcut> earcut_;
     std::vector<std::uint32_t> triangles_;
     std::vector<std::uint8_t> used_; ///< an n-gon's ring points its triangles use
+    /// its triangles' edges: their ends (the lesser in the high word) and their triangle, as made and in their order
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> edges_;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> sorted_;
+    std::vector<std::uint32_t> starts_;                    ///< where each lesser end's edges begin among them
+    std::vector<std::array<std::uint32_t, 3>> neighbours_; ///< each triangle's convex partners (no_polygon: none)
+    std::vector<std::uint8_t> free_;                       ///< how many of them are in no piece yet
+    std::vector<std::uint32_t> leaves_;                    ///< triangles left with one such partner
+    std::vector<std::uint32_t> partner_;                   ///< each triangle's piece's other triangle, or no_polygon
 };
 
 /// The walls of `bl` (its cells in both variants, a skillion's walls and each wall's windows) into `b`, flagged

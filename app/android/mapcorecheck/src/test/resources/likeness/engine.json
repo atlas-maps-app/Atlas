@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "29",
+  "version": "30",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -496,6 +496,21 @@
           "board grey": "77b0d7f26d75d60f7807ef870e563de1aa6d85cd6e714e2050c8d625ff6353a6",
           "board wet": "4803e0a84829036dbe5730ba1f0ab37f47db851cdd48f3baa3830bf6a071e166",
           "board night": "4d8f709785bc5ca5eb53a9d9f0b581389574cb46a960330c29ba0156e211c396"
+        }
+      }
+    },
+    "30": {
+      "note": "Step 4, the buildings (palette-shapes): every n-gon of a building (a flat top, a skillion's, a mansard's top, a deck) drawn as convex pieces, earcut's triangles paired along a shared edge into quads whose fourth edge is outlined (prim_flag::outline_last), with the plain box for Atlas's guesses off (FRAME_PLAIN_ROOFS, which no frame here sets). All eight frames changed at the roofs' edges alone, where a polygon's strokes overlap at its corners and blend in another order: the home's at 145 to 196 pixels (0.006 to 0.008 %), the board's at 2,951 to 3,469 (0.11 to 0.13 %), each by 1 or 2 levels but for at most 54 a frame (the largest 29) where a stroke and the face beside it meet at a near tie. With the pairing switched off, the branch drew version 29's eight frames pixel for pixel.",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "55aa904de52edecc7980df355354545cada71cbfb3cb6428840e3a31490774a7",
+          "home grey": "e5fa6428c105286e492b30291312d40f11733dae1ea12d6e3685e7d2f8cce6e7",
+          "home wet": "348d9a9a842c4000959d0f06ffa6e9703ff9cc336b2a3c808b3b7a5d132fa859",
+          "home night": "8400357ca91b15f0d8f68de82764c1237ac835565ed6f14e3765172ac64ec73e",
+          "board sunny": "8e0e759605d191918c6e49c0cd4da58366ec2e452a2629b6f17d7a3ad085f4cc",
+          "board grey": "221fcc44ed5d9fe17fc375a62c79786ef8beb7982ff5f958bc3537dc75ca881d",
+          "board wet": "453afaaf7df645b443bb41f2889fb7ec6b7e218669ff88fd9175e9ac399b0a1c",
+          "board night": "63d466befcc48a3426f2fc243a854d18bebbc9c6c0b23aded45d08f9a4cae2c9"
         }
       }
     }

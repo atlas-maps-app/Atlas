@@ -130,6 +130,8 @@ public:
     /// A strs column: null, or the list's string indexes (resolve them with `strings`).
     [[nodiscard]] std::optional<std::span<const std::uint32_t>> string_list(std::uint8_t slot,
                                                                             std::size_t i) const noexcept;
+    /// Whether a strs column's list holds `s` (none where it is null).
+    [[nodiscard]] bool list_holds(std::uint8_t slot, std::size_t i, std::string_view s) const noexcept;
     /// A value column (null when absent).
     [[nodiscard]] Value value(std::uint8_t slot, std::size_t i) const noexcept;
 

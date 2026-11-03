@@ -373,9 +373,8 @@ void mansard(Builder& b, const Building& bl, std::uint16_t variant) {
     top(b, ins, h, PrimKind::mansard_top, variant, b.sample++, bl.v.roof_rgb, bl.v.roof_slot);
 }
 
-} // namespace
-
-void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
+/// The roof by its shape (_draw_building's).
+void shaped(Builder& b, const Building& bl, std::uint16_t variant) {
     const std::span<const V2> poly = bl.poly;
     const std::size_t n = poly.size();
     const double h = bl.h;
@@ -433,6 +432,28 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
         top(b, poly, h, PrimKind::top, variant, b.sample++, bl.v.roof_rgb,
             static_cast<std::uint16_t>(style::flat_roof_slot(bl.v.roof_slot, bl.id)));
     }
+}
+
+/// The plain box's flat top in a guessed roof's place, at the roof's top (its walls reach it while the guesses are off:
+/// ShapeGuess::box_wall), as a flat roof's (its slot the flat roofs' mid grey where the roof's colour is a guess), lit
+/// by a sample of its own after the roof's.
+void plain_top(Builder& b, const Building& bl, std::uint16_t variant) {
+    top(b, bl.poly, bl.h, PrimKind::plain_top, variant, b.sample++, bl.v.roof_rgb,
+        static_cast<std::uint16_t>(style::flat_roof_slot(bl.v.roof_slot, bl.id)));
+}
+
+} // namespace
+
+void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
+    // a guessed shape's faces are drawn while the user's palette keeps Atlas's guesses, the plain box's top after them
+    // while it has them off (the frame's FRAME_PLAIN_ROOFS)
+    b.shape = bl.guessed_shape ? ShapeGuess::guessed : ShapeGuess::any;
+    shaped(b, bl, variant);
+    if (bl.guessed_shape) {
+        b.shape = ShapeGuess::plain;
+        plain_top(b, bl, variant);
+    }
+    b.shape = ShapeGuess::any;
 }
 
 } // namespace atlas::geometry

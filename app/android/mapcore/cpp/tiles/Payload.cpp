@@ -135,6 +135,11 @@ std::optional<std::span<const std::uint32_t>> Layer::string_list(std::uint8_t sl
     return c.refs.subspan(c.offsets[i], c.offsets[i + 1] - c.offsets[i]);
 }
 
+bool Layer::list_holds(std::uint8_t slot, std::size_t i, std::string_view s) const noexcept {
+    const auto list = string_list(slot, i);
+    return list && std::ranges::any_of(*list, [&](std::uint32_t k) { return k < strings.size() && strings[k] == s; });
+}
+
 Value Layer::value(std::uint8_t slot, std::size_t i) const noexcept {
     const Column& c = columns[slot];
     if (!c.present) return {};

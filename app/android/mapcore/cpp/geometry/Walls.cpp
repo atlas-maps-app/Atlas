@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <unordered_map>
 
 namespace atlas::geometry {
@@ -43,6 +44,7 @@ std::string_view name_of(PrimKind kind) noexcept {
     case PrimKind::cabin_roof: return "cabin_roof";
     case PrimKind::band: return "band";
     case PrimKind::corner_board: return "corner_board";
+    case PrimKind::plain_top: return "plain_top";
     }
     return "?";
 }
@@ -72,6 +74,7 @@ struct Slots {
     std::uint8_t no_win;
     std::uint8_t year;
     std::uint8_t rmat_draw;
+    std::uint8_t guessed;
 };
 
 template <class Columns>
@@ -96,7 +99,8 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "kind"),
             tl::slot_of(c, "no_win"),
             tl::slot_of(c, "year"),
-            tl::slot_of(c, "rmat_draw")};
+            tl::slot_of(c, "rmat_draw"),
+            tl::slot_of(c, "guessed")};
 }
 
 constexpr Slots record_slots = slots_in(tl::building::columns);
@@ -129,6 +133,7 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
     v.year = l.nullable_integer(s.year, i).value_or(0); // amsterdam.py: yr = b['year'] or 0
     v.rmat_draw = l.string(s.rmat_draw, i);
+    v.shape_guessed = l.list_holds(s.guessed, i, tl::building::guessed_roof_shape);
     return v;
 }
 
@@ -206,7 +211,8 @@ std::uint16_t stroke_of(PrimKind kind) noexcept {
     case PrimKind::mansard: return prim_flag::stroke_fine; // gable_roof's and mansard's stroke-width=".25"
     case PrimKind::top:
     case PrimKind::skillion:
-    case PrimKind::mansard_top: return prim_flag::stroke_wide; // the flat tops' and the skillion's ".45"
+    case PrimKind::mansard_top:
+    case PrimKind::plain_top: return prim_flag::stroke_wide;   // the flat tops' and the skillion's ".45"
     case PrimKind::cabin_roof: return prim_flag::stroke_cabin; // draw_houseboat's #2A2C30 ".4"
     case PrimKind::cell:
     case PrimKind::skillion_wall:
@@ -225,8 +231,21 @@ double kit_eaves_of(const Values& v, std::optional<double> eaves) noexcept {
     return eaves && (is(v.roof, "gabled") || is(v.roof, "hipped")) ? *eaves : 0.0;
 }
 
+/// earcut's run and the plan as it takes it, as triangulate makes them, kept for the next n-gon (made anew for each,
+/// earcut took twice the time)
+struct Builder::Earcut {
+    using Ring = std::vector<std::array<double, 2>>;
+    mapbox::detail::Earcut<std::uint32_t> run;
+    std::vector<Ring> rings = std::vector<Ring>(1); ///< one ring, the plan's
+};
+
+Builder::Builder(TileBuildings& o) : out(o), earcut_(std::make_unique<Earcut>()) {}
+
+Builder::~Builder() = default;
+
 std::uint32_t Builder::face(const Face& f) {
     out.faces.push_back(f);
+    if (f.shape == ShapeGuess::any) out.faces.back().shape = shape;
     return static_cast<std::uint32_t>(out.faces.size() - 1);
 }
 
@@ -281,7 +300,15 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
                  .item = item,
                  .kind = kind,
                  .flags = static_cast<std::uint16_t>(flags | stroke_of(kind))};
-    triangulate(plan, triangles_);
+    // triangulate(plan, triangles_), in the memory earcut kept from the n-gon before
+    triangles_.clear();
+    if (plan.size() >= 3) {
+        std::vector<std::array<double, 2>>& points = earcut_->rings[0];
+        points.clear();
+        for (const V2& p : plan) points.push_back({p.x, p.z});
+        earcut_->run(earcut_->rings);
+        triangles_.swap(earcut_->run.indices);
+    }
     // an edge of a triangle lies on the ring where its two corners follow each other there, but for points between
     // them that no triangle uses (earcut drops a ring's duplicate and collinear points: the edge runs over them)
     const std::size_t n = poly.ring.size();
@@ -295,22 +322,140 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
         return false;
     };
     const auto on_ring = [&](std::uint32_t u, std::uint32_t v) { return follows(u, v) || follows(v, u); };
-    for (std::size_t t = 0; t + 2 < triangles_.size(); t += 3) {
-        const std::uint32_t i = triangles_[t];
-        const std::uint32_t j = triangles_[t + 1];
-        const std::uint32_t k = triangles_[t + 2];
-        const V3& a = poly.ring[i];
-        const V3& b = poly.ring[j];
-        const V3& c = poly.ring[k];
-        std::uint32_t outline = 0;
-        if (on_ring(i, j)) outline |= prim_flag::outline;
-        if (on_ring(j, k)) outline |= std::uint32_t{prim_flag::outline} << 1U;
-        if (on_ring(k, i)) outline |= std::uint32_t{prim_flag::outline} << 2U;
-        out.plain.push_back({.p = {a, b, c, c},
+    const auto t = static_cast<std::uint32_t>(triangles_.size() / 3);
+    const auto corner = [&](std::uint32_t tri, std::uint32_t k) {
+        return triangles_[(3 * std::size_t{tri}) + (k % 3)];
+    };
+    const auto third = [&](std::uint32_t tri, std::uint32_t u, std::uint32_t v) {
+        for (std::uint32_t k = 0; k < 2; ++k) {
+            if (corner(tri, k) != u && corner(tri, k) != v) return corner(tri, k);
+        }
+        return corner(tri, 2);
+    };
+    const auto has = [&](std::uint32_t tri, std::uint32_t v) {
+        return corner(tri, 0) == v || corner(tri, 1) == v || corner(tri, 2) == v;
+    };
+    // two triangles sharing an edge make one piece where their quad is convex: their third corners on either side of
+    // the edge, and its ends on either side of the line through those (in plan: the n-gon lies in one plane)
+    const auto turn = [&](std::uint32_t o, std::uint32_t a, std::uint32_t b) {
+        return ((plan[a].x - plan[o].x) * (plan[b].z - plan[o].z)) -
+               ((plan[b].x - plan[o].x) * (plan[a].z - plan[o].z));
+    };
+    const auto apart = [](double x, double y) { return (x > 0.0 && y < 0.0) || (x < 0.0 && y > 0.0); };
+    const auto convex = [&](std::uint32_t u, std::uint32_t v, std::uint32_t a, std::uint32_t b) {
+        const std::uint32_t r = third(a, u, v);
+        const std::uint32_t s = third(b, u, v);
+        return apart(turn(u, v, r), turn(u, v, s)) && apart(turn(r, s, u), turn(r, s, v));
+    };
+    partner_.assign(t, no_polygon);
+    if (t == 2) {
+        // two triangles are one piece where they share an edge (two corners: sharing three, they meet no edge's ends
+        // apart) and make a convex quad, as for more
+        std::array<std::uint32_t, 3> shared{};
+        std::uint32_t m = 0;
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            if (has(1, corner(0, k))) shared.at(m++) = corner(0, k);
+        }
+        if (m == 2 && convex(std::min(shared[0], shared[1]), std::max(shared[0], shared[1]), 0, 1)) {
+            partner_[0] = 1;
+            partner_[1] = 0;
+        }
+    } else if (t > 2) {
+        // the triangles' edges in the order of their ends, then of their triangle: by the lesser end (counted into
+        // place, which keeps the triangles' order), then by the other within each (by insertion, which keeps it too)
+        edges_.clear();
+        for (std::uint32_t tri = 0; tri < t; ++tri) {
+            for (std::uint32_t k = 0; k < 3; ++k) {
+                const std::uint32_t u = corner(tri, k);
+                const std::uint32_t v = corner(tri, k + 1);
+                edges_.emplace_back((std::uint64_t{std::min(u, v)} << 32U) | std::max(u, v), tri);
+            }
+        }
+        starts_.assign(n + 1, 0);
+        for (const auto& e : edges_) ++starts_[static_cast<std::size_t>(e.first >> 32U) + 1];
+        for (std::size_t u = 1; u <= n; ++u) starts_[u] += starts_[u - 1];
+        sorted_.resize(edges_.size());
+        for (const auto& e : edges_) sorted_[starts_[static_cast<std::size_t>(e.first >> 32U)]++] = e;
+        for (std::size_t i = 1; i < sorted_.size(); ++i) {
+            const auto e = sorted_[i];
+            std::size_t j = i;
+            for (; j > 0 && sorted_[j - 1].first > e.first; --j) sorted_[j] = sorted_[j - 1];
+            sorted_[j] = e;
+        }
+        neighbours_.assign(t, {no_polygon, no_polygon, no_polygon});
+        free_.assign(t, 0);
+        for (std::size_t e = 0; e < sorted_.size();) {
+            std::size_t end = e + 1;
+            while (end < sorted_.size() && sorted_[end].first == sorted_[e].first) ++end;
+            if (end - e == 2) {
+                const std::uint32_t a = sorted_[e].second;
+                const std::uint32_t b = sorted_[e + 1].second;
+                if (convex(static_cast<std::uint32_t>(sorted_[e].first >> 32U),
+                           static_cast<std::uint32_t>(sorted_[e].first), a, b)) {
+                    neighbours_[a].at(free_[a]++) = b;
+                    neighbours_[b].at(free_[b]++) = a;
+                }
+            }
+            e = end;
+        }
+        // paired leaves first (the triangles of a ring are a tree by the edges they share: so as many pairs as it
+        // holds)
+        leaves_.clear();
+        for (std::uint32_t tri = 0; tri < t; ++tri) {
+            if (free_[tri] == 1) leaves_.push_back(tri);
+        }
+        const auto join = [&](std::uint32_t a, std::uint32_t b) {
+            partner_[a] = b;
+            partner_[b] = a;
+            for (const std::uint32_t x : {a, b}) {
+                for (const std::uint32_t y : neighbours_[x]) {
+                    if (y != no_polygon && partner_[y] == no_polygon && --free_[y] == 1) leaves_.push_back(y);
+                }
+            }
+        };
+        const auto first_free = [&](std::uint32_t a) {
+            for (const std::uint32_t b : neighbours_[a]) {
+                if (b != no_polygon && partner_[b] == no_polygon) return b;
+            }
+            return no_polygon;
+        };
+        const auto drain = [&] {
+            while (!leaves_.empty()) {
+                const std::uint32_t a = leaves_.back();
+                leaves_.pop_back();
+                if (partner_[a] == no_polygon && free_[a] == 1) join(a, first_free(a));
+            }
+        };
+        drain();
+        for (std::uint32_t a = 0; a < t; ++a) {
+            if (partner_[a] != no_polygon || first_free(a) == no_polygon) continue;
+            join(a, first_free(a));
+            drain();
+        }
+    }
+    // the pieces in the triangles' order, a pair's at its first triangle a: a triangle (its corners 0, 1, 2), or the
+    // quad (p, s, q, r), (p, q, r) being a's corners from the edge p q it shares with b and s b's third corner, whose
+    // fan (p, s, q), (p, q, r) fills b, then a
+    for (std::uint32_t a = 0; a < t; ++a) {
+        const std::uint32_t b = partner_[a];
+        if (b != no_polygon && b < a) continue;
+        std::array<std::uint32_t, 4> c{corner(a, 0), corner(a, 1), corner(a, 2), corner(a, 2)};
+        std::uint32_t m = 3;
+        if (b != no_polygon) {
+            std::uint32_t k = 0;
+            while (k < 2 && !(has(b, corner(a, k)) && has(b, corner(a, k + 1)))) ++k;
+            c = {corner(a, k), third(b, corner(a, k), corner(a, k + 1)), corner(a, k + 1), corner(a, k + 2)};
+            m = 4;
+        }
+        std::uint32_t bits = prim_flag::polygon | (m == 3 ? prim_flag::triangle : 0U);
+        for (std::uint32_t e = 0; e < m; ++e) {
+            if (!on_ring(c.at(e), c.at((e + 1) % m))) continue;
+            bits |= e == 3 ? std::uint32_t{prim_flag::outline_last} : std::uint32_t{prim_flag::outline} << e;
+        }
+        out.plain.push_back({.p = {poly.ring[c[0]], poly.ring[c[1]], poly.ring[c[2]], poly.ring[c[3]]},
                              .kind = kind,
                              .cell = cell,
-                             .flags = static_cast<std::uint16_t>(poly.flags | prim_flag::triangle | prim_flag::polygon |
-                                                                 static_cast<std::uint16_t>(outline)),
+                             .flags = static_cast<std::uint16_t>(poly.flags | static_cast<std::uint16_t>(bits)),
                              .face = face,
                              .sample = sun,
                              .item = item,
@@ -402,12 +547,15 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         const V3 nrm = vnorm({ez, 0.0, -ex});
         const auto edge = static_cast<std::uint32_t>(i);
         // vdot(nrm, vsub(cam.C, ((a + bb) / 2, (y0 + wall_top) / 2))) > 0: the wall faces the eye
+        // a guessed roof's building's wall reaches the roof's top while the guesses are off (the plain box's)
         const std::uint32_t face = b.face({.base = bl.v.wall_rgb,
                                            .normal = nrm,
                                            .test = {(a.x + bb.x) / 2, (y0 + wall_top) / 2, (a.z + bb.z) / 2},
                                            .lit = Lit::sun,
                                            .facing = true,
-                                           .slot = bl.v.wall_slot});
+                                           .slot = bl.v.wall_slot,
+                                           .shape = bl.guessed_shape ? ShapeGuess::box_wall : ShapeGuess::any,
+                                           .top = bl.guessed_shape ? bl.h : 0.0});
         // the kit's details this wall has: its boards' lines where it takes two boards or more (`range(1, nb)`), its
         // corner boards where it is over 1 m long, the shadow of its eaves (|e · u| / max(elen, 1e-6) > 0.7 along
         // the ridge); its cells' leads under theirs
@@ -504,7 +652,16 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
             if (pm::max(ta, tb) > wall_top + 0.05) {
                 const std::array<V3, 4> q{V3{a.x, wall_top, a.z}, V3{bb.x, wall_top, bb.z}, V3{bb.x, tb, bb.z},
                                           V3{a.x, ta, a.z}};
-                b.edged(q, PrimKind::skillion_wall, static_cast<std::uint16_t>(variant | prim_flag::any), face,
+                // a guessed slope's wall up to it is the shape's: the wall's face as one of its own, drawn while the
+                // guesses are on
+                std::uint32_t up = face;
+                if (bl.guessed_shape) {
+                    Face shaped = b.out.faces[face];
+                    shaped.shape = ShapeGuess::guessed;
+                    shaped.top = 0.0;
+                    up = b.face(shaped);
+                }
+                b.edged(q, PrimKind::skillion_wall, static_cast<std::uint16_t>(variant | prim_flag::any), up,
                         b.sample++, Builder::slot(b.near_slot++), Builder::slot(b.far_slot++),
                         {.edge = edge, .part = 0});
             }
@@ -657,6 +814,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             if (is(bl.roof, "quadruple_saltbox")) bl.roof = "hipped"; // closest shape this renderer draws
             bl.rh = in_set(bl.roof, pitched) && bl.v.roof_h != 0.0 ? bl.v.roof_h : 0.0;
             bl.wall_top = bl.h - bl.rh;
+            bl.guessed_shape = bl.v.shape_guessed && bl.rh != 0.0;
             bl.skillion = is(bl.roof, "skillion") && bl.rh != 0.0;
             if (bl.skillion) {
                 bl.dirv = roof_dir(bl.v.direction.value_or(std::string_view{}), bl.poly);

@@ -74,13 +74,14 @@ enum class Kind : std::uint8_t {
     quay_band = 17,    ///< a piece of a tall quay wall in sun (TONE, water deeper than 2 m)
     crown = 18,        ///< a tree's crown: 3/4 up the tree, moved toward the sun by the crown's radius
     band = 19,         ///< a kit's stucco ground floor on a wall: its middle, 0.2 m out, half its height up
+    plain_top = 20,    ///< the plain box's flat top in a guessed roof's place, seen from above, 0.05 m above it
 };
 
 /// The kinds' names, for logs and tests.
 [[nodiscard]] const char* name_of(Kind kind) noexcept;
 
 /// The number of kinds.
-inline constexpr std::size_t kinds = 20;
+inline constexpr std::size_t kinds = 21;
 
 /// No face: a sample tested whatever the sun (flat tops, crowns).
 inline constexpr std::uint32_t no_face = 0xFFFF'FFFFU;
@@ -178,6 +179,9 @@ struct Mirror {
     bool across = false; ///< orient == 'across'
     bool boat = false;   ///< building == 'houseboat'
     bool part = false;   ///< 'building:part' in its tags
+    /// The loader guessed its roof's shape: while the user's palette has Atlas's guesses off, the plain box mirrors in
+    /// its place (walls up to h, no gable).
+    bool shape_guessed = false;
 };
 
 /// A bridge's deck over the water (waterLayer's decks): a bridge road (its centreline, half width plus 0.8 m) or a

@@ -2,7 +2,7 @@
 // stage reads (shaders/building/building.slangh) and its twin reads back, for one tile at one level. One range a tile:
 //   - the primitives, 4 uint4 each (corners c0-c3 as floats relative to the tile's south-west corner, each with a word:
 //     the face, the sun sample, the item and flags, the slots), the edged ones (a wall as one cell, a skillion's wall,
-//     a houseboat's walls) then the plain ones (roof faces, n-gons' triangles);
+//     a houseboat's walls) then the plain ones (roof faces, n-gons' pieces);
 //   - the near cells, two words each (two a uint4): the wall's primitive in the edged list, and its place on the wall
 //     with the wall's columns and rows (building_cell_prim cuts the cell from its wall);
 //   - the windowed walls, a uint4 each (shaders/building/windows.slangh's BuildingWindowWall: its wall's primitive in
@@ -40,8 +40,8 @@ struct Theme;
 
 namespace atlas::passes {
 
-/// An n-gon the frame fills as triangles and the twin emits whole, as the port's face() gets it: its ring's points in
-/// BuildingTile::ring_points, and its triangles among the plain primitives.
+/// An n-gon the frame fills as pieces (triangles, two of them as a convex quad) and the twin emits whole, as the port's
+/// face() gets it: its ring's points in BuildingTile::ring_points, and its pieces among the plain primitives.
 struct BuildingRing {
     std::uint32_t first = 0;  ///< its first point
     std::uint32_t points = 0; ///< how many
@@ -194,8 +194,8 @@ struct BuildingTile {
     /// houseboat's or cabin's wall: in the wall's material, which a building asked about takes its flat colour on).
     std::vector<std::uint16_t> face_items;
     std::vector<std::uint8_t> face_walls;
-    /// The n-gons, in their triangles' order, and their rings' points relative to the tile's corner (x, y, z each, the
-    /// floats the heap holds of the triangles' corners).
+    /// The n-gons, in their pieces' order, and their rings' points relative to the tile's corner (x, y, z each, the
+    /// floats the heap holds of the pieces' corners).
     std::vector<BuildingRing> rings;
     std::vector<float> ring_points;
     /// Each item's building (its own OSM id, or a part's outline's where the part names one), and its owner: bit 0 a

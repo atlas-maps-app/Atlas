@@ -645,7 +645,7 @@ namespace {
         put(v);
     }
     k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
-                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U);
+                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U) | (f.plain_roofs ? 64U : 0U);
     k.bits[n++] = f.left_out;
     return k;
 }
@@ -695,6 +695,7 @@ bool Ground::decide(const frame::FrameState& state) {
     f.light = state.theme.sun_vector;
     f.park_sun = !f.night && f.light[1] > 0.05 && !f.out(style::camera_part::park_shadows);
     f.planted = state.palette == nullptr || !state.palette->has(style::palette_flag::no_guesses);
+    f.plain_roofs = !f.planted;
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
     f.tile_plates.clear();
