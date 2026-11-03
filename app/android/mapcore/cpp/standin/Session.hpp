@@ -89,10 +89,13 @@ public:
                                                                            vk::SurfaceKHR surface, vk::Extent2D wanted,
                                                                            const gpu::Output* old, gpu::Depth depth,
                                                                            gpu::Compression compression);
-    /// Tells the display the frames come at `fps` a second (ANativeWindow_setFrameRate, FIXED_SOURCE: the display may
-    /// run at a multiple, and faster under the finger); false where it cannot.
-    virtual bool set_frame_rate(float fps) {
+    /// Tells the display the frames come at `fps` a second (ANativeWindow_setFrameRate): with fixed-source
+    /// compatibility (`fixed_source`) as the content's own rate, so that the display may run at a multiple and faster
+    /// under the finger; else with the default, the app's wish alone, which turns the touch boost off while the window
+    /// is on the display. False where it cannot.
+    virtual bool set_frame_rate(float fps, bool fixed_source) {
         (void)fps;
+        (void)fixed_source;
         return false;
     }
 };
@@ -173,8 +176,12 @@ public:
     /// The map moves, or has come to rest (the frame loop's word): the window is told its frames come at 120 a second
     /// while it moves, so that the display runs at 120 Hz where it has it, and at 60 at rest (SessionWindow's
     /// set_frame_rate; ENGINE.md gain 11). Told at once and only on a change, and a window attached is told as it
-    /// stands.
+    /// stands; without the Fast refresh, nothing is told.
     void set_moving(bool moving);
+    /// The Map look's Fast refresh (on until it is set): on, the window is told 120 while the map moves and 60 at
+    /// rest, with fixed-source compatibility (set_moving); off, 60 with default compatibility whether the map moves or
+    /// not, the vote of alphas up to 27. A change tells the window again at once; the output is untouched.
+    void set_fast_refresh(bool on);
 
     /// Switches VK bench's stand-in on (mode 1) or off (0) and its configuration (bench_flag's `flags`); "" or why it
     /// could not. Mode 0, whatever configuration it names, lets go of the renderer and of anything of 10 bits (the
@@ -303,6 +310,9 @@ private:
     void leave_ten_bits();
     /// Everything of the window goes, each in its stage: the renderer, the output, the colour stage, the surface.
     void release_window();
+    /// Tells the window its frames' rate as the map and the Fast refresh stand (set_moving, set_fast_refresh); whether
+    /// it could be told.
+    bool tell_frame_rate();
     /// Reads Android's profiles behind the profiles stage, once a device, never inside the colour stage.
     void read_profiles();
     /// The facts' colour as the output made it (`colour:`), or in the colour stage their deepest one.
@@ -355,6 +365,7 @@ private:
     bool noise_lost_ = false;         // a device was lost making the noise fields on the GPU: the CPU's this session
     bool frame_rate_ = false;         // the window can be told its frames' rate (set_frame_rate)
     bool moving_ = false;             // the map moves (set_moving): the window told 120 frames a second, else 60
+    bool fast_refresh_ = true;        // the Map look's Fast refresh (set_fast_refresh)
     bool first_frames_saved_ = false; // the cache written back after the session's first 120 frames
     double first_pipelines_ms_ = -1;  // this launch's first pipelines (-1 until the stand-in draws)
     std::uint32_t first_pipelines_ = 0;

@@ -165,7 +165,7 @@ public:
     [[nodiscard]] gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& instance) override {
         return gpu::make_android_surface(instance, window_.get());
     }
-    bool set_frame_rate(float fps) override { return window_.set_frame_rate(fps); }
+    bool set_frame_rate(float fps, bool fixed_source) override { return window_.set_frame_rate(fps, fixed_source); }
 
 private:
     platform::Window window_;
@@ -458,6 +458,14 @@ public:
     /// Whether the driver lets an app make the swapchain's images without its compression: the switch's off acts only
     /// there. Any thread: read as the core starts (a device made again after a loss is the same driver's).
     [[nodiscard]] bool compression_switch() const noexcept { return compression_switch_; }
+
+    /// The Map look's Fast refresh: on (until it is set), the window's frames are said to come at 120 a second while
+    /// the map moves and at 60 at rest, with fixed-source compatibility; off, at 60 with default compatibility
+    /// throughout, the vote of alphas up to 27 (Session::set_fast_refresh, ENGINE.md gain 11). Said again at once on
+    /// the render thread; the swapchain is untouched, and no frame is asked for.
+    void fast_refresh(bool on) {
+        on_session([this, on] { session_->set_fast_refresh(on); });
+    }
 
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
@@ -892,6 +900,10 @@ void native_set_pacing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean o
 
 void native_set_compression(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
     if (Core* core = core_of(handle); core != nullptr) core->compression(on == JNI_TRUE);
+}
+
+void native_set_fast_refresh(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->fast_refresh(on == JNI_TRUE);
 }
 
 jboolean native_compression_switch(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
@@ -1501,8 +1513,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 54>& methods() {
-    static const std::array<JNINativeMethod, 54> table{{
+const std::array<JNINativeMethod, 55>& methods() {
+    static const std::array<JNINativeMethod, 55> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1525,6 +1537,7 @@ const std::array<JNINativeMethod, 54>& methods() {
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
         method("setCompression", "(JZ)V", fn(&native_set_compression)),
         method("compressionSwitch", "(J)Z", fn(&native_compression_switch)),
+        method("setFastRefresh", "(JZ)V", fn(&native_set_fast_refresh)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),

@@ -171,6 +171,9 @@ int draw(standin::Session& session, int n) {
 }
 
 constexpr std::uint32_t pills = standin::bench_flag::pills;
+
+/// The frame rates a window was told, each with its compatibility (test::OffscreenWindow::rates).
+using Rates = std::vector<std::string>;
 constexpr std::uint32_t ten = standin::bench_flag::ten_bit;
 
 /// Whether the host's Vulkan opens the façade's start (a device that presents): else the test skips, saying why (the
@@ -777,7 +780,7 @@ TEST_CASE("the window is told 120 frames a second while the map moves and 60 at 
           "come back as it stands") {
     // ENGINE.md gain 11: the frame loop says the map moves from its second new camera since it last rested, and that
     // it has come to rest (Session::set_moving). A phone's window is told at once (ANativeWindow_setFrameRate, fixed
-    // source), and only on a change.
+    // source, the Map look's Fast refresh on as by default), and only on a change.
     if (!test::open_session()) return;
     const Folder folder("rates");
     const fs::path& dir = folder.path();
@@ -793,22 +796,22 @@ TEST_CASE("the window is told 120 frames a second while the map moves and 60 at 
         const test::OffscreenWindow* w = window.get();
         std::string why;
         ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
-        CHECK(w->rates() == std::vector<int>{60});
+        CHECK(w->rates() == Rates{"60 fixed-source"});
         session.set_moving(true);
         session.set_moving(true); // no change: nothing told
-        CHECK(w->rates() == std::vector<int>{60, 120});
+        CHECK(w->rates() == Rates{"60 fixed-source", "120 fixed-source"});
         session.set_moving(false);
         session.set_moving(false);
-        CHECK(w->rates() == std::vector<int>{60, 120, 60});
+        CHECK(w->rates() == Rates{"60 fixed-source", "120 fixed-source", "60 fixed-source"});
         // A window come back while the map moves is told 120 at once, and 60 at rest.
         session.set_moving(true);
         auto next = std::make_unique<test::OffscreenWindow>();
         next->take_rates();
         const test::OffscreenWindow* n = next.get();
         ATLAS_REQUIRE(session.attach(std::move(next), size, why), why);
-        CHECK(n->rates() == std::vector<int>{120});
+        CHECK(n->rates() == Rates{"120 fixed-source"});
         session.set_moving(false);
-        CHECK(n->rates() == std::vector<int>{120, 60});
+        CHECK(n->rates() == Rates{"120 fixed-source", "60 fixed-source"});
         // One that cannot be told (Android 10's) is asked once, when attached, and no more.
         auto deaf = std::make_unique<test::OffscreenWindow>();
         const test::OffscreenWindow* d = deaf.get();
@@ -817,6 +820,62 @@ TEST_CASE("the window is told 120 frames a second while the map moves and 60 at 
         session.set_moving(false);
         CHECK(d->asked() == 1);
         CHECK(d->rates().empty());
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+    }
+}
+
+TEST_CASE("the Map look's Fast refresh off tells the window 60 with default compatibility whatever the map does, on "
+          "again as the map stands, once a change, the output untouched") {
+    // ENGINE.md gain 11 (the user, 3 November: "Give it a toggle?"): off, the vote of alphas up to 27, so that a rate
+    // switch's step in brightness can be told from the driver's flicker; a change tells the window at once, and its
+    // swapchain is not made again.
+    if (!test::open_session()) return;
+    const Folder folder("fastrefresh");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        session.set_fast_refresh(false); // no window yet: nothing to tell
+        auto window = std::make_unique<test::OffscreenWindow>();
+        window->take_rates();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        ATLAS_REQUIRE(session.bench(1, started->device->facts().choice, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        CHECK(w->rates() == Rates{"60 default"});
+        const int made = w->made();
+        // The map moves and rests: nothing more is told, no 120 and so no hold.
+        session.set_moving(true);
+        session.set_moving(false);
+        session.set_fast_refresh(false); // no change: nothing told
+        CHECK(w->rates() == Rates{"60 default"});
+        // On while the map moves: 120 at once, and the vote follows the move again.
+        session.set_moving(true);
+        session.set_fast_refresh(true);
+        session.set_fast_refresh(true);
+        CHECK(w->rates() == Rates{"60 default", "120 fixed-source"});
+        session.set_moving(false);
+        CHECK(w->rates() == Rates{"60 default", "120 fixed-source", "60 fixed-source"});
+        // Off at rest: 60 with default compatibility at once.
+        session.set_fast_refresh(false);
+        CHECK(w->rates() == Rates{"60 default", "120 fixed-source", "60 fixed-source", "60 default"});
+        // The output was never made again, and the frames go on.
+        CHECK(w->made() == made);
+        CHECK(draw(session, 2) == 2);
+        // A window come back while the map moves, the Fast refresh off: 60 with default compatibility, and 120 once on.
+        session.set_moving(true);
+        auto next = std::make_unique<test::OffscreenWindow>();
+        next->take_rates();
+        const test::OffscreenWindow* n = next.get();
+        ATLAS_REQUIRE(session.attach(std::move(next), size, why), why);
+        CHECK(n->rates() == Rates{"60 default"});
+        session.set_fast_refresh(true);
+        CHECK(n->rates() == Rates{"60 default", "120 fixed-source"});
         const std::vector<std::string> messages = started->instance->messages().take();
         CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
         session.close();

@@ -98,9 +98,13 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
     if (why.empty() && mode_ == 1) why = make_standin();
     if (why.empty()) why = make_output();
     if (why.empty()) {
-        frame_rate_ = window_->set_frame_rate(moving_ ? 120.0F : 60.0F);
+        frame_rate_ = tell_frame_rate();
         std::string_view rate = "not available";
-        if (frame_rate_) rate = moving_ ? "120 fixed-source" : "60 fixed-source";
+        if (frame_rate_ && !fast_refresh_) {
+            rate = "60 default";
+        } else if (frame_rate_) {
+            rate = moving_ ? "120 fixed-source" : "60 fixed-source";
+        }
         log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {} colour {} compression {}",
                   output_->extent().width, output_->extent().height, vk::to_string(output_->transform()),
                   output_->images().size(), output_->transfer_source() ? "yes" : "no", rate,
@@ -139,7 +143,18 @@ void Session::detach() { release_window(); }
 void Session::set_moving(bool moving) {
     if (moving == moving_) return;
     moving_ = moving;
-    if (window_ && frame_rate_) window_->set_frame_rate(moving ? 120.0F : 60.0F);
+    if (fast_refresh_ && window_ && frame_rate_) tell_frame_rate();
+}
+
+void Session::set_fast_refresh(bool on) {
+    if (on == fast_refresh_) return;
+    fast_refresh_ = on;
+    if (window_ && frame_rate_) tell_frame_rate();
+}
+
+bool Session::tell_frame_rate() {
+    // Without the Fast refresh, 60 with default compatibility whether the map moves or not, as alphas up to 27 said.
+    return window_->set_frame_rate(fast_refresh_ && moving_ ? 120.0F : 60.0F, fast_refresh_);
 }
 
 void Session::release_window() {

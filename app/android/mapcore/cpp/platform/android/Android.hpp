@@ -55,10 +55,12 @@ public:
     explicit operator bool() const noexcept { return window_ != nullptr; }
     [[nodiscard]] std::int32_t width() const noexcept;
     [[nodiscard]] std::int32_t height() const noexcept;
-    /// Says the window's frames come at `fps` a second (ANativeWindow_setFrameRate with FIXED_SOURCE compatibility, API
-    /// 30; only windows on the display honour it): the display runs at that rate or a multiple, and at its top rate
-    /// under the finger. At once, buffers or none. Returns false where this Android has no such call.
-    bool set_frame_rate(float fps) const noexcept;
+    /// Says the window's frames come at `fps` a second (ANativeWindow_setFrameRate, API 30; only windows on the
+    /// display honour it). With FIXED_SOURCE compatibility (`fixed_source`) the display runs at that rate or a
+    /// multiple, and at its top rate under the finger; with DEFAULT at the rate SurfaceFlinger picks for it, with no
+    /// touch boost while the window is on the display. At once, buffers or none. Returns false where this Android has
+    /// no such call.
+    bool set_frame_rate(float fps, bool fixed_source) const noexcept;
 
 private:
     ANativeWindow* window_ = nullptr;

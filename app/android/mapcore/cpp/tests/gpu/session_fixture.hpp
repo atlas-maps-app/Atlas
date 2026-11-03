@@ -12,6 +12,7 @@
 #include "standin/Session.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace atlas::test {
@@ -57,13 +58,15 @@ public:
     [[nodiscard]] gpu::Compression compression() const noexcept { return compression_; }
     /// From now on it can be told its frames' rate, as a phone's window on Android 11 or later can, and keeps each.
     void take_rates() noexcept { taking_ = true; }
-    bool set_frame_rate(float fps) override {
+    bool set_frame_rate(float fps, bool fixed_source) override {
         ++asked_;
-        if (taking_) rates_.push_back(static_cast<int>(fps));
+        if (taking_)
+            rates_.push_back(std::to_string(static_cast<int>(fps)) + (fixed_source ? " fixed-source" : " default"));
         return taking_;
     }
-    /// The frame rates it was told, in order (take_rates), and how often it was asked to be told one.
-    [[nodiscard]] const std::vector<int>& rates() const noexcept { return rates_; }
+    /// The frame rates it was told, in order (take_rates), each with its compatibility ("120 fixed-source", "60
+    /// default"), and how often it was asked to be told one.
+    [[nodiscard]] const std::vector<std::string>& rates() const noexcept { return rates_; }
     [[nodiscard]] int asked() const noexcept { return asked_; }
 
 private:
@@ -72,7 +75,7 @@ private:
     int made_ = 0;
     gpu::Compression compression_ = gpu::Compression::driver;
     bool taking_ = false;
-    std::vector<int> rates_;
+    std::vector<std::string> rates_;
     int asked_ = 0;
 };
 

@@ -4,6 +4,7 @@
 #include "platform/android/Android.hpp"
 
 #include <android/api-level.h>
+#include <android/native_window.h>
 #include <android/native_window_jni.h>
 
 #include <ctime>
@@ -45,13 +46,16 @@ Window::~Window() {
 std::int32_t Window::width() const noexcept { return window_ == nullptr ? 0 : ANativeWindow_getWidth(window_); }
 std::int32_t Window::height() const noexcept { return window_ == nullptr ? 0 : ANativeWindow_getHeight(window_); }
 
-bool Window::set_frame_rate(float fps) const noexcept {
+bool Window::set_frame_rate(float fps, bool fixed_source) const noexcept {
     using SetFrameRate = std::int32_t (*)(ANativeWindow*, float, std::int8_t);
     static const auto set = reinterpret_cast<SetFrameRate>(android_symbol("ANativeWindow_setFrameRate")); // NOLINT
     if (set == nullptr || window_ == nullptr) return false;
-    // The content's own rate: SurfaceFlinger runs the display at it or a multiple, and boosts it under the finger as
-    // for any app, which a vote of DEFAULT compatibility turns off for the whole display (ENGINE.md gain 11).
-    return set(window_, fps, 1 /* ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE */) == 0;
+    // FIXED_SOURCE, the content's own rate: SurfaceFlinger runs the display at it or a multiple, and boosts it under
+    // the finger as for any app, which a vote of DEFAULT compatibility turns off for the whole display (ENGINE.md gain
+    // 11).
+    const auto compatibility = fixed_source ? ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+                                            : ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT;
+    return set(window_, fps, static_cast<std::int8_t>(compatibility)) == 0;
 }
 
 } // namespace atlas::platform

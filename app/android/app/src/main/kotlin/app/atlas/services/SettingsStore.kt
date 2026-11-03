@@ -105,10 +105,16 @@ class SettingsStore(private val store: DataStore<Preferences>) {
 
     /** The map's parts a debug build's Look settings leave out ([leftOutParts]). */
     val partsOff: Flow<Set<MapPart>> = data.map { leftOutParts(it) }.distinctUntilChanged()
+
+    /** The Map look's Fast refresh ([fastRefreshOn]). */
+    val fastRefresh: Flow<Boolean> = data.map { fastRefreshOn(it) }.distinctUntilChanged()
 }
 
 /** The map's parts left out (SettingsKeys.MAP_PARTS_OFF, their names); unset, the defaults (MapParts.byDefault). */
 fun leftOutParts(p: Preferences): Set<MapPart> = p[SettingsKeys.MAP_PARTS_OFF]?.let { MapParts.named(it) } ?: MapParts.byDefault
+
+/** Whether the Map look's Fast refresh is on (SettingsKeys.MAP_FAST_REFRESH): on when unset. */
+fun fastRefreshOn(p: Preferences): Boolean = p[SettingsKeys.MAP_FAST_REFRESH] ?: true
 
 /** The shell's settings keys. Features add theirs in their own packages, prefixed with the package name. */
 object SettingsKeys {
@@ -181,6 +187,15 @@ object SettingsKeys {
      * more, so the driver's is the default (the user, 2 November 2026: "Driver's default").
      */
     val MAP_COMPRESSION = booleanPreferencesKey("map.compression")
+
+    /**
+     * The Map look's Fast refresh (on when unset, [fastRefreshOn]): the map's window says its frames come at 120 a second
+     * while the map moves and at 60 at rest, so that a display with a faster mode runs fast while the map moves and the
+     * platform's touch boost stays (MapEngine.fastRefresh); off, at 60 throughout with no touch boost, the vote of alphas
+     * up to 27, so that a rate switch's step in brightness can be told from the driver's flicker (the user, 3 November
+     * 2026: "Give it a toggle?").
+     */
+    val MAP_FAST_REFRESH = booleanPreferencesKey("map.fastRefresh")
 
     /**
      * A debug or bench build's frame timings over the Map home: on when unset, as every such build drew them; off,
