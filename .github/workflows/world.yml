@@ -199,7 +199,7 @@ jobs:
   sources:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 100
     env:
       TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
@@ -209,7 +209,9 @@ jobs:
           set -euo pipefail
           S="$RUNNER_TEMP/sources"
           mkdir -p "$S/naturalearth"
-          get() { curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$2" "$1"; }
+          # a host that does not answer is waited for up to an hour, while the filter runs (osmdata.openstreetmap.de
+          # took no connections from about 12:15 UTC on 3 November, and Belgium's second run's sources failed on it)
+          get() { curl -fsSL --connect-timeout 60 --retry 60 --retry-delay 60 --retry-max-time 3600 --retry-all-errors -A "$USER_AGENT" -o "$2" "$1"; }
           # the land under the blocks (split, EPSG:4326) and under the globe's L4 and L5 (simplified, EPSG:3857)
           get https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip "$S/scratch-land-polygons-split-4326.zip"
           get https://osmdata.openstreetmap.de/download/simplified-land-polygons-complete-3857.zip "$S/scratch-simplified-land-polygons-complete-3857.zip"
