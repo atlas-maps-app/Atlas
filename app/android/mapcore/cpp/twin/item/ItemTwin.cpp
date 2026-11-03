@@ -38,6 +38,7 @@ constexpr Paint black = Paint::colour(0xFF00'0000U);
     case shaders::ITEM_WOOD: return "wood";
     case shaders::ITEM_GANTRY: return "gantry";
     case shaders::ITEM_CONVEYOR: return "conveyor";
+    case shaders::ITEM_ROOF_MAST: return "roof mast";
     default: return "power";
     }
 }
@@ -96,13 +97,14 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
         it.way || kind == shaders::ITEM_GANTRY || kind == shaders::ITEM_CONVEYOR || kind == shaders::ITEM_POWER;
     const std::int32_t owner =
         out_.item({.owner = way ? Owner::way : Owner::node, .id = it.id, .kind = kind_name(kind)});
-    face_records_.assign(shaders::item_face_count(kind, static_cast<std::uint32_t>(w.extra)), shaders::item_nothing());
+    face_records_.assign(shaders::item_job_faces(kind, static_cast<std::uint32_t>(w.extra)), shaders::item_nothing());
     part_records_.assign(shaders::item_part_count(kind), shaders::item_nothing());
     side_records_.assign(shaders::item_side_count(kind), shaders::item_nothing());
     const hlsl::float3 foot = shaders::item_eye(j.place, w.foot);
     const hlsl::float3 end = shaders::item_eye(j.place, hlsl::float3{w.end.x, w.foot.y, w.end.y});
     switch (kind) {
     case shaders::ITEM_TOWER: tower(j, w, it, foot, owner); break;
+    case shaders::ITEM_ROOF_MAST: roof_mast(j, w, it, foot, extra, owner); break;
     case shaders::ITEM_CRANE: crane(j, w, foot, extra, owner); break;
     case shaders::ITEM_MAST: mast(j, w, foot, extra, owner); break;
     case shaders::ITEM_GANTRY:
@@ -177,6 +179,49 @@ void ItemTwin::tower(const shaders::ItemJob& j, const shaders::ItemWords& w, con
         for (std::uint32_t i = 0; i < count; ++i) pts[i] = corner(rec, i);
         out_.at(j.slot + k, objects_, item);
         out_.path({.fill = Paint::gradient(g)}, std::span<const Point>(pts.data(), count), true);
+    }
+}
+
+void ItemTwin::roof_mast(const shaders::ItemJob& j, const shaders::ItemWords& w, const geometry::RegionItem& it,
+                         hlsl::float3 foot, std::span<const std::uint32_t> extra, std::int32_t item) {
+    const shaders::FrameCamera& c = camera_;
+    if ((w.flags & shaders::ITEM_PANELS) == 0U) {
+        const shaders::ItemPoly f = shaders::item_band_poly(c, foot, 0.0F, w.h, j.a);
+        if (f.count != 0) {
+            // its tower's shaft's band, moved to the roof: its gradient's id the shaft's
+            const bool high = (j.flags & shaders::ITEM_JOB_HIGH) != 0U;
+            const std::uint32_t t = shaders::ITEM_TONE_TOWER;
+            const shaders::ItemRecord r =
+                shaders::item_band(c, f, j.slot, 0U, tones_[t], tones_[t + 1], tones_[t + 2], high);
+            face_records_[0] = r;
+            const std::int64_t id = ((it.id % 100000) + 100000) % 100000;
+            const std::array<float, 3> offsets{0.0F, high ? 0.65F : 0.35F, 1.0F};
+            const std::array<std::uint32_t, 3> colours{paint(tones_[t]).argb, paint(tones_[t + 1]).argb,
+                                                       paint(tones_[t + 2]).argb};
+            const std::int32_t g = out_.gradient({.id = std::format("tw{}_0", id),
+                                                  .radial = false,
+                                                  .coords = {0.0F, 0.0F, 1.0F, 0.0F, 0.0F},
+                                                  .units = Units::bounding_box,
+                                                  .offsets = offsets,
+                                                  .colours = colours});
+            const std::uint32_t count = shaders::item_count(r);
+            std::array<Point, 5> pts{};
+            for (std::uint32_t i = 0; i < count; ++i) pts[i] = corner(r, i);
+            out_.at(j.slot, objects_, item);
+            out_.path({.fill = Paint::gradient(g)}, std::span<const Point>(pts.data(), count), true);
+        }
+    }
+    for (std::uint32_t k = 0; k < 3; ++k) {
+        const shaders::ItemBox b = shaders::item_panel(w, foot, k);
+        for (std::uint32_t face = 0; face < 5; ++face) {
+            const shaders::ItemPoly f = shaders::item_box_face(c, b, face);
+            if (f.count == 0) continue;
+            const std::uint32_t at = (k * 5) + face;
+            const std::uint32_t colour = at < extra.size() ? extra[at] : 0U;
+            const shaders::ItemRecord r = shaders::item_face(c, f, j.slot + 1 + at, face, colour, 0.125F);
+            face_records_[1 + at] = r;
+            face_path(r, j.slot + 1 + at, true, objects_, item);
+        }
     }
 }
 

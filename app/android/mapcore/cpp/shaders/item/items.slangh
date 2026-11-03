@@ -1,6 +1,7 @@
 // A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items; CP/geometry/Items.hpp),
-// shared by the GPU (shaders/item/draw.slang's items_cs and its stages) and the twin (CP/twin/item/ItemShader.hpp
-// compiles it as C++ after tree.slangh, whose coverage tests and prints it uses). Not a module.
+// shared by the GPU (shaders/item/draw.slang's items_cs, roof_masts_cs and its stages) and the twin
+// (CP/twin/item/ItemShader.hpp compiles it as C++ after tree.slangh, whose coverage tests and prints it uses). Not a
+// module.
 //
 // An item in the points heap is ITEM_VECTORS uint4: its foot tile-local (a segment's first end) and its kind and flags,
 // a segment's second end (a crane's half sizes), its height and a kind's own value (a turbine's rotor's radius, a
@@ -8,11 +9,16 @@
 // its length (stage T's, in double) or a crane's axes. Per frame the render thread decides in double what the item's depth d decides (passes::item_choice: drawn
 // or not, s = focal / d, the widths and radii as the port prints them, a power line's fade), the moment's colours (the
 // box faces' by their normals, the port's light in binary64) and the parts' order where draw_items sorts them, and
-// writes a job a drawn item; items_cs writes its records as draw_items draws it, every printed value snapped at rest:
+// writes a job a drawn item; items_cs (a roof mast's roof_masts_cs) writes its records as draw_items draws it, every
+// printed value snapped at rest:
 //   - a tower: its bands (the shaft, and a cab's base, glass, gallery and antenna), each a quad facing the camera
 //     (along its right vector, at the band's radius) as Camera.poly cuts it at the near plane and keeps it within 200 px
 //     of the frame, filled with its gradient across its box: mix(col, shadow, .35), col at .35 (.65 where the sun lies
 //     on the camera's right) and mix(col, shadow, .5);
+//   - a roof mast (the app's map's: a communication tower standing on a roof, ENGINE.md step 4, "Towers on roofs"):
+//     its pole from its base, a tower's shaft's band max(0.08, length / 80) m about its axis and 0.25 px at least; its
+//     three panels 120° apart, boxes 0.3 m wide and 0.12 m deep 0.2 m out from the pole, down their length from its
+//     top, each face toward the eye filled and stroked .25 in the shaft's colour lit by its normal;
 //   - a crane: on a quay its portal's legs and sills, its boom out over the water, its machinery house and its
 //     A-frame, and its stays from the A-frame's top to the boom's tip and tail (butt-ended, in the steel unlit); in a
 //     yard its legs, girders, end beams and trolley; boxes along its axes, in draw_items' order of their middles'
@@ -48,6 +54,7 @@ static const uint ITEM_CONVEYOR = 5u;
 static const uint ITEM_POWER = 6u;
 static const uint ITEM_COASTER = 7u; // a 3 m piece of a coaster track
 static const uint ITEM_WOOD = 8u;    // a tree a park or a zoo plants in its woods
+static const uint ITEM_ROOF_MAST = 9u; // a communication tower standing on a roof
 
 /// An item's uint4 in the points heap: three, then a wood's tree's four clumps (geometry::RegionItem::clumps).
 static const uint ITEM_VECTORS = 7u;
@@ -60,6 +67,7 @@ static const uint ITEM_LEGS_B = 2048u;   // and at its second
 static const uint ITEM_YARD = 4096u;     // a crane in a yard (a portal gantry); else on a quay (ship-to-shore)
 static const uint ITEM_WOODEN = 8192u;   // a wooden coaster's piece (its posts every 2.6 m, braced)
 static const uint ITEM_MONO = 16384u;    // a monorail's
+static const uint ITEM_PANELS = 32768u;  // a roof mast's panels alone, on its site's tallest's pole
 
 /// A job's flags: its kind in bits 0 to 3.
 static const uint ITEM_JOB_KIND = 15u;
@@ -98,7 +106,8 @@ static const uint ITEM_TONES = 69u;
 
 /// A job's own words (the frame's extra list, at the job's `extra`): its boxes' colours by their faces' normals (+u, -u,
 /// +v, -v, up; their first colour then their second: the steel, and a mast's floodlights, a crane's machinery or a
-/// conveyor's gallery), then its parts in draw_items' order.
+/// conveyor's gallery), then its parts in draw_items' order. A roof mast's: each panel's faces' (+u, -u, +v, -v, up: u
+/// along it, v out from the pole).
 static const uint ITEM_EXTRA_COLOURS = 10u;
 
 /// A record's kind (its first word's low byte) and flags.
@@ -198,17 +207,26 @@ inline uint item_side_count(uint kind) {
     return 0u;
 }
 
+/// A roof mast's faces (its pole, its three panels' five faces), which a stage of their own writes (roof_masts_cs), so
+/// that items_cs stays at the bytes the user's phone ran (shaders/spirv.budget).
+static const uint ITEM_ROOF_MAST_FACES = 16u;
+
+/// The faces a job reserves: item_face_count's, a roof mast's ITEM_ROOF_MAST_FACES.
+inline uint item_job_faces(uint kind, uint gaps) {
+    return kind == ITEM_ROOF_MAST ? ITEM_ROOF_MAST_FACES : item_face_count(kind, gaps);
+}
+
 /// An item's words.
 struct ItemWords {
     float3 foot; // tile-local metres
     uint kind;
     uint flags;
     float2 end; // a segment's second end, tile-local x and z; a crane's half sizes hu and hv
-    float h;
-    float extra; // a turbine's rotor's radius; a conveyor's gaps between its legs
+    float h;     // its height (a roof mast's above its foot, its base)
+    float extra; // a turbine's rotor's radius; a conveyor's gaps between its legs; a roof mast's panels' length
     float3 sag;  // a power line's conductors' heights at f = .25, .5, .75
-    float2 u;    // a crane's axes (unit, x and z): on a quay w toward the water and q across it; in a yard u and v
-    float2 v;
+    float2 u;    // a crane's axes (unit, x and z): on a quay w toward the water and q across it; in a yard u and v; a
+    float2 v;    // roof mast's first panel's way out from its pole (u) and its pole's length (v.x)
 };
 
 inline ItemWords item_words(uint4 a, uint4 b, uint4 c) {
@@ -731,6 +749,32 @@ inline ItemPoly item_box_face(FrameCamera c, ItemBox b, uint face) {
         return item_poly_none();
     }
     return f;
+}
+
+/// A roof mast's pole's radius, metres: max(0.08, length / 80), as the renders' towers take max(1.2, H / 30).
+inline float item_pole(float h) {
+    return max(0.08f, h / 80.0f);
+}
+
+/// A roof mast's panel `k` (0 to 2, 120° on from its first panel's way u) about its foot `foot` (eye-relative, its
+/// base): a box 0.2 m out from its pole (its site's tallest's, w.v.x long), 0.3 m wide along it (u) and 0.12 m deep
+/// (v, out from the pole), from its top down its panels' length.
+inline ItemBox item_panel(ItemWords w, float3 foot, uint k) {
+    float cs = k == 0u ? 1.0f : -0.5f;
+    float sn = k == 0u ? 0.0f : (k == 1u ? 0.8660254f : -0.8660254f);
+    float2 v = {(w.u.x * cs) - (w.u.y * sn), (w.u.x * sn) + (w.u.y * cs)};
+    float2 u = {-v.y, v.x};
+    float reach = (item_pole(w.v.x) + 0.2f) + 0.06f;
+    float3 c0 = {foot.x + v.x * reach, foot.y, foot.z + v.y * reach};
+    ItemBox b;
+    b.c0 = c0;
+    b.u = u;
+    b.v = v;
+    b.hu = 0.15f;
+    b.hv = 0.06f;
+    b.y0 = w.h - w.extra;
+    b.y1 = w.h;
+    return b;
 }
 
 /// A segment's direction (draw_items' u = (b - a) / Lg, v = (-u.z, u.x)) and length, eye-relative.

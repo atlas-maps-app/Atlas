@@ -18,8 +18,8 @@
 // heap_high_base (2^31: a shader tells a range's buffer by its index alone, shaders/shared/heaps.slangh), so no piece
 // and no range lies across the two. The windows fill the first from its start and go on into the second; the levels
 // fill the second from its end and go on into the first. The points kind (the trees, things and items) lies in the
-// first alone: the compute stages that read it (items_cs, things_cs) are held at the bytes the user's phone ran
-// (shaders/spirv.budget), which reading two buffers would pass.
+// first alone: the compute stages that read it (items_cs, roof_masts_cs, things_cs) are held to their lines in
+// shaders/spirv.budget, items_cs and things_cs at the bytes the user's phone ran, which reading two buffers would pass.
 //
 // Each buffer starts small and doubles when a range placed lies beyond it, within its part of the budget (a level's
 // first range grows the second to its end): the new buffer takes the old one's bytes at the same offsets (so every

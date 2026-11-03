@@ -1,15 +1,15 @@
 // The region items' pipelines (ENGINE.md step 4, "Trees and things"; CP/passes/Items.cpp; shaders/item/items.slangh):
-// before the main pass items_cs decides each drawn item once, a thread a job, from its words in the points heap (set
-// 1, binding 0), the frame's tones and the job's own words (set 2), into its records: the faces (its towers' bands,
-// its boxes' faces, a turbine's tower and blades), the opaque parts (a turbine's blades' strokes and hub, a crane's
-// stays, a mast's glow's core, a power line's tower) and the translucent ones (a turbine's night light, a mast's glow, a
-// power line's conductors and its tower while it fades). items_faces_vs draws each face as its fan and, stroked, its edges' quads,
-// whose fragments items_faces_fs keeps where they lie within the stroke, sample by sample; at true depth the fans draw
-// first, alone, through items_fills_fs, which keeps every sample the rasteriser covers and so keeps the early depth
-// test and a tiler's hidden-surface removal (ENGINE.md gain 18), then the edges alone; items_parts_vs draws a
-// segment or a circle as a box about it whose fragments items_parts_fs keeps where they lie in it; items_sides_fs blends
-// the translucent ones, premultiplied, a conductor's segment leaving the samples its path's earlier segments cover. Every
-// corner at its own depth, with mat's grain.
+// before the main pass items_cs decides each drawn item once (a roof mast roof_masts_cs, a stage of its own), a thread
+// a job, from its words in the points heap (set 1, binding 0), the frame's tones and the job's own words (set 2), into
+// its records: the faces (its towers' bands, its boxes' faces, a turbine's tower and blades), the opaque parts (a
+// turbine's blades' strokes and hub, a crane's stays, a mast's glow's core, a power line's tower) and the translucent
+// ones (a turbine's night light, a mast's glow, a power line's conductors and its tower while it fades). items_faces_vs
+// draws each face as its fan and, stroked, its edges' quads, whose fragments items_faces_fs keeps where they lie within
+// the stroke, sample by sample; at true depth the fans draw first, alone, through items_fills_fs, which keeps every
+// sample the rasteriser covers and so keeps the early depth test and a tiler's hidden-surface removal (ENGINE.md gain
+// 18), then the edges alone; items_parts_vs draws a segment or a circle as a box about it whose fragments
+// items_parts_fs keeps where they lie in it; items_sides_fs blends the translucent ones, premultiplied, a conductor's
+// segment leaving the samples its path's earlier segments cover. Every corner at its own depth, with mat's grain.
 
 #include "shared/frame.slang"
 #include "shared/painter.slang"
@@ -36,8 +36,8 @@
 [[vk::binding(7, 2)]] RWStructuredBuffer<uint4> item_sides_out;
 [[vk::binding(8, 2)]] StructuredBuffer<uint4> item_sides;
 
-/// The push constants: x the jobs (items_cs) or the samples a pixel (the fragment stages); y which of a face's
-/// triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads).
+/// The push constants: x the jobs (items_cs, roof_masts_cs) or the samples a pixel (the fragment stages); y which of a
+/// face's triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads), or roof_masts_cs's first job.
 struct ItemPush {
     uint4 at;
 };
@@ -120,6 +120,33 @@ void tower(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
         uint t = ITEM_TONE_TOWER + 3u * tone;
         put(item_faces_out, j.faces + k,
             item_band(c, f, j.slot + k, k, item_tones[t], item_tones[t + 1u], item_tones[t + 2u], high));
+    }
+}
+
+/// A roof mast: its pole from its base to its top (none where it draws its panels alone), half `j.a` wide, a tower's
+/// shaft's band; its three panels' faces toward the eye, each filled and stroked .25 in the shaft's colour by its
+/// normal.
+void roof_mast(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
+    if ((w.flags & ITEM_PANELS) == 0u) {
+        ItemPoly f = item_band_poly(c, foot, 0.0f, w.h, j.a);
+        if (f.count != 0u) {
+            uint t = ITEM_TONE_TOWER;
+            put(item_faces_out, j.faces,
+                item_band(c, f, j.slot, 0u, item_tones[t], item_tones[t + 1u], item_tones[t + 2u],
+                          (j.flags & ITEM_JOB_HIGH) != 0u));
+        }
+    }
+    for (uint k = 0u; k < 3u; ++k) {
+        ItemBox b = item_panel(w, foot, k);
+        for (uint face = 0u; face < 5u; ++face) {
+            ItemPoly f = item_box_face(c, b, face);
+            if (f.count == 0u) {
+                continue;
+            }
+            uint at = k * 5u + face;
+            put(item_faces_out, j.faces + 1u + at,
+                item_face(c, f, j.slot + 1u + at, face, item_extra[j.extra + at], 0.125f));
+        }
     }
 }
 
@@ -468,6 +495,26 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         wood(c, j, w, foot, points_heap[j.item + 3u], points_heap[j.item + 4u], points_heap[j.item + 5u],
              points_heap[j.item + 6u]);
     }
+}
+
+/// The roof masts' jobs (the frame's last, push.at.x of them from job push.at.y), a thread a job, each its records as
+/// items_cs writes a job's: a stage of their own, so that items_cs stays at the bytes the user's phone ran
+/// (shaders/spirv.budget).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void roof_masts_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = (group.y * ITEM_JOB_ROW + group.x) * 64u + thread.x;
+    if (index >= push.at.x) {
+        return;
+    }
+    uint at = (push.at.y + index) * ITEM_JOB_VECTORS;
+    ItemJob j = item_job(item_jobs[at], item_jobs[at + 1u], item_jobs[at + 2u], item_jobs[at + 3u],
+                         item_jobs[at + 4u]);
+    ItemWords w = item_words(points_heap[j.item], points_heap[j.item + 1u], points_heap[j.item + 2u]);
+    for (uint i = 0u; i < ITEM_ROOF_MAST_FACES; ++i) {
+        put(item_faces_out, j.faces + i, item_nothing());
+    }
+    roof_mast(frame.camera, j, w, item_eye(j.place, w.foot));
 }
 
 // ---- drawing

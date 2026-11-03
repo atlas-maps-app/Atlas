@@ -1,9 +1,11 @@
 // A region's items' pass on the host's Vulkan (ENGINE.md step 4, "Trees and things"; lavapipe): a window built from
 // Overpass's JSON with a tower and its cab, a turbine, a crane on a quay and one in a yard, a lighting mast, a gantry,
-// a goods conveyor and a power line, by day and at night, near and where the power line fades, and the canal ring's
-// towers and masts (ATLAS_TILES_DIR), drawn through the frame builder and the world with that pass alone beside the
-// composite, at rest and moving, at 1x and 4x, at true depth and under the painter switch, against an exact CPU raster
-// of the records the twin says items_cs writes: each face's fan by its edges and its stroke's edges sample by sample
+// a goods conveyor and a power line, by day and at night, near and where the power line fades, the communication towers
+// on the user's roof by Amsterdam's central station and on a flat roof beside it as the app's map's roof masts (a
+// site's lower twin its panels alone) and in engine mode as the renders' towers, and the canal ring's towers and masts
+// (ATLAS_TILES_DIR), drawn through the frame builder and the world with that pass alone beside the composite, at rest
+// and moving, at 1x and 4x, at true depth and under the painter switch, against an exact CPU raster of the records the
+// twin says items_cs and roof_masts_cs write: each face's fan by its edges and its stroke's edges sample by sample
 // (items.slangh's own tests, in float, at the samples' CSS points), each segment's and circle's samples; each sample's
 // depth as the rasteriser interpolates the vertex stage's corners over the triangle it lies in (item_segment_corner's
 // quads for the strokes and segments); each sample ending with the record of the greatest depth (the first drawn where
@@ -48,6 +50,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -76,7 +79,7 @@ struct Scene {
 
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
-                                              std::span<const PackFile> packs, std::uint32_t clear) {
+                                              std::span<const PackFile> packs, std::uint32_t clear, bool grounded) {
     const gpu::Device& device = *session.device;
     Scene s;
     auto output = gpu::Offscreen::create(device, {.width = w, .height = h}, 2);
@@ -91,8 +94,8 @@ struct Scene {
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
                                  static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
                                  static_cast<float>(clear & 0xFFU) / 255.0F, 1.0F};
-    auto builder =
-        frame::FrameBuilder::create(device, cache, std::move(passes), {.overdraw = false, .clear = c, .steps = 0});
+    auto builder = frame::FrameBuilder::create(device, cache, std::move(passes),
+                                               {.overdraw = false, .clear = c, .steps = 0, .grounded = grounded});
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
     s.builder = std::move(*builder);
     auto world = scene::World::create(device, s.builder->passes(), {.workers = 3, .clock = {}});
@@ -138,14 +141,19 @@ using test::items::compare;
 using test::items::Compared;
 
 /// Draws `cam` at 1x and 4x, at rest and moving, at true depth and under the painter switch, at moment `th`, and
-/// holds every pixel to the exact raster of the twin's records; the twin emits at least `least` elements.
-void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
-                  const style::ThemeBlock& th, std::size_t least) {
+/// holds every pixel to the exact raster of the twin's records; the twin emits at least `least` elements. In engine
+/// mode, or as the app's map draws it where `app` says (its builder grounded, its camera not in engine mode: the roof
+/// masts the app's map draws in place of the renders' towers). The counts of its first frame (none without the host's
+/// Vulkan).
+std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam, const std::string& view,
+                                                  std::span<const PackFile> packs, const style::ThemeBlock& th,
+                                                  std::size_t least, bool app = false) {
     auto session = test::open_session();
-    if (!session) return;
+    if (!session) return std::nullopt;
+    std::optional<passes::Items::Counts> first;
     const gpu::Device& device = *session->device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
-    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, cache.has_value(), cache.error().text());
     constexpr std::uint32_t clear = 0x808080;
     for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::x1,
                                                                .route = gpu::Route::renderpass,
@@ -160,12 +168,13 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             for (const bool rest : {true, false}) {
                 style::CameraState c = cam;
                 c.flags = rest ? (c.flags | style::camera_flag::rest) : (c.flags & ~style::camera_flag::rest);
-                auto made = make_scene(*session, *cache, config, c.width_px, c.height_px, packs, clear);
-                ATLAS_REQUIRE(made.has_value());
+                if (app) c.flags &= ~style::camera_flag::engine_mode;
+                auto made = make_scene(*session, *cache, config, c.width_px, c.height_px, packs, clear, app);
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, made.has_value());
                 Scene& s = *made;
                 s.builder->set_painter(painter);
                 const auto pixels = draw(s, c, th);
-                ATLAS_REQUIRE(pixels.has_value());
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, pixels.has_value());
                 CHECK_MESSAGE(s.settled, view << ": the world did not settle");
                 twin::Stream stream;
                 std::vector<sh::ItemRecord> faces;
@@ -174,11 +183,11 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 const frame::FrameState& state = s.builder->state();
                 s.items->emit_records(state, stream, &faces, &parts, &sides);
                 const twin::Decoded decoded = twin::decode(stream.bytes());
-                ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, decoded.error.empty(), decoded.error);
                 const passes::Items::Counts counts = s.items->counts();
-                ATLAS_REQUIRE(state.active_pack != nullptr && state.active_pack->source);
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, state.active_pack != nullptr && state.active_pack->source);
                 const tiles::Style* style = state.active_pack->source->pack.style();
-                ATLAS_REQUIRE(style != nullptr);
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, style != nullptr);
                 const passes::ItemTones tones = passes::item_tones(state.theme, state.block.theme, style->items);
                 const Compared r = compare(*pixels, faces, parts, sides, tones, state.block, config, clear);
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
@@ -193,6 +202,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 CHECK(faces.size() == counts.faces);
                 CHECK(parts.size() == counts.parts);
                 CHECK(sides.size() == counts.sides);
+                // engine mode ranks no roof mast: the renders' set
+                if (!app) CHECK(counts.masts == 0);
+                if (!first) first = counts;
                 CHECK_MESSAGE(r.wrong == 0, name << ": " << r.first);
                 CHECK(static_cast<double>(r.boundary + r.tied) <= 0.01 * static_cast<double>(r.pixels));
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
@@ -200,6 +212,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             }
         }
     }
+    return first;
 }
 
 /// A window about the Westerkerk with a region's items: a tower and its cab, a turbine, a crane on a quay (a bay's
@@ -282,6 +295,46 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
     return file.string();
 }
 
+/// A window about the user's roof by Amsterdam's central station (way 266944822, 21 m, its roof guessed gabled) with
+/// its two communication towers, a flat roof of 21 m beside it with a site of two (the lower one's panels on the
+/// higher's pole) and a third below the roof's height, and a free-standing mast; its pack written to the tests' scratch
+/// folder.
+[[nodiscard]] std::string roofs_window() {
+    const tiles::TileKey k = tiles::tile_of(14, 523'757'074, 49'016'321);
+    const std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
+{"type": "way", "id": 266944822, "tags": {"building": "yes", "building:levels": "7", "building:material": "brick",
+    "height": "21", "roof:material": "grass", "start_date": "1659"}, "geometry": [{"lat": 52.3758717, "lon": 4.9014625},
+    {"lat": 52.3758658, "lon": 4.901474}, {"lat": 52.3757351, "lon": 4.9017294}, {"lat": 52.3755765, "lon": 4.9016467},
+    {"lat": 52.3757322, "lon": 4.90135}, {"lat": 52.3757752, "lon": 4.9014099}, {"lat": 52.3757825, "lon": 4.9013954},
+    {"lat": 52.375788, "lon": 4.901403}, {"lat": 52.3759575, "lon": 4.9010833}, {"lat": 52.3760078, "lon": 4.9011965},
+    {"lat": 52.3758717, "lon": 4.9014625}]},
+{"type": "node", "id": 599590770, "lat": 52.3757074, "lon": 4.9016321, "tags": {"height": "23", "man_made": "tower",
+    "technology": "UMTS", "tower:type": "communication"}},
+{"type": "node", "id": 599612867, "lat": 52.3757071, "lon": 4.9016355, "tags": {"height": "25", "man_made": "tower",
+    "technology": "GSM 1800", "tower:type": "communication"}},
+{"type": "way", "id": 302, "tags": {"building": "yes", "height": "21", "roof:shape": "flat"}, "geometry": [
+    {"lat": 52.3756, "lon": 4.9022}, {"lat": 52.3756, "lon": 4.9025}, {"lat": 52.37578, "lon": 4.9025},
+    {"lat": 52.37578, "lon": 4.9022}, {"lat": 52.3756, "lon": 4.9022}]},
+{"type": "node", "id": 313, "lat": 52.37569, "lon": 4.90235, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "26"}},
+{"type": "node", "id": 314, "lat": 52.37569, "lon": 4.902352, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "23.5"}},
+{"type": "node", "id": 315, "lat": 52.37575, "lon": 4.90245, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "19"}},
+{"type": "node", "id": 318, "lat": 52.3760, "lon": 4.9028, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "30"}}
+]})";
+    const auto built = load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, load::place_of(k));
+    ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "items-roofs";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / "roofs.atlas";
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(built->pack.size()));
+    return file.string();
+}
+
 /// A camera of the map at S1/2 (540 × 1200 px, 412 × 916 dp), looking at (lat, lon).
 [[nodiscard]] style::CameraState camera(double lat, double lon, double bearing, double pitch, double distance) {
     style::CameraState c = test::s1_camera(lat, lon, bearing, pitch, distance);
@@ -308,6 +361,34 @@ TEST_CASE("items: a window's tower, turbine, cranes, mast, gantry, conveyor and 
     check_frames(camera(52.3744, 4.8840, 200.0, 50.0, 380.0), "the window's items at night", packs, test::night(), 30);
     // far: the power line fading (1,200 to 2,000 m), its tower translucent
     check_frames(camera(52.3744, 4.8840, 120.0, 30.0, 1600.0), "the window's items far off", packs, test::sunny(), 3);
+}
+
+TEST_CASE("items: the masts on the user's roof and a flat one beside it on the host's Vulkan, pixel for pixel the "
+          "exact shapes of their twin, and in engine mode the renders' towers") {
+    const std::string path = roofs_window();
+    ATLAS_REQUIRE(!path.empty());
+    const std::array<PackFile, 1> packs{
+        PackFile{.id = "window/" + load::place_of(tiles::tile_of(14, 523'757'074, 49'016'321)).name,
+                 .kind = tiles::PackKind::window,
+                 .path = path}};
+    // the app's map: its roof masts, and of the towers only the free-standing one's shaft
+    const auto masts = [](const std::optional<passes::Items::Counts>& counts) {
+        if (!counts) return;
+        CHECK(counts->masts > 0);
+        CHECK(counts->jobs - counts->masts <= 1);
+    };
+    const style::CameraState east = camera(52.37572, 4.90200, 90.0, 55.0, 150.0);
+    // close by day, looking east along the two roofs: the poles from their roofs, the panels' lit and shaded sides
+    masts(check_frames(east, "the roofs' masts by day", packs, test::sunny(), 30, true));
+    // at night, looking west: no side lit
+    masts(check_frames(camera(52.37572, 4.90200, 270.0, 45.0, 140.0), "the roofs' masts at night", packs, test::night(),
+                       30, true));
+    // far: the poles at their least width, the panels a pixel or less; the free-standing mast's shaft
+    masts(check_frames(camera(52.37572, 4.90190, 120.0, 40.0, 700.0), "the roofs' masts far off", packs, test::sunny(),
+                       30, true));
+    // engine mode, as the renders draw them: the towers' shafts from the ground, the five on the roofs among them
+    const auto towers = check_frames(east, "the roofs' towers in engine mode", packs, test::sunny(), 5);
+    if (towers) CHECK(towers->jobs >= 5);
 }
 
 TEST_CASE("items: a park's coaster tracks and woods' trees on the host's Vulkan, pixel for pixel the exact shapes of "

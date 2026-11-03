@@ -1,12 +1,14 @@
 // Stage T of a region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items): a render tile's
-// towers with a height (S['mtowers']), wind turbines, cranes (with the form stage P derived from the whole scene),
-// masts, gantries and goods conveyors (each segment of their way), a theme park's coaster tracks (each 3 m piece, as
-// coasters.py subdivides them) and the trees a park or a zoo plants in its woods, and power lines (each segment), each
-// an item as draw_items makes it, in its order: the towers, the turbines, the cranes, the masts, the gantries' segments
-// then the conveyors', the coasters' pieces (draw_over's items) then the woods' trees, the power lines' segments. Each
-// its point (the depth draw_items sorts it by), from 5 m (a coaster's piece from 3, a tree from 4), the radius cut
-// where draw_items applies it at one point (a segment's, at either end, and a track's, at every fourth of its points
-// and its last, the pass decides). What each draws the frame decides at its camera (shaders/item/items.slangh).
+// towers with a height (S['mtowers']: a communication tower standing on a roof only in the renders' frames, the app's
+// map drawing it as a roof mast, its pole from the roof and its antennas' panels), wind turbines, cranes (with the form
+// stage P derived from the whole scene), masts, gantries and goods conveyors (each segment of their way), a theme
+// park's coaster tracks (each 3 m piece, as coasters.py subdivides them) and the trees a park or a zoo plants in its
+// woods, and power lines (each segment), each an item as draw_items makes it, in its order: the towers, the turbines,
+// the cranes, the masts, the gantries' segments then the conveyors', the coasters' pieces (draw_over's items) then the
+// woods' trees, the power lines' segments. Each its point (the depth draw_items sorts it by), from 5 m (a coaster's
+// piece from 3, a tree from 4), the radius cut where draw_items applies it at one point (a segment's, at either end,
+// and a track's, at every fourth of its points and its last, the pass decides). What each draws the frame decides at
+// its camera (shaders/item/items.slangh).
 #pragma once
 
 #include "scene/ItemTable.hpp"
@@ -30,14 +32,17 @@ enum class RegionItemKind : std::uint8_t {
     power = 6,
     coaster = 7, ///< a 3 m piece of a coaster track
     wood = 8,    ///< a tree a park or a zoo plants in its woods
+    /// a communication tower standing on a roof as the app's map draws it: its pole and its antennas' panels
+    roof_mast = 9,
 };
 
 /// The region items' list in the renders' gather order (scene::order_of): after the buildings, parts and nodes.
 inline constexpr std::uint32_t region_items_list = 3;
 
 /// draw_items' groups, in its order: the towers, the turbines, the cranes, the masts, the gantries, the conveyors, the
-/// coasters' pieces and the woods' trees (draw_over's items, the trees after every piece), the power lines.
-inline constexpr std::array<std::uint32_t, 9> region_item_group{0, 1, 2, 3, 4, 5, 7, 6, 6};
+/// coasters' pieces and the woods' trees (draw_over's items, the trees after every piece), the power lines; a roof
+/// mast in the towers', at its tower's place.
+inline constexpr std::array<std::uint32_t, 10> region_item_group{0, 1, 2, 3, 4, 5, 7, 6, 6, 0};
 
 /// A wood's tree's place in the coasters' group: after every track's pieces (its index past this).
 inline constexpr std::uint32_t wood_index_base = 1U << 20U;
@@ -48,7 +53,8 @@ inline constexpr double coaster_step = 3.0;
 /// A power line's towers: 38 m, their tops 2 m more (draw_items' `H = 38.0`).
 inline constexpr double power_height = 38.0;
 
-/// One region item: a tower, a turbine, a crane, a mast, or a segment of a gantry, a conveyor or a power line.
+/// One region item: a tower (or a roof mast), a turbine, a crane, a mast, or a segment of a gantry, a conveyor or a
+/// power line.
 struct RegionItem {
     RegionItemKind kind = RegionItemKind::tower;
     std::int64_t id = 0;       ///< its OSM node, or its way: a crane's outline, a gantry, a conveyor, a power line
@@ -58,9 +64,9 @@ struct RegionItem {
     double z = 0;
     double bx = 0; ///< a segment's second end
     double bz = 0;
-    /// Its height: a tower's; a turbine's (100 m unless mapped); a crane's (44 m on a quay, 26 m in a yard unless
-    /// mapped); a mast's (30 m with floodlights, 25 m else); a gantry's (7 m) or a conveyor's (6 m) unless mapped; a
-    /// power line's 38 m.
+    /// Its height: a tower's; a roof mast's above its base; a turbine's (100 m unless mapped); a crane's (44 m on a
+    /// quay, 26 m in a yard unless mapped); a mast's (30 m with floodlights, 25 m else); a gantry's (7 m) or a
+    /// conveyor's (6 m) unless mapped; a power line's 38 m.
     double h = 0;
     double rotor = 0;       ///< a turbine's rotor's radius (a 100 m rotor unless mapped)
     std::uint32_t gaps = 0; ///< a conveyor's segment's gaps between its legs: max(1, int(Lg / 22))
@@ -70,6 +76,15 @@ struct RegionItem {
     bool legs_b = false;    ///< and at its second (its way's last)
     bool way = false;       ///< a crane mapped as a way (its outline)
     bool yard = false;      ///< a crane in a yard, a portal gantry; else a ship-to-shore crane on a quay
+    /// a tower's tower:type=communication
+    bool communication = false;
+    /// A roof mast: the height it stands at (its roof's eaves: the roof hides it below its slope), its panels' length
+    /// down from its top, the length of the pole they stand out from (its site's tallest's), and whether it draws its
+    /// panels alone, on that pole (ux, uz: its first panel's way out from its pole, its site's).
+    double base = 0;
+    double panel = 0;
+    double pole = 0;
+    bool panels_only = false;
     /// A crane's axes (frame metres, unit): a ship-to-shore crane's boom toward the water w and q = (-w[1], w[0]); a
     /// yard gantry's u and v.
     double ux = 0;
@@ -122,11 +137,12 @@ struct RegionItemInput {
 /// The tile's region items.
 [[nodiscard]] TileRegionItems build_region_items(const RegionItemInput& in);
 
-/// The painter slots item `item` takes (the most elements it draws, each its own): a tower's five bands; a turbine's
-/// tower, blades, their stroke, hub and night light; a ship-to-shore crane's twelve boxes' five faces each and its
-/// stays, a yard gantry's nine boxes'; a mast's two boxes' and its two night circles; a gantry's three boxes'; a
-/// conveyor's legs' and gallery's; a coaster's piece's post, braces, underside and top; a wood's tree's four clumps,
-/// their four lit tops and a glint; a power line's tower and conductors.
+/// The painter slots item `item` takes (the most elements it draws, each its own): a tower's five bands; a roof mast's
+/// pole and its three panels' five faces each; a turbine's tower, blades, their stroke, hub and night light; a
+/// ship-to-shore crane's twelve boxes' five faces each and its stays, a yard gantry's nine boxes'; a mast's two boxes'
+/// and its two night circles; a gantry's three boxes'; a conveyor's legs' and gallery's; a coaster's piece's post,
+/// braces, underside and top; a wood's tree's four clumps, their four lit tops and a glint; a power line's tower and
+/// conductors.
 [[nodiscard]] std::uint32_t region_item_slots(const RegionItem& item) noexcept;
 
 } // namespace atlas::geometry

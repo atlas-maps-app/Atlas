@@ -2,9 +2,12 @@
 // (passes/Items.hpp): a window's tower, turbine, cranes, masts, gantry, conveyor and power line as draw_items gathers
 // them (each an item in its order, at its point, from 5 m, the radius cut where it applies at one point; a crane's form
 // on a quay and in a yard, by its outline and by its rail; a segment each of a line, a gantry's legs at its way's ends,
-// a conveyor's gaps, a power line's conductors' heights as the port computes them), every bundled tile's items,
-// item_choice's thresholds and printed values, and the moment's tones. That the items are the port's, the twin's
-// elements against the port's SVG say (L1).
+// a conveyor's gaps, a power line's conductors' heights as the port computes them), the communication towers standing
+// on a roof the renders' alone beside their roof masts, the app's map's (the user's roof by Amsterdam's central
+// station; a roof whose height was guessed, one below its tag, a tower just beside its outline, a site's masts; a bell
+// tower, a free-standing tower and one on its own foot in both), every bundled tile's items, item_choice's thresholds
+// and printed values, and the moment's tones. That the items are the port's, the twin's elements against the port's
+// SVG say (L1).
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
@@ -48,9 +51,11 @@ namespace sh = atlas::shaders;
     return *style;
 }
 
-/// A window's items: built from Overpass's JSON `elements` about the Westerkerk, decoded and gathered.
-[[nodiscard]] gm::TileRegionItems window_items(const std::string& elements) {
-    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+/// A window's items: built from Overpass's JSON `elements` about the Westerkerk (or the point `lat`, `lon`: the grid's
+/// 1e-7°), decoded and gathered.
+[[nodiscard]] gm::TileRegionItems window_items(const std::string& elements, std::int32_t lat = 523'746'000,
+                                               std::int32_t lon = 48'840'000) {
+    const tl::TileKey k = tl::tile_of(14, lat, lon);
     const std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
 )" + elements + "]}";
     const auto built =
@@ -356,6 +361,155 @@ TEST_CASE("items: a window's tower, turbine, cranes, masts, gantry, conveyor and
     }
 }
 
+TEST_CASE("items: communication towers standing on a roof are the app's map's roof masts, their pole from the roof, "
+          "their panels above it, and the renders' towers") {
+    // the user's roof (30 October 2026: "the roof at 52.37570, 4.90164"), way 266944822 as OSM has it: 21 m (BAG), its
+    // roof guessed gabled (start_date 1659, its shortest edge 1 m: 3 m of roof, the eaves at 18 m); two of the
+    // Antenneregister's nodes on it, 0.23 m apart and 5 m within its outline, UMTS at 23 m and GSM 1800 at 25 m
+    const std::string elements = R"({"type": "way", "id": 266944822, "tags": {"building": "yes",
+    "building:levels": "7", "building:material": "brick", "height": "21", "roof:material": "grass",
+    "start_date": "1659"}, "geometry": [{"lat": 52.3758717, "lon": 4.9014625}, {"lat": 52.3758658, "lon": 4.901474},
+    {"lat": 52.3757351, "lon": 4.9017294}, {"lat": 52.3755765, "lon": 4.9016467}, {"lat": 52.3757322, "lon": 4.90135},
+    {"lat": 52.3757752, "lon": 4.9014099}, {"lat": 52.3757825, "lon": 4.9013954}, {"lat": 52.375788, "lon": 4.901403},
+    {"lat": 52.3759575, "lon": 4.9010833}, {"lat": 52.3760078, "lon": 4.9011965},
+    {"lat": 52.3758717, "lon": 4.9014625}]},
+{"type": "node", "id": 599590770, "lat": 52.3757074, "lon": 4.9016321, "tags": {"height": "23", "man_made": "tower",
+    "technology": "UMTS", "tower:type": "communication"}},
+{"type": "node", "id": 599612867, "lat": 52.3757071, "lon": 4.9016355, "tags": {"height": "25", "man_made": "tower",
+    "technology": "GSM 1800", "tower:type": "communication"}},
+{"type": "way", "id": 301, "tags": {"building": "yes"}, "geometry": [{"lat": 52.3770, "lon": 4.9040},
+    {"lat": 52.3770, "lon": 4.9043}, {"lat": 52.37718, "lon": 4.9043}, {"lat": 52.37718, "lon": 4.9040},
+    {"lat": 52.3770, "lon": 4.9040}]},
+{"type": "node", "id": 311, "lat": 52.37709, "lon": 4.90415, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "30"}},
+{"type": "node", "id": 312, "lat": 52.37703, "lon": 4.90405, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "11"}},
+{"type": "way", "id": 302, "tags": {"building": "yes", "height": "21", "roof:shape": "flat"}, "geometry": [
+    {"lat": 52.3770, "lon": 4.9060}, {"lat": 52.3770, "lon": 4.9063}, {"lat": 52.37718, "lon": 4.9063},
+    {"lat": 52.37718, "lon": 4.9060}, {"lat": 52.3770, "lon": 4.9060}]},
+{"type": "node", "id": 313, "lat": 52.37709, "lon": 4.90615, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "19"}},
+{"type": "node", "id": 314, "lat": 52.37709, "lon": 4.9059926, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "26"}},
+{"type": "node", "id": 315, "lat": 52.37715, "lon": 4.90625, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "26"}},
+{"type": "node", "id": 316, "lat": 52.37715, "lon": 4.906252, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "25.8"}},
+{"type": "way", "id": 303, "tags": {"building": "church", "height": "30"}, "geometry": [{"lat": 52.3770, "lon": 4.9080},
+    {"lat": 52.3770, "lon": 4.9083}, {"lat": 52.37718, "lon": 4.9083}, {"lat": 52.37718, "lon": 4.9080},
+    {"lat": 52.3770, "lon": 4.9080}]},
+{"type": "node", "id": 317, "lat": 52.37709, "lon": 4.90815, "tags": {"man_made": "tower", "tower:type": "bell_tower",
+    "height": "45"}},
+{"type": "node", "id": 318, "lat": 52.3780, "lon": 4.9100, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "30"}},
+{"type": "way", "id": 304, "tags": {"building": "yes"}, "geometry": [{"lat": 52.3770, "lon": 4.9100},
+    {"lat": 52.3770, "lon": 4.9100367}, {"lat": 52.3770225, "lon": 4.9100367}, {"lat": 52.3770225, "lon": 4.9100},
+    {"lat": 52.3770, "lon": 4.9100}]},
+{"type": "node", "id": 319, "lat": 52.37701125, "lon": 4.91001835, "tags": {"man_made": "tower",
+    "tower:type": "communication", "height": "26"}})";
+    const gm::TileRegionItems g = window_items(elements, 523'757'074, 49'016'321);
+    REQUIRE(g.items.size() == g.specs.size());
+    // each node's tower and its roof mast, apart
+    std::map<std::int64_t, std::size_t> towers;
+    std::map<std::int64_t, std::size_t> masts;
+    for (std::size_t i = 0; i < g.items.size(); ++i) {
+        (g.items[i].kind == gm::RegionItemKind::roof_mast ? masts : towers)[g.items[i].id] = i;
+    }
+    const auto of = [&](const std::map<std::int64_t, std::size_t>& in, std::int64_t id) -> const gm::RegionItem& {
+        static const gm::RegionItem none;
+        const auto it = in.find(id);
+        ATLAS_REQUIRE_OR_RETURN(none, it != in.end(), std::format("no item of node {}", id));
+        return g.items[it->second];
+    };
+    const auto mast = [&](std::int64_t id) -> const gm::RegionItem& { return of(masts, id); };
+    // every tower as draw_items gathers it, from the ground at its tag's height: one standing on a roof the renders'
+    // alone, the others (the bell tower, the free-standing one and one on a solid of 6 m², its own foot) both frames'
+    const std::array<std::int64_t, 8> on_roofs{599590770, 599612867, 311, 312, 313, 314, 315, 316};
+    CHECK(towers.size() == 11);
+    for (const auto& [id, i] : towers) {
+        CAPTURE(id);
+        const bool roof = std::ranges::find(on_roofs, id) != on_roofs.end();
+        const auto want = static_cast<std::uint16_t>(atlas::scene::item_flag::radius |
+                                                     (roof ? atlas::scene::item_flag::renders : 0U));
+        CHECK(g.items[i].kind == gm::RegionItemKind::tower);
+        CHECK(g.specs[i].flags == want);
+    }
+    CHECK(of(towers, 317).h == 45.0);
+    CHECK(of(towers, 599612867).h == 25.0);
+    CHECK(of(towers, 316).h == 25.8);
+    // a roof mast for each on a roof, the app's map's alone, at its tower's place in the towers' group, its node's; the
+    // site's lower twin of 315 has none
+    CHECK(masts.size() == 7);
+    CHECK(!masts.contains(316));
+    CHECK(g.items.size() == 18);
+    for (const auto& [id, i] : masts) {
+        CAPTURE(id);
+        const atlas::scene::ItemSpec& tower = g.specs[towers.at(id)];
+        CHECK(g.specs[i].flags == atlas::scene::item_flag::app);
+        CHECK(g.specs[i].order == tower.order + 1);
+        CHECK(g.specs[i].owner == tower.owner);
+        CHECK(g.specs[i].min_depth == tower.min_depth);
+    }
+    // the user's roof: one site, the GSM 1800's pole from the eaves to 25 m and its panels 2 m down from its top; the
+    // UMTS's panels alone on that pole, 23 m down to 22 m, turned as the site's
+    const gm::RegionItem& gsm = mast(599612867);
+    const gm::RegionItem& umts = mast(599590770);
+    CHECK(gsm.kind == gm::RegionItemKind::roof_mast);
+    CHECK(umts.kind == gm::RegionItemKind::roof_mast);
+    CHECK(!gsm.panels_only);
+    CHECK(umts.panels_only);
+    CHECK(gsm.base == 18.0);
+    CHECK(gsm.base + gsm.h == 25.0);
+    CHECK(gsm.panel == 2.0);
+    CHECK(umts.base == 18.0);
+    CHECK(umts.base + umts.h == 23.0);
+    CHECK(umts.panel == 1.0);
+    CHECK(umts.x == gsm.x);
+    CHECK(umts.z == gsm.z);
+    CHECK(umts.ux == gsm.ux);
+    CHECK(umts.uz == gsm.uz);
+    CHECK(gsm.pole == gsm.h);
+    CHECK(umts.pole == gsm.h);
+    const double way = atlas::pymath::radians(static_cast<double>(599612867 % 120));
+    CHECK(gsm.ux == atlas::pymath::cos(way));
+    CHECK(gsm.uz == atlas::pymath::sin(way));
+    // nothing below the roof: each pole from the eaves (the roof hides it to its slope), each panel above the ridge
+    for (const gm::RegionItem& it : g.items) {
+        if (it.kind != gm::RegionItemKind::roof_mast) continue;
+        CAPTURE(it.id);
+        const atlas::scene::ItemSpec& spec = g.specs[masts[it.id]];
+        CHECK(spec.y == it.base + (it.h / 2));
+        CHECK(spec.x == it.x);
+        CHECK(spec.z == it.z);
+        CHECK(spec.slots[0] == 16);
+        CHECK(it.pole >= it.h);
+        CHECK(gm::region_item_slots(it) == 16);
+        CHECK(it.h >= 2.0);
+        CHECK(it.panel >= 1.0);
+        CHECK(it.panel <= 2.0);
+    }
+    CHECK(gsm.base + gsm.h - gsm.panel >= 21.0);
+    CHECK(umts.base + umts.h - umts.panel >= 21.0);
+    // a roof whose height the loader guessed (10 m, flat): the tag 30 m reaches 3.5 m above it, the tag 11 m 2 m
+    CHECK(mast(311).kind == gm::RegionItemKind::roof_mast);
+    CHECK(mast(311).base == 10.0);
+    CHECK(mast(311).h == 3.5);
+    CHECK(mast(311).panel == 1.75);
+    CHECK(mast(312).base == 10.0);
+    CHECK(mast(312).h == 2.0);
+    // a mapped roof of 21 m: its tag 19 m below it puts the mast 2 m above it; 26 m is its top; a mast 0.5 m beside
+    // its outline stands 0.5 m within it, across the outline's nearest point
+    CHECK(mast(313).base == 21.0);
+    CHECK(mast(313).h == 2.0);
+    CHECK(mast(314).kind == gm::RegionItemKind::roof_mast);
+    CHECK(mast(314).base + mast(314).h == 26.0);
+    CHECK(mast(315).base + mast(315).h == 26.0);
+    CHECK(!mast(315).panels_only);
+    const double kx = (mast(313).x - mast(311).x) / (4.90615 - 4.90415);
+    CHECK(std::abs(mast(314).x - (mast(313).x + ((4.9060 - 4.90615) * kx) + 0.5)) < 1e-6);
+    CHECK(std::abs(mast(314).z - mast(313).z) < 1e-6);
+}
+
 TEST_CASE("items: the render thread's choices, as draw_items compares and prints them in double") {
     const auto item = [](gm::RegionItemKind kind) {
         gm::RegionItem it;
@@ -405,6 +559,17 @@ TEST_CASE("items: the render thread's choices, as draw_items compares and prints
     CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::crane), 1500.0, focal, false).a == 0.5F);
     // a tower always
     CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::tower), 9000.0, focal, false).drawn);
+    // a roof mast from focal / d of 1.6 (the renders' furniture_px), its pole's half width max(0.08, length / 80) m,
+    // 0.25 px at least: a 30 m one's 0.375 m, a 4 m one's 0.08 m but 0.15 m at 600 m
+    CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::roof_mast), focal / 1.6, focal, false).drawn);
+    CHECK(
+        !atlas::passes::item_choice(item(gm::RegionItemKind::roof_mast), std::nextafter(focal / 1.6, 1e9), focal, false)
+             .drawn);
+    CHECK(atlas::passes::item_choice(item(gm::RegionItemKind::roof_mast), 600.0, focal, false).a == 0.375F);
+    gm::RegionItem short_mast = item(gm::RegionItemKind::roof_mast);
+    short_mast.h = 4.0;
+    CHECK(atlas::passes::item_choice(short_mast, 100.0, focal, false).a == 0.08F);
+    CHECK(atlas::passes::item_choice(short_mast, 600.0, focal, false).a == static_cast<float>(0.25 / (focal / 600.0)));
 }
 
 TEST_CASE("items: the user's palette colours the turbines, the pylons and the woods' greens, today's none") {
@@ -499,28 +664,40 @@ TEST_CASE("items: stage T of every bundled tile") {
         std::vector<std::byte> raw;
         std::vector<std::byte> scratch;
         atlas::Arena arena(4U << 20U, atlas::Growth::grows, "items test");
-        std::array<std::size_t, 7> kinds{};
+        std::array<std::size_t, 10> kinds{};
+        std::size_t renders = 0;
+        std::size_t app = 0;
         for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
             arena.reset();
             auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
             ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
             const gm::TileRegionItems g = gm::build_region_items({.tile = &*tile, .head = head, .kind = 7});
             CHECK(g.items.size() == g.specs.size());
-            for (const gm::RegionItem& it : g.items) {
+            for (std::size_t i = 0; i < g.items.size(); ++i) {
+                const gm::RegionItem& it = g.items[i];
                 ++kinds[static_cast<std::size_t>(it.kind)];
                 if (it.kind == gm::RegionItemKind::tower) CHECK(it.h > 0);
+                if ((g.specs[i].flags & atlas::scene::item_flag::renders) != 0) ++renders;
+                if ((g.specs[i].flags & atlas::scene::item_flag::app) != 0) ++app;
             }
         }
-        MESSAGE(std::format("{}: {} towers, {} turbines, {} cranes, {} masts, {} gantries' and {} conveyors' segments, "
-                            "{} power lines' segments",
-                            name, kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6]));
+        MESSAGE(std::format("{}: {} towers ({} the renders' alone), {} turbines, {} cranes, {} masts, {} gantries' and "
+                            "{} conveyors' segments, {} power lines' segments, {} roof masts (the app's map's alone)",
+                            name, kinds[0], renders, kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6],
+                            kinds[9]));
         if (std::string_view(name) == "grachten") {
-            // the canal ring's 143 towers with a height as regions.py's num() reads it, its crane and its three masts
+            // the canal ring's 143 towers with a height as regions.py's num() reads it, 123 of them communication
+            // towers on its roofs, the renders' alone; the app's map's 92 roof masts in their place, once a site's
+            // twins at one height are one; its crane and its three masts
             CHECK(kinds[0] == 143);
+            CHECK(renders == 123);
+            CHECK(kinds[9] == 92);
+            CHECK(app == 92);
             CHECK(kinds[2] == 1);
             CHECK(kinds[3] == 3);
         } else {
             CHECK(std::ranges::all_of(kinds, [](std::size_t k) { return k == 0; })); // the living map has none
+            CHECK(renders + app == 0);
         }
     }
 }
