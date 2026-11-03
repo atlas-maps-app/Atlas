@@ -649,12 +649,12 @@ private:
             return;
         }
         // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
-        // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync unless the phone
-        // runs warm.
+        // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn).
         cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
-        const bool every_second = cadence_.every_second(
-            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
-        if (!cadence_.due(v.frame_ns, every_second)) {
+        const frame::Cadence::Step step =
+            cadence_.step([this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
+        if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
         }
@@ -683,13 +683,13 @@ private:
             rest();
             return;
         }
-        cadence_.drew(v.frame_ns);
+        cadence_.drew(v.frame_ns, step);
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
         // responsive", and more frames despite more stutter is better there. A debug build's switch paces again
         // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
-        const std::int64_t cadence = cadence_.cadence_ns(every_second);
+        const std::int64_t cadence = cadence_.cadence_ns(step);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
         // The map moves from its second new camera since the loop last rested: the window's frames are said to come at
         // 120 a second until it has rested a second (frame/Motion.hpp), so that the display stays at 120 Hz where it

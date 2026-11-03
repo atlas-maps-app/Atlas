@@ -54,15 +54,15 @@ struct Run {
         if (last != 0) r.gaps.push_back(v - last);
         last = v;
         r.period.push_back(cadence.period_ns());
-        const bool every_second = cadence.every_second([&] {
+        const frame::Cadence::Step step = cadence.step([&] {
             ++r.warm_asked;
             return warm;
         });
-        if (!cadence.due(v, every_second)) {
+        if (!cadence.due(v, step)) {
             v += period;
             continue;
         }
-        cadence.drew(v);
+        cadence.drew(v, step);
         r.drawn.push_back(v);
         const std::int64_t end = v + work[r.shown.size() % work.size()];
         const std::int64_t next = ((end / period) + 1) * period;
@@ -152,7 +152,7 @@ TEST_CASE("cadence: a frame later than two refreshes is never held back") {
     for (std::size_t i = 1; i < s.drawn.size(); ++i) CHECK(s.drawn[i] - s.drawn[i - 1] == 2 * period60);
 }
 
-TEST_CASE("cadence: at 60 Hz every vsync draws, at 90 Hz every vsync unless the phone runs warm") {
+TEST_CASE("cadence: at 60 Hz every vsync draws, at 90 Hz every vsync where the phone is cool") {
     const std::array<std::int64_t, 1> light{5 * ms};
     const Run at60 = run(period60, light, true, true, 50);
     for (std::size_t i = 1; i < at60.drawn.size(); ++i) CHECK(at60.drawn[i] - at60.drawn[i - 1] == period60);
@@ -160,8 +160,47 @@ TEST_CASE("cadence: at 60 Hz every vsync draws, at 90 Hz every vsync unless the 
     const Run cool = run(period90, light, true, false, 50);
     for (std::size_t i = 1; i < cool.drawn.size(); ++i) CHECK(cool.drawn[i] - cool.drawn[i - 1] == period90);
     CHECK(cool.warm_asked > 0);
-    const Run warm = run(period90, light, true, true, 50);
-    for (std::size_t i = 1; i < warm.drawn.size(); ++i) CHECK(warm.drawn[i] - warm.drawn[i - 1] == 2 * period90);
+}
+
+TEST_CASE("cadence: at 90 Hz where the phone runs warm, 60 a second by phase, and a later frame never held") {
+    // Light frames: one vsync and two in turn, every two frames three vsyncs (60 a second), where every second vsync
+    // gave 45 until 3 November.
+    const std::array<std::int64_t, 1> light{5 * ms};
+    const Run warm = run(period90, light, true, true, 60);
+    CHECK(warm.warm_asked > 0);
+    for (std::size_t i = 1; i < warm.drawn.size(); ++i) {
+        const std::int64_t gap = warm.drawn[i] - warm.drawn[i - 1];
+        CHECK((gap == period90 || gap == 2 * period90));
+    }
+    for (std::size_t i = 2; i < warm.drawn.size(); ++i) CHECK(warm.drawn[i] - warm.drawn[i - 2] == 3 * period90);
+    const std::int64_t mean = mean_interval(warm, 2);
+    CHECK(mean >= frame::Cadence::sixtieth_ns - (ms / 10));
+    CHECK(mean <= frame::Cadence::sixtieth_ns + (ms / 10));
+    // Frames about 2 to 22 ms with 1.5 or 3 ms of spread: after one under a period the next comes one vsync on or
+    // two, by the phase; after a longer one at the first vsync after it ends, never later (a frame over a period misses
+    // the next vsync at any step: from 11.1 to 22.2 ms, 45 a second); and no two frames within fewer than three vsyncs
+    // (never more than 60 a second), a later frame moving the phase on from itself, not letting the next ones catch up.
+    constexpr std::array<std::int64_t, 8> halves{-2, 2, 0, -1, 1, -2, 2, 0}; // each frame's offset, in half spreads
+    for (const std::int64_t spread : {3 * ms / 2, 3 * ms}) {
+        CAPTURE(spread);
+        for (std::int64_t centre = 2; centre <= 22; ++centre) {
+            CAPTURE(centre);
+            std::array<std::int64_t, halves.size()> work{};
+            for (std::size_t i = 0; i < work.size(); ++i)
+                work[i] = std::max(ms / 2, (centre * ms) + (halves[i] * spread / 2));
+            const Run r = run(period90, work, true, true, 80);
+            for (std::size_t i = 1; i < r.drawn.size(); ++i) {
+                const std::int64_t w = work[(i - 1) % work.size()];
+                const std::int64_t gap = r.drawn[i] - r.drawn[i - 1];
+                if (w >= period90) {
+                    CHECK(gap == ((w / period90) + 1) * period90);
+                } else {
+                    CHECK((gap == period90 || gap == 2 * period90));
+                }
+                if (i >= 2) CHECK(r.drawn[i] - r.drawn[i - 2] >= 3 * period90);
+            }
+        }
+    }
 }
 
 TEST_CASE("cadence: without frame timelines, the shortest of the last gaps") {
@@ -178,24 +217,33 @@ TEST_CASE("cadence: without frame timelines, the shortest of the last gaps") {
 }
 
 TEST_CASE("cadence: the period follows the display's at once, and gaps across a rest are not the display's") {
+    using Step = frame::Cadence::Step;
     frame::Cadence c;
     CHECK(c.period_ns() == 0);
-    CHECK_FALSE(c.every_second([] { return true; }));
-    CHECK(c.cadence_ns(false) == 0);
-    CHECK(c.due(1'000 * ms, false));
+    CHECK(c.step([] { return true; }) == Step::every);
+    CHECK(c.cadence_ns(Step::every) == 0);
+    CHECK(c.due(1'000 * ms, Step::every));
     std::int64_t v = 1'000 * ms;
     const auto p60 = presents_at(v, period60);
     c.at_vsync(v, p60);
     CHECK(c.period_ns() == period60);
-    CHECK_FALSE(c.every_second([] { return true; }));
-    CHECK(c.cadence_ns(false) == period60);
+    CHECK(c.step([] { return true; }) == Step::every);
+    CHECK(c.cadence_ns(Step::every) == period60);
     // the display goes to 120 Hz: the next vsync's timelines say so
     v += period60;
     const auto p120 = presents_at(v, period120);
     c.at_vsync(v, p120);
     CHECK(c.period_ns() == period120);
-    CHECK(c.every_second([] { return false; }));
-    CHECK(c.cadence_ns(true) == 2 * period120);
+    CHECK(c.step([] { return false; }) == Step::second);
+    CHECK(c.cadence_ns(Step::second) == 2 * period120);
+    // and to 90 Hz: by the phase where the phone runs warm, else every vsync; the pacer's cadence a period, since by
+    // the phase a frame may follow the last at the next vsync
+    v += period120;
+    c.at_vsync(v, presents_at(v, period90));
+    CHECK(c.period_ns() == period90);
+    CHECK(c.step([] { return true; }) == Step::phase);
+    CHECK(c.step([] { return false; }) == Step::every);
+    CHECK(c.cadence_ns(Step::phase) == period90);
     // timelines no display has (60 ms apart), or one timeline: the shortest of the gaps
     frame::Cadence e;
     v = 1'000 * ms;
@@ -217,11 +265,11 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     d.at_vsync((2'000 * ms) + period120, {});
     CHECK(d.period_ns() == period120);
     // the first frame draws at any vsync; the next from two periods less the slack
-    CHECK(d.due(2'000 * ms, true));
-    d.drew(2'000 * ms);
-    CHECK_FALSE(d.due((2'000 * ms) + period120, true));
-    CHECK(d.due((2'000 * ms) + (2 * period120) - frame::Cadence::slack_ns, true));
-    CHECK(d.due((2'000 * ms) + period120, false));
+    CHECK(d.due(2'000 * ms, Step::second));
+    d.drew(2'000 * ms, Step::second);
+    CHECK_FALSE(d.due((2'000 * ms) + period120, Step::second));
+    CHECK(d.due((2'000 * ms) + (2 * period120) - frame::Cadence::slack_ns, Step::second));
+    CHECK(d.due((2'000 * ms) + period120, Step::every));
 }
 
 TEST_CASE("cadence: the headroom read at most once a second, the last number kept, a phone never read cool") {

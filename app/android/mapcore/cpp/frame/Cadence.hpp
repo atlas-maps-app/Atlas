@@ -1,6 +1,7 @@
 // The frame loop's cadence on the display (plan-vector D5.8, ENGINE.md gain 11): at most 60 frames a second, every
-// vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync unless the phone runs warm; a frame that comes later
-// than that is never held back. The display's period is the spacing of the vsync's frame timelines, which
+// vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is cool and 60 a second by phase
+// where it runs warm (one vsync and two in turn, where every second one gave 45 until 3 November); a frame that comes
+// later than that is never held back. The display's period is the spacing of the vsync's frame timelines, which
 // SurfaceFlinger spaces by the app's vsync period (API 33); before API 33, the shortest of the last gaps between the
 // vsyncs the loop received, each a whole number of periods. Until 3 November it was the mean of those gaps: after a
 // frame longer than a refresh the loop's next vsync comes two periods on, so at 120 Hz the mean settled at 11 to 12 ms,
@@ -21,16 +22,22 @@ namespace atlas::frame {
 /// The display's period and the limit of 60 frames a second, from the vsyncs the frame loop receives.
 class Cadence {
 public:
+    /// Which vsyncs may draw: every one, every second one (displays faster than 100 Hz), or by the phase of 60 a second
+    /// (a warm phone at 90 Hz: one vsync and two in turn).
+    enum class Step : std::uint8_t { every, second, phase };
+
     /// The gaps between vsyncs whose shortest is the period where a vsync has no frame timelines to space.
     static constexpr std::size_t window = 16;
     /// A period or a gap outside these is no display's (the loop rested between the vsyncs, or the data is off).
     static constexpr std::int64_t shortest_ns = 4'000'000;
     static constexpr std::int64_t longest_ns = 50'000'000;
     /// Under this period (displays faster than 100 Hz) frames go out every second vsync; under the warm one (90 Hz)
-    /// where the phone runs warm.
+    /// by the phase where the phone runs warm.
     static constexpr std::int64_t fast_ns = 10'000'000;
     static constexpr std::int64_t warm_ns = 14'000'000;
-    /// What a vsync may fall short of two periods after the last one drawn for, and still draw.
+    /// How far apart the phase puts the frames: a sixtieth of a second.
+    static constexpr std::int64_t sixtieth_ns = 16'666'667;
+    /// What a vsync may fall short of the time its frame is due, and still draw.
     static constexpr std::int64_t slack_ns = 2'000'000;
 
     /// A vsync at `frame_ns`, with its frame timelines' expected presentations, earliest first (none before API 33).
@@ -55,27 +62,37 @@ public:
     /// The display's period, ns: 0 until known.
     [[nodiscard]] std::int64_t period_ns() const noexcept { return period_ns_; }
 
-    /// Whether frames go out at most every second vsync: under the fast period, and under the warm one where `warm()`
-    /// says the phone runs warm (asked only there).
+    /// Which vsyncs may draw: every second one under the fast period; under the warm one, by the phase where `warm()`
+    /// says the phone runs warm (asked only there), else every one; every one at slower displays.
     template <class Warm>
-    [[nodiscard]] bool every_second(const Warm& warm) const {
-        if (period_ns_ == 0 || period_ns_ >= warm_ns) return false;
-        return period_ns_ < fast_ns || warm();
+    [[nodiscard]] Step step(const Warm& warm) const {
+        if (period_ns_ == 0 || period_ns_ >= warm_ns) return Step::every;
+        if (period_ns_ < fast_ns) return Step::second;
+        return warm() ? Step::phase : Step::every;
     }
 
-    /// Whether the vsync at `frame_ns` may draw: every vsync may, unless `every_second`; then from two periods after
-    /// the vsync the last frame was drawn for, less the slack.
-    [[nodiscard]] bool due(std::int64_t frame_ns, bool every_second) const noexcept {
-        if (!every_second || drawn_ns_ == 0) return true;
-        return frame_ns - drawn_ns_ >= (2 * period_ns_) - slack_ns;
+    /// Whether the vsync at `frame_ns` may draw at `step`: any vsync at every; from two periods after the vsync the
+    /// last frame was drawn for at second, from the phase's time at phase, each less the slack.
+    [[nodiscard]] bool due(std::int64_t frame_ns, Step step) const noexcept {
+        if (drawn_ns_ == 0 || step == Step::every) return true;
+        if (step == Step::second) return frame_ns - drawn_ns_ >= (2 * period_ns_) - slack_ns;
+        return frame_ns >= phase_ns_ - slack_ns;
     }
 
-    /// A frame was drawn for the vsync at `frame_ns`.
-    void drew(std::int64_t frame_ns) noexcept { drawn_ns_ = frame_ns; }
+    /// A frame was drawn for the vsync at `frame_ns` at `step`. The phase goes a sixtieth of a second on where the
+    /// frame came at the first vsync it allowed, so that frames under a period take one vsync and two in turn; where it
+    /// came a vsync or more later (its frame's work, a rest, or another step), from this frame, so that a later frame
+    /// is never followed by a run of vsyncs.
+    void drew(std::int64_t frame_ns, Step step) noexcept {
+        const bool kept = step == Step::phase && drawn_ns_ != 0 && frame_ns < phase_ns_ + period_ns_ - slack_ns;
+        phase_ns_ = (kept ? phase_ns_ : frame_ns) + sixtieth_ns;
+        drawn_ns_ = frame_ns;
+    }
 
-    /// The cadence the frames keep, ns: two periods where every second vsync draws, else one; 0 while unknown.
-    [[nodiscard]] std::int64_t cadence_ns(bool every_second) const noexcept {
-        return every_second ? 2 * period_ns_ : period_ns_;
+    /// The least spacing of the frames' presentations, ns (gain 15's pacing): two periods where every second vsync
+    /// draws, else one (by the phase a frame may follow the last at the next vsync); 0 while unknown.
+    [[nodiscard]] std::int64_t cadence_ns(Step step) const noexcept {
+        return step == Step::second ? 2 * period_ns_ : period_ns_;
     }
 
 private:
@@ -84,6 +101,7 @@ private:
     std::size_t next_ = 0;
     std::int64_t last_ns_ = 0;
     std::int64_t drawn_ns_ = 0;
+    std::int64_t phase_ns_ = 0; // when the phase lets the next frame draw: a sixtieth of a second after the last one's
     std::int64_t period_ns_ = 0;
 };
 
