@@ -17,7 +17,9 @@ import app.atlas.ui.local.NamedAfterScreen
 import app.atlas.ui.local.SoonScreen
 import app.atlas.ui.mine.AboutScreen
 import app.atlas.ui.mine.DataSourcesScreen
+import app.atlas.ui.mine.ColourMapScreen
 import app.atlas.ui.mine.LayersScreen
+import app.atlas.ui.mine.MapLookScreen
 import app.atlas.ui.mine.MineScreen
 import app.atlas.ui.mine.OnboardingScreen
 import app.atlas.ui.mine.PrivacyScreen
@@ -515,6 +517,27 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = LayersScreen(this, nav)
     }
 
+    /**
+     * The Map look: the presets, the Tone, Atlas's guesses, the bare ground, mapped colours and the user's palettes;
+     * [code] a palette's code handed to Atlas (the QR's link, a shared message), added and taken as the screen opens.
+     */
+    data class MapLook(val code: String? = null) : Dest {
+        override val route get() = Routes.build("maplook", "code" to code)
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = MapLookScreen(this, nav)
+    }
+
+    /** Colour the map: the live map in the palette as it is changed, and the sheet that changes each of its colours. */
+    data object ColourMap : Dest {
+        override val route get() = "colourmap"
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = ColourMapScreen(this, nav)
+    }
+
     /** The weather at a point (null: here) and what it means. */
     data class Weather(val lat: Double? = null, val lon: Double? = null) : Dest {
         override val route get() = Routes.build("weather", "lat" to lat, "lon" to lon)
@@ -735,6 +758,8 @@ sealed interface Dest {
             "about" to { _ -> About },
             "onboarding" to { a -> Onboarding(a.int("step") ?: 0) },
             "layers" to { _ -> Layers },
+            "maplook" to { a -> MapLook(a.str("code")) },
+            "colourmap" to { _ -> ColourMap },
             "weather" to { a -> Weather(a.double("lat"), a.double("lon")) },
             "offline" to { _ -> Offline },
             "regionpicker" to { a -> RegionPicker(a.double("lat"), a.double("lon"), a.str("mode"), a.str("pack")) },

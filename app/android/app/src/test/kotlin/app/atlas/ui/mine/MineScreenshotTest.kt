@@ -34,7 +34,8 @@ import java.time.Duration
 /**
  * Every mine screen, through the real navigation, on the test phone at the Westerkerk: one PNG each to look at beside its
  * board (`cache/pictures/img/<Board>.jpg`): Mine, Offline, Settings, Privacy, DataSources, Satellites, Watch, Weather,
- * Forecast, Overlay (the map's look), Plugs and Charge, Pump, Power, Sources (water) and Welcome.
+ * Forecast, Overlay (the map's layers), Styles (the Map look) and its share sheet, Colour (Colour the map), Plugs and
+ * Charge, Pump, Power, Sources (water) and Welcome.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -350,6 +351,29 @@ class MineScreenshotTest {
     @Test
     fun chargingRouteWithNoCar() {
         chargingRoute("mine_charging_route_nocar", app.atlas.ui.mine.charge.Car(null, 0.8, emptySet())) { app.atlas.ui.mine.charge.TripState.NoCar }
+    }
+
+    /** The Map look board: today's look, the Tone at 100 %, Canal evening saved. */
+    @Test
+    fun mapLook() {
+        show(Dest.MapLook(), MineFixtures.withPalettes(phone(), drawn = false))
+        capture("mine_maplook")
+    }
+
+    /** Its share sheet: Canal evening's name, its QR code and its code. */
+    @Test
+    fun mapLookShare() {
+        show(Dest.MapLook(), MineFixtures.withPalettes(phone(), drawn = false))
+        compose.onNodeWithContentDescription("Share Canal evening").performClick()
+        capture("mine_maplook_share")
+    }
+
+    /** The Colour the map board: Canal evening drawn, its roofs, red tiles picked. */
+    @Test
+    fun colourMap() {
+        show(Dest.ColourMap, MineFixtures.withPalettes(phone(), drawn = true))
+        compose.onNodeWithText("Roofs").performClick()
+        capture("mine_colourmap")
     }
 
     /** The boards are light only, and so are these screens: the dark theme leaves them as their boards. */

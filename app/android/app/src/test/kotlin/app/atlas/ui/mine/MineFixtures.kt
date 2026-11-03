@@ -3,6 +3,10 @@ package app.atlas.ui.mine
 import app.atlas.Services
 import app.atlas.testing.keepFixtureForecast
 import app.atlas.geo.BBox
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteCode
+import app.atlas.mapview.palette.Slot
+import app.atlas.services.SettingsKeys
 import app.atlas.services.RegionLayer
 import app.atlas.tiles.PackDownloader
 import app.atlas.ui.mine.offline.LayerRecord
@@ -12,9 +16,28 @@ import app.atlas.ui.mine.offline.RegionMeta
 import java.io.File
 import java.io.RandomAccessFile
 import java.time.Instant
+import kotlinx.coroutines.runBlocking
 
 /** Regions for the mine screens' tests: real files of the sizes a download would leave (sparse), and fakes for the network. */
 object MineFixtures {
+    /** The Map look board's saved palette: Canal evening, from Today with six colours changed (the Colour board's). */
+    val CANAL_EVENING = Palette(
+        colours = mapOf(
+            Slot.PAPER to 0xD9CBB4, Slot.LAWN to 0x5C7E52, Slot.WATER to 0x35596E, Slot.OLD_BRICK_2 to 0x6A3A2C,
+            Slot.OLD_BRICK_4 to 0x94523F, Slot.RED_TILES to 0x9C4A33,
+        ),
+    )
+
+    /** [s] with Canal evening saved, and the map drawing it where [drawn] (else today's look, as the Map look board has it). */
+    fun withPalettes(s: Services, drawn: Boolean): Services = s.also {
+        runBlocking {
+            it.settings.edit { m ->
+                m[SettingsKeys.MAP_PALETTES] = MapLookModel.textOf(listOf(SavedPalette("Canal evening", PaletteCode.write(CANAL_EVENING))))!!
+                if (drawn) m[SettingsKeys.MAP_PALETTE] = MapLookModel.keep(CANAL_EVENING)!!
+            }
+        }
+    }
+
     /** The canal ring of Amsterdam, around the Westerkerk. */
     val AMSTERDAM = BBox(4.80, 52.33, 4.99, 52.42)
     val HAARLEM = BBox(4.55, 52.33, 4.70, 52.43)

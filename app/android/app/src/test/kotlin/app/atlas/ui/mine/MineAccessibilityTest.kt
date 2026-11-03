@@ -70,6 +70,8 @@ class MineAccessibilityTest {
     @Test fun watch() = check("Watch", Dest.Watch)
     @Test fun weather() = check("Weather", Dest.Weather())
     @Test fun layers() = check("Layers", Dest.Layers)
+    @Test fun mapLook() = check("Map look", Dest.MapLook(), MineFixtures.withPalettes(phone(), drawn = false))
+    @Test fun colourMap() = check("Colour the map", Dest.ColourMap, MineFixtures.withPalettes(phone(), drawn = true))
 
     @Test fun dataSources() {
         val s = phone()

@@ -3,12 +3,14 @@ package app.atlas.nav
 import app.atlas.geo.CoordinateParser
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
+import app.atlas.ui.mine.MapLookModel
 import java.net.URLDecoder
 
 /**
  * Reads what other apps hand Atlas into a back stack: `geo:` URIs (a point, a labelled point, or a search),
- * openstreetmap.org links (a node, way or relation; a marker; a map view; a short link), and shared text holding
- * coordinates, a Plus Code or a map link (anything else shared becomes a search).
+ * openstreetmap.org links (a node, way or relation; a marker; a map view; a short link), a palette's QR code
+ * (`app.atlas:AT1-…`), and shared text holding a palette's code, coordinates, a Plus Code or a map link (anything else
+ * shared becomes a search).
  */
 object Links {
     private val OSM_ELEMENT = Regex("""(?i)(?:openstreetmap|osm)\.org/(node|way|relation)/(\d+)""")
@@ -20,6 +22,7 @@ object Links {
     fun forUri(uri: String): List<Dest>? {
         val u = uri.trim()
         return when {
+            u.startsWith(MapLookModel.LINK, ignoreCase = true) -> palette(u)
             u.startsWith("geo:", ignoreCase = true) -> geo(u)
             u.contains("openstreetmap.org", ignoreCase = true) || u.contains("osm.org", ignoreCase = true) -> osm(u)
             else -> CoordinateParser.parse(u)?.let { point(it, null, null) }
@@ -30,10 +33,18 @@ object Links {
     fun forText(text: String): List<Dest>? {
         val t = text.trim()
         if (t.isEmpty()) return null
+        // a palette shared as its name and code: the Map look, which adds it
+        palette(t)?.let { return it }
         Regex("""(?i)(geo:\S+|https?://\S+)""").find(t)?.let { m -> forUri(m.value)?.let { return it } }
         CoordinateParser.parse(t)?.let { return point(it, null, null) }
         return listOf(Dest.Home(), Dest.Search(t.take(200)))
     }
+
+    /** A palette's code in [text] (the QR's `app.atlas:` link, a shared message): the Map look, handed the text to add. */
+    private fun palette(text: String): List<Dest>? =
+        MapLookModel.codeIn(text)?.let { listOf(Dest.Home(), Dest.MapLook(text.take(MAX_SHARED))) }
+
+    private const val MAX_SHARED = 400
 
     private fun geo(u: String): List<Dest>? {
         val zoom = GEO_ZOOM.find(u)?.groupValues?.get(1)?.toDoubleOrNull()

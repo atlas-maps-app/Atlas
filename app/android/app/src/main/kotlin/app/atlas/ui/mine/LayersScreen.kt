@@ -84,11 +84,12 @@ import java.time.LocalDate
 import kotlin.math.roundToInt
 
 /**
- * The map's look: the real map behind a sheet, so every switch shows at once. Theme chips along the top (auto day and
- * night, day, night); in the sheet the layers (3D buildings, shadows, trees, places, labels, hillshade,
- * contours, transit, cycle routes, hiking, sea marks), the time of light with a scrubber that moves the sun and its
- * shadows, the language of names, and how much of the streets here OpenStreetMap knows (lighting, surfaces, pavements,
- * parking), with the way to fill in the gaps. Choices are the Map's own settings, kept on the phone.
+ * The map's layers: the real map behind a sheet, so every switch shows at once. Theme chips along the top (auto day
+ * and night, day, night); in the sheet the way to the Map look (its presets, colours and switches), the layers (3D
+ * buildings, shadows, trees, places, labels, hillshade, contours, transit, cycle routes, hiking, sea marks), the time of
+ * light with a scrubber that moves the sun and its shadows, the language of names, and how much of the streets here
+ * OpenStreetMap knows (lighting, surfaces, pavements, parking), with the way to fill in the gaps. Choices are the Map's
+ * own settings, kept on the phone.
  */
 @Composable
 fun LayersScreen(args: Dest.Layers, nav: Navigator) {
@@ -104,6 +105,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
+    val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
+    val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
     val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, true).collectAsStateWithLifecycle(true)
     val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
@@ -162,6 +165,15 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
         ) {
             Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).bbox(0xFFD5D8DE, cr(3f)))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // the Map look's own screen (the Settings board's row): its presets, colours and switches, what the map
+                // draws now as its value
+                val palette = remember(paletteCode) { MapLookModel.current(paletteCode) }
+                val saved = remember(savedText) { MapLookModel.savedOf(savedText) }
+                SettingRow(
+                    stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK),
+                    value = paletteLine(palette, saved.getOrNull(MapLookModel.savedIndex(saved, palette))?.name, presetNames()),
+                    onClick = { nav.go(Dest.MapLook()) },
+                )
                 LayerChips(layers) { layer, on ->
                     scope.launch {
                         if (layer == MapLayer.BUILDINGS_3D) settings.set(SettingsKeys.MAP_3D, on)
