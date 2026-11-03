@@ -213,6 +213,11 @@ inline constexpr std::uint64_t buildings = walls | roofs | roof_edges | windows 
                                            kit_details;
 /// The water's light: every effect on the water.
 inline constexpr std::uint64_t water_light = reflections | ripple | glitter | rings | glints | water_streaks;
+/// The buildings' parts Atlas guesses where nothing is mapped, which the map leaves out where the user's palette has
+/// Atlas's guesses off (FrameBuilder): the windows and their depth, a shop floor's glazing, the plinths and cornices,
+/// a church's own windows, the walls' material faces, the hoist beams and a kit's details.
+inline constexpr std::uint64_t guessed = windows | window_depth | shop_glazing | plinths | cornices | church_windows |
+                                         material_faces | hoist_beams | kit_details;
 } // namespace camera_part
 
 /// Whose rules draw the frame (D2): the active pack's profile as its rhead names it (tiles::Profile, Appendix A) plus

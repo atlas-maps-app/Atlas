@@ -153,7 +153,7 @@ void Ground::decide_shadows(const DrawnTile& t, TileDecisions& d) const {
 void Ground::decide_woods(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const {
     const GroundFrame& f = frame_;
     const geo::GroundTile& g = *t.ground;
-    if (!f.park_sun || g.woods.empty()) return;
+    if (!f.park_sun || !f.planted || g.woods.empty()) return;
     if (d.shadow_drawn.empty()) d.shadow_drawn.assign(g.shadows.size(), 0);
     const std::uint32_t first = g.woods_first();
     for (std::uint32_t i = 0; i < g.woods.size(); ++i) {

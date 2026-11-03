@@ -3,8 +3,10 @@ package app.atlas.mapcorecheck.style
 import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.palette.Family
 import app.atlas.mapview.palette.PaletteFlags
 import app.atlas.mapview.palette.Slot
+import app.atlas.rendertiles.compile.BuildingSlots
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -148,6 +150,34 @@ class LayoutTest {
         put("Slot.WOODS.today", Slot.WOODS.today)
         put("Slot.PAPER.today", Slot.PAPER.today)
         put("Slot.QUAY_WALLS.today", Slot.QUAY_WALLS.today)
+        // the walls' and roofs' slots stage P gives buildings, each with its colour today
+        for (slot in Slot.entries.filter { it.family == Family.WALLS || it.family == Family.ROOFS }) {
+            put("Slot.${slot.name}", slot.code)
+            put("Slot.${slot.name}.today", slot.today)
+        }
+        put("BuildingSlots.MAPPED", BuildingSlots.MAPPED.toInt())
+        put("BuildingSlots.GUESSED", BuildingSlots.GUESSED.toInt())
+    }
+
+    @Test
+    fun theCutsBuildingSlotsAreThePalettesWallsAndRoofs() {
+        // the packer's twin of the core's cut gives buildings the slots the palette names, with their colours today
+        fun of(family: Family) = Slot.entries.filter { it.family == family }.map { it.code.toLong() to it.today.toLong() }
+        assertEquals(of(Family.WALLS), BuildingSlots.WALLS)
+        assertEquals(of(Family.ROOFS), BuildingSlots.ROOFS)
+        // a guessed colour goes with its own slot exactly, another with the nearest; a mapped one carries the bit
+        assertEquals(53L, BuildingSlots.nearest(BuildingSlots.WALLS, 0x7E5242))
+        assertEquals(51L, BuildingSlots.nearest(BuildingSlots.WALLS, 0x8E5A46)) // the generic looks' brick
+        assertEquals(87L, BuildingSlots.nearest(BuildingSlots.ROOFS, 0x56585C))
+        val guessed = mapOf("col" to "#8C8A86", "guessed" to mapOf("building:colour" to true))
+        assertEquals(60L, BuildingSlots.wall(guessed, emptyMap(), 0x8E8B88))
+        assertEquals(BuildingSlots.MAPPED or 63L, BuildingSlots.wall(mapOf("col" to "grey"), emptyMap(), 0xBDBAB2))
+        assertEquals(60L, BuildingSlots.roof(guessed, emptyMap(), 0x8E8B88, 60L))
+        // a houseboat's guessed paint goes with no slot, its roof with its walls; its mapped colour with none
+        val boat = mapOf("building" to "houseboat")
+        assertEquals(BuildingSlots.GUESSED, BuildingSlots.wall(guessed, boat, 0x8E8B88))
+        assertEquals(BuildingSlots.GUESSED, BuildingSlots.roof(guessed, boat, 0x8E8B88, BuildingSlots.GUESSED))
+        assertEquals(0L, BuildingSlots.wall(mapOf("col" to "grey"), boat, 0xBDBAB2))
     }
 
     @Test

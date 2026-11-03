@@ -84,6 +84,9 @@ struct Face {
     Lit lit = Lit::sun;
     bool facing = true; ///< tested for facing (a deck and a cabin roof are drawn from either side)
     KitPart kit = KitPart::none;
+    /// The user's palette's slot word its base goes with: its building's wall_slot or roof_slot (0 none, +256 mapped,
+    /// +512 guessed with no slot), and a guessed flat roof's mid grey above them (style::slot_grey_shift)
+    std::uint16_t slot = 0;
 };
 
 /// What a primitive is, as the port draws it.
@@ -419,6 +422,8 @@ struct Values {
     std::optional<std::string_view> orient;
     std::uint32_t wall_rgb = 0;
     std::uint32_t roof_rgb = 0;
+    std::uint16_t wall_slot = 0; ///< the palette's slot the walls go with (0 none, +256 mapped, +512 guessed)
+    std::uint16_t roof_slot = 0; ///< the roof's
     bool relation = false;
     std::optional<std::string_view> btype;
     bool part_tag = false;
@@ -448,6 +453,7 @@ struct Values {
 /// share (the walls' base and top, the roof's shape and height, a skillion's slope).
 struct Building {
     Source source = Source::building;
+    std::int64_t id = 0; ///< its OpenStreetMap id (a guessed flat roof's mid grey goes by it)
     Values v;
     std::vector<V2> poly;
     double h = 0.0;                       ///< the top

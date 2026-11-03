@@ -134,19 +134,35 @@ data class MapOverlays(
 
 /**
  * The building under a point of the map as the core drew it ([id]: the building, an outline or the one a part stands
- * in; [part] the part met, 0 for the outline itself) and where the finger's ray met it ([at]).
+ * in; [part] the part met, 0 for the outline itself), where the finger's ray met it ([at]), and the face it met as the
+ * building's geometry draws it: its roof ([roof]), else a wall (a gable among them); that face's slot word ([slot]: the
+ * tiles' roof_slot or wall_slot, which palette.PaletteFace reads) and its base colour ([rgb], 0xRRGGBB before light).
  */
 @Immutable
-data class MapPick(val id: app.atlas.model.OsmId, val part: Long, val at: LatLon) {
+data class MapPick(
+    val id: app.atlas.model.OsmId,
+    val part: Long,
+    val at: LatLon,
+    val roof: Boolean = false,
+    val slot: Int = 0,
+    val rgb: Int = 0,
+) {
     companion object {
-        /** The core's line of a pick (`MapCore.pick`: "way 123 0 52.3745 4.8838"), or null for none. */
+        /** The core's line of a pick (`MapCore.pick`: "way 123 0 52.3745 4.8838 roof 80 11425599"), or null for none. */
         fun parse(line: String): MapPick? {
             val parts = line.split(' ')
-            if (parts.size != 5) return null
+            if (parts.size != 8) return null
             val id = app.atlas.model.OsmId.parse(parts[0] + " " + parts[1]) ?: return null
             val lat = parts[3].toDoubleOrNull() ?: return null
             val lon = parts[4].toDoubleOrNull() ?: return null
-            return MapPick(id, parts[2].toLongOrNull() ?: 0L, LatLon(lat, lon))
+            val roof = when (parts[5]) {
+                "roof" -> true
+                "wall" -> false
+                else -> return null
+            }
+            val slot = parts[6].toIntOrNull() ?: return null
+            val rgb = parts[7].toIntOrNull() ?: return null
+            return MapPick(id, parts[2].toLongOrNull() ?: 0L, LatLon(lat, lon), roof, slot, rgb)
         }
     }
 }

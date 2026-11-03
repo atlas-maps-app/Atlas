@@ -25,6 +25,7 @@ LIBRARIES = [
     ('OkHttp and Okio (Square)', 'Apache License 2.0'),
     ('SQLite, as bundled by androidx.sqlite', 'Public domain (SQLite); Apache License 2.0 (androidx.sqlite)'),
     ('BRouter (offline routing, vendored as Java source in the :brouter module)', 'MIT License, © 2019 BRouter contributors'),
+    ('The QR Code generator library (Project Nayuki, io.nayuki:qrcodegen): the palette\'s QR code', 'MIT License, © Project Nayuki'),
 ]
 
 

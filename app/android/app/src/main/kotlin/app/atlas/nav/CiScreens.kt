@@ -74,6 +74,8 @@ object CiScreens {
         "onboarding2" to Dest.Onboarding(1),
         "onboarding3" to Dest.Onboarding(2),
         "layers" to Dest.Layers,
+        "maplook" to Dest.MapLook(),
+        "colourmap" to Dest.ColourMap,
         "weather" to Dest.Weather(),
         "offline" to Dest.Offline,
         "regionpicker" to Dest.RegionPicker(LAT, LON),

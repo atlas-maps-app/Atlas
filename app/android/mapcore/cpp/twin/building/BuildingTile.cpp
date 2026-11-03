@@ -332,7 +332,10 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
             out[layout.faces_at + (i * 2)] = shape;
             out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
         }
-        layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z}, .base = face.base, .flags = flags};
+        layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z},
+                            .base = face.base,
+                            .flags = flags,
+                            .slot = face.slot};
     }
     // the hoist beams, their ends and their gables' faces in the heap's floats
     layout.beams.clear();
@@ -426,12 +429,35 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     return out;
 }
 
-void building_colours(const shaders::Theme& theme, std::span<const BuildingLight> lights,
-                      std::span<std::uint32_t> out) {
+std::uint32_t painted(const style::PaletteBlock* palette, const BuildingLight& light) noexcept {
+    if (palette == nullptr) return light.base;
+    const std::uint32_t code = light.slot & 0xFFU;
+    const bool mapped = (light.slot & style::slot_mapped) != 0U;
+    // Atlas's guesses off: a guessed colour, with a slot or without one (a houseboat's paint), is the plain clay
+    if (!mapped && (code != 0U || (light.slot & style::slot_guessed) != 0U) &&
+        palette->has(style::palette_flag::no_guesses)) {
+        return style::plain_building;
+    }
+    if (code == 0U) return light.base;
+    const std::uint32_t own = style::building_today(code);
+    // the flat greys: a guessed flat roof moves from its own slot's colour to its mid grey's, the user's or today's
+    if (const std::uint32_t grey = (light.slot >> style::slot_grey_shift) & 3U;
+        grey != 0U && palette->has(style::palette_flag::flat_greys)) {
+        const std::size_t g = style::palette_slot::flat_grey_1 + grey - 1U;
+        const std::uint32_t to = palette->colour(g).value_or(style::building_today(static_cast<std::uint32_t>(g)));
+        return to == own ? light.base : style::palette_move(light.base, own, to);
+    }
+    if (mapped && !palette->has(style::palette_flag::mapped_follow)) return light.base;
+    return style::paint(palette, code, own, light.base);
+}
+
+void building_colours(const shaders::Theme& theme, const style::PaletteBlock* palette,
+                      std::span<const BuildingLight> lights, std::span<std::uint32_t> out) {
     for (std::size_t i = 0; i < lights.size() && (2 * i) + 1 < out.size(); ++i) {
         const BuildingLight& l = lights[i];
-        const shaders::double3 rgb{static_cast<double>((l.base >> 16U) & 0xFFU),
-                                   static_cast<double>((l.base >> 8U) & 0xFFU), static_cast<double>(l.base & 0xFFU)};
+        const std::uint32_t base = painted(palette, l);
+        const shaders::double3 rgb{static_cast<double>((base >> 16U) & 0xFFU),
+                                   static_cast<double>((base >> 8U) & 0xFFU), static_cast<double>(base & 0xFFU)};
         const shaders::double3 n{l.normal[0], l.normal[1], l.normal[2]};
         const hlsl::uint3 lit = shaders::light_bytes(theme, rgb, n, true);
         const hlsl::uint3 unlit = shaders::light_bytes(theme, rgb, n, false);
@@ -440,15 +466,17 @@ void building_colours(const shaders::Theme& theme, std::span<const BuildingLight
     }
 }
 
-void building_reveals(const shaders::Theme& theme, std::span<const BuildingLight> lights,
-                      std::span<const std::uint32_t> faces, std::span<std::uint32_t> out) {
+void building_reveals(const shaders::Theme& theme, const style::PaletteBlock* palette,
+                      std::span<const BuildingLight> lights, std::span<const std::uint32_t> faces,
+                      std::span<std::uint32_t> out) {
     for (std::size_t i = 0; i < faces.size() && i < out.size(); ++i) {
         if (faces[i] >= lights.size()) continue;
         const BuildingLight& l = lights[faces[i]];
+        const std::uint32_t base = painted(palette, l);
         // amsterdam.py: tohex(light(th, mulc(base, 0.55), nrm, False))
-        const shaders::double3 rgb{static_cast<double>((l.base >> 16U) & 0xFFU) * 0.55,
-                                   static_cast<double>((l.base >> 8U) & 0xFFU) * 0.55,
-                                   static_cast<double>(l.base & 0xFFU) * 0.55};
+        const shaders::double3 rgb{static_cast<double>((base >> 16U) & 0xFFU) * 0.55,
+                                   static_cast<double>((base >> 8U) & 0xFFU) * 0.55,
+                                   static_cast<double>(base & 0xFFU) * 0.55};
         const shaders::double3 n{l.normal[0], l.normal[1], l.normal[2]};
         const hlsl::uint3 c = shaders::light_bytes(theme, rgb, n, false);
         out[i] = c.x | (c.y << 8U) | (c.z << 16U);

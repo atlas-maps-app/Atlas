@@ -133,7 +133,7 @@ fun MineScreen(args: Dest.Mine, nav: Navigator) {
                 // The buttons: a grid of three at y 676, 8 px apart, its columns as the board's grid sizes them.
                 val labels = listOf(
                     Triple("ui.settings", R.string.mine_btn_settings, Dest.Settings()),
-                    Triple("ui.layers.2", R.string.mine_btn_look, Dest.Layers),
+                    Triple("ui.layers.2", R.string.mine_btn_look, Dest.MapLook()),
                     Triple("ui.watch", R.string.mine_btn_watch, Dest.Watch),
                     Triple("local.gps", R.string.mine_btn_satellites, Dest.Satellites),
                     Triple("ui.privacy.2", R.string.mine_btn_privacy, Dest.Privacy),

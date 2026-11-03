@@ -1,10 +1,14 @@
 // What a press on the map points at (scene/Pick.hpp), on the bundled grachten pack when ATLAS_TILES_DIR names a folder
 // holding it: a ray straight down onto a building's footprint names that building, met at its lid, its height down from
-// the eye; a ray slanting steeply onto a point just under its top names it too, met at its lid where the ray reaches
-// its height; one slanting low from 60 m beside it meets a wall nearer than its middle; a ray that does not fall to
-// the street, or falls where no pack reaches, meets none; and a pick sees only the packs it is given.
+// the eye, and its roof, in its roof's slot word (a flat top's with its mid grey) and colour; a ray slanting steeply
+// onto a point just under its top names it too, met at its lid where the ray reaches its height; one slanting low from
+// 60 m beside it meets a wall nearer than its middle, and one level from there 1 m over its base a wall, in its slot
+// word and colour; a ray that does not fall to the street, or falls where no pack reaches, meets none; and a pick sees
+// only the packs it is given. Without a pack, which a wall met stands in the walls' colour as geometry/Roofs.cpp draws
+// it: below the eaves, a gable end's triangle and a skillion's wall below its slope.
 #include "base/arena.hpp"
 #include "scene/Pick.hpp"
+#include "style/Palette.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Store.hpp"
@@ -13,8 +17,13 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace atlas;
@@ -23,14 +32,24 @@ namespace {
 
 namespace tl = atlas::tiles;
 
-/// A building of the pack to aim at: its id, a point inside its footprint (frame metres), its base and its top.
+/// The buildings' and parts' slot words (their colours' slots in the user's palette).
+constexpr std::uint8_t wall_slot = tl::slot_of(tl::building::columns, "wall_slot");
+constexpr std::uint8_t roof_slot = tl::slot_of(tl::building::columns, "roof_slot");
+
+/// A building of the pack to aim at: its id, a point inside its footprint (frame metres), its base and its top, and
+/// what a ray meeting its lid finds: its roof's slot word (a flat top's with its mid grey) and colour.
 struct Target {
     std::int64_t id = 0;
     double x = 0.0;
     double z = 0.0;
     double base = 0.0;
     double top = 0.0;
+    std::uint32_t lid_slot = 0;
+    std::uint32_t roof_rgb = 0;
 };
+
+/// The roof shapes geometry/Walls.cpp gives their height: any other, or one without a height, a flat top.
+constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 
 /// Whether (x, z) lies in the ring (even-odd).
 bool inside(const std::vector<std::array<double, 2>>& ring, double x, double z) {
@@ -64,6 +83,8 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
     // Buildings to aim at: outlines drawn as themselves, at least 8 m tall, each with a point well inside it (the
     // middle of its ring's box, where that lies inside, 2 m in from every edge).
     std::vector<Target> targets;
+    // every building's and part's wall: its slot word and colour, by its id
+    std::unordered_map<std::int64_t, std::pair<std::uint32_t, std::uint32_t>> walls_of;
     {
         tl::Zstd zstd;
         tl::TileDecoder decoder;
@@ -74,6 +95,14 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
             arena.reset();
             auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
             ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+            for (const tl::LayerId layer : {tl::LayerId::building, tl::LayerId::part}) {
+                const tl::Layer* w = tile->layer(layer);
+                for (std::uint32_t i = 0; w != nullptr && i < w->count; ++i) {
+                    walls_of[w->integer(tl::building::id, i)] = {
+                        static_cast<std::uint32_t>(w->integer(wall_slot, i)) & 0x3FFU,
+                        static_cast<std::uint32_t>(w->integer(tl::building::wall_rgb, i)) & 0xFF'FFFFU};
+                }
+            }
             const tl::Layer* l = tile->layer(tl::LayerId::building);
             if (l == nullptr) continue;
             for (std::uint32_t i = 0; i < l->count && targets.size() < 40; ++i) {
@@ -101,28 +130,41 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
                 for (const double dx : {-2.0, 2.0}) deep = deep && inside(ring, cx + dx, cz);
                 for (const double dz : {-2.0, 2.0}) deep = deep && inside(ring, cx, cz + dz);
                 if (!deep) continue;
-                targets.push_back({.id = l->integer(tl::building::id, i),
-                                   .x = cx,
-                                   .z = cz,
-                                   .base = l->decimal(tl::building::min, i).value_or(0.0),
-                                   .top = *top});
+                const std::int64_t id = l->integer(tl::building::id, i);
+                std::string_view shape = l->string(tl::building::roof, i).value_or(std::string_view{});
+                if (shape == "quadruple_saltbox") shape = "hipped";
+                const bool flat = std::ranges::find(pitched, shape) == pitched.end() ||
+                                  l->decimal(tl::building::roof_h, i).value_or(0.0) == 0.0;
+                const auto roof_word = static_cast<std::uint32_t>(l->integer(roof_slot, i)) & 0x3FFU;
+                targets.push_back(
+                    {.id = id,
+                     .x = cx,
+                     .z = cz,
+                     .base = l->decimal(tl::building::min, i).value_or(0.0),
+                     .top = *top,
+                     .lid_slot = flat ? style::flat_roof_slot(roof_word, id) : roof_word,
+                     .roof_rgb = static_cast<std::uint32_t>(l->integer(tl::building::roof_rgb, i)) & 0xFF'FFFFU});
             }
-            if (targets.size() >= 40) break;
         }
     }
     ATLAS_REQUIRE(targets.size() >= 10);
     std::size_t named = 0;
     std::size_t slanted = 0;
+    std::size_t walls = 0;
+    std::size_t known = 0;
     for (const Target& t : targets) {
         // straight down from 300 m: the building itself (or one standing over its middle), met at a lid
         const view::Vec3 above{t.x, 300.0, t.z};
         const auto down = scene::pick_building(store, packs, ground, above, {0.0, -1.0, 0.0});
         REQUIRE(down.has_value());
         CHECK(down->distance <= 300.0 - t.top + 1e-6);
+        CHECK(down->roof);
         if (down->id == t.id) {
             ++named;
             CHECK(down->distance == doctest::Approx(300.0 - t.top).epsilon(1e-9));
             CHECK(down->part == 0);
+            CHECK(down->slot == t.lid_slot);
+            CHECK(down->rgb == t.roof_rgb);
         }
         // slanting down from 30 m over it and 15 m east onto a point 1 m under its top in its middle: met first at its
         // lid, half a metre from that point, by itself (nothing taller stands within its 2 m)
@@ -135,6 +177,8 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
         if (slant->id == t.id) {
             ++slanted;
             CHECK(slant->distance == doctest::Approx(to_aim * 30.0 / 31.0).epsilon(1e-9));
+            CHECK(slant->roof);
+            CHECK(slant->slot == t.lid_slot);
         }
         // from 60 m east of it, 20 m up, slanting onto its middle 1 m above its base: a building's wall nearer than
         // that middle (in the canal ring, mostly another's, standing between)
@@ -143,8 +187,22 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
         const auto beside = scene::pick_building(store, packs, ground, side, low);
         REQUIRE(beside.has_value());
         CHECK(beside->distance < std::sqrt((low.x * low.x) + (low.y * low.y) + (low.z * low.z)));
+        // level from 60 m east 1 m over its base, under any eaves: a wall, in its slot word and colour
+        const view::Vec3 level{t.x + 60.0, t.base + 1.0, t.z};
+        const auto wall = scene::pick_building(store, packs, ground, level, {-1.0, -1e-4, 0.0});
+        REQUIRE(wall.has_value());
+        if (!wall->roof) ++walls;
+        const auto it = walls_of.find(wall->part != 0 ? wall->part : wall->id);
+        if (!wall->roof && it != walls_of.end()) {
+            ++known;
+            CHECK(wall->slot == it->second.first);
+            CHECK(wall->rgb == it->second.second);
+        }
     }
-    MESSAGE(std::format("{} buildings: {} named straight down, {} slanting", targets.size(), named, slanted));
+    MESSAGE(std::format("{} buildings: {} named straight down, {} slanting, {} walls met level ({} of known slots)",
+                        targets.size(), named, slanted, walls, known));
+    CHECK(walls * 10 >= targets.size() * 9);
+    CHECK(known * 10 >= walls * 9);
     // nearly every one names itself (another may stand over a middle, or within 2 m taller)
     CHECK(named * 10 >= targets.size() * 9);
     CHECK(slanted * 10 >= targets.size() * 9);
@@ -154,4 +212,42 @@ TEST_CASE("pick: the building a ray from the eye meets first, on the bundled gra
     CHECK(!scene::pick_building(store, packs, ground, {t.x + 1e6, 300.0, t.z}, {0.0, -1.0, 0.0}).has_value());
     const std::array<scene::PickPack, 1> other{scene::PickPack{.id = "amsterdam", .z = z}};
     CHECK(!scene::pick_building(store, other, ground, {t.x, 300.0, t.z}, {0.0, -1.0, 0.0}).has_value());
+}
+
+TEST_CASE("pick: a wall met stands in the walls' colour below the eaves, in a gable's triangle and under a skillion") {
+    namespace gm = atlas::geometry;
+    // 20 m along x (east) by 10 m, 12 m tall with a roof of 4 m: its eaves at 8 m. Sides from each vertex: 0 the north
+    // (z = 0) and 2 the south, 20 m long; 1 the east and 3 the west, 10 m.
+    const std::array<gm::V2, 4> box{gm::V2{0.0, 0.0}, gm::V2{20.0, 0.0}, gm::V2{20.0, 10.0}, gm::V2{0.0, 10.0}};
+    const scene::PickRoof gabled{.shape = "gabled", .roof_h = 4.0};
+    for (std::size_t e = 0; e < box.size(); ++e) CHECK(scene::in_walls_colour(box, e, 0.5, 7.9, 12.0, gabled));
+    // the ridge along the long sides: over theirs the slopes, the short ones gables, their triangles' apex halfway
+    CHECK_FALSE(scene::in_walls_colour(box, 0, 0.5, 8.1, 12.0, gabled));
+    CHECK_FALSE(scene::in_walls_colour(box, 2, 0.5, 11.9, 12.0, gabled));
+    CHECK(scene::in_walls_colour(box, 1, 0.5, 11.9, 12.0, gabled));
+    CHECK(scene::in_walls_colour(box, 3, 0.25, 9.9, 12.0, gabled)); // its edge at a quarter: 8 + 4 / 2
+    CHECK_FALSE(scene::in_walls_colour(box, 3, 0.25, 10.1, 12.0, gabled));
+    CHECK_FALSE(scene::in_walls_colour(box, 1, 0.9, 9.0, 12.0, gabled)); // 8 + 4 * 0.2 = 8.8
+    // across: the long sides the gables
+    const scene::PickRoof across{.shape = "gabled", .roof_h = 4.0, .across = true};
+    CHECK(scene::in_walls_colour(box, 0, 0.5, 11.9, 12.0, across));
+    CHECK_FALSE(scene::in_walls_colour(box, 1, 0.5, 8.1, 12.0, across));
+    // hipped, and a quadruple saltbox drawn hipped: no gables
+    for (const std::string_view shape : {"hipped", "quadruple_saltbox", "pyramidal", "mansard"}) {
+        const scene::PickRoof r{.shape = shape, .roof_h = 4.0};
+        CHECK_FALSE(scene::in_walls_colour(box, 1, 0.5, 8.1, 12.0, r));
+        CHECK(scene::in_walls_colour(box, 1, 0.5, 7.9, 12.0, r));
+    }
+    // a flat top, and a pitched shape without a height: walls to the top
+    for (const scene::PickRoof& r : {scene::PickRoof{.shape = "flat", .roof_h = 4.0},
+                                     scene::PickRoof{.shape = "gabled", .roof_h = 0.0}, scene::PickRoof{}}) {
+        CHECK(scene::in_walls_colour(box, 0, 0.5, 11.9, 12.0, r));
+        CHECK(scene::in_walls_colour(box, 1, 0.1, 11.9, 12.0, r));
+    }
+    // a skillion falling south: the north wall to the top, the south one to the eaves, the east one slanting between
+    const scene::PickRoof skillion{.shape = "skillion", .roof_h = 4.0, .direction = "S"};
+    CHECK(scene::in_walls_colour(box, 0, 0.5, 11.9, 12.0, skillion));
+    CHECK_FALSE(scene::in_walls_colour(box, 2, 0.5, 8.1, 12.0, skillion));
+    CHECK(scene::in_walls_colour(box, 1, 0.5, 9.9, 12.0, skillion)); // halfway south: 12 - 4 / 2
+    CHECK_FALSE(scene::in_walls_colour(box, 1, 0.5, 10.1, 12.0, skillion));
 }

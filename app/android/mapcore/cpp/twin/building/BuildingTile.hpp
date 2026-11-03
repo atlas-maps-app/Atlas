@@ -27,6 +27,7 @@
 #pragma once
 
 #include "geometry/Walls.hpp"
+#include "style/Palette.hpp"
 
 #include <array>
 #include <cstdint>
@@ -54,6 +55,7 @@ struct BuildingLight {
     std::array<double, 3> normal{};
     std::uint32_t base = 0; ///< 0xRRGGBB
     std::uint32_t flags = 0;
+    std::uint16_t slot = 0; ///< the user's palette's slot the base goes with (geometry::Face's)
 };
 
 /// What the buildings' stage T keeps of a tile (PassTile::cpu): where its records lie in its range of the walls heap
@@ -211,13 +213,23 @@ struct BuildingTile {
     }
 };
 
-/// Every face's colours at the theme `theme`, lit and unlit (0xBBGGRR: light.slang's light() and tohex in binary64, the
-/// port's bits), two words a face, into `out` (2 · lights.size() words).
-void building_colours(const shaders::Theme& theme, std::span<const BuildingLight> lights, std::span<std::uint32_t> out);
-/// Each windowed wall's reveals' colour at the theme `theme` (0xBBGGRR: its face's colour times 0.55, unlit,
-/// light.slang's light() in binary64 as the port's), a word a wall of `faces` (BuildingTile::window_faces), into `out`.
-void building_reveals(const shaders::Theme& theme, std::span<const BuildingLight> lights,
-                      std::span<const std::uint32_t> faces, std::span<std::uint32_t> out);
+/// A face's base colour as the user's palette has it (0xRRGGBB): moved with its slot (style::paint, the slot's colour
+/// today its own); its base itself without a slot, by today's palette (null, or no colour for its slot), or where it
+/// is a mapped colour and the palette does not let mapped colours follow. With the palette's guesses off a guessed
+/// colour is the plain clay (style::plain_building); with its flat greys a guessed flat roof moves from its own slot's
+/// colour to its mid grey's (style::flat_roof_slot).
+[[nodiscard]] std::uint32_t painted(const style::PaletteBlock* palette, const BuildingLight& light) noexcept;
+/// Every face's colours at the theme `theme` in the user's palette `palette` (null: today's), lit and unlit (0xBBGGRR:
+/// light.slang's light() and tohex in binary64, the port's bits), two words a face, into `out` (2 · lights.size()
+/// words).
+void building_colours(const shaders::Theme& theme, const style::PaletteBlock* palette,
+                      std::span<const BuildingLight> lights, std::span<std::uint32_t> out);
+/// Each windowed wall's reveals' colour at the theme `theme` in the palette `palette` (0xBBGGRR: its face's colour
+/// times 0.55, unlit, light.slang's light() in binary64 as the port's), a word a wall of `faces`
+/// (BuildingTile::window_faces), into `out`.
+void building_reveals(const shaders::Theme& theme, const style::PaletteBlock* palette,
+                      std::span<const BuildingLight> lights, std::span<const std::uint32_t> faces,
+                      std::span<std::uint32_t> out);
 
 /// The sash bars' least width (CSS px).
 inline constexpr double sash_least = 0.7;

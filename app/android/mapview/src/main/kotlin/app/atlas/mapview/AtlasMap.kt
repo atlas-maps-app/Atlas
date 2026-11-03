@@ -18,6 +18,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerEvent
@@ -69,6 +70,8 @@ fun AtlasMap(
     onLongPress: (LatLon) -> Unit = {},
     /** A long press on a building the core draws: the building under the finger (in place of [onLongPress]). */
     onLongPressBuilding: ((MapPick) -> Unit)? = null,
+    /** A tap on a building the core draws: the building under the finger and where it was (px), in place of [onTap]. */
+    onTapBuilding: ((MapPick, Offset) -> Unit)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -86,6 +89,7 @@ fun AtlasMap(
     val tap by rememberUpdatedState(onTap)
     val longPress by rememberUpdatedState(onLongPress)
     val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
+    val tapBuilding by rememberUpdatedState(onTapBuilding)
     val cameraMove by rememberUpdatedState(onCameraMove)
 
     val insets = with(density) {
@@ -109,6 +113,7 @@ fun AtlasMap(
         controller.onTap = { tap(it) }
         controller.onLongPress = { longPress(it) }
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
+        controller.onTapBuilding = if (tapBuilding != null) { p, at -> tapBuilding?.invoke(p, at) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
         // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }

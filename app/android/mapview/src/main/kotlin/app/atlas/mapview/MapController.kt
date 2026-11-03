@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.geometry.Offset
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
@@ -159,6 +160,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * pick, scene/Pick.hpp) in place of [onLongPress]; null to take [onLongPress] alone.
      */
     var onLongPressBuilding: ((MapPick) -> Unit)? = null
+
+    /**
+     * A tap on a building where the core draws the map: the building under the finger as the core drew it and where the
+     * finger was (view px), in place of [onTap]'s empty hit; null to take [onTap] alone. A marker takes its tap first.
+     */
+    var onTapBuilding: ((MapPick, Offset) -> Unit)? = null
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
     /** Plays one of Android's haptic feedback constants on the map's view (the view sets it): the tilt's stops. */
@@ -1627,8 +1634,19 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             onTap(MapHit.OnMarker(it, it.at))
             return
         }
-        val at = CameraOps.groundAt(state.camera, v, x, y) ?: return
-        onTap(MapHit.Empty(at))
+        val at = CameraOps.groundAt(state.camera, v, x, y)
+        val c = core
+        val building = onTapBuilding
+        // the building under the finger as the core drew it, where it draws the map (as a long press finds it)
+        if (c != null && building != null && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
+            scope.launch {
+                val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
+                if (core !== c || closed) return@launch
+                if (picked != null) building(picked, Offset(x, y)) else at?.let { onTap(MapHit.Empty(it)) }
+            }
+            return
+        }
+        at?.let { onTap(MapHit.Empty(it)) }
     }
 
     override fun onLongPress(x: Float, y: Float) {

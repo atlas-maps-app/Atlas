@@ -7,6 +7,7 @@ import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.LiveScene
 import app.atlas.render.py.Dict
 import app.atlas.render.py.truthy
+import app.atlas.rendertiles.compile.BuildingSlots
 import app.atlas.rendertiles.compile.KeepCodes
 import app.atlas.rendertiles.model.Codec
 import app.atlas.rendertiles.model.Feature
@@ -139,9 +140,14 @@ class L0aTest {
             val want = (c[0].toLong() shl 16) or (c[1].toLong() shl 8) or c[2].toLong()
             if (want != ((f["${which}_rgb"] as Long?) ?: 0L)) out += "${which}_rgb ${f["${which}_rgb"]} != $want"
         }
+        // the user's palette's slots the colours go with, as the cut finds them from the scene
+        val wallSlot = BuildingSlots.wall(b, tags, (f["wall_rgb"] as Long?) ?: 0L)
+        if (wallSlot != ((f["wall_slot"] as Long?) ?: 0L)) out += "wall_slot ${f["wall_slot"]} != $wallSlot"
+        val roofSlot = BuildingSlots.roof(b, tags, (f["roof_rgb"] as Long?) ?: 0L, wallSlot)
+        if (roofSlot != ((f["roof_slot"] as Long?) ?: 0L)) out += "roof_slot ${f["roof_slot"]} != $roofSlot"
         // nothing decoded that the scene does not hold
         for (k in f.fields.keys) {
-            if (k in setOf("index", "id", "ring", "flags", "layer", "tolerance", "wall_rgb", "roof_rgb") || k.startsWith("tag:")) continue
+            if (k in setOf("index", "id", "ring", "flags", "layer", "tolerance", "wall_rgb", "roof_rgb", "wall_slot", "roof_slot") || k.startsWith("tag:")) continue
             if (k !in handled) out += "decoded $k=${f[k]}, which the scene does not have"
         }
         // the derived flags, by the renders' own tests

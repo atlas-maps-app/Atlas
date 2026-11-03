@@ -89,7 +89,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="app.atlas" android:path="/osm-signin" />
             </intent-filter>
-            <!-- Shared text that holds coordinates, a Plus Code or a map link. -->
+            <!-- A palette's QR code (the Map look's share sheet): app.atlas:AT1-… opens the Map look, which adds it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="app.atlas" android:sspPrefix="AT1-" />
+            </intent-filter>
+            <!-- Shared text that holds a palette's code, coordinates, a Plus Code or a map link. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

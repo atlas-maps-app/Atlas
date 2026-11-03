@@ -125,7 +125,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     };
     // every face's light at the frame's moment, as the pass's CPU writes it
     colours_.resize(std::size_t{b.faces} * 2);
-    passes::building_colours(theme, b.lights, colours_);
+    passes::building_colours(theme, nullptr, b.lights, colours_);
     const auto light_of = [&](std::uint32_t face, bool lit) {
         const std::size_t at = (std::size_t{face} * 2) + (lit ? 0 : 1);
         return at < colours_.size() ? colours_[at] : 0U;
@@ -256,7 +256,7 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
     };
     // the walls' reveals' colours at the frame's moment, as the pass's CPU writes them
     reveals_.assign(b.window_walls, 0U);
-    passes::building_reveals(block_.theme, b.lights, b.window_faces, reveals_);
+    passes::building_reveals(block_.theme, nullptr, b.lights, b.window_faces, reveals_);
     const hlsl::float3 shop_frame = shaders::building_shop_frame(paints, theme_flags);
     const float shop_width = shaders::building_shop_frame_width(paints);
     const hlsl::float3 cabin_frame = shaders::building_cabin_frame(paints, theme_flags);

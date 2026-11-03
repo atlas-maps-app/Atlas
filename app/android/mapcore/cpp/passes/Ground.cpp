@@ -702,6 +702,7 @@ bool Ground::decide(const frame::FrameState& state) {
     // draw_over's park shadows: `sun = not night and L[1] > 0.05`, toward the moment's own sun
     f.light = state.theme.sun_vector;
     f.park_sun = !f.night && f.light[1] > 0.05 && !f.out(style::camera_part::park_shadows);
+    f.planted = state.palette == nullptr || !state.palette->has(style::palette_flag::no_guesses);
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
     f.tile_plates.clear();

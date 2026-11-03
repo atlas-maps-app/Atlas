@@ -154,7 +154,7 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
                     },
                 )
             }
-            SettingRow(stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK), value = look, onClick = { nav.go(Dest.Layers) })
+            SettingRow(stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK), value = look, onClick = { nav.go(Dest.MapLook()) })
             SettingRow(stringResource(R.string.mine_settings_names), symbol = "ui.globe", tile = Color(0xFF2E7BC4), value = names?.let(SettingsModel::languageName) ?: local, onClick = { namesOpen = true })
             val scale = LocalContext.current.resources.configuration.fontScale
             SettingRow(

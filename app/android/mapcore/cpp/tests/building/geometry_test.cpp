@@ -5,11 +5,13 @@
 // samples end where K8's trees' begin, every item's slots hold its primitives in each variant, and the primitives lie
 // in their cells' ranges. MT/buildings/StageTParityTest.kt holds the corners to the port's own face() calls.
 #include "base/arena.hpp"
+#include "frame/FrameBlock.hpp"
 #include "geometry/Ground.hpp"
 #include "geometry/Houseboats.hpp"
 #include "geometry/Walls.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
+#include "style/Palette.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
 #include "tests/building/fixture.hpp"
@@ -1096,4 +1098,79 @@ TEST_CASE("buildings: a dense tile walked in blocks on several threads is the on
     CHECK(split > 0);
     MESSAGE(tiles << " tiles' buildings (" << items << " of them) walked in blocks as in one walk; " << split
                   << " of the tiles dense enough to walk in blocks");
+}
+
+TEST_CASE(
+    "buildings: a face's base moves with its slot in the user's palette, a mapped one where mapped colours follow") {
+    using atlas::passes::BuildingLight;
+    using atlas::passes::painted;
+    namespace st = atlas::style;
+    const BuildingLight own{.base = 0x8A5040U, .slot = 51};   // an old brick's own colour
+    const BuildingLight brick{.base = 0x80463AU, .slot = 51}; // a jittered one
+    const BuildingLight mapped{.base = 0x8C5A44U, .slot = static_cast<std::uint16_t>(st::slot_mapped | 51U)};
+    const BuildingLight boat{.base = 0x2F4A3AU, .slot = 0};
+    const st::PaletteBlock today{};
+    for (const BuildingLight& l : {own, brick, mapped, boat}) {
+        CHECK(painted(nullptr, l) == l.base);
+        CHECK(painted(&today, l) == l.base);
+    }
+    st::PaletteBlock blue{};
+    blue.colours.at(51) = 0x01405C80U;
+    CHECK(painted(&blue, own) == 0x405C80U); // the slot's own colour becomes the user's exactly
+    CHECK(painted(&blue, brick) != brick.base);
+    CHECK((painted(&blue, brick) & 0xFFU) > ((painted(&blue, brick) >> 16U) & 0xFFU)); // a tone of the blue
+    CHECK(painted(&blue, mapped) == mapped.base);                                      // drawn as mapped
+    CHECK(painted(&blue, boat) == boat.base);
+    blue.flags = st::palette_flag::mapped_follow;
+    CHECK(painted(&blue, mapped) != mapped.base); // unless mapped colours follow
+    // a face's colours, lit and unlit, and its reveals' are its painted base's
+    const atlas::shaders::Theme theme{};
+    const BuildingLight moved{.base = 0x405C80U};
+    std::array<std::uint32_t, 2> painted_out{};
+    std::array<std::uint32_t, 2> moved_out{};
+    atlas::passes::building_colours(theme, &blue, std::span(&own, 1), painted_out);
+    atlas::passes::building_colours(theme, nullptr, std::span(&moved, 1), moved_out);
+    CHECK(painted_out == moved_out);
+    const std::array<std::uint32_t, 1> faces{0};
+    std::array<std::uint32_t, 1> reveal{};
+    std::array<std::uint32_t, 1> moved_reveal{};
+    atlas::passes::building_reveals(theme, &blue, std::span(&own, 1), faces, reveal);
+    atlas::passes::building_reveals(theme, nullptr, std::span(&moved, 1), faces, moved_reveal);
+    CHECK(reveal == moved_reveal);
+}
+
+TEST_CASE("buildings: the flat greys give a guessed flat roof its mid grey, the guesses off paint guesses plain") {
+    using atlas::passes::BuildingLight;
+    using atlas::passes::painted;
+    namespace st = atlas::style;
+    const auto word = [](std::uint32_t slot, std::int64_t id) {
+        return static_cast<std::uint16_t>(st::flat_roof_slot(slot, id));
+    };
+    const BuildingLight bitumen{.base = 0x56585CU, .slot = word(87, 31)}; // the second grey's
+    const BuildingLight jittered{.base = 0x5A5C61U, .slot = word(87, 31)};
+    const BuildingLight grey{.base = 0x8C8882U, .slot = word(85, 30)}; // a mid grey keeps its own
+    const BuildingLight gable{.base = 0x4A3E3AU, .slot = 81};          // a pitched roof carries none
+    const BuildingLight mapped{.base = 0x56585CU, .slot = word(st::slot_mapped | 87U, 31)};
+    const BuildingLight wall{.base = 0x8A5040U, .slot = 51};
+    const BuildingLight boat{.base = 0x2F4A3AU, .slot = static_cast<std::uint16_t>(st::slot_guessed)};
+    const BuildingLight clay{.base = 0xE4E0D8U, .slot = 0};
+    const st::PaletteBlock today{};
+    for (const BuildingLight& l : {bitumen, jittered, grey, gable, mapped, wall, boat, clay}) {
+        CHECK(painted(&today, l) == l.base);
+    }
+    st::PaletteBlock greys{};
+    greys.flags = st::palette_flag::flat_greys;
+    CHECK(painted(&greys, bitumen) == 0x8C8882U);  // the second mid grey today, exactly
+    CHECK(painted(&greys, jittered) != 0x8C8882U); // a tone of it
+    CHECK(painted(&greys, grey) == grey.base);
+    CHECK(painted(&greys, gable) == gable.base);
+    CHECK(painted(&greys, mapped) == mapped.base);
+    greys.colours.at(85) = 0x01707070U;
+    CHECK(painted(&greys, bitumen) == 0x707070U); // the user's second grey
+    CHECK(painted(&greys, grey) != grey.base);
+    st::PaletteBlock plain{};
+    plain.flags = st::palette_flag::no_guesses | st::palette_flag::flat_greys;
+    for (const BuildingLight& l : {bitumen, grey, gable, wall, boat}) CHECK(painted(&plain, l) == st::plain_building);
+    CHECK(painted(&plain, mapped) == mapped.base);
+    CHECK(painted(&plain, clay) == clay.base);
 }

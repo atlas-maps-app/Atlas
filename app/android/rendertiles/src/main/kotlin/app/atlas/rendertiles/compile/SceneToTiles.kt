@@ -297,6 +297,9 @@ class SceneToTiles(
         }
         out["wall_rgb"] = rgb(Amsterdam.surfaceColour(b, null, "wall"), what)
         out["roof_rgb"] = rgb(Amsterdam.surfaceColour(b, null, "roof"), what)
+        val wallSlot = BuildingSlots.wall(b, tags, out["wall_rgb"] as Long)
+        out["wall_slot"] = wallSlot
+        out["roof_slot"] = BuildingSlots.roof(b, tags, out["roof_rgb"] as Long, wallSlot)
         out["flags"] = flags(b, tags, nearWater)
         return out
     }
@@ -1022,6 +1025,6 @@ class SceneToTiles(
         fun cmUp(m: Double): Int = Math.ceil(m * 100).coerceIn(Int.MIN_VALUE.toDouble(), Int.MAX_VALUE.toDouble()).toInt()
 
         /** The attributes the packer derives for buildings and parts, which no loader field may share a name with. */
-        val DERIVED = setOf("wall_rgb", "roof_rgb", "flags")
+        val DERIVED = setOf("wall_rgb", "roof_rgb", "wall_slot", "roof_slot", "flags")
     }
 }

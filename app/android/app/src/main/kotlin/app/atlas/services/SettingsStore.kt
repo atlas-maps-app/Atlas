@@ -145,6 +145,9 @@ object SettingsKeys {
 
     /** The Map look's palette as its code (PaletteCode, AT1-...): today's look when unset or unreadable. */
     val MAP_PALETTE = stringPreferencesKey("map.palette")
+
+    /** The Map look's saved palettes (Your palettes), in the order saved: a line each, the code, a tab and the name. */
+    val MAP_PALETTES = stringPreferencesKey("map.palettes")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
 

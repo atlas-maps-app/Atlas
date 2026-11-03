@@ -1297,15 +1297,17 @@ void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation
 }
 
 /// The building under the view's device point (`x`, `y`) as the map's last frame drew it (frame/MapFrame.hpp's pick):
-/// "way <id> <part> <latitude> <longitude>" (or "relation …"; the part 0 where the ray met the outline itself), where
-/// the ray met it; "" where it met none.
+/// "way <id> <part> <latitude> <longitude> <roof|wall> <slot> <rgb>" (or "relation …"; the part 0 where the ray met
+/// the outline itself), where the ray met it, the face it met, that face's slot word and its base colour (decimal);
+/// "" where it met none.
 jstring native_pick(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat y) {
     Core* core = core_of(handle);
     if (core == nullptr) return java(env, "");
     const auto picked = core->pick(static_cast<double>(x), static_cast<double>(y));
     if (!picked) return java(env, "");
-    return java(env, std::format("{} {} {} {:.7f} {:.7f}", picked->relation ? "relation" : "way", picked->id,
-                                 picked->part, picked->latitude, picked->longitude));
+    return java(env, std::format("{} {} {} {:.7f} {:.7f} {} {} {}", picked->relation ? "relation" : "way", picked->id,
+                                 picked->part, picked->latitude, picked->longitude, picked->roof ? "roof" : "wall",
+                                 picked->slot, picked->rgb));
 }
 
 template <class F>

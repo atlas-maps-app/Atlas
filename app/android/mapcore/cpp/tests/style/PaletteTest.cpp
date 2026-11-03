@@ -116,3 +116,40 @@ TEST_CASE("a colour moves with the one it goes with: that one exactly, a tone of
     const std::uint32_t lantern = palette_move(0x3B4148U, 0x2A2E33U, red);
     CHECK(channel(lantern, 16) > channel(lantern, 8) + 20);
 }
+
+TEST_CASE("a building's colour goes with the nearest wall or roof slot, its own exactly") {
+    using atlas::style::building_today;
+    using atlas::style::nearest_slot;
+    using atlas::style::roof_slots;
+    using atlas::style::wall_slots;
+    // each slot's own colour goes with it, the codes ascending in their families
+    for (const auto& s : wall_slots) CHECK(nearest_slot(wall_slots, s.today) == s.code);
+    for (const auto& s : roof_slots) CHECK(nearest_slot(roof_slots, s.today) == s.code);
+    CHECK(std::ranges::is_sorted(wall_slots, {}, &atlas::style::SlotColour::code));
+    CHECK(std::ranges::is_sorted(roof_slots, {}, &atlas::style::SlotColour::code));
+    // the generic looks' brick goes with the old brick nearest it, a concrete with the concrete
+    CHECK(nearest_slot(wall_slots, 0x8E5A46U) == 51U);
+    CHECK(nearest_slot(wall_slots, 0xBDBAB2U) == 63U);
+    CHECK(nearest_slot(roof_slots, 0x9E5038U) == 80U);
+    CHECK(building_today(53) == 0x7E5242U);
+    CHECK(building_today(87) == 0x56585CU);
+    CHECK(building_today(19) == 0U);
+}
+
+TEST_CASE("a guessed flat roof carries one of the three mid greys, its own where it is one") {
+    using atlas::style::flat_roof_slot;
+    using atlas::style::slot_grey_shift;
+    constexpr std::uint32_t grey_1 = 1U << slot_grey_shift;
+    // a mid grey keeps its own, whatever the id
+    CHECK(flat_roof_slot(84, 7) == (84U | grey_1));
+    CHECK(flat_roof_slot(86, 7) == (86U | (3U << slot_grey_shift)));
+    // the bitumen, the gravel and the dark tiles take the one the id picks
+    CHECK(flat_roof_slot(87, 30) == (87U | grey_1));
+    CHECK(flat_roof_slot(88, 31) == (88U | (2U << slot_grey_shift)));
+    CHECK(flat_roof_slot(81, 32) == (81U | (3U << slot_grey_shift)));
+    // a mapped roof, a houseboat's paint, a roof in its walls' colour and none keep their words
+    CHECK(flat_roof_slot(atlas::style::slot_mapped | 87U, 30) == (atlas::style::slot_mapped | 87U));
+    CHECK(flat_roof_slot(atlas::style::slot_guessed, 30) == atlas::style::slot_guessed);
+    CHECK(flat_roof_slot(51, 30) == 51U);
+    CHECK(flat_roof_slot(0, 30) == 0U);
+}
