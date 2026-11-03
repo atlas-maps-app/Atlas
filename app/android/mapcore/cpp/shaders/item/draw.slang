@@ -9,8 +9,11 @@
 // sample the rasteriser covers and so keeps the early depth test and a tiler's hidden-surface removal (ENGINE.md gain
 // 18), then the edges alone; items_parts_vs draws a segment or a circle as a box about it whose fragments
 // items_parts_fs keeps where they lie in it; items_sides_fs blends the translucent ones, premultiplied, a conductor's
-// segment leaving the samples its path's earlier segments cover. Every corner at its own depth, with mat's grain.
+// segment leaving the samples its path's earlier segments cover. Every corner at its own depth, with mat's grain. While
+// a tile fades (ENGINE.md's standing fades) every record keeps the samples of its tile's standing fade (shared/
+// fade.slang): the CPU gives each its fade (item_fades) and the fans alone draw through items_fills_fading_fs.
 
+#include "shared/fade.slang"
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
@@ -25,7 +28,8 @@
 [[vk::binding(0, 1)]] StructuredBuffer<uint4> points_heap;
 
 // Set 2: the jobs (written by the CPU), the tones, the jobs' own words, the faces, the opaque parts and the translucent
-// records as the compute stage writes them and as the vertex and fragment stages read them.
+// records as the compute stage writes them and as the vertex and fragment stages read them, and while a tile fades each
+// record's standing fade (written by the CPU: the faces', the opaque parts', then the translucent ones').
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> item_jobs;
 [[vk::binding(1, 2)]] StructuredBuffer<uint> item_tones;
 [[vk::binding(2, 2)]] StructuredBuffer<uint> item_extra;
@@ -35,9 +39,12 @@
 [[vk::binding(6, 2)]] StructuredBuffer<uint4> item_parts;
 [[vk::binding(7, 2)]] RWStructuredBuffer<uint4> item_sides_out;
 [[vk::binding(8, 2)]] StructuredBuffer<uint4> item_sides;
+[[vk::binding(9, 2)]] StructuredBuffer<uint> item_fades;
 
 /// The push constants: x the jobs (items_cs, roof_masts_cs) or the samples a pixel (the fragment stages); y which of a
-/// face's triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads), or roof_masts_cs's first job.
+/// face's triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads), or roof_masts_cs's first job; w while
+/// a tile fades 1 more than the first of the draw's list's fades in item_fades (the faces' 1, the parts' 1 more than
+/// the faces, the translucent ones' 1 more than the faces and the parts), else 0.
 struct ItemPush {
     uint4 at;
 };
@@ -523,7 +530,8 @@ struct ItemOut {
     float4 position : SV_Position;
     nointerpolation float3 colour : COLOUR;
     nointerpolation float4 shape : ITEM_SHAPE; // an edge's or a segment's ends; a circle's centre and radius
-    nointerpolation uint4 kind : ITEM_KIND;    // the record's kind word, its part (0 a fan, 1 to 5 an edge), its index
+    nointerpolation uint4 kind : ITEM_KIND;    // the record's kind word, its part (0 a fan, 1 to 5 an edge), its index,
+                                               // its tile's standing fade (fade_word; 0 at rest)
     nointerpolation float4 paint : ITEM_PAINT; // a gradient's box (x0, x1); a segment's half width; the opacity
     nointerpolation uint2 stops : ITEM_STOPS;  // a gradient's middle and last stops' colours
 };
@@ -542,7 +550,7 @@ ItemOut nowhere() {
     return o;
 }
 
-ItemOut place_face(ItemRecord r, uint index, uint vertex) {
+ItemOut place_face(ItemRecord r, uint index, uint vertex, uint fade) {
     uint kind = r.a.x & ITEM_RECORD_KIND;
     if (kind == ITEM_NONE) {
         return nowhere();
@@ -573,7 +581,7 @@ ItemOut place_face(ItemRecord r, uint index, uint vertex) {
         }
         uint i = corner == 0u ? 0u : t + corner;
         o.position = clip_of(frame.camera, item_point(r, i), 1.0f, item_corner_depth(r, i));
-        uint4 k = {r.a.x, 0u, index, 0u};
+        uint4 k = {r.a.x, 0u, index, fade};
         o.kind = k;
         return o;
     }
@@ -592,12 +600,12 @@ ItemOut place_face(ItemRecord r, uint index, uint vertex) {
     o.position = clip_of(frame.camera, k.p, 1.0f, k.depth);
     float4 shape = {a.x, a.y, b.x, b.y};
     o.shape = shape;
-    uint4 kw = {r.a.x, 1u + e, index, 0u};
+    uint4 kw = {r.a.x, 1u + e, index, fade};
     o.kind = kw;
     return o;
 }
 
-ItemOut place_part(ItemRecord r, uint index, uint vertex) {
+ItemOut place_part(ItemRecord r, uint index, uint vertex, uint fade) {
     uint kind = r.a.x & ITEM_RECORD_KIND;
     if (kind == ITEM_NONE || vertex >= 6u) {
         return nowhere();
@@ -622,27 +630,32 @@ ItemOut place_part(ItemRecord r, uint index, uint vertex) {
     }
     float4 paint = {0.0f, 0.0f, asfloat(r.a.w), asfloat(r.a.z)};
     o.paint = paint;
-    uint4 k = {r.a.x, 0u, index, 0u};
+    uint4 k = {r.a.x, 0u, index, fade};
     o.kind = k;
     return o;
+}
+
+/// The standing fade of the draw's list's record `index` (push.at.w): 0 at rest.
+uint fade_of(uint index) {
+    return push.at.w != 0u ? item_fades[push.at.w - 1u + index] : 0u;
 }
 
 [shader("vertex")]
 ItemOut items_faces_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / ITEM_FACE_VERTICES;
-    return place_face(record_at(item_faces, index), index, vertex - index * ITEM_FACE_VERTICES);
+    return place_face(record_at(item_faces, index), index, vertex - index * ITEM_FACE_VERTICES, fade_of(index));
 }
 
 [shader("vertex")]
 ItemOut items_parts_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / ITEM_PART_VERTICES;
-    return place_part(record_at(item_parts, index), index, vertex - index * ITEM_PART_VERTICES);
+    return place_part(record_at(item_parts, index), index, vertex - index * ITEM_PART_VERTICES, fade_of(index));
 }
 
 [shader("vertex")]
 ItemOut items_sides_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / ITEM_PART_VERTICES;
-    return place_part(record_at(item_sides, index), index, vertex - index * ITEM_PART_VERTICES);
+    return place_part(record_at(item_sides, index), index, vertex - index * ITEM_PART_VERTICES, fade_of(index));
 }
 
 /// Vulkan's standard sample positions in a pixel (D7): 4x, then 2x.
@@ -676,7 +689,7 @@ bool part_covers(ItemRecord r, float2 s) {
 
 /// The samples of the fragment at `v` its shape covers: a fan's are the rasteriser's (all kept); an edge's those within
 /// the stroke's half width of it (round-capped); a segment's, a circle's and a glow's each sample in it.
-uint coverage_of(ItemOut v) {
+uint shape_coverage(ItemOut v) {
     uint word = v.kind.x;
     uint kind = word & ITEM_RECORD_KIND;
     if (kind == ITEM_FACE && v.kind.y == 0u) {
@@ -711,6 +724,12 @@ float4 face_colour(ItemOut v) {
     return float4(mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame)), 1.0f);
 }
 
+/// The samples of the fragment at `v` its shape covers (shape_coverage) and its tile's standing fade keeps (every
+/// sample at rest).
+uint coverage_of(ItemOut v) {
+    return shape_coverage(v) & fade_mask(int2(v.position.xy), frame.info.w, v.kind.w);
+}
+
 /// A face: its colour or its gradient at the pixel's centre, with mat's grain, on the samples it covers.
 [shader("fragment")]
 ItemTarget items_faces_fs(ItemOut v) {
@@ -728,12 +747,22 @@ struct ItemFill {
     [[vk::location(0)]] float4 colour : SV_Target0;
 };
 
-/// A face's fan alone: its colour on every sample the rasteriser covers (coverage_of's own for a fan), with no mask
+/// A face's fan alone: its colour on every sample the rasteriser covers (shape_coverage's own for a fan), with no mask
 /// written and nothing discarded.
 [shader("fragment")]
 ItemFill items_fills_fs(ItemOut v) {
     ItemFill o;
     o.colour = face_colour(v);
+    return o;
+}
+
+/// The same while a tile fades (the fans' pipelines while fading, Cover::dithers): on the samples its standing fade
+/// keeps.
+[shader("fragment")]
+ItemTarget items_fills_fading_fs(ItemOut v) {
+    ItemTarget o;
+    o.colour = face_colour(v);
+    o.coverage = fade_mask(int2(v.position.xy), frame.info.w, v.kind.w);
     return o;
 }
 

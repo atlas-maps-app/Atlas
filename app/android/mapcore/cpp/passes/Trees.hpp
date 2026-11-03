@@ -168,17 +168,22 @@ private:
     std::array<gpu::Buffer, 2> records_;
     std::array<gpu::Buffer, 2> sides_;
     std::array<gpu::Buffer, 2> fills_; ///< the fills' list: the trunks' records (ENGINE.md gain 18)
+    /// While a tile fades, each record's standing fade, then each side's (ENGINE.md's standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline draw_{nullptr};
-    vk::raii::Pipeline fill_{nullptr}; ///< the trunks alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_{nullptr};        ///< the trunks alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_fading_{nullptr}; ///< the same while a tile fades (trees_fills_fading_fs)
     vk::raii::Pipeline side_{nullptr};
 
     // the render thread's, per frame
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> fill_words_;
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
 };
 

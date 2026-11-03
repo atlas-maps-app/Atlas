@@ -21,8 +21,10 @@
 // The doors' numbers (passes/Doors.cpp, the scene subpass's translucent slot, before every object's translucent part):
 // a glyph as the ground's, among the objects, at its plate's depth at true depth (the nearest its wall's plane has under
 // the plate) and at its slot's under the painter switch, so what stands in front of the plate covers it; its colour
-// through `mat`, the objects group's.
+// through `mat`, the objects group's. While a tile fades (ENGINE.md's standing fades) they draw through
+// wall_text_fading_fs, on the samples their door's standing fade keeps (info.w).
 
+#include "shared/fade.slang"
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
@@ -39,7 +41,8 @@ struct GlyphDraw {
     float4 bands;   // a sample's band indices: em · (x, y) + (z, w), truncated and clamped
     uint4 location; // the glyph's first band texel (x, y); its vertical and horizontal bands minus one
     float4 colour;  // premultiplied: the fill at its opacity and its fade
-    uint4 info;     // x: the face's coverage table; y: its painter slot; z: a door's number's depth (bits)
+    uint4 info;     // x: the face's coverage table; y: its painter slot; z: a door's number's depth (bits); w: while a
+                    // tile fades a door's number's standing fade (fade_word), else 0
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
@@ -226,13 +229,32 @@ float4 ground_text_fs(GlyphOut v) : SV_Target0 {
 
 /// A door's number's glyph: its colour (opaque: rgb, then its opacity in a) through `mat` at the pixel, the objects
 /// group's grain where the moment has weather, then its coverage, premultiplied.
-[shader("fragment")]
-float4 wall_text_fs(GlyphOut v) : SV_Target0 {
+float4 wall_text_colour(GlyphOut v) {
     GlyphDraw g = glyph_draws[v.glyph];
     float2 pixels_per_em = 1.0f / fwidth(v.em);
     float coverage = slug_table(g.info.x, slug_coverage(g, v.em, pixels_per_em));
     float3 colour = mat_colour(frame.camera, g.colour.rgb, v.position.xy, mat_grain_on(frame));
     return float4(colour, 1.0f) * (g.colour.a * coverage);
+}
+
+[shader("fragment")]
+float4 wall_text_fs(GlyphOut v) : SV_Target0 {
+    return wall_text_colour(v);
+}
+
+struct GlyphFading {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+    uint coverage : SV_Coverage;
+};
+
+/// The same while a tile fades (the numbers' pipeline while fading, Cover::dithers): on the samples its door's standing
+/// fade keeps.
+[shader("fragment")]
+GlyphFading wall_text_fading_fs(GlyphOut v) {
+    GlyphFading o;
+    o.colour = wall_text_colour(v);
+    o.coverage = fade_mask(int2(v.position.xy), frame.info.w, glyph_draws[v.glyph].info.w);
+    return o;
 }
 
 /// The coverage alone at the samples of a probe (tests/text/slug_vk_test.cpp): per probe its glyph, its em sample and

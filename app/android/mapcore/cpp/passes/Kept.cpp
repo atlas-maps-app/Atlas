@@ -120,30 +120,49 @@ gpu::Result<void> Buildings::prepare_kept(const frame::PassContext& context) {
                                    {.name = name, .module = "building_draw", .configuration = context.configuration},
                                    *draw_module_, entry, *k->compute_layout);
     };
-    const auto graphics = [&](const char* name, const char* entry) {
-        return frame::make_pipeline(context, building_desc(context, *draw_module_, name, entry, *k->layout),
-                                    frame::Overdraw::opaque);
-    };
     ATLAS_GPU_LET(cull, compute("kept cull", "kept_cull_cs"));
     k->cull = std::move(cull);
     ATLAS_GPU_LET(scan, compute("kept scan", "kept_scan_cs"));
     k->scan = std::move(scan);
     ATLAS_GPU_LET(scatter, compute("kept scatter", "kept_scatter_cs"));
     k->scatter = std::move(scatter);
-    ATLAS_GPU_LET(walls, graphics("kept walls", "walls_kept_vs"));
+    const gpu::GraphicsDesc walls_desc =
+        building_desc(context, *draw_module_, "kept walls", "walls_kept_vs", *k->layout);
+    ATLAS_GPU_LET(walls, frame::make_pipeline(context, walls_desc, frame::Overdraw::opaque));
     k->walls = std::move(walls);
-    ATLAS_GPU_LET(roofs, graphics("kept roofs", "roofs_kept_vs"));
+    const gpu::GraphicsDesc roofs_desc =
+        building_desc(context, *draw_module_, "kept roofs", "roofs_kept_vs", *k->layout);
+    ATLAS_GPU_LET(roofs, frame::make_pipeline(context, roofs_desc, frame::Overdraw::opaque));
     k->roofs = std::move(roofs);
-    // the records' scatter and draw: without them every kept primitive is decided at each point
+    // the same while a tile fades
+    ATLAS_GPU_LET(walls_fading, frame::make_pipeline(
+                                    context, fading_desc(walls_desc, "kept walls while fading", "building_fading_fs"),
+                                    frame::Overdraw::opaque));
+    k->walls_fading = std::move(walls_fading);
+    ATLAS_GPU_LET(roofs_fading, frame::make_pipeline(
+                                    context, fading_desc(roofs_desc, "kept roofs while fading", "building_fading_fs"),
+                                    frame::Overdraw::opaque));
+    k->roofs_fading = std::move(roofs_fading);
+    // the records' scatter and draw, and the draw while a tile fades (its tile's fade through the place its record
+    // stands for): without them every kept primitive is decided at each point
     auto shape_scatter = compute("kept shapes", "kept_shapes_cs");
-    auto walls_shaped = graphics("kept walls shaped", "walls_shape_vs");
-    if (shape_scatter && walls_shaped) {
+    const gpu::GraphicsDesc shaped_desc =
+        building_desc(context, *draw_module_, "kept walls shaped", "walls_shape_vs", *k->layout);
+    gpu::GraphicsDesc shaped_fading_desc =
+        fading_desc(shaped_desc, "kept walls shaped while fading", "building_fading_fs");
+    shaped_fading_desc.vertex = "walls_shape_fading_vs";
+    auto walls_shaped = frame::make_pipeline(context, shaped_desc, frame::Overdraw::opaque);
+    auto walls_shaped_fading = frame::make_pipeline(context, shaped_fading_desc, frame::Overdraw::opaque);
+    if (shape_scatter && walls_shaped && walls_shaped_fading) {
         k->shape_scatter = std::move(*shape_scatter);
         k->walls_shaped = std::move(*walls_shaped);
+        k->walls_shaped_fading = std::move(*walls_shaped_fading);
         k->shape_budget = std::min({most_shape_bytes, scene::heap_budget(context.device).total / 16,
                                     vk::DeviceSize{context.device.facts().limits.maxStorageBufferRange}});
     } else {
-        const gpu::Error& e = !shape_scatter ? shape_scatter.error() : walls_shaped.error();
+        const gpu::Error& e = !shape_scatter  ? shape_scatter.error()
+                              : !walls_shaped ? walls_shaped.error()
+                                              : walls_shaped_fading.error();
         log::warn("vk buildings: the kept primitives' shape records: {}; each decided at each point", e.text());
     }
     kept_ = std::move(k);
@@ -154,6 +173,7 @@ bool Buildings::drawn_kept() const noexcept { return kept_ != nullptr && kept_->
 
 void Buildings::write_kept_jobs(std::uint32_t slot) {
     Kept& k = *kept_;
+    if (fade_every_) dithers_ = true;
     // what this frame slot's last frame kept of each list, its draws' first words (that frame has finished)
     std::array<std::uint32_t, lists> last{};
     if (k.counted[slot] && k.draws[slot]) {
@@ -192,6 +212,11 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
             const std::uint32_t mode = d.tile->list_mode(list == 1);
             std::memcpy(push.data() + 32, &ats[list], sizeof(std::uint32_t)); // BuildingPush.at.x: the list
             std::memcpy(push.data() + 60, &mode, sizeof mode);                // BuildingPush.sun.w: the list's kind
+            if (fade_every_) {
+                // (a test's fade on every tile: BuildingPush.place.offset.w and scale.w)
+                std::memcpy(push.data() + 12, fade_every_->data(), sizeof(float));
+                std::memcpy(push.data() + 28, fade_every_->data() + 1, sizeof(float));
+            }
             for (std::uint32_t r = 0; r < runs[list]; ++r) {
                 const Run& run = runs_[firsts[list] + r];
                 for (std::uint32_t first = run.first; first < run.end; first += job_size) {
@@ -336,12 +361,15 @@ void Buildings::record_kept(const frame::Recording& recording, std::uint32_t lis
     if (k.chunks[list] == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     const bool plain = list + 1 == lists;
-    // the list's chunks of records first, each point placed from its record, then those decided at each point
+    // the list's chunks of records first, each point placed from its record, then those decided at each point (each
+    // with its pipeline while a tile fades)
     const std::uint32_t shaped = (k.records[list] + chunk_of[list] - 1) / chunk_of[list];
     for (std::uint32_t c = 0; c < k.chunks[list]; ++c) {
         if (c == 0 || c == shaped) {
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                             plain ? *k.roofs : (c < shaped ? *k.walls_shaped : *k.walls));
+            const vk::Pipeline pipeline = plain        ? pick(k.roofs, k.roofs_fading)
+                                          : c < shaped ? pick(k.walls_shaped, k.walls_shaped_fading)
+                                                       : pick(k.walls, k.walls_fading);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
         }
         if (c == 0) {
             cmd.bindIndexBuffer(plain ? plain_index_.handle() : edged_index_.handle(), 0, vk::IndexType::eUint16);

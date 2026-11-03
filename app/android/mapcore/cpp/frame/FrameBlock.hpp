@@ -1,7 +1,8 @@
 // The frame's shared shader modules as C++ (plan-vector T6, D5.6): shaders/shared/frame.slang, with camera.slang,
-// composite.slang and theme.slang, compiled after base/hlsl.hpp, so the frame builder writes the block the shaders read
-// and the twin runs the shaders' own text (the camera's projection and snap, painter depth, the composite's
-// arithmetic). Everything lands in atlas::shaders, beside style/Light.hpp's light.
+// composite.slang and theme.slang, and fade.slang, compiled after base/hlsl.hpp, so the frame builder writes the block
+// the shaders read and the twin runs the shaders' own text (the camera's projection and snap, painter depth, the
+// composite's arithmetic, the standing fades' dither). Everything lands in atlas::shaders, beside style/Light.hpp's
+// light.
 #pragma once
 
 #include "base/hlsl.hpp"
@@ -20,6 +21,8 @@ using namespace atlas::hlsl;
 
 #include "shaders/shared/frame.slang"
 #include "shaders/shared/painter.slang"
+// the standing fades' dither (the passes give each tile's draws its range: Cover::upright)
+#include "shaders/shared/fade.slang"
 
 static_assert(sizeof(FrameCamera) == 112, "camera.slang's FrameCamera: seven four-lane vectors");
 static_assert(sizeof(TilePlace) == 32);

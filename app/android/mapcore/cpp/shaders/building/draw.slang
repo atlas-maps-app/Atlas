@@ -16,6 +16,7 @@
 // keep the jobs' order); roof_strokes_vs then draws a segment along each edge its stroke follows from the record, at
 // its face's own depth carried past the edge and a little nearer (building_stroke_recip, building_stroke_depth).
 
+#include "shared/fade.slang"
 #include "shared/frame.slang"
 #include "shared/heaps.slang"
 #include "shared/painter.slang"
@@ -95,7 +96,9 @@ uint4 walls_vector(uint i) {
 struct BuildingOut {
     float4 position : SV_Position;
     nointerpolation float3 colour : COLOUR;
-    nointerpolation uint asked : ASKED; // a wall of the building the app asks about, before its answer: hatched
+    // bit 0: a wall of the building the app asks about, before its answer (hatched); bits 8 to 23 its tile's standing
+    // fade (shared/fade.slang's fade_word, which building_fading_fs keeps)
+    nointerpolation uint asked : ASKED;
 };
 
 /// The primitive at record `index` of the draw's list, its face, its rank entry, and the shape the frame draws.
@@ -192,7 +195,7 @@ BuildingOut wall_vertex(BuildingPush p, uint index, uint corner) {
     float depth = building_depth(frame.camera, d.shape, building_plane_recip(frame.camera, d.shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = colour_at(p, d);
-    o.asked = (d.rank & RANK_ASKED) != 0u ? 1u : 0u;
+    o.asked = ((d.rank & RANK_ASKED) != 0u ? 1u : 0u) | fade_word(p.place.offset.w, p.place.scale.w);
     return o;
 }
 
@@ -210,7 +213,7 @@ BuildingOut roof_vertex(BuildingPush p, uint index, uint corner) {
     float2 css = {point.x, point.y};
     o.position = clip_of(frame.camera, css, 1.0f, building_depth(frame.camera, d.shape, point.z));
     o.colour = colour_at(p, d);
-    o.asked = 0u; // the board hatches the walls alone
+    o.asked = fade_word(p.place.offset.w, p.place.scale.w); // the board hatches the walls alone
     return o;
 }
 
@@ -278,9 +281,8 @@ BuildingShapeRecord shape_record_at(uint slot) {
 
 /// The kept walls and near cells decided once (kept_shapes_cs): a draw's vertex is point vertex % 16 of the outline
 /// record at vertex / 16 (its chunk's vertex offset is the chunk's first record, times 16), placed as wall_vertex
-/// places it.
-[shader("vertex")]
-BuildingOut walls_shape_vs(uint vertex : SV_VulkanVertexID) {
+/// places it at rest (a fade word of 0: shared/fade.slang).
+BuildingOut wall_shape_vertex(uint vertex) {
     uint slot = vertex / BUILDING_EDGED_VERTICES;
     uint corner = vertex - slot * BUILDING_EDGED_VERTICES;
     BuildingOut o;
@@ -297,6 +299,24 @@ BuildingOut walls_shape_vs(uint vertex : SV_VulkanVertexID) {
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = building_shape_colour(r);
     o.asked = building_shape_asked(r.v0.x);
+    return o;
+}
+
+[shader("vertex")]
+BuildingOut walls_shape_vs(uint vertex : SV_VulkanVertexID) {
+    return wall_shape_vertex(vertex);
+}
+
+/// The same while a tile fades (the records' pipeline while fading), with its tile's standing fade as wall_vertex
+/// gives it: its job's place's, through the kept place its record stands for (kept_shapes_cs writes every candidate's
+/// job and lane, a record's too; the near cells' records follow the walls').
+[shader("vertex")]
+BuildingOut walls_shape_fading_vs(uint vertex : SV_VulkanVertexID) {
+    BuildingOut o = wall_shape_vertex(vertex);
+    uint slot = vertex / BUILDING_EDGED_VERTICES;
+    uint list = slot < kept_jobs[4].y ? 0u : 1u;
+    KeptPrim k = kept_at(kept_jobs[2][list] + slot - kept_jobs[4][list]);
+    o.asked |= fade_word(k.push.place.offset.w, k.push.place.scale.w);
     return o;
 }
 
@@ -460,8 +480,8 @@ void kept_scatter_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) 
 /// The kept primitives' scatter where they are decided once (ENGINE.md's gains, 1b): each candidate of a job's run
 /// among its list's records (the walls' and the near cells', none of the roofs') decided for the frame as walls_vs
 /// decides it, into its shape record (its list's first record, then its place in the list: building.slangh's
-/// BuildingShapeRecord); a candidate beyond them into its place as kept_scatter_cs writes it, for the vertex stage to
-/// decide at each point.
+/// BuildingShapeRecord); a candidate beyond them for the vertex stage to decide at each point. Each writes its job and
+/// lane at its place as kept_scatter_cs does, a record's for its tile's fade (walls_shape_fading_vs).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -481,10 +501,10 @@ void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint4 span = kept_jobs[at + 4u];
     uint list = span.z;
     uint place = c.w + below;
+    kept_out[kept_jobs[2][list] + place] = (job << 6u) | lane;
     uint record = kept_jobs[4][list];
     uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[4].w) - record;
     if (place >= records) {
-        kept_out[kept_jobs[2][list] + place] = (job << 6u) | lane;
         return;
     }
     BuildingPush p;
@@ -508,8 +528,7 @@ void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
 
 /// Vertex `vertex` of the records' strokes: record vertex / 30's segment along its shape's edge (vertex % 30) / 6, if
 /// its stroke follows that edge, its width and colour its stroke's, at its face's depth there.
-[shader("vertex")]
-StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
+StrokeVertex roof_stroke_vertex(uint vertex) {
     uint index = vertex / BUILDING_STROKE_VERTICES;
     uint rest = vertex - index * BUILDING_STROKE_VERTICES;
     uint k = rest / 6u;
@@ -553,6 +572,35 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
         float2 here = {(o.position.x + 1.0f) / scale.x, (o.position.y + 1.0f) / scale.y};
         o.position.z = building_stroke_depth(frame.camera, building_stroke_slot(header),
                                              building_stroke_recip(oa, ob, oc, here), building_stroke_face_lead(header));
+    }
+    return o;
+}
+
+[shader("vertex")]
+StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
+    return roof_stroke_vertex(vertex);
+}
+
+/// The same while a tile fades (ObjectStrokes' fading pipelines), with its tile's standing fade: its job's place's,
+/// the last of the push.at.x jobs (in their records' order) whose first record is at most its own.
+[shader("vertex")]
+StrokeVertex roof_strokes_fading_vs(uint vertex : SV_VulkanVertexID) {
+    StrokeVertex o = roof_stroke_vertex(vertex);
+    if (o.style.x > 0.0f) {
+        uint index = vertex / BUILDING_STROKE_VERTICES;
+        uint lo = 0u;
+        uint hi = push.at.x;
+        while (hi - lo > 1u) {
+            uint mid = (lo + hi) / 2u;
+            if (stroke_jobs[mid * STROKE_JOB_VECTORS + 4u].z <= index) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        float4 offset = asfloat(stroke_jobs[lo * STROKE_JOB_VECTORS]);
+        float4 scale = asfloat(stroke_jobs[lo * STROKE_JOB_VECTORS + 1u]);
+        o.style.y = fade_lane(fade_word(offset.w, scale.w));
     }
     return o;
 }
@@ -685,9 +733,11 @@ void window_wall_out(WindowLane l, float4 plane, float2 dark, float2 lit, float 
     uint reveal_word = l.p.sun.w + l.span.x + l.k;
     uint4 reveals = walls_vector(reveal_word / 4u);
     uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
+    uint4 fade = {fade_word(l.p.place.offset.w, l.p.place.scale.w), 0u, 0u, 0u};
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
+    window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 3u] = fade;
 }
 
 // The windows' decide stages (Buildings::record_window_decide): each facade wall of the frame's jobs is decided once,
@@ -1040,7 +1090,8 @@ BuildingWindowRecord window_record_at(uint index) {
 /// The frame's wall record `index`.
 BuildingWallRecord window_wall_at(uint index) {
     uint at = index * BUILDING_WALL_RECORD_VECTORS;
-    return building_wall_record_of(window_walls[at], window_walls[at + 1u], window_walls[at + 2u]);
+    return building_wall_record_of(window_walls[at], window_walls[at + 1u], window_walls[at + 2u],
+                                   window_walls[at + 3u]);
 }
 
 /// A window's (or a part's) shape on its wall's plane with its lead and painter slot (the depth building_depth gives
@@ -1060,6 +1111,7 @@ struct FrameOut {
     nointerpolation float4 a : WINDOW_A; // its corners 0 and 1
     nointerpolation float4 b : WINDOW_B; // 2 and 3
     nointerpolation float4 c : WINDOW_C; // 4, then its corners' count and the half width
+    nointerpolation uint fade : FADE;    // its wall's standing fade (fade_word)
 };
 
 /// Vertex `vertex` of the windows' frames: record vertex / 30's polygon holding the band its wall's frames' half width
@@ -1074,6 +1126,7 @@ FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     o.a = float4(0.0f);
     o.b = float4(0.0f);
     o.c = float4(0.0f);
+    o.fade = 0u;
     if (s.count == 0u) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
@@ -1094,6 +1147,7 @@ FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     o.a = float4(s.p0, s.p1);
     o.b = float4(s.p2, s.p3);
     o.c = float4(s.p4, float(s.count), half);
+    o.fade = wall.fade;
     return o;
 }
 
@@ -1104,16 +1158,23 @@ struct GlassOut {
     nointerpolation float4 bottom : GLASS_BOTTOM;
 };
 
+/// The same while a tile fades, with its wall's standing fade (fade_word), for which the glass has no lane to spare.
+struct GlassFadingOut {
+    GlassOut glass;
+    nointerpolation uint fade : FADE;
+};
+
 /// Vertex `vertex` of the windows' glass: record vertex / 5's window eroded by its wall's frames' half width (a fan from
-/// its first corner, the last repeated), on its wall's plane a lead over the wall's cells, with its glass's paint.
-[shader("vertex")]
-GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
+/// its first corner, the last repeated), on its wall's plane a lead over the wall's cells, with its glass's paint; its
+/// wall's standing fade in `fade`.
+GlassOut window_glass_at(uint vertex, out uint fade) {
     uint index = vertex / BUILDING_WINDOW_GLASS_VERTICES;
     BuildingWindowRecord r = window_record_at(index);
     GlassOut o;
     BuildingWindowShape s = building_window_of(r);
     o.top = float4(0.0f);
     o.bottom = float4(0.0f);
+    fade = 0u;
     if (s.count == 0u) {
         o.position = NOWHERE;
         return o;
@@ -1147,6 +1208,21 @@ GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
     }
     o.top = float4(g.top, box.x);
     o.bottom = g.gradient ? float4(g.bottom, box.y) : float4(g.top, box.x);
+    fade = wall.fade;
+    return o;
+}
+
+[shader("vertex")]
+GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
+    uint fade;
+    return window_glass_at(vertex, fade);
+}
+
+/// The same while a tile fades (the glass's pipeline while fading), with its wall's standing fade.
+[shader("vertex")]
+GlassFadingOut window_glass_fading_vs(uint vertex : SV_VulkanVertexID) {
+    GlassFadingOut o;
+    o.glass = window_glass_at(vertex, o.fade);
     return o;
 }
 
@@ -1212,6 +1288,7 @@ BuildingOut window_near_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanIns
     float2 css = building_near_point(r, v, wall.sash_half);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.asked = wall.fade; // its wall's standing fade, no hatch
     return o;
 }
 
@@ -1252,6 +1329,7 @@ BuildingOut window_facade_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     uint theme_flags = frame.theme.flags.x;
     o.colour = part == 0u ? building_plinth_colour(frame.windows, theme_flags)
                           : building_cornice_colour(frame.windows, theme_flags);
+    o.asked = wall.fade; // its wall's standing fade, no hatch
     return o;
 }
 
@@ -1274,19 +1352,20 @@ BuildingChurchRecord church_record_at(uint index, uint part) {
 /// segment of its leading (its mullion, then its transoms; past its last none) a bar of two triangles at the sash bars'
 /// lead, at its path's slot under the painter switch: the stones' colour, its wall's reveals', its glass with the
 /// day's veil folded in (window_glass_fs: its gradient over its wall's church windows' glass's box), the leading's; an
-/// instance a record.
-[shader("vertex")]
-GlassOut church_window_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+/// instance a record; its wall's standing fade in `fade`.
+GlassOut church_window_at(uint v, uint index, out uint fade) {
     uint part = building_church_part(v);
     BuildingChurchRecord r = church_record_at(index, part);
     GlassOut o;
     o.top = float4(0.0f);
     o.bottom = float4(0.0f);
+    fade = 0u;
     if (r.v[0].x == 0u) {
         o.position = NOWHERE;
         return o;
     }
     BuildingWallRecord wall = window_wall_at(r.v[0].y);
+    fade = wall.fade;
     uint theme_flags = frame.theme.flags.x;
     BuildingShape shape = building_nothing();
     float2 css = float2(0.0f);
@@ -1336,21 +1415,54 @@ GlassOut church_window_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInst
     return o;
 }
 
+[shader("vertex")]
+GlassOut church_window_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    uint fade;
+    return church_window_at(v, index, fade);
+}
+
+/// The same while a tile fades (the church windows' pipeline while fading), with its wall's standing fade.
+[shader("vertex")]
+GlassFadingOut church_window_fading_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    GlassFadingOut o;
+    o.glass = church_window_at(v, index, o.fade);
+    return o;
+}
+
 struct BuildingTarget {
     [[vk::location(0)]] float4 colour : SV_Target0;
 };
 
 /// A window's glass: its gradient at the pixel's centre over its path's box (or its flat colour), with mat's grain.
-[shader("fragment")]
-BuildingTarget window_glass_fs(GlassOut v) {
-    BuildingTarget o;
+float3 window_glass_colour(GlassOut v) {
     BuildingGlass g;
     g.top = v.top.xyz;
     g.bottom = v.bottom.xyz;
     g.gradient = v.bottom.w > v.top.w;
     float y = css_of_output(frame.camera, v.position.xy).y;
-    float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
-    o.colour = float4(c, 1.0f);
+    return mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
+}
+
+[shader("fragment")]
+BuildingTarget window_glass_fs(GlassOut v) {
+    BuildingTarget o;
+    o.colour = float4(window_glass_colour(v), 1.0f);
+    return o;
+}
+
+/// What a pipeline used only while a tile fades writes (Cover::dithers): the colour, on the samples its standing fade
+/// keeps (shared/fade.slang).
+struct FadingTarget {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+    uint coverage : SV_Coverage;
+};
+
+/// The glass while a tile fades: window_glass_fs's on the samples its wall's standing fade keeps.
+[shader("fragment")]
+FadingTarget window_glass_fading_fs(GlassFadingOut v) {
+    FadingTarget o;
+    o.colour = float4(window_glass_colour(v.glass), 1.0f);
+    o.coverage = fade_mask(int2(v.glass.position.xy), frame.info.w, v.fade);
     return o;
 }
 
@@ -1365,15 +1477,30 @@ float3 building_hatch(FrameCamera c, float3 colour, float2 position) {
     return lerp(colour, float3(140.0f, 133.0f, 122.0f) / 255.0f, cover);
 }
 
+/// A wall's or a roof's colour: mat's grain on it, where the frame's fields are bound and the moment has weather, and
+/// the hatch over the building the app asks about.
+float3 building_colour_of(BuildingOut v) {
+    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame));
+    if ((v.asked & 1u) != 0u) {
+        c = building_hatch(frame.camera, c, v.position.xy);
+    }
+    return c;
+}
+
 [shader("fragment")]
 BuildingTarget building_fs(BuildingOut v) {
     BuildingTarget o;
-    // mat's grain on the walls and roofs, where the frame's fields are bound and the moment has weather
-    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame));
-    if (v.asked != 0u) {
-        c = building_hatch(frame.camera, c, v.position.xy);
-    }
-    o.colour = float4(c, 1.0f);
+    o.colour = float4(building_colour_of(v), 1.0f);
+    return o;
+}
+
+/// The walls, roofs and windows' near parts and facades while a tile fades: building_fs's on the samples their tile's
+/// standing fade keeps.
+[shader("fragment")]
+FadingTarget building_fading_fs(BuildingOut v) {
+    FadingTarget o;
+    o.colour = float4(building_colour_of(v), 1.0f);
+    o.coverage = fade_mask(int2(v.position.xy), frame.info.w, v.asked);
     return o;
 }
 
@@ -1408,6 +1535,7 @@ FrameTarget window_frames_fs(FrameOut v) {
             mask |= 1u << i;
         }
     }
+    mask &= fade_mask(int2(v.position.xy), frame.info.w, v.fade); // every sample at rest
     if (mask == 0u) {
         discard;
     }
@@ -1438,13 +1566,13 @@ BuildingMaterialLineRecord material_line_at(uint index) {
     return r;
 }
 
-/// A material face's fragments: its paint at its box's top and bottom (as the glass's: rgb, then the CSS y), and its
-/// opacity.
+/// A material face's fragments: its paint at its box's top and bottom (as the glass's: rgb, then the CSS y), its
+/// opacity and its wall's standing fade (a kit's eaves' shadow: its tile's).
 struct MaterialOut {
     float4 position : SV_Position;
     nointerpolation float4 top : GLASS_TOP;
     nointerpolation float4 bottom : GLASS_BOTTOM;
-    nointerpolation float opacity : MATERIAL_OPACITY;
+    nointerpolation float2 opacity : MATERIAL_OPACITY; // x: the opacity; y: the standing fade (fade_lane)
 };
 
 /// Vertex `v` of material fill record `index`: its shape's fan of 3 triangles from its first corner (its last corner
@@ -1456,7 +1584,7 @@ MaterialOut material_fill_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     MaterialOut o;
     o.top = float4(0.0f);
     o.bottom = float4(0.0f);
-    o.opacity = 0.0f;
+    o.opacity = float2(0.0f);
     BuildingWindowShape s = building_material_fill_shape(r);
     if (s.count == 0u) {
         o.position = NOWHERE;
@@ -1480,7 +1608,7 @@ MaterialOut material_fill_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     }
     o.top = float4(p.paint.top, top);
     o.bottom = p.paint.gradient ? float4(p.paint.bottom, bottom) : o.top;
-    o.opacity = p.opacity;
+    o.opacity = float2(p.opacity, fade_lane(wall.fade));
     return o;
 }
 
@@ -1493,7 +1621,7 @@ MaterialOut material_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     MaterialOut o;
     o.top = float4(0.0f);
     o.bottom = float4(0.0f);
-    o.opacity = 0.0f;
+    o.opacity = float2(0.0f);
     uint material = (r.v0.x >> 4u) & 7u;
     BuildingWindowShape bar =
         building_material_bar(building_material_line_of(r), 0.5f * building_material_width(material, r.v0.w));
@@ -1510,22 +1638,36 @@ MaterialOut material_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     BuildingMaterialPaint p = building_material_lines(frame.theme.flags.x, material, r.v0.w);
     o.top = float4(p.paint.top, 0.0f);
     o.bottom = o.top;
-    o.opacity = p.opacity;
+    o.opacity = float2(p.opacity, fade_lane(wall.fade));
     return o;
 }
 
 /// A material face's fragments: its paint at the pixel (a gradient's from its box's top to its bottom, as the glass's),
 /// with mat's grain as the objects take it, at its opacity over what lies under it (premultiplied, source over).
-[shader("fragment")]
-BuildingTarget material_fs(MaterialOut v) {
-    BuildingTarget o;
+float4 material_colour(MaterialOut v) {
     BuildingGlass g;
     g.top = v.top.xyz;
     g.bottom = v.bottom.xyz;
     g.gradient = v.bottom.w > v.top.w;
     float y = css_of_output(frame.camera, v.position.xy).y;
     float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
-    o.colour = float4(c * v.opacity, v.opacity);
+    return float4(c * v.opacity.x, v.opacity.x);
+}
+
+[shader("fragment")]
+BuildingTarget material_fs(MaterialOut v) {
+    BuildingTarget o;
+    o.colour = material_colour(v);
+    return o;
+}
+
+/// A material face's paint, or a kit's eaves' shadow, while a tile fades: material_fs's on the samples its standing
+/// fade keeps.
+[shader("fragment")]
+FadingTarget material_fading_fs(MaterialOut v) {
+    FadingTarget o;
+    o.colour = material_colour(v);
+    o.coverage = fade_mask(int2(v.position.xy), frame.info.w, lane_fade(v.opacity.y));
     return o;
 }
 
@@ -1535,6 +1677,7 @@ struct BeamOut {
     float4 position : SV_Position;
     nointerpolation float4 ends : BEAM_ENDS;
     nointerpolation float half : BEAM_HALF;
+    nointerpolation uint fade : FADE; // its tile's standing fade (fade_word)
 };
 
 /// Vertex `v` of beam record `index`: its quad (two triangles over building_beam_corner's), at its true depth along it
@@ -1547,6 +1690,8 @@ BeamOut beam_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
     BeamOut o;
     o.ends = float4(0.0f);
     o.half = 0.0f;
+    TilePlace place = building_record_place(beams[at + 4u], beams[at + 5u]);
+    o.fade = fade_word(place.offset.w, place.scale.w);
     if (!b.drawn) {
         o.position = NOWHERE;
         return o;
@@ -1584,6 +1729,7 @@ FrameTarget beam_fs(BeamOut v) {
             mask |= 1u << i;
         }
     }
+    mask &= fade_mask(int2(v.position.xy), frame.info.w, v.fade); // every sample at rest
     if (mask == 0u) {
         discard;
     }
@@ -1601,6 +1747,7 @@ struct RoofLineOut {
     nointerpolation float4 paint : ROOF_LINE_PAINT; ///< its colour (with mat's grain to come) and its opacity
     nointerpolation float half : ROOF_LINE_HALF;
     nointerpolation uint round : ROOF_LINE_ROUND;
+    nointerpolation uint fade : FADE; // its tile's standing fade (fade_word)
 };
 
 /// Vertex `v` of roof line record `index` (a kit roof's tile course or lit ridge, or a kit wall's board line): its quad
@@ -1616,6 +1763,8 @@ RoofLineOut roof_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInsta
     o.paint = float4(0.0f);
     o.half = 0.0f;
     o.round = 0u;
+    TilePlace place = building_record_place(roof_lines[at + 4u], roof_lines[at + 5u]);
+    o.fade = fade_word(place.offset.w, place.scale.w);
     if (!r.line.drawn) {
         o.position = NOWHERE;
         return o;
@@ -1658,6 +1807,7 @@ FrameTarget roof_line_fs(RoofLineOut v) {
             mask |= 1u << i;
         }
     }
+    mask &= fade_mask(int2(v.position.xy), frame.info.w, v.fade); // every sample at rest
     if (mask == 0u) {
         discard;
     }
@@ -1680,7 +1830,7 @@ MaterialOut kit_shadow_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInst
     MaterialOut o;
     o.top = float4(0.0f);
     o.bottom = float4(0.0f);
-    o.opacity = 0.0f;
+    o.opacity = float2(0.0f);
     BuildingWindowShape s = k.shape;
     if (s.count == 0u) {
         o.position = NOWHERE;
@@ -1697,6 +1847,7 @@ MaterialOut kit_shadow_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInst
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.top = float4(building_rgb(k.rgb), s.p0.y);
     o.bottom = o.top;
-    o.opacity = k.opacity;
+    TilePlace place = building_record_place(roof_lines[at + 4u], roof_lines[at + 5u]);
+    o.opacity = float2(k.opacity, fade_lane(fade_word(place.offset.w, place.scale.w)));
     return o;
 }

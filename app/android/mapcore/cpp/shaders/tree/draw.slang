@@ -7,8 +7,11 @@
 // depth with float depth the quads below depth 1 (tree.slangh's tree_fill: a close tree's trunk, a lamp's cap and
 // lantern, a box's top) draw apart, from the fills' list through trees_fills_vs and trees_fills_fs, which writes no mask
 // and discards nothing, so a tiler keeps its early depth test and hidden-surface removal for them (ENGINE.md gain 18);
-// trees_vs leaves them out where the push says.
+// trees_vs leaves them out where the push says. While a tile fades (ENGINE.md's standing fades) every record keeps the
+// samples of its tile's standing fade (shared/fade.slang): the CPU gives each its fade (tree_fades) and the plain fills
+// draw through trees_fills_fading_fs.
 
+#include "shared/fade.slang"
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
@@ -24,8 +27,8 @@
 [[vk::binding(6, 1)]] StructuredBuffer<uint2> sun_bits;
 
 // Set 2: the jobs (written by the CPU), the tones, the records as the compute stage writes them and as the vertex
-// stage reads them, the sunlit sides alike, and the fills' list (written by the CPU: each a record's index, in the
-// records' order).
+// stage reads them, the sunlit sides alike, the fills' list (written by the CPU: each a record's index, in the records'
+// order), and while a tile fades each record's standing fade (written by the CPU: the records', then the sides').
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> tree_jobs;
 [[vk::binding(1, 2)]] StructuredBuffer<uint> tree_tones;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> tree_records_out;
@@ -33,9 +36,11 @@
 [[vk::binding(4, 2)]] RWStructuredBuffer<uint4> tree_sides_out;
 [[vk::binding(5, 2)]] StructuredBuffer<uint4> tree_sides;
 [[vk::binding(6, 2)]] StructuredBuffer<uint> tree_fills;
+[[vk::binding(7, 2)]] StructuredBuffer<uint> tree_fades;
 
 /// The push constants: x the jobs (trees_cs) or the samples a pixel (the fragment stages); y 1 where trees_vs leaves
-/// out the records the plain fills draw (tree_fill), 0 where it draws them all.
+/// out the records the plain fills draw (tree_fill), 0 where it draws them all; w while a tile fades 1 more than the
+/// first of the draw's list's fades in tree_fades (the records' 1, the sides' 1 more than the records), else 0.
 struct TreePush {
     uint4 at;
 };
@@ -540,7 +545,7 @@ void things_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
 
 struct TreeOut {
     float4 position : SV_Position;
-    nointerpolation float3 colour : COLOUR;
+    nointerpolation float4 colour : COLOUR;    // rgb; a: its tile's standing fade (fade_lane; 0 at rest)
     nointerpolation float4 shape : TREE_SHAPE; // a circle's centre and radius; a limb's two ends
     nointerpolation float4 kind : TREE_KIND;   // its kind and caps, a segment's half width, its opacity
     nointerpolation int4 region : TREE_REGION; // a crown's circle's filter region (device px)
@@ -602,7 +607,7 @@ float2 corner_of(TreeRecord r, uint i) {
     return from - v;
 }
 
-TreeOut place(TreeRecord r, uint vertex) {
+TreeOut place(TreeRecord r, uint vertex, uint fade) {
     TreeOut o;
     o.shape = float4(0.0f);
     o.kind = float4(0.0f);
@@ -610,7 +615,7 @@ TreeOut place(TreeRecord r, uint vertex) {
     o.field = int2(0);
     if ((r.a.x & TREE_KIND) == TREE_NONE) {
         o.position = NOWHERE;
-        o.colour = float3(0.0f);
+        o.colour = float4(0.0f);
         return o;
     }
     // two triangles: corners 0 1 2, then 0 2 3
@@ -618,7 +623,7 @@ TreeOut place(TreeRecord r, uint vertex) {
     // flat on the screen at one depth: w = 1, so the depth (a painter slot's exact) and the corners come through the
     // division as they are
     o.position = clip_of(frame.camera, corner_of(r, corner), 1.0f, asfloat(r.a.w));
-    o.colour = tree_rgb(r.a.y);
+    o.colour = float4(tree_rgb(r.a.y), fade_lane(fade));
     o.shape = asfloat(r.b);
     o.kind = float4(float(r.a.x), asfloat(r.c.x), asfloat(r.a.z), 0.0f);
     if (crowned(r.a.x)) {
@@ -626,6 +631,11 @@ TreeOut place(TreeRecord r, uint vertex) {
         o.field = tree_crown_shift(r);
     }
     return o;
+}
+
+/// The standing fade of the draw's list's record `index` (push.at.w): 0 at rest.
+uint fade_of(uint index) {
+    return push.at.w != 0u ? tree_fades[push.at.w - 1u + index] : 0u;
 }
 
 [shader("vertex")]
@@ -639,7 +649,7 @@ TreeOut trees_vs(uint vertex : SV_VulkanVertexID) {
     if (push.at.y == 1u && tree_fill(r)) {
         r = tree_nothing(); // the plain fills draw it
     }
-    return place(r, vertex - index * TREE_RECORD_VERTICES);
+    return place(r, vertex - index * TREE_RECORD_VERTICES, fade_of(index));
 }
 
 /// The plain fills (ENGINE.md gain 18): the records the fills' list names (a close tree's trunk; a lamp's cap and
@@ -647,7 +657,8 @@ TreeOut trees_vs(uint vertex : SV_VulkanVertexID) {
 [shader("vertex")]
 TreeOut trees_fills_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / TREE_RECORD_VERTICES;
-    uint at = tree_fills[index] * TREE_RECORD_VECTORS;
+    uint record = tree_fills[index];
+    uint at = record * TREE_RECORD_VECTORS;
     TreeRecord r;
     r.a = tree_records[at];
     r.b = tree_records[at + 1u];
@@ -655,7 +666,7 @@ TreeOut trees_fills_vs(uint vertex : SV_VulkanVertexID) {
     if (!tree_fill(r)) {
         r = tree_nothing();
     }
-    return place(r, vertex - index * TREE_RECORD_VERTICES);
+    return place(r, vertex - index * TREE_RECORD_VERTICES, fade_of(record));
 }
 
 [shader("vertex")]
@@ -666,7 +677,7 @@ TreeOut tree_sides_vs(uint vertex : SV_VulkanVertexID) {
     r.a = tree_sides[at];
     r.b = tree_sides[at + 1u];
     r.c = tree_sides[at + 2u];
-    return place(r, vertex - index * TREE_RECORD_VERTICES);
+    return place(r, vertex - index * TREE_RECORD_VERTICES, fade_of(index));
 }
 
 /// Vulkan's standard sample positions in a pixel (D7): 4x, then 2x.
@@ -732,8 +743,9 @@ uint crown_coverage(TreeOut v, uint3 k) {
     return mask;
 }
 
-/// A tree's part: its colour with mat's grain, on the samples its shape covers; a crown's circle under the crown filter
-/// on the samples its moved places hold, in the filter's colour at the crown tone's byte there.
+/// A tree's part: its colour with mat's grain, on the samples its shape covers (and its standing fade keeps); a crown's
+/// circle under the crown filter on the samples its moved places hold, in the filter's colour at the crown tone's byte
+/// there.
 [shader("fragment")]
 TreeTarget trees_fs(TreeOut v) {
     bool crown = crowned(uint(v.kind.x));
@@ -741,11 +753,12 @@ TreeTarget trees_fs(TreeOut v) {
     if (crown) {
         k = fx_crown(fx_wrap(fx_pixel(frame.camera, v.position.xy) + v.field));
     }
-    uint mask = crown ? crown_coverage(v, k) : coverage_of(v);
+    uint kept = fade_mask(int2(v.position.xy), frame.info.w, lane_fade(v.colour.a)); // every sample at rest
+    uint mask = (crown ? crown_coverage(v, k) : coverage_of(v)) & kept;
     if (mask == 0u) {
         discard;
     }
-    float3 colour = crown ? crown_colour(v.colour, k.z) : v.colour;
+    float3 colour = crown ? crown_colour(v.colour.rgb, k.z) : v.colour.rgb;
     TreeTarget o;
     o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
@@ -761,7 +774,16 @@ struct TreeFill {
 [shader("fragment")]
 TreeFill trees_fills_fs(TreeOut v) {
     TreeFill o;
-    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = float4(mat_colour(frame.camera, v.colour.rgb, v.position.xy, mat_on(frame)), 1.0f);
+    return o;
+}
+
+/// The same while a tile fades (the fills' fading pipelines, Cover::dithers): on the samples its standing fade keeps.
+[shader("fragment")]
+TreeTarget trees_fills_fading_fs(TreeOut v) {
+    TreeTarget o;
+    o.colour = float4(mat_colour(frame.camera, v.colour.rgb, v.position.xy, mat_on(frame)), 1.0f);
+    o.coverage = fade_mask(int2(v.position.xy), frame.info.w, lane_fade(v.colour.a));
     return o;
 }
 
@@ -791,15 +813,15 @@ float4 streak_at(float t) {
 
 /// A translucent part (a trunk's sunlit side, a lamp's halo or its wet streak): its colour at its opacity (a halo's
 /// its gradient's at the pixel's centre, a streak's its gradient's at its opacity), premultiplied, with mat's grain, on
-/// the samples its shape covers.
+/// the samples its shape covers (and its standing fade keeps).
 [shader("fragment")]
 TreeTarget tree_sides_fs(TreeOut v) {
-    uint mask = coverage_of(v);
+    uint mask = coverage_of(v) & fade_mask(int2(v.position.xy), frame.info.w, lane_fade(v.colour.a));
     if (mask == 0u) {
         discard;
     }
     float alpha = v.kind.z;
-    float3 colour = v.colour;
+    float3 colour = v.colour.rgb;
     if ((uint(v.kind.x) & TREE_HALO) != 0u) {
         float2 css = css_of_output(frame.camera, v.position.xy);
         float2 d = css - v.shape.xy;

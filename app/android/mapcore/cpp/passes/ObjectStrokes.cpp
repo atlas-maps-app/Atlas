@@ -9,18 +9,24 @@
 namespace atlas::passes {
 
 gpu::Result<void> ObjectStrokes::prepare(const frame::PassContext& context, vk::ShaderModule vertex, const char* entry,
-                                         vk::PipelineLayout layout, std::string_view name) {
+                                         vk::PipelineLayout layout, std::string_view name, const char* fading) {
     release();
     ATLAS_GPU_LET(fragment, frame::make_module(context, "fx_strokes", spirv::fx_strokes));
     fragment_ = std::move(fragment);
-    names_ = {std::format("{} strokes over the ground", name), std::format("{} strokes over the objects", name)};
-    for (std::size_t v = 0; v < pipelines_.size(); ++v) {
-        const bool ground = static_cast<Variant>(v) == Variant::ground;
+    names_ = {std::format("{} strokes over the ground", name), std::format("{} strokes over the objects", name),
+              std::format("{} strokes over the ground while fading", name),
+              std::format("{} strokes over the objects while fading", name)};
+    // the two at rest, then the two while a tile fades (where the pass has their vertex stage)
+    for (std::size_t v = 0; v < names_.size(); ++v) {
+        const bool ground = static_cast<Variant>(v % 2) == Variant::ground;
+        const bool fades = v >= pipelines_.size();
+        if (fades && fading == nullptr) break;
         gpu::GraphicsDesc desc{
             .label = {.name = names_[v], .module = "fx_strokes", .configuration = context.configuration},
             .module = vertex,
-            .vertex = entry,
-            .fragment = ground ? "strokes_ground_fs" : "strokes_objects_fs",
+            .vertex = fades ? fading : entry,
+            .fragment = fades ? (ground ? "strokes_ground_fading_fs" : "strokes_objects_fading_fs")
+                              : (ground ? "strokes_ground_fs" : "strokes_objects_fs"),
             .fragment_module = *fragment_,
             .layout = layout,
             .target = context.pass.scene_target()};
@@ -40,13 +46,14 @@ gpu::Result<void> ObjectStrokes::prepare(const frame::PassContext& context, vk::
         desc.blends[0] = gpu::Blend::over();
         if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
-        pipelines_[v] = std::move(pipeline);
+        (fades ? fading_ : pipelines_)[v % 2] = std::move(pipeline);
     }
     return {};
 }
 
 void ObjectStrokes::release() noexcept {
     for (vk::raii::Pipeline& p : pipelines_) p.clear();
+    for (vk::raii::Pipeline& p : fading_) p.clear();
     fragment_.clear();
 }
 

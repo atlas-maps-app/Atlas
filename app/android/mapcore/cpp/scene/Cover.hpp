@@ -75,11 +75,32 @@ struct CoverTile {
     float sun_weight = 1.0F;
     /// Kept under a tile fading in (ENGINE.md's fades): what the frame before drew where it lies, its nearest ancestor
     /// drawn or else its descendants drawn, until its fade ends; `cells` are its cells under the fading tile. The
-    /// ground draws them under the fading tile's ground; Cover::tiles leaves it out, so nothing that stands up does.
+    /// ground draws them under the fading tile's ground; Cover::tiles leaves it out, and what stands up draws it only
+    /// in Cover::upright's entries of it, as it does a tile drawn's cells under a tile fading in beyond its own places
+    /// (an entry under too).
     /// (`fade` is a tile's fade as the picture's completion reckons it; its place's scale.w the fade it is drawn at, 1
     /// for a tile that took over from nothing.)
     bool under = false;
 };
+
+/// Whether entry `c` of `tiles` (Cover::upright) draws its tile's items: a tile drawn for several tiles (a stand-in
+/// ancestor, its cells over each) draws them once, at its first entry, those under a tile fading in too (its entries
+/// under, after the tiles drawn, draw none); a tile kept under one fading in draws at each of its entries the items in
+/// its cells there (draws_item).
+[[nodiscard]] inline bool draws_items(std::span<const CoverTile> tiles, std::size_t c) noexcept {
+    for (std::size_t e = 0; e < c; ++e) {
+        if (tiles[e].drawn == tiles[c].drawn && !tiles[e].under) return false;
+    }
+    return true;
+}
+
+/// Whether entry `t` of Cover::upright draws item row `row` of its tile, whose cell `cells` holds (ItemTable::cell):
+/// every item of a tile drawn, those in its cells alone of a tile kept under one fading in (ENGINE.md's standing fades:
+/// its other entries take the rest, each its own cells' range of the dither).
+[[nodiscard]] inline bool draws_item(const CoverTile& t, std::span<const std::uint8_t> cells,
+                                     std::uint32_t row) noexcept {
+    return !t.under || (row < cells.size() && ((t.cells >> cells[row]) & 1U) != 0U);
+}
 
 /// What the cover is made of for a frame.
 struct CoverInputs {
@@ -143,6 +164,23 @@ public:
     [[nodiscard]] std::span<const CoverTile> with_under() const noexcept { return tiles_; }
     /// The same, for the world to fill their sun (SunGlobals::prepare).
     [[nodiscard]] std::span<CoverTile> with_under() noexcept { return tiles_; }
+    /// What stands up draws (the buildings, trees, things, items and doors; ENGINE.md's standing fades): the tiles
+    /// drawn, then each tile under one fading in once for each start of its cells (CoverTile::under; nearest first),
+    /// its cells there: a tile kept under, or a tile drawn in its cells under one fading in beyond those its own
+    /// entries draw (a stand-in still drawn for another place). Each keeps the dither's levels from its place's
+    /// offset.w to its scale.w (shaders/shared/fade.slang): a tile drawn from 0 to its fade where it takes over from a
+    /// tile the frame before drew, else to 1; a tile under one from the fade over it to its own (1 but where it fades
+    /// in over one in turn), so that every pixel is one tile's. The tiles drawn alone, each whole, while no tile fades
+    /// in over one the frame before drew. Laid out by lay_upright (until then, tiles()).
+    [[nodiscard]] std::span<const CoverTile> upright() const noexcept {
+        return upright_.empty() ? tiles() : std::span<const CoverTile>(upright_);
+    }
+    /// Whether what stands up draws dithered this frame (a tile fades in over one the frame before drew): the passes
+    /// that stand up bind their fading pipelines, whose fragments keep upright()'s ranges.
+    [[nodiscard]] bool dithers() const noexcept { return dithers_; }
+    /// Lays upright() out from the tiles drawn and those kept under them, their sun filled (after SunGlobals::prepare,
+    /// which fills with_under()'s). Render thread.
+    void lay_upright();
     /// The requests for the residency (want), by lane and priority.
     [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
     /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).
@@ -273,7 +311,23 @@ private:
     void lay_under(const view::View& view, const view::Frames& frames, const Frustum& frustum,
                    const Residency& residency, double seconds);
 
+    /// A tile fading in and one it takes over from (lay_under), kept under it or still drawn for another place, for
+    /// what stands up (lay_upright): the two's entries in tiles_ (the latter's first).
+    struct Pair {
+        std::size_t over = 0;
+        std::size_t under = 0;
+    };
+    /// No start: a cell that nothing fading lies over.
+    static constexpr float none_start = 2.0F;
+
     std::vector<CoverTile> tiles_;
+    std::vector<Pair> pairs_;                   // this frame's, lay_under's order
+    std::vector<std::array<float, 64>> starts_; // by entry of tiles_ and cell, where its range starts (lay_upright)
+    std::vector<std::size_t> order_;            // update's sort of tiles_: by entry, the one it was before
+    std::vector<std::size_t> moved_;            // the same the other way: by entry before, the one it is
+    std::vector<CoverTile> sorted_;             // tiles_ in that order, before the swap
+    std::vector<CoverTile> upright_;
+    bool dithers_ = false;
     std::size_t drawn_tiles_ = 0;            // tiles_'s tiles drawn, before those kept under the fading ones
     std::vector<std::uint32_t> drew_;        // the handles of the tiles drawn this frame, those kept under too (sorted)
     std::vector<std::uint32_t> drew_before_; // the frame before's

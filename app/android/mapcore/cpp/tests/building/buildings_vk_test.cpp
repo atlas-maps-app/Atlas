@@ -1814,6 +1814,27 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 }
                 CHECK(k.shaped[2] == 0);
             }
+            // and while a tile fades (ENGINE.md's standing fades): every kept job's tile on the dither's levels from a
+            // quarter to three quarters, the records' pipeline while fading (walls_shape_fading_vs) taking its tile's
+            // fade through the place its record stands for as each decided at each point takes its job's
+            s.buildings->fade_every(std::array<float, 2>{0.25F, 0.75F});
+            std::optional<gpu::Pixels> fading;
+            for (const std::uint32_t most : {0U, every}) {
+                s.buildings->most_shape_chunks(most);
+                const auto still = draw_still(s, c, th);
+                ATLAS_REQUIRE(still.has_value());
+                const passes::Buildings::KeptCounts k = s.buildings->kept_counts();
+                CHECK(k.kept == kept.kept);
+                if (!fading) {
+                    // each at each point: the walls dithered
+                    if (kept.kept[0] + kept.kept[1] > 0) CHECK(*still != *pixels);
+                    fading = *still;
+                    continue;
+                }
+                if (most == every) CHECK(k.shaped[0] + k.shaped[1] == k.kept[0] + k.kept[1]);
+                CHECK_MESSAGE(*still == *fading, name << ", fading, every chunk from records");
+            }
+            s.buildings->fade_every(std::nullopt);
             s.buildings->most_shape_chunks(std::nullopt);
             for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
             if (const std::string out = environment("ATLAS_BUILDINGS_PPM"); !out.empty()) {
