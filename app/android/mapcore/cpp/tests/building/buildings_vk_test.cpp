@@ -23,7 +23,8 @@
 // in front of it) is drawn by true depth as its geometry says and by the painter switch as the renders paint it. A new
 // moment, lit ahead on the pass's own thread (ENGINE.md gain 5), is held frame by frame to the frames drawn from
 // scratch at each moment: every frame one moment whole, the new one from the frame that takes it on, in both frame
-// slots, its light copied in and none of it lit on the render thread. The validation layer stays silent.
+// slots, its light copied in and none of it lit on the render thread. With the user's palette's guesses off, a guessed
+// roof's shape is drawn as the plain box in its place, held to the twin alike. The validation layer stays silent.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -38,6 +39,7 @@
 #include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
 #include "tests/building/fixture.hpp"
@@ -46,6 +48,7 @@
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/layers/Buildings.hpp"
 #include "twin/Twin.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
@@ -60,6 +63,7 @@
 #include <ctime>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -191,7 +195,7 @@ struct Shape {
     /// crossing, each over its own corners' depths, so near it the GPU may differ from the exact shape (counted
     /// apart).
     bool sliver = false;
-    /// An n-gon (five corners or more): the GPU fills the triangles stage T cut from its ring in the plan, which at
+    /// An n-gon (five corners or more): the GPU fills the pieces stage T cut from its ring in the plan, which at
     /// rest (each corner snapped to a tenth of a pixel) can stray from the snapped ring by a fraction of a pixel along
     /// its boundary (counted apart).
     bool ngon = false;
@@ -240,7 +244,7 @@ using Vertex = std::array<double, 3>;
 /// The triangles the vertex stage draws an element as, each corner with its reciprocal depth (Shape::triangles): an
 /// edged element's outline fan `half` its stroke's width out, 14 triangles from its first point, each point its face
 /// plane's within the shape's span; a plain one's fan of 3 over its corners (a kit's band's or corner board's on its
-/// wall's plane: building_fan_vertex's); an n-gon's triangles, each over its own corners.
+/// wall's plane: building_fan_vertex's); an n-gon's pieces' fans, each over its own corners.
 [[nodiscard]] std::vector<std::array<Vertex, 3>> triangles_of(const shaders::FrameCamera& cam,
                                                               const twin::ElementDepth& e, float half) {
     namespace sh = atlas::shaders;
@@ -261,8 +265,8 @@ using Vertex = std::array<double, 3>;
             fan.push_back({static_cast<double>(o.x), static_cast<double>(o.y), static_cast<double>(r)});
         }
         for (std::size_t t = 0; t + 2 < fan.size(); ++t) out.push_back({fan[0], fan[t + 1], fan[t + 2]});
-    } else if (!e.triangles.empty()) {
-        for (const sh::BuildingShape& t : e.triangles) plain_fan(t);
+    } else if (!e.pieces.empty()) {
+        for (const sh::BuildingShape& piece : e.pieces) plain_fan(piece);
     } else {
         plain_fan(e.shape);
     }
@@ -782,10 +786,10 @@ struct StrokeSeg {
         for (const twin::Element* e : by_tile[t]) {
             const twin::ElementDepth& ed = depths[e->sequence];
             const std::uint32_t colour = e->style.stroke.argb & 0xFF'FFFFU;
-            if (ed.triangles.empty()) {
+            if (ed.pieces.empty()) {
                 add(ed.shape, e->style.stroke_width, colour);
             } else {
-                for (const sh::BuildingShape& tri : ed.triangles) add(tri, e->style.stroke_width, colour);
+                for (const sh::BuildingShape& piece : ed.pieces) add(piece, e->style.stroke_width, colour);
             }
         }
     }
@@ -1213,15 +1217,38 @@ struct Scene {
     return out;
 }
 
+/// The user's palette the frames draw by (FrameInputs::palette; null: today's), set while a WithPalette lives.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
+const style::PaletteBlock* frame_palette = nullptr;
+
+/// Draws the frames by `palette` while it lives (the switch cleared however a test ends).
+class WithPalette {
+public:
+    explicit WithPalette(const style::PaletteBlock* palette) noexcept { frame_palette = palette; }
+    ~WithPalette() { frame_palette = nullptr; }
+    WithPalette(const WithPalette&) = delete;
+    WithPalette& operator=(const WithPalette&) = delete;
+    WithPalette(WithPalette&&) = delete;
+    WithPalette& operator=(WithPalette&&) = delete;
+};
+
 /// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
 [[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
-    s.builder->set_inputs(
-        {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+    s.builder->set_inputs({.camera = cam,
+                           .theme = th,
+                           .seconds = s.now,
+                           .mode = frame::Mode::structural,
+                           .scene = s.world.get(),
+                           .palette = frame_palette});
     int waited = 0;
     for (int n = 0; n < 80; ++n) {
         s.now += 0.25;
-        s.builder->set_inputs(
-            {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+        s.builder->set_inputs({.camera = cam,
+                               .theme = th,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get(),
+                               .palette = frame_palette});
         auto report = s.renderer->draw(0);
         if (!report) {
             FAIL("a frame failed: " << report.error().text());
@@ -1258,8 +1285,12 @@ struct Scene {
     }
     // one more, with every tile taken and settled
     s.now += 0.25;
-    s.builder->set_inputs(
-        {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+    s.builder->set_inputs({.camera = cam,
+                           .theme = th,
+                           .seconds = s.now,
+                           .mode = frame::Mode::structural,
+                           .scene = s.world.get(),
+                           .palette = frame_palette});
     auto report = s.renderer->draw(0);
     if (!report) {
         FAIL("a frame failed: " << report.error().text());
@@ -1286,8 +1317,12 @@ struct Scene {
     bool shown = false;
     for (int n = 0; n < 40; ++n) {
         s.now += 0.25;
-        s.builder->set_inputs(
-            {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+        s.builder->set_inputs({.camera = cam,
+                               .theme = th,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get(),
+                               .palette = frame_palette});
         auto report = s.renderer->draw(0);
         if (!report) {
             FAIL("a frame failed: " << report.error().text());
@@ -2379,6 +2414,120 @@ TEST_CASE(
     check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, lean", packs, sunny(),
                  10, nullptr, true);
     lean_tiles = false;
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: a guessed roof's shape drawn as the plain box in its place while the user's palette has Atlas's "
+          "guesses off, pixel for pixel the exact shapes of their twin") {
+    // the synthetic tile with each pitched roof's shape guessed (its `guessed` list naming roof:shape): with the
+    // guesses off (FRAME_PLAIN_ROOFS) each is drawn as its walls up to the roof's top under a flat top, from the south
+    // (near: the walls' top cells raised), far (each wall one cell), far as a level's lean records (the roof's top on
+    // the tile's grid) and straight down, the GPU's pixels the twin's; from the south each house's walls reach higher
+    // with the guesses off than with them on; straight down the twin draws the hipped roof's ends and the pyramid's
+    // faces as triangles with the guesses on, and with them off no triangle of the five, each roof a flat top
+    test::TileBytes t = test::building::tile();
+    const std::vector<std::string> shape{std::string(tiles::building::guessed_roof_shape)};
+    t.layers[0].columns.push_back(
+        {"guessed", tiles::Codec::strs,
+         test::columns::strs(t, {std::nullopt, shape, shape, shape, shape, shape, std::nullopt})});
+    const std::string path = synthetic_pack(std::move(t), test::building::tile_features, "guessed");
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    // the five guessed houses' row (20 to 117 m east of the tile's corner, 0 to 20 m north) in view about the frame's
+    // origin (52.3746° N, 4.884° E, 46 to 66 m north of the row), which a synthetic pack's frames are drawn about
+    // wherever the camera is (its head's one view names no target, so the pack has no ladder): looking north-west at
+    // 50° from 400 m, the houses 284 to 363 m away; at 45° from 650 m, 540 to 616 m away; straight down from 460 m
+    const style::CameraState south = camera(52.3746, 4.884, 308.0, 50.0, 400.0, 1080, 2400, d);
+    const style::CameraState far = camera(52.3746, 4.884, 308.0, 45.0, 650.0, 1080, 2400, d);
+    const style::CameraState down = camera(52.3746, 4.884, 312.0, 0.0, 460.0, 1080, 2400, d);
+    style::PaletteBlock plain{};
+    plain.flags = style::palette_flag::no_guesses;
+    {
+        const WithPalette with(&plain);
+        check_frames(south, "guessed shapes from the south, guesses off", packs, sunny(), 15);
+        check_frames(far, "guessed shapes far, guesses off", packs, sunny(), 15);
+        lean_tiles = true;
+        check_frames(far, "guessed shapes far, lean, guesses off", packs, sunny(), 10);
+        lean_tiles = false;
+        check_frames(down, "guessed shapes straight down, guesses off", packs, sunny(), 20);
+    }
+    auto session = test::open_session();
+    if (session) {
+        const gpu::Device& device = *session->device;
+        auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+        ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+        const gpu::Configuration config{.config = gpu::FrameConfig::x1,
+                                        .route = gpu::Route::renderpass,
+                                        .form = gpu::FrameForm::composite,
+                                        .target = gpu::CompositeTarget::direct};
+        ATLAS_REQUIRE(device.facts().supports(config.config));
+        // the twin's elements of each guessed building (ids 101 to 105), its closed paths of three points among them,
+        // and the topmost point (CSS px) of its walls' (each filled and edged in one colour, 0.3 px wide)
+        constexpr float none = std::numeric_limits<float>::infinity();
+        struct Shapes {
+            std::array<std::size_t, 5> elements{};
+            std::size_t triangles = 0;
+            std::array<float, 5> wall_top{none, none, none, none, none};
+        };
+        const auto shapes = [&](style::CameraState cam, const style::PaletteBlock* palette) {
+            const WithPalette with(palette);
+            cam.flags |= style::camera_flag::rest;
+            Shapes out;
+            auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, 0x808080);
+            ATLAS_REQUIRE_OR_RETURN(out, made.has_value());
+            Scene& s = *made;
+            const auto pixels = draw(s, cam, sunny());
+            ATLAS_REQUIRE_OR_RETURN(out, pixels.has_value());
+            CHECK(s.settled);
+            twin::Stream stream;
+            s.buildings->emit(s.builder->state(), stream, passes::Buildings::draw_phase);
+            const twin::Decoded decoded = twin::decode(stream.bytes());
+            ATLAS_REQUIRE_OR_RETURN(out, decoded.error.empty(), decoded.error);
+            for (const twin::Element& e : decoded.document.elements) {
+                if (e.item < 0 || e.clip != twin::none || e.kind != twin::Op::path) continue;
+                const std::int64_t id = decoded.document.items[static_cast<std::size_t>(e.item)].id;
+                if (id < 101 || id > 105) continue;
+                const auto k = static_cast<std::size_t>(id - 101);
+                ++out.elements.at(k);
+                const bool closed = !e.closed.empty() && e.closed.front() != 0;
+                if (e.points.size() == 3 && closed) ++out.triangles;
+                if (std::abs(e.style.stroke_width - 0.3F) < 1e-6F) {
+                    for (const twin::Point& q : e.points) out.wall_top.at(k) = std::min(out.wall_top.at(k), q.y);
+                }
+            }
+            s.renderer.reset();
+            return out;
+        };
+        const auto listed = [](const auto& n) { return std::format("{} {} {} {} {}", n[0], n[1], n[2], n[3], n[4]); };
+        const Shapes on = shapes(down, nullptr);
+        const Shapes off = shapes(down, &plain);
+        MESSAGE(std::format("straight down, the guessed buildings' elements {} with the guesses on ({} triangles), {} "
+                            "with them off ({} triangles)",
+                            listed(on.elements), on.triangles, listed(off.elements), off.triangles));
+        CHECK(on.triangles >= 6);
+        CHECK(off.triangles == 0);
+        for (std::size_t k = 0; k < on.elements.size(); ++k) {
+            CAPTURE(k);
+            CHECK(on.elements.at(k) > 0);
+            CHECK(off.elements.at(k) > 0);
+        }
+        const Shapes south_on = shapes(south, nullptr);
+        const Shapes south_off = shapes(south, &plain);
+        MESSAGE(
+            std::format("from the south, the guessed buildings' walls' tops at {} px with the guesses on, {} px with "
+                        "them off",
+                        listed(south_on.wall_top), listed(south_off.wall_top)));
+        std::size_t higher = 0;
+        for (std::size_t k = 0; k < south_on.wall_top.size(); ++k) {
+            CAPTURE(k);
+            REQUIRE(south_on.wall_top.at(k) < none);
+            REQUIRE(south_off.wall_top.at(k) < none);
+            CHECK(south_off.wall_top.at(k) <= south_on.wall_top.at(k));
+            if (south_off.wall_top.at(k) < south_on.wall_top.at(k) - 2.0F) ++higher;
+        }
+        CHECK(higher >= 4);
+    }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

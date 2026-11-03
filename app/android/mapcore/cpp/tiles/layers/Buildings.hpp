@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 
 namespace atlas::tiles {
 
@@ -83,6 +84,10 @@ inline constexpr std::uint8_t party = slot_of(columns, "party");
 inline constexpr std::uint8_t tag_building = slot_of(columns, "tag:building");
 inline constexpr std::uint8_t tag_building_part = slot_of(columns, "tag:building:part");
 inline constexpr std::uint8_t tag_roof_direction = slot_of(columns, "tag:roof:direction");
+inline constexpr std::uint8_t guessed = slot_of(columns, "guessed");
+
+/// The key `guessed` lists where the loader guessed the roof's shape (load::key_of(Guess::roof_shape)).
+inline constexpr std::string_view guessed_roof_shape = "roof:shape";
 
 /// The derived flags (Schema.Flags), computed by the packer with the renders' own tests.
 inline constexpr std::uint64_t flag_church = 1;       // a church, cathedral or chapel, or a part in one

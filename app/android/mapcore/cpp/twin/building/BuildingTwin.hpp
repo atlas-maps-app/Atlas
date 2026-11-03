@@ -126,13 +126,13 @@ struct ArchesDepth {
 /// How the vertex stage gives an element its depth (the tests' depth raster; L1 reads none of it): the shape it draws
 /// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
 /// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
-/// building_plain_vertex); an n-gon's, each of its triangles the frame draws, over its own corners (`shape` is the
+/// building_plain_vertex); an n-gon's, each of its pieces the frame draws, over its own corners (`shape` is the
 /// first of them); a wall's windows' path, its windows; and the cover tile it was drawn for (its place in the cover's
 /// list: the order the roofs' thin edges are drawn in follows the tiles').
 struct ElementDepth {
     shaders::BuildingShape shape{};
     bool edged = false;
-    std::vector<shaders::BuildingShape> triangles;
+    std::vector<shaders::BuildingShape> pieces;
     std::uint32_t tile = 0;
     std::vector<WindowsDepth> windows;        ///< one: the element is a wall's windows' path
     std::vector<PartsDepth> parts;            ///< one: the element is a wall's reveals', sash bars' or sills' path
@@ -157,14 +157,25 @@ struct WindowDistances {
     double focal = 0.0;
 };
 
+/// The buildings' parts the frame leaves out (style::CameraState::parts) whose records the CPU lays each frame, which
+/// no rank's detail leaves out (passes/Windows.cpp's jobs): a houseboat cabin's panes go with the windows, a church's
+/// own windows with theirs, a kit's walls' lines and eaves' shadows and its roofs' lines with its details.
+struct LeftOut {
+    bool windows = false;
+    bool church_windows = false;
+    bool kit_details = false;
+};
+
 /// Emits the buildings of the tiles a frame draws.
 class BuildingTwin {
 public:
     /// For the frame whose block is `block`, rank table `ranks` (one entry per item row) and items' distances
-    /// `distances`, and its glass's gradients, into `out`, in its group `group` (the objects group).
+    /// `distances`, its glass's gradients and the parts it leaves out `left_out`, into `out`, in its group `group` (the
+    /// objects group).
     BuildingTwin(const shaders::FrameBlock& block, std::span<const std::uint32_t> ranks, WindowDistances distances,
-                 WindowGradients gradients, Stream& out, std::int32_t group) noexcept
-        : block_(block), ranks_(ranks), distances_(distances), gradients_(gradients), out_(out), group_(group) {}
+                 WindowGradients gradients, LeftOut left_out, Stream& out, std::int32_t group) noexcept
+        : block_(block), ranks_(ranks), distances_(distances), gradients_(gradients), left_out_(left_out), out_(out),
+          group_(group) {}
 
     /// The primitives the frame draws of a tile over its visible cells `cells`: its buildings' `b`, its items' rows in
     /// the item table `rows` (its first item's on), the words of its range of the walls heap, its place and sun bits.
@@ -221,6 +232,7 @@ private:
     std::span<const std::uint32_t> ranks_;
     WindowDistances distances_;
     WindowGradients gradients_;
+    LeftOut left_out_;
     Stream& out_;
     std::int32_t group_;
     std::size_t elements_ = 0;
@@ -231,7 +243,7 @@ private:
     std::vector<std::uint32_t> colours_;  // the tile's faces' colours at the frame's moment, lit and unlit
     std::vector<Point> points_;
     std::vector<Subpath> subpaths_;
-    std::vector<shaders::BuildingShape> triangles_;                    // an n-gon's drawn triangles
+    std::vector<shaders::BuildingShape> pieces_;                       // an n-gon's drawn pieces
     std::array<std::vector<shaders::BuildingWindowShape>, 2> windows_; // a wall's dark and lit windows
     std::vector<shaders::BuildingWindowShape> reveal_shapes_;          // its deep windows' reveals
     std::vector<shaders::BuildingWindowShape> sill_shapes_;            // and sills

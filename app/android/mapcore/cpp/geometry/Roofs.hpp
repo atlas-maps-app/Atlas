@@ -9,7 +9,10 @@
 //   - mansard: the brisis faces from the eaves to the inset top (Amsterdam.insetRing), and the top;
 //   - anything else (flat, unknown, or a pitched shape without a height): the top, drawn when the eye is above it.
 // Each face with the port's normal and test point, its sun sample (K8's order: every edge's, in the edges' order), and
-// its painter slot after the walls'.
+// its painter slot after the walls'. A shape the loader guessed (`guessed` holds roof:shape) and drawn pitched has its
+// faces ShapeGuess::guessed, and after them the plain box's flat top in its place at the roof's top
+// (ShapeGuess::plain), lit by a sample of its own; the frame draws the one or the other by the user's palette (Atlas's
+// guesses off: FRAME_PLAIN_ROOFS), the building's walls reaching the top then (ShapeGuess::box_wall).
 #pragma once
 
 #include "geometry/Walls.hpp"

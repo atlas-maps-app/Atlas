@@ -1,5 +1,5 @@
 // The buildings pass's roofs (passes/Walls.hpp): the plain primitives' pipeline and draws (roof faces and n-gons'
-// triangles, shaders/building/draw.slang's roofs_vs), and their thin edges' (roof_strokes_cs, roof_strokes_vs, through
+// pieces, shaders/building/draw.slang's roofs_vs), and their thin edges' (roof_strokes_cs, roof_strokes_vs, through
 // ObjectStrokes).
 #include "base/log.hpp"
 #include "frame/FrameBuilder.hpp"

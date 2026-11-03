@@ -161,7 +161,8 @@ bool in_walls_colour(std::span<const geometry::V2> poly, std::size_t edge, doubl
 }
 
 std::optional<Picked> pick_building(const tiles::Store& store, std::span<const PickPack> packs,
-                                    const view::GroundFrame& ground, const view::Vec3& eye, const view::Vec3& ray) {
+                                    const view::GroundFrame& ground, const view::Vec3& eye, const view::Vec3& ray,
+                                    bool plain_roofs) {
     const double length = pymath::sqrt((ray.x * ray.x) + (ray.y * ray.y) + (ray.z * ray.z));
     if (!(length > 0.0) || !(ray.y < 0.0) || ground.kx == 0.0 || ground.kz == 0.0) return std::nullopt;
     const view::Vec3 dir{ray.x / length, ray.y / length, ray.z / length};
@@ -226,9 +227,12 @@ std::optional<Picked> pick_building(const tiles::Store& store, std::span<const P
                              .latitude = lat_of(eye.z + (t * dir.z)),
                              .longitude = lon_of(eye.x + (t * dir.x))};
                     // the face met, its slot word as geometry::Face::slot holds it (the columns' 10 bits) and its
-                    // colour
+                    // colour; a guessed roof's shape drawn as the plain box in its place is a flat roof's
+                    const bool plain =
+                        plain_roofs && l->list_holds(tl::building::guessed, i, tl::building::guessed_roof_shape);
                     const PickRoof roof{
-                        .shape = l->string(tl::building::roof, i).value_or(std::string_view{}),
+                        .shape =
+                            plain ? std::string_view{} : l->string(tl::building::roof, i).value_or(std::string_view{}),
                         .roof_h = l->decimal(tl::building::roof_h, i).value_or(0.0),
                         .across = l->string(tl::building::orient, i) == "across",
                         .direction = l->string(tl::building::tag_roof_direction, i).value_or(std::string_view{})};

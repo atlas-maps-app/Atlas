@@ -616,7 +616,11 @@ void Ground::decide_reflections(const frame::FrameState& state) {
             const std::span<const double> xs = g.casters->solids.xs(m.solid);
             const std::span<const double> zs = g.casters->solids.zs(m.solid);
             const std::size_t n = xs.size();
-            const bool rows = !m.boat && !m.part && depth < 520;
+            // its windows' rows, but where the map leaves the windows out (Atlas's guesses off among others)
+            const bool rows = !m.boat && !m.part && depth < 520 && !f.out(style::camera_part::windows);
+            // a guessed roof's shape while the guesses are off: the plain box's walls up to the top, no gable
+            const bool plain = f.plain_roofs && m.shape_guessed;
+            const double top_y = plain ? hd.apex_y : hd.top_y;
             ++mirror_count;
             if (ahead && base_at.size() < n) {
                 base_at.resize(n);
@@ -627,7 +631,7 @@ void Ground::decide_reflections(const frame::FrameState& state) {
             const auto screen = [&](std::size_t i) {
                 if (made_for[i] != mirror_count) {
                     base_at[i] = cam.pc(cam.cam({xs[i], hd.base_y, zs[i]}));
-                    top_at[i] = cam.pc(cam.cam({xs[i], hd.top_y, zs[i]}));
+                    top_at[i] = cam.pc(cam.cam({xs[i], top_y, zs[i]}));
                     made_for[i] = mirror_count;
                 }
             };
@@ -658,7 +662,7 @@ void Ground::decide_reflections(const frame::FrameState& state) {
                 const std::uint32_t unlit_c = own.unlit[wi];
                 const std::uint32_t col = lit ? lit_c : unlit_c;
                 const std::array<view::Vec3, 4> q{view::Vec3{a.x, hd.base_y, a.z}, view::Vec3{bb.x, hd.base_y, bb.z},
-                                                  view::Vec3{bb.x, hd.top_y, bb.z}, view::Vec3{a.x, hd.top_y, a.z}};
+                                                  view::Vec3{bb.x, top_y, bb.z}, view::Vec3{a.x, top_y, a.z}};
                 const Reflection wall{.kind = Reflection::Kind::wall,
                                       .tile = ti,
                                       .first = 0,
@@ -683,7 +687,7 @@ void Ground::decide_reflections(const frame::FrameState& state) {
                     f.reflection_faces.push_back({.q = q, .n = 4, .box = box});
                     rank(depth, e);
                 }
-                if (w.gable) {
+                if (w.gable && !plain) {
                     const std::array<view::Vec3, 3> tri{q[3], q[2], view::Vec3{mid.x, hd.apex_y, mid.z}};
                     const bool kept_gable =
                         ahead

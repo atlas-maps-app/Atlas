@@ -396,6 +396,7 @@ struct Slots {
     std::uint8_t tag_building;
     std::uint8_t tag_part;
     std::uint8_t tag_direction;
+    std::uint8_t guessed;
 };
 
 template <class Columns>
@@ -413,7 +414,8 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "flags"),
             tl::slot_of(c, "tag:building"),
             tl::slot_of(c, "tag:building:part"),
-            tl::slot_of(c, "tag:roof:direction")};
+            tl::slot_of(c, "tag:roof:direction"),
+            tl::slot_of(c, "guessed")};
 }
 
 constexpr Slots record_slots = slots_in(tl::building::columns);
@@ -438,6 +440,7 @@ struct Values {
     bool hidden = false;
     bool no_win = false;
     std::uint64_t flags = 0;
+    bool shape_guessed = false; ///< the loader guessed the roof's shape (`guessed` holds roof:shape)
 };
 
 [[nodiscard]] Values values_of(const tl::Layer& l, const Slots& s, std::size_t i) noexcept {
@@ -460,6 +463,7 @@ struct Values {
     v.hidden = l.boolean(s.hidden, i).value_or(false);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
     v.flags = static_cast<std::uint64_t>(l.integer(s.flags, i));
+    v.shape_guessed = l.list_holds(s.guessed, i, tl::building::guessed_roof_shape);
     return v;
 }
 
@@ -648,6 +652,12 @@ private:
             if (windowed && elen > 2.2) wall_windows(v, a, ex, ez, elen, nrm, e, y0, wall_top, modern);
         }
         roofs(v, poly, roof, h, rh, wall_top, skillion, dirv, span);
+        // a guessed shape drawn pitched: the plain box's flat top in its place after it, seen from above
+        // (geometry/Roofs.cpp's plain_top; its walls up to it take their cells' samples)
+        if (v.shape_guessed && rh != 0.0) {
+            const V2 ce = centroid(poly);
+            add(Kind::plain_top, 0, 0, {ce.x, h + 0.05, ce.z}, no_face);
+        }
     }
 
     /// The windows of one wall: a row per level (the shop floor's row too), bays by the wall's length.
@@ -1161,6 +1171,7 @@ const char* name_of(Kind kind) noexcept {
     case Kind::quay_band: return "quay_band";
     case Kind::crown: return "crown";
     case Kind::band: return "band";
+    case Kind::plain_top: return "plain_top";
     }
     return "?";
 }
@@ -1304,7 +1315,8 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
                      .gabled = is(v.roof, "gabled"),
                      .across = is(v.orient, "across"),
                      .boat = is(v.btype, "houseboat"),
-                     .part = v.part_tag};
+                     .part = v.part_tag,
+                     .shape_guessed = v.shape_guessed};
             double longest = -1.0;
             const std::size_t n = poly.size();
             for (std::size_t k = 0; k < n; ++k) {

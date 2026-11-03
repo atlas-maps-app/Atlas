@@ -33,7 +33,8 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
                   geometry::prim_flag::stroke_fine == shaders::BUILDING_STROKE_FINE &&
                   geometry::prim_flag::stroke_wide == shaders::BUILDING_STROKE_WIDE &&
                   geometry::prim_flag::stroke_cabin == shaders::BUILDING_STROKE_CABIN &&
-                  geometry::prim_flag::outline == shaders::BUILDING_OUTLINE,
+                  geometry::prim_flag::outline == shaders::BUILDING_OUTLINE &&
+                  geometry::prim_flag::outline_last == shaders::BUILDING_OUTLINE_LAST,
               "geometry/Walls.hpp's prim_flag and building.slangh's flags");
 static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP_FLOOR &&
                   geometry::window_flag::warehouse == shaders::BUILDING_WINDOW_WAREHOUSE &&
@@ -195,6 +196,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
         if (face.kit == gm::KitPart::band) flags |= shaders::BUILDING_FACE_BAND;
         if (face.kit == gm::KitPart::corner) flags |= shaders::BUILDING_FACE_CORNER;
+        if (face.shape == gm::ShapeGuess::guessed) flags |= shaders::BUILDING_FACE_SHAPE_GUESSED;
+        if (face.shape == gm::ShapeGuess::plain) flags |= shaders::BUILDING_FACE_SHAPE_PLAIN;
+        if (face.shape == gm::ShapeGuess::box_wall) flags |= shaders::BUILDING_FACE_BOX_WALL;
         face_flags[i] = flags;
     }
     // a level's grid: over every corner, test point and ring point it holds, tile-local
@@ -293,7 +297,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.item_facades = g.item_facades;
     layout.item_facades.resize(k, geometry::no_facade);
     for (std::uint32_t i = 0; i < k; ++i) out[layout.facades_at + (i / 4)][i % 4] = layout.item_facades[i];
-    // the n-gons whole, for the twin: their rings in the triangles' floats
+    // the n-gons whole, for the twin: their rings in the pieces' floats
     layout.rings.clear();
     layout.ring_points.clear();
     for (const gm::Polygon& poly : g.polygons) {
@@ -314,11 +318,17 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
             layout.ring_points.push_back(f32(v.z - origin_z));
         }
     }
-    // in their triangles' order (stage T sorts the primitives by cell, not the n-gons), as the twin looks them up
+    // in their pieces' order (stage T sorts the primitives by cell, not the n-gons), as the twin looks them up
     std::ranges::sort(layout.rings, {}, &BuildingRing::prim);
-    // each face's geometry for the vertex stage, its light inputs for the CPU's light
+    // each face's geometry for the vertex stage, its light inputs for the CPU's light: an n-gon's area, or a box wall's
+    // roof's top (on a level's grid, as the plain top's corners are) in its place
     std::vector<double> areas(f, 0.0);
     for (const gm::Polygon& poly : g.polygons) areas[poly.face] = poly.area;
+    for (std::uint32_t i = 0; i < f; ++i) {
+        const gm::Face& face = g.faces[i];
+        if (face.shape != gm::ShapeGuess::box_wall) continue;
+        areas[i] = g.lean ? static_cast<double>(lattice.point(1, lattice.steps(1, face.top))) : face.top;
+    }
     layout.lights.resize(f);
     for (std::uint32_t i = 0; i < f; ++i) {
         const gm::Face& face = g.faces[i];

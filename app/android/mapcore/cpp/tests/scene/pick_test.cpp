@@ -5,11 +5,14 @@
 // 60 m beside it meets a wall nearer than its middle, and one level from there 1 m over its base a wall, in its slot
 // word and colour; a ray that does not fall to the street, or falls where no pack reaches, meets none; and a pick sees
 // only the packs it is given. Without a pack, which a wall met stands in the walls' colour as geometry/Roofs.cpp draws
-// it: below the eaves, a gable end's triangle and a skillion's wall below its slope.
+// it: below the eaves, a gable end's triangle and a skillion's wall below its slope. On a synthetic pack, a guessed
+// roof's shape while Atlas's guesses are off is met as the plain box the map draws in its place: walls to its top under
+// a flat top.
 #include "base/arena.hpp"
 #include "scene/Pick.hpp"
 #include "style/Palette.hpp"
 #include "tests/base/require.hpp"
+#include "tests/building/fixture.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/layers/Buildings.hpp"
@@ -20,7 +23,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <format>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -250,4 +256,77 @@ TEST_CASE("pick: a wall met stands in the walls' colour below the eaves, in a ga
     CHECK_FALSE(scene::in_walls_colour(box, 2, 0.5, 8.1, 12.0, skillion));
     CHECK(scene::in_walls_colour(box, 1, 0.5, 9.9, 12.0, skillion)); // halfway south: 12 - 4 / 2
     CHECK_FALSE(scene::in_walls_colour(box, 1, 0.5, 10.1, 12.0, skillion));
+}
+
+TEST_CASE("pick: a guessed roof's shape, drawn as the plain box in its place while Atlas's guesses are off, is met as "
+          "walls to its top under a flat top") {
+    namespace fx = atlas::test::building;
+    // the synthetic tile (tests/building/fixture.hpp) with the gabled house's shape guessed (building 1: 8 m east to
+    // west by 14 m, 15 m tall, its eaves at 10 m, its ridge from north to south, so its gables the north and south
+    // walls) and the hipped one's mapped (building 2: 14 m tall, its eaves at 10 m), both roofs in the red tiles' slot
+    test::TileBytes t = fx::tile();
+    const std::vector<std::string> shape{std::string(tl::building::guessed_roof_shape)};
+    t.layers[0].columns.push_back({"guessed", tl::Codec::strs,
+                                   test::columns::strs(t, {std::nullopt, shape, std::nullopt, std::nullopt,
+                                                           std::nullopt, std::nullopt, std::nullopt})});
+    t.layers[0].columns.push_back({"roof_slot", tl::Codec::varu, test::columns::varu({0, 80, 80, 0, 0, 0, 0})});
+    const std::string path = fx::write_pack(std::move(t), fx::tile_features, "pick-guessed");
+    auto pack = test::open_pack(path);
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const tl::RenderHead* head = pack->head();
+    ATLAS_REQUIRE(head != nullptr);
+    const view::GroundFrame ground = view::frame_of(head->frame);
+    const std::uint8_t z = pack->chunks().level(head->levels[0]).front().tile.z;
+    tl::Store store;
+    ATLAS_REQUIRE(store.add({.id = "synthetic", .kind = tl::PackKind::bundled, .path = path}).has_value());
+    const std::array<scene::PickPack, 1> packs{scene::PickPack{.id = "synthetic", .z = z}};
+    // a point of the tile in frame metres, from the fixture's south-west corner in grid units
+    const auto at = [&](std::int32_t dlon, std::int32_t dlat) {
+        const double lat = tl::Frame::degrees(fx::s0 + dlat);
+        const double lon = tl::Frame::degrees(fx::w0 + dlon);
+        return std::array<double, 2>{ground.x(lat, lon), ground.z(lat, lon)};
+    };
+    const std::array<double, 2> house = at(3000 + 588, 630); // building 1's middle
+    const std::array<double, 2> house_nw = at(3000, 1260);
+    const std::array<double, 2> hipped = at(6000 + 735, 540); // building 2's middle
+    const std::array<double, 2> hipped_n = at(6000, 1080);
+    constexpr std::uint32_t red_tiles = 80;
+    const std::uint32_t flat_red_tiles = style::flat_roof_slot(red_tiles, 101);
+    REQUIRE(flat_red_tiles != red_tiles);
+    for (const bool plain : {false, true}) {
+        CAPTURE(plain);
+        // straight down onto the gabled house: met at its lid, its roof's colour, its slot word a pitched roof's while
+        // its shape is drawn, a flat top's (its mid grey) while the box is
+        const auto down =
+            scene::pick_building(store, packs, ground, {house[0], 300.0, house[1]}, {0.0, -1.0, 0.0}, plain);
+        REQUIRE(down.has_value());
+        CHECK(down->id == 101);
+        CHECK(down->roof);
+        CHECK(down->distance == doctest::Approx(300.0 - 15.0).epsilon(1e-9));
+        CHECK(down->rgb == 0x9E5038U);
+        CHECK(down->slot == (plain ? flat_red_tiles : red_tiles));
+        // level from the north 12 m up, 1 m in from its west wall: over the gable's slope there (10 m + 5 m · 1/4),
+        // so its roof while its shape is drawn, and the box's wall while the box is
+        const auto gable = scene::pick_building(store, packs, ground, {house_nw[0] + 1.0, 12.0, house_nw[1] - 60.0},
+                                                {0.0, -1e-4, 1.0}, plain);
+        REQUIRE(gable.has_value());
+        CHECK(gable->id == 101);
+        CHECK(gable->roof == !plain);
+        CHECK(gable->rgb == (plain ? 0xA27A62U : 0x9E5038U));
+        CHECK(gable->slot == (plain ? 0U : red_tiles));
+        // the hipped house's shape is mapped: drawn either way, its roof over the eaves and its lid a pitched one's
+        const auto hip =
+            scene::pick_building(store, packs, ground, {hipped[0], 12.0, hipped_n[1] - 60.0}, {0.0, -1e-4, 1.0}, plain);
+        REQUIRE(hip.has_value());
+        CHECK(hip->id == 102);
+        CHECK(hip->roof);
+        CHECK(hip->rgb == 0x535C66U);
+        const auto lid =
+            scene::pick_building(store, packs, ground, {hipped[0], 300.0, hipped[1]}, {0.0, -1.0, 0.0}, plain);
+        REQUIRE(lid.has_value());
+        CHECK(lid->id == 102);
+        CHECK(lid->slot == red_tiles);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }

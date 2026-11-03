@@ -483,6 +483,11 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
         gradients.lit = out.gradient(
             {.id = "glassLit", .coords = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F}, .offsets = offsets, .colours = lit});
     }
+    // the parts the map leaves out whose records the jobs lay (passes/Windows.cpp), which the twin leaves out alike
+    namespace part = style::camera_part;
+    const twin::LeftOut left_out{.windows = state.camera.leaves_out(part::windows),
+                                 .church_windows = state.camera.leaves_out(part::church_windows),
+                                 .kit_details = state.camera.leaves_out(part::kit_details)};
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     for (std::size_t i = 0; i < tiles.size(); ++i) {
         const scene::CoverTile& t = tiles[i];
@@ -503,8 +508,8 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
         }
         twin::BuildingTwin twin(
             state.block, state.ranks->table(),
-            {.depth = state.ranks->depth(), .focal = state.view ? state.view->camera().focal() : 0.0}, gradients, out,
-            objects);
+            {.depth = state.ranks->depth(), .focal = state.view ? state.view->camera().focal() : 0.0}, gradients,
+            left_out, out, objects);
         twin.record_depths(&depths_, static_cast<std::uint32_t>(i));
         twin.tile(*b, rows.subspan(std::min<std::size_t>(first, rows.size())), w.bytes(), t.place, t.cells, sun);
         emitted_.elements += twin.elements();

@@ -267,8 +267,10 @@ std::optional<scene::Picked> MapFrame::pick(double x, double y) {
             packs, [&](const scene::PickPack& p) { return p.id == tile->pack && p.z == tile->key.z; });
         if (!known) packs.push_back({.id = tile->pack, .z = tile->key.z});
     }
+    // a guessed roof's shape as the frame draws it: the plain box in its place where the palette has the guesses off
+    const bool plain_roofs = state.palette != nullptr && state.palette->has(style::palette_flag::no_guesses);
     return scene::pick_building(world_->store(), packs, *state.ground_frame, state.view->camera().eye(),
-                                scene::ray_of(*state.view, x, y));
+                                scene::ray_of(*state.view, x, y), plain_roofs);
 }
 
 bool MapFrame::noise_due(const style::CameraState& camera) const {
