@@ -101,8 +101,97 @@ object VkBench {
     /** How far out the map's pinch goes, metres: 8 km (the core's cover reaches 9, PackList.CORE_REACH). */
     const val MAP_FAR = 8000.0
 
-    /** The longest VK bench waits at a view of the map for its complete picture before measuring there, seconds. */
+    /**
+     * How long the map may make no progress toward a view's complete picture before VK bench's wait there gives up,
+     * seconds ([PictureWait]): no frame finished while none is being drawn, or frames finished on without the picture
+     * growing.
+     */
     const val MAP_WAIT_SECONDS = 60
+
+    /** How long one frame of the map may run before [PictureWait] takes it for stuck, seconds. */
+    const val MAP_FRAME_STUCK_SECONDS = 180
+
+    /**
+     * The frames the map may finish without its picture growing, besides [MAP_WAIT_SECONDS] passing so, before
+     * [PictureWait] gives up: CI's runners draw a few between the picture's last growth and its completion, the slow ones'
+     * waiting up to 43 s each on the driver; a phone draws dozens in a second, long within [MAP_WAIT_SECONDS].
+     */
+    const val MAP_STALL_FRAMES = 20
+
+    /**
+     * A view's wait for its complete picture in VK bench's map stage, on a clock that stands still while the app is away
+     * (its times are that clock's, ns): it goes on while the map makes progress toward the picture and gives up once the
+     * map has stalled, not at a fixed time after it began, so a slow device is waited for and a stuck map is not. On CI's
+     * emulator the map's first frames over its tiles wait on the driver's first compiles of the map's shaders (lavapipe):
+     * 6 to 12 s for the longest on the fast runners, 16 to 43 s on the slow ones, which build tiles and draw a frame at
+     * rest only about 1.5 times as slowly. So the home's first picture took 16 to 28 s on the one and 43 to about 68 s on
+     * the other (26 runs, 30 October to 3 November), against the fixed 60 s it had; the map phase after it draws the same
+     * home from a new process, the compiles kept, in 22 to 27 s there. The map has stalled ([stall]) when
+     * - no frame finished for [MAP_WAIT_SECONDS] and none is being drawn (the frame loop stopped);
+     * - a frame has run for [MAP_FRAME_STUCK_SECONDS] (the render thread or the driver stuck);
+     * - [MAP_STALL_FRAMES] frames finished and [MAP_WAIT_SECONDS] passed since the picture last grew, a frame of the view's
+     *   drawing more than any before it (more draws or triangles: its tiles coming in): the map draws on without it.
+     */
+    class PictureWait(private val startNs: Long) {
+        /** The frames finished in the wait, and the longest of them (its render thread's milliseconds). */
+        var frames = 0
+            private set
+        var longestMs = 0.0
+            private set
+
+        /** When the picture last grew (the wait's start until a frame of the view's finished). */
+        var grewNs = startNs
+            private set
+        private var lastNs = startNs
+        private var sinceGrowth = 0
+        private var mostDraws = -1
+        private var mostTrianglesK = -1
+
+        /**
+         * A frame finished by [nowNs], its render thread's [cpuMs], having drawn [draws] and [trianglesK] thousand
+         * triangles; [ours]: drawn at the view and shown (a frame begun before the wait, or skipped, keeps the frame
+         * loop's liveness alone).
+         */
+        fun frame(nowNs: Long, cpuMs: Double, draws: Int, trianglesK: Int, ours: Boolean) {
+            frames++
+            longestMs = max(longestMs, cpuMs)
+            lastNs = nowNs
+            if (ours && (draws > mostDraws || trianglesK > mostTrianglesK)) {
+                mostDraws = max(mostDraws, draws)
+                mostTrianglesK = max(mostTrianglesK, trianglesK)
+                grewNs = nowNs
+                sinceGrowth = 0
+            } else {
+                sinceGrowth++
+            }
+        }
+
+        /**
+         * Why the map has stalled by [nowNs], the frame it draws now having run [drawingMs] (null: none is being drawn),
+         * or null while it makes progress.
+         */
+        fun stall(nowNs: Long, drawingMs: Long?): String? = when {
+            drawingMs != null && drawingMs >= MAP_FRAME_STUCK_SECONDS * 1000L -> "a frame has run for ${drawingMs / 1000} s"
+            drawingMs == null && nowNs - lastNs >= MAP_WAIT_SECONDS * NS -> "no frame for $MAP_WAIT_SECONDS s, and none being drawn"
+            sinceGrowth >= MAP_STALL_FRAMES && nowNs - grewNs >= MAP_WAIT_SECONDS * NS ->
+                "$sinceGrowth frames in ${(nowNs - grewNs) / NS} s without the picture growing"
+            else -> null
+        }
+
+        /** The wait's frames for its line: how many, the longest, and when the picture last grew. */
+        fun said(): String =
+            "$frames frames, the longest ${ms(longestMs)} ms; the picture last grew at ${ms((grewNs - startNs) / 1e6)} ms"
+
+        private companion object {
+            const val NS = 1_000_000_000L
+        }
+    }
+
+    /**
+     * How long the core's frame drawn now has run, ms, from its health line ([MapCore.health]: `vk drawing N ms …`), or
+     * null when none is being drawn ("vk drawing no") or there is no core.
+     */
+    fun drawingMs(health: String): Long? = Regex("""^vk drawing (\d+) ms""").find(health)?.groupValues?.get(1)?.toLongOrNull()
 
     /** The frames the core keeps in flight (`CP/gpu/Frames.hpp`'s in_flight): drawn, not yet presented. */
     const val IN_FLIGHT = 2
@@ -167,14 +256,14 @@ object VkBench {
             "vignette ${if (vignette) "on" else "off"}"
 
     /**
-     * The line of a view's complete picture: how long after the map stood at [view] its picture was complete (the first
-     * view's is the map's first picture, its tiles built after the map was turned on), or that it was not within [wait]
-     * seconds.
+     * The line of a view's complete picture: how long after the map stood at [view] its picture was complete ([seconds];
+     * the first view's is the map's first picture, its tiles built after the map was turned on), or why the wait gave up
+     * before it ([stalled], [seconds] in), with the wait's frames ([PictureWait.said]).
      */
-    fun mapPictureLine(view: String, seconds: Double, first: Boolean, wait: Int = MAP_WAIT_SECONDS): String {
+    fun mapPictureLine(view: String, seconds: Double, first: Boolean, frames: String, stalled: String? = null): String {
         val what = if (first) "vkbench map first picture" else "vkbench map $view picture"
-        return if (seconds.isNaN()) "$what: not complete within $wait s (at the $view)"
-        else "$what: complete after ${ms(seconds * 1000.0)} ms (at the $view)"
+        return if (stalled != null) "$what: not complete, the map stalled after ${ms(seconds * 1000.0)} ms: $stalled (at the $view; $frames)"
+        else "$what: complete after ${ms(seconds * 1000.0)} ms (at the $view; $frames)"
     }
 
     /** One way of drawing the frame (`CP/gpu/Facts.hpp`'s Configuration, as `Native.bench` takes it). */

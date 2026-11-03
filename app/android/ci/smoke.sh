@@ -560,6 +560,8 @@ vk_phase() {
     grep -q -e '^a frame failed' -e '^device lost' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: a frame failed"; FAIL=1; }
     # The app's map at its real views (ENGINE.md step 2: VK bench runs the real paths): its first picture complete, and
     # a line for each path (the guest's software Vulkan is far slower than a phone: the numbers are the phone's to judge).
+    # VK bench waits for each picture while the map makes progress toward it (VkBench.PictureWait), not a fixed 60 s: on
+    # the slow runners lavapipe's first compiles of the map's shaders hold its first frames over the tiles 16 to 43 s.
     grep '^vkbench map' "$OUT/vkbench.txt" || true
     grep -q '^vkbench map first picture: complete after ' "$OUT/vkbench.txt" ||
       { echo "VK BENCH FAILED: the map's first picture was not complete (no 'vkbench map first picture: complete after' line)"; FAIL=1; }
