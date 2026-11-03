@@ -650,10 +650,11 @@ private:
         }
         // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
         // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
-        // cool and 60 a second by phase where it runs warm (one vsync and two in turn).
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there while
+        // the GPU's last figure is 16 ms or more.
         cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
-        const frame::Cadence::Step step =
-            cadence_.step([this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
+        const frame::Cadence::Step step = cadence_.step(
+            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); }, gpu_ns_);
         if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
@@ -684,8 +685,9 @@ private:
             return;
         }
         cadence_.drew(v.frame_ns, step);
-        // ADPF's target follows the frames' interval: 11.1 ms at 90 Hz where the phone is cool, 16.7 ms elsewhere (two
-        // periods at 120 Hz, a sixtieth of a second by the phase), told only when it changes.
+        // ADPF's target follows the frames' interval: 11.1 ms at 90 Hz where every vsync draws (the phone cool, the GPU
+        // light), 16.7 ms elsewhere (two periods at 120 Hz; at 90 Hz by the phase and behind a heavy GPU alike), told
+        // only when it changes.
         hint_.target(cadence_.target_ns(step));
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
@@ -744,9 +746,10 @@ private:
                      static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
         // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
         // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
-        // back after its fence: the percentile does not mind).
+        // back after its fence: the percentile does not mind). The cadence's step at 90 Hz takes the same figure.
         if ((r.flags & standin::frame_flag::gpu) != 0) {
-            pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+            gpu_ns_ = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
+            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns_);
         }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
@@ -782,6 +785,7 @@ private:
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
+    std::int64_t gpu_ns_ = 0;          // the GPU's time of the last frame it measured (two frames old), for the cadence
     frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
     frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;

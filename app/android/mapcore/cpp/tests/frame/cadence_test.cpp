@@ -41,9 +41,11 @@ struct Run {
 /// The frame loop on a display of `period`: at each vsync the cadence's word; where it draws, a frame of
 /// `work[i % size]`, the next vsync asked for as the frame ends (the first after it), the frame shown at the first
 /// refresh after it is done (FIFO, as soon as it is ready; the GPU's time left out); where it does not, the next vsync.
-/// `timelines`: the vsyncs carry frame timelines (API 33). The vsyncs lie on the display's grid from 1 s.
+/// `timelines`: the vsyncs carry frame timelines (API 33). The vsyncs lie on the display's grid from 1 s. `gpu`: the
+/// GPU's time of frame i, `gpu[i % size]`, which the cadence sees two frames on, as the frame loop reads it back after
+/// the slot's fence (none, 0, before the third frame, and where `gpu` is empty).
 [[nodiscard]] Run run(std::int64_t period, std::span<const std::int64_t> work, bool timelines, bool warm,
-                      std::size_t frames) {
+                      std::size_t frames, std::span<const std::int64_t> gpu = {}) {
     frame::Cadence cadence;
     Run r;
     std::int64_t v = (1'000 * ms / period) * period;
@@ -54,10 +56,14 @@ struct Run {
         if (last != 0) r.gaps.push_back(v - last);
         last = v;
         r.period.push_back(cadence.period_ns());
-        const frame::Cadence::Step step = cadence.step([&] {
-            ++r.warm_asked;
-            return warm;
-        });
+        const std::size_t i = r.drawn.size();
+        const std::int64_t gpu_ns = i >= 2 && !gpu.empty() ? gpu[(i - 2) % gpu.size()] : 0;
+        const frame::Cadence::Step step = cadence.step(
+            [&] {
+                ++r.warm_asked;
+                return warm;
+            },
+            gpu_ns);
         if (!cadence.due(v, step)) {
             v += period;
             continue;
@@ -203,6 +209,57 @@ TEST_CASE("cadence: at 90 Hz where the phone runs warm, 60 a second by phase, an
     }
 }
 
+TEST_CASE("cadence: at 90 Hz behind a GPU of 16 ms or more, every second vsync, cool or warm, from the figure on") {
+    // The stutter review's fourth check (3 November): past about 16 ms of GPU a step of one vsync (11.1 ms) runs the
+    // GPU behind its frames, for 8 to 17 ms more lag and an uneven speed at 55 or 48 frames a second, where every
+    // second vsync gives 45 at an even lag. Light frames on the render thread, the GPU's figure seen two frames late.
+    const std::array<std::int64_t, 1> light{5 * ms};
+    for (const bool warm : {false, true}) {
+        CAPTURE(warm);
+        for (const std::int64_t g : {frame::Cadence::heavy_gpu_ns, 18 * ms, 21 * ms}) {
+            CAPTURE(g);
+            const std::array<std::int64_t, 1> heavy{g};
+            const Run r = run(period90, light, true, warm, 60, heavy);
+            // the first two frames see no figure yet, by the step at rest; from the third every second vsync
+            for (std::size_t i = 2; i < r.drawn.size(); ++i) CHECK(r.drawn[i] - r.drawn[i - 1] == 2 * period90);
+        }
+        // just under it, as without a figure: every vsync where the phone is cool, by the phase where it is warm
+        const std::array<std::int64_t, 1> under{frame::Cadence::heavy_gpu_ns - 1};
+        const Run r = run(period90, light, true, warm, 60, under);
+        for (std::size_t i = 1; i < r.drawn.size(); ++i) {
+            const std::int64_t gap = r.drawn[i] - r.drawn[i - 1];
+            if (warm) {
+                CHECK((gap == period90 || gap == 2 * period90));
+            } else {
+                CHECK(gap == period90);
+            }
+        }
+        if (warm) {
+            for (std::size_t i = 2; i < r.drawn.size(); ++i) CHECK(r.drawn[i] - r.drawn[i - 2] == 3 * period90);
+        }
+    }
+    // A GPU that turns heavy for a stretch and light again: the step follows its figure, two frames late each way, and
+    // never more than 60 a second at the turns. 20 frames at 10 ms, 20 at 18 ms, in turn.
+    std::array<std::int64_t, 40> turns{};
+    for (std::size_t i = 0; i < turns.size(); ++i) turns.at(i) = i < 20 ? 10 * ms : 18 * ms;
+    for (const bool warm : {false, true}) {
+        CAPTURE(warm);
+        const Run r = run(period90, light, true, warm, 160, turns);
+        for (std::size_t i = 2; i < r.drawn.size(); ++i) {
+            CAPTURE(i);
+            const std::int64_t gap = r.drawn[i] - r.drawn[i - 1];
+            if (turns.at((i - 2) % turns.size()) >= frame::Cadence::heavy_gpu_ns) {
+                CHECK(gap == 2 * period90);
+            } else if (warm) {
+                CHECK((gap == period90 || gap == 2 * period90));
+                CHECK(r.drawn[i] - r.drawn[i - 2] >= 3 * period90);
+            } else {
+                CHECK(gap == period90);
+            }
+        }
+    }
+}
+
 TEST_CASE("cadence: without frame timelines, the shortest of the last gaps") {
     // Before API 33: the gap after a skipped vsync (or a frame under a period) is the period itself.
     const Run r = run(period120, mixed, false, true, 400);
@@ -220,7 +277,7 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     using Step = frame::Cadence::Step;
     frame::Cadence c;
     CHECK(c.period_ns() == 0);
-    CHECK(c.step([] { return true; }) == Step::every);
+    CHECK(c.step([] { return true; }, 0) == Step::every);
     CHECK(c.cadence_ns(Step::every) == 0);
     CHECK(c.target_ns(Step::every) == 0);
     CHECK(c.due(1'000 * ms, Step::every));
@@ -228,7 +285,7 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     const auto p60 = presents_at(v, period60);
     c.at_vsync(v, p60);
     CHECK(c.period_ns() == period60);
-    CHECK(c.step([] { return true; }) == Step::every);
+    CHECK(c.step([] { return true; }, 0) == Step::every);
     CHECK(c.cadence_ns(Step::every) == period60);
     CHECK(c.target_ns(Step::every) == period60);
     // the display goes to 120 Hz: the next vsync's timelines say so
@@ -236,19 +293,37 @@ TEST_CASE("cadence: the period follows the display's at once, and gaps across a 
     const auto p120 = presents_at(v, period120);
     c.at_vsync(v, p120);
     CHECK(c.period_ns() == period120);
-    CHECK(c.step([] { return false; }) == Step::second);
+    CHECK(c.step([] { return false; }, 0) == Step::second);
     CHECK(c.cadence_ns(Step::second) == 2 * period120);
     CHECK(c.target_ns(Step::second) == 2 * period120);
-    // and to 90 Hz: by the phase where the phone runs warm, else every vsync; the pacer's cadence a period, since by
-    // the phase a frame may follow the last at the next vsync, and ADPF's target the frames' interval on the mean
+    CHECK(c.step([] { return true; }, 20 * ms) == Step::second);
+    // and to 90 Hz: by the phase where the phone runs warm, else every vsync, and every second one behind a GPU of
+    // 16 ms or more, cool or warm (warmth not asked then); the pacer's cadence a period, since by the phase a frame may
+    // follow the last at the next vsync; ADPF's target 11.1 ms where every vsync draws, else a sixtieth of a second
     v += period120;
     c.at_vsync(v, presents_at(v, period90));
     CHECK(c.period_ns() == period90);
-    CHECK(c.step([] { return true; }) == Step::phase);
-    CHECK(c.step([] { return false; }) == Step::every);
+    CHECK(c.step([] { return true; }, 0) == Step::phase);
+    CHECK(c.step([] { return false; }, 0) == Step::every);
+    CHECK(c.step([] { return true; }, frame::Cadence::heavy_gpu_ns - 1) == Step::phase);
+    CHECK(c.step([] { return false; }, frame::Cadence::heavy_gpu_ns - 1) == Step::every);
+    int asked = 0;
+    const auto warm = [&] {
+        ++asked;
+        return true;
+    };
+    CHECK(c.step(warm, frame::Cadence::heavy_gpu_ns) == Step::second);
+    CHECK(c.step([] { return false; }, 25 * ms) == Step::second);
+    CHECK(asked == 0);
     CHECK(c.cadence_ns(Step::phase) == period90);
+    CHECK(c.cadence_ns(Step::second) == 2 * period90);
     CHECK(c.target_ns(Step::phase) == frame::Cadence::sixtieth_ns);
+    CHECK(c.target_ns(Step::second) == frame::Cadence::sixtieth_ns);
     CHECK(c.target_ns(Step::every) == period90);
+    // at 60 Hz a heavy GPU changes nothing: every vsync
+    v += period90;
+    c.at_vsync(v, presents_at(v, period60));
+    CHECK(c.step([] { return true; }, 25 * ms) == Step::every);
     // timelines no display has (60 ms apart), or one timeline: the shortest of the gaps
     frame::Cadence e;
     v = 1'000 * ms;
