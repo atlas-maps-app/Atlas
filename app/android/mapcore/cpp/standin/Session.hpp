@@ -89,7 +89,8 @@ public:
                                                                            vk::SurfaceKHR surface, vk::Extent2D wanted,
                                                                            const gpu::Output* old, gpu::Depth depth,
                                                                            gpu::Compression compression);
-    /// Asks the display for `fps` frames a second (ANativeWindow_setFrameRate); false where it cannot.
+    /// Tells the display the frames come at `fps` a second (ANativeWindow_setFrameRate, FIXED_SOURCE: the display may
+    /// run at a multiple, and faster under the finger); false where it cannot.
     virtual bool set_frame_rate(float fps) {
         (void)fps;
         return false;
@@ -169,6 +170,11 @@ public:
     /// Lets go of the window: the renderer, the output, the colour stage, the surface.
     void detach();
     [[nodiscard]] bool attached() const noexcept { return window_ != nullptr; }
+    /// The map moves, or has come to rest (the frame loop's word): the window is told its frames come at 120 a second
+    /// while it moves, so that the display runs at 120 Hz where it has it, and at 60 at rest (SessionWindow's
+    /// set_frame_rate; ENGINE.md gain 11). Told at once and only on a change, and a window attached is told as it
+    /// stands.
+    void set_moving(bool moving);
 
     /// Switches VK bench's stand-in on (mode 1) or off (0) and its configuration (bench_flag's `flags`); "" or why it
     /// could not. Mode 0, whatever configuration it names, lets go of the renderer and of anything of 10 bits (the
@@ -346,8 +352,9 @@ private:
     /// drop_renderer), so its marker never names a frame no longer drawn.
     bool guarding_ = false;
     bool profiles_read_ = false;
-    bool noise_lost_ = false; // a device was lost making the noise fields on the GPU: the CPU's this session
-    bool frame_rate_ = false;
+    bool noise_lost_ = false;         // a device was lost making the noise fields on the GPU: the CPU's this session
+    bool frame_rate_ = false;         // the window can be told its frames' rate (set_frame_rate)
+    bool moving_ = false;             // the map moves (set_moving): the window told 120 frames a second, else 60
     bool first_frames_saved_ = false; // the cache written back after the session's first 120 frames
     double first_pipelines_ms_ = -1;  // this launch's first pipelines (-1 until the stand-in draws)
     std::uint32_t first_pipelines_ = 0;

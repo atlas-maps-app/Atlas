@@ -629,6 +629,9 @@ private:
         requested_ = false;
         pacer_.rest();
         session_->rest();
+        // At rest the window's frames come at 60 a second again, where they came at 120 while the map moved.
+        session_->set_moving(false);
+        moved_since_rest_ = 0;
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
@@ -683,6 +686,11 @@ private:
         // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
         const std::int64_t cadence = cadence_.cadence_ns(every_second);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
+        // The map moves from its second new camera since the loop last rested: the window's frames are said to come at
+        // 120 a second until it rests again, so that the display stays at 120 Hz where it has it, through a fling's
+        // tail and the camera's animations as under the finger (ENGINE.md gain 11). Said once the frame is out, so
+        // that no frame waits for it; one camera alone, or a tile or a fade at rest, moves nothing.
+        if (more == JNI_TRUE && moved_since_rest_ < 2 && ++moved_since_rest_ == 2) session_->set_moving(true);
         ask_vsync();
     }
 
@@ -763,6 +771,7 @@ private:
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
     frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
+    int moved_since_rest_ = 0;         // new cameras drawn since the frame loop last rested (from two the map moves)
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.

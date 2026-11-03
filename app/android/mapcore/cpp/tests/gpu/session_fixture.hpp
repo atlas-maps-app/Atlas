@@ -12,6 +12,7 @@
 #include "standin/Session.hpp"
 
 #include <memory>
+#include <vector>
 
 namespace atlas::test {
 
@@ -54,12 +55,25 @@ public:
     [[nodiscard]] int made() const noexcept { return made_; }
     /// The compression the last output was asked for (a phone's swapchain's images).
     [[nodiscard]] gpu::Compression compression() const noexcept { return compression_; }
+    /// From now on it can be told its frames' rate, as a phone's window on Android 11 or later can, and keeps each.
+    void take_rates() noexcept { taking_ = true; }
+    bool set_frame_rate(float fps) override {
+        ++asked_;
+        if (taking_) rates_.push_back(static_cast<int>(fps));
+        return taking_;
+    }
+    /// The frame rates it was told, in order (take_rates), and how often it was asked to be told one.
+    [[nodiscard]] const std::vector<int>& rates() const noexcept { return rates_; }
+    [[nodiscard]] int asked() const noexcept { return asked_; }
 
 private:
     int refuse_ = 0;
     bool ten_only_ = false;
     int made_ = 0;
     gpu::Compression compression_ = gpu::Compression::driver;
+    bool taking_ = false;
+    std::vector<int> rates_;
+    int asked_ = 0;
 };
 
 /// A window on a headless surface: the surface and its queries are real; its output a swapchain where `swapchains`,

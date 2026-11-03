@@ -773,6 +773,56 @@ TEST_CASE("the Map look's compression switch makes the output again with it, onc
     }
 }
 
+TEST_CASE("the window is told 120 frames a second while the map moves and 60 at rest, once a change, and a window "
+          "come back as it stands") {
+    // ENGINE.md gain 11: the frame loop says the map moves from its second new camera since it last rested, and that
+    // it has come to rest (Session::set_moving). A phone's window is told at once (ANativeWindow_setFrameRate, fixed
+    // source), and only on a change.
+    if (!test::open_session()) return;
+    const Folder folder("rates");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        session.set_moving(true); // no window yet: nothing to tell
+        session.set_moving(false);
+        auto window = std::make_unique<test::OffscreenWindow>();
+        window->take_rates();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        CHECK(w->rates() == std::vector<int>{60});
+        session.set_moving(true);
+        session.set_moving(true); // no change: nothing told
+        CHECK(w->rates() == std::vector<int>{60, 120});
+        session.set_moving(false);
+        session.set_moving(false);
+        CHECK(w->rates() == std::vector<int>{60, 120, 60});
+        // A window come back while the map moves is told 120 at once, and 60 at rest.
+        session.set_moving(true);
+        auto next = std::make_unique<test::OffscreenWindow>();
+        next->take_rates();
+        const test::OffscreenWindow* n = next.get();
+        ATLAS_REQUIRE(session.attach(std::move(next), size, why), why);
+        CHECK(n->rates() == std::vector<int>{120});
+        session.set_moving(false);
+        CHECK(n->rates() == std::vector<int>{120, 60});
+        // One that cannot be told (Android 10's) is asked once, when attached, and no more.
+        auto deaf = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* d = deaf.get();
+        ATLAS_REQUIRE(session.attach(std::move(deaf), size, why), why);
+        session.set_moving(true);
+        session.set_moving(false);
+        CHECK(d->asked() == 1);
+        CHECK(d->rates().empty());
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+    }
+}
+
 TEST_CASE("the frame loop at rest leaves no marker on disk, inside VK bench's colour stage too: a trim from "
           "TRIM_MEMORY_UI_HIDDEN rests it") {
     // So that a routine kill of a cached process rarely finds a marker (D5.10): the frame loop rests when nothing

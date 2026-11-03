@@ -55,8 +55,9 @@ public:
     explicit operator bool() const noexcept { return window_ != nullptr; }
     [[nodiscard]] std::int32_t width() const noexcept;
     [[nodiscard]] std::int32_t height() const noexcept;
-    /// Asks for `fps` frames a second (ANativeWindow_setFrameRate, API 30; only windows on the display honour it).
-    /// Returns false where this Android has no such call.
+    /// Says the window's frames come at `fps` a second (ANativeWindow_setFrameRate with FIXED_SOURCE compatibility, API
+    /// 30; only windows on the display honour it): the display runs at that rate or a multiple, and at its top rate
+    /// under the finger. At once, buffers or none. Returns false where this Android has no such call.
     bool set_frame_rate(float fps) const noexcept;
 
 private:

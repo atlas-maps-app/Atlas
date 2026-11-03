@@ -49,7 +49,9 @@ bool Window::set_frame_rate(float fps) const noexcept {
     using SetFrameRate = std::int32_t (*)(ANativeWindow*, float, std::int8_t);
     static const auto set = reinterpret_cast<SetFrameRate>(android_symbol("ANativeWindow_setFrameRate")); // NOLINT
     if (set == nullptr || window_ == nullptr) return false;
-    return set(window_, fps, 0 /* ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT */) == 0;
+    // The content's own rate: SurfaceFlinger runs the display at it or a multiple, and boosts it under the finger as
+    // for any app, which a vote of DEFAULT compatibility turns off for the whole display (ENGINE.md gain 11).
+    return set(window_, fps, 1 /* ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE */) == 0;
 }
 
 } // namespace atlas::platform
