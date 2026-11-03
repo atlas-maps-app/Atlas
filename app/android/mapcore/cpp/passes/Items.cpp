@@ -43,6 +43,11 @@ constexpr std::uint32_t max_records = 1U << 20U;
 constexpr double power_near = 1200.0;
 constexpr double power_far = 2000.0;
 
+/// A roof mast is drawn where a metre is this many CSS px or more (the renders' furniture_px: "street furniture only a
+/// pixel or two tall is left out"), its pole 0.25 px about its axis at least.
+constexpr double roof_mast_px = 1.6;
+constexpr double pole_least_px = 0.25;
+
 /// `b`, or a buffer for `use` of at least `bytes` with room to grow by half again where `b` is smaller; whether it was
 /// made anew.
 [[nodiscard]] gpu::Result<bool> fit(const gpu::Device& device, gpu::Buffer& b, vk::DeviceSize bytes,
@@ -132,9 +137,12 @@ std::vector<hlsl::uint4> item_words(const geometry::TileRegionItems& items, doub
         if (it.yard) flags |= shaders::ITEM_YARD;
         if (it.coaster == 1) flags |= shaders::ITEM_WOODEN;
         if (it.coaster == 2) flags |= shaders::ITEM_MONO;
+        if (it.panels_only) flags |= shaders::ITEM_PANELS;
         const double extra = it.kind == geometry::RegionItemKind::turbine ? it.rotor : static_cast<double>(it.gaps);
+        // its foot on the ground, a roof mast's at its base
+        const double foot = it.kind == geometry::RegionItemKind::roof_mast ? it.base : 0.0;
         out.push_back(
-            hlsl::uint4{f32_bits(it.x - origin_x), f32_bits(0.0 - origin_y), f32_bits(it.z - origin_z), flags});
+            hlsl::uint4{f32_bits(it.x - origin_x), f32_bits(foot - origin_y), f32_bits(it.z - origin_z), flags});
         if (it.kind == geometry::RegionItemKind::crane) {
             // its half sizes, its height; its axes
             out.push_back(hlsl::uint4{f32_bits(it.hu), f32_bits(it.hv), f32_bits(it.h), 0U});
@@ -144,6 +152,10 @@ std::vector<hlsl::uint4> item_words(const geometry::TileRegionItems& items, doub
             out.push_back(
                 hlsl::uint4{f32_bits(it.bx - origin_x), f32_bits(it.bz - origin_z), f32_bits(it.ya), f32_bits(it.yb)});
             out.push_back(hlsl::uint4{0U, 0U, 0U, 0U});
+        } else if (it.kind == geometry::RegionItemKind::roof_mast) {
+            // its height above its base, its panels' length; its first panel's way, its pole's length
+            out.push_back(hlsl::uint4{0U, 0U, f32_bits(it.h), f32_bits(it.panel)});
+            out.push_back(hlsl::uint4{f32_bits(it.ux), f32_bits(it.uz), f32_bits(it.pole), 0U});
         } else if (it.kind == geometry::RegionItemKind::wood) {
             // its crown, its height and its tone (id % 5); its draws after
             out.push_back(hlsl::uint4{f32_bits(it.crown), 0U, f32_bits(it.h),
@@ -168,6 +180,13 @@ ItemChoice item_choice(const geometry::RegionItem& item, double depth, double fo
     c.flags = static_cast<std::uint32_t>(item.kind) | (night ? shaders::ITEM_JOB_NIGHT : 0U);
     switch (item.kind) {
     case geometry::RegionItemKind::tower: c.drawn = true; break;
+    case geometry::RegionItemKind::roof_mast:
+        // where a metre is 1.6 px or more; its pole's half width, 0.25 px at least
+        if (s < roof_mast_px) return c;
+        c.drawn = true;
+        c.a = static_cast<float>(
+            pymath::max(static_cast<double>(shaders::item_pole(static_cast<float>(item.h))), pole_least_px / s));
+        break;
     case geometry::RegionItemKind::turbine:
         // s = cam.focal / c[2]; the hub '%.1f' % max(0.8, 2.2 * s); the light at ph[1] - max(1.0, 3 * s), '%.1f' %
         // max(0.8, 1.2 * s)
@@ -328,6 +347,26 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out) {
     const bool night = night_of(theme);
+    if (item.kind == geometry::RegionItemKind::roof_mast) {
+        // its panels' faces in the towers' shaft's colour by their normals (each panel's way v out from the pole, 120°
+        // apart, and u = (-v[1], v[0]) along it), as box() lights a face; its pole is the shaft's band (item_tones)
+        const std::array<double, 3>& l = theme.sun_vector;
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            const double a = pymath::radians(120.0 * k);
+            const double vx = (item.ux * pymath::cos(a)) - (item.uz * pymath::sin(a));
+            const double vz = (item.ux * pymath::sin(a)) + (item.uz * pymath::cos(a));
+            const std::array<shaders::double3, 5> normals{{{.x = -vz, .y = 0.0, .z = vx},
+                                                           {.x = vz, .y = 0.0, .z = -vx},
+                                                           {.x = vx, .y = 0.0, .z = vz},
+                                                           {.x = -vx, .y = 0.0, .z = -vz},
+                                                           {.x = 0.0, .y = 1.0, .z = 0.0}}};
+            for (const shaders::double3& n : normals) {
+                const bool lit = !night && ((n.x * l[0]) + (n.y * l[1]) + (n.z * l[2])) > 0;
+                out.push_back(lit_bgr(th, hx(style.shaft), n, lit));
+            }
+        }
+        return;
+    }
     const bool crane = item.kind == geometry::RegionItemKind::crane;
     // the axes: a crane's (stage P's); a mast's u = (cam.r[0], cam.r[2]); a segment's u = ((b - a) / Lg), Lg =
     // math.dist(a, b); v = (-u[1], u[0])
@@ -484,6 +523,11 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
                               context, {.name = "items", .module = "item_draw", .configuration = context.configuration},
                               *module_, "items_cs", *compute_layout_));
     decide_ = std::move(decide);
+    ATLAS_GPU_LET(masts,
+                  frame::make_compute(
+                      context, {.name = "roof masts", .module = "item_draw", .configuration = context.configuration},
+                      *module_, "roof_masts_cs", *compute_layout_));
+    roof_masts_ = std::move(masts);
     // the faces and the opaque parts: at their corners' depths, writing the depth and the objects bit
     const auto opaque = [&](const char* name, const char* vertex, const char* fragment) {
         gpu::GraphicsDesc desc{.label = {.name = name, .module = "item_draw", .configuration = context.configuration},
@@ -535,6 +579,7 @@ void Items::release() noexcept {
     parts_pipeline_.clear();
     fills_pipeline_.clear();
     faces_pipeline_.clear();
+    roof_masts_.clear();
     decide_.clear();
     compute_layout_.clear();
     layout_.clear();
@@ -703,6 +748,7 @@ void Items::update(const frame::FrameState& state) {
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     words_.clear();
     extra_words_.clear();
+    mast_words_.clear();
     std::uint32_t faces = 0;
     std::uint32_t parts = 0;
     std::uint32_t sides = 0;
@@ -713,7 +759,7 @@ void Items::update(const frame::FrameState& state) {
         const ItemTile& items = *mine.cpu_as<ItemTile>();
         const geometry::RegionItem& it = items.items[d.item];
         const auto kind = static_cast<std::uint32_t>(it.kind);
-        const std::uint32_t nf = shaders::item_face_count(kind, it.gaps);
+        const std::uint32_t nf = shaders::item_job_faces(kind, it.gaps);
         const std::uint32_t np = shaders::item_part_count(kind);
         const std::uint32_t ns = shaders::item_side_count(kind);
         if (faces + nf > max_records || parts + np > max_records || sides + ns > max_records) continue;
@@ -749,8 +795,14 @@ void Items::update(const frame::FrameState& state) {
                                        bits(d.choice.c),
                                        bits(d.choice.d)};
         static_assert(std::size(words) == std::size_t{4} * shaders::ITEM_JOB_VECTORS);
-        words_.insert(words_.end(), std::begin(words), std::end(words));
-        side_counts.push_back(ns);
+        // a roof mast's job after the rest, for its own stage (its records keep their places, and it has no
+        // translucent ones)
+        if (it.kind == geometry::RegionItemKind::roof_mast) {
+            mast_words_.insert(mast_words_.end(), std::begin(words), std::end(words));
+        } else {
+            words_.insert(words_.end(), std::begin(words), std::end(words));
+            side_counts.push_back(ns);
+        }
         faces += nf;
         parts += np;
         sides += ns;
@@ -760,6 +812,8 @@ void Items::update(const frame::FrameState& state) {
     for (std::size_t j = 0, at = 0; at < words_.size(); ++j, at += std::size_t{4} * shaders::ITEM_JOB_VECTORS) {
         words_[at + 13] = sides - (words_[at + 13] + side_counts[j]);
     }
+    const auto masts = static_cast<std::uint32_t>(mast_words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
+    words_.insert(words_.end(), mast_words_.begin(), mast_words_.end());
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
     if (jobs == 0) return;
     if (extra_words_.empty()) extra_words_.push_back(0U);
@@ -810,7 +864,7 @@ void Items::update(const frame::FrameState& state) {
     std::memcpy(extra_[slot].bytes().data(), extra_words_.data(), extra_words_.size() * sizeof(std::uint32_t));
     extra_[slot].flush();
     slot_ = slot;
-    counts_ = {.jobs = jobs, .faces = faces, .parts = parts, .sides = sides};
+    counts_ = {.jobs = jobs, .masts = masts, .faces = faces, .parts = parts, .sides = sides};
 }
 
 void Items::record(const frame::Recording& recording, std::uint32_t phase) {
@@ -825,16 +879,24 @@ void Items::record(const frame::Recording& recording, std::uint32_t phase) {
 void Items::record_decide(const frame::Recording& recording) {
     if (decide_ == nullptr || counts_.jobs == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *decide_);
     const auto frame_sets = recording.layout.sets();
     const auto offsets = recording.layout.offsets(recording.frame.slot.slot);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *compute_layout_, 0, frame_sets, offsets);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *compute_layout_, 2, *sets_[slot_], {});
-    const hlsl::uint4 push{counts_.jobs, 0U, 0U, 0U};
-    cmd.pushConstants<hlsl::uint4>(*compute_layout_, vk::ShaderStageFlagBits::eCompute, 0, push);
-    const std::uint32_t groups = (counts_.jobs + 63) / 64;
-    cmd.dispatch(std::min(groups, job_row), (groups + job_row - 1) / job_row, 1);
-    recording.counters.dispatch("items");
+    // items_cs over the jobs before the roof masts', roof_masts_cs over theirs from there (none: not run); each job's
+    // records are its own, so nothing orders the two stages between themselves
+    const auto run = [&](const vk::raii::Pipeline& stage, std::uint32_t count, std::uint32_t first, const char* name) {
+        if (count == 0) return;
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *stage);
+        const hlsl::uint4 push{count, first, 0U, 0U};
+        cmd.pushConstants<hlsl::uint4>(*compute_layout_, vk::ShaderStageFlagBits::eCompute, 0, push);
+        const std::uint32_t groups = (count + 63) / 64;
+        cmd.dispatch(std::min(groups, job_row), (groups + job_row - 1) / job_row, 1);
+        recording.counters.dispatch(name);
+    };
+    const std::uint32_t rest = counts_.jobs - counts_.masts;
+    run(decide_, rest, 0, "items");
+    run(roof_masts_, counts_.masts, rest, "roof masts");
     // the records, for the vertex and fragment stages
     using S = vk::PipelineStageFlagBits2;
     using A = vk::AccessFlagBits2;

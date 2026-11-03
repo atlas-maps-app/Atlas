@@ -1,7 +1,8 @@
 // A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items): one pass draws every tower
-// with a height, wind turbine, crane, mast, gantry, goods conveyor and power line of a region as the port does, in the
-// objects slot at true depth (shaders/item/: items_cs writes their records; items_faces_vs and _fs draw the faces,
-// items_parts_vs and _fs the opaque parts, items_sides_vs and _fs the translucent ones, far to near).
+// with a height (the app's map one standing on a roof as its roof mast), wind turbine, crane, mast, gantry, goods
+// conveyor and power line of a region as the port does, in the objects slot at true depth (shaders/item/: items_cs and
+// roof_masts_cs write their records; items_faces_vs and _fs draw the faces, items_parts_vs and _fs the opaque parts,
+// items_sides_vs and _fs the translucent ones, far to near).
 //   - Stage T (build, on a worker): geometry/Items.hpp's items of the tile, ITEM_VECTORS uint4 each in the points heap;
 //     an item each, of the kind "region item" (its kind's painter slots); the pass keeps each item as stage T made it.
 //   - Stage F (update): the moment's tones (item_tones), and a job for each item the ranks draw, the nearest first,
@@ -9,8 +10,9 @@
 //     what its item's depth decides in double (item_choice: a segment's radius cut at either end in engine mode, the
 //     port's least sizes, the widths as printed, a power line's fade), its boxes' colours by their faces' normals and
 //     its parts in draw_items' order (item_extra).
-//   - Before the main pass items_cs writes each job's records; the objects phase draws the faces and the opaque parts,
-//     the translucent phase the rest, far to near. None in the owner mode.
+//   - Before the main pass items_cs writes each job's records, roof_masts_cs a roof mast's (their jobs the last: a
+//     stage of their own, so that items_cs stays at the bytes the user's phone ran); the objects phase draws the faces
+//     and the opaque parts, the translucent phase the rest, far to near. None in the owner mode.
 //   - The twin (emit): every item's elements as the port's SVG has them (twin/item/ItemTwin.hpp).
 #pragma once
 
@@ -82,8 +84,9 @@ using ItemTones = std::array<std::uint32_t, item_tone_count>;
 /// A job's own words (items.slangh's ITEM_EXTRA_COLOURS, then its parts in draw_items' order): a crane's, a mast's, a
 /// gantry's or a conveyor's boxes' colours by their faces' normals (light(th, col, n3, not night and vdot(n3, L) > 0),
 /// the steel first, a crane's machinery, a mast's floodlights or a conveyor's gallery second), and a crane's, a
-/// gantry's or a conveyor's parts sorted by their middles' depths at H / 2, far first (a stable sort), in double. `a`
-/// and `b` are a crane's foot or a segment's ends in the drawn frame.
+/// gantry's or a conveyor's parts sorted by their middles' depths at H / 2, far first (a stable sort), in double; a
+/// roof mast's panels' faces' colours, the towers' shaft lit so. `a` and `b` are a crane's foot or a segment's ends in
+/// the drawn frame.
 void item_extra(const geometry::RegionItem& item, const view::Camera& camera, const style::ThemeBlock& theme,
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out);
@@ -118,9 +121,11 @@ public:
     static constexpr std::uint32_t sides_phase = 2;
     static constexpr std::int32_t sides_order = 1012;
 
-    /// What the last frame drew: its jobs (the items drawn), their faces, opaque parts and translucent ones.
+    /// What the last frame drew: its jobs (the items drawn; the roof masts', the last, their own stage's), their faces,
+    /// opaque parts and translucent ones.
     struct Counts {
         std::uint32_t jobs = 0;
+        std::uint32_t masts = 0;
         std::uint32_t faces = 0;
         std::uint32_t parts = 0;
         std::uint32_t sides = 0;
@@ -174,6 +179,7 @@ private:
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
+    vk::raii::Pipeline roof_masts_{nullptr}; ///< roof_masts_cs, over the roof masts' jobs
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
     vk::raii::Pipeline parts_pipeline_{nullptr};
@@ -183,6 +189,7 @@ private:
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> extra_words_;
+    std::vector<std::uint32_t> mast_words_; ///< the roof masts' jobs, before they join words_ as its last
     std::uint32_t slot_ = 0;
 };
 

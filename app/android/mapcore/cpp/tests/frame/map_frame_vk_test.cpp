@@ -689,7 +689,7 @@ const std::vector<Part>& every_part() {
          .changes = part::lamp_halos | part::lamp_streaks},
         {.name = "towers and cranes",
          .bit = part::region_items,
-         .own = {"items", "item faces", "item fills", "item parts", "item sides"}},
+         .own = {"items", "roof masts", "item faces", "item fills", "item parts", "item sides"}},
         {.name = "labels", .bit = part::labels, .own = {"label sprites"}},
         {.name = "routes", .bit = part::routes, .own = {"routes"}},
         {.name = "markers", .bit = part::markers, .own = {"markers"}},

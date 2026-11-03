@@ -610,6 +610,12 @@ private class BenchRun(
         leaveColour()
     }
 
+    /** System.nanoTime less the time the app was away: a clock that stands still while it is (the map's waits). */
+    private fun activeNs(): Long {
+        val now = System.nanoTime()
+        return now - awayNs - if (paused) now - pausedAtNs else 0L
+    }
+
     /** The app came back (ON_START): the run goes on where it was. */
     fun resume() {
         if (!paused) return
@@ -914,10 +920,10 @@ private class BenchRun(
      * have them; no labels) under scripted paths at its real views
      * ([VkBench.mapViews]): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main
      * board, its pitch of 70° and the governor's view of it from 25 km at 72°, turning. Before a view's first path the
-     * run waits, at most [VkBench.MAP_WAIT_SECONDS], for its complete picture: the first, at the home just after the map
-     * was turned on, is the map's first picture, its tiles built from the packs. Each path's line ends with how many of
-     * its frames were complete pictures and the triangle governor's bias ([VkBench.governor]). The map goes off after
-     * (the next step's bench call takes the window back).
+     * run waits for its complete picture while the map makes progress toward it ([VkBench.PictureWait]): the first, at
+     * the home just after the map was turned on, is the map's first picture, its tiles built from the packs. Each path's
+     * line ends with how many of its frames were complete pictures and the triangle governor's bias ([VkBench.governor]).
+     * The map goes off after (the next step's bench call takes the window back).
      */
     private suspend fun mapStage() {
         val surface = switchHost(VkHost.SURFACE, "the map")
@@ -960,7 +966,7 @@ private class BenchRun(
                 return
             }
             for ((i, view) in views.withIndex()) {
-                emit(VkBench.mapPictureLine(view.label, awaitPicture(view), first = i == 0))
+                emit(awaitPicture(view, first = i == 0))
                 for (path in view.paths) {
                     val label = "map ${view.label} ${path.label}"
                     val presented = source.presentedCount
@@ -982,12 +988,12 @@ private class BenchRun(
     }
 
     /**
-     * The map standing at [view] (swaying slightly) until a complete picture of it is presented, at most
-     * [VkBench.MAP_WAIT_SECONDS] (the app's going to the background meanwhile adds its time away): the seconds it took,
-     * or NaN. A picture counts once more frames were presented than the core keeps in flight, so none drawn before (the
-     * last view's, the stand-in's) is taken for it.
+     * The map standing at [view] (swaying slightly) until a complete picture of it is presented, or until the map stalls
+     * on its way there ([VkBench.PictureWait], on a clock that stands still while the app is away): the view's picture
+     * line, the seconds it took without the time away. A picture counts once more frames were presented than the core
+     * keeps in flight, so none drawn before (the last view's, the stand-in's) is taken for it.
      */
-    private suspend fun awaitPicture(view: VkBench.MapView): Double {
+    private suspend fun awaitPicture(view: VkBench.MapView, first: Boolean): String {
         awaitApp("the map's ${view.label}", VkHost.SURFACE)
         val base = source.presentedCount
         val from = System.nanoTime()
@@ -997,12 +1003,27 @@ private class BenchRun(
         source.startNs = from
         source.running = true
         val away = awayNs
-        while (System.nanoTime() - from - (awayNs - away) < VkBench.MAP_WAIT_SECONDS * 1_000_000_000L) {
+        drain() // the frames finished before the view's
+        val wait = VkBench.PictureWait(activeNs(), from, base)
+        var back = awayNs
+        while (true) {
             if (!paused) core.requestFrame()
             delay(50)
-            if (source.completeIndex > base + VkBench.IN_FLIGHT && !paused) return (source.completeAtNs - from - (awayNs - away)) / 1e9
+            val now = activeNs()
+            val drawing = VkBench.drawingMs(core.health())
+            wait.tick(now, source.presentedCount, drawing)
+            for (r in drain()) if (r.startNs >= from && !r.skipped) wait.frame(r.endNs, r.cpuMs, r.draws, r.trianglesK)
+            if (paused) continue
+            if (awayNs != back) {
+                back = awayNs
+                wait.cameBack(System.nanoTime())
+            }
+            if (source.completeIndex > base + VkBench.IN_FLIGHT) {
+                return VkBench.mapPictureLine(view.label, (source.completeAtNs - from - (awayNs - away)) / 1e9, first, wait.said())
+            }
+            val stalled = wait.stall(now, drawing) ?: continue
+            return VkBench.mapPictureLine(view.label, (System.nanoTime() - from - (awayNs - away)) / 1e9, first, wait.said(), stalled)
         }
-        return Double.NaN
     }
 
     /**

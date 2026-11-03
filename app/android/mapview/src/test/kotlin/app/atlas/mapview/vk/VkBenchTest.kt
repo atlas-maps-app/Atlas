@@ -145,8 +145,163 @@ class VkBenchTest {
             "vkbench map: the packs (grachten opened), the sunny moment, haze on, vignette off",
             VkBench.mapHead("grachten opened", "sunny", haze = true, vignette = false),
         )
-        assertEquals("vkbench map first picture: complete after 412.50 ms (at the home)", VkBench.mapPictureLine("home", 0.4125, first = true))
-        assertEquals("vkbench map board picture: not complete within 60 s (at the board)", VkBench.mapPictureLine("board", Double.NaN, first = false))
+        val frames = "45 frames, the longest 26174.44 ms"
+        assertEquals(
+            "vkbench map first picture: complete after 59971.92 ms (at the home; $frames)",
+            VkBench.mapPictureLine("home", 59.97192, first = true, frames = frames),
+        )
+        val stalled = VkBench.mapPictureLine("home", 82.4, first = true, frames = frames, stalled = "43 frames in 60 s without the picture growing")
+        assertEquals(
+            "vkbench map first picture: not complete, the map stalled after 82400.00 ms: 43 frames in 60 s without the picture " +
+                "growing (at the home; $frames)",
+            stalled,
+        )
+        // smoke.sh passes the first picture by its 'complete after' line alone
+        assertFalse(stalled.startsWith("vkbench map first picture: complete after "))
+        assertEquals(
+            "vkbench map board picture: complete after 412.50 ms (at the board; 0 frames, the longest 0.00 ms)",
+            VkBench.mapPictureLine("board", 0.4125, first = false, frames = VkBench.PictureWait(0L, 0L, 0L).said()),
+        )
+        // the core's health line: the frame drawn now, or none
+        assertEquals(27404L, VkBench.drawingMs("vk drawing 27404 ms failed 0 lost 0 undrawn 0\nvk failed: x"))
+        assertEquals(null, VkBench.drawingMs("vk drawing no failed 0 lost 0 undrawn 2 (no window)"))
+        assertEquals(null, VkBench.drawingMs("vk no core"))
+    }
+
+    /** A frame of the map's as the core draws it: from [startS] to [endS] seconds into the wait, with [draws]. */
+    private data class Drawn(val startS: Double, val endS: Double, val draws: Int, val ours: Boolean = true)
+
+    /** Frames drawn one after another from [fromS]: each (seconds, draws). */
+    private fun backToBack(fromS: Double, frames: List<Pair<Double, Int>>): List<Drawn> {
+        var t = fromS
+        return frames.map { (s, d) -> Drawn(t, t + s, d).also { t += s } }
+    }
+
+    /**
+     * [loop] through a [VkBench.PictureWait] as VK bench's map stage polls it, every 50 ms from the wait's start up to
+     * [untilS]: the frames presented since it began and how long the one drawn now has run (the core's health), then the
+     * records the core has handed on, each once [heldBack] more frames were drawn (8 where the device does not say when a
+     * frame was presented, as on CI's emulator), the view's own (begun in the wait) to the wait. Over [away] (seconds in)
+     * the app is away: VK bench's clock stands still and no stall is judged, and the wait is told when it comes back. The
+     * wait, and its first stall (seconds in, why) or null.
+     */
+    private fun waited(
+        loop: List<Drawn>,
+        untilS: Double,
+        heldBack: Int = 8,
+        away: ClosedFloatingPointRange<Double>? = null,
+    ): Pair<VkBench.PictureWait, Pair<Double, String>?> {
+        val records = loop.sortedBy { it.endS }
+        val presentedBefore = records.count { it.endS <= 0.0 }
+        val wait = VkBench.PictureWait(0L, 0L, presentedBefore.toLong())
+        var fed = 0
+        var awayNs = 0L
+        var leftNs = -1L
+        var t = 0L
+        while (t <= (untilS * 1e9).toLong()) {
+            val gone = away != null && t / 1e9 in away
+            if (gone && leftNs < 0) leftNs = t
+            val cameBack = !gone && leftNs >= 0
+            if (cameBack) {
+                awayNs += t - leftNs
+                leftNs = -1L
+            }
+            val now = t - awayNs - if (leftNs >= 0) t - leftNs else 0L
+            val presented = records.count { (it.endS * 1e9).toLong() <= t }
+            val drawing = loop.firstOrNull { (it.startS * 1e9).toLong() <= t && t < (it.endS * 1e9).toLong() }
+                ?.let { (t - (it.startS * 1e9).toLong()) / 1_000_000 }
+            wait.tick(now, presented.toLong(), drawing)
+            while (fed < presented - heldBack) {
+                val f = records[fed++]
+                if (f.ours) wait.frame((f.endS * 1e9).toLong(), (f.endS - f.startS) * 1000.0, f.draws, f.draws * 3)
+            }
+            if (!gone) {
+                if (cameBack) wait.cameBack(t)
+                wait.stall(now, drawing)?.let { return wait to (t / 1e9 to it) }
+            }
+            t += 50_000_000L
+        }
+        return wait to null
+    }
+
+    private fun firstStall(
+        loop: List<Drawn>,
+        untilS: Double,
+        heldBack: Int = 8,
+        away: ClosedFloatingPointRange<Double>? = null,
+    ): Pair<Double, String>? = waited(loop, untilS, heldBack, away).second
+
+    @Test
+    fun aSlowRunnersPictureIsWaitedForAndAStuckMapIsNot() {
+        // The branch's run 41601551318 (53e376ac, 3 November) as its logcat has the frames: the map's first, which made its
+        // 95 pipelines, 9.9 s; 41 more of about 130 ms as its tiles came in (the picture growing through the first 8 of
+        // them, as the wait saw it); then its first frames over the tiles, waiting on lavapipe's first compiles, 26.2 s
+        // and 17.0 s, and the complete picture's 1.5 s, 60.0 s in. The core handed each record on 8 frames late, so the
+        // wait never saw those last 8 frames' and judged the picture by the 37 before them; its longest frame is the core's
+        // health's.
+        val home = backToBack(0.0, listOf(9.91 to 60) + (1..41).map { 0.1307 to minOf(it, 8) * 120 } +
+            listOf(26.17 to 960, 17.04 to 960, 1.48 to 960))
+        val (seen, stall) = waited(listOf(Drawn(-0.4, -0.2, 9000, ours = false)) + home, home.last().endS + 0.1)
+        assertEquals(null, stall)
+        assertEquals(45L, seen.frames)
+        assertEquals(26170.0, seen.longestMs, 60.0)
+        // Its compiles 1.66 times as long, as the slowest seen (43.4 s, onemap's 41346470652, attempt 1), and 28.2 s:
+        // waited for, 88.4 s in, where a rule that judged by the frames not seen yet would have given up 71 s in.
+        val slowest = backToBack(0.0, listOf(9.91 to 60) + (1..41).map { 0.1307 to minOf(it, 8) * 120 } +
+            listOf(43.4 to 960, 28.2 to 960, 1.48 to 960))
+        assertEquals(null, firstStall(listOf(Drawn(-0.4, -0.2, 9000, ours = false)) + slowest, slowest.last().endS + 0.1))
+        // App's push run 41503008244 (5b547053, 2 November) on a slow runner (the emulator's boot 37.1 s): the stand-in's
+        // last frame, begun before the wait; 11.5 s with no frame while the map's 94 pipelines were made; 31 frames of
+        // about 135 ms as its tiles came in (here the picture grows through the first 24 of them alone); then its first
+        // frames over the tiles: 27.4 s, 2.6 s, 16.0 s, and the complete picture's 1.4 s, 63.1 s in: past the fixed 60 s
+        // the wait had, as on 7 of 26 runs from 30 October to 3 November.
+        val tiles = (1..31).map { 0.135 to minOf(it, 24) * 40 }
+        val slow = listOf(Drawn(-0.3, 0.1, 5000, ours = false)) +
+            backToBack(11.5, tiles + listOf(27.4 to 960, 2.6 to 960, 16.0 to 960, 1.4 to 960))
+        assertTrue(slow.last().endS > VkBench.MAP_WAIT_SECONDS)
+        assertEquals(null, firstStall(slow, slow.last().endS))
+        // twice as slow again, every frame: still waited for, its longest frame 54.8 s
+        val slower = listOf(Drawn(-0.3, 0.1, 5000, ours = false)) +
+            backToBack(23.0, tiles.map { (s, d) -> 2 * s to d } + listOf(54.8 to 960, 5.2 to 960, 32.0 to 960, 2.8 to 960))
+        assertEquals(null, firstStall(slower, slower.last().endS))
+        // a phone's: 60 frames a second, the tiles in within half a second, the fades drawn on for two seconds after; its
+        // records come once their frames were presented, 2 frames on
+        val phone = backToBack(0.2, (1..150).map { 1 / 60.0 to minOf(it, 30) * 30 })
+        assertEquals(null, firstStall(phone, phone.last().endS, heldBack = 2))
+        // The app away for 2 minutes once the picture stopped growing: VK bench's clock stands still, and the frames drawn
+        // before it count no time without growth after it, so the map is waited for when it comes back.
+        val beforeAway = backToBack(0.0, (1..10).map { 1.0 to it * 50 } + (1..20).map { 1.0 to 500 })
+        val afterAway = backToBack(150.1, (1..20).map { 1.0 to 500 })
+        assertEquals(null, firstStall(beforeAway + afterAway, afterAway.last().endS, away = 30.0..150.0))
+
+        // The frame loop stops after 20 s of frames, none being drawn: given up 60 s after the last one.
+        val stopped = backToBack(1.0, (1..19).map { 1.0 to it * 50 })
+        val (at, why) = firstStall(stopped, 200.0)!!
+        assertEquals(80.0, at, 0.051)
+        assertEquals("no frame for 60 s, and none being drawn", why)
+        // A frame that never ends (the driver or the render thread stuck): given up once it has run 180 s.
+        val stuck = backToBack(1.0, (1..9).map { 1.0 to it * 50 }) + Drawn(10.0, 1e9, 500)
+        val (stuckAt, stuckWhy) = firstStall(stuck, 400.0)!!
+        assertEquals(190.0, stuckAt, 0.051)
+        assertEquals("a frame has run for 180 s", stuckWhy)
+        // Frames on without the picture growing (a tile that never comes): given up once 20 of the frames seen were drawn
+        // after it last grew, over 60 s of their own times, however the frames are paced (each seen 8 frames on).
+        val drawingOn = backToBack(1.0, (1..10).map { 1.0 to it * 50 } + (1..200).map { 1.4 to 500 })
+        val (onAt, onWhy) = firstStall(drawingOn, 400.0)!!
+        assertEquals(82.4, onAt, 0.051) // the 43rd frame since the picture last grew, 60.2 s after it, seen as the 51st ends
+        assertEquals("43 frames in 60 s without the picture growing", onWhy)
+        val heavyOn = backToBack(1.0, (1..10).map { 1.0 to it * 50 } + (1..30).map { 15.0 to 500 })
+        val (heavyAt, heavyWhy) = firstStall(heavyOn, 500.0)!!
+        assertEquals(431.0, heavyAt, 0.051) // the 20th, 300 s after it, seen as the 28th ends
+        assertEquals("20 frames in 300 s without the picture growing", heavyWhy)
+        // The frames of the view before (begun before the wait) set no bar for this one's growth: the board's own tiles,
+        // coming in here over 92 s, each frame drawing more but fewer than a bigger view's last frame, keep it waited for,
+        // as they would not were that frame taken for the board's.
+        val board = backToBack(0.1, (1..400).map { 0.23 to it * 10 })
+        assertEquals(null, firstStall(listOf(Drawn(-0.3, 0.1, 9000, ours = false)) + board, board.last().endS))
+        val (barAt, barWhy) = firstStall(listOf(Drawn(-0.3, 0.1, 9000)) + board, board.last().endS)!!
+        assertEquals(62.0, barAt, 0.051) // the 261st frame, 60.03 s after that one, seen as the 269th ends
+        assertEquals("261 frames in 60 s without the picture growing", barWhy)
     }
 
     @Test
