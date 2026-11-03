@@ -61,6 +61,7 @@ using atlas::hlsl::float4;
 /// roof's, a kit eaves', a kit's band's and its corner board's.
 [[nodiscard]] std::vector<float> leads() {
     std::vector<float> out;
+    out.reserve(sh::BUILDING_CELL_LEADS + 4);
     for (std::uint32_t i = 0; i < sh::BUILDING_CELL_LEADS; ++i)
         out.push_back(static_cast<float>(i) * sh::BUILDING_CELL_LEAD);
     out.push_back(sh::BUILDING_ROOF_LEAD);
