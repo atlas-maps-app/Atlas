@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -105,11 +106,38 @@ TEST_CASE("cadence: at 120 Hz the period is the timelines' spacing, and frames o
         // warmth decides only at 90 Hz: never asked here
         CHECK(r.warm_asked == 0);
         // The loop's received vsyncs come one period apart after a skipped one and two after a frame over a period:
-        // the gaps' mean (alpha 16 to 27's period) reads a 90 Hz display's, and on a warm phone it kept the frames
-        // 2 x 11.5 - 2 ms apart, past the vsync at 16.7 ms (the stutter review: 40 to 52 frames a second).
+        // the gaps' mean (alpha 16 to 27's period) reads a 90 Hz display's, which failed both ways (the stutter
+        // review's simulation): on a cool phone every vsync drew (61 to 72 frames a second), and on a warm one the
+        // frames were kept 2 x 11.5 - 2 ms apart, past the vsync at 16.7 ms (40 to 52 a second).
         const std::int64_t old = gaps_mean(r);
         CHECK(old > frame::Cadence::fast_ns);
         CHECK(old < frame::Cadence::warm_ns);
+        CHECK((2 * old) - frame::Cadence::slack_ns > 2 * period120);
+    }
+}
+
+TEST_CASE("cadence: at 120 Hz never more than 60 a second, and 60 wherever a frame makes every second vsync") {
+    // Frames about 2 to 22 ms with 1.5 or 3 ms of spread (the stutter review's), the phone cool and warm: after a
+    // frame under two periods the next is drawn two periods on (60 a second), after a longer one at the first vsync
+    // after it ends, never sooner and never later. Frames of one length alone would not tell: every gap the same,
+    // the gaps' mean was right for them.
+    constexpr std::array<std::int64_t, 8> halves{-2, 2, 0, -1, 1, -2, 2, 0}; // each frame's offset, in half spreads
+    for (const bool warm : {false, true}) {
+        CAPTURE(warm);
+        for (const std::int64_t spread : {3 * ms / 2, 3 * ms}) {
+            CAPTURE(spread);
+            for (std::int64_t centre = 2; centre <= 22; ++centre) {
+                CAPTURE(centre);
+                std::array<std::int64_t, halves.size()> work{};
+                for (std::size_t i = 0; i < work.size(); ++i)
+                    work[i] = std::max(ms / 2, (centre * ms) + (halves[i] * spread / 2));
+                const Run r = run(period120, work, true, warm, 80);
+                for (std::size_t i = 1; i < r.drawn.size(); ++i) {
+                    const std::int64_t w = work[(i - 1) % work.size()];
+                    CHECK(r.drawn[i] - r.drawn[i - 1] == std::max<std::int64_t>(2, (w / period120) + 1) * period120);
+                }
+            }
+        }
     }
 }
 
