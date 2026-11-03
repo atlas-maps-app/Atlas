@@ -101,6 +101,7 @@ inline constexpr std::uint32_t night = 1;       ///< the night colours
 inline constexpr std::uint32_t water_level = 2; ///< water_vs: the pieces at their level (wclip)
 inline constexpr std::uint32_t visible_all = 4; ///< every fill drawn
 inline constexpr std::uint32_t layer = 8;       ///< into the reflections' layer (Ripple.cpp): upright, own colours
+inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a big road's asphalt as wide as the road (the app's map)
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -387,7 +388,9 @@ inline constexpr std::uint8_t level = 2;
 
 /// One element of the coaster tracks' shadows (draw_over's, in coasters.draw's order), each its own path: a post's,
 /// from its foot along the ground (its track's point `first`), or a run of its track's points' shadows ahead of the
-/// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest).
+/// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest). In
+/// the app's map (GroundFrame::grounded) the run is all its track's points, from the near plane on, and the width its
+/// metres on the ground, each point px at its own depth (LINE_METRES).
 struct TrackShadow {
     std::uint32_t tile = 0;
     std::uint32_t track = 0;
@@ -426,6 +429,10 @@ struct GroundFrame {
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
+    /// The app's map (FrameState::grounded): a line px wide and a coaster track's shadow take their width at each of
+    /// their points (LINE_METRES) rather than at their one point, and a big road's asphalt is as wide as the road
+    /// (ground_flag::wide), where the renders' frames lay it half as wide.
+    bool grounded = false;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;

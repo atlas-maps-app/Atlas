@@ -108,6 +108,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
+    val compression by settings.flow(SettingsKeys.MAP_COMPRESSION, true).collectAsStateWithLifecycle(true)
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
@@ -187,8 +188,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                 if (app.atlas.BuildConfig.TIMINGS) {
                     PartChips(
                         partsOff, pacing, timings,
+                        // only where the driver obeys its off: elsewhere the screen's compression is the driver's alone
+                        compression = compression.takeIf { MapEngine.compressionSwitch },
                         onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } },
                         onTimings = { on -> scope.launch { settings.set(SettingsKeys.MAP_TIMINGS, on) } },
+                        onCompression = { on -> scope.launch { settings.set(SettingsKeys.MAP_COMPRESSION, on) } },
                     ) { off ->
                         scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
                     }
@@ -285,7 +289,9 @@ private fun ScreenChips(
  * phone what the part costs. A row a group: its own chip first, which turns all of its parts off while any is drawn and
  * on again when none is (dark when all are drawn, grey when some), then the parts listed under it. The map's own layers
  * (the trees, the soft shadows) leave theirs out too. Last, the frame pacing (dark when on, off by default): each frame
- * presented at a timeline its work can make, as alpha 15 drew.
+ * presented at a timeline its work can make, as alpha 15 drew; the frame timings; and the screen's [compression] (dark
+ * when on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
+ * images are made without the driver's framebuffer compression.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -293,8 +299,10 @@ private fun PartChips(
     off: Set<MapPart>,
     pacing: Boolean,
     timings: Boolean,
+    compression: Boolean?,
     onPacing: (Boolean) -> Unit,
     onTimings: (Boolean) -> Unit,
+    onCompression: (Boolean) -> Unit,
     onChange: (Set<MapPart>) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -321,9 +329,10 @@ private fun PartChips(
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((label, on, onToggle) in listOf(
+            for ((label, on, onToggle) in listOfNotNull(
                 Triple(stringResource(R.string.mine_part_pacing), pacing, onPacing),
                 Triple(stringResource(R.string.mine_part_timings), timings, onTimings),
+                compression?.let { Triple(stringResource(R.string.mine_part_compression), it, onCompression) },
             )) {
                 TextPill(
                     label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,

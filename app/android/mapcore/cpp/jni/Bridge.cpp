@@ -182,6 +182,8 @@ public:
             return nullptr;
         }
         std::unique_ptr<Core> core(new Core(options, std::move(*started))); // NOLINT(cppcoreguidelines-owning-memory)
+        core->compression_switch_ =
+            core->started_.device != nullptr && core->started_.device->enabled().swapchain_compression_control;
         if (!core->started_.guard_line.empty()) log::warn("{}", core->started_.guard_line);
 #if defined(__ANDROID__)
         env->GetJavaVM(&core->vm_);
@@ -436,6 +438,20 @@ public:
     /// since alpha 16) instead of as soon as it is ready. Any thread; the next frame takes it.
     void set_pacing(bool on) noexcept { pacing_.store(on, std::memory_order_relaxed); }
 
+    /// The Map look's switch of the screen's compression: on, the swapchain's images with the driver's own framebuffer
+    /// compression (its default); off, without it where the driver lets an app ask (gpu::Compression). The swapchain
+    /// is made again with it on the render thread, and drawn.
+    void compression(bool on) {
+        on_session([this, on] {
+            session_->set_compression(on ? gpu::Compression::driver : gpu::Compression::off);
+            ask_frame();
+        });
+    }
+
+    /// Whether the driver lets an app make the swapchain's images without its compression: the switch's off acts only
+    /// there. Any thread: read as the core starts (a device made again after a loss is the same driver's).
+    [[nodiscard]] bool compression_switch() const noexcept { return compression_switch_; }
+
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
         if (camera == nullptr || env->GetDirectBufferAddress(camera) == nullptr ||
@@ -558,6 +574,7 @@ private:
     std::unique_ptr<frame::MapFrame> map_;
     bool map_on_ = false;
     std::atomic<bool> pacing_{false}; // set_pacing
+    bool compression_switch_ = false; // set as the core starts, read only after
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
@@ -839,6 +856,15 @@ jstring native_health(JNIEnv* env, jclass /*cls*/, jlong handle) {
 
 void native_set_pacing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
     if (Core* core = core_of(handle); core != nullptr) core->set_pacing(on == JNI_TRUE);
+}
+
+void native_set_compression(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->compression(on == JNI_TRUE);
+}
+
+jboolean native_compression_switch(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    const Core* core = core_of(handle);
+    return core != nullptr && core->compression_switch() ? JNI_TRUE : JNI_FALSE;
 }
 
 jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
@@ -1420,8 +1446,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 51>& methods() {
-    static const std::array<JNINativeMethod, 51> table{{
+const std::array<JNINativeMethod, 53>& methods() {
+    static const std::array<JNINativeMethod, 53> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1442,6 +1468,8 @@ const std::array<JNINativeMethod, 51>& methods() {
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
         method("health", "(J)Ljava/lang/String;", fn(&native_health)),
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
+        method("setCompression", "(JZ)V", fn(&native_set_compression)),
+        method("compressionSwitch", "(J)Z", fn(&native_compression_switch)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),

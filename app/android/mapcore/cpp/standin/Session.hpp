@@ -81,12 +81,14 @@ public:
     /// The window's Vulkan surface on `instance` (VK_KHR_android_surface on the phone; a headless one on hosts), or an
     /// empty one for a window without a surface (a host test's offscreen images).
     [[nodiscard]] virtual gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& instance) = 0;
-    /// The output of `wanted` pixels on `surface` in the frame's colour at `depth`, retiring `old` (if any), which the
-    /// session lets go of once this returns, made or refused, each in its stage: by default a swapchain
+    /// The output of `wanted` pixels on `surface` in the frame's colour at `depth`, its images with the driver's
+    /// framebuffer compression or without it (`compression`, the Map look's switch), retiring `old` (if any), which
+    /// the session lets go of once this returns, made or refused, each in its stage: by default a swapchain
     /// (gpu/Swapchain.hpp). A refused one is an error, never an output of another depth.
     [[nodiscard]] virtual gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                            vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                                           const gpu::Output* old, gpu::Depth depth);
+                                                                           const gpu::Output* old, gpu::Depth depth,
+                                                                           gpu::Compression compression);
     /// Asks the display for `fps` frames a second (ANativeWindow_setFrameRate); false where it cannot.
     virtual bool set_frame_rate(float fps) {
         (void)fps;
@@ -158,6 +160,9 @@ public:
     void resize(vk::Extent2D size);
     /// The output asked to be made again (out of date or suboptimal), at the size it had.
     void remake();
+    /// The swapchain's images with the driver's framebuffer compression from now on, or without it where the driver
+    /// lets an app ask (the Map look's switch; the driver's until it is set): a change makes the output again.
+    void set_compression(gpu::Compression compression);
     /// Lets go of the window: the renderer, the output, the colour stage, the surface.
     void detach();
     [[nodiscard]] bool attached() const noexcept { return window_ != nullptr; }
@@ -330,6 +335,7 @@ private:
     gpu::Configuration config_{};
     /// The output's colour: the frame's 8 bits, or in VK bench's colour stage as deep as the surface allows.
     gpu::Depth depth_ = gpu::default_depth;
+    gpu::Compression compression_ = gpu::Compression::driver; // set_compression
     int mode_ = 0; // 0 nothing, 1 VK bench's stand-in, 2 the app's map (map_)
     bool pills_ = false;
     bool texture_ = false;

@@ -172,6 +172,14 @@ object SettingsKeys {
     val MAP_PACING = booleanPreferencesKey("map.pacing")
 
     /**
+     * A debug build's switch of the screen's compression (on when unset: the driver's own framebuffer compression, its
+     * default): off, the core makes the swapchain's images without it where the driver lets an app ask
+     * (MapEngine.compression). Off ended the glitches in busy frames on the user's PowerVR, but heavy frames jiggled
+     * more, so the driver's is the default (the user, 2 November 2026: "Driver's default").
+     */
+    val MAP_COMPRESSION = booleanPreferencesKey("map.compression")
+
+    /**
      * A debug or bench build's frame timings over the Map home: on when unset, as every such build drew them; off,
      * nothing is drawn over the map for them and its canvas no longer redraws each frame to show them (the user, 30
      * October: "Let me toggle off the debug overlay its in the way").

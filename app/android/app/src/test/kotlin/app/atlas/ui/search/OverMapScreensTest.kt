@@ -41,7 +41,8 @@ import org.robolectric.annotation.GraphicsMode
  * The screens with places on the map keep the one map as they open and close (the user, 1 November: "There is too much
  * re loading the map"): a search's places, a category's and a brand's, the eat map, charging and the drop-off points
  * take on the map on screen, its camera and look, and glide it; the fill-in keeps its own view of the building on that
- * map ([app.atlas.mapview.MapStageTest]: the same map draws it), in the user's look rather than the live sky.
+ * map ([app.atlas.mapview.MapStageTest]: the same map draws it), in the user's look rather than the live sky, and the
+ * quests' street card is that map too, at the card's place with its own camera, rather than a second map.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -98,6 +99,14 @@ class OverMapScreensTest {
         // the user's look comes with the settings' first read: the live sky (AUTO) until then
         compose.waitUntil(30_000) { stage.shown()?.style?.theme == Theme.DAY }
         assertEquals(MapStyle(theme = Theme.DAY, calm = true), stage.shown()?.style)
+        compose.runOnIdle { screen = null }
+        compose.waitForIdle()
+        assertSame(home, stage.shown()?.state)
+
+        // the quests' street card: the one map at the card's place, with the card's own camera
+        compose.runOnIdle { screen = Dest.Quests() }
+        compose.waitForIdle()
+        assertNotSame("the quests' card", home, stage.shown()?.state)
         compose.runOnIdle { screen = null }
         compose.waitForIdle()
         assertSame(home, stage.shown()?.state)

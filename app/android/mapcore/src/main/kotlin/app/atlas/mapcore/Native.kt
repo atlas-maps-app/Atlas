@@ -201,6 +201,16 @@ object Native {
      */
     @JvmStatic external fun setPacing(handle: Long, on: Boolean)
 
+    /**
+     * The Map look's switch of the screen's compression: on, the swapchain's images with the driver's own framebuffer
+     * compression (its default); off, without it where the driver lets an app ask ([compressionSwitch]). The swapchain
+     * is made again with it, and drawn. Any thread; it waits for the render thread.
+     */
+    @JvmStatic external fun setCompression(handle: Long, on: Boolean)
+
+    /** Whether the driver lets the app make the screen's images without its compression ([setCompression]'s off). */
+    @JvmStatic external fun compressionSwitch(handle: Long): Boolean
+
     @JvmStatic external fun trimMemory(handle: Long, level: Int)
 
     /**

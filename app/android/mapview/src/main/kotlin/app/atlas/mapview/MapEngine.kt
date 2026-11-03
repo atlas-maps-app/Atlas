@@ -182,6 +182,26 @@ object MapEngine {
     }
 
     /**
+     * A debug build's switch of the screen's compression, on when unset: the swapchain's images with the driver's own
+     * framebuffer compression (its default), or without it where the driver lets an app ask ([compressionSwitch]).
+     * Off, the user's PowerVR showed none of its glitches in busy frames, but heavy frames jiggled more, so the
+     * driver's is the default (the user, 2 November). Handed to the core as it starts ([startCore]) and by
+     * [compression].
+     */
+    @Volatile
+    var compressed: Boolean = true
+        private set
+
+    /** Sets [compressed] and hands it to the running core, which makes its swapchain again with it (off the main thread). */
+    fun compression(on: Boolean) {
+        compressed = on
+        (core as? CoreState.Ready)?.core?.setCompression(on)
+    }
+
+    /** Whether the running core's driver obeys [compression]'s off (VK_EXT_image_compression_control_swapchain). */
+    val compressionSwitch: Boolean get() = (core as? CoreState.Ready)?.core?.compressionSwitch == true
+
+    /**
      * The user's strength of TONE (the Map look's Tone: 0 off, 1 the renders', up to 2): the core lights by it from the
      * next moment it is handed (CoreMap.moment), today's map from its next frame ([options]); [tone] sets it.
      */
@@ -280,12 +300,17 @@ object MapEngine {
             // The core's text, once, before the maps draw with it: the canal names and the runways' designators are
             // drawn from these fonts. Until 27 October only VK facts loaded them, so the app's map drew none.
             if (made != null && assets != null) runCatching { TextRounding.install(assets) }
+            // The screen's compression before the first window's swapchain is made, and again should the switch have
+            // moved before the core was ready to take it.
+            val handed = compressed
+            made?.setCompression(handed)
             core = when {
                 made != null -> CoreState.Ready(made)
                 // No core's library in this process at all (the JVM's tests): today's map alone, as without a start.
                 !MapCore.present() -> CoreState.Canvas
                 else -> CoreState.Off(MapCore.lastError())
             }
+            if (made != null && compressed != handed) made.setCompression(compressed)
         }, "atlas-core-start").apply { isDaemon = true }.start()
     }
 

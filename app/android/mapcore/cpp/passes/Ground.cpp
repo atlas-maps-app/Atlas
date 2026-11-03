@@ -550,6 +550,8 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     // the reflections' mirrors whatever the camera, here rather than on the render thread
     prepare_reflections(*ground);
     const geo::GroundGpu gpu = geo::pack(*ground);
+    // fill_vs's wide_point finds a vertex's triangle by its word's place past the range's first, mod 3
+    ATLAS_ASSERT(gpu.vertices.first == 0 && gpu.above.first % 3 == 0 && gpu.below.first % 3 == 0);
     ground->polyline_words.resize(ground->polylines.size());
     std::uint32_t words = 0;
     for (std::size_t i = 0; i < ground->polylines.size(); ++i) {
@@ -668,6 +670,7 @@ bool Ground::decide(const frame::FrameState& state) {
     f.night = state.theme.has(style::theme_flag::night);
     f.wet = state.theme.has(style::theme_flag::wet);
     f.engine = state.camera.has(style::camera_flag::engine_mode) && state.placed.has_value();
+    f.grounded = state.grounded;
     f.radius = 0;
     f.ground_r = view::default_ground_r;
     f.target_x = 0;
@@ -1487,6 +1490,8 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
 }
 
 void Ground::record_fills(const frame::Recording& r, bool above) {
+    // ground.slang's GROUP_BIG: the big roads' asphalt, in the app's map as wide as the road
+    static_assert(geo::group::over + 1 == 25);
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     bool bound = false;
     for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
@@ -1495,7 +1500,7 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
         if (draw.count == 0 || !t.pass->ranges[0]) continue;
         if (!bound) {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->fill);
-            push(r, 0, 0);
+            push(r, frame_.grounded ? ground_flag::wide : 0U, 0);
             bound = true;
         }
         cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
