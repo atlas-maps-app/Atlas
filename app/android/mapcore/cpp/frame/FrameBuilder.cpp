@@ -556,6 +556,7 @@ void FrameBuilder::stage_f() {
     state_.ground_slots = ground;
     if (state_.items != nullptr) {
         RankOptions options{.ground_slots = ground};
+        options.grounded = state_.grounded;
         if (state_.camera.has(style::camera_flag::engine_mode) && state_.placed) {
             if (const auto radius = state_.placed->number("radius")) {
                 const view::Vec3 target = state_.placed->camera().target;

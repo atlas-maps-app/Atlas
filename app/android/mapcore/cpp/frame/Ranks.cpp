@@ -73,6 +73,8 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto kind = items.kind();
     for (std::size_t i = 0; i < rows; ++i) {
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
+        // an item the other kind of frame draws (a bridge's railing of the app's map's set, or of the renders')
+        if ((flags[i] & (options.grounded ? scene::item_flag::renders : scene::item_flag::app)) != 0) continue;
         // its cut point beyond the most at which it may be drawn (a door's node), so a frame ranks only what it may
         // draw; first, as most of a city's doors are, and with no depth (no pass reads the depth of a row it does not
         // rank)

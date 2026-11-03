@@ -81,12 +81,15 @@ env:
   # synchronise through atomics, futexes and reference counts that TSan cannot see, so it reports races between them
   # that are none (17 in the first run, every access in their code); and an order of their own locks that one of their
   # threads takes both ways is theirs to mend (on 30 October the validation layer's, both locks taken in its code on a
-  # thread of the queue's submit, in one of the 150 processes of a run). A report is dropped when any of its stacks
-  # passes through one of them; a race between the core's own threads still fails, as the canaries prove, and so does
-  # an order of the core's own locks taken both ways.
+  # thread of the queue's submit, in one of the 150 processes of a run), as is a misuse of their own mutexes (on 1 and
+  # 3 November lavapipe's: lp_fence_destroy destroyed a fence's mutex that another of its threads held through mtx_lock,
+  # and that thread then unlocked it). A report is dropped when any of its stacks passes through one of them; a race
+  # between the core's own threads still fails, as the canaries prove, and so do an order of the core's own locks taken
+  # both ways and a misuse of its own mutexes.
   ATLAS_TSAN_SUPPRESSIONS: >-
     race:libvulkan_lvp race:libLLVM race:libVkLayer_khronos_validation
     deadlock:libvulkan_lvp deadlock:libLLVM deadlock:libVkLayer_khronos_validation
+    mutex:libvulkan_lvp mutex:libLLVM mutex:libVkLayer_khronos_validation
 
 jobs:
   # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above, less

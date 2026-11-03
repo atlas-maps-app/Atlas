@@ -11,11 +11,12 @@
 // street and at its level, over the ring's pieces in the drawn tiles (the shoelace sums of the pieces add up to the
 // ring's, their boxes to its box). Without a ring at its level the renders draw no water at all.
 //
-// On the GPU (the opaque ground, after what lies above the water): the w0 rings' fans counted in the stencil's three
-// low bits (front faces up, back faces down, wrapping), where that count is not zero the w0 bit set and the count
-// cleared; the wclip rings' fans counted where the w0 bit is set; then the surface where the count is not zero, at the
-// water's painter depth (opaque: what lies above it was drawn first). Its tint and the end of its clip are translucent
-// phases at their orders, so K16's and K17's water elements draw inside the clip between them.
+// On the GPU (the opaque ground): first, before what lies above the water, the w0 rings' fans counted in the stencil's
+// three low bits (front faces up, back faces down, wrapping), where that count is not zero the w0 bit set and the count
+// cleared, so the app's map's streets keep off the water (passes/Ground.cpp's record_fills); after what lies above it,
+// the wclip rings' fans counted where the w0 bit is set, then the surface where the count is not zero, at the water's
+// painter depth (opaque: what lies above it was drawn first). Its tint and the end of its clip are translucent phases
+// at their orders, so K16's and K17's water elements draw inside the clip between them.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -276,52 +277,55 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     return {};
 }
 
+void Ground::water_fans(const frame::Recording& r, std::uint32_t flags) const {
+    push(r, flags, slot(geo::group::water, 0, 0));
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const DrawnTile& t = frame_.tiles[i];
+        const geo::Words draw = t.ground->layout.fans;
+        if (draw.count == 0 || !t.pass->ranges[0]) continue;
+        r.frame.cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
+        r.counters.draw("ground water", draw.count / 3);
+    }
+}
+
+void Ground::water_screen(const frame::Recording& r, const vk::raii::Pipeline& pipeline, std::array<float, 4> rows,
+                          std::array<std::uint32_t, 4> colour) const {
+    const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+    const Words& w = *words_;
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+    layouts::ground_ground::PushConstants pc{};
+    pc.at = {w.tiles, w.slots, w.theme, w.runs};
+    pc.mode = {0U, slot(geo::group::water, 0, 0), 0U, 0U};
+    pc.rows = {rows[0], rows[1], rows[2], rows[3]};
+    pc.colour = {colour[0], colour[1], colour[2], colour[3]};
+    cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+    cmd.draw(3, 1, 0, 0);
+    r.counters.draw("ground water", 1);
+}
+
+void Ground::record_water_count(const frame::Recording& r) {
+    if (!frame_.water) return;
+    r.frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->water_count);
+    water_fans(r, 0);
+    if (frame_.weather) water_screen(r, pipelines_->water_convert, {}, {});
+}
+
 void Ground::record_water_opaque(const frame::Recording& r) {
     if (!frame_.water) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Pipelines& p = *pipelines_;
-    const Words& w = *words_;
-    const std::uint32_t surface = slot(geo::group::water, 0, 0);
-    auto fans = [&](std::uint32_t flags) {
-        push(r, flags, surface);
-        for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
-            const DrawnTile& t = frame_.tiles[i];
-            const geo::Words draw = t.ground->layout.fans;
-            if (draw.count == 0 || !t.pass->ranges[0]) continue;
-            cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
-            r.counters.draw("ground water", draw.count / 3);
-        }
-    };
-    auto screen = [&](const vk::raii::Pipeline& pipeline, layouts::ground_ground::PushConstants pc) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-        pc.at = {w.tiles, w.slots, w.theme, w.runs};
-        cmd.pushConstants<layouts::ground_ground::PushConstants>(*p.layout, frame::push_stages, 0, pc);
-        cmd.draw(3, 1, 0, 0);
-        r.counters.draw("ground water", 1);
-    };
     const style::ThemeBlock* th = &r.state.theme;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *p.water_count);
-    fans(0);
     if (!frame_.weather) {
-        // every drawn ring in th['water'], at the street
-        layouts::ground_ground::PushConstants pc{};
-        pc.mode = {0U, surface, 0U, 0U};
-        pc.rows = {0.0F, 0.0F, 1.0F, 0.0F};
-        pc.colour = {0U, 0U, rgba(th->water).packed(), 0U};
-        screen(p.water_flat, pc);
+        // every drawn ring in th['water'], at the street (record_water_count counted them)
+        water_screen(r, p.water_flat, {0.0F, 0.0F, 1.0F, 0.0F}, {0U, 0U, rgba(th->water).packed(), 0U});
         return;
     }
-    layouts::ground_ground::PushConstants convert{};
-    convert.mode = {0U, surface, 0U, 0U};
-    screen(p.water_convert, convert);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *p.water_count_level);
-    fans(ground_flag::water_level);
+    water_fans(r, ground_flag::water_level);
     // wgrad: water_top at max(0, hy) to water_bot at the frame's bottom
-    layouts::ground_ground::PushConstants grad{};
-    grad.mode = {0U, surface, 0U, 0U};
-    grad.rows = {static_cast<float>(frame_.wgrad_y1), static_cast<float>(frame_.wgrad_y2), 1.0F, 0.0F};
-    grad.colour = {rgba(th->water_top).packed(), rgba(th->water_bottom).packed(), 0U, 0U};
-    screen(p.water_surface, grad);
+    water_screen(r, p.water_surface,
+                 {static_cast<float>(frame_.wgrad_y1), static_cast<float>(frame_.wgrad_y2), 1.0F, 0.0F},
+                 {rgba(th->water_top).packed(), rgba(th->water_bottom).packed(), 0U, 0U});
 }
 
 void Ground::record_water_tint(const frame::Recording& r) {

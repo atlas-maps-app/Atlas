@@ -19,7 +19,11 @@ static const uint LINE_POST = 256u;   // a post's shadow: its one point's foot t
 /// as wide as it lies wherever it lies, from the near plane on (stroke_vs).
 static const uint LINE_METRES = 512u;
 /// A dashed run's flags word holds its dash table's first word in the frame's words from this bit; a run in metres
-/// (never dashed) the px it is drawn over there, in hundredths of a CSS px (a big road's lines' 0.3; 0: everywhere).
+/// (never dashed) the px it is drawn over there, in hundredths of a CSS px (a big road's lines' 0.3; 0: everywhere); a
+/// run neither, signed, the words on of the run whose points are its points' mirrors (0: none): a bridge's lines in the
+/// app's map, each point's mirror about its street's centreline at the same place on the other line, each point lying
+/// twice as far from the middle of it and its mirror, at the edge of its street as wide as its way (stroke_vs;
+/// ground.slang's GROUND_WIDE).
 static const uint LINE_DASH_SHIFT = 10u;
 static const uint LINE_FLAG_BITS = 0x3FFu;
 /// px's least width (render/regions.py's px: max(0.25, w · focal / depth)), CSS px.
@@ -236,7 +240,7 @@ inline bool in_dash(Seg g, float4 dash, float2 x) {
 }
 
 /// A line of a pair run (a sett road's course): its ends in device px, and whether it is drawn (both ends ahead of the
-/// near plane).
+/// near plane; in the app's map either, its part ahead of it).
 struct SettLine {
     float2 a;
     float2 b;
