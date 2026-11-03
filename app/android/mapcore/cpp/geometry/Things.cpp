@@ -78,8 +78,8 @@ void railing_pieces(std::span<const P2> line, std::int64_t id, std::uint32_t roa
                                  .min_depth = 0.8F,
                                  .radius = static_cast<float>(pymath::hypot((k2 - k) / 2, 0.6) + 0.01),
                                  .tile = 0,
-                                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id)),
-                                 .cell = cell});
+                                 .cell = cell,
+                                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id))});
             out.things.push_back(t);
             ++piece;
             k = k2;
@@ -135,8 +135,8 @@ TileThings build_things(const ThingInput& in) {
                                  .min_depth = 2.0F,
                                  .radius = static_cast<float>(pymath::hypot(reach_of(*kind), up) + 0.01),
                                  .tile = 0,
-                                 .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id)),
-                                 .cell = layer->cell_of(i)});
+                                 .cell = layer->cell_of(i),
+                                 .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id))});
             out.things.push_back(t);
         }
     }

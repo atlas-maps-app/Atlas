@@ -61,16 +61,16 @@ struct ItemSpec {
     float radius = 0.0F;
     /// The tile it belongs to (Residency's handle).
     std::uint32_t tile = 0;
+    /// The cell of its tile its feature lies in, as the pack's cell table has it (bit `cell` of a CoverTile's cells):
+    /// what stands up of a tile kept under one fading in draws its cells under that tile alone (scene/Cover.hpp's
+    /// upright). Beside `tile`, in the padding before `owner`, so that an item takes no more room.
+    std::uint8_t cell = 0;
     /// Its owner, as the likeness harness keys owners (owner_key): the OSM element it draws.
     std::uint64_t owner = 0;
     /// The building it draws, keyed as `owner` is: an outline's own key, a part's outline's (where the part names one,
     /// else its own); 0 for an item of no building. The building the app asks about is drawn by the items of its key
     /// (frame/Ranks.hpp).
     std::uint64_t building = 0;
-    /// The cell of its tile its feature lies in, as the pack's cell table has it (bit `cell` of a CoverTile's cells):
-    /// what stands up of a tile kept under one fading in draws its cells under that tile alone (scene/Cover.hpp's
-    /// upright).
-    std::uint8_t cell = 0;
 };
 
 /// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in

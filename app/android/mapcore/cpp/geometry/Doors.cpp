@@ -87,9 +87,9 @@ TileDoors build_doors(const DoorInput& in) {
              .max_depth = door_depth, // its node (the cut point) beyond the pass's reach: no rank
              .radius = static_cast<float>(reach),
              .tile = 0,
+             .cell = buildings->cell_of(at->second), // its building's, whose walls it stands on
              .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(d.id)),
-             .building = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(d.building)),
-             .cell = buildings->cell_of(at->second)}); // its building's, whose walls it stands on
+             .building = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(d.building))});
         out.doors.push_back(d);
     }
     return out;
