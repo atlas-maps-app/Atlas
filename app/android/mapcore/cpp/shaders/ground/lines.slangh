@@ -236,7 +236,7 @@ inline bool in_dash(Seg g, float4 dash, float2 x) {
 }
 
 /// A line of a pair run (a sett road's course): its ends in device px, and whether it is drawn (both ends ahead of the
-/// near plane).
+/// near plane; in the app's map either, its part ahead of it).
 struct SettLine {
     float2 a;
     float2 b;

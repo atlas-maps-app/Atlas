@@ -1489,8 +1489,9 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
 }
 
 void Ground::record_fills(const frame::Recording& r, bool above) {
-    // ground.slang's GROUP_BIG: the big roads' asphalt, in the app's map as wide as the road
-    static_assert(geo::group::over + 1 == 25);
+    // ground.slang's wide_group: the big roads' asphalt and the runways' and taxiways' pavements, in the app's map as
+    // wide as their ways
+    static_assert(geo::group::over + 1 == 25 && geo::group::over + 2 == 26 && geo::aero_sub::pavement == 0);
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     bool bound = false;
     for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {

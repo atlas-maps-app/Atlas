@@ -100,40 +100,41 @@ std::optional<ThingKind> thing_kind(std::optional<std::string_view> highway, std
 
 TileThings build_things(const ThingInput& in) {
     TileThings out;
-    const tl::Layer* layer = in.tile->layer(tl::LayerId::thing);
-    if (layer == nullptr) return out;
     const tl::Frame& frame = in.head->frame;
-    for (std::uint32_t i = 0; i < layer->count; ++i) {
-        const std::optional<ThingKind> kind =
-            thing_kind(layer->string(tl::thing::tag_highway, i), layer->string(tl::thing::tag_amenity, i),
-                       layer->string(tl::thing::tag_barrier, i));
-        if (!kind) continue;
-        Thing t;
-        const tl::GridPoint p = layer->point(tl::thing::pos, i);
-        t.x = frame.x(p.lon);
-        t.z = frame.z(p.lat);
-        t.id = layer->integer(tl::thing::id, i);
-        t.node = static_cast<std::uint32_t>(layer->integer(tl::thing::index, i));
-        t.gy = layer->decimal(tl::thing::gy, i).value_or(0.0);
-        t.kind = *kind;
-        const std::uint32_t slots = thing_slots[static_cast<std::size_t>(*kind)];
-        // its item: amsterdam.py's gather, c = cam.cam((n['x'], 1, n['z'])), from 2 m, the radius cut at it
-        const double up = std::abs(t.gy - 1) + reach_of(*kind);
-        out.items.push_back({.x = t.x,
-                             .y = 1.0,
-                             .z = t.z,
-                             .offset = 0.0,
-                             .cut_x = t.x,
-                             .cut_z = t.z,
-                             .order = scene::order_of(nodes_list, t.node),
-                             .kind = in.kind,
-                             .flags = scene::item_flag::radius,
-                             .slots = {slots, slots, slots, slots},
-                             .min_depth = 2.0F,
-                             .radius = static_cast<float>(pymath::hypot(reach_of(*kind), up) + 0.01),
-                             .tile = 0,
-                             .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id))});
-        out.things.push_back(t);
+    // the street furniture; a tile without any still has its bridges' railings
+    if (const tl::Layer* layer = in.tile->layer(tl::LayerId::thing)) {
+        for (std::uint32_t i = 0; i < layer->count; ++i) {
+            const std::optional<ThingKind> kind =
+                thing_kind(layer->string(tl::thing::tag_highway, i), layer->string(tl::thing::tag_amenity, i),
+                           layer->string(tl::thing::tag_barrier, i));
+            if (!kind) continue;
+            Thing t;
+            const tl::GridPoint p = layer->point(tl::thing::pos, i);
+            t.x = frame.x(p.lon);
+            t.z = frame.z(p.lat);
+            t.id = layer->integer(tl::thing::id, i);
+            t.node = static_cast<std::uint32_t>(layer->integer(tl::thing::index, i));
+            t.gy = layer->decimal(tl::thing::gy, i).value_or(0.0);
+            t.kind = *kind;
+            const std::uint32_t slots = thing_slots[static_cast<std::size_t>(*kind)];
+            // its item: amsterdam.py's gather, c = cam.cam((n['x'], 1, n['z'])), from 2 m, the radius cut at it
+            const double up = std::abs(t.gy - 1) + reach_of(*kind);
+            out.items.push_back({.x = t.x,
+                                 .y = 1.0,
+                                 .z = t.z,
+                                 .offset = 0.0,
+                                 .cut_x = t.x,
+                                 .cut_z = t.z,
+                                 .order = scene::order_of(nodes_list, t.node),
+                                 .kind = in.kind,
+                                 .flags = scene::item_flag::radius,
+                                 .slots = {slots, slots, slots, slots},
+                                 .min_depth = 2.0F,
+                                 .radius = static_cast<float>(pymath::hypot(reach_of(*kind), up) + 0.01),
+                                 .tile = 0,
+                                 .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id))});
+            out.things.push_back(t);
+        }
     }
     // the bridges' railings: for s_ in (-1, 1), off = ribbon(r['pts'], r['w'] / 2 + 0.15), off[:n] or off[n:][::-1]
     if (const tl::Layer* roads = in.tile->layer(tl::LayerId::road)) {
