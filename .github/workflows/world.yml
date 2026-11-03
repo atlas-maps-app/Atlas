@@ -145,10 +145,12 @@ jobs:
           BYTES=$(size "$URL")
           echo "$AREA: $URL, $BYTES bytes"
           WEIGHTS=()
-          if gh release download world-latest --pattern world.json --dir "$RUNNER_TEMP/latest" 2> /dev/null; then
-            # the last world's weights: each L6 block's fine pack's bytes
-            LAST=$(jq -r .release "$RUNNER_TEMP/latest/world.json")
-            gh release download "$LAST" --pattern world.idx --dir "$RUNNER_TEMP/latest"
+          STEM=$(basename "$URL" -latest.osm.pbf)
+          if gh release download world-latest --pattern world.json --dir "$RUNNER_TEMP/latest" 2> /dev/null &&
+            LAST=$(jq -r .release "$RUNNER_TEMP/latest/world.json") &&
+            jq -e --arg s ": $STEM-" '.sources[0] | contains($s)' "$RUNNER_TEMP/latest/world.json" > /dev/null &&
+            gh release download "$LAST" --pattern world.idx --dir "$RUNNER_TEMP/latest" 2> /dev/null; then
+            # the last world's weights where it was built of the same extract: each L6 block's fine pack's bytes
             WEIGHTS=(--weights-index "$RUNNER_TEMP/latest/world.idx")
             echo "weights: $LAST's packs"
           else
@@ -309,8 +311,11 @@ jobs:
           CUT="$BIG/cut"
           mkdir -p "$CUT"
           for cfg in "$RUNNER_TEMP"/plan/extract-*.json; do
+            # osmium extract writes no replication time of its own (Belgium's first run, 3 November): each region's header
+            # is given the extract's, which every pack and world.json go by
+            jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$cfg" > "$cfg.dated"
             # each region's box and margin, with whole ways and multipolygons where they cross its edge
-            time osmium extract -c "$cfg" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
+            time osmium extract -c "$cfg.dated" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
             for f in "$CUT"/scratch-r*.osm.pbf; do
               if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
               echo "- ${f##*/}: $(stat -c %s "$f") bytes" >> "$GITHUB_STEP_SUMMARY"
