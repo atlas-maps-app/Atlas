@@ -415,6 +415,54 @@ TEST_CASE("ranks leave out an item whose cut point lies deeper than its most dep
                              << " left out beyond it");
 }
 
+TEST_CASE("ranks take an item flagged for the app's map only in it, and one flagged for the renders' frames only "
+          "outside it") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    // three items in a row about the target: a railing's piece of the app's map's set, one of the renders' set, and
+    // one of neither (drawn in both)
+    const std::array<std::uint16_t, 3> flags{scene::item_flag::app, scene::item_flag::renders, 0};
+    scene::ItemTable items;
+    for (std::uint32_t i = 0; i < flags.size(); ++i) {
+        const double x = (10.0 * i) - 10.0;
+        items.add({.x = x,
+                   .y = 1,
+                   .z = 0,
+                   .cut_x = x,
+                   .cut_z = 0,
+                   .order = scene::order_of(0, i),
+                   .kind = kind,
+                   .flags = flags.at(i),
+                   .slots = {1, 1, 1, 1},
+                   .min_depth = 0.8F,
+                   .radius = 2.0F,
+                   .tile = 1});
+    }
+    const view::Camera camera({.target = {0, 0, 0},
+                               .yaw = 30.0,
+                               .pitch = 45.0,
+                               .dist = 100,
+                               .fov = 36,
+                               .width = 412,
+                               .height = 916,
+                               .cx = std::nullopt,
+                               .cy = 440});
+    for (const bool grounded : {false, true}) {
+        CAPTURE(grounded);
+        frame::Ranks ranks;
+        ranks.update(items, camera, selectors, {.ground_slots = 100, .grounded = grounded});
+        const auto ranked = [&](std::uint32_t row) {
+            return std::ranges::find(ranks.order(), row) != ranks.order().end();
+        };
+        CHECK(ranked(0) == grounded);
+        CHECK(ranked(1) == !grounded);
+        CHECK(ranked(2));
+        CHECK(ranks.order().size() == 2);
+        CHECK((ranks.table()[grounded ? 1 : 0] == shaders::RANK_NONE));
+    }
+}
+
 TEST_CASE("an item's band and detail are the ranks' choice in double, which a float depth or threshold can miss") {
     // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
     // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one

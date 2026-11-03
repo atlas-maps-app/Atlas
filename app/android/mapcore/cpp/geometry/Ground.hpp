@@ -297,6 +297,9 @@ struct Stroke {
     P2 from;
     /// Its place in the ground's order across scenes (its feature's).
     OrderKey key;
+    /// A bridge's line: its other line's polyline, so many polylines on (1 or -1), whose points are its points' mirrors
+    /// about the street's centreline (the line stage's LINE_WIDE); 0 for every other stroke.
+    std::int32_t mirror = 0;
 };
 
 /// A street lamp the night's streaks on the water start from (S['nodes']'s highway=street_lamp): its place in
@@ -487,6 +490,9 @@ struct GroundGpu {
     std::vector<std::uint32_t> lines;
     Words vertices; ///< three words each
     Words above;    ///< the opaque fills above the water (draw_over's, the roads, the areas), top first: indices
+    /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
+    /// app's map draws again by themselves (passes/Ground.cpp's record_fills).
+    Words streets;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
@@ -513,6 +519,7 @@ inline constexpr std::uint32_t tree = 2;
 struct GroundLayout {
     Words vertices;
     Words above;
+    Words streets;
     Words below;
     Words canopy;
     Words fans;

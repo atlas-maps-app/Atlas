@@ -3,6 +3,7 @@
 // groundMarks; R/Regions.kt drawUnder, drawOver).
 #include "geometry/Ground.hpp"
 
+#include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Items.hpp"
 #include "geometry/RoofShapes.hpp"
@@ -367,6 +368,7 @@ private:
         std::ranges::reverse(right);
         const std::uint32_t right_first = put(right);
         const auto order = static_cast<std::uint32_t>(tl::ground_key::order(marks));
+        // the two lines' polylines one after the other, each point of one the mirror of the other's at its place
         for (const std::uint32_t first : {left, right_first}) {
             const std::uint32_t p = polyline(first, static_cast<std::uint32_t>(n), 1.1);
             out_.strokes.push_back({.kind = StrokeKind::bridge,
@@ -378,7 +380,8 @@ private:
                                     .count = 1,
                                     .width = {.css = style_.bridge_lines_width},
                                     .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)},
-                                    .key = key_});
+                                    .key = key_,
+                                    .mirror = first == left ? 1 : -1});
         }
     }
 
@@ -1058,6 +1061,9 @@ GroundGpu pack(const GroundTile& g) {
     std::vector<std::uint32_t> below;
     std::vector<std::uint32_t> canopy;
     std::vector<std::uint32_t> fans;
+    // the roads' triangles in `above`: one run, their groups between draw_over's and the areas'
+    std::size_t streets_from = 0;
+    std::size_t streets_to = 0;
     for (const std::uint32_t f : order) {
         const Fill& fill = g.fills[f];
         switch (fill.kind) {
@@ -1065,7 +1071,16 @@ GroundGpu pack(const GroundTile& g) {
         case FillKind::canopy: triangles(f, canopy); break;
         case FillKind::water: fan(base[f], fill.count, fans); break;
         default:
-            if (fill.drawn) triangles(f, above);
+            if (!fill.drawn) break;
+            if (fill.kind == FillKind::road) {
+                ATLAS_ASSERT(fill.group >= group::road && fill.group < group::over);
+                ATLAS_ASSERT(streets_to == streets_from || streets_to == above.size());
+                if (streets_to == streets_from) streets_from = above.size();
+            } else {
+                ATLAS_ASSERT(fill.group < group::road || fill.group >= group::over);
+            }
+            triangles(f, above);
+            if (fill.kind == FillKind::road) streets_to = above.size();
             break;
         }
     }
@@ -1075,6 +1090,8 @@ GroundGpu pack(const GroundTile& g) {
         return at;
     };
     out.above = put(above);
+    out.streets = {.first = out.above.first + static_cast<std::uint32_t>(streets_from),
+                   .count = static_cast<std::uint32_t>(streets_to - streets_from)};
     out.below = put(below);
     out.canopy = put(canopy);
     out.fans = put(fans);

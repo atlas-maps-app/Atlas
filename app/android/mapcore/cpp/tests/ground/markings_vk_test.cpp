@@ -11,13 +11,16 @@
 // them is such a line too (passes/Shadows.cpp's decide_tracks): the renders' 1.1 · focal over the depth of the track's
 // middle point, on the ground 1.1 m at each of its points; drawn with the park's shadows and without them, every pixel
 // its shadow and its posts' change lies within their widths there and a pixel and a half beyond, and the shadow fills
-// its width. And the big road's asphalt and a runway's and the taxiway's pavements are as wide as their ways there
-// (fill_vs, GROUND_WIDE), what is drawn on them on them (the big road's edge lines, the runway's threshold bars and
-// designators), where engine mode lays them half as wide, as the renders' ribbon(pts, w / 2) does, and a sett street
-// as the renders lay it in both. A sett bridge passing under the camera has its lines (by day without weather, a fixed
-// width) from the frame's bottom edge on there, their segments through the near plane kept (GROUND_NEAR_CLIP), where
-// engine mode leaves those out as the renders' path does; and its railings stand (with weather) in both, though the
-// window holds no street furniture (geometry/Things.cpp's build_things).
+// its width. And a sett street, the big road's asphalt and a runway's and the taxiway's pavements are as wide as their
+// ways there (fill_vs, GROUND_WIDE), what is drawn on them on them (the big road's edge lines, the runway's threshold
+// bars and designators), where engine mode lays them half as wide, as the renders' ribbon(pts, w / 2) does; a street
+// along a canal as wide as its way on the land and not over the water (the streets' own draw, GROUND_STREETS: where
+// the stencil holds no water, with weather and without), its bridge across the canal as wide as its way over it. A
+// sett bridge passing under the camera has its lines (by day without weather, a fixed width) at the edges of its street
+// as wide as its way there (LINE_WIDE) and from the frame's bottom edge on, their segments through the near plane kept
+// (GROUND_NEAR_CLIP), where engine mode lays them at the edges of the renders' street and leaves those segments out, as
+// the renders' path does; and its railings stand (with weather) at its street's edges in either kind of frame, though
+// the window holds no street furniture (geometry/Things.cpp's build_things).
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -88,10 +91,17 @@ constexpr double runway_lon = 4.8800;
 constexpr double street_lon = 4.8980;
 /// A point of the bridge, 166 m on from where it starts.
 constexpr double bridge_lat = 52.3705;
+/// A street of plain asphalt (residential, 5.5 m) from 52.3690 to 52.3745 along a canal 20 m wide from 52.3700 to
+/// 52.3740, the canal's west bank 2 m east of the street's centreline (the renders' street reaches 1.375 m from it, the
+/// way 2.75 m), and the street's bridge across the canal at 52.3720, to 30 m east of the street.
+constexpr double canal_street_lon = 4.8860;
+constexpr double canal_bridge_lat = 52.3720;
+/// Degrees of longitude a metre east there.
+double east_metre() { return 1.0 / (111320.0 * pymath::cos(pymath::radians(canal_bridge_lat))); }
 
 /// A theme park's window with a taxiway, a primary road of two lanes and a coaster's track along the latitudes, the
-/// lines 815 m apart and the track 408 m from each, the runway, and the sett street and its bridge; its pack written to
-/// the tests' scratch folder.
+/// lines 815 m apart and the track 408 m from each, the runway, the sett street and its bridge, and the canal with its
+/// street and bridge; its pack written to the tests' scratch folder.
 [[nodiscard]] std::string markings_window() {
     std::string taxiway;
     std::string road;
@@ -120,7 +130,17 @@ constexpr double bridge_lat = 52.3705;
         street +
         R"(]}, {"type": "way", "id": 42, "tags": {"highway": "residential", "surface": "sett", "bridge": "yes"}, )"
         R"("geometry": [)" +
-        bridge + R"(]}]})";
+        bridge + R"(]}, {"type": "way", "id": 43, "tags": {"highway": "residential"}, "geometry": [)" +
+        std::format(R"({{"lat": 52.3690, "lon": {0:.7f}}}, {{"lat": 52.3745, "lon": {0:.7f}}})", canal_street_lon) +
+        R"(]}, {"type": "way", "id": 44, "tags": {"highway": "residential", "bridge": "yes"}, "geometry": [)" +
+        std::format(R"({{"lat": {0:.7f}, "lon": {1:.7f}}}, {{"lat": {0:.7f}, "lon": {2:.7f}}})", canal_bridge_lat,
+                    canal_street_lon, canal_street_lon + (30.0 * east_metre())) +
+        R"(]}, {"type": "way", "id": 60, "tags": {"natural": "water", "water": "canal"}, "geometry": [)" +
+        std::format(R"({{"lat": 52.3700, "lon": {0:.7f}}}, {{"lat": 52.3700, "lon": {1:.7f}}}, )"
+                    R"({{"lat": 52.3740, "lon": {1:.7f}}}, {{"lat": 52.3740, "lon": {0:.7f}}}, )"
+                    R"({{"lat": 52.3700, "lon": {0:.7f}}})",
+                    canal_street_lon + (2.0 * east_metre()), canal_street_lon + (22.0 * east_metre())) +
+        R"(]}]})";
     // the park's rides: none with a profile
     static const load::RideProfiles rides{};
     load::WindowPlace place = load::place_of(window_tile);
@@ -554,6 +574,37 @@ bool within(const Quad& q, double x, double y) {
     return !(left && right) || least <= q.margin;
 }
 
+/// Whether (x, z) lies in one of the tile's water rings (the window's canal: no islands).
+bool in_water(const geo::GroundTile& g, double x, double z) {
+    for (const geo::Fill& f : g.fills) {
+        if (f.kind != geo::FillKind::water) continue;
+        const std::span<const geo::P2> ring = std::span(g.points).subspan(f.first, f.count);
+        bool in = false;
+        for (std::size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+            const geo::P2& a = ring[i];
+            const geo::P2& b = ring[j];
+            if ((a.z > z) != (b.z > z) && x < (((b.x - a.x) * (z - a.z)) / (b.z - a.z)) + a.x) in = !in;
+        }
+        if (in) return true;
+    }
+    return false;
+}
+
+/// How far (x, z) lies from the polyline `line`.
+double distance_to(const std::vector<geo::P2>& line, double x, double z) {
+    double least = std::numeric_limits<double>::infinity();
+    for (std::size_t k = 0; k + 1 < line.size(); ++k) {
+        const geo::P2& a = line[k];
+        const geo::P2& b = line[k + 1];
+        const double dx = b.x - a.x;
+        const double dz = b.z - a.z;
+        const double l2 = (dx * dx) + (dz * dz);
+        const double t = l2 == 0.0 ? 0.0 : std::clamp((((x - a.x) * dx) + ((z - a.z) * dz)) / l2, 0.0, 1.0);
+        least = std::min(least, pymath::hypot(a.x + (t * dx) - x, a.z + (t * dz) - z));
+    }
+    return least;
+}
+
 /// Whether a tile of the pack at `path` holds street furniture (a thing layer).
 bool furnished(const std::string& path) {
     namespace tl = atlas::tiles;
@@ -664,9 +715,8 @@ TEST_CASE("ground: in the app's map a coaster track's shadow is as wide as it li
     }
 }
 
-TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a taxiway's pavements are as wide as "
-          "their ways, what is drawn on them on them; in engine mode half as wide, as the renders lay them, and a "
-          "street so in both") {
+TEST_CASE("ground: in the app's map a street, a big road's asphalt and a runway's and a taxiway's pavements are as "
+          "wide as their ways, what is drawn on them on them; in engine mode half as wide, as the renders lay them") {
     auto session = test::open_session();
     if (!session) return;
     const std::string path = markings_window();
@@ -675,7 +725,7 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
     ATLAS_REQUIRE(fonts != nullptr);
     // a way measured across: its fill's kind, the camera, and its samples' offsets from the centreline: the plain
     // ground's either side, those within the way's width but beyond the renders' half of it, those just beyond the way;
-    // its sections from 2 m past its first point to `reach`; whether the app's map lays it as wide as the way
+    // its sections from 2 m past its first point to `reach`
     struct Across {
         const char* name;
         geo::FillKind kind;
@@ -684,7 +734,6 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
         std::vector<double> inside;
         std::vector<double> beyond;
         double reach;
-        bool wide;
     };
     const std::array<Across, 4> ways{
         // the two-lane primary's 8 m: its edge lines' middles 3.5 m either side, 4.6 m beyond the road's 4 m, the plain
@@ -696,8 +745,7 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
                .plain = 9.0,
                .inside = {3.5},
                .beyond = {4.6},
-               .reach = 2000.0,
-               .wide = true},
+               .reach = 2000.0},
         // the runway's 45 m: 0.6 m beyond its outermost threshold bars (to 3 + 7 · 16.5 / 8 + 0.9 = 18.34 m) and 0.5 m
         // within its edge, 0.6 m beyond it, the grass 26 m off (the renders' pavement reaches 11.25 m, under the fifth
         // of the eight bars on each side); from 300 m at 70° over its first 120 m, 190 m to 300 m deep, its south
@@ -708,8 +756,7 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
                .plain = 26.0,
                .inside = {18.94, 22.0},
                .beyond = {23.1},
-               .reach = 120.0,
-               .wide = true},
+               .reach = 120.0},
         // the taxiway's 23 m: 0.5 m within its edge, 0.6 m beyond it, the plain ground 25 m off; at 60° from 250 m
         Across{.name = "the taxiway's pavement",
                .kind = geo::FillKind::taxiway,
@@ -717,18 +764,16 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
                .plain = 25.0,
                .inside = {11.0},
                .beyond = {12.1},
-               .reach = 2000.0,
-               .wide = true},
+               .reach = 2000.0},
         // the sett street's 5.5 m: 0.3 m within its edge, 0.6 m beyond it, the plain ground 8 m off (the renders'
-        // street reaches 1.375 m, in either kind of frame); at 50° from 80 m
+        // street reaches 1.375 m); at 50° from 80 m
         Across{.name = "the sett street",
                .kind = geo::FillKind::road,
                .camera = test::s1_camera(lats[1], street_lon, 0.0, 50.0, 80.0),
                .plain = 8.0,
                .inside = {2.45},
                .beyond = {3.35},
-               .reach = 2000.0,
-               .wide = false}};
+               .reach = 2000.0}};
     for (const Across& way : ways) {
         for (const bool engine : {false, true}) {
             CAPTURE(way.name);
@@ -852,48 +897,78 @@ TEST_CASE("ground: in the app's map a big road's asphalt and a runway's and a ta
                                 beyond));
             CHECK(told > 20);
             CHECK(beyond_on == 0);
-            CHECK(inside_on == (engine || !way.wide ? 0 : inside));
+            CHECK(inside_on == (engine ? 0 : inside));
         }
     }
 }
 
-TEST_CASE("ground: in the app's map a bridge's lines reach the frame's bottom edge where the bridge passes under the "
-          "camera; in engine mode they start at its first point ahead of the near plane, as the renders' path does") {
+TEST_CASE("ground: in the app's map a bridge's lines lie at the edges of its street as wide as its way and reach the "
+          "frame's bottom edge where the bridge passes under the camera; in engine mode they lie at the edges of the "
+          "renders' half as wide street and start at its first point ahead of the near plane, as the renders' path "
+          "does") {
     auto session = test::open_session();
     if (!session) return;
     const std::string path = markings_window();
     ATLAS_REQUIRE(!path.empty());
     // looking north along the sett bridge at 60° from 200 m, the eye 100 m over it from where it starts, by day without
     // weather (when its lines are drawn): its first point behind the near plane, the next one 232 m ahead of the eye
-    // and on the screen, the ground from some 90 m ahead; its lines 1.1 m up, a fixed width
+    // and on the screen, the ground from some 90 m ahead; its lines 1.1 m up, a fixed width, at the renders'
+    // ribbon(pts, w / 2 + 0.3), 1.525 m from its centreline, and in the app's map twice as far, 3.05 m
     const style::CameraState camera = test::s1_camera(lats[2] + (273.0 / 110540.0), street_lon, 0.0, 60.0, 200.0);
     for (const bool engine : {false, true}) {
         CAPTURE(engine);
         style::CameraState c = camera;
         if (!engine) c.flags &= ~style::camera_flag::engine_mode;
         c.parts = style::camera_part::setts;
-        // the lines as the frame lays them: in the app's map each segment's part ahead of the near plane, in engine
-        // mode the segments with both ends ahead of it; and how many segments pass the near plane
+        // the lines as the frame lays them: in the app's map each segment's part ahead of the near plane, its points
+        // twice as far from the middle of them and their mirrors on the other line, in engine mode the segments with
+        // both ends ahead of it; how many segments pass the near plane; and the other kind of frame's lines, their
+        // segments ahead of it
         std::size_t lines = 0;
         std::size_t through = 0;
+        std::vector<Piece> there;
         const auto pieces = [&](const passes::GroundFrame& decided, double density, WindowDraw& d) {
             for (const passes::DrawnTile& t : decided.tiles) {
                 const view::Camera& cam = *t.cam;
                 const geo::GroundTile& g = *t.ground;
+                // the sett bridge's deck: three points (the canal's bridge has two)
+                std::vector<geo::P2> deck;
+                for (const geo::Fill& f : g.fills) {
+                    if (f.kind == geo::FillKind::road && f.y > 0.3 && centre_of(g, f).size() == 3)
+                        deck = centre_of(g, f);
+                }
                 for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
                     const geo::Stroke& s = g.strokes[i];
                     if (s.kind != geo::StrokeKind::bridge || decided.stroke_drawn[t.strokes + i] == 0) continue;
-                    for (std::uint32_t p = s.first; p < s.first + s.count; ++p) {
-                        ++lines;
-                        const geo::Polyline& pl = g.polylines[p];
+                    const geo::P2& start = g.points[g.polylines[s.first].first];
+                    if (deck.empty() || distance_to(deck, start.x, start.z) > 5.0) continue;
+                    ++lines;
+                    REQUIRE(s.count == 1);
+                    REQUIRE((s.mirror == 1 || s.mirror == -1));
+                    const geo::Polyline& pl = g.polylines[s.first];
+                    const geo::Polyline& ml =
+                        g.polylines[static_cast<std::uint32_t>(static_cast<std::int64_t>(s.first) + s.mirror)];
+                    REQUIRE(ml.count == pl.count);
+                    for (const bool wide : {false, true}) {
+                        const auto at = [&](std::uint32_t k) {
+                            const geo::P2 p = g.points[pl.first + k];
+                            const geo::P2 m = g.points[ml.first + k];
+                            return wide ? geo::P2{.x = (2 * p.x) - (0.5 * (p.x + m.x)),
+                                                  .z = (2 * p.z) - (0.5 * (p.z + m.z))}
+                                        : p;
+                        };
                         for (std::uint32_t k = 0; k + 1 < pl.count; ++k) {
-                            const geo::P2& a = g.points[pl.first + k];
-                            const geo::P2& b = g.points[pl.first + k + 1];
+                            const geo::P2 a = at(k);
+                            const geo::P2 b = at(k + 1);
                             const view::Vec3 ka = cam.cam({a.x, pl.y, a.z});
                             const view::Vec3 kb = cam.cam({b.x, pl.y, b.z});
                             const bool both = ka.z >= cam.near() && kb.z >= cam.near();
-                            if (!both && (ka.z >= cam.near() || kb.z >= cam.near())) ++through;
-                            if (!engine || both) add_piece(cam, ka, kb, 0.0, s.width.css, density, d.pieces);
+                            if (wide != engine) {
+                                if (!both && (ka.z >= cam.near() || kb.z >= cam.near())) ++through;
+                                if (!engine || both) add_piece(cam, ka, kb, 0.0, s.width.css, density, d.pieces);
+                            } else if (both) {
+                                add_piece(cam, ka, kb, 0.0, s.width.css, density, there);
+                            }
                         }
                     }
                 }
@@ -910,14 +985,24 @@ TEST_CASE("ground: in the app's map a bridge's lines reach the frame's bottom ed
         CHECK(through == 2);
         const Change change = change_of(*with, without->pixels);
         const Filled rows = rows_of(*with, without->pixels);
+        std::size_t on_there = 0;
+        for (std::size_t i = 0; i < std::size_t{with->pixels.width} * with->pixels.height; ++i) {
+            if (!changed(with->pixels, without->pixels, i)) continue;
+            const std::size_t row = i / with->pixels.width;
+            const double x = static_cast<double>(i % with->pixels.width) + 0.5;
+            const double y = static_cast<double>(row) + 0.5;
+            if (beyond(there, x, y) <= 0.0) ++on_there;
+        }
         MESSAGE(
             std::format("{}: the bridge's lines change {} pixels, {} in the frame's bottom fiftieth, {} beyond "
-                        "their width and 1.5 px (the worst {:.2f} px beyond it); of the {} rows their pieces cross, "
-                        "{} without a changed pixel within their width and 1.5 px",
+                        "their width and 1.5 px (the worst {:.2f} px beyond it), {} on the other kind of frame's "
+                        "lines; of the {} rows their pieces cross, {} without a changed pixel within their width and "
+                        "1.5 px",
                         engine ? "engine mode" : "the app's map", change.drawn, change.bottom, change.spilt,
-                        change.worst, rows.rows, rows.missed));
+                        change.worst, on_there, rows.rows, rows.missed));
         CHECK(change.drawn > 500);
         CHECK(change.spilt == 0);
+        CHECK(on_there == 0);
         CHECK(rows.rows > 500);
         CHECK(rows.missed == 0);
         if (engine) {
@@ -928,8 +1013,8 @@ TEST_CASE("ground: in the app's map a bridge's lines reach the frame's bottom ed
     }
 }
 
-TEST_CASE("things: a bridge's railings stand at the edges of the renders' half as wide street in either kind of frame, "
-          "though its window holds no street furniture") {
+TEST_CASE("things: in the app's map a bridge's railings stand at the edges of its street as wide as its way; in engine "
+          "mode at the edges of the renders' half as wide; in either, though its window holds no street furniture") {
     auto session = test::open_session();
     if (!session) return;
     const std::string path = markings_window();
@@ -937,7 +1022,8 @@ TEST_CASE("things: a bridge's railings stand at the edges of the renders' half a
     // geometry::build_things built a tile's bridges' railings only where the tile held a thing
     CHECK_FALSE(furnished(path));
     // looking north along the sett bridge at 50° from 60 m, with weather (when its railings stand): its rails 0.12 m
-    // and 1 m over its foot along the renders' ribbon(pts, w / 2 + 0.15), 1.45 m from its centreline
+    // and 1 m over its foot along the renders' ribbon(pts, w / 2 + 0.15), 1.45 m from its centreline, and in the app's
+    // map along ribbon(pts, w + 0.3), 2.9 m from it
     const style::CameraState camera = test::s1_camera(bridge_lat, street_lon, 0.0, 50.0, 60.0);
     for (const bool engine : {false, true}) {
         CAPTURE(engine);
@@ -952,12 +1038,14 @@ TEST_CASE("things: a bridge's railings stand at the edges of the renders' half a
                 const view::Camera& cam = *t.cam;
                 const geo::GroundTile& g = *t.ground;
                 for (const geo::Fill& f : g.fills) {
-                    if (f.kind != geo::FillKind::road || f.y < 0.3) continue; // the bridge's deck
-                    ++decks;
+                    if (f.kind != geo::FillKind::road || f.y < 0.3) continue;
+                    // the sett bridge's deck: three points (the canal's bridge has two)
                     const std::vector<geo::P2> centre = centre_of(g, f);
+                    if (centre.size() != 3) continue;
+                    ++decks;
                     const std::size_t n = centre.size();
                     std::vector<geo::P2> side;
-                    geo::ribbon(centre, (5.5 / 2) + 0.15, side);
+                    geo::ribbon(centre, engine ? (5.5 / 2) + 0.15 : 5.5 + 0.3, side);
                     for (std::size_t s = 0; s < 2; ++s) {
                         for (std::size_t k = 0; k + 1 < n; ++k) {
                             const geo::P2 a = s == 0 ? side[k] : side[(2 * n) - 1 - k];
@@ -1015,6 +1103,182 @@ TEST_CASE("things: a bridge's railings stand at the edges of the renders' half a
                             engine ? "engine mode" : "the app's map", drawn, spilt));
         CHECK(drawn > 500);
         CHECK(spilt == 0);
+    }
+}
+
+TEST_CASE("ground: in the app's map a street is as wide as its way on the land and kept off the water, and its "
+          "bridge as wide as its way over the water; in engine mode both half as wide, as the renders lay them") {
+    auto session = test::open_session();
+    if (!session) return;
+    const std::string path = markings_window();
+    ATLAS_REQUIRE(!path.empty());
+    // looking north along the canal's street at 50° from 80 m, its target on the canal's bank 30 m short of the bridge,
+    // and east along the bridge from the street's west, its target 12 m out over the water; with weather and without
+    // (the streets' draw tests the water's w0 bit, or its count)
+    const std::array<style::CameraState, 2> cameras{
+        test::s1_camera(canal_bridge_lat - (30.0 / 110540.0), canal_street_lon + (2.0 * east_metre()), 0.0, 50.0, 80.0),
+        test::s1_camera(canal_bridge_lat, canal_street_lon + (12.0 * east_metre()), 90.0, 50.0, 80.0)};
+    for (const bool weather : {true, false}) {
+        for (const bool engine : {false, true}) {
+            CAPTURE(weather);
+            CAPTURE(engine);
+            // the street's sections with the water on one side: its sample between the renders' half of the way and
+            // the way's edge on the land (`land`) and over the water (`wet`), and within the renders' half on each
+            // side (`half`); the bridge's sections over the water: its two samples between the renders' half and the
+            // way's edge (`deck`) and within the renders' half (`half`); each by the colour it is nearer, the
+            // section's centreline's or its side's beyond the way (the plain ground's, the water's)
+            struct Count {
+                std::size_t sections = 0;
+                std::size_t samples = 0;
+                std::size_t on = 0;
+            };
+            Count land;
+            Count wet;
+            Count deck;
+            Count half;
+            double way = 0;
+            for (const style::CameraState& camera : cameras) {
+                style::CameraState c = camera;
+                if (!engine) c.flags &= ~style::camera_flag::engine_mode;
+                // the street, the bridge and the water's surface alone: no lines, quay walls, shadows or elements on
+                // the water to tell the samples' colours by
+                namespace part = style::camera_part;
+                c.parts = part::ground_lines | part::setts | part::ground_text | part::quays | part::building_shadows |
+                          part::park_shadows | part::cloud_shadows | part::reflections | part::ripple | part::glitter |
+                          part::rings | part::glints | part::water_streaks;
+                // each section: its samples (device px) and which count each goes to; the first its centreline's, the
+                // next two its sides' references
+                struct Section {
+                    std::vector<std::array<double, 2>> at;
+                    std::vector<Count*> to;
+                    std::vector<std::size_t> ref;
+                };
+                std::vector<Section> sections;
+                const auto across = [&](const passes::GroundFrame& decided, double density, WindowDraw&) {
+                    for (const passes::DrawnTile& t : decided.tiles) {
+                        const view::Camera& cam = *t.cam;
+                        const geo::GroundTile& g = *t.ground;
+                        std::vector<geo::P2> street;
+                        std::vector<geo::P2> bridge;
+                        for (const geo::Fill& f : g.fills) {
+                            if (f.kind != geo::FillKind::road) continue;
+                            const std::vector<geo::P2> line = centre_of(g, f);
+                            if (line.size() != 2) continue;
+                            // the canal's street and bridge: two points each, the street north, the bridge east
+                            const bool north = std::abs(line[1].z - line[0].z) > std::abs(line[1].x - line[0].x);
+                            const double length = pymath::hypot(line[1].x - line[0].x, line[1].z - line[0].z);
+                            if (north ? std::abs(length - 611.0) > 20.0 : std::abs(length - 30.0) > 1.0) continue;
+                            (f.y > 0.3 ? bridge : street) = line;
+                            // the way's width: twice its ribbon's
+                            const geo::P2& v = g.points[f.first];
+                            const geo::P2& m = g.points[f.first + f.count - 1];
+                            way = 2 * pymath::hypot(v.x - m.x, v.z - m.z);
+                        }
+                        if (street.empty() || bridge.empty()) continue;
+                        for (const bool on_bridge : {false, true}) {
+                            const std::vector<geo::P2>& line = on_bridge ? bridge : street;
+                            const std::vector<geo::P2>& other = on_bridge ? street : bridge;
+                            const geo::P2& a = line[0];
+                            const geo::P2& b = line[1];
+                            const double length = pymath::hypot(b.x - a.x, b.z - a.z);
+                            const double ux = (b.x - a.x) / length;
+                            const double uz = (b.z - a.z) / length;
+                            const double y = on_bridge ? 0.45 : 0.05;
+                            const auto ground = [&](double s, double o) {
+                                return geo::P2{.x = a.x + (ux * s) - (uz * o), .z = a.z + (uz * s) + (ux * o)};
+                            };
+                            const double step = on_bridge ? 1.0 : 3.0;
+                            const auto steps = static_cast<std::uint32_t>(std::ceil(length / step));
+                            for (std::uint32_t j = 0; j < steps; ++j) {
+                                const double s = step * static_cast<double>(j);
+                                // between the renders' half (1.375 m) and the way's edge (2.75 m), within the half,
+                                // and beyond the way
+                                const double between = (way / 2) - 0.15;
+                                const double within_half = (way / 4) - 0.375;
+                                const double off = 6.0;
+                                const std::array<double, 7> offsets{0.0,     -off,         off,        -between,
+                                                                    between, -within_half, within_half};
+                                Section section;
+                                bool valid = true;
+                                std::array<bool, 7> water{};
+                                for (std::size_t i = 0; i < offsets.size() && valid; ++i) {
+                                    const geo::P2 p = ground(s, offsets.at(i));
+                                    water.at(i) = in_water(g, p.x, p.z);
+                                    // clear of the other way and its widened reach
+                                    valid = i == 0 || distance_to(other, p.x, p.z) > (way / 2) + 1.0;
+                                    const view::Vec3 q = cam.cam({p.x, y, p.z});
+                                    valid = valid && q.z > cam.near() && q.z < 300.0;
+                                    const view::Vec2 sp = cam.pc(q);
+                                    section.at.push_back({sp.x * density, sp.y * density});
+                                }
+                                if (!valid) continue;
+                                if (on_bridge) {
+                                    // over the water on both sides
+                                    if (!(water[1] && water[2] && water[3] && water[4])) continue;
+                                    section.to = {nullptr, nullptr, nullptr, &deck, &deck, &half, &half};
+                                } else {
+                                    // the water on one side only, and that side's sample between over it
+                                    if (water[1] == water[2] || water[3] != water[1] || water[4] != water[2]) continue;
+                                    section.to = {
+                                        nullptr, nullptr, nullptr, water[3] ? &wet : &land, water[4] ? &wet : &land,
+                                        &half,   &half};
+                                }
+                                section.ref = {0, 1, 2, 1, 2, 1, 2};
+                                sections.push_back(std::move(section));
+                            }
+                        }
+                    }
+                };
+                const auto drawn = draw_window(*session, path, c, across, weather ? test::sunny() : dry());
+                ATLAS_REQUIRE(drawn.has_value(), "the window was not drawn");
+                const gpu::Pixels& px = drawn->pixels;
+                const auto colour = [&](const std::array<double, 2>& at) -> std::optional<std::array<int, 3>> {
+                    if (at[0] < 0.0 || at[1] < 0.0 || at[0] >= static_cast<double>(px.width) ||
+                        at[1] >= static_cast<double>(px.height)) {
+                        return std::nullopt;
+                    }
+                    const std::size_t i =
+                        (static_cast<std::size_t>(at[1]) * px.width) + static_cast<std::size_t>(at[0]);
+                    return std::array<int, 3>{px.rgba[i * 4], px.rgba[(i * 4) + 1], px.rgba[(i * 4) + 2]};
+                };
+                const auto apart = [](const std::array<int, 3>& p, const std::array<int, 3>& q) {
+                    return ((p[0] - q[0]) * (p[0] - q[0])) + ((p[1] - q[1]) * (p[1] - q[1])) +
+                           ((p[2] - q[2]) * (p[2] - q[2]));
+                };
+                for (const Section& section : sections) {
+                    std::vector<std::array<int, 3>> c3;
+                    for (const std::array<double, 2>& at : section.at) {
+                        if (const auto c1 = colour(at)) c3.push_back(*c1);
+                    }
+                    if (c3.size() != section.at.size()) continue;
+                    if (apart(c3[0], c3[1]) < 400 || apart(c3[0], c3[2]) < 400) continue;
+                    std::vector<Count*> counted;
+                    for (std::size_t i = 3; i < c3.size(); ++i) {
+                        Count& n = *section.to.at(i);
+                        if (std::ranges::find(counted, &n) == counted.end()) {
+                            ++n.sections;
+                            counted.push_back(&n);
+                        }
+                        ++n.samples;
+                        n.on += apart(c3[i], c3[0]) < apart(c3[i], c3.at(section.ref.at(i))) ? 1U : 0U;
+                    }
+                }
+            }
+            MESSAGE(std::format("{}, {}: the way {:.2f} m wide; between the renders' half of it and its edge {} of {} "
+                                "samples (in {} sections) on the street on the land, {} of {} ({}) over the water, {} "
+                                "of {} ({}) on the bridge over the water; within the renders' half {} of {}",
+                                engine ? "engine mode" : "the app's map", weather ? "with weather" : "without", way,
+                                land.on, land.samples, land.sections, wet.on, wet.samples, wet.sections, deck.on,
+                                deck.samples, deck.sections, half.on, half.samples));
+            CHECK(way == doctest::Approx(5.5).epsilon(0.01));
+            CHECK(land.sections > 10);
+            CHECK(wet.sections > 10);
+            CHECK(deck.sections > 5);
+            CHECK(land.on == (engine ? 0 : land.samples));
+            CHECK(wet.on == 0);
+            CHECK(deck.on == (engine ? 0 : deck.samples));
+            CHECK(half.on == half.samples);
+        }
     }
 }
 

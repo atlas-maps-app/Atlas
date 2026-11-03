@@ -7,9 +7,11 @@
 //     the tile's place in the frame's tile table), each vertex placed by its tile, projected as camera.slang projects
 //     (snapped at rest), at its fill's painter depth: its group's base and stride from the frame's slot table, its
 //     order and sub-element (geometry/Ground.hpp), in its day or night colour or the theme's. A fill the frame does not
-//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away. In the app's map a big road's
-//     asphalt and a runway's or a taxiway's pavement are as wide as their way (GROUND_WIDE), where the renders lay them
-//     half as wide.
+//     draw (the renders' cull and area test, decided on the CPU) folds its triangles away. In the app's map a street, a
+//     big road's asphalt and a runway's or a taxiway's pavement are as wide as their way (GROUND_WIDE), where the
+//     renders lay them half as wide; a street off a bridge is drawn by the streets' own draw (GROUND_STREETS), where the
+//     stencil holds no water at the street (passes/Ground.cpp's record_fills), so it keeps off the canals that a
+//     bridge's street crosses.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
@@ -108,15 +110,24 @@ static const uint GROUND_VISIBLE_ALL = 4u; // every fill drawn (the frame's deci
 static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Ripple.cpp): the upright view, its own colours
 static const uint GROUND_WIDE = 16u;       // fill_vs: the ribbons' pavements as wide as their ways (the app's map)
 static const uint GROUND_NEAR_CLIP = 32u;  // stroke_vs: a line of a fixed width from the near plane on (the app's map)
+static const uint GROUND_STREETS = 64u;    // fill_vs: the streets' own draw, each off a bridge (with GROUND_WIDE)
 
-/// The painter groups whose fills are ribbons as wide as their ways in the app's map (geometry::group): draw_over's big
-/// roads (over + 1), their asphalt its one fill; and its runways and taxiways (over + 2), their pavements its
-/// sub-element 0 (aero_sub::pavement).
+/// The painter groups whose fills are ribbons as wide as their ways in the app's map (geometry::group): S['roads'], a
+/// group a class from road up to draw_over's; draw_over's big roads (over + 1), their asphalt its one fill; and its
+/// runways and taxiways (over + 2), their pavements its sub-element 0 (aero_sub::pavement).
+static const uint GROUP_ROAD = 8u;
+static const uint GROUP_OVER = 24u;
 static const uint GROUP_BIG = 25u;
 static const uint GROUP_AERO = 26u;
+/// A street's height: 0.05 m, on a bridge 0.45 (geometry/Ground.cpp's roads); a bridge's is over this.
+static const float BRIDGE_Y = 0.25f;
+
+bool street_group(uint group) {
+    return group >= GROUP_ROAD && group < GROUP_OVER;
+}
 
 bool wide_group(uint group, uint sub) {
-    return group == GROUP_BIG || (group == GROUP_AERO && sub == 0u);
+    return street_group(group) || group == GROUP_BIG || (group == GROUP_AERO && sub == 0u);
 }
 
 /// A tile's record in the tile table: 20 words.
@@ -223,13 +234,13 @@ bool in_mat(uint group) {
 }
 
 /// A ribbon's vertex v at (x, z), as wide as its way (GROUND_WIDE): render's ribbon(pts, w / 2) lays its sides w / 4
-/// from the centreline, half the way's width, where a big road's edge lines lie at w / 2 - 0.5 and a runway's
-/// threshold bars and designators reach w / 2, so each side point moves twice as far from the centreline, the middle
-/// of it and its mirror on the other side. The ribbon's vertices are its left side, then its right side reversed, so a
-/// point and its mirror sum to the same s throughout; its quads are the triangles (l, l + 1, s - l - 1) and
-/// (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle tells s, the first kind where its second corner
-/// follows its first. The tile's triangle lists follow its vertices' words, 3 a vertex, and hold whole triangles, so a
-/// word's corner is its place past the tile's first word, mod 3.
+/// from the centreline, half the way's width, where a big road's edge lines lie at w / 2 - 0.5, a runway's threshold
+/// bars and designators reach w / 2 and a sett road's courses run across w, so each side point moves twice as far from
+/// the centreline, the middle of it and its mirror on the other side. The ribbon's vertices are its left side, then its
+/// right side reversed, so a point and its mirror sum to the same s throughout; its quads are the triangles (l, l + 1,
+/// s - l - 1) and (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle tells s, the first kind where
+/// its second corner follows its first. The tile's triangle lists follow its vertices' words, 3 a vertex, and hold
+/// whole triangles, so a word's corner is its place past the tile's first word, mod 3.
 float2 wide_point(uint tile, uint index, uint v, float2 p) {
     uint base = tile_word(tile, 8u);
     uint t0 = index - (index - base) % 3u;
@@ -266,6 +277,12 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
     uint c = repainted((push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u));
     if ((push.mode.x & GROUND_WIDE) != 0u && wide_group(gs & 0xFFFFu, gs >> 16u)) {
+        // a street off a bridge in the streets' own draw only, one on a bridge (over the water) in the draw of the rest
+        if (street_group(gs & 0xFFFFu) && (y < BRIDGE_Y) != ((push.mode.x & GROUND_STREETS) != 0u)) {
+            o.position = FOLDED;
+            o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
+            return o;
+        }
         float2 w = wide_point(tile, index, v, float2(x, z));
         x = w.x;
         z = w.y;
@@ -851,7 +868,9 @@ ColourOut soft_fs(ScreenOut v) {
 // least 0.5 px as coasters.draw's are, without a cut. A line of a fixed width in the app's map (GROUND_NEAR_CLIP) is
 // kept from the near plane on too, so it reaches the screen's bottom edge where it passes under the camera: a sett
 // road's course where one of its ends is ahead (sett_line alike), a dashed run's pattern reaching the first point ahead
-// as there.
+// as there. A bridge's lines in the app's map (LINE_WIDE) lie at the edges of its street, which is as wide as its way
+// there: each point twice as far from the middle of it and its mirror on the other line, the renders' ribbon(pts, w / 2
+// + 0.3) moved as fill_vs moves the street's.
 
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
@@ -899,9 +918,20 @@ float3 shadow_local(uint first, uint k, float y, bool moved) {
     return float3(x - sun.x / sun.y * h, y, z - sun.z / sun.y * h);
 }
 
-/// A run's point k, projected: a shadow run's moved.
-float3 stroke_point(uint tile, uint first, uint k, float y, bool shadow) {
-    return shadow ? local_camera(tile, shadow_local(first, k, y, true)) : run_point(tile, first, k, y);
+/// A wide run's point k (LINE_WIDE) in its tile's metres at height y: twice as far from the middle of it and its mirror,
+/// `mirror` words on, as wide_point lays a ribbon's vertex.
+float3 wide_local(uint first, uint k, float y, int mirror) {
+    float3 p = run_local(first, k, y);
+    float3 m = run_local(uint(int(first) + mirror), k, y);
+    float2 w = 2.0f * p.xz - 0.5f * (p.xz + m.xz);
+    return float3(w.x, y, w.y);
+}
+
+/// A run's point k, projected: a shadow run's moved, a wide run's (its mirror's words on, 0 for none) moved out.
+float3 stroke_point(uint tile, uint first, uint k, float y, bool shadow, int mirror) {
+    if (shadow) return local_camera(tile, shadow_local(first, k, y, true));
+    if (mirror != 0) return local_camera(tile, wide_local(first, k, y, mirror));
+    return run_point(tile, first, k, y);
 }
 
 /// A point's device px in the view (unturned): its CSS point (snapped at rest) times the density.
@@ -947,6 +977,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint slot = words[run + 6u];
     uint flags = words[run + 7u] & LINE_FLAG_BITS;
     uint table = words[run + 7u] >> LINE_DASH_SHIFT;
+    int mirror = (flags & LINE_WIDE) != 0u ? asint(words[run + 7u]) >> int(LINE_DASH_SHIFT) : 0;
     StrokeOut o;
     o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.ab = float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -960,9 +991,9 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     bool shadow = (flags & LINE_SHADOW) != 0u;
     bool post = (flags & LINE_POST) != 0u;
     uint ia = pairs ? 2u * seg : seg;
-    float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow);
+    float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow, mirror);
     float3 kb = post ? local_camera(tile, shadow_local(first, 0u, y, true))
-                     : stroke_point(tile, first, ia + 1u, y, shadow);
+                     : stroke_point(tile, first, ia + 1u, y, shadow, mirror);
     float near = frame.camera.frame.w;
     float focal = frame.camera.forward.w;
     // a run in metres: the part of the segment between the near plane and the depth where its px is its cut (none:
@@ -1038,7 +1069,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float2 p = a;
     float2 n = b;
     if (!pairs && !post && seg > 0u && !free_a) {
-        float3 kp = stroke_point(tile, first, seg - 1u, y, shadow);
+        float3 kp = stroke_point(tile, first, seg - 1u, y, shadow, mirror);
         if (clipped) kp = ahead_toward(ka, kp, near);
         if (clipped || kp.z >= near) {
             p = device_of(kp);
@@ -1046,7 +1077,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
         }
     }
     if (!pairs && !post && seg + 2u < count && !free_b) {
-        float3 kn = stroke_point(tile, first, seg + 2u, y, shadow);
+        float3 kn = stroke_point(tile, first, seg + 2u, y, shadow, mirror);
         if (clipped) kn = ahead_toward(kb, kn, near);
         if (clipped || kn.z >= near) {
             n = device_of(kn);

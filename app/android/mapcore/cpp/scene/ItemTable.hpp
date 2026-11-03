@@ -27,6 +27,10 @@ inline constexpr std::uint16_t near_plane = 1; ///< its bounds may reach within 
 inline constexpr std::uint16_t radius = 2;     ///< the renders' radius cut applies to it (in engine mode)
 /// It is masked: a coarser pack's item whose reference point lies inside the active pack's box (D3), never drawn.
 inline constexpr std::uint16_t masked = 4;
+/// It is drawn only in the app's map (FrameState::grounded): a bridge's railing at the edges of its street as wide as
+/// its way there; or only outside it: the renders' railing at the edges of their street half as wide.
+inline constexpr std::uint16_t app = 8;
+inline constexpr std::uint16_t renders = 16;
 } // namespace item_flag
 
 /// What a stage-T builder adds for one item.
