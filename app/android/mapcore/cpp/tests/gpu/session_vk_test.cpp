@@ -160,6 +160,11 @@ int draw(standin::Session& session, int n) {
     for (int i = 0; i < n; ++i) {
         const standin::Drawn d = session.draw(camera, {});
         drawn += d.drawn ? 1 : 0;
+        if (d.drawn) {
+            // its waits within its time: the rest is the render thread's own work (the ADPF hint's, jni/Bridge.cpp)
+            CHECK(d.wait_ns >= 0);
+            CHECK(d.wait_ns <= d.record.end_ns - d.record.start_ns);
+        }
         if (d.stale) session.remake();
     }
     return drawn;

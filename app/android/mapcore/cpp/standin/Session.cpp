@@ -696,6 +696,7 @@ Drawn Session::draw_frame(const style::CameraState& camera, const FrameTimes& ti
     r.start_ns = start;
     r.end_ns = end;
     r.desired_ns = times.present_ns;
+    d.wait_ns = static_cast<std::int64_t>(report->wait_ms * 1e6);
     r.gpu_frame = report->gpu.frame;
     r.gpu_ms = static_cast<float>(report->gpu.total_ns / 1e6);
     r.gpu_main_ms = static_cast<float>(report->gpu.main_ns / 1e6);

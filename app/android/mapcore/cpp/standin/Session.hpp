@@ -131,6 +131,9 @@ struct Drawn {
     bool stale = false;   // the output asks to be made again (remake, after the frame's upcalls)
     bool rebuilt = false; // the device was lost and made again: another frame is wanted
     FrameRecord record{};
+    /// Of the record's start to its end, the render thread's waits: for the frame slot's previous frame (the GPU) and
+    /// the swapchain's image (the display). The rest is its own work (the ADPF hint's).
+    std::int64_t wait_ns = 0;
 };
 
 /// The core's build and its linker's identity, as VkFacts' first lines ("build: …", "build.linker: …").

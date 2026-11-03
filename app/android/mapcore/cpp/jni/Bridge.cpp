@@ -725,9 +725,15 @@ private:
         if (!d.drawn) return;
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
-        hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
-        // The pacer's work, for the debug switch's pacing: the frame's CPU time and its GPU time, where the GPU's clock
-        // measured it (an earlier frame's, read back after its fence: the percentile does not mind).
+        // ADPF hears the render thread's own work: the frame's time less its waits for the slot's previous frame (the
+        // GPU) and the swapchain's image (the display), as Android's own render thread leaves out its dequeue. With
+        // them in, a frame the GPU or the display held told ADPF the CPU missed its 16.7 ms, and its clocks rose for
+        // nothing (the stutter review, 3 November). The GPU's time as before: an earlier frame's.
+        hint_.report(r.start_ns, (r.end_ns - r.start_ns) - d.wait_ns,
+                     static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
+        // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
+        // back after its fence: the percentile does not mind).
         if ((r.flags & standin::frame_flag::gpu) != 0) {
             pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
         }
