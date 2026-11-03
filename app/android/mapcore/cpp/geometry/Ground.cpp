@@ -367,6 +367,7 @@ private:
         std::ranges::reverse(right);
         const std::uint32_t right_first = put(right);
         const auto order = static_cast<std::uint32_t>(tl::ground_key::order(marks));
+        // the two lines' polylines one after the other, each point of one the mirror of the other's at its place
         for (const std::uint32_t first : {left, right_first}) {
             const std::uint32_t p = polyline(first, static_cast<std::uint32_t>(n), 1.1);
             out_.strokes.push_back({.kind = StrokeKind::bridge,
@@ -378,7 +379,8 @@ private:
                                     .count = 1,
                                     .width = {.css = style_.bridge_lines_width},
                                     .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)},
-                                    .key = key_});
+                                    .key = key_,
+                                    .mirror = first == left ? 1 : -1});
         }
     }
 

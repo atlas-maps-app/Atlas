@@ -42,6 +42,9 @@ struct RankOptions {
     /// without windows or facade detail, as the FillIn board draws it), and carry RANK_ASKED where `hatched`.
     std::uint64_t asked = 0;
     bool hatched = false;
+    /// The app's map (FrameState::grounded): the items flagged scene::item_flag::app take ranks, those flagged
+    /// item_flag::renders none; elsewhere the other way about.
+    bool grounded = false;
 };
 
 /// The frame's painter ranks.

@@ -101,7 +101,7 @@ inline constexpr std::uint32_t night = 1;       ///< the night colours
 inline constexpr std::uint32_t water_level = 2; ///< water_vs: the pieces at their level (wclip)
 inline constexpr std::uint32_t visible_all = 4; ///< every fill drawn
 inline constexpr std::uint32_t layer = 8;       ///< into the reflections' layer (Ripple.cpp): upright, own colours
-inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a big road's asphalt as wide as the road (the app's map)
+inline constexpr std::uint32_t wide = 16;       ///< fill_vs: a ribbon's pavement as wide as its way (the app's map)
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -430,8 +430,9 @@ struct GroundFrame {
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
     /// The app's map (FrameState::grounded): a line px wide and a coaster track's shadow take their width at each of
-    /// their points (LINE_METRES) rather than at their one point, and a big road's asphalt is as wide as the road
-    /// (ground_flag::wide), where the renders' frames lay it half as wide.
+    /// their points (LINE_METRES) rather than at their one point, and a street, a big road's asphalt and a runway's or
+    /// a taxiway's pavement are as wide as their way (ground_flag::wide), a bridge's lines at its street's edges
+    /// (LINE_WIDE), where the renders' frames lay them half as wide.
     bool grounded = false;
     double radius = 0;
     double target_x = 0;
