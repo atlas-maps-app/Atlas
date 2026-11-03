@@ -93,6 +93,10 @@ namespace atlas::passes {
 /// kept forms').
 [[nodiscard]] gpu::GraphicsDesc building_desc(const frame::PassContext& context, vk::ShaderModule module,
                                               std::string_view name, const char* vertex, vk::PipelineLayout layout);
+/// Pipeline `desc` while a tile fades (ENGINE.md's standing fades: the pass binds it while Cover::dithers), named
+/// `name`, with its module's fragment stage `fragment`, its own's fading twin, which keeps the samples of its tile's
+/// standing fade (shaders/shared/fade.slang).
+[[nodiscard]] gpu::GraphicsDesc fading_desc(gpu::GraphicsDesc desc, std::string_view name, const char* fragment);
 
 /// The buildings pass.
 class Buildings final : public frame::Pass {
@@ -267,6 +271,13 @@ private:
         std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours at the frame's moment
         std::uint32_t facades = 0;           ///< the walls heap's uint4 of its items' plinths' and cornices' slots
         double distance = 0;                 ///< the tile's distance from the eye (the draws go nearest first)
+        /// Kept under a tile fading in (scene::CoverTile::under: ENGINE.md's standing fades), its cells there: the
+        /// records the CPU makes (the hoist beams, a kit's lines and shadows) keep its items in them alone; 0 for a
+        /// tile drawn, every item.
+        std::uint64_t under = 0;
+        /// Whether it makes those records: not an entry under one fading in of a tile drawn, whose entries drawn make
+        /// them as at rest (scene::draws_items).
+        bool records = true;
     };
 
     /// The roofs' thin edges' pipelines, sets and buffers (below; made in passes/Roofs.cpp).
@@ -342,6 +353,10 @@ private:
     vk::raii::ShaderModule draw_module_{nullptr};
     vk::raii::Pipeline walls_{nullptr};
     vk::raii::Pipeline roofs_{nullptr};
+    /// The same while a tile fades (building_fading_fs), bound while dithers_ (as are the windows' and the kept
+    /// primitives' fading pipelines).
+    vk::raii::Pipeline walls_fading_{nullptr};
+    vk::raii::Pipeline roofs_fading_{nullptr};
     gpu::Buffer edged_index_;
     gpu::Buffer plain_index_;
     vk::PipelineLayout frame_layout_;
@@ -355,6 +370,12 @@ private:
     std::unique_ptr<Kept> kept_;
 
     // the render thread's, per frame
+    /// What stands up draws dithered this frame (scene::Cover::dithers): the fading pipelines are bound.
+    bool dithers_ = false;
+    /// `fading` while dithers_ (where the pass made it), else `rest`.
+    [[nodiscard]] vk::Pipeline pick(const vk::raii::Pipeline& rest, const vk::raii::Pipeline& fading) const noexcept {
+        return dithers_ && *fading ? *fading : *rest;
+    }
     std::vector<TileDraw> draws_;
     std::vector<Run> runs_;
     std::unordered_set<std::uint32_t> rows_written_;
@@ -443,6 +464,16 @@ struct Buildings::Windows {
     vk::raii::Pipeline beams_pipeline{nullptr};
     vk::raii::Pipeline roof_lines_pipeline{nullptr};
     vk::raii::Pipeline kit_shadows_pipeline{nullptr};
+    /// The same while a tile fades, those whose fragments write no coverage at rest (building_fading_fs,
+    /// window_glass_fading_fs, material_fading_fs); the frames', the beams' and the lines' fragments, which write
+    /// theirs, keep their standing fade's samples among it at rest too.
+    vk::raii::Pipeline near_fading{nullptr};
+    vk::raii::Pipeline facades_fading{nullptr};
+    vk::raii::Pipeline glass_fading{nullptr};
+    vk::raii::Pipeline church_fading{nullptr};
+    vk::raii::Pipeline material_fills_fading{nullptr};
+    vk::raii::Pipeline material_lines_fading{nullptr};
+    vk::raii::Pipeline kit_shadows_fading{nullptr};
     // the render thread's, per frame: the jobs' words (each decide stage's lanes after the jobs), the frame slot they
     // went to, and what they hold (each stage's lanes and its first word; the church windows' records, and the most
     // segments of leading one of them has; the material faces' records)
@@ -489,6 +520,8 @@ struct Buildings::Kept {
     vk::raii::Pipeline scatter{nullptr};
     vk::raii::Pipeline walls{nullptr};
     vk::raii::Pipeline roofs{nullptr};
+    vk::raii::Pipeline walls_fading{nullptr}; ///< the same while a tile fades (building_fading_fs)
+    vk::raii::Pipeline roofs_fading{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, their count, and each list's first
     // chunk draw, chunk draws and primitives submitted
     std::vector<std::uint32_t> words;

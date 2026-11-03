@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -53,6 +54,38 @@ namespace {
     return std::hash<std::string_view>{}(pack) ^ (key * 0x9E37'79B9'7F4A'7C15ULL);
 }
 
+/// Calls `fn(from_cell, to_cell)` for each cell of tile `to` (`n` cells a side) that overlaps one of the cells `cells`
+/// of tile `from` (`m` a side; bit r · m + c the cell in row r from the north and column c, as Cells.hpp has them),
+/// both laid on the grid of the finer of their cells. Sides of 1, 2, 4 or 8 cells; another meets nothing.
+template <class Fn>
+void each_meeting(tiles::TileKey from, std::uint8_t m, std::uint64_t cells, tiles::TileKey to, std::uint8_t n,
+                  const Fn& fn) {
+    if (!std::has_single_bit(m) || m > 8 || !std::has_single_bit(n) || n > 8) return;
+    const auto mb = static_cast<unsigned>(std::countr_zero(m));
+    const auto nb = static_cast<unsigned>(std::countr_zero(n));
+    const unsigned fine = std::max(from.z + mb, to.z + nb);
+    const unsigned fs = fine - from.z - mb; // a cell of `from` is 2^fs of the fine grid a side, one of `to` 2^ts
+    const unsigned ts = fine - to.z - nb;
+    const std::int64_t tx = static_cast<std::int64_t>(to.x) << (fine - to.z); // `to`'s north-west corner
+    const std::int64_t ty = static_cast<std::int64_t>(to.y) << (fine - to.z);
+    const std::int64_t last = std::int64_t{n} - 1;
+    for (std::uint64_t left = cells; left != 0; left &= left - 1) {
+        const auto bit = static_cast<unsigned>(std::countr_zero(left));
+        if (bit >= unsigned{m} * m) break;
+        // the cell's box on the fine grid from `to`'s corner, and the cells of `to` it overlaps (shifts floor)
+        const std::int64_t x0 = (((static_cast<std::int64_t>(from.x) * m) + (bit % m)) << fs) - tx;
+        const std::int64_t y0 = (((static_cast<std::int64_t>(from.y) * m) + (bit / m)) << fs) - ty;
+        const std::int64_t span = (std::int64_t{1} << fs) - 1;
+        const std::int64_t c0 = std::max<std::int64_t>(0, x0 >> ts);
+        const std::int64_t c1 = std::min(last, (x0 + span) >> ts);
+        const std::int64_t r0 = std::max<std::int64_t>(0, y0 >> ts);
+        const std::int64_t r1 = std::min(last, (y0 + span) >> ts);
+        for (std::int64_t r = r0; r <= r1; ++r) {
+            for (std::int64_t c = c0; c <= c1; ++c) fn(bit, static_cast<unsigned>((r * n) + c));
+        }
+    }
+}
+
 } // namespace
 
 void Cover::request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance,
@@ -97,6 +130,9 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
 void Cover::update(const view::View& view, const view::Frames& frames, const CoverInputs& in,
                    const Residency& residency, double seconds) {
     tiles_.clear();
+    pairs_.clear();
+    upright_.clear();
+    dithers_ = false;
     drawn_tiles_ = 0;
     drew_before_.swap(drew_);
     drew_.clear();
@@ -160,10 +196,24 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     lay_under(view, frames, frustum, residency, seconds);
     sort_out(residency);
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
-    // stable: tiles at one distance keep the cover's order, on every libc++; those kept under after the tiles drawn
-    const auto nearer = [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; };
-    std::ranges::stable_sort(std::span(tiles_).first(drawn_tiles_), nearer);
-    std::ranges::stable_sort(std::span(tiles_).subspan(drawn_tiles_), nearer);
+    // stable: tiles at one distance keep the cover's order, on every libc++; those kept under after the tiles drawn,
+    // each pair moved with its two entries (lay_under made them by entry, for lay_upright)
+    order_.resize(tiles_.size());
+    std::ranges::iota(order_, std::size_t{0});
+    const auto nearer = [this](std::size_t a, std::size_t b) { return tiles_[a].distance < tiles_[b].distance; };
+    std::ranges::stable_sort(std::span(order_).first(drawn_tiles_), nearer);
+    std::ranges::stable_sort(std::span(order_).subspan(drawn_tiles_), nearer);
+    sorted_.clear();
+    moved_.resize(order_.size());
+    for (std::size_t n = 0; n < order_.size(); ++n) {
+        sorted_.push_back(tiles_[order_[n]]);
+        moved_[order_[n]] = n;
+    }
+    tiles_.swap(sorted_);
+    for (Pair& pair : pairs_) {
+        pair.over = moved_[pair.over];
+        pair.under = moved_[pair.under];
+    }
     for (const CoverTile& t : tiles_) drew_.push_back(t.drawn->handle);
     std::ranges::sort(drew_);
     std::ranges::sort(requests_, [](const Request& a, const Request& b) {
@@ -556,15 +606,113 @@ void Cover::lay_under(const view::View& view, const view::Frames& frames, const 
                 r->key.z < t.key.z
                     ? cells_over(r->cells_per_side, static_cast<std::uint32_t>(t.key.z - r->key.z), t.key.x, t.key.y)
                     : ~std::uint64_t{0};
-            if (const auto it = std::ranges::find(tiles_, r, &CoverTile::drawn); it != tiles_.end()) {
-                if (it->under) it->cells |= cells; // (a tile drawn draws whole)
+            // A tile drawn (a stand-in still drawn for another place) draws its ground whole, so nothing is kept under
+            // for it, but what stands up of it only in its own entries' cells: what stands up of its cells under this
+            // one does, as a tile kept under's (lay_upright).
+            const auto it = std::ranges::find(tiles_, r, &CoverTile::drawn);
+            if (it != tiles_.end()) {
+                if (it->under) it->cells |= cells;
+                pairs_.push_back({.over = i, .under = static_cast<std::size_t>(it - tiles_.begin())});
                 continue;
             }
+            pairs_.push_back({.over = i, .under = tiles_.size()}); // what stands up of it, under this one (lay_upright)
             keep(r->handle);
             draw(*r, cells, view, frames, frustum, r->key, seconds);
             tiles_.back().under = true;
         }
     }
+}
+
+void Cover::lay_upright() {
+    upright_.clear();
+    dithers_ = !pairs_.empty();
+    const std::span<const CoverTile> drawn = tiles();
+    // A tile drawn keeps the dither's levels from 0 to its fade where it takes over from a tile the frame before drew
+    // (kept under it, or still drawn for another place), and all of them where it takes over from none (one fading in
+    // over what the frame before did not draw there: as before the fades, since nothing of the frame before stands
+    // where it fades in). With no pair and none fading in, the tiles drawn as they are.
+    const auto fading = [](const CoverTile& t) { return t.place.scale.w < 1.0F; };
+    if (pairs_.empty() && std::ranges::none_of(drawn, fading)) return;
+    upright_.assign(drawn.begin(), drawn.end());
+    for (std::size_t i = 0; i < drawn.size(); ++i) {
+        if (std::ranges::find(pairs_, i, &Pair::over) == pairs_.end()) upright_[i].place.scale.w = 1.0F;
+    }
+    if (pairs_.empty()) return;
+    // A tile under one fading in keeps them, in each of its cells, from the fades over it there: the fade of a tile
+    // drawn over it, or of one under a tile fading in turn from where that one's own start is later (a chain of
+    // levels zoomed through, so that a pixel is the topmost tile's of the chain whose range holds it); the least of
+    // them where a cell lies under two tiles fading at different fades (a coarse cell under siblings: what stands up
+    // there draws on the pixels the later of them takes too, never leaving a pixel to neither); none where nothing
+    // fading lies over it. Pairs whose tile over is itself under one see the starts of the pairs before them, a few
+    // passes over the list at most.
+    starts_.resize(tiles_.size());
+    for (std::array<float, 64>& s : starts_) s.fill(none_start);
+    for (int pass = 0; pass < 4; ++pass) {
+        bool moved = false;
+        for (const Pair& p : pairs_) {
+            const CoverTile& over = tiles_[p.over];
+            const ResidentTile& under = *tiles_[p.under].drawn;
+            std::array<float, 64>& to = starts_[p.under];
+            const float fade = over.place.scale.w;
+            const auto lower = [&](float start, unsigned t) {
+                if (start < to[t]) {
+                    to[t] = start;
+                    moved = true;
+                }
+            };
+            if (p.over < drawn_tiles_) {
+                // the place the tile drawn is drawn for, whole (its own key, or the wanted tile it stands in for)
+                each_meeting(over.key, 1, 1, under.key, under.cells_per_side,
+                             [&](unsigned, unsigned t) { lower(fade, t); });
+            }
+            // and the cells of the tile over under one fading in over it in turn: a tile kept under, or a tile drawn
+            // beyond its own places (still drawn for another place while one takes over from it here)
+            const std::array<float, 64>& from = starts_[p.over];
+            std::uint64_t cells = 0;
+            for (unsigned c = 0; c < 64; ++c) {
+                if (from[c] < none_start) cells |= std::uint64_t{1} << c;
+            }
+            each_meeting(over.drawn->key, over.drawn->cells_per_side, cells, under.key, under.cells_per_side,
+                         [&](unsigned f, unsigned t) { lower(std::max(from[f], fade), t); });
+        }
+        if (!moved) break;
+    }
+    // each tile under one fading in once for each start its cells have, to its own fade where it fades in over one
+    // in turn and else 1 (its place's scale.w), unless nothing lies between the two; a tile drawn in its cells there
+    // but those its own entries draw whole (a stand-in's, one for each place it stands in for), marked under as one
+    // kept under is (draws_items: its items are its first entry's)
+    const auto level = [](float f) { return std::floor((std::clamp(f, 0.0F, 1.0F) * 255.0F) + 0.5F); }; // fade_word's
+    for (std::size_t k = 0; k < tiles_.size(); ++k) {
+        const std::array<float, 64>& s = starts_[k];
+        std::uint64_t left = 0;
+        for (unsigned c = 0; c < 64; ++c) {
+            if (s[c] < none_start) left |= std::uint64_t{1} << c;
+        }
+        const bool drawn_tile = k < drawn_tiles_;
+        if (drawn_tile) {
+            for (std::size_t e = 0; e < drawn_tiles_; ++e) {
+                if (tiles_[e].drawn == tiles_[k].drawn) left &= ~tiles_[e].cells;
+            }
+        }
+        const float end = drawn_tile ? upright_[k].place.scale.w : tiles_[k].place.scale.w;
+        while (left != 0) {
+            const float start = s[static_cast<std::size_t>(std::countr_zero(left))];
+            std::uint64_t cells = 0;
+            for (std::uint64_t b = left; b != 0; b &= b - 1) {
+                const auto c = static_cast<std::size_t>(std::countr_zero(b));
+                if (s[c] == start) cells |= std::uint64_t{1} << c;
+            }
+            left &= ~cells;
+            if (level(start) >= level(end)) continue;
+            CoverTile& c = upright_.emplace_back(tiles_[k]);
+            c.cells = cells;
+            c.under = true;
+            c.place.offset.w = start;
+            c.place.scale.w = end;
+        }
+    }
+    // those kept under after the tiles drawn, nearest first, as with_under has them
+    std::ranges::stable_sort(std::span(upright_).subspan(drawn.size()), std::ranges::less{}, &CoverTile::distance);
 }
 
 void Cover::keep(std::uint32_t handle) {

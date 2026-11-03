@@ -36,22 +36,26 @@ public:
     /// Makes the pipelines of the pass's stroke vertex stage `entry` in `vertex` (returning strokes.slang's
     /// StrokeVertex, triangle lists, six vertices a segment), in the pass's pipeline layout `layout` (sets 0 and 1 and
     /// the frame's push constants first, as every pass's), for the main pass's scene subpass; `name` names them to the
-    /// log and the crash guard ("<name> strokes over the ground", "<name> strokes over the objects"). What an earlier
-    /// prepare made goes first.
+    /// log and the crash guard ("<name> strokes over the ground", "<name> strokes over the objects"). Where `fading`
+    /// names the same stage with its stroke's standing fade (StrokeVertex's style.y: ENGINE.md's standing fades), also
+    /// the two the pass draws through while a tile fades (Cover::dithers), whose fragments keep that fade's samples
+    /// ("... while fading"). What an earlier prepare made goes first.
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context, vk::ShaderModule vertex,
-                                            const char* entry, vk::PipelineLayout layout, std::string_view name);
+                                            const char* entry, vk::PipelineLayout layout, std::string_view name,
+                                            const char* fading = nullptr);
     /// Lets go of the pipelines and the fragment module (the GPU has finished with them).
     void release() noexcept;
     /// Whether prepare made them.
     [[nodiscard]] bool prepared() const noexcept { return static_cast<bool>(*pipelines_[1]); }
     [[nodiscard]] vk::Pipeline pipeline(Variant v) const noexcept { return *pipelines_[static_cast<std::size_t>(v)]; }
 
-    /// Records the pass's draws once a variant: binds the variant's pipeline, then calls `draw(pipeline)`, which binds
-    /// what else the draws need and draws. The stencil gives each sample to one variant. Nothing before prepare.
+    /// Records the pass's draws once a variant: binds the variant's pipeline (its fading one where `fading` and
+    /// prepare made them), then calls `draw(pipeline)`, which binds what else the draws need and draws. The stencil
+    /// gives each sample to one variant. Nothing before prepare.
     template <class Draw>
-    void record(const vk::raii::CommandBuffer& cmd, const Draw& draw) const {
+    void record(const vk::raii::CommandBuffer& cmd, const Draw& draw, bool fading = false) const {
         if (!prepared()) return;
-        for (const vk::raii::Pipeline& p : pipelines_) {
+        for (const vk::raii::Pipeline& p : fading && *fading_[1] ? fading_ : pipelines_) {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *p);
             draw(*p);
         }
@@ -60,7 +64,8 @@ public:
 private:
     vk::raii::ShaderModule fragment_{nullptr};
     std::array<vk::raii::Pipeline, 2> pipelines_{vk::raii::Pipeline{nullptr}, vk::raii::Pipeline{nullptr}};
-    std::array<std::string, 2> names_;
+    std::array<vk::raii::Pipeline, 2> fading_{vk::raii::Pipeline{nullptr}, vk::raii::Pipeline{nullptr}};
+    std::array<std::string, 4> names_;
 };
 
 } // namespace atlas::passes

@@ -65,7 +65,8 @@ struct FrameBlock {
     FrameCamera camera;
     Theme theme;
     FrameLayers layers;
-    uint4 info; // x: the FRAME_ bits; y: the frame's painter slots (the ground's and the items'); z: its items; w: 0
+    uint4 info; // x: the FRAME_ bits; y: the frame's painter slots (the ground's and the items'); z: its items; w: the
+                // scene's samples a pixel (1, 2 or 4: the standing fades' dither, shared/fade.slang)
     FrameStrokes strokes;
     FrameWindows windows;
 };

@@ -168,7 +168,8 @@ TileTrees build_trees(const TreeInput& in) {
                              .min_depth = 2.0F,
                              .radius = static_cast<float>(std::sqrt((across * across) + (up * up)) + 0.01),
                              .tile = 0,
-                             .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id))});
+                             .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id)),
+                             .cell = layer->cell_of(i)});
         out.trees.push_back(t);
     }
     return out;

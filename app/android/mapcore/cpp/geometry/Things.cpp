@@ -38,7 +38,7 @@ constexpr std::uint8_t owner_way = 2;
 /// gaps, numbered in the road's order (the pieces of a side past its 16,383rd, 32.8 km on, share the last number); the
 /// renders' (`app` false) or the app's map's, their items flagged so that a frame ranks the one set it draws.
 void railing_pieces(std::span<const P2> line, std::int64_t id, std::uint32_t road, std::uint32_t side, bool app,
-                    std::uint16_t kind, TileThings& out) {
+                    std::uint16_t kind, std::uint8_t cell, TileThings& out) {
     std::uint32_t piece = 0;
     for (std::size_t i = 0; i + 1 < line.size(); ++i) {
         const P2 a = line[i];
@@ -78,7 +78,8 @@ void railing_pieces(std::span<const P2> line, std::int64_t id, std::uint32_t roa
                                  .min_depth = 0.8F,
                                  .radius = static_cast<float>(pymath::hypot((k2 - k) / 2, 0.6) + 0.01),
                                  .tile = 0,
-                                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id))});
+                                 .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id)),
+                                 .cell = cell});
             out.things.push_back(t);
             ++piece;
             k = k2;
@@ -134,7 +135,8 @@ TileThings build_things(const ThingInput& in) {
                                  .min_depth = 2.0F,
                                  .radius = static_cast<float>(pymath::hypot(reach_of(*kind), up) + 0.01),
                                  .tile = 0,
-                                 .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id))});
+                                 .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(t.id)),
+                                 .cell = layer->cell_of(i)});
             out.things.push_back(t);
         }
     }
@@ -154,13 +156,14 @@ TileThings build_things(const ThingInput& in) {
             const std::size_t n = pts.size();
             const std::int64_t id = roads->integer(tl::road::id, i);
             const auto road = static_cast<std::uint32_t>(roads->integer(tl::road::index, i));
+            const std::uint8_t cell = roads->cell_of(i);
             for (const bool app : {false, true}) {
                 off.clear();
                 ribbon(pts, app ? w + 0.3 : (w / 2) + 0.15, off);
-                railing_pieces(std::span<const P2>(off).first(n), id, road, 0, app, in.kind, out);
+                railing_pieces(std::span<const P2>(off).first(n), id, road, 0, app, in.kind, cell, out);
                 std::vector<P2> right(off.begin() + static_cast<std::ptrdiff_t>(n), off.end());
                 std::ranges::reverse(right);
-                railing_pieces(right, id, road, 1, app, in.kind, out);
+                railing_pieces(right, id, road, 1, app, in.kind, cell, out);
             }
         }
     }

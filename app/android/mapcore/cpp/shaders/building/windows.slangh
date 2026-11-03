@@ -1200,12 +1200,13 @@ inline float2 building_facade_point(BuildingFacadeRecord r, uint v) {
 }
 
 // A windowed wall's record for the frame, which one decide stage writes once a windowed wall of the frame's jobs (the
-// first it has of the church windows', the windows', the facades' and the material faces': draw.slang's lanes; 3
+// first it has of the church windows', the windows', the facades' and the material faces': draw.slang's lanes; 4
 // uint4): its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its
 // lit ones' (CSS px; top below bottom where it has none; a church's windows' glass's as its dark ones' where it draws
 // them); its frames' half width and its sash bars' (CSS px), its reveals' colour (0xBBGGRR, the wall's colour times
-// 0.55 unlit at the moment), and its church windows' leading's width (CSS px).
-static const uint BUILDING_WALL_RECORD_VECTORS = 3u;
+// 0.55 unlit at the moment), and its church windows' leading's width (CSS px); its tile's standing fade (its range of
+// the dither's levels, shared/fade.slang's fade_word), for every part of its windows.
+static const uint BUILDING_WALL_RECORD_VECTORS = 4u;
 
 struct BuildingWallRecord {
     float4 plane;
@@ -1215,9 +1216,10 @@ struct BuildingWallRecord {
     float sash_half;
     uint reveal;
     float leading;
+    uint fade;
 };
 
-inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c) {
+inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c, uint4 d) {
     BuildingWallRecord w;
     float4 plane = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
     float2 dark = {asfloat(b.x), asfloat(b.y)};
@@ -1229,6 +1231,7 @@ inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c) {
     w.sash_half = asfloat(c.y);
     w.reveal = c.z;
     w.leading = asfloat(c.w);
+    w.fade = d.x;
     return w;
 }
 

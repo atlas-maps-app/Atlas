@@ -102,14 +102,23 @@ gpu::Result<void> Buildings::prepare_kept(const frame::PassContext& context) {
     k->scan = std::move(scan);
     ATLAS_GPU_LET(scatter, compute("kept scatter", "kept_scatter_cs"));
     k->scatter = std::move(scatter);
-    ATLAS_GPU_LET(walls, frame::make_pipeline(
-                             context, building_desc(context, *draw_module_, "kept walls", "walls_kept_vs", *k->layout),
-                             frame::Overdraw::opaque));
+    const gpu::GraphicsDesc walls_desc =
+        building_desc(context, *draw_module_, "kept walls", "walls_kept_vs", *k->layout);
+    ATLAS_GPU_LET(walls, frame::make_pipeline(context, walls_desc, frame::Overdraw::opaque));
     k->walls = std::move(walls);
-    ATLAS_GPU_LET(roofs, frame::make_pipeline(
-                             context, building_desc(context, *draw_module_, "kept roofs", "roofs_kept_vs", *k->layout),
-                             frame::Overdraw::opaque));
+    const gpu::GraphicsDesc roofs_desc =
+        building_desc(context, *draw_module_, "kept roofs", "roofs_kept_vs", *k->layout);
+    ATLAS_GPU_LET(roofs, frame::make_pipeline(context, roofs_desc, frame::Overdraw::opaque));
     k->roofs = std::move(roofs);
+    // the same while a tile fades
+    ATLAS_GPU_LET(walls_fading, frame::make_pipeline(
+                                    context, fading_desc(walls_desc, "kept walls while fading", "building_fading_fs"),
+                                    frame::Overdraw::opaque));
+    k->walls_fading = std::move(walls_fading);
+    ATLAS_GPU_LET(roofs_fading, frame::make_pipeline(
+                                    context, fading_desc(roofs_desc, "kept roofs while fading", "building_fading_fs"),
+                                    frame::Overdraw::opaque));
+    k->roofs_fading = std::move(roofs_fading);
     kept_ = std::move(k);
     return {};
 }
@@ -254,7 +263,8 @@ void Buildings::record_kept(const frame::Recording& recording, std::uint32_t lis
     const Kept& k = *kept_;
     if (k.chunks[list] == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, list + 1 == lists ? *k.roofs : *k.walls);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                     list + 1 == lists ? pick(k.roofs, k.roofs_fading) : pick(k.walls, k.walls_fading));
     cmd.bindIndexBuffer(list + 1 == lists ? plain_index_.handle() : edged_index_.handle(), 0, vk::IndexType::eUint16);
     // set 2 under the frame's sets, which the scene subpass keeps bound
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *k.layout, 2, *k.sets[k.slot], {});

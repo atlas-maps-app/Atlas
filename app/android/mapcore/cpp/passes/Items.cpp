@@ -10,6 +10,7 @@
 #include "gpu/Descriptors.hpp"
 #include "passes/CoasterWalk.hpp"
 #include "scene/Cover.hpp"
+#include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "style/Light.hpp"
@@ -502,7 +503,9 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
                               gpu::Binding{.slot = 5, .type = storage, .stages = Stage::eCompute},
                               gpu::Binding{.slot = 6, .type = storage, .stages = Stage::eVertex},
                               gpu::Binding{.slot = 7, .type = storage, .stages = Stage::eCompute},
-                              gpu::Binding{.slot = 8, .type = storage, .stages = Stage::eVertex | Stage::eFragment}};
+                              gpu::Binding{.slot = 8, .type = storage, .stages = Stage::eVertex | Stage::eFragment},
+                              // the records' standing fades while a tile fades
+                              gpu::Binding{.slot = 9, .type = storage, .stages = Stage::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -554,6 +557,9 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
     faces_pipeline_ = std::move(faces);
     ATLAS_GPU_LET(fills, opaque("item fills", "items_faces_vs", "items_fills_fs"));
     fills_pipeline_ = std::move(fills);
+    // and while a tile fades, on the samples its standing fade keeps (ENGINE.md's standing fades)
+    ATLAS_GPU_LET(fills_fading, opaque("item fills while fading", "items_faces_vs", "items_fills_fading_fs"));
+    fills_fading_ = std::move(fills_fading);
     ATLAS_GPU_LET(parts, opaque("item parts", "items_parts_vs", "items_parts_fs"));
     parts_pipeline_ = std::move(parts);
     // the translucent ones: in painter's order, the test on and writes off
@@ -577,6 +583,7 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
 void Items::release() noexcept {
     sides_pipeline_.clear();
     parts_pipeline_.clear();
+    fills_fading_.clear();
     fills_pipeline_.clear();
     faces_pipeline_.clear();
     roof_masts_.clear();
@@ -593,6 +600,7 @@ void Items::release() noexcept {
     faces_ = {};
     parts_ = {};
     sides_ = {};
+    fades_ = {};
     counts_ = {};
 }
 
@@ -627,7 +635,10 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
     const std::uint32_t me = index();
     const std::span<const std::uint32_t> table = state.ranks->table();
     const std::span<const double> depth = state.ranks->depth();
-    const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    // the tiles drawn and those kept under ones fading in (ENGINE.md's standing fades)
+    const std::span<const scene::CoverTile> tiles = state.cover->upright();
+    const std::span<const std::uint8_t> cells =
+        state.items != nullptr ? state.items->cell() : std::span<const std::uint8_t>();
     const RadiusCut cut = radius_cut(state);
     const bool night = night_of(state.theme);
     const view::Camera& camera = state.view->camera();
@@ -643,9 +654,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
         const auto* items = mine.cpu_as<ItemTile>();
         if (items == nullptr || !mine.ranges[0]) continue;
         // a tile's items once, though it draws for several tiles (a stand-in ancestor, its cells over each)
-        bool seen = false;
-        for (std::size_t e = 0; e < c && !seen; ++e) seen = tiles[e].drawn == t.drawn;
-        if (seen) continue;
+        if (!scene::draws_items(tiles, c)) continue;
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
         const auto drawn_point = [&](double x, double z) {
             const view::Vec3 p{x, 0.0, z};
@@ -695,9 +704,11 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
                     last_post = i;
                 }
             }
+            // (after the walk's step: a tile kept under one fading in draws its cells' pieces of a track the walk
+            // takes whole)
             const std::uint32_t row = rows[first + i];
             const std::uint32_t rank = row < table.size() ? table[row] : shaders::RANK_NONE;
-            if (rank == shaders::RANK_NONE) continue;
+            if (rank == shaders::RANK_NONE || !scene::draws_item(t, cells, row)) continue;
             Drawn d{.cover = static_cast<std::uint32_t>(c), .item = i, .rank = rank, .depth = depth[row]};
             const view::Vec3 a = drawn_point(it.x, it.z);
             const view::Vec3 b = drawn_point(it.bx, it.bz);
@@ -733,6 +744,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
 
 void Items::update(const frame::FrameState& state) {
     counts_ = {};
+    dithers_ = state.cover != nullptr && state.cover->dithers();
     if (decide_ == nullptr || state.heaps == nullptr || !state.view ||
         state.camera.leaves_out(style::camera_part::region_items)) {
         return;
@@ -745,14 +757,18 @@ void Items::update(const frame::FrameState& state) {
     const std::uint32_t me = index();
     const view::Camera& camera = state.view->camera();
     const bool high = item_high(state.theme, camera);
-    const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    const std::span<const scene::CoverTile> tiles = state.cover->upright();
     words_.clear();
     extra_words_.clear();
     mast_words_.clear();
+    fade_words_.clear();
     std::uint32_t faces = 0;
     std::uint32_t parts = 0;
     std::uint32_t sides = 0;
     std::vector<std::uint32_t> side_counts;
+    // while a tile fades, the opaque parts' and the translucent ones' standing fades in the jobs' order
+    std::vector<std::uint32_t> part_fades;
+    std::vector<std::uint32_t> side_fades;
     for (const Drawn& d : drawn_) {
         const scene::CoverTile& t = tiles[d.cover];
         const scene::PassTile& mine = t.drawn->passes[me];
@@ -803,6 +819,13 @@ void Items::update(const frame::FrameState& state) {
             words_.insert(words_.end(), std::begin(words), std::end(words));
             side_counts.push_back(ns);
         }
+        // while a tile fades, its records' range of the dither (ENGINE.md's standing fades)
+        if (dithers_) {
+            const std::uint32_t fade = shaders::fade_word(t.place.offset.w, t.place.scale.w);
+            fade_words_.insert(fade_words_.end(), nf, fade);
+            part_fades.insert(part_fades.end(), np, fade);
+            side_fades.insert(side_fades.end(), ns, fade);
+        }
         faces += nf;
         parts += np;
         sides += ns;
@@ -812,6 +835,8 @@ void Items::update(const frame::FrameState& state) {
     for (std::size_t j = 0, at = 0; at < words_.size(); ++j, at += std::size_t{4} * shaders::ITEM_JOB_VECTORS) {
         words_[at + 13] = sides - (words_[at + 13] + side_counts[j]);
     }
+    fade_words_.insert(fade_words_.end(), part_fades.begin(), part_fades.end());
+    fade_words_.insert(fade_words_.end(), side_fades.rbegin(), side_fades.rend());
     const auto masts = static_cast<std::uint32_t>(mast_words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
     words_.insert(words_.end(), mast_words_.begin(), mast_words_.end());
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
@@ -832,7 +857,10 @@ void Items::update(const frame::FrameState& state) {
     auto faces_made = fit(*device_, faces_[slot], vectors(faces), B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto parts_made = fit(*device_, parts_[slot], vectors(parts), B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, gpu::MemoryUse::gpu);
-    for (const auto* made : {&jobs_made, &tones_made, &extra_made, &faces_made, &parts_made, &sides_made}) {
+    auto fades_made = fit(*device_, fades_[slot], std::max<std::size_t>(fade_words_.size(), 1) * sizeof(std::uint32_t),
+                          B::eStorageBuffer, gpu::MemoryUse::upload);
+    for (const auto* made :
+         {&jobs_made, &tones_made, &extra_made, &faces_made, &parts_made, &sides_made, &fades_made}) {
         if (*made) continue;
         log::error("vk items: {} jobs, {} faces, {} parts and {} translucent ones: {}", jobs, faces, parts, sides,
                    made->error().text());
@@ -842,9 +870,10 @@ void Items::update(const frame::FrameState& state) {
         faces_[slot] = {};
         parts_[slot] = {};
         sides_[slot] = {};
+        fades_[slot] = {};
         return;
     }
-    if (*jobs_made || *tones_made || *extra_made || *faces_made || *parts_made || *sides_made) {
+    if (*jobs_made || *tones_made || *extra_made || *faces_made || *parts_made || *sides_made || *fades_made) {
         gpu::SetWriter(*sets_[slot])
             .buffer(0, vk::DescriptorType::eStorageBuffer, jobs_[slot].handle())
             .buffer(1, vk::DescriptorType::eStorageBuffer, tones_[slot].handle())
@@ -855,6 +884,7 @@ void Items::update(const frame::FrameState& state) {
             .buffer(6, vk::DescriptorType::eStorageBuffer, parts_[slot].handle())
             .buffer(7, vk::DescriptorType::eStorageBuffer, sides_[slot].handle())
             .buffer(8, vk::DescriptorType::eStorageBuffer, sides_[slot].handle())
+            .buffer(9, vk::DescriptorType::eStorageBuffer, fades_[slot].handle())
             .apply(device_->handle());
     }
     std::memcpy(jobs_[slot].bytes().data(), words_.data(), words_.size() * sizeof(std::uint32_t));
@@ -863,6 +893,10 @@ void Items::update(const frame::FrameState& state) {
     tones_[slot].flush();
     std::memcpy(extra_[slot].bytes().data(), extra_words_.data(), extra_words_.size() * sizeof(std::uint32_t));
     extra_[slot].flush();
+    if (!fade_words_.empty()) {
+        std::memcpy(fades_[slot].bytes().data(), fade_words_.data(), fade_words_.size() * sizeof(std::uint32_t));
+        fades_[slot].flush();
+    }
     slot_ = slot;
     counts_ = {.jobs = jobs, .masts = masts, .faces = faces, .parts = parts, .sides = sides};
 }
@@ -911,7 +945,9 @@ void Items::record_draw(const frame::Recording& recording) {
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_[slot_], {});
     const auto samples = static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples());
-    const hlsl::uint4 push{samples, 0U, 0U, 0U};
+    // (w: while a tile fades, the list's first fade: the faces' the first, the parts' after the faces')
+    const std::uint32_t faded = dithers_ ? 1U : 0U;
+    const hlsl::uint4 push{samples, 0U, 0U, faded};
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     if (counts_.faces > 0) {
         const std::uint32_t vertices = counts_.faces * shaders::ITEM_FACE_VERTICES;
@@ -922,15 +958,14 @@ void Items::record_draw(const frame::Recording& recording) {
             // later face's fan in depth: the order of the two draws decides no sample. On 24-bit depth a lead falls
             // under the depth's step a few dozen metres out (0.5 r 2^-16 under 2^-24 where r < 2^-7), and there the
             // one draw's order (each face's fan, then its edges) decides where an edge meets the next face's fan.
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, 0U});
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fills_pipeline_);
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, faded});
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, dithers_ ? *fills_fading_ : *fills_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
             recording.counters.draw("item fills", std::uint64_t{counts_.faces} * 3);
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 2U, 0U, 0U});
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 2U, 0U, faded});
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
             recording.counters.draw("item faces", std::uint64_t{counts_.faces} * 10);
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
         } else {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
@@ -938,6 +973,8 @@ void Items::record_draw(const frame::Recording& recording) {
         }
     }
     if (counts_.parts > 0) {
+        cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0,
+                                       hlsl::uint4{samples, 0U, 0U, dithers_ ? counts_.faces + 1U : 0U});
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *parts_pipeline_);
         cmd.draw(counts_.parts * shaders::ITEM_PART_VERTICES, 1, 0, 0);
         recording.counters.draw("item parts", std::uint64_t{counts_.parts} * 2);
@@ -948,7 +985,9 @@ void Items::record_sides(const frame::Recording& recording) {
     if (sides_pipeline_ == nullptr || counts_.sides == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_[slot_], {});
-    const hlsl::uint4 push{static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
+    // (w: while a tile fades, the translucent ones' fades after the faces' and the parts')
+    const hlsl::uint4 push{static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U,
+                           dithers_ ? counts_.faces + counts_.parts + 1U : 0U};
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *sides_pipeline_);
     cmd.draw(counts_.sides * shaders::ITEM_PART_VERTICES, 1, 0, 0);
@@ -976,7 +1015,7 @@ void Items::emit_records(const frame::FrameState& state, twin::Stream& out, std:
     twin::ItemTwin twin(state, tones, out);
     twin.keep_records(faces, parts, sides);
     const std::uint32_t me = index();
-    const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    const std::span<const scene::CoverTile> tiles = state.cover->upright();
     std::vector<std::uint32_t> extra;
     for (const Drawn& d : items) {
         const scene::CoverTile& t = tiles[d.cover];
