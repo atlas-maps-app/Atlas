@@ -27,6 +27,7 @@
 #include "tests/load/query.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/TileBox.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
@@ -849,6 +850,108 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(w.residency().resident().empty());
     CHECK(w.residency().stats().native_bytes == 0);
     CHECK(one_kept.expired());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a tile of the sun's halo that comes resident gets its bits, though the sun's scene keeps its tiles") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(path)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk: the sun's halo is not checked over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = path.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+
+    // The Westerkerk's tile and the one north of it, of the pack's three (the third west of the Westerkerk's), whose
+    // features reach within a few hundred metres of the Westerkerk, so each lies in the halo of every other.
+    const tiles::TileKey alone{14, 8414, 5384};
+    const tiles::TileKey beside{14, 8414, 5383};
+    auto pack = test::open_pack(path.string());
+    ATLAS_REQUIRE(pack.has_value(), tiles::describe(pack.error()));
+    const std::size_t tiles_of_pack = pack->chunks().chunks().size();
+    REQUIRE(pack->chunks().find(alone) != nullptr);
+    REQUIRE(pack->chunks().find(beside) != nullptr);
+    // straight down from 300 m, the ground in view a few hundred metres across, at 4.888° E: 620 m south of the two
+    // tiles' edge, the Westerkerk's tile alone in view, then on the edge, the two of them
+    const double edge = 1e-7 * tiles::row_edge(beside.z, beside.y + 1);
+    const auto above = [](double latitude, double longitude) {
+        style::CameraState c = home();
+        c.latitude = latitude;
+        c.longitude = longitude;
+        c.bearing = 0.0;
+        c.pitch = 0.0;
+        c.distance = 300.0;
+        return c;
+    };
+    std::uint64_t n = 0;
+    const auto settle = [&](const style::CameraState& camera) {
+        (*builder)->set_inputs({.camera = camera, .scene = &w});
+        for (int i = 0; i < 20; ++i) {
+            now = static_cast<double>(++n) * 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            if (w.sun() != nullptr) w.sun()->wait_idle();
+        }
+        // the frame after the sun went idle takes what it published
+        now = static_cast<double>(++n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    const auto drawn = [&w](const tiles::TileKey& key) {
+        return std::ranges::any_of(w.cover()->tiles(), [&](const scene::CoverTile& t) { return t.drawn->key == key; });
+    };
+    const auto resident = [&w] {
+        std::vector<tiles::TileKey> out;
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) out.push_back(t->key);
+        return out;
+    };
+
+    // The Westerkerk's tile alone, resident with its bits; the others in its halo, its scene's tiles, but no bits made
+    // for them, as none is resident.
+    settle(above(edge - (620.0 / 110540.0), 4.888));
+    REQUIRE(w.sun() != nullptr);
+    REQUIRE(drawn(alone));
+    CHECK_FALSE(drawn(beside));
+    const std::vector<tiles::TileKey> first = resident();
+    CHECK(std::ranges::find(first, beside) == first.end());
+    CHECK(w.residency().sun_tiles("amsterdam").size() == tiles_of_pack);
+    CHECK(w.sun()->bits().view(alone, now).has_value());
+    CHECK_FALSE(w.sun()->bits().view(beside, now).has_value());
+    const scene::SunStats asked = w.sun()->stats();
+    CHECK(asked.tiles == tiles_of_pack);
+
+    // Then the edge it shares with the tile north of it: that tile resident at the level its halo took it at, so the
+    // sun's scene keeps its tiles (not built again), and its bits made all the same, as for every tile drawn.
+    settle(above(edge, 4.888));
+    REQUIRE(drawn(alone));
+    REQUIRE(drawn(beside));
+    const std::vector<tiles::TileKey> second = resident();
+    CHECK(std::ranges::find(second, beside) != second.end());
+    const scene::SunStats again = w.sun()->stats();
+    CHECK(again.scenes == asked.scenes);
+    CHECK(again.runs > asked.runs);
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
+        CHECK_MESSAGE(t.sun.has_value(), std::format("{}/{}/{} drawn without its sun bits after the sun went idle",
+                                                     t.key.z, t.key.x, t.key.y));
+    }
+    MESSAGE(std::format("the sun's scene {} tiles, built {} time(s), {} then {} run(s); {} then {} resident",
+                        again.tiles, again.scenes, asked.runs, again.runs, first.size(), second.size()));
     (void)session->take_messages();
 }
 

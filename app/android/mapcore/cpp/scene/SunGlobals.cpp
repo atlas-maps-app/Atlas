@@ -272,6 +272,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
     // the other packs' solids near them.
     const sun::Bucket bucket = sun::bucket_of(state.theme);
     bool scene_changed = false;
+    bool wanted_more = false; // a tile resident that was not
     if (in.wanted != lane.wanted || in.level != lane.level || levels != lane.levels) {
         using Level = std::pair<std::uint64_t, std::uint8_t>;
         std::vector<Asked> asked;
@@ -306,6 +307,9 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
         for (const auto& [key, level] : lane.held) keep_or_forget(key, level);
         std::ranges::sort(held);
         scene_changed = asked != lane.asked;
+        // A tile of the halo resident now at the level the scene took it at leaves the scene as it was, but its bits
+        // are wanted now, and only the wanted tiles' are made (ask): asked again of the scene as built.
+        wanted_more = !std::ranges::includes(lane.wanted, in.wanted);
         lane.asked = std::move(asked);
         lane.held = std::move(held);
         lane.wanted = in.wanted;
@@ -316,7 +320,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
         lane.asked_others = lane.others;
         scene_changed = true;
     }
-    if (!lane.asked.empty() && (scene_changed || !lane.have_bucket || bucket.key != lane.bucket)) {
+    if (!lane.asked.empty() && (scene_changed || wanted_more || !lane.have_bucket || bucket.key != lane.bucket)) {
         Build b;
         b.pack = pack;
         b.tiles = lane.asked;
