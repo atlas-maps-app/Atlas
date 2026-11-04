@@ -306,6 +306,50 @@ TEST_CASE("the app's map lists its packs before its world: listed, kept, dropped
     CHECK(map.drawn_pack().empty());
 }
 
+TEST_CASE("the app's map matches thousands of windows listed again by their ids: each kept once, in the listing's "
+          "order, one new, one gone and one written again listed anew") {
+    // A phone's folder after a long while holds thousands of windows, and each one landing lists them all again
+    // (MapController's repack): matched by id, the listing is as before, kept, listed and dropped alike.
+    const auto window = [](int i, std::uint64_t time) {
+        frame::MapPack p;
+        p.number = static_cast<std::uint64_t>(i) + 1U;
+        p.ref.id = std::format("window/14/{}/{}", 8400 + (i % 100), 5300 + (i / 100));
+        p.ref.kind = tiles::PackKind::window;
+        p.ref.path = "/nowhere/" + p.ref.id + ".atlas";
+        p.ref.offset = time; // the file's time and size, as the app lists a window
+        p.ref.length = 1000U + static_cast<std::uint64_t>(i);
+        return p;
+    };
+    constexpr int n = 5000;
+    frame::MapFrame map(2, nullptr);
+    std::vector<frame::MapPack> first;
+    std::string listed;
+    for (int i = 0; i < n; ++i) {
+        first.push_back(window(i, 1));
+        listed += first.back().ref.id + " listed\n";
+    }
+    // the same window twice, the same bytes: listed twice, then kept twice
+    first.push_back(window(7, 1));
+    listed += first.back().ref.id + " listed\n";
+    CHECK(map.set_packs(std::move(first)) == listed);
+    // backwards, after a new one, without window 3, and window 5 written again (another time)
+    std::vector<frame::MapPack> again{window(n, 1)};
+    std::string said = again.back().ref.id + " listed\n";
+    for (int i = n - 1; i >= 0; --i) {
+        if (i == 3) continue;
+        again.push_back(window(i, i == 5 ? 2U : 1U));
+        said += again.back().ref.id + (i == 5 ? " listed\n" : " kept\n");
+    }
+    again.push_back(window(7, 1));
+    said += again.back().ref.id + " kept\n";
+    std::vector<frame::MapPack> same = again;
+    CHECK(map.set_packs(std::move(again)) == said);
+    // the same listing once more: every pack kept, the twice listed one twice
+    std::string kept;
+    for (const frame::MapPack& p : same) kept += p.ref.id + " kept\n";
+    CHECK(map.set_packs(std::move(same)) == kept);
+}
+
 TEST_CASE("the app's map draws through the session: the pack the camera names, complete pictures, rest, a device's "
           "loss, VK bench between, the map off and on, and the close") {
     const std::string tiles_dir = environment("ATLAS_TILES_DIR");

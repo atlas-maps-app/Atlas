@@ -10,8 +10,12 @@
 
 #include <algorithm>
 #include <format>
+#include <span>
+#include <string>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace atlas::frame {
 
@@ -31,6 +35,16 @@ constexpr Mode map_mode = Mode::full;
 void close_owned(tiles::PackRef& ref) noexcept {
     if (ref.fd >= 0) ::close(ref.fd);
     ref.fd = -1;
+}
+
+/// A listing's places by its packs' ids, each id's in the listing's order: a pack is looked for among the listings of
+/// its own id alone (same_source asks the id first), so matching a listing of thousands of windows against the last
+/// one takes as many lookups, not their product (each a frame's time on the render thread as each window landed).
+[[nodiscard]] std::unordered_map<std::string, std::vector<std::size_t>> places_by_id(std::span<const MapPack> packs) {
+    std::unordered_map<std::string, std::vector<std::size_t>> out;
+    out.reserve(packs.size());
+    for (std::size_t i = 0; i < packs.size(); ++i) out[packs[i].ref.id].push_back(i);
+    return out;
 }
 
 } // namespace
@@ -86,21 +100,36 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
     std::vector<MapPack> kept;
     kept.reserve(packs.size());
     // The packs no longer listed, or listed with other bytes, leave the world first.
-    for (MapPack& old : packs_) {
-        const auto again =
-            std::ranges::find_if(packs, [&old](const MapPack& p) { return same_source(p.ref, old.ref); });
-        if (again != packs.end()) continue;
-        if (world_) (void)world_->store().remove(old.ref.id);
-        close_owned(old.ref);
+    {
+        const auto listed = places_by_id(packs);
+        for (MapPack& old : packs_) {
+            const auto at = listed.find(old.ref.id);
+            if (at != listed.end() &&
+                std::ranges::any_of(at->second, [&](std::size_t i) { return same_source(packs[i].ref, old.ref); })) {
+                continue;
+            }
+            if (world_) (void)world_->store().remove(old.ref.id);
+            close_owned(old.ref);
+        }
     }
+    const auto open_before = places_by_id(packs_);
+    std::vector<bool> taken(packs_.size(), false); // an earlier listing's pack kept already, once for one listed now
     for (MapPack& p : packs) {
-        const auto before = std::ranges::find_if(packs_, [&p](const MapPack& o) { return same_source(o.ref, p.ref); });
-        if (before != packs_.end()) {
+        std::size_t before = packs_.size(); // none
+        if (const auto at = open_before.find(p.ref.id); at != open_before.end()) {
+            for (const std::size_t i : at->second) {
+                if (taken[i] || !same_source(packs_[i].ref, p.ref)) continue;
+                before = i;
+                break;
+            }
+        }
+        if (before < packs_.size()) {
             // The same bytes: the pack open in the world stays, with the descriptor it was opened from (the new
             // listing's copy is closed), under the number the app gives it now.
+            taken[before] = true;
             close_owned(p.ref);
-            MapPack same = std::move(*before);
-            before->ref.fd = -1;
+            MapPack same = std::move(packs_[before]);
+            packs_[before].ref.fd = -1;
             same.number = p.number;
             kept.push_back(std::move(same));
             out += std::format("{} kept\n", kept.back().ref.id);
