@@ -1,15 +1,18 @@
-# Builds the world's base map (ENGINE.md step 5, "The pipeline") into a draft release world-YYYYMMDD: the packs of L6 to
-# L11 of every L6 block an area of Geofabrik's meets (Europe for now), the globe's L0 to L5, their index and world.json,
-# the app's description of them. A run by hand with publish=<tag> publishes a checked draft instead and points
-# world-latest at it.
+# Builds the world's base map (ENGINE.md step 5, "The pipeline") into a draft release world-YYYYMMDD, named by the day
+# its OpenStreetMap data is current to: the packs of L6 to L11 of every L6 block an area of Geofabrik's meets (Europe
+# for now), the globe's L0 to L5, their index and world.json, the app's description of them. A run by hand with
+# publish=<tag> publishes a checked draft instead and points world-latest at it.
 # - plan: the area's polygon from Geofabrik's index, its L6 blocks split into regions of about equal weight (`packer
 #   world-plan`: by the last world's packs' bytes, or for the first by the sizes of the area's own extracts), the tags
-#   the world's profile draws (`packer world-tags`), the draft release;
+#   the world's profile draws (`packer world-tags`), the extract the run takes, its MD5 and its header's replication
+#   time (from its first 128 KB: a run whose tag is not of that day is refused), the draft release, its notes naming
+#   the extract;
 # - sources: osmdata's land polygons and Natural Earth's layers, fetched once a run into the draft, so no other job asks
 #   those free hosts again; with land=<a draft's tag>, the land polygons that draft holds stand in for osmdata's, the
 #   run's summary and the draft's notes naming the copy's date and SHA-256;
-# - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), the
-#   filtered file into the draft in parts (scratch-filtered.osm.pbf.000, …), their SHA-256 sums beside them;
+# - filter: the extract the plan read, by its MD5 (a run whose extract changed since is refused), `osmium tags-filter`
+#   to the profile's tags (the raw file deleted), the filtered file into the draft in parts
+#   (scratch-filtered.osm.pbf.000, …), their SHA-256 sums beside them;
 # - cut, a job every two regions: the filtered file from the draft, `osmium extract` into the two regions, each region
 #   into the draft;
 # - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
@@ -37,7 +40,7 @@ on:
         required: false
         default: '20'
       tag:
-        description: The draft release's tag (empty for world-YYYYMMDD, today's)
+        description: The draft release's tag, world-YYYYMMDD or world-YYYYMMDD-<word> of the day the extract's data is current to (empty for world-YYYYMMDD of that day)
         required: false
         default: ''
       land:
@@ -87,13 +90,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
-      tag: ${{ steps.run.outputs.tag }}
+      tag: ${{ steps.day.outputs.tag }}
       land: ${{ steps.run.outputs.land }}
       url: ${{ steps.plan.outputs.url }}
       bytes: ${{ steps.plan.outputs.bytes }}
       matrix: ${{ steps.plan.outputs.matrix }}
       count: ${{ steps.plan.outputs.count }}
       extracts: ${{ steps.plan.outputs.extracts }}
+      from: ${{ steps.day.outputs.from }}
+      md5: ${{ steps.day.outputs.md5 }}
+      name: ${{ steps.day.outputs.name }}
+      timestamp: ${{ steps.day.outputs.timestamp }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -128,12 +135,14 @@ jobs:
           fi
           AREA=${AREA:-europe}
           REGIONS=${REGIONS:-20}
-          TAG=${TAG:-world-$(date -u +%Y%m%d)}
           if ! [[ "$AREA" =~ ^[a-z0-9-]+(/[a-z0-9-]+)?$ ]]; then echo "::error::Not an extract's id in Geofabrik's index: $AREA"; exit 1; fi
           if ! [[ "$REGIONS" =~ ^[0-9]+$ ]] || [ "$REGIONS" -lt 1 ] || [ "$REGIONS" -gt 60 ]; then echo "::error::regions is 1 to 60, not $REGIONS"; exit 1; fi
-          # never world-test (the app's test world) nor world-latest
-          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::A world's release is world-YYYYMMDD or world-YYYYMMDD-<word>, not $TAG"; exit 1; fi
-          if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
+          # never world-test (the app's test world) nor world-latest; with none given, the plan names the release by the
+          # day of the extract's data
+          if [ -n "$TAG" ]; then
+            if ! [[ "$TAG" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::A world's release is world-YYYYMMDD or world-YYYYMMDD-<word>, not $TAG"; exit 1; fi
+            if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
+          fi
           if [ -n "$LAND" ]; then
             # the land polygons' stand-in: a world's draft holding both zips (a published release holds no scratch)
             if ! [[ "$LAND" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::land names a world's draft, not $LAND"; exit 1; fi
@@ -208,6 +217,92 @@ jobs:
             echo "From $URL ($BYTES bytes)."
             jq -r '.regions[] | "- \(.id): \(.count) blocks, \(.weight * 1000 | round / 10) % of the weight"' "$P/regions.json"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: The extract's day
+        id: day
+        env:
+          URL: ${{ steps.plan.outputs.url }}
+          TAG: ${{ steps.run.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # the extract the filter job takes: Geofabrik sends a -latest extract to its dated file, or a big one to a
+          # mirror's copy, which may be a day or two older; the MD5 file beside the file served names the dated extract
+          # it is (3 November: Europe's -latest went to ftp5.gwdg.de's of 1 November, and download.geofabrik.de had no
+          # europe-latest.osm.pbf.md5; 4 November: ftp5.gwdg.de's of 2 November), and its header, in its first 128 KB,
+          # gives the time its data is current to
+          FROM=$(curl -fsSIL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o /dev/null -w '%{url_effective}' "$URL")
+          curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/extract.md5" "$FROM.md5"
+          read -r MD5 NAME < "$RUNNER_TEMP/extract.md5" || true
+          if ! [[ "$MD5" =~ ^[0-9a-f]{32}$ && "$NAME" =~ ^[A-Za-z0-9_-]+\.osm\.pbf$ ]]; then echo "::error::$FROM.md5 names no extract"; exit 1; fi
+          curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -r 0-131071 -o "$RUNNER_TEMP/extract.head" "$FROM"
+          cat > "$RUNNER_TEMP/header.py" << 'EOF'
+          # the replication time and sequence of a PBF file's OSMHeader block (its fields 32 and 33), the time as
+          # osmium fileinfo gives it
+          import datetime, struct, sys, zlib
+
+
+          def varint(b, i):
+              v = s = 0
+              while True:
+                  c = b[i]
+                  i += 1
+                  v |= (c & 0x7F) << s
+                  s += 7
+                  if c < 0x80:
+                      return v, i
+
+
+          def fields(b):
+              i = 0
+              while i < len(b):
+                  k, i = varint(b, i)
+                  t = k & 7
+                  if t == 0:
+                      v, i = varint(b, i)
+                  elif t == 2:
+                      n, i = varint(b, i)
+                      v, i = b[i:i + n], i + n
+                  elif t in (1, 5):
+                      n = 8 if t == 1 else 4
+                      v, i = b[i:i + n], i + n
+                  else:
+                      sys.exit("not a PBF file's header: wire type %d" % t)
+                  yield k >> 3, v
+
+
+          d = open(sys.argv[1], "rb").read()
+          n = struct.unpack(">I", d[:4])[0]
+          blob_header = dict(fields(d[4:4 + n]))
+          if blob_header.get(1) != b"OSMHeader" or 4 + n + blob_header.get(3, 0) > len(d):
+              sys.exit("no whole OSMHeader block in the bytes read")
+          blob = dict(fields(d[4 + n:4 + n + blob_header[3]]))
+          header = dict(fields(zlib.decompress(blob[3]) if 3 in blob else blob[1]))
+          if 32 not in header:
+              sys.exit("the header gives no replication time")
+          time = datetime.datetime.fromtimestamp(header[32], datetime.timezone.utc)
+          print(time.strftime("%Y-%m-%dT%H:%M:%SZ"), header.get(33, "none"))
+          EOF
+          HEAD=$(python3 -I "$RUNNER_TEMP/header.py" "$RUNNER_TEMP/extract.head")
+          read -r TS SEQ <<< "$HEAD"
+          if ! [[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then echo "::error::$NAME's header gives no replication time"; exit 1; fi
+          DAY=${TS:0:4}${TS:5:2}${TS:8:2}
+          if [ -z "$TAG" ]; then
+            TAG=world-$DAY
+            if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
+          elif [ "${TAG:6:8}" != "$DAY" ]; then
+            # a release is named by the day its data is current to, so that the tag and the data never disagree
+            echo "::error::$TAG is not of the day its data is current to: $NAME's data is of $TS (sequence $SEQ), so world-$DAY"
+            exit 1
+          fi
+          echo "$NAME: MD5 $MD5, its data of $TS (sequence $SEQ), into $TAG"
+          {
+            echo "tag=$TAG"
+            echo "from=$FROM"
+            echo "md5=$MD5"
+            echo "name=$NAME"
+            echo "timestamp=$TS"
+            echo "data=The OpenStreetMap data is Geofabrik's extract $NAME (MD5 $MD5), current to $TS by its header's replication time, sequence $SEQ."
+          } >> "$GITHUB_OUTPUT"
+          echo "- The extract: $NAME, MD5 $MD5, its data of $TS (sequence $SEQ), so the draft $TAG" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: world-plan
@@ -216,10 +311,12 @@ jobs:
           overwrite: true
       - name: The draft release
         env:
-          TAG: ${{ steps.run.outputs.tag }}
+          TAG: ${{ steps.day.outputs.tag }}
+          DATA: ${{ steps.day.outputs.data }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          # the notes, then the extract the run takes (the sources job adds a stand-in's land polygons after it)
+          printf '%s\n%s\n' "$RELEASE_NOTES" "$DATA" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" --draft --latest=false --title "World ${TAG#world-}" --notes-file "$RUNNER_TEMP/notes.md" --target "$GITHUB_SHA"
 
   sources:
@@ -291,7 +388,11 @@ jobs:
       timestamp: ${{ steps.extract.outputs.timestamp }}
     env:
       TAG: ${{ needs.plan.outputs.tag }}
-      URL: ${{ needs.plan.outputs.url }}
+      # the extract the plan read: the file served, its MD5 and name, the time of its data
+      FROM: ${{ needs.plan.outputs.from }}
+      MD5: ${{ needs.plan.outputs.md5 }}
+      NAME: ${{ needs.plan.outputs.name }}
+      TS: ${{ needs.plan.outputs.timestamp }}
       BYTES: ${{ needs.plan.outputs.bytes }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -319,26 +420,18 @@ jobs:
         id: extract
         run: |
           set -euo pipefail
+          RAW="$BIG/$NAME"
           for attempt in 1 2; do
-            # Geofabrik sends a -latest extract to its dated file, or a big one to a mirror's copy, which may be a day
-            # older; the MD5 file beside the file served names the dated extract it is (3 November: Europe's -latest
-            # went to ftp5.gwdg.de's of 1 November, and download.geofabrik.de had no europe-latest.osm.pbf.md5)
-            FROM=$(curl -fsSIL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o /dev/null -w '%{url_effective}' "$URL")
-            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$BIG/extract.md5" "$FROM.md5"
-            read -r MD5 NAME < "$BIG/extract.md5" || true
-            if ! [[ "$MD5" =~ ^[0-9a-f]{32}$ && "$NAME" =~ ^[A-Za-z0-9_-]+\.osm\.pbf$ ]]; then echo "::error::$FROM.md5 names no extract"; exit 1; fi
-            RAW="$BIG/$NAME"
             rm -f "$RAW"
-            # taken up again where a connection drops; the MD5 says whether the whole is the file published
+            # taken up again where a connection drops; the MD5 says whether the whole is the extract the plan read
             curl -fsSL -C - --retry 10 --retry-all-errors --retry-delay 30 -A "$USER_AGENT" -o "$RAW" "$FROM"
             if [ "$MD5" = "$(md5sum "$RAW" | cut -d' ' -f1)" ]; then break; fi
-            # the extract may have been replaced while it came
+            # a download gone wrong, or the extract replaced since the plan read it, its tag then not its data's day
             rm -f "$RAW"
-            if [ "$attempt" = 2 ]; then echo "::error::$FROM does not match its MD5"; exit 1; fi
+            if [ "$attempt" = 2 ]; then echo "::error::$FROM is no longer $NAME (MD5 $MD5), the extract the plan read: run again, the tag of the day of the one it serves now"; exit 1; fi
             sleep 60
           done
-          TS=$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$RAW")
-          if [ -z "$TS" ]; then echo "::error::$NAME's header gives no replication time"; exit 1; fi
+          if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$RAW")" != "$TS" ]; then echo "::error::$NAME's header is not of $TS, the time the plan read"; exit 1; fi
           ls -l "$RAW"
           echo "$NAME: MD5 $MD5, its data of $TS"
           { echo "name=$NAME"; echo "md5=$MD5"; echo "timestamp=$TS"; } >> "$GITHUB_OUTPUT"
