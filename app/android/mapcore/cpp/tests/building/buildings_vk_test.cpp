@@ -57,8 +57,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -69,6 +71,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1232,7 +1235,10 @@ public:
     WithPalette& operator=(WithPalette&&) = delete;
 };
 
-/// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
+/// Draws `cam` until the world has built every tile the cover wants and their fades are over, then until the sun has
+/// settled: its workers idle, nothing published since the frame before and no tile's bits cross-fading. The sun's
+/// fades run on its own steady clock, not on the frames' seconds (SunGlobals::now), so a frame drawn while one runs
+/// differs from its still redraw (draw_still), which shows that fade further on. The last frame's pixels.
 [[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
     s.builder->set_inputs({.camera = cam,
                            .theme = th,
@@ -1283,20 +1289,42 @@ public:
         }
         if (built && s.world->sun() != nullptr) s.world->sun()->wait_idle();
     }
-    // one more, with every tile taken and settled
-    s.now += 0.25;
-    s.builder->set_inputs({.camera = cam,
-                           .theme = th,
-                           .seconds = s.now,
-                           .mode = frame::Mode::structural,
-                           .scene = s.world.get(),
-                           .palette = frame_palette});
-    auto report = s.renderer->draw(0);
-    if (!report) {
-        FAIL("a frame failed: " << report.error().text());
-        return std::nullopt;
+    // one more, with every tile taken and settled, and more until the sun has settled: bits the last frames asked for
+    // (a halo tile come resident asks again) or a tile's first bits after a frame that drew it by day fade in over
+    // sun::fade_seconds of its clock
+    scene::SunGlobals* sun = s.world->sun();
+    const auto sun_work = [sun] {
+        const scene::SunStats st = sun != nullptr ? sun->stats() : scene::SunStats{};
+        return std::array<std::uint64_t, 4>{st.scenes, st.failed, st.runs, st.cached};
+    };
+    for (int n = 0;; ++n) {
+        const std::array<std::uint64_t, 4> before = sun_work();
+        s.now += 0.25;
+        s.builder->set_inputs({.camera = cam,
+                               .theme = th,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get(),
+                               .palette = frame_palette});
+        auto report = s.renderer->draw(0);
+        if (!report) {
+            FAIL("a frame failed: " << report.error().text());
+            return std::nullopt;
+        }
+        s.renderer->drain();
+        if (sun == nullptr) break;
+        sun->wait_idle();
+        if (!sun->fading() && sun_work() == before) break;
+        if (n == 40) {
+            MESSAGE("the sun not settled after 40 more frames");
+            s.settled = false;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the fades' clock is the sun's own
     }
-    s.renderer->drain();
+    s.lit = std::ranges::all_of(s.world->cover()->tiles(), [](const scene::CoverTile& t) {
+        return t.sun_base != scene::no_sun && t.sun.has_value() && t.sun_weight >= 1.0F;
+    });
     auto pixels = s.output->read(s.output->latest());
     if (!pixels) {
         FAIL("the frame could not be read: " << pixels.error().text());
