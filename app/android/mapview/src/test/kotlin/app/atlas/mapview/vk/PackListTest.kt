@@ -187,6 +187,35 @@ class PackListTest {
     }
 
     @Test
+    fun aWindowsManifestIsReadAgainOnlyWhereItsFilesTimeOrSizeChanged() {
+        // each window landing lists the folder again, thousands of windows on a phone: the rest are not read again
+        val file = window(8414, tz = "Europe/Amsterdam")
+        file.setLastModified(1_700_000_000_000L)
+        val size = file.length()
+        val list = PackList(windows = { windows })
+        list.load()
+        assertEquals(ZoneId.of("Europe/Amsterdam"), list.packs.single().zone)
+        // other bytes of the same size at the same time: the head read stands, as the core takes the file by them
+        window(8414, tz = "Europe/Stockholm")
+        file.setLastModified(1_700_000_000_000L)
+        assertEquals(size, file.length())
+        list.load()
+        assertEquals(ZoneId.of("Europe/Amsterdam"), list.packs.single().zone)
+        // a new time: read again
+        file.setLastModified(1_700_000_060_000L)
+        list.load()
+        assertEquals(ZoneId.of("Europe/Stockholm"), list.packs.single().zone)
+        // gone, then written again at the same time and size: read, not taken from what was read before it went
+        assertTrue(file.delete())
+        list.load()
+        assertTrue(list.packs.isEmpty())
+        window(8414, tz = "Europe/Amsterdam")
+        file.setLastModified(1_700_000_060_000L)
+        list.load()
+        assertEquals(ZoneId.of("Europe/Amsterdam"), list.packs.single().zone)
+    }
+
+    @Test
     fun aWindowThatHoldsNothingToDrawIsNotListedAndItsPlaceIsTodaysMaps() {
         // the open sea far from a coast, the middle of a field: the core would hold no tile there; a window that holds
         // its tile is listed, and so is a pack whose manifest does not count its tiles

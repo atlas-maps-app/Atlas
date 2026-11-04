@@ -128,13 +128,36 @@ class PackList(
     @Synchronized
     private fun numberOf(id: String): Long = numbers.getOrPut(id) { numbers.size + 1L }
 
-    /** Reads the packs again (off the main thread: every pack's manifest is read). Returns the list. */
+    /** A file's head as [load] read it (null where it is no pack the list takes), and the file's time and size then. */
+    private class Read(val time: Long, val size: Long, val head: Head?)
+
+    /**
+     * The heads [load] read, by their files' paths: a file of the same time and size is not read again. Each window that
+     * lands lists the folder again, which holds thousands of windows after a while (and those of earlier versions, read
+     * to be left out), and every manifest was opened and parsed again each time. The core, too, opens a file anew only
+     * where its time or size changed ([refs]).
+     */
+    private val heads = HashMap<String, Read>()
+
+    /** [file]'s head, read where its time or size changed since [load] last read it; its path noted in [seen]. */
+    private fun headOf(file: File, seen: MutableSet<String>): Read {
+        val path = file.path
+        seen += path
+        val time = file.lastModified()
+        val size = file.length()
+        heads[path]?.takeIf { it.time == time && it.size == size }?.let { return it }
+        return Read(time, size, runCatching { file.inputStream().use { readHead(it) } }.getOrNull()).also { heads[path] = it }
+    }
+
+    /** Reads the packs again (off the main thread: a pack's manifest is read where its file is new or changed). Returns the list. */
     @Synchronized
     fun load(): List<Pack> {
         val out = ArrayList<Pack>()
+        val seen = HashSet<String>()
         for (file in runCatching { bench() }.getOrDefault(emptyList())) {
-            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: continue
-            out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file)
+            val read = headOf(file, seen)
+            val head = read.head ?: continue
+            out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file, read)
         }
         // the windows on the phone: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
@@ -144,10 +167,13 @@ class PackList(
         val version = windowVersion()
         windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
             val w = Windows.windowOf(file) ?: return@forEach
-            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: return@forEach
+            val read = headOf(file, seen)
+            val head = read.head ?: return@forEach
             if (head.chunks == 0 || (version != null && head.version != version)) return@forEach
-            out += packOf(w.id, MapCore.PackRef.WINDOW, head, file)
+            out += packOf(w.id, MapCore.PackRef.WINDOW, head, file, read)
         }
+        // a file gone (evicted, or listed no longer) is forgotten: one written there again is read
+        heads.keys.retainAll(seen)
         val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
         if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
             worldOut.map { listOf(it.id, it.path, it.offset, it.length) } != worldRefs.map { listOf(it.id, it.path, it.offset, it.length) }
@@ -183,13 +209,13 @@ class PackList(
         return out
     }
 
-    private fun packOf(id: String, kind: Int, h: Head, file: File): Pack {
+    private fun packOf(id: String, kind: Int, h: Head, file: File, read: Read): Pack {
         val profile = profileOf(h.profile)
         return Pack(
             id, numberOf(id), kind, h.box, profile,
             if (profile == CameraWriter.PROFILE_LIVING) RegionFrame.living() else RegionFrame.region(h.origin),
             runCatching { ZoneId.of(h.zone ?: AMSTERDAM) }.getOrDefault(ZoneId.of(AMSTERDAM)),
-            h.views, file,
+            h.views, file, read.time, read.size,
         )
     }
 
