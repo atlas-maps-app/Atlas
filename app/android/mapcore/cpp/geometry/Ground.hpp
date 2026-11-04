@@ -642,7 +642,7 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out);
 [[nodiscard]] tiles::Result<std::uint64_t> ground_check(const tiles::Pack& pack);
 
 /// The host build's hash of the ground's check.
-inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
+inline constexpr std::uint64_t ground_check_expected = 0xC804'5FA0'8E1B'C9BBULL;
 
 /// `ground <hash> ok`, or `ground <hash> FAIL expected <hash>`, or `ground unavailable: <why>`, for the bundled pack in
 /// `pack`.
