@@ -59,6 +59,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -170,6 +171,26 @@ public:
 private:
     platform::Window window_;
 };
+
+/// The threads the map's frame runs on as the ground last told them (frame/RenderThreads.hpp), for the render thread's
+/// hint session to take in once the frame is out (render thread only).
+class TookThreads final : public frame::RenderThreads {
+public:
+    void took(std::span<const std::int32_t> tids) override {
+        tids_.assign(tids.begin(), tids.end());
+        fresh_ = true;
+    }
+    /// The threads told since the last call, or none.
+    [[nodiscard]] std::optional<std::span<const std::int32_t>> take() noexcept {
+        if (!fresh_) return std::nullopt;
+        fresh_ = false;
+        return std::span<const std::int32_t>(tids_);
+    }
+
+private:
+    std::vector<std::int32_t> tids_;
+    bool fresh_ = false;
+};
 #endif
 
 /// The process's core.
@@ -204,7 +225,8 @@ public:
         core->map_ = std::make_unique<frame::MapFrame>(
             map_workers(), [self] { self->wake(); },
             frame::MapOptions{.cache_dir = options.cache_dir,
-                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); }});
+                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); },
+                              .render_threads = core->took_threads_});
 #else
         (void)env;
         core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr,
@@ -758,6 +780,10 @@ private:
         // nothing (the stutter review, 3 November). The GPU's time as before: an earlier frame's.
         hint_.report(r.start_ns, (r.end_ns - r.start_ns) - d.wait_ns,
                      static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The ground's helpers, as its team is made (once the frame is out, so that no frame waits for the call): the
+        // run the render thread waits for them in is in its own time above, so the boost that time asks for reaches
+        // them too (API 34).
+        if (const auto tids = took_threads_->take()) hint_.threads(*tids);
         // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
         // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
         // back after its fence: the percentile does not mind). The cadence takes the same figure for its step at 90 Hz
@@ -785,6 +811,7 @@ private:
     JavaVM* vm_ = nullptr;
     JNIEnv* render_env_ = nullptr;
     platform::HintSession hint_;
+    std::shared_ptr<TookThreads> took_threads_ = std::make_shared<TookThreads>(); // the map's frame's threads
     platform::Thermal thermal_;
     frame::Pacer pacer_; // the presentation each frame asks for under the debug switch's pacing (set_pacing)
     jobject source_ = nullptr;

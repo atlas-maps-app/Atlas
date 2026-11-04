@@ -68,13 +68,15 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 /// 1's bindings to the world (the noise fields), and `settle` (may be empty) runs after each frame (their worker's
 /// wait); `options` are the frame builder's (no composite step by default). With `second_buffer`, the heaps are two
 /// buffers of 64 MB and the first is filled before any tile is built, so the tiles' ground and lines lie in the second.
+/// `each` (may be empty) changes the inputs before each frame, by its number from 0: the camera's size stays.
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
             const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
             const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
             const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {},
-            const frame::FrameOptions& options = {.steps = 0}, bool second_buffer = false) {
+            const frame::FrameOptions& options = {.steps = 0}, bool second_buffer = false,
+            const std::function<void(int, frame::FrameInputs&)>& each = {}) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -107,7 +109,8 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     const vk::Extent2D extent{.width = camera.width_px, .height = camera.height_px};
     auto output = gpu::Offscreen::create(device, extent, 2);
     if (!output) return std::nullopt;
-    (*builder)->set_inputs({.camera = camera, .theme = theme, .seconds = 0, .mode = mode, .scene = world->get()});
+    frame::FrameInputs inputs{.camera = camera, .theme = theme, .seconds = 0, .mode = mode, .scene = world->get()};
+    (*builder)->set_inputs(inputs);
     const gpu::Configuration config{.config = gpu::FrameConfig::c,
                                     .route = gpu::Route::renderpass,
                                     .form = gpu::FrameForm::composite,
@@ -121,6 +124,10 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     std::uint32_t kept = 0;
     for (int f = 0; f < frames; ++f) {
         now = static_cast<double>(f) * 0.05;
+        if (each) {
+            each(f, inputs);
+            (*builder)->set_inputs(inputs);
+        }
         auto report = (*renderer)->draw(0);
         if (!report) {
             MESSAGE("draw: " << report.error().text());

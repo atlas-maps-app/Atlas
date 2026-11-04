@@ -2,8 +2,12 @@
 
 #include <ctime>
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__APPLE__)
 #include <pthread.h>
+#endif
+#if !defined(__APPLE__)
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 namespace atlas::passes {
@@ -19,11 +23,25 @@ namespace {
 
 } // namespace
 
-Team::Team(unsigned helpers) {
+std::int32_t thread_id() noexcept {
+#if defined(__ANDROID__)
+    return static_cast<std::int32_t>(::gettid());
+#elif defined(__APPLE__)
+    return static_cast<std::int32_t>(::pthread_mach_thread_np(::pthread_self()));
+#else
+    return static_cast<std::int32_t>(::syscall(SYS_gettid));
+#endif
+}
+
+Team::Team(unsigned helpers) : threads_(std::size_t{helpers} + 1, 0) {
+    threads_[0] = thread_id();
     helpers_.reserve(helpers);
     for (unsigned k = 1; k <= helpers; ++k) {
         helpers_.emplace_back([this, k](const std::stop_token& stop) { work(stop, k); });
     }
+    // every helper's id known before the platform is told of them
+    std::unique_lock lock(mutex_);
+    done_.wait(lock, [&] { return started_ == helpers; });
 }
 
 double Team::run(std::size_t items, const Job& job) {
@@ -52,6 +70,12 @@ void Team::work(const std::stop_token& stop, unsigned taker) {
 #if defined(__ANDROID__)
     (void)::pthread_setname_np(::pthread_self(), "atlas-team");
 #endif
+    {
+        const std::lock_guard lock(mutex_);
+        threads_[taker] = thread_id();
+        ++started_;
+    }
+    done_.notify_one();
     std::uint32_t seen = 0;
     for (;;) {
         const Job* job = nullptr;
