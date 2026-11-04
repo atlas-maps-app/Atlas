@@ -499,7 +499,7 @@ struct GroundGpu {
     Words vertices; ///< three words each
     Words above;    ///< the opaque fills above the water (draw_over's, the roads, the areas), top first: indices
     /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
-    /// app's map draws again by themselves (passes/Ground.cpp's record_fills).
+    /// app's map draws by themselves after the land, `above` without them (passes/Ground.cpp's record_streets).
     Words streets;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles

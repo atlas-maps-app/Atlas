@@ -679,7 +679,9 @@ struct Work {
 /// The parts the map's switches leave out, as the frame's counters name their work.
 const std::vector<Part>& every_part() {
     static const std::vector<Part> parts{
-        {.name = "land and roads", .bit = part::ground, .own = {"ground above", "ground land", "ground plate"}},
+        {.name = "land and roads",
+         .bit = part::ground,
+         .own = {"ground above", "ground land", "ground plate", "ground streets", "ground bridges"}},
         {.name = "water", .bit = part::water, .own = {"ground water"}},
         {.name = "canopy", .bit = part::canopy, .own = {"ground canopy"}},
         // (a big road's lines go with its asphalt)
