@@ -19,6 +19,9 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <span>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace atlas::geometry {
@@ -930,6 +933,49 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     out.windows = b.windows;
 }
 
+/// The opening hours of the places of `out`'s buildings whose walls have shop glazing (TileBuildings::hours): each
+/// item's place_hours as the packer joins its places (`b.get('places')`), the variant's where the walk took the item's
+/// values from one, but those without hours ("").
+void shop_hours(const Records& records, const tl::Layer* var,
+                const std::unordered_map<std::uint64_t, std::uint32_t>& variants, TileBuildings& out) {
+    std::vector<bool> glazed(out.items.size(), false);
+    bool any = false;
+    for (const WindowWall& w : out.window_walls) {
+        if ((w.flags & window_flag::glazing) == 0U) continue;
+        glazed[out.edged[w.wall].item] = true;
+        any = true;
+    }
+    if (!any) return;
+    constexpr std::uint8_t variant_hours = tl::slot_of(tl::variant::columns, "place_hours");
+    std::unordered_map<std::string_view, std::uint32_t> at;
+    out.item_hours_first.reserve(out.items.size() + 1);
+    out.item_hours_first.push_back(0);
+    for (std::size_t i = 0; i < out.items.size(); ++i) {
+        const BuildingItem& item = out.items[i];
+        const std::size_t w = item.source == Source::building ? 0 : 1;
+        const tl::Layer* l = records.layers[w];
+        if (glazed[i] && l != nullptr) {
+            const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, item.record));
+            const auto v = variants.find((static_cast<std::uint64_t>(walked[w].first) << 56U) | index);
+            const bool varied = var != nullptr && v != variants.end();
+            const tl::Layer& from = varied ? *var : *l;
+            const auto list = varied ? from.string_list(variant_hours, v->second)
+                                     : from.string_list(tl::building::place_hours, item.record);
+            for (const std::uint32_t k : list.value_or(std::span<const std::uint32_t>{})) {
+                if (k >= from.strings.size() || from.strings[k].empty()) continue;
+                const auto [it, made] = at.try_emplace(from.strings[k], static_cast<std::uint32_t>(out.hours.size()));
+                if (made) out.hours.emplace_back(from.strings[k]);
+                out.item_hours.push_back(it->second);
+            }
+        }
+        out.item_hours_first.push_back(static_cast<std::uint32_t>(out.item_hours.size()));
+    }
+    if (out.hours.empty()) {
+        out.item_hours_first.clear();
+        out.item_hours.clear();
+    }
+}
+
 } // namespace
 
 TileBuildings build_buildings(const BuildingInput& in) {
@@ -1107,6 +1153,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     for (Polygon& p : out.polygons) {
         if (p.count > 0) p.first = moved[p.first];
     }
+    shop_hours(records, var, variants, out);
     // A level's tile (a frame cell's L13 or L12, drawn beyond the finest level's reach): its faces lit by their samples
     // where its tile has bits (the coarse level's, in its lane's sun scene: scene/SunGlobals.hpp), else by their facing
     // alone, as a deck is (the far level's; a tile drawn before its first bits), never as if in the shade.

@@ -67,6 +67,9 @@ class MapPartsTest {
         // a quay wall's faces and a facade's flat detail each their own switch ("Every part gets its own switch")
         assertTrue(MapPartGroup.GROUND.listed.containsAll(setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)))
         assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOP_GLAZING, MapPart.PLINTHS, MapPart.CORNICES)))
+        // a shop's front and its terrace each their own switch with the facades, its glow at night with the night's lights
+        assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOPFRONTS, MapPart.TERRACES)))
+        assertTrue(MapPart.OPEN_GLOWS in MapPartGroup.NIGHT.listed)
         // one part's switch alone
         assertEquals(MapParts.byDefault + MapPart.RAIN, MapParts.toggled(MapParts.byDefault, MapPart.RAIN))
         assertEquals(setOf(MapPart.RAIN), MapParts.toggled(setOf(MapPart.RAIN, MapPart.RIPPLE), MapPart.RIPPLE))

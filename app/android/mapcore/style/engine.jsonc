@@ -196,8 +196,9 @@
     // draw_building's windows: by day with weather the glass's gradients from the top of a wall's windows to their
     // bottom (`glass` by the sky's cover, `glassLit` where the sun is on them), without weather and at night their flat
     // glass, a warehouse's shutters (with weather), and the frames, by day and at night, with their width; the deep
-    // windows' sills, by day and at night; a shop's glazing's frame, by day and at night, with its width; the facades'
-    // plinths and cornices, by day and at night
+    // windows' sills, by day and at night; a shop's glazing's frame, by day and at night, with its width, and its glass
+    // at night while one of its building's places is open and while none is (open_here; by day it is `glass`); the
+    // facades' plinths and cornices, by day and at night
     "windows": {
         "glass_top": "#B7CBE0",
         "glass_bottom": "#3E4C5E",
@@ -218,6 +219,8 @@
         "shop_frame_day": "#2A2D30",
         "shop_frame_night": "#30343E",
         "shop_frame_width": 0.8,
+        "shop_glass_open": "#FFD08C",
+        "shop_glass_closed": "#0E1119",
         "plinth_day": "#47443F",
         "plinth_night": "#121318",
         "cornice_day": "#E6E1D6",
@@ -282,6 +285,49 @@
         "plate_night": "#3A3A40",
         "number_day": "#1E2A44",
         "number_night": "#B9C0D0"
+    },
+
+    // amsterdam.py's shopfront: a mapped shop's frame by day and at night, its glass at night open and closed (by day
+    // the windows' glass and glassLit), its mullions, the awning's stripes and their opacity, the sign's and the
+    // blade's outline and their widths (the awning's outline's), the sign's text where its brand gives none, the
+    // night's spill on the pavement and its opacity; a terrace's wood (its tables' legs) by day and at night, its
+    // chairs (draw_box's, at night x0.3) and their legs' width, their backs at night, the tables' tops by day and at
+    // night, their outline and its width, the parasols' poles and their light panels; and the night light's open
+    // places, the `open` gradient's stops (colour, offset, opacity)
+    "shopfronts": {
+        "frame_day": "#2A2C2E",
+        "frame_night": "#0C0D10",
+        "glass_open": "#FFD08C",
+        "glass_closed": "#0B0D12",
+        "mullion": "#2A2C2E",
+        "stripes_day": "#F4EFE6",
+        "stripes_night": "#3A3A40",
+        "stripes_opacity": 0.85,
+        "awning_width": 0.4,
+        "sign_outline": "#1E1F22",
+        "sign_width": 0.4,
+        "blade_width": 0.5,
+        "text": "#FFFFFF",
+        "spill": "#FFC27A",
+        "spill_opacity": 0.55,
+        "wood_day": "#6B5442",
+        "wood_night": "#1A1714",
+        "chair": "#3E3A36",
+        "chair_leg_width": 1.0,
+        "chair_back_night": "#121214",
+        "top_day": "#E9E3D6",
+        "top_night": "#2A2826",
+        "top_outline": "#9B9182",
+        "top_width": 0.3,
+        "pole": "#5A5048",
+        "panel": "#F4EFE6",
+        "open_inner": "#FFE2A8",
+        "open_inner_opacity": 0.95,
+        "open_middle": "#FFC878",
+        "open_middle_offset": 0.3,
+        "open_middle_opacity": 0.45,
+        "open_outer": "#FFC878",
+        "open_outer_opacity": 0.0
     },
 
     // regions.py's draw_items: a tower's shaft (lit as a face toward the south), its cab's glass by day and at night,

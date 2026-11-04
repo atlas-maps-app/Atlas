@@ -12,13 +12,13 @@
 // windows' reveals; its dark windows' path, then its lit ones', each window a closed subpath of its corners, filled
 // with its glass (the gradients `glass` and `glassLit` the pass defines by day with weather, else a flat colour) and
 // stroked in the frames' colour and width (wider deep); its sash bars, two open subpaths a window stroked in the
-// frames' colour; its deep windows' sills; before them its shop glazing, a path of its own; and each building's plinths
-// and cornices, a path each after its walls. A church's wall with weather nearer than 520 m has its church windows
-// there instead, closeup.py's five paths: their stones, their reveals, their glass, by day their glass again in the
-// veil at opacity .42, and their leading, each arch a closed subpath, each segment of leading an open one. A kit's
-// wall (with weather by day) has its boards' lines, a path of open subpaths, and its eaves' shadow, at their slots
-// after its band's and its corner boards' (trad_wall's). Plain data in, no Vulkan: the pass's emit and the tests call
-// it alike.
+// frames' colour; its deep windows' sills; before them its shop glazing, a path of its own (at night lit while one of
+// its building's places is open, passes::shop_open); and each building's plinths and cornices, a path each after its
+// walls. A church's wall with weather nearer than 520 m has its church windows there instead, closeup.py's five paths:
+// their stones, their reveals, their glass, by day their glass again in the veil at opacity .42, and their leading,
+// each arch a closed subpath, each segment of leading an open one. A kit's wall (with weather by day) has its boards'
+// lines, a path of open subpaths, and its eaves' shadow, at their slots after its band's and its corner boards'
+// (trad_wall's). Plain data in, no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -192,6 +192,14 @@ public:
         tile_ = tile;
     }
 
+    /// The next tiles' shop floors' glazing at night: its glass `glass` while one of its building's places is open
+    /// (passes::shop_open of `answers`, the tiles' hours at the frame's moment: passes::OpenHours's of
+    /// BuildingTile::hours) and while none is (no answers: every shop floor closed).
+    void shop_glazing(passes::ShopGlass glass, std::span<const std::int8_t> answers) noexcept {
+        glass_ = glass;
+        answers_ = answers;
+    }
+
     /// The paths of the tile's windowed walls the frame draws over its visible cells (the rest as `tile`'s).
     void windows(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, std::span<const std::byte> words,
                  const shaders::TilePlace& place, std::uint64_t cells, const SunTexels& sun);
@@ -235,6 +243,8 @@ private:
     LeftOut left_out_;
     Stream& out_;
     std::int32_t group_;
+    passes::ShopGlass glass_;
+    std::span<const std::int8_t> answers_;
     std::size_t elements_ = 0;
     std::size_t sunlit_ = 0;
     std::vector<passes::BuildingRun> runs_;

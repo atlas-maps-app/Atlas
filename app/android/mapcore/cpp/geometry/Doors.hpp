@@ -27,6 +27,11 @@ inline constexpr std::uint32_t door_slots = 5;
 /// The doors' items' list in the renders' gather order (scene::order_of): the facades, after every other list.
 inline constexpr std::uint32_t facades_list = 4;
 
+/// What a door's source order (its node) is filed after in that list: facade_details appends its doors after its
+/// shopfronts (geometry/Shopfronts.hpp), so a door ties after every shopfront of its building (their items' depth is
+/// its building's).
+inline constexpr std::uint64_t doors_after = std::uint64_t{1} << 39U;
+
 /// One door: an address on a street wall, as facade_details reads it.
 struct Door {
     std::uint32_t node = 0; ///< its place in S['nodes']
