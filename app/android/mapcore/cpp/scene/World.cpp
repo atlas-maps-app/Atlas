@@ -546,7 +546,7 @@ std::vector<tiles::TileKey> World::levels_in_view() const {
     return levels_drawn_;
 }
 
-void World::place_items(const ResidentTile& tile) {
+void World::place_items(const ResidentTile& tile, std::uint64_t passes) {
     const std::optional<view::GroundFrame>& drawn = frames_.current();
     const bool convert = drawn && *drawn != tile.frame;
     const bool coarse = coarser_ && tile.pack == coarser_->id && mask_;
@@ -562,7 +562,7 @@ void World::place_items(const ResidentTile& tile) {
         z0 = f.z(mask_->north);
         z1 = f.z(mask_->south);
     }
-    for (std::size_t i = 0; i < tile.rows.size() && i < tile.items.size(); ++i) {
+    const auto place = [&](std::size_t i) {
         const ItemSpec& spec = tile.items[i];
         ItemSpec placed = spec;
         if (convert) {
@@ -578,6 +578,17 @@ void World::place_items(const ResidentTile& tile) {
         placed.flags =
             static_cast<std::uint16_t>(inside ? (spec.flags | item_flag::masked) : (spec.flags & ~item_flag::masked));
         items_.update(tile.rows[i], placed);
+    };
+    const std::size_t n = std::min(tile.rows.size(), tile.items.size());
+    if (tile.item_runs.empty()) { // a tile without its passes' runs: every item
+        for (std::size_t i = 0; i < n; ++i) place(i);
+        return;
+    }
+    // the items of the passes asked for alone, each pass's run (its kinds' parts left out, the others take no rank)
+    for (std::size_t p = 0; p < tile.item_runs.size(); ++p) {
+        if (!Residency::among(passes, p)) continue;
+        const auto [first, count] = tile.item_runs[p];
+        for (std::size_t i = first; i < std::size_t{first} + count && i < n; ++i) place(i);
     }
 }
 
@@ -613,14 +624,16 @@ void World::release_idle(double seconds, std::uint64_t frame) {
 }
 
 void World::take_packs() {
-    // The packs' own stage T: asked once per pack drawn, taken as it is built; what was built of a pack the store no
-    // longer holds (let go of, or added again) goes when the packs drawn change or a pack arrives.
-    pack_stage_->want(active_);
-    if (coarser_) pack_stage_->want(coarser_);
+    // The packs' own stage T: asked once per pack drawn for the passes the parts drawn want, and again for those a part
+    // come back wants, taken as it is built; what was built of a pack the store no longer holds (let go of, or added
+    // again) goes when the packs drawn change or a pack arrives.
+    const std::uint64_t wanted = residency_->wanted();
+    pack_stage_->want(active_, wanted);
+    if (coarser_) pack_stage_->want(coarser_, wanted);
     for (const std::shared_ptr<const tiles::StorePack>& n : neighbours_) {
-        if (n) pack_stage_->want(n);
+        if (n) pack_stage_->want(n, wanted);
     }
-    if (incoming_) pack_stage_->want(incoming_);
+    if (incoming_) pack_stage_->want(incoming_, wanted);
     pack_stage_->take(arrived_);
     if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbours_ == last_neighbours_) {
         return;
@@ -628,7 +641,24 @@ void World::take_packs() {
     last_active_ = active_;
     last_coarser_ = coarser_;
     last_neighbours_ = neighbours_;
-    for (std::shared_ptr<const ResidentPack>& b : arrived_) packs_.push_back(std::move(b));
+    for (std::shared_ptr<const ResidentPack>& b : arrived_) {
+        // passes built onto a pack built before (their parts come back): one ResidentPack of the pack holds them all,
+        // the others' data as it was
+        const auto before = std::ranges::find_if(
+            packs_, [&b](const std::shared_ptr<const ResidentPack>& p) { return p->source == b->source; });
+        if (before == packs_.end()) {
+            packs_.push_back(std::move(b));
+            continue;
+        }
+        auto joined = std::make_shared<ResidentPack>(**before);
+        joined->passes.resize(std::max(joined->passes.size(), b->passes.size()));
+        for (std::size_t p = 0; p < b->passes.size(); ++p) {
+            if (Residency::among(b->built, p)) joined->passes[p] = b->passes[p];
+        }
+        joined->built |= b->built;
+        joined->build_ms += b->build_ms;
+        *before = std::move(joined);
+    }
     arrived_.clear();
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
     std::erase_if(packs_, [&open](const std::shared_ptr<const ResidentPack>& p) {
@@ -689,6 +719,9 @@ void World::update(const frame::FrameState& state) {
                                        state.camera.pitch, state.camera.distance};
     const bool moved = last_camera_ != camera;
     last_camera_ = camera;
+    // the passes the frame's parts want built (ENGINE.md's parts: no stage T for a pass whose parts are all left out)
+    residency_->set_left_out(state.camera.parts);
+    const std::uint64_t wanted = residency_->wanted();
     // what the last frame's make_room let go of, before any cover of this frame can draw it
     for (const auto& [key, pack] : going_) {
         if (const ResidentTile* t = residency_->find(key, pack)) {
@@ -728,21 +761,26 @@ void World::update(const frame::FrameState& state) {
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
-    // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
-    // or the mask changed, else the tiles just taken.
+    // The items in the frame drawn, the coarser pack's masked, those of the passes a part drawn wants alone (a kind
+    // whose parts are all left out takes no rank): every resident tile's when the frame, the coarser pack or the mask
+    // changed, else the tiles just taken, and every resident tile's of the passes come back since the last placing.
     choose_coarser();
     choose_neighbours(state.camera);
     take_packs();
     take_neighbour_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
     if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
-        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t);
+        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t, wanted);
         placed_frame_ = frames_.current();
         placed_coarser_ = coarser_id;
         placed_mask_ = mask_;
     } else {
-        for (const std::shared_ptr<const ResidentTile>& t : taken_) place_items(*t);
+        if (const std::uint64_t back = wanted & ~placed_passes_; back != 0U) {
+            for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t, back);
+        }
+        for (const std::shared_ptr<const ResidentTile>& t : taken_) place_items(*t, wanted);
     }
+    placed_passes_ = wanted;
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
     const auto plan_budget =
@@ -842,6 +880,23 @@ void World::update(const frame::FrameState& state) {
         }
     }
     make_room();
+    // The tiles drawn and those kept under them that lack a pass a part come back wants: built again for those passes
+    // alone, onto the tile, which is drawn as it is until they are taken (Residency's top-ups), after every tile in
+    // view the frame asks for, the drawn ones in their lane, those kept under in the ancestors'.
+    const std::span<const CoverTile> laid = cover_.with_under();
+    const std::size_t drawn_count = cover_.tiles().size();
+    for (std::size_t i = 0; i < laid.size(); ++i) {
+        const CoverTile& t = laid[i];
+        if (t.drawn == nullptr || !residency_->lacks(*t.drawn)) continue;
+        const ResidentTile& r = *t.drawn;
+        if (std::ranges::any_of(asked_, [&r](const Request& w) { return w.key == r.key && w.pack == r.pack; }))
+            continue;
+        asked_.push_back({.key = r.key,
+                          .pack = r.pack,
+                          .lane = i < drawn_count ? Lane::visible : Lane::ancestor,
+                          .priority = t.share - 2.0,
+                          .level = r.level});
+    }
     residency_->want(asked_);
     // the tiles drawn, those kept under the places in view (each place's coarsest), and a waiting switch's resident
     // ones, are not idle
@@ -879,11 +934,12 @@ void World::make_room() {
     const std::vector<Residency::Wait> waits = residency_->waits(mine);
     // A tile resident already takes no more room: the cover asks for a place's coarser level while the place's own
     // comes, resident or not (Residency::want passes over it). Counted, the Westerkerk's L12 under its places' L13
-    // took the room first from 12 km and held back every other tile, while the residency built nothing.
+    // took the room first from 12 km and held back every other tile, while the residency built nothing. But for the
+    // passes a part come back wants: a build of them onto it that found no room waits for the bytes it asked for.
     std::vector<bool> resident(own, false);
     for (std::size_t i = 0; i < own; ++i) resident[i] = residency_->find(mine[i].key, mine[i].pack) != nullptr;
     const auto left = [&](std::size_t i) -> std::uint64_t {
-        if (resident[i]) return 0;
+        if (resident[i]) return waits[i].need;
         return std::max(mine[i].bytes > waits[i].placed ? mine[i].bytes - waits[i].placed : 0, waits[i].need);
     };
     // Each in turn while the heaps' free bytes hold what the cover expects of it and of those before it (less what a
@@ -1158,6 +1214,13 @@ std::string World::tiles_line() const {
     line += std::format(" governor bias {:.2f} most {:.2f} triangles {:.2f} of {:.2f}", frame_bias(), most_bias(),
                         static_cast<double>(planned_triangles_) / 1.0e6,
                         static_cast<double>(options_.triangle_budget) / 1.0e6);
+    // the sun (off while it or every part that reads its bits is left out: ENGINE.md's parts): its scenes and runs so
+    // far with their own milliseconds, the tiles their buckets computed, and the texels the last frame wrote
+    if (sun_) {
+        const SunStats s = sun_->stats();
+        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} texels {}", s.on ? "on" : "off",
+                            s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.texels);
+    }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;
         for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));

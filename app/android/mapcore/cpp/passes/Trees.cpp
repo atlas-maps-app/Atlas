@@ -329,8 +329,10 @@ void Trees::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("tree");
 
 void Trees::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves its trees out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::trees));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Trees::camera_parts() const noexcept { return style::camera_part::trees; }
 
 gpu::Result<void> Trees::build(scene::TileBuild& b) const {
     const geometry::TileTrees g =

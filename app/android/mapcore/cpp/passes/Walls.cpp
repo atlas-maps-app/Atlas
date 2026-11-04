@@ -100,8 +100,10 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
                                          reach(part::kit_details, corner_boards_reach(focal))};
     selectors.set_details(kind_, details);
     // every part of the buildings left out: their items take no rank
-    selectors.leave_out(kind_, (left_out_ & part::buildings) == part::buildings);
+    selectors.leave_out(kind_, !serves(left_out_));
 }
+
+std::uint64_t Buildings::camera_parts() const noexcept { return style::camera_part::buildings; }
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     const tiles::Style& style = b.style();

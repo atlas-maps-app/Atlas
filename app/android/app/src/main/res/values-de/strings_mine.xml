@@ -392,6 +392,7 @@
     <string name="mine_part_building_shadows">Gebäudeschatten</string>
     <string name="mine_part_shadow_blur">Weiche Schatten</string>
     <string name="mine_part_park_shadows">Parkschatten</string>
+    <string name="mine_part_sun">Sonnenlicht</string>
     <string name="mine_part_reflections">Spiegelungen</string>
     <string name="mine_part_ripple">Kräuseln</string>
     <string name="mine_part_glitter">Sonnenglitzern</string>

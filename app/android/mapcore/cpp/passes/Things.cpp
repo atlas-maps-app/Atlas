@@ -298,8 +298,10 @@ void Things::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("thing"
 
 void Things::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves its street furniture out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::furniture));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Things::camera_parts() const noexcept { return style::camera_part::furniture; }
 
 gpu::Result<void> Things::build(scene::TileBuild& b) const {
     const geometry::TileThings g = geometry::build_things({.tile = &b.tile(), .head = &b.head(), .kind = kind_});

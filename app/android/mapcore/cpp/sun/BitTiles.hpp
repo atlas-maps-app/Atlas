@@ -97,6 +97,8 @@ public:
 
     /// Forgets a tile (it left the scene).
     void forget(tiles::TileKey key);
+    /// Forgets every tile (the sun left out: ENGINE.md's parts), so that each tile's next bits come as its first.
+    void clear();
 
     /// Called on the publishing thread after each publication (a run's bits are one), outside the lock (null:
     /// nothing): cheap and never blocking, such as the frame loop's wake (K7's scene/SunGlobals.hpp).

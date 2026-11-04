@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -212,7 +213,7 @@ std::vector<TileJob> nearest_first(const Scene& scene, const tiles::Frame& frame
 }
 
 void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
-         const std::function<void(std::uint32_t tile, TileBits bits)>& done) {
+         const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop) {
     struct Piece {
         std::uint32_t job;
         std::uint32_t from;
@@ -243,6 +244,7 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
     std::atomic<std::size_t> next{0};
     const auto work = [&] {
         for (;;) {
+            if (stop != nullptr && stop->load(std::memory_order_relaxed)) return;
             const std::size_t p = next.fetch_add(1, std::memory_order_relaxed);
             if (p >= pieces.size()) return;
             const Piece& pc = pieces[p];
@@ -588,6 +590,22 @@ void Worker::wait_idle() {
     idle_.wait(lock, [&] { return !busy_ && !next_; });
 }
 
+void Worker::cancel() {
+    const std::lock_guard lock(mutex_);
+    next_.reset();
+    cancelled_.store(true, std::memory_order_relaxed);
+}
+
+double Worker::run_ms() const {
+    const std::lock_guard lock(mutex_);
+    return run_ms_;
+}
+
+std::uint64_t Worker::run_tiles() const {
+    const std::lock_guard lock(mutex_);
+    return run_tiles_;
+}
+
 std::uint64_t Worker::runs() const {
     const std::lock_guard lock(mutex_);
     return runs_;
@@ -611,6 +629,8 @@ void Worker::loop(const std::stop_token& stop) {
         if (!taken) continue;
         Request r = std::move(*taken);
         busy_ = true;
+        cancelled_.store(false, std::memory_order_relaxed);
+        const auto started = std::chrono::steady_clock::now();
         lock.unlock();
         std::uint64_t from_disk = 0;
         std::vector<TileJob> jobs;
@@ -636,22 +656,30 @@ void Worker::loop(const std::stop_token& stop) {
             }
             jobs.push_back(j);
         }
-        run(*r.scene, r.bucket, jobs, r.threads, [&](std::uint32_t tile, TileBits bits) {
-            const SunTile& t = r.scene->tiles()[tile];
-            if (r.bucket.named && cache_ != nullptr) {
-                if (const tiles::Sha256Digest* chunk = r.scene->chunk(tile)) (void)cache_->store(*chunk, t.level, bits);
-            }
-            bits.quays = t.quays;
-            bits.reflections = t.reflections;
-            bits.context = r.scene->context(tile);
-            const std::scoped_lock held(made_mutex);
-            made.emplace_back(t.key, std::move(bits));
-        });
-        bits_.publish(std::move(made), clock_());
+        run(
+            *r.scene, r.bucket, jobs, r.threads,
+            [&](std::uint32_t tile, TileBits bits) {
+                const SunTile& t = r.scene->tiles()[tile];
+                if (r.bucket.named && cache_ != nullptr) {
+                    if (const tiles::Sha256Digest* chunk = r.scene->chunk(tile))
+                        (void)cache_->store(*chunk, t.level, bits);
+                }
+                bits.quays = t.quays;
+                bits.reflections = t.reflections;
+                bits.context = r.scene->context(tile);
+                const std::scoped_lock held(made_mutex);
+                made.emplace_back(t.key, std::move(bits));
+            },
+            &cancelled_);
+        const std::size_t computed = made.size() - from_disk;
         lock.lock();
+        // published under the lock, so that once cancel has returned no bits of the run it stopped come
+        if (!cancelled_.load(std::memory_order_relaxed)) bits_.publish(std::move(made), clock_());
         busy_ = false;
         ++runs_;
         cached_ += from_disk;
+        run_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        run_tiles_ += computed;
         idle_.notify_all();
     }
 }

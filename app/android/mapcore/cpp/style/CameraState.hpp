@@ -76,7 +76,10 @@ inline constexpr std::uint32_t known = 0x3FU;
 /// numbers): the map's own layers (MapLayer.TREES and SHADOWS off) and the switches of a debug build's Look settings,
 /// so the map's panel shows on the phone what each part costs (ENGINE.md, "On the user's phone first"). A part left
 /// out is not decided, laid or recorded: no draw, dispatch or offscreen pass of it and none of its stage F, and an item
-/// kind whose parts are all left out takes no rank. Everything else is decided as before.
+/// kind whose parts are all left out takes no rank and is not placed. A pass's stage T whose parts are all left out
+/// (frame::Pass::camera_parts) is not built for the tiles that come, and is built for the resident ones drawn as one of
+/// them comes back (scene::Residency's top-ups); the sun's works only while it and a part reading its bits are drawn
+/// (sun_works). Everything else is decided as before.
 namespace camera_part {
 // The ground (passes/Ground.hpp).
 /// The land cover, the areas, the roads (with a big road's lines and a runway's marks, which go with their pavement)
@@ -200,8 +203,13 @@ inline constexpr std::uint64_t cornices = 1ULL << 49U;
 inline constexpr std::uint64_t quay_waterlines = 1ULL << 50U;
 /// The light stone top along a quay wall at the street's level.
 inline constexpr std::uint64_t quay_tops = 1ULL << 51U;
+// The sun (scene/SunGlobals.hpp), a switch of its own (the user, 4 November: "Toggle for the sun").
+/// The sun's light and shade on the faces and crowns: its grid, march and bits (K8). Left out, no lane of the sun
+/// works (no scene, no bucket, no texels) and every tile is drawn without bits, as a tile before its first bits is
+/// (scene/SunGlobals.hpp); drawn again, its bits come as a new tile's do.
+inline constexpr std::uint64_t sun = 1ULL << 52U;
 /// Every part version 3 knows; a state with another is refused.
-inline constexpr std::uint64_t known = (1ULL << 52U) - 1U;
+inline constexpr std::uint64_t known = (1ULL << 53U) - 1U;
 
 /// The facades' detail: every part of a facade wall (ENGINE.md step 4, the facades), its doors and numbers too.
 inline constexpr std::uint64_t facade_detail = windows | window_depth | shop_glazing | plinths | cornices |
@@ -218,6 +226,14 @@ inline constexpr std::uint64_t water_light = reflections | ripple | glitter | ri
 /// a church's own windows, the walls' material faces, the hoist beams and a kit's details.
 inline constexpr std::uint64_t guessed = windows | window_depth | shop_glazing | plinths | cornices | church_windows |
                                          material_faces | hoist_beams | kit_details;
+/// The parts that read the sun's bits (CoverTile::sun and set 1's sun_bits): the buildings' faces and windows, the
+/// trees' crowns, the reflections and the quay walls' lit faces.
+inline constexpr std::uint64_t sun_readers = buildings | trees | reflections | quays | quay_waterlines | quay_tops;
+/// Whether the sun works for a frame leaving out `left_out` (CameraState::parts): neither the sun itself nor every
+/// part that reads its bits is left out.
+[[nodiscard]] constexpr bool sun_works(std::uint64_t left_out) noexcept {
+    return (left_out & sun) == 0U && (sun_readers & ~left_out) != 0U;
+}
 } // namespace camera_part
 
 /// Whose rules draw the frame (D2): the active pack's profile as its rhead names it (tiles::Profile, Appendix A) plus

@@ -232,6 +232,14 @@ public:
         (void)build;
         return {};
     }
+    /// The parts of the picture (style::camera_part) what its stage T makes of a tile serves: while every one of them
+    /// is left out, the residency builds none of it for the tiles that come (no stage T, heap bytes or items), builds
+    /// it for the resident tiles drawn as one of them comes back (scene::Residency's top-ups), and its item kinds take
+    /// no rank and are not placed (serves). Every part by default: a pass that names none is always built (the
+    /// ground, which the shadows, the reflections and the quays read too).
+    [[nodiscard]] virtual std::uint64_t camera_parts() const noexcept { return ~std::uint64_t{0}; }
+    /// Whether its stage T serves a part drawn while `left_out` (CameraState::parts) is left out.
+    [[nodiscard]] bool serves(std::uint64_t left_out) const noexcept { return (camera_parts() & ~left_out) != 0U; }
     /// The pack-level stage T of the pass: what it derives from a whole pack rather than a tile (D13's canal names:
     /// each name's first way in source order across the pack's label layer), once per pack, on a worker, when the
     /// pack becomes the active or the coarser one (scene/Packs.hpp); kept with the pack (scene::PackBuild::keep) and

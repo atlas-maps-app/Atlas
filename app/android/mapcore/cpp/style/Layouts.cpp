@@ -247,6 +247,7 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.PART_CORNICES", .value = part(camera_part::cornices)},
     Constant{.name = "CameraWriter.PART_QUAY_WATERLINES", .value = part(camera_part::quay_waterlines)},
     Constant{.name = "CameraWriter.PART_QUAY_TOPS", .value = part(camera_part::quay_tops)},
+    Constant{.name = "CameraWriter.PART_SUN", .value = part(camera_part::sun)},
     Constant{.name = "CameraWriter.PARTS", .value = part(camera_part::known + 1U)},
     Constant{.name = "CameraWriter.PROFILE_NONE", .value = profile(Profile::none)},
     Constant{.name = "CameraWriter.PROFILE_LIVING", .value = profile(Profile::living)},
@@ -426,7 +427,8 @@ constexpr std::array part_bits{camera_part::ground,
                                camera_part::plinths,
                                camera_part::cornices,
                                camera_part::quay_waterlines,
-                               camera_part::quay_tops};
+                               camera_part::quay_tops,
+                               camera_part::sun};
 constexpr bool parts_in_order() noexcept {
     std::uint64_t all = 0;
     for (std::size_t i = 0; i < part_bits.size(); ++i) {

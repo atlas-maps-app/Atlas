@@ -127,6 +127,7 @@ class LayoutTest {
         put("CameraWriter.PART_CORNICES", CameraWriter.PART_CORNICES)
         put("CameraWriter.PART_QUAY_WATERLINES", CameraWriter.PART_QUAY_WATERLINES)
         put("CameraWriter.PART_QUAY_TOPS", CameraWriter.PART_QUAY_TOPS)
+        put("CameraWriter.PART_SUN", CameraWriter.PART_SUN)
         put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)

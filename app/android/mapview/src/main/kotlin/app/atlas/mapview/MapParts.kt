@@ -6,14 +6,17 @@ import app.atlas.mapcore.state.CameraWriter
  * A part of the map's picture the app can leave out: every layer and effect the core draws (the camera state's parts,
  * CameraWriter.PART_*; style::camera_part in the core), each a switch of its own in a debug build's Look settings (Mine →
  * Map look → Engine parts), so the map's panel shows on the phone what each one costs (ENGINE.md, "On the user's phone
- * first"). A part left out costs nothing: the core decides, lays and draws none of it. Each is listed in one [group]
- * (its home), and [drawn] is its default. The clouds' shadows and the water's light were left out from alpha 19 (the
- * user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these need to be
- * worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows on the
- * ground) brought a moving frame with them to within about a millisecond and a half of one without them. The roofs'
- * edges and the plinths are left out by default (the user, 1 November: "Roof edges off by default for now", then of the
- * plinths: "And the thin dark band off by default"), and a quay wall's faces and a facade's flat detail each have their
- * own switch ("Every part gets its own switch").
+ * first"). A part left out costs nothing: the core builds, decides, lays and draws none of it (the user, 4 November:
+ * "disabling instead of hiding? This makes troubleshooting easier too"): a pass whose parts are all left out builds
+ * nothing of the tiles that come, and the sun works only while it and a part that reads its bits are drawn; a part
+ * switched on again is built for the tiles in view, which stay drawn as they are meanwhile. Each is listed in one
+ * [group] (its home), and [drawn] is its default. The clouds' shadows and the water's light were left out from alpha
+ * 19 (the user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these
+ * need to be worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows
+ * on the ground) brought a moving frame with them to within about a millisecond and a half of one without them. The
+ * roofs' edges and the plinths are left out by default (the user, 1 November: "Roof edges off by default for now",
+ * then of the plinths: "And the thin dark band off by default"), and a quay wall's faces and a facade's flat detail
+ * each have their own switch ("Every part gets its own switch").
  */
 enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = true) {
     GROUND(CameraWriter.PART_GROUND, MapPartGroup.GROUND),
@@ -36,6 +39,13 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     /** The soft shadows' blur: without it the buildings' shadows are drawn sharp, with no mask or blur. */
     SHADOW_BLUR(CameraWriter.PART_SHADOW_BLUR, MapPartGroup.SHADOWS),
     PARK_SHADOWS(CameraWriter.PART_PARK_SHADOWS, MapPartGroup.SHADOWS),
+
+    /**
+     * The sun's light and shade on the buildings' faces and the trees' crowns: its grid, march and bits (the user, 4
+     * November: "Toggle for the sun"). Without it no sun works at all, and the faces and crowns are drawn as before
+     * their bits come.
+     */
+    SUN(CameraWriter.PART_SUN, MapPartGroup.SHADOWS),
     CLOUD_SHADOWS(CameraWriter.PART_CLOUD_SHADOWS, MapPartGroup.WEATHER),
     REFLECTIONS(CameraWriter.PART_REFLECTIONS, MapPartGroup.WATER_LIGHT),
     RIPPLE(CameraWriter.PART_RIPPLE, MapPartGroup.WATER_LIGHT),

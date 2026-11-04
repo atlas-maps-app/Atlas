@@ -1,11 +1,13 @@
 // The packs' own stage T (plan-vector D13's canal names; K7's hook): what a pass derives from a whole pack rather than
 // from a tile, such as each canal name's first way in source order across the pack's label layer, which a tile's own
 // records cannot tell. When a pack becomes the active one, the coarser one or a neighbour (scene/World.hpp), a thread
-// of the world's, at background priority, runs every pass's build_pack over it once (frame::Pass::build_pack, reading
-// its tiles through PackBuild::tiles) and publishes what each kept (PackBuild::keep) as the pack's ResidentPack; the
-// render thread takes it between frames and the passes read it in frame::FrameState (active_pack, coarser_pack,
-// neighbour_packs), like a tile's PassTile::cpu: made on the worker, const once published, freed when the world lets
-// the pack go.
+// of the world's, at background priority, runs the build_pack of every pass a part drawn wants over it once
+// (frame::Pass::build_pack, reading its tiles through PackBuild::tiles; a pass whose parts are all left out builds
+// nothing, as for the tiles: Residency::wanted) and publishes what each kept (PackBuild::keep) as the pack's
+// ResidentPack; a pass wanted later is built onto it as its part comes back, and published with the rest as the pack's
+// next ResidentPack (World keeps one for each pack). The render thread takes it between frames and the passes read it
+// in frame::FrameState (active_pack, coarser_pack, neighbour_packs), like a tile's PassTile::cpu: made on the worker,
+// const once published, freed when the world lets the pack go.
 #pragma once
 
 #include "frame/Pass.hpp"
@@ -44,6 +46,9 @@ struct ResidentPack {
     std::shared_ptr<const tiles::StorePack>
         source; ///< the store's pack it was built from (a pack added again is another)
     std::vector<PassPack> passes;
+    /// The passes built, a bit each in the frame builder's order (bit p is passes[p]'s; Residency::among): those wanted
+    /// as it was asked for, and those built onto it since. A pass not built has an empty PassPack.
+    std::uint64_t built = 0;
     double build_ms = 0;
 };
 
@@ -90,9 +95,11 @@ public:
     PackStage(PackStage&&) = delete;
     PackStage& operator=(PackStage&&) = delete;
 
-    /// Asks for `pack`'s stage T (render thread): nothing when it is built, under way or asked for already. A pack
-    /// added to the store again is another pack, built again.
-    void want(const std::shared_ptr<const tiles::StorePack>& pack);
+    /// Asks for `pack`'s stage T of the passes `passes` (render thread; a bit each in the frame builder's order, as
+    /// Residency::wanted gives them): nothing for those built, under way or asked for already; those a pack built
+    /// before lacks are built alone and published as a ResidentPack of their own (World::take_packs joins it to the
+    /// pack's). A pack added to the store again is another pack, built again.
+    void want(const std::shared_ptr<const tiles::StorePack>& pack, std::uint64_t passes = ~std::uint64_t{0});
     /// The packs built since the last call (render thread).
     void take(std::vector<std::shared_ptr<const ResidentPack>>& out);
     /// Called on the stage's thread as each pack is published (cheap and never blocking: the frame loop's wake).
@@ -110,8 +117,18 @@ private:
     std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
-    std::vector<std::shared_ptr<const tiles::StorePack>> queue_;
-    std::vector<std::weak_ptr<const tiles::StorePack>> known_; ///< asked for, under way or built (while they are open)
+    /// A pack asked for, and the passes to build of it.
+    struct Job {
+        std::shared_ptr<const tiles::StorePack> pack;
+        std::uint64_t passes = 0;
+    };
+    /// A pack asked for, under way or built (while it is open), and the passes asked for of it.
+    struct Known {
+        std::weak_ptr<const tiles::StorePack> pack;
+        std::uint64_t passes = 0;
+    };
+    std::vector<Job> queue_;
+    std::vector<Known> known_;
     std::vector<std::shared_ptr<const ResidentPack>> published_;
     std::function<void()> published_callback_;
     bool busy_ = false;

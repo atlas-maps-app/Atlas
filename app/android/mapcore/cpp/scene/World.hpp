@@ -277,9 +277,9 @@ private:
     /// where they cannot.
     [[nodiscard]] bool piece_for(std::uint32_t bytes, HeapKind kind,
                                  std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins);
-    /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
-    /// coarser pack's inside the mask.
-    void place_items(const ResidentTile& tile);
+    /// A resident tile's items of the passes `passes` (a bit each in the registry's order) in the frame drawn
+    /// (converted from their pack's frame) and masked where they are the coarser pack's inside the mask.
+    void place_items(const ResidentTile& tile, std::uint64_t passes);
     /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
     void take_packs();
     /// The neighbours' stage T, as built so far (neighbour_packs).
@@ -347,6 +347,8 @@ private:
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;
     std::optional<tiles::GridBox> placed_mask_;
+    /// And the passes whose items were placed (those a part drawn wanted).
+    std::uint64_t placed_passes_ = 0;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;

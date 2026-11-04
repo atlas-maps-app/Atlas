@@ -60,6 +60,8 @@ double canal_names_radius(std::optional<double> view_radius, double dist, bool e
 
 GroundText::~GroundText() { GroundText::release(); }
 
+std::uint64_t GroundText::camera_parts() const noexcept { return style::camera_part::ground_text; }
+
 gpu::Result<void> GroundText::build(scene::TileBuild& b) const {
     auto kept = std::make_shared<CanalTile>();
     if (const tiles::Layer* labels = b.tile().layer(tiles::LayerId::label)) {

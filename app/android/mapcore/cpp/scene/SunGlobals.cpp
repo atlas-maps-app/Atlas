@@ -7,6 +7,7 @@
 #include "base/trace.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "scene/Cells.hpp"
+#include "style/CameraState.hpp"
 #include "tiles/Error.hpp"
 
 #include <algorithm>
@@ -85,6 +86,16 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         c.sun.reset();
         c.sun_base = no_sun;
         c.sun_weight = 1.0F;
+    }
+    // The sun left out, or every part that reads its bits (ENGINE.md's parts): no lane works, every tile is drawn
+    // without bits; drawn again, each pack drawn takes a lane as a new one does.
+    if (const bool on = style::camera_part::sun_works(state.camera.parts); on != on_.load()) {
+        on_.store(on);
+        if (!on) rest();
+    }
+    if (!on_.load()) {
+        last_texels_ = 0;
+        return;
     }
     if (!state.view) return;
     // The frame the view's eye is in: the active pack's, which the world draws in.
@@ -219,6 +230,36 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     buffer_.flush();
 }
 
+void SunGlobals::rest() {
+    // The builder's scene under way and its asking dropped (epoch_), every lane's request and scene let go of.
+    {
+        const std::scoped_lock lock(mutex_);
+        ++epoch_;
+        for (Lane& l : lanes_) {
+            l.next.reset();
+            l.scene.reset();
+        }
+    }
+    for (Lane& l : lanes_) {
+        l.worker->cancel(); // then no bits of its run come
+        l.bits.clear();
+        l.pack_id.clear();
+        l.role = LaneOf::neighbour;
+        l.fine = 0;
+        l.asked.clear();
+        l.wanted.clear();
+        l.levels = {};
+        l.held.clear();
+        l.others.clear();
+        l.asked_others.clear();
+        l.level = 0;
+        l.bucket = 0;
+        l.have_bucket = false;
+    }
+    others_from_ = {};
+    idle_.notify_all();
+}
+
 void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const LaneInputs& in,
                               const LaneLevels& levels, std::span<const CoverTile> drawn,
                               const std::optional<view::GroundFrame>& eye_frame) {
@@ -335,6 +376,7 @@ void SunGlobals::work(const std::stop_token& stop) {
     for (;;) {
         Lane* lane = nullptr;
         Build b;
+        std::uint64_t epoch = 0; // the sun's rests as it took the request
         {
             std::unique_lock lock(mutex_);
             const auto asked = [this] {
@@ -350,6 +392,7 @@ void SunGlobals::work(const std::stop_token& stop) {
             b = std::move(*lane->next);
             lane->next.reset();
             lane->building = true;
+            epoch = epoch_;
         }
         std::shared_ptr<const sun::Scene> scene;
         {
@@ -366,6 +409,7 @@ void SunGlobals::work(const std::stop_token& stop) {
             const std::scoped_lock lock(mutex_);
             if (scene) {
                 ++stats_.scenes;
+                stats_.scenes_ms += ms;
                 if (lane == &lanes_.at(active_lane_.load())) {
                     stats_.scene_ms = ms;
                     stats_.tiles = scene->tiles().size();
@@ -382,14 +426,25 @@ void SunGlobals::work(const std::stop_token& stop) {
             } else {
                 ++stats_.failed;
             }
-            lane->scene = scene;
-            lane->built = b.tiles;
-            lane->built_others = b.others;
-            lane->built_pack = b.pack->id;
+            if (epoch == epoch_) {
+                lane->scene = scene;
+                lane->built = b.tiles;
+                lane->built_others = b.others;
+                lane->built_pack = b.pack->id;
+            } else {
+                scene = nullptr; // the sun was left out meanwhile: the scene is dropped, nothing asked of it
+            }
         }
         if (scene) {
             const trace::Section traced("atlas sun test");
             ask(*lane, scene, b);
+            // left out while it asked: what it asked goes (rest's cancel may have come before it)
+            bool rested = false;
+            {
+                const std::scoped_lock lock(mutex_);
+                rested = epoch != epoch_;
+            }
+            if (rested) lane->worker->cancel();
         }
         {
             const std::scoped_lock lock(mutex_);
@@ -702,9 +757,12 @@ SunStats SunGlobals::stats() const {
     for (const Lane& l : lanes_) {
         s.runs += l.worker->runs();
         s.cached += l.worker->cached();
+        s.runs_ms += l.worker->run_ms();
+        s.run_tiles += l.worker->run_tiles();
     }
     s.texels = last_texels_;
     s.others_ms = others_ms_;
+    s.on = on_.load();
     return s;
 }
 

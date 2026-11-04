@@ -2,7 +2,9 @@
 // world's runs every pass's build_pack over it once, reading its tiles, and publishes what each pass kept as the pack's
 // ResidentPack; the frame's state carries it (FrameState::active_pack) from the frame that takes it on; a pack drawn
 // again is not built again, a pack added to the store again is another pack, built again, and what was built of a pack
-// goes with it from the store. On a synthetic render pack (tests/building/fixture.hpp's tile), so CI runs it.
+// goes with it from the store. A pass whose parts are all left out builds nothing of it, and is built onto it as one
+// of its parts comes back (ENGINE.md's parts). On a synthetic render pack (tests/building/fixture.hpp's tile), so CI
+// runs it.
 #include "frame/FrameBuilder.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "scene/Packs.hpp"
@@ -31,10 +33,13 @@ struct PackSeen {
     std::uint64_t features = 0;
 };
 
-/// A pass whose pack-level stage T reads every tile of a pack's finest level once and keeps what it saw.
+/// A pass whose pack-level stage T reads every tile of a pack's finest level once and keeps what it saw; of the camera
+/// parts `parts` (every one when none is given: frame::Pass's).
 class PackProbe final : public frame::Pass {
 public:
+    explicit PackProbe(std::uint64_t parts = ~std::uint64_t{0}) : parts_(parts) {}
     [[nodiscard]] std::string_view name() const noexcept override { return "pack probe"; }
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override { return parts_; }
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return {}; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
         (void)c;
@@ -58,6 +63,9 @@ public:
         return {};
     }
     mutable std::atomic<int> builds{0};
+
+private:
+    std::uint64_t parts_;
 };
 
 /// A camera over the synthetic tile's buildings, at rest, on a 1080 × 2400 px frame.
@@ -168,6 +176,89 @@ TEST_CASE("a pack's own stage T: built once when it is drawn, published to the f
     CHECK(w.active() == nullptr);
     CHECK(w.active_pack() == nullptr);
     CHECK(kept_again.expired());
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("a pack's own stage T builds no pass whose parts are all left out, and builds it onto the pack as one of its "
+          "parts comes back, the others' as they were (ENGINE.md's parts)") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the probe of every part, then one of the names on the ground's alone (the canal names' pass, GroundText's)
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    auto every = std::make_unique<PackProbe>();
+    auto names = std::make_unique<PackProbe>(style::camera_part::ground_text);
+    const PackProbe* all = every.get();
+    const PackProbe* text = names.get();
+    passes.push_back(std::move(every));
+    passes.push_back(std::move(names));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    frame::FrameBuilder& fb = **builder;
+    std::atomic<double> now{0};
+    auto world =
+        scene::World::create(*session->device, fb.passes(),
+                             {.workers = 2, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const std::string path =
+        test::building::write_pack(test::building::tile(), test::building::tile_features, "packs-parts-test");
+    auto added = w.store().add({.id = "synthetic", .kind = tiles::PackKind::bundled, .path = path});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    style::CameraState camera = over_the_tile();
+    std::uint64_t n = 0;
+    const auto frames = [&](std::uint64_t parts, int count) {
+        camera.parts = parts;
+        fb.set_inputs({.camera = camera, .scene = &w});
+        for (int k = 0; k < count; ++k) {
+            ++n;
+            now = static_cast<double>(n) * 0.016;
+            ATLAS_REQUIRE(fb.derive(n, 0, nullptr));
+            w.update(fb.state());
+            w.residency().wait_idle();
+            w.pack_stage().wait_idle();
+        }
+    };
+    // The names left out: the pack's stage T is the first probe's alone, the second's never run.
+    frames(style::camera_part::ground_text, 4);
+    const scene::ResidentPack* built = w.active_pack();
+    ATLAS_REQUIRE(built != nullptr, "the pack's stage T was published and taken");
+    REQUIRE(built->passes.size() == 2);
+    CHECK(built->built == 0b01U);
+    CHECK(all->builds.load() == 1);
+    CHECK(text->builds.load() == 0);
+    CHECK(built->passes[0].cpu_as<PackSeen>() != nullptr);
+    CHECK(built->passes[1].cpu == nullptr);
+    CHECK(built->passes[1].cpu_bytes == 0);
+    const std::shared_ptr<const void> first = built->passes[0].cpu;
+    // Drawn again: the second probe is built onto the pack alone, and published with the first's data as it was (the
+    // same object, not built again) in the pack's one ResidentPack.
+    frames(0, 4);
+    const scene::ResidentPack* joined = w.active_pack();
+    ATLAS_REQUIRE(joined != nullptr);
+    CHECK(joined->built == 0b11U);
+    CHECK(all->builds.load() == 1);
+    CHECK(text->builds.load() == 1);
+    CHECK(joined->passes[0].cpu == first);
+    const auto* seen = joined->passes[1].cpu_as<PackSeen>();
+    ATLAS_REQUIRE(seen != nullptr, "the names' probe kept what it saw of the pack");
+    CHECK(seen->id == "synthetic");
+    CHECK(seen->tiles == 1);
+    CHECK(seen->features == test::building::tile_features);
+    CHECK(joined->source.get() == w.active());
+    // the frame builder's own stage F hands the joined pack to the passes, as it emits a frame
+    twin::Stream stream;
+    fb.emit(stream, ++n);
+    CHECK(fb.state().active_pack == joined);
+    // Left out and drawn again: nothing is built again; what was built stays while the pack does.
+    frames(style::camera_part::ground_text, 3);
+    frames(0, 3);
+    CHECK(all->builds.load() == 1);
+    CHECK(text->builds.load() == 1);
+    CHECK(w.active_pack() == joined);
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);

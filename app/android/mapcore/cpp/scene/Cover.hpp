@@ -15,7 +15,8 @@
 //     reach (the near view as before the levels), then nearest first each other place the level its distance asks for
 //     where its tile's bytes fit what is left, else the next coarser that fits; a tile's
 //     bytes are its heap ranges' while resident, as they were when it was resident before, else its chunk's raw bytes
-//     times what its level's resident tiles take per raw byte (every level's before any of its own was resident). A
+//     times what its level's resident tiles take per raw byte (every level's before any of its own was resident),
+//     every pass's whatever the parts drawn (a pass not built of a tile by its share, Cover::estimate). A
 //     tile no place asks for is not drawn once the tile planned there is, and the world lets it go; so the near tiles
 //     are never starved by far ones drawn in their stead. Each place's coarsest tile is kept resident under it while it
 //     is in view (kept), so a finer tile drawn in its stead never holds the room the coarser ones wait for.
@@ -271,16 +272,26 @@ private:
     /// `above` has a tile of its finest level), each with the level its distance asks for.
     void walk(const Drawn& drawn, const view::Frames& frames, const Frustum& frustum, const CoverInputs& in,
               const std::optional<tiles::GridBox>& mask, std::span<const tiles::StorePack* const> above);
-    /// What the resident tiles of the packs drawn take: each one's bytes remembered, and per zoom the heaps' bytes per
-    /// raw byte of their chunks (ratio_, any_).
+    /// What the resident tiles of the packs drawn take: each one's bytes and triangles remembered with the passes built
+    /// of it, and per zoom and pass the heaps' bytes and triangles per raw byte of their chunks of the tiles built with
+    /// it (shares_, any_).
     void measure(const Residency& residency);
-    /// The heaps' bytes tile `k` of pack `p` takes: its ranges' while resident, as they were when it was resident
-    /// before, else its chunk's raw bytes times its level's ratio (any level's before one of its own was resident).
+    /// The heaps' bytes tile `k` of pack `p` takes with every pass, whatever the parts drawn (so that the plan is the
+    /// same with a part left out as with it drawn, and comes back without a tile planned in the room its passes then
+    /// take): those built of it, its ranges' while resident, as they were when it was resident before; the others (a
+    /// tile not resident before: every pass) its chunk's raw bytes times their shares at its level (any level's before
+    /// one of its own was resident with it); a pass no tile was built with yet (its part left out since the world
+    /// began) nothing, until one is. Before any tile was measured: its raw bytes times first_ratio.
     [[nodiscard]] std::uint64_t estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
     /// The levels within the budget (Spot::plan).
     void plan(const CoverInputs& in, const Residency& residency);
-    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it), and the places' sum of them.
+    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it, every pass's as `estimate`'s bytes), and
+    /// the places' sum of them.
     [[nodiscard]] double estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
+    /// What tile `k` of pack `p` holds of every pass, the heaps' bytes or the triangles, as estimate and
+    /// estimate_triangles take it.
+    [[nodiscard]] double every_pass(const Drawn& p, const tiles::TileKey& k, const Residency& residency,
+                                    bool triangles) const;
     void count_triangles(const Residency& residency);
     /// Pack `p`'s places drawn at their planned levels, and what they lack asked for.
     void emit(std::size_t p, const view::View& view, const view::Frames& frames, const Frustum& frustum,
@@ -356,16 +367,30 @@ private:
     std::vector<std::uint32_t> standing_;        // the stand-ins' handles, as stand_ins_ (sort_out)
     std::vector<std::uint32_t> backing_;         // the stand-ins' backups' handles
     std::vector<std::uint32_t> planned_handles_; // the resident tiles the places in view plan
-    /// Per zoom, the heaps' bytes per raw byte of the resident tiles (0: none seen yet), the same over every zoom, and
-    /// the bytes of the tiles resident before (by tile_id), for when they are asked for again.
-    std::array<double, 32> ratio_{};
-    double any_ = first_ratio;
-    std::unordered_map<std::uint64_t, std::uint64_t> bytes_;
-    /// The same for the triangles the tiles draw (the governor's).
+    /// What one pass's ranges take of a tile per raw byte of its chunk: the heaps' bytes and the triangles drawn (the
+    /// governor's), learnt from the resident tiles built with it (`seen`: one was; a tile built without it, its part
+    /// left out, tells nothing of it).
+    struct Share {
+        double heap = 0;
+        double triangles = 0;
+        bool seen = false;
+    };
+    /// The passes reckoned apart (the registry's first; those past them are reckoned built with every tile).
+    static constexpr std::size_t share_passes = 16;
+    /// Per zoom and pass, the resident tiles' shares, and the same over every zoom (a zoom none of whose tiles was
+    /// resident with the pass yet).
+    std::array<std::array<Share, share_passes>, 32> shares_{};
+    std::array<Share, share_passes> any_{};
+    std::size_t passes_seen_ = 0; // the resident tiles' passes, as measured (0: none measured yet)
+    /// The tiles resident before (by tile_id), for when they are asked for again: the heaps' bytes and the triangles
+    /// their passes built held, and which passes those were.
+    struct Held {
+        std::uint64_t bytes = 0;
+        std::uint64_t triangles = 0;
+        std::uint64_t built = 0;
+    };
+    std::unordered_map<std::uint64_t, Held> held_;
     std::uint64_t triangles_ = 0;
-    std::array<double, 32> triangle_ratio_{};
-    double triangle_any_ = first_triangle_ratio;
-    std::unordered_map<std::uint64_t, std::uint64_t> triangles_of_;
 };
 
 } // namespace atlas::scene

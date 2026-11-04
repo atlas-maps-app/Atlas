@@ -77,6 +77,7 @@ Residency::Residency(const tiles::Store& store, Heaps& heaps, std::span<const st
       workers_count_(std::max(1U, workers.count)), share_(workers.share) {
     for (const std::unique_ptr<frame::Pass>& p : passes_)
         stage_t_names_.push_back(std::format("atlas stage T {}", p->name()));
+    wanted_.store(wanted_for(0), std::memory_order_relaxed);
     pass_ms_.assign(passes_.size(), 0.0);
     pass_runs_.assign(passes_.size(), 0);
     workers_.reserve(workers_count_);
@@ -89,8 +90,9 @@ Residency::~Residency() {
     stop(); // no worker touches the members below after this
     // What was published and never taken goes back to the heaps (the GPU never saw it), and what the passes of a tile
     // the stop left under way made.
-    for (const std::shared_ptr<ResidentTile>& t : published_) {
-        each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+    // (A top-up's tile holds the ranges of the passes it built alone: its resident tile's are that one's.)
+    for (const Published& p : published_) {
+        each_range(*p.tile, [this](const HeapRange& r) { heaps_.retire(r, 0); });
     }
     for (const std::unique_ptr<Underway>& u : building_) {
         if (u->out) each_range(*u->out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
@@ -137,9 +139,16 @@ void Residency::want(std::span<const Request> requests) {
         const auto piece_of = [&pieces](HeapKind kind) -> std::uint64_t& { return pieces.at(in_both(kind) ? 1 : 0); };
         std::vector<Job> queue;
         queue.reserve(requests.size());
+        const std::uint64_t wanted = wanted_.load(std::memory_order_relaxed);
         for (const Request& r : requests) {
             const std::uint64_t k = key_of(r.key, r.pack);
-            if (r.held || index_.contains(k)) continue; // held back; resident (the render thread's own map)
+            if (r.held) continue; // held back
+            // resident (the render thread's own map): asked for again only for the passes it lacks, built onto it
+            std::shared_ptr<const ResidentTile> base;
+            if (const auto at = index_.find(k); at != index_.end()) {
+                if ((wanted & ~resident_[at->second]->built) == 0U) continue;
+                base = resident_[at->second];
+            }
             bool again = false;
             std::optional<Failed> retried;
             if (const auto f = failed_.find(k); f != failed_.end()) {
@@ -173,7 +182,8 @@ void Residency::want(std::span<const Request> requests) {
                              .pack = std::string(r.pack),
                              .generation = generation_,
                              .again = again,
-                             .reserved = reserved});
+                             .reserved = reserved,
+                             .base = std::move(base)});
             queue.back().request.pack = queue.back().pack;
         }
         for (const Job& j : queue_) {
@@ -200,6 +210,20 @@ void Residency::want(std::span<const Request> requests) {
         if (hints_) tell(urgent_locked());
     }
     wake_.notify_all();
+}
+
+std::uint64_t Residency::wanted_for(std::uint64_t parts) const {
+    std::uint64_t wanted = 0;
+    for (std::size_t p = 0; p < passes_.size() && p < 64; ++p) {
+        if (passes_[p]->serves(parts)) wanted |= std::uint64_t{1} << p;
+    }
+    return wanted;
+}
+
+void Residency::set_left_out(std::uint64_t parts) {
+    if (parts == left_out_) return;
+    left_out_ = parts;
+    wanted_.store(wanted_for(parts), std::memory_order_relaxed);
 }
 
 bool Residency::urgent_locked() const noexcept {
@@ -339,10 +363,13 @@ void Residency::work(const std::stop_token& stop, unsigned worker) {
             start_ms_ += ms;
             ++start_runs_;
             if (ok) {
-                // its passes, the longest first (their mean so far; one not yet timed before them, in the registry's
-                // order), handed out from now on: this worker takes the first
-                u.order.resize(passes_.size());
-                for (std::uint32_t p = 0; p < u.order.size(); ++p) u.order[p] = p;
+                // its passes a part drawn wants (a top-up's: those its tile lacks), the longest first (their mean so
+                // far; one not yet timed before them, in the registry's order), handed out from now on: this worker
+                // takes the first
+                u.order.clear();
+                for (std::uint32_t p = 0; p < passes_.size(); ++p) {
+                    if (among(u.out->built, p)) u.order.push_back(p);
+                }
                 const auto mean = [this](std::uint32_t p) {
                     return pass_runs_[p] == 0 ? std::numeric_limits<double>::infinity()
                                               : pass_ms_[p] / static_cast<double>(pass_runs_[p]);
@@ -388,6 +415,18 @@ bool Residency::start(Underway& u, tiles::Zstd& zstd, tiles::TileDecoder& decode
     if (!u.scratch) u.scratch = std::make_unique<Scratch>();
     u.scratch->arena.reset();
     const Job& job = u.job;
+    // the passes to build: those a part drawn wants, and of a top-up's those its resident tile lacks (none left, the
+    // parts changed again since it was asked for: nothing to build, nothing decoded)
+    const std::uint64_t wanted = wanted_.load(std::memory_order_relaxed);
+    const std::uint64_t built = job.base ? wanted & ~job.base->built : wanted;
+    if (job.base && built == 0U) {
+        auto none = std::make_shared<ResidentTile>();
+        none->key = job.request.key;
+        none->handle = job.base->handle;
+        none->pack = job.pack;
+        u.out = std::move(none);
+        return true;
+    }
     u.pack = pack_of(store_, job.pack);
     if (!u.pack || !u.pack->pack.is_render() || u.pack->pack.head() == nullptr || u.pack->pack.style() == nullptr)
         return false;
@@ -406,7 +445,8 @@ bool Residency::start(Underway& u, tiles::Zstd& zstd, tiles::TileDecoder& decode
     const tiles::RenderHead& head = *u.pack->pack.head();
     auto out = std::make_shared<ResidentTile>();
     out->key = job.request.key;
-    out->handle = next_handle_.fetch_add(1, std::memory_order_relaxed);
+    // a top-up's under its resident tile's handle (its items' tile column), which it joins as it is taken
+    out->handle = job.base ? job.base->handle : next_handle_.fetch_add(1, std::memory_order_relaxed);
     out->pack = job.pack;
     out->kind = u.pack->kind;
     out->frame = view::frame_of(head.frame);
@@ -416,6 +456,7 @@ bool Residency::start(Underway& u, tiles::Zstd& zstd, tiles::TileDecoder& decode
     out->cells.assign(u.tile.cells.begin(), u.tile.cells.end());
     out->reach = chunk->reach;
     out->passes.resize(passes_.size());
+    out->built = built;
     u.out = std::move(out);
     u.items.resize(passes_.size());
     return true;
@@ -493,12 +534,16 @@ void Residency::publish(Underway& u) {
         // The tile's writes, visible to the GPU before the render thread can see the tile.
         heaps_.flush();
         out.published = clock_ ? clock_() : 0.0;
-        // The items in the passes' order, as one thread building them in turn adds them.
+        // The items in the passes' order, as one thread building them in turn adds them, each pass's run kept.
         std::size_t n = 0;
         for (const std::vector<ItemSpec>& items : u.items) n += items.size();
         out.items.reserve(n);
-        for (const std::vector<ItemSpec>& items : u.items)
-            out.items.insert(out.items.end(), items.begin(), items.end());
+        out.item_runs.assign(passes_.size(), {0U, 0U});
+        for (std::size_t p = 0; p < u.items.size(); ++p) {
+            out.item_runs[p] = {static_cast<std::uint32_t>(out.items.size()),
+                                static_cast<std::uint32_t>(u.items[p].size())};
+            out.items.insert(out.items.end(), u.items[p].begin(), u.items[p].end());
+        }
         for (ItemSpec& item : out.items) item.tile = out.handle;
         out.native_bytes = native_bytes_of(out);
     }
@@ -521,7 +566,7 @@ void Residency::publish(Underway& u) {
         }
         if (!u.failed) {
             underway_[u.key] = 3;
-            published_.push_back(std::move(u.out));
+            published_.push_back({.tile = std::move(u.out), .base = std::move(u.job.base)});
             ++stats_.built;
             stats_.build_ms += u.ms + ms;
             published = published_callback_;
@@ -542,15 +587,32 @@ void Residency::publish(Underway& u) {
 }
 
 void Residency::take_published(ItemTable& items, std::vector<std::shared_ptr<const ResidentTile>>* taken) {
-    std::vector<std::shared_ptr<ResidentTile>> ready;
+    std::vector<Published> ready;
     {
         const std::scoped_lock lock(mutex_);
         ready.swap(published_);
-        for (const std::shared_ptr<ResidentTile>& t : ready) underway_.erase(key_of(t->key, t->pack));
+        for (const Published& p : ready) underway_.erase(key_of(p.tile->key, p.tile->pack));
     }
-    for (std::shared_ptr<ResidentTile>& t : ready) {
+    std::uint64_t topped = 0;
+    for (Published& p : ready) {
+        std::shared_ptr<ResidentTile>& t = p.tile;
         const std::uint64_t k = key_of(t->key, t->pack);
-        if (index_.contains(k)) { // a second build of a tile already resident: the first stays
+        const auto at = index_.find(k);
+        if (p.base) {
+            // A top-up: its passes onto the tile it was built onto, where that one is still resident (else, or with
+            // nothing built, back to the heaps: the GPU never saw them)
+            if (at == index_.end() || resident_[at->second] != p.base || t->built == 0U) {
+                each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+                continue;
+            }
+            resident_[at->second] = joined(*p.base, *t, items);
+            native_.fetch_add(resident_[at->second]->native_bytes, std::memory_order_relaxed);
+            native_.fetch_sub(p.base->native_bytes, std::memory_order_relaxed);
+            if (taken != nullptr) taken->push_back(resident_[at->second]);
+            ++topped;
+            continue;
+        }
+        if (at != index_.end()) { // a second build of a tile already resident: the first stays
             each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
             continue;
         }
@@ -561,6 +623,30 @@ void Residency::take_published(ItemTable& items, std::vector<std::shared_ptr<con
         resident_.push_back(t);
         if (taken != nullptr) taken->push_back(t);
     }
+    if (topped > 0) {
+        const std::scoped_lock lock(mutex_);
+        stats_.topped += topped;
+    }
+}
+
+std::shared_ptr<const ResidentTile> Residency::joined(const ResidentTile& base, ResidentTile& top, ItemTable& items) {
+    // The resident tile as it is (its handle, cells, passes' ranges and data, items and their rows), with the top-up's
+    // passes in their places and their items after its own, each pass's run kept, given rows of their own.
+    auto t = std::make_shared<ResidentTile>(base);
+    t->item_runs.resize(passes_.size(), {0U, 0U});
+    for (std::size_t p = 0; p < passes_.size(); ++p) {
+        if (!among(top.built, p) || p >= top.passes.size()) continue;
+        t->passes[p] = std::move(top.passes[p]);
+        const auto [first, count] = p < top.item_runs.size() ? top.item_runs[p] : std::pair{0U, 0U};
+        t->item_runs[p] = {static_cast<std::uint32_t>(t->items.size()), count};
+        for (std::uint32_t i = first; i < first + count && i < top.items.size(); ++i) {
+            t->items.push_back(top.items[i]);
+            t->rows.push_back(items.add(top.items[i]));
+        }
+    }
+    t->built |= top.built;
+    t->native_bytes = native_bytes_of(*t);
+    return t;
 }
 
 void Residency::release(tiles::TileKey key, std::string_view pack, ItemTable& items, std::uint64_t frame) {
@@ -626,10 +712,10 @@ std::vector<Residency::Wait> Residency::waits(std::span<const Request> requests)
         for (const std::unique_ptr<Underway>& u : building_) {
             if (u->key == k) out[i].placed = u->asked.load(std::memory_order_relaxed);
         }
-        for (const std::shared_ptr<ResidentTile>& t : published_) {
-            if (key_of(t->key, t->pack) != k) continue;
+        for (const Published& p : published_) {
+            if (key_of(p.tile->key, p.tile->pack) != k) continue;
             std::uint64_t bytes = 0;
-            each_range(*t, [&bytes](const HeapRange& r) { bytes += r.size; });
+            each_range(*p.tile, [&bytes](const HeapRange& r) { bytes += r.size; });
             out[i].placed = bytes;
         }
     }

@@ -92,6 +92,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the street furniture (style::camera_part::furniture).
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
     /// emit's elements, keeping the records the GPU writes for them in its order into `records` and the translucent
     /// ones (the nearest first: the GPU's list holds them the other way round) into `sides` (the tests').

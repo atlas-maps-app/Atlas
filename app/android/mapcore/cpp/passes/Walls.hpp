@@ -125,6 +125,8 @@ public:
                                  const std::function<void()>& wake) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves every part of the buildings pass (style::camera_part::buildings).
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The phases: the drawing (objects); the roofs' thin edges, decided before the main pass (offscreen) and drawn

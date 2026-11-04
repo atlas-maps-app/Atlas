@@ -87,6 +87,8 @@ public:
     [[nodiscard]] bool fading() const noexcept override { return fading_; }
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the names on the ground (style::camera_part::ground_text).
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     /// The pack-level stage T: the pack's canal names whole (text::pack_canals; a frame cell's windows each a source of
     /// their own), which the renders' rule reads once the pack is drawn (FrameState::active_pack, neighbour_packs).
     [[nodiscard]] gpu::Result<void> build_pack(scene::PackBuild& build) const override;

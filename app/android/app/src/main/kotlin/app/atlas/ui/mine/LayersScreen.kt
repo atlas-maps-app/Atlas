@@ -394,6 +394,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.BUILDING_SHADOWS -> R.string.mine_part_building_shadows
     MapPart.SHADOW_BLUR -> R.string.mine_part_shadow_blur
     MapPart.PARK_SHADOWS -> R.string.mine_part_park_shadows
+    MapPart.SUN -> R.string.mine_part_sun
     MapPart.CLOUD_SHADOWS -> R.string.mine_layers_cloud_shadows
     MapPart.REFLECTIONS -> R.string.mine_part_reflections
     MapPart.RIPPLE -> R.string.mine_part_ripple

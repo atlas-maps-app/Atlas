@@ -60,6 +60,11 @@ void BitTiles::forget(tiles::TileKey key) {
     tiles_.erase(key.packed());
 }
 
+void BitTiles::clear() {
+    const std::lock_guard lock(mutex_);
+    tiles_.clear();
+}
+
 std::size_t BitTiles::size() const {
     const std::lock_guard lock(mutex_);
     return tiles_.size();

@@ -392,6 +392,7 @@
     <string name="mine_part_building_shadows">Gebouwschaduwen</string>
     <string name="mine_part_shadow_blur">Zachte schaduwen</string>
     <string name="mine_part_park_shadows">Parkschaduwen</string>
+    <string name="mine_part_sun">Zonlicht</string>
     <string name="mine_part_reflections">Weerspiegelingen</string>
     <string name="mine_part_ripple">Rimpeling</string>
     <string name="mine_part_glitter">Zonneglinstering</string>

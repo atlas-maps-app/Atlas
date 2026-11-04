@@ -141,7 +141,7 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
         {"version 2", [](CameraState& s) { s.version = 2; }, CameraError::version},
         {"an unknown flag", [](CameraState& s) { s.flags = 2048; }, CameraError::flags},
         {"version 2's trees flag", [](CameraState& s) { s.flags |= 64U; }, CameraError::flags},
-        {"an unknown part", [](CameraState& s) { s.parts = std::uint64_t{1} << 52U; }, CameraError::parts},
+        {"an unknown part", [](CameraState& s) { s.parts = std::uint64_t{1} << 53U; }, CameraError::parts},
         {"the parts' last bit", [](CameraState& s) { s.parts = std::uint64_t{1} << 63U; }, CameraError::parts},
         {"a heading without a location", [](CameraState& s) { s.flags |= flag::heading; }, CameraError::flags},
         {"a stale location", [](CameraState& s) { s.location.latitude = 52.37; }, CameraError::reserved},
@@ -260,8 +260,17 @@ TEST_CASE("a camera state carries the parts the map leaves out") {
     CHECK_FALSE(got->leaves_out(part::trees));
     CHECK_FALSE(got->leaves_out(part::water_light));
     // every part once, the groups within them
-    CHECK(std::popcount(part::known) == 52);
+    CHECK(std::popcount(part::known) == 53);
     CHECK((part::facade_detail & ~part::known) == 0U);
     CHECK((part::buildings & part::doors) == 0U);
     CHECK((part::water_light & part::water) == 0U);
+    // the sun works while it and a part that reads its bits are drawn (ENGINE.md's parts)
+    CHECK((part::sun_readers & ~part::known) == 0U);
+    CHECK((part::sun_readers & part::sun) == 0U);
+    CHECK(part::sun_works(0U));
+    CHECK_FALSE(part::sun_works(part::sun));
+    CHECK_FALSE(part::sun_works(part::sun_readers));
+    CHECK(part::sun_works(part::sun_readers & ~part::trees));
+    CHECK(part::sun_works(part::known & ~part::sun & ~part::quay_tops));
+    CHECK_FALSE(part::sun_works(part::known));
 }

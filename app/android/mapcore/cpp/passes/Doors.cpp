@@ -659,8 +659,10 @@ void Doors::select(const frame::FrameState& state, frame::Selectors& selectors) 
     const std::array<double, 2> details{frame::Selectors::never, frame::Selectors::never};
     selectors.set_details(kind_, details);
     // the doors left out of the map: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::doors));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Doors::camera_parts() const noexcept { return style::camera_part::doors; }
 
 gpu::Result<void> Doors::build(scene::TileBuild& b) const {
     geometry::TileDoors g = geometry::build_doors({.tile = &b.tile(), .head = &b.head(), .kind = kind_});

@@ -608,8 +608,10 @@ void Items::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("region 
 
 void Items::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves a region's items out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::region_items));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Items::camera_parts() const noexcept { return style::camera_part::region_items; }
 
 gpu::Result<void> Items::build(scene::TileBuild& b) const {
     const geometry::TileRegionItems g =

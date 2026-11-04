@@ -31,6 +31,12 @@
 // has faded. The buffer is set 1's sun_bits; it changes, and set 1 with it, only when it grows (the old one kept until
 // the frames that read it have finished). A tile drawn before its first bits (or a stand-in ancestor, which the scene
 // does not hold) has sun_base no_sun.
+//
+// The sun works while its part is drawn and a part that reads its bits is (style::camera_part::sun_works: the
+// buildings, the trees, the reflections, the quays): left out, no lane holds a pack, no scene is built, no bucket runs
+// (one under way stops before its next piece, its bits dropped), no texel is written, and every tile is drawn without
+// bits; drawn again, each pack drawn takes a lane as a new one does, its bits made again (a named moment's from the
+// disk cache).
 #pragma once
 
 #include "frame/Globals.hpp"
@@ -86,6 +92,14 @@ struct SunStats {
     /// The last working out of every lane's other packs' tiles (Lane::others), on the render thread: done where a
     /// lane's pack, role, level or resident tiles changed, else nothing a frame.
     double others_ms = 0;
+    /// Every lane's scenes so far: their builds' milliseconds (the builder thread's).
+    double scenes_ms = 0;
+    /// Every lane's runs so far: their own milliseconds (sun::Worker::run_ms: from a request's taking to its bits'
+    /// publication) and the tiles their buckets computed.
+    double runs_ms = 0;
+    std::uint64_t run_tiles = 0;
+    /// Whether the sun works (the last frame's parts: style::camera_part::sun_works).
+    bool on = true;
 };
 
 /// The world's sun: a provider of set 1's sun_bits.
@@ -248,6 +262,8 @@ private:
     /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.
     [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
+    /// The sun left out (render thread): every lane let go of its pack, scene, bits and requests, its run stopped.
+    void rest();
     [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t zoom,
                                              std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
@@ -277,6 +293,7 @@ private:
     bool fading_ = false;
     std::size_t last_texels_ = 0;
     double others_ms_ = 0;
+    std::atomic<bool> on_{true}; ///< whether the sun works (prepare: the frame's parts)
 
     // The builder thread's wakes (the lanes' requests and results are under mutex_).
     mutable std::mutex mutex_;
@@ -290,6 +307,8 @@ private:
         double h = 0.0;
     };
     std::vector<Tallest> maxh_;
+    /// What the sun's rests have made of the builder's work under way (rest: its scene and its asking dropped).
+    std::uint64_t epoch_ = 0;
     SunStats stats_;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops first
 };
