@@ -648,7 +648,10 @@ constexpr std::array<std::string_view, 5> made_anew{"ripple layer", "ripple fuse
                                                     "lit cores layer"};
 
 /// A part's work in the last frame: its own kinds' draws and dispatches (and of them, those of the kinds made anew),
-/// its shared kinds' triangles and dispatches, whether its step ran or its mode bit is clear.
+/// its shared kinds' triangles and dispatches but those of the kinds made anew, which a frame makes or keeps as their
+/// inputs changed whatever the part (at the golden moment, where no streaks are drawn, the water's streaks once showed
+/// 27,638 such triangles with everything on, the ripple's layer made anew in that frame, and 1 with their switch),
+/// whether its step ran or its mode bit is clear.
 struct Work {
     std::uint64_t own = 0;
     std::uint64_t anew = 0;
@@ -666,7 +669,8 @@ struct Work {
                 if (std::ranges::find(made_anew, k.kind) != made_anew.end())
                     w.anew += k.count.draws + k.count.dispatches;
             }
-            if (std::ranges::find(p.shared, k.kind) != p.shared.end())
+            if (std::ranges::find(p.shared, k.kind) != p.shared.end() &&
+                std::ranges::find(made_anew, k.kind) == made_anew.end())
                 w.shared += k.count.triangles + k.count.dispatches;
         }
     }
