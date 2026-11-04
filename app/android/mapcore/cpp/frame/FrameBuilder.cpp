@@ -192,7 +192,7 @@ gpu::Result<vk::raii::Pipeline> make_compute(const PassContext& context, const g
 
 FrameBuilder::FrameBuilder(const gpu::Device& device, const gpu::PipelineCache& cache, FrameOptions options,
                            gpu::PipelineWatch* watch) noexcept
-    : device_(device), cache_(cache), options_(options), watch_(watch) {}
+    : device_(device), cache_(cache), options_(std::move(options)), watch_(watch) {}
 
 FrameBuilder::~FrameBuilder() { release(); }
 
@@ -201,7 +201,7 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
                                                                 std::vector<std::unique_ptr<Pass>> passes,
                                                                 FrameOptions options, gpu::PipelineWatch* watch) {
     std::unique_ptr<FrameBuilder> self(
-        new FrameBuilder(device, cache, options, watch)); // NOLINT(cppcoreguidelines-owning-memory)
+        new FrameBuilder(device, cache, std::move(options), watch)); // NOLINT(cppcoreguidelines-owning-memory)
     ATLAS_GPU_LET(layout, FrameLayout::create(device));
     self->layout_ = std::move(layout);
     self->passes_ = std::move(passes);
@@ -236,7 +236,7 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
         self->slot_steps_[s] = {static_cast<std::uint32_t>(first - self->steps_.begin()),
                                 static_cast<std::uint32_t>(last - self->steps_.begin())};
     }
-    if (options.overdraw) {
+    if (self->options_.overdraw) {
         auto made = [&] {
             const gpu::Announced named = gpu::announce_module("frame_overdraw", watch);
             return gpu::make_module(device.handle(), spirv::frame_overdraw);
@@ -244,7 +244,7 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
         ATLAS_GPU_LET(module, std::move(made));
         self->overdraw_module_ = std::move(module);
     }
-    if (options.owners) {
+    if (self->options_.owners) {
         auto made = [&] {
             const gpu::Announced named = gpu::announce_module("frame_owner", watch);
             return gpu::make_module(device.handle(), spirv::frame_owner);

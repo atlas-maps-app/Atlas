@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <span>
 
 namespace atlas::passes {
 
@@ -266,9 +267,10 @@ void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::Fr
     static_assert(sizeof(shaders::FrameCamera) == 28 * sizeof(std::uint32_t));
     std::array<std::uint32_t, 28> camera{};
     std::memcpy(camera.data(), &state.block.camera, sizeof(shaders::FrameCamera));
-    const auto camera_end = camera.begin() + static_cast<std::ptrdiff_t>(camera_words);
-    std::vector<std::uint32_t> key(camera.begin(), camera_end);
-    const bool held = ripple_key_.size() >= camera_words && std::equal(camera.begin(), camera_end, ripple_key_.begin());
+    const std::span<const std::uint32_t> read = std::span(camera).first(camera_words);
+    std::vector<std::uint32_t> key(read.begin(), read.end());
+    const bool held =
+        ripple_key_.size() >= camera_words && std::ranges::equal(read, std::span(ripple_key_).first(camera_words));
     if (frame_.exact || held) {
         const auto add = [&](std::uint32_t first, std::size_t n) {
             key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));

@@ -518,10 +518,10 @@ TEST_CASE("ground: the ripple's result is made once a camera, and stands while i
     ATLAS_REQUIRE(makes.size() == settled + (4 * phases), makes.size() << " frames");
     REQUIRE_MESSAGE(drew[settled - 1], "the frame drew its reflections without their ripple (the fields not bound?)");
     MESSAGE("the ripple's results made: " << makes[settled - 1] << " over the " << settled << " frames to settle");
-    // the results made over each phase's frames, after the frame before it
-    const auto over = [&](int phase, int first, int last) {
-        const auto at = [&](int k) { return makes[static_cast<std::size_t>(settled + (4 * phase) + k)]; };
-        return at(last) - (first == 0 ? makes[static_cast<std::size_t>(settled + (4 * phase) - 1)] : at(first - 1));
+    // the results made over frames `first` to `last` of a phase
+    const auto over = [&](std::size_t phase, std::size_t first, std::size_t last) {
+        const std::size_t start = std::size_t{settled} + (4 * phase);
+        return makes[start + last] - makes[start + first - 1];
     };
     CHECK(over(0, 0, 3) == 0); // the same camera and time: the last result stands
     CHECK(over(1, 0, 3) == 0); // a later time: the fields stand still, and nothing the ripple draws moved
