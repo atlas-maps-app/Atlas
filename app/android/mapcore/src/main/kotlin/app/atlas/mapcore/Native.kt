@@ -343,6 +343,13 @@ object Native {
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)
 
     /**
+     * The kept walls' and near cells' shape records for the map, [on] (the default) or off, each kept wall then decided
+     * at each of its points (VK bench's comparison of the two): "" where its buildings draw from them, else why they
+     * cannot, or not yet (no frame drawn since the map or its window was made).
+     */
+    @JvmStatic external fun shapeRecords(handle: Long, on: Boolean): String
+
+    /**
      * Where the fling under way lands ([has]: none when false): the camera's target, bearing, pitch and distance at its
      * end. The core builds the tiles there after the frame's own (ENGINE.md gain 26). Returns at once.
      */

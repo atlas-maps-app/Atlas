@@ -193,8 +193,12 @@ public:
     /// The most chunks of the walls' and of the near cells' kept lists a frame draws from shape records (each primitive
     /// decided once), the rest decided at each point; unset, as many as its frame slot's last frame kept with a quarter
     /// more, within the records' budget (passes/Kept.cpp). For the tests, which hold either way of drawing a list, and
-    /// the two in one list, to the same pixels.
+    /// the two in one list, to the same pixels, and for VK bench, which draws the map's far views with the records on
+    /// and off in turn (frame::MapFrame::set_shape_records).
     void most_shape_chunks(std::optional<std::uint32_t> most) noexcept { most_shape_chunks_ = most; }
+    /// "" where the kept walls and near cells can be drawn from shape records, else why not: the lists drawn as their
+    /// runs (no kept pipelines), or each kept primitive decided at each point (no records' pipelines).
+    [[nodiscard]] std::string_view records_why() const noexcept;
     /// Every kept job's tile on the dither's levels from `range`[0] to `range`[1] (its place's offset.w and scale.w:
     /// ENGINE.md's standing fades), the pass dithering; unset, each tile's own. For the tests, which hold the kept
     /// walls and near cells drawn from their records to the pixels of each decided at each point while a tile fades.

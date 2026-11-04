@@ -342,6 +342,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call(Unit) { Native.screen(it, haze, vignette, grain) }
 
     /**
+     * The kept walls' and near cells' shape records from now on, [on] (the default) or off (ENGINE.md gain 1b: each kept
+     * wall then decided at each of its points), for VK bench's comparison of the two at the map's far views: "" where
+     * the map's buildings draw from them, else why they cannot, or not yet (no frame drawn since the map or its window
+     * was made); "vk no core" without a core. Off the main thread: it waits for the render thread.
+     */
+    fun shapeRecords(on: Boolean): String = core.call("vk no core") { Native.shapeRecords(it, on) }
+
+    /**
      * Where the fling under way lands: the camera at its end, which the map knows as the fling begins. The core builds
      * the tiles there after the frame's own, so the map lands whole (ENGINE.md gain 26). Any thread; it does not wait.
      */

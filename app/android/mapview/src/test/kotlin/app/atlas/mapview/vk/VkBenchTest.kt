@@ -119,6 +119,52 @@ class VkBenchTest {
         assertEquals(listOf("home", "board"), views.take(2).map { it.where })
         assertEquals("map home still", VkBench.mapLabel(home, VkBench.Path.STILL))
         assertEquals("map world72 orbit", VkBench.mapLabel(far, VkBench.Path.ORBIT))
+        // The records are compared where the most walls are kept: the home's pinch and pitch70's turn.
+        assertEquals(listOf(VkBench.Path.PINCH, null, VkBench.Path.ORBIT, null), views.map { it.compared })
+    }
+
+    @Test
+    fun theRecordsAreComparedInSlicesTwoByTwoEndingOnWithALineEachThatCiReadsNoneOf() {
+        // an even number of slices of about half a second, at least two: CI's 1.5 s path two, the quick bench's 12
+        assertEquals(listOf(2, 2, 12, 60), listOf(0.0, 1.5, 6.0, 30.0).map { VkBench.recordsSlices(it) })
+        // on, off, off, on, … counted from the last, which is on; off then on in CI's two
+        assertEquals(listOf(true, false, false, true, true, false, false, true), (0 until 8).map { VkBench.recordsOn(it, 8) })
+        assertEquals(listOf(false, true, true, false, false, true), (0 until 6).map { VkBench.recordsOn(it, 6) })
+        assertEquals(listOf(false, true), (0 until 2).map { VkBench.recordsOn(it, 2) })
+        for (n in listOf(2, 6, 12, 60)) {
+            assertEquals(n / 2, (0 until n).count { VkBench.recordsOn(it, n) })
+            assertTrue(VkBench.recordsOn(n - 1, n))
+        }
+        // where the slices are a multiple of four, on and off meet the path's views alike: their mean slice the same
+        for (n in listOf(12, 60)) assertEquals((0 until n).filter { VkBench.recordsOn(it, n) }.sum(), (0 until n).filter { !VkBench.recordsOn(it, n) }.sum())
+        // a frame is its slice's once the records were set and until the next slice's were asked for; none between
+        val slices = listOf(VkBench.RecordsSlice(true, 100), VkBench.RecordsSlice(false, 300))
+        slices[0].untilNs = 250
+        slices[1].untilNs = 500
+        assertEquals(listOf(null, slices[0], null, null, slices[1], null), listOf(100L, 101L, 260L, 300L, 499L, 500L).map { VkBench.recordsSlice(slices, it) })
+        // each side its own line, naming whether the records were on, over a phone's own pack too
+        val home = VkBench.mapViews(RegionFrame.living(), null, null).single()
+        assertEquals("map home pinch records on", VkBench.recordsLabel(home, VkBench.Path.PINCH, true))
+        val over = VkBench.MapView("home", 52.0, 4.9, 52.0, 52.0, 430.0, home.paths, "window/14/8414/5384", VkBench.Path.PINCH)
+        assertEquals("map home pinch records off over window/14/8414/5384", VkBench.recordsLabel(over, VkBench.Path.PINCH, false))
+        assertEquals("vkbench map home pinch records: not compared (no map)", VkBench.recordsSkipped(home, VkBench.Path.PINCH, "no map"))
+        assertEquals(
+            "gpu before the main pass 2.00 ms, in it 7.00, after it 1.00",
+            VkBench.gpuParts(doubleArrayOf(3.0, 2.0, 1.0), doubleArrayOf(7.0, 9.0, 5.0), doubleArrayOf(1.0, 1.0, 2.0)),
+        )
+        assertEquals("gpu before the main pass — ms, in it —, after it —", VkBench.gpuParts(DoubleArray(0), DoubleArray(0), DoubleArray(0)))
+        // CI's checks of the map's paths (smoke.sh: a line for each, the governor's bias 0 on each but world72's) read
+        // none of the comparison's lines, and the paths' own lines are as they were
+        val s = VkBench.Summary(10, 16.7, 18.0, 20.0, 0, "display-timing", 9.0, 11.0, 6.0, 8.0, 1.0, 2.0, Double.NaN, Double.NaN, 40, 900)
+        val lines = listOf(home, over).flatMap { v ->
+            listOf(true, false).map { on -> VkBench.line(VkBench.recordsLabel(v, VkBench.Path.PINCH, on), s, 100.0, 50.0, VkBench.gpuParts(DoubleArray(0), DoubleArray(0), DoubleArray(0))) }
+        } + VkBench.recordsSkipped(over, VkBench.Path.PINCH, "no map")
+        val path = Regex("^vkbench map [a-z0-9]+ [a-z]+: p50 ")
+        for (p in listOf("home still", "home orbit", "home pan", "home pinch", "board orbit", "pitch70 orbit", "world72 orbit")) {
+            assertTrue(lines.none { it.startsWith("vkbench map $p: p50 ") })
+        }
+        assertTrue(lines.none { path.containsMatchIn(it) || it.startsWith("vkbench board ") || it.startsWith("vkbench pitch70 ") })
+        assertEquals("vkbench map home pinch: p50 16.70", VkBench.line(VkBench.mapLabel(home, VkBench.Path.PINCH), s, 100.0, 50.0).take(33))
     }
 
     /** Window [z]/[x]/[y] in [dir] as PackList reads one: D1's header and a format-3 manifest with its tile's box, no views. */
@@ -160,7 +206,7 @@ class VkBenchTest {
             val views = VkBench.installedViews(packs)
             // the same views and paths at the same targets as over the canal ring
             val canal = VkBench.mapViews(living, RegionFrame.region(VkBench.BOARD_ORIGIN), VkBench.BOARD_CAMERA)
-            val shape = { v: VkBench.MapView -> listOf(v.label, v.latitude, v.longitude, v.bearing, v.pitch, v.distance, v.paths) }
+            val shape = { v: VkBench.MapView -> listOf(v.label, v.latitude, v.longitude, v.bearing, v.pitch, v.distance, v.paths, v.compared) }
             assertEquals(canal.map(shape), views.map(shape))
             // each over the window the app names at its target, its L14 one
             assertEquals(views.map { v -> tileOf(v.latitude, v.longitude).let { (tx, ty) -> "window/14/$tx/$ty" } }, views.map { it.over })
