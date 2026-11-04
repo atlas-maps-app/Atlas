@@ -35,6 +35,7 @@
 #include "gen/layouts.hpp"
 #include "geometry/Shopfronts.hpp"
 #include "gpu/Memory.hpp"
+#include "passes/OpenHours.hpp"
 #include "text/GroundText.hpp"
 #include "text/Shaper.hpp"
 #include "text/SlugBands.hpp"
@@ -206,18 +207,6 @@ struct ShopKinds {
     std::uint16_t blade = 0;
     std::uint16_t table = 0;
     std::uint16_t glow = 0;
-};
-
-/// Each tile's opening hours' answers at one moment (open, closed or none: -1), by its build's serial: open_at once a
-/// minute for each distinct value, not a frame for each place.
-class OpenHours {
-public:
-    /// The answers of `tile`'s hours at the frame's moment.
-    [[nodiscard]] const std::vector<std::int8_t>& of(const ShopTile& tile, const frame::FrameState& state);
-
-private:
-    std::array<int, 5> moment_{};
-    std::unordered_map<std::uint64_t, std::vector<std::int8_t>> answers_;
 };
 
 /// What the frame draws of the shops (shopfronts' order, then the glows'): those of the cover's tiles (Cover::upright)

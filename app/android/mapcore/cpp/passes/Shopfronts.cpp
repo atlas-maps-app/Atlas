@@ -16,7 +16,6 @@
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "style/CameraState.hpp"
-#include "style/OpeningHours.hpp"
 #include "style/Theme.hpp"
 #include "text/Fonts.hpp"
 #include "text/Utf8.hpp"
@@ -27,7 +26,6 @@
 #include "view/Ladder.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <bit>
 #include <cstring>
 #include <format>
@@ -87,12 +85,6 @@ constexpr std::uint32_t facade_detail = 2;
 
 /// The coverage tables, a face each: the identity, as the ground's text has them until calibrated (D13).
 constexpr std::size_t table_entries = 256 * text::face_count;
-
-/// A new build's serial (OpenHours' key).
-[[nodiscard]] std::uint64_t next_serial() noexcept {
-    static std::atomic<std::uint64_t> next{1};
-    return next.fetch_add(1, std::memory_order_relaxed);
-}
 
 [[nodiscard]] gpu::Result<bool> fit(const gpu::Device& device, gpu::Buffer& b, vk::DeviceSize bytes) {
     if (b && b.size() >= bytes) return false;
@@ -364,28 +356,6 @@ struct Records {
 
 } // namespace
 
-const std::vector<std::int8_t>& OpenHours::of(const ShopTile& tile, const frame::FrameState& state) {
-    const style::ThemeBlock& th = state.theme;
-    const std::array<int, 5> moment{th.year, th.month, th.day, th.hour, th.minute};
-    if (moment != moment_ || answers_.size() > 4096) {
-        answers_.clear();
-        moment_ = moment;
-    }
-    const auto [it, made] = answers_.try_emplace(tile.serial);
-    if (made) {
-        // `open_at(oh, DAYS[datetime.date(*th['date']).weekday()], th['hhmm'], date=th['date'])`
-        const style::Date date{.year = th.year, .month = th.month, .day = th.day};
-        const std::optional<style::Weekday> day = style::weekday_of(date);
-        it->second.reserve(tile.hours.size());
-        for (const std::string& oh : tile.hours) {
-            std::optional<bool> now;
-            if (day) now = style::open_at(oh, *day, {.hour = th.hour, .minute = th.minute}, date);
-            it->second.push_back(!now ? std::int8_t{-1} : *now ? std::int8_t{1} : std::int8_t{0});
-        }
-    }
-    return it->second;
-}
-
 ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const ShopKinds& kinds,
                       const tiles::ShopfrontsStyle& style, OpenHours& hours) {
     ShopFrame out;
@@ -461,7 +431,7 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
         if (!scene::draws_items(tiles, c)) continue;
         const std::uint32_t fade = dithers ? sh::fade_word(t.place.offset.w, t.place.scale.w) : 0U;
         const std::uint32_t first = first_item(*t.drawn, kinds);
-        const std::vector<std::int8_t>& answers = hours.of(*shops, state);
+        const std::vector<std::int8_t>& answers = hours.of(shops->serial, shops->hours, state.theme);
         const auto row_of = [&](std::uint32_t at) -> std::optional<std::uint32_t> {
             if (at >= t.drawn->rows.size()) return std::nullopt;
             const std::uint32_t row = t.drawn->rows[at];

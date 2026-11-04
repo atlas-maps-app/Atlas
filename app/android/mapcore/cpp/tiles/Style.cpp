@@ -271,6 +271,8 @@ Result<Style> Style::of(const StyleTables& tables) {
     ws.sill = r.day_night(windows, "windows", "sill_day", "sill_night");
     ws.shop_frame = r.day_night(windows, "windows", "shop_frame_day", "shop_frame_night");
     ws.shop_frame_width = static_cast<float>(r.number(windows, "windows", "shop_frame_width"));
+    ws.shop_glass_open = r.colour(windows, "windows", "shop_glass_open");
+    ws.shop_glass_closed = r.colour(windows, "windows", "shop_glass_closed");
     ws.plinth = r.day_night(windows, "windows", "plinth_day", "plinth_night");
     ws.cornice = r.day_night(windows, "windows", "cornice_day", "cornice_night");
     ws.cabin_glass_night = r.colour(boats, "houseboats", "cabin_glass_night");

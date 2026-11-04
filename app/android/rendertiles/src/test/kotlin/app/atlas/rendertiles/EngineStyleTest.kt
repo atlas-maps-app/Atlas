@@ -210,6 +210,10 @@ class EngineStyleTest {
             ),
             Triple(listOf("windows.shop_frame_width"), amsterdam, """stroke-width=\"${css("windows.shop_frame_width")}\"%s/>", P(gq)"""),
             Triple(
+                listOf("windows.shop_glass_open", "windows.shop_glass_closed"), amsterdam,
+                """if (night) (if (openHere) "${value("windows.shop_glass_open")}" else "${value("windows.shop_glass_closed")}") else "url(#glass)"""",
+            ),
+            Triple(
                 listOf("windows.plinth_day", "windows.plinth_night"), amsterdam,
                 """hzc(th, if (!night) "${value("windows.plinth_day")}" else "${value("windows.plinth_night")}")""",
             ),

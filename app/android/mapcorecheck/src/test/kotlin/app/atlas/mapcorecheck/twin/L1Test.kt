@@ -187,6 +187,13 @@ class L1Test {
     private fun shopKey(key: String): Boolean = key.startsWith("path; fill #ffffc27a ") ||
         listOf("#ff2a2c2e", "#ff0b0d12", "#ff1e1f22", "#ff6b5442", "#ff1a1714", "#ff9b9182", "#ff5a5048").any { it in key }
 
+    /**
+     * Whether an element of [key] is a shop floor's glazing at night (amsterdam.py's open_here): its glass while one of its
+     * building's places is open or while none is, in the glazing's night frame.
+     */
+    private fun glazingKey(key: String): Boolean =
+        (key.startsWith("path; fill #ffffd08c ") || key.startsWith("path; fill #ff0e1119 ")) && "stroke #ff30343e " in key
+
     private fun knot(r: LiveRegion, name: String, height: Int): LiveView {
         val k = r.ladder.knots.firstOrNull { it.name == name } ?: error("region ${r.id} has no view $name")
         return EngineVersion.knotView(r.frame, k, 412, height)
@@ -275,6 +282,12 @@ class L1Test {
                     println("  shopfronts: $shopsInView of the port's shopfront elements in the view, ${missingShops.values.sum()} missing")
                     if (missingShops.isNotEmpty()) failed += "${case.name}: shopfront elements the twin does not draw: $missingShops"
                     if (case.name.startsWith("shops") && shopsInView == 0) failed += "${case.name}: the port draws no shopfront in the view"
+                    // the shop floors' glazing at night, lit while one of its building's places is open: every one of the
+                    // port's in the view the twin's
+                    val glazingInView = portElements.count { glazingKey(it.key) } - r.outsideByKey.filterKeys { glazingKey(it) }.values.sum()
+                    val missingGlazing = r.missing.filterKeys { glazingKey(it) }
+                    println("  night glazing: $glazingInView of the port's shop glazings in the view, ${missingGlazing.values.sum()} missing")
+                    if (missingGlazing.isNotEmpty()) failed += "${case.name}: shop glazing the twin does not draw at night: $missingGlazing"
                 }
                 for ((k, n) in r.missing.entries.sortedByDescending { it.value }.take(8)) println("  missing $n × $k")
                 for ((k, n) in r.extra.entries.sortedByDescending { it.value }.take(8)) println("  extra $n × $k")

@@ -24,7 +24,9 @@
 // moment, lit ahead on the pass's own thread (ENGINE.md gain 5), is held frame by frame to the frames drawn from
 // scratch at each moment: every frame one moment whole, the new one from the frame that takes it on, in both frame
 // slots, its light copied in and none of it lit on the render thread. With the user's palette's guesses off, a guessed
-// roof's shape is drawn as the plain box in its place, held to the twin alike. The validation layer stays silent.
+// roof's shape is drawn as the plain box in its place, held to the twin alike. At night the shop floors' glazing is
+// lit where one of its building's places is open and dark where none is (the Westerkerk home at 21:30), held to the
+// twin alike. The validation layer stays silent.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -1667,15 +1669,23 @@ bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-vari
 /// The windows' decide stages a frame runs (passes::Buildings::WindowStage's order).
 using Stages = std::array<bool, passes::Buildings::window_stages>;
 
+/// The least shop glazings a frame draws lit at night (one of their building's places open) and dark.
+struct Glazings {
+    std::size_t open = 0;
+    std::size_t closed = 0;
+};
+
 /// Draws `cam` in X1 and C, at rest and moving, at moment `th` over `packs`, and holds every pixel to the exact raster
 /// of the pass's twin; the twin emits at least `least` elements. With `then`, the first frame's moment changes to it
 /// (the CPU's light lights every drawn tile again) and that frame is held to the twin too. With `painter`, under the
 /// painter switch: the renders' order, held to the twin's painter order. The frame lays at least `least_kit` records of
 /// a kit's walls' lines and eaves' shadows. Each windows' decide stage runs where the frame has its part, over the
-/// walls that have it; with `stages`, the frame runs those alone.
+/// walls that have it; with `stages`, the frame runs those alone. With `glazings`, the twin draws at least so many
+/// shop glazings lit and dark at night (the GPU's, pixel for pixel).
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
                   const style::ThemeBlock& th, std::size_t least, const style::ThemeBlock* then = nullptr,
-                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr) {
+                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr,
+                  const Glazings* glazings = nullptr) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -1763,6 +1773,28 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << windows.roof_lines << " roof lines; a kit's walls' " << windows.kit_lines << " lines and "
                          << windows.kit_shadows << " eaves' shadows");
             CHECK(windows.kit_lines + windows.kit_shadows >= least_kit);
+            // the shop floors' glazing the twin draws (its shop windows' glass): at night lit while one of its
+            // building's places is open, else dark
+            const passes::ShopGlass paints = passes::shop_glass_of(s.builder->state());
+            const auto is = [](hlsl::float3 a, hlsl::float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; };
+            std::size_t open = 0;
+            std::size_t closed = 0;
+            std::size_t glazed = 0;
+            for (const twin::ElementDepth& e : s.buildings->depths()) {
+                for (const twin::WindowsDepth& wd : e.windows) {
+                    if (!wd.shop) continue;
+                    ++glazed;
+                    open += is(wd.glass.top, shaders::building_rgb(paints.open)) ? 1 : 0;
+                    closed += is(wd.glass.top, shaders::building_rgb(paints.closed)) ? 1 : 0;
+                }
+            }
+            MESSAGE(name << ": " << glazed << " shop glazings, " << open << " lit as open and " << closed
+                         << " dark as closed");
+            if (glazings != nullptr) {
+                CHECK(open >= glazings->open);
+                CHECK(closed >= glazings->closed);
+                CHECK(open + closed == glazed);
+            }
             // each decide stage dispatched where it has walls (its lanes), and those its part's alone: the windows'
             // where the frame decides windows, the churches' where church windows, the material faces' where their
             // records; none past the frame's facade walls
@@ -2401,6 +2433,25 @@ TEST_CASE("buildings: the Westerkerk home drawn on the host's Vulkan, pixel for 
         return;
     }
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home", bundled_packs(dir), sunny(), 1000);
+}
+
+TEST_CASE(
+    "buildings: the Westerkerk home at night drawn on the host's Vulkan, the shop floors' glazing lit where one of "
+    "their places is open and dark where none is, pixel for pixel the exact shapes of its twin") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    // Thursday 1 October 2026 at 21:30 (amsterdam.py's open_here): the cafés and bars open, the shops closed (of the
+    // 318 glazings in the view, 17 lit and 301 dark)
+    style::ThemeBlock night = sunny();
+    night.flags |= style::theme_flag::night;
+    night.hour = 21;
+    night.minute = 30;
+    const Glazings both{.open = 12, .closed = 250};
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home at night", bundled_packs(dir), night, 1000, nullptr, false, 0,
+                 nullptr, &both);
 }
 
 TEST_CASE("buildings: the Main board drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {

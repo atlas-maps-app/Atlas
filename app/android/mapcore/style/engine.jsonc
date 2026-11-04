@@ -196,8 +196,9 @@
     // draw_building's windows: by day with weather the glass's gradients from the top of a wall's windows to their
     // bottom (`glass` by the sky's cover, `glassLit` where the sun is on them), without weather and at night their flat
     // glass, a warehouse's shutters (with weather), and the frames, by day and at night, with their width; the deep
-    // windows' sills, by day and at night; a shop's glazing's frame, by day and at night, with its width; the facades'
-    // plinths and cornices, by day and at night
+    // windows' sills, by day and at night; a shop's glazing's frame, by day and at night, with its width, and its glass
+    // at night while one of its building's places is open and while none is (open_here; by day it is `glass`); the
+    // facades' plinths and cornices, by day and at night
     "windows": {
         "glass_top": "#B7CBE0",
         "glass_bottom": "#3E4C5E",
@@ -218,6 +219,8 @@
         "shop_frame_day": "#2A2D30",
         "shop_frame_night": "#30343E",
         "shop_frame_width": 0.8,
+        "shop_glass_open": "#FFD08C",
+        "shop_glass_closed": "#0E1119",
         "plinth_day": "#47443F",
         "plinth_night": "#121318",
         "cornice_day": "#E6E1D6",

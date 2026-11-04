@@ -525,12 +525,12 @@
       }
     },
     "31": {
-      "note": "Step 4, the facades and the night (shopfronts): the shopfronts, their signs and terraces, and at night the open places' glows. The night's frames (home wet and night, board wet and night) gain the open places' glows; the day's are version 30's (no shopfront lies within 230 m of these views). With the shopfronts, the terraces and the open places' glows left out (camera parts 52 to 54), every frame of lavapipe-macos is version 30's.",
+      "note": "Step 4, the facades and the night (shopfronts): the shopfronts, their signs and terraces, and at night the open places' glows and the shop floors' glazing, lit while one of its building's places is open (open_here). The night's frames (home wet and night, board wet and night) gain the open places' glows, home wet its shop floors' glazing too; the day's are version 30's (no shopfront lies within 230 m of these views). With the shopfronts, the terraces and the open places' glows left out (camera parts 52 to 54), and at night the shop glazing (29), every frame of lavapipe-macos is version 30's.",
       "platforms": {
         "lavapipe-macos": {
           "home sunny": "55aa904de52edecc7980df355354545cada71cbfb3cb6428840e3a31490774a7",
           "home grey": "e5fa6428c105286e492b30291312d40f11733dae1ea12d6e3685e7d2f8cce6e7",
-          "home wet": "642ad531ead18f06d0134d470c4ebe12feb73a8d71aa74321f568d70e9beaaef",
+          "home wet": "86b9b4ca6faa940565ac0b3348d269c2cdcff2252f5fd4b0c5e44333951afa85",
           "home night": "e304e1d5fbf03eed6769c1c76ef225c55e616581a3ae462aae25853ec58cf6e1",
           "board sunny": "8e0e759605d191918c6e49c0cd4da58366ec2e452a2629b6f17d7a3ad085f4cc",
           "board grey": "221fcc44ed5d9fe17fc375a62c79786ef8beb7982ff5f958bc3537dc75ca881d",

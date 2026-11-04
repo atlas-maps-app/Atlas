@@ -78,7 +78,9 @@ struct EdgesStyle {
 
 /// The windows (`windows`): by day with weather the glass's gradients from a wall's windows' top to their bottom (the
 /// glass by a clear and by an overcast sky, the glass the sun is on), without weather and at night their flat glass, a
-/// warehouse's shutters by day and at night, the frames by day and at night and their width (CSS px).
+/// warehouse's shutters by day and at night, the frames by day and at night and their width (CSS px); a shop's
+/// glazing's frame by day and at night, its width, and its glass at night while its building's places are open and
+/// while they are not (by day the glass's gradient).
 struct WindowsStyle {
     std::array<StyleRgb, 2> glass{};
     std::array<StyleRgb, 2> glass_overcast{};
@@ -91,6 +93,8 @@ struct WindowsStyle {
     DayNight sill;
     DayNight shop_frame;
     float shop_frame_width = 0.0F;
+    StyleRgb shop_glass_open = 0;
+    StyleRgb shop_glass_closed = 0;
     DayNight plinth;
     DayNight cornice;
     /// A houseboat cabin's windows (`houseboats`): their glass at night (by day the glass's gradient), their frames by

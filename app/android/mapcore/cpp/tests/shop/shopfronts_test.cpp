@@ -3,8 +3,8 @@
 // point lies on that wall, its direction a unit vector, its place style and opening hours as the thing layer holds
 // them, a food place with outdoor seating its terrace; its items as facade_details sorts what shopfront draws (the
 // board as a door, its blade and its tables at their own points, each cut at its node); and every place with opening
-// hours its glow's item after them. And the frame's open hours (passes/Shopfronts.hpp's OpenHours): each tile's
-// distinct hours answered once a moment, open, closed or none.
+// hours its glow's item after them. And the frame's open hours (passes/OpenHours.hpp): each tile's distinct hours
+// answered once a moment, open, closed or none.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -236,23 +236,23 @@ TEST_CASE("shopfronts: a tile's opening hours answered once a moment, open, clos
     state.theme.hour = 16;
     state.theme.minute = 0;
     passes::OpenHours hours;
-    const std::vector<std::int8_t> afternoon = hours.of(tile, state);
+    const std::vector<std::int8_t> afternoon = hours.of(tile.serial, tile.hours, state.theme);
     CHECK(afternoon == std::vector<std::int8_t>{1, 1, -1, 0});
     // the same moment again: the same answers, kept
-    CHECK(&hours.of(tile, state) == &hours.of(tile, state));
-    CHECK(hours.of(other, state) == std::vector<std::int8_t>{1});
+    CHECK(&hours.of(tile.serial, tile.hours, state.theme) == &hours.of(tile.serial, tile.hours, state.theme));
+    CHECK(hours.of(other.serial, other.hours, state.theme) == std::vector<std::int8_t>{1});
     // at 21:30, the café alone; at 23:00, none
     state.theme.hour = 21;
     state.theme.minute = 30;
-    CHECK(hours.of(tile, state) == std::vector<std::int8_t>{1, 0, -1, 0});
-    CHECK(hours.of(other, state) == std::vector<std::int8_t>{0});
+    CHECK(hours.of(tile.serial, tile.hours, state.theme) == std::vector<std::int8_t>{1, 0, -1, 0});
+    CHECK(hours.of(other.serial, other.hours, state.theme) == std::vector<std::int8_t>{0});
     state.theme.hour = 23;
     state.theme.minute = 0;
-    CHECK(hours.of(tile, state) == std::vector<std::int8_t>{0, 0, -1, 0});
+    CHECK(hours.of(tile.serial, tile.hours, state.theme) == std::vector<std::int8_t>{0, 0, -1, 0});
     // Saturday 3 October, noon: the weekend's
     state.theme.day = 3;
     state.theme.hour = 12;
-    CHECK(hours.of(tile, state) == std::vector<std::int8_t>{1, 0, -1, 1});
+    CHECK(hours.of(tile.serial, tile.hours, state.theme) == std::vector<std::int8_t>{1, 0, -1, 1});
     // each as open_at answers it
     for (const std::string& oh : tile.hours) {
         CAPTURE(oh);
@@ -260,6 +260,6 @@ TEST_CASE("shopfronts: a tile's opening hours answered once a moment, open, clos
             style::open_at(oh, style::Weekday::sa, {.hour = 12, .minute = 0}, {.year = 2026, .month = 10, .day = 3});
         const std::int8_t want = !now ? std::int8_t{-1} : *now ? std::int8_t{1} : std::int8_t{0};
         const auto at = static_cast<std::size_t>(&oh - tile.hours.data());
-        CHECK(hours.of(tile, state)[at] == want);
+        CHECK(hours.of(tile.serial, tile.hours, state.theme)[at] == want);
     }
 }
