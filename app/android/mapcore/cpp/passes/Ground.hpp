@@ -144,12 +144,44 @@ struct TileDecisions {
     bool used = false;
 };
 
+/// A drawn tile's fill as the frame's loops over every fill read it, a few bytes where a geometry::Fill takes some two
+/// hundred: its order, the fill it goes with (no_fill: none), its group, kind and cell, whether it has points, whether
+/// it stands for a line (draw_over's radius cut samples it) and whether it lies in its cell's core (Fill::core).
+struct HotFill {
+    std::uint32_t order = 0;
+    std::uint32_t with = 0;
+    std::uint16_t group = 0;
+    geometry::FillKind kind = geometry::FillKind::area;
+    std::uint8_t cell = 0;
+    bool points = false;
+    bool line = false;
+    bool core = false;
+};
+inline constexpr std::uint32_t no_fill = 0xFFFF'FFFFU;
+
+/// A drawn tile's stroke as lay_out reads it: its order and group.
+struct HotStroke {
+    std::uint32_t order = 0;
+    std::uint16_t group = 0;
+};
+
+/// A drawn tile's fills and strokes as the frame's loops read them (HotFill, HotStroke), made once while its ground
+/// lives (`held`, so that `ground` names that build); the last frame that drew it.
+struct TileHot {
+    const geometry::GroundTile* ground = nullptr;
+    std::weak_ptr<const void> held;
+    std::vector<HotFill> fills;
+    std::vector<HotStroke> strokes;
+    std::uint64_t drawn = 0;
+};
+
 /// One tile the frame draws the ground of: its resident tile, its ground (stage T's, PassTile::cpu) and heap ranges,
 /// its visible cells, its place relative to the eye, its decisions and where they lie in the frame's.
 struct DrawnTile {
     const scene::ResidentTile* tile = nullptr;
     const scene::PassTile* pass = nullptr;
     const geometry::GroundTile* ground = nullptr;
+    const TileHot* hot = nullptr; ///< its fills and strokes as the loops read them
     std::uint64_t cells = 0;
     shaders::TilePlace place{};
     const TileDecisions* decided = nullptr;
@@ -296,19 +328,46 @@ struct ReflectionsKept {
         std::uint64_t order = 0;
         std::uint32_t index = 0;
     };
-    /// A drawn tile's own: its ground (held while it is drawn); its mirror heads, trees, street lamps and lit roads
-    /// each by its scene's order, a tie in the tile's own (made with it, so the lists across the drawn tiles are
-    /// merged as the tiles drawn change, not sorted again); each mirror head's place in `mirrors`; each wall's colour
-    /// lit and unlit (0xRRGGBB, made in the moment's generation `made`, 0: not yet); whether each of its lit roads'
-    /// points lies within 12 m of a quay edge; each tree's five circles' fifteen draws from random.Random(its id) (its
-    /// first in `draws`, -1: not drawn yet); its water rings by bands (made the first night it is drawn).
+    /// A group of a drawn tile's mirror heads (those whose centres lie in one of its 16 × 16 squares): the box over
+    /// theirs as mirror_box widens them, so that a frame tests the group before its heads.
+    struct Group {
+        double x0 = 0;
+        double x1 = 0;
+        double z0 = 0;
+        double z1 = 0;
+        double y0 = 0;
+        double y1 = 0;
+    };
+    /// Which of a drawn tile's trees (lit roads' points) lie near one of a tile's quay edges (near_water reads every
+    /// drawn tile's edges, each in its own tile's metres, so it reads another tile's too): that tile's serial, and the
+    /// trees' (points') indices.
+    struct Near {
+        std::uint64_t serial = 0;
+        std::vector<std::uint32_t> at;
+    };
+    /// A drawn tile's own: its ground (held while it is drawn, else watched while it is kept for a few lays, `laid`
+    /// the last it was drawn in); its mirror heads, trees, street lamps and lit roads each by its scene's order, a tie
+    /// in the tile's own (made with it, so the lists across the drawn tiles are merged as the tiles drawn change, not
+    /// sorted again); each mirror head's place in `mirrors`, and its group; each wall's colour lit and unlit (0xRRGGBB,
+    /// made in the moment's generation `made`, 0: not yet); whether each of its lit roads' points lies within 12 m of
+    /// a quay edge; each tree's five circles' fifteen draws from random.Random(its id) (its first in `draws`, -1: not
+    /// drawn yet); its water rings by bands (made the first night it is drawn). Its quay edges filed by near_water's
+    /// cells (sorted keys, each one's first in `edge_list` and the next one's after it), their box and its trees' and
+    /// lit points' boxes (x0, x1, z0, z1; empty while x1 < x0); which of its trees and points lie near each drawn
+    /// tile's edges (its own among them), made as the two are first drawn together.
     struct Tile {
         std::shared_ptr<const void> ground;
+        std::weak_ptr<const void> watched;
+        const void* key = nullptr;
+        std::uint64_t serial = 0;
+        std::uint64_t laid = 0;
         std::vector<Ordered> mirrors_by_order;
         std::vector<Ordered> trees_by_order;
         std::vector<Ordered> lamps_by_order;
         std::vector<Ordered> roads_by_order;
         std::vector<std::uint32_t> places;
+        std::vector<Group> groups;
+        std::vector<std::uint16_t> group_of;
         std::vector<std::uint32_t> lit;
         std::vector<std::uint32_t> unlit;
         std::vector<std::uint32_t> made;
@@ -319,7 +378,26 @@ struct ReflectionsKept {
         std::vector<WaterRing> rings;
         std::vector<std::uint32_t> band_at;
         std::vector<std::uint32_t> sides;
+        std::vector<std::uint64_t> edge_keys;
+        std::vector<std::uint32_t> edge_first;
+        std::vector<std::uint32_t> edge_list;
+        std::array<double, 4> edge_box{0, -1, 0, 0};
+        std::array<double, 4> tree_box{0, -1, 0, 0};
+        std::array<double, 4> road_box{0, -1, 0, 0};
+        std::vector<Near> near_trees;
+        std::vector<Near> near_roads;
         bool used = false;
+    };
+    /// A run of a frame's elements before the sort, all of one depth (a mirror's walls, its gables, its window rows, a
+    /// tree): that depth, its first element's place in the renders' list (its mirror's place in `mirrors`, then its
+    /// own among its mirror's elements), and its elements [first, first + count) of the frame's, in their places'
+    /// order. No other element's place lies between two of a run's, so the runs sorted far to near, a tie by place,
+    /// give the renders' order.
+    struct Run {
+        double depth = 0;
+        std::uint64_t place = 0;
+        std::uint32_t first = 0;
+        std::uint32_t count = 0;
     };
     /// The drawn tiles' grounds the lists were laid for, in the frame's order, those kept under tiles fading in (which
     /// come last) left off and null for one before a tile drawn.
@@ -331,10 +409,43 @@ struct ReflectionsKept {
     std::vector<Ref> trees;   ///< S['trees'] in its source order, those within 9 m of a quay edge
     std::vector<Ref> lamps;   ///< S['nodes']'s street lamps in their order
     std::vector<Ref> roads;   ///< S['roads']'s lit roads in their order
+    bool roads_near = false;  ///< the drawn tiles' road_near made for this lay (the first night frame after it)
+    std::uint64_t lays = 0;
+    std::uint64_t serials = 0;
     /// The moment the walls' colours are made in (its theme block, its sun, night and overcast, as bytes), and its
     /// generation.
     std::vector<std::uint8_t> moment;
     std::uint32_t generation = 0;
+    /// A thread's scratch for the tiles' mirrors it takes (decide_reflections, on the ground's team): a mirror's
+    /// gables and its window rows' faces, each footprint point's screen points (made_for: the mirror they were made
+    /// for, counted in `mirror_count`), the clipped points of a face, each group's place against the frame.
+    struct Taker {
+        std::vector<Reflection> gables;
+        std::vector<ReflectionFace> rows_faces;
+        std::vector<view::Vec2> base_at;
+        std::vector<view::Vec2> top_at;
+        std::vector<std::uint64_t> made_for;
+        std::uint64_t mirror_count = 0;
+        std::vector<view::Vec3> cs;
+        std::vector<std::uint8_t> group_box;
+    };
+    /// A drawn tile's mirrors' elements at the frame, their runs and their faces, each first in its own tile's lists
+    /// (merged in the frame's order).
+    struct Mirrored {
+        std::vector<Reflection> elements;
+        std::vector<Run> runs;
+        std::vector<ReflectionFace> faces;
+    };
+    /// A frame's scratch, kept for its room: its elements and their runs before the sort, each drawn tile's mirrors'
+    /// (in the frame's order) and the order the team takes the tiles in, each taker's own.
+    std::vector<Reflection> elements;
+    std::vector<Run> runs;
+    std::vector<Mirrored> mirrored;
+    std::vector<std::uint32_t> order;
+    std::vector<Taker> takers;
+    std::vector<std::uint8_t> flags;
+    std::vector<Ordered> near_by_order;
+    std::vector<std::vector<Ordered>> near_lists;
 };
 
 /// A circle of a tree's reflection, CSS px (as the SVG prints them at rest).
@@ -569,6 +680,12 @@ struct ProjectedPoly {
 [[nodiscard]] ProjectedPoly project_poly(const view::Camera& cam, std::span<const geometry::P2> pts, double y,
                                          double margin, std::vector<view::Vec3>& cs, std::vector<view::Vec2>& sp);
 
+/// project_poly's scratch, one for each thread that decides tiles (Ground::decide_tile).
+struct PolyScratch {
+    std::vector<view::Vec3> cs;
+    std::vector<view::Vec2> sp;
+};
+
 /// The twin's Camera.poly: a tile-local ring at height y as the vertex stage projects it (twin::Projector: the float
 /// camera, snapped at rest), clipped at the near plane in its camera coordinates as Camera.poly clips. Appends its CSS
 /// points to `out`; returns how many.
@@ -658,8 +775,8 @@ struct QuayColours {
 [[nodiscard]] double printed(double v, int decimals);
 
 /// What a box says of Camera.poly's margin test: it surely drops what lies in it, it cannot tell, or (a cell's) what
-/// lies in it surely projects into the frame.
-enum class Box : std::uint8_t { outside, unknown, inside };
+/// lies in it surely projects into the frame, or within the narrowest margin of its fills (so it drops none).
+enum class Box : std::uint8_t { outside, unknown, inside, within };
 [[nodiscard]] Box box_test(const view::Camera& cam, const geometry::Fill& f, double y, double margin);
 /// draw_over's near(pts) in engine mode: the line's samples' box (`near`, geometry::near_box) wholly within the radius
 /// or wholly beyond it, else near_radius over its samples.
@@ -757,6 +874,8 @@ inline constexpr std::uint32_t palette_pairs = 256;
 [[nodiscard]] std::size_t ground_slot_of(const geometry::Paint& paint, const tiles::Style* style,
                                          const style::PaletteBlock* palette, bool night, bool grass);
 
+class Team;
+
 class Ground final : public frame::Pass {
 public:
     Ground();
@@ -783,8 +902,13 @@ public:
     /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
     /// full mode; else its union is black at .55, as a frame without filters draws it.
     [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
-    /// What the last select cost, milliseconds of the render thread's CPU time.
+    /// What the last select cost, milliseconds of CPU time: the render thread's and the team's helpers' over the
+    /// tiles they took (what it costs on one core).
     [[nodiscard]] double select_ms() const noexcept { return select_ms_; }
+    /// The last frame's words for the GPU and its ripple's layer, hashed (FNV-1a), the tiles' heap offsets left out
+    /// (they lie where each build's tiles landed): the pinch audit's ATLAS_PINCH_HASH holds two builds' frames to the
+    /// same words by it. 0 before a frame's words.
+    [[nodiscard]] std::uint64_t words_hash() const noexcept;
     /// The absolute painter slot of a group's element this frame (from update on).
     [[nodiscard]] std::uint32_t slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept;
     /// The order a drawn tile's fill `i` (stroke `i`) takes in its group this frame: its scene's, or where the frame
@@ -832,6 +956,9 @@ public:
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
     /// The tests' look at the water: from the next frame on, no glints (K17's rect after the tint).
     void draw_wind_glints(bool draw) noexcept { no_wind_glints_ = !draw; }
+    /// The tests' look at the team: from the next frame on, the tiles and their mirrors decided on `helpers` threads
+    /// beside the caller's (0: the caller's alone), so that a test holds the team's decisions to one thread's.
+    void decide_on(unsigned helpers);
     /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
     /// frame copies its resolved layer there too (RippleLayer::layer_copy).
     void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
@@ -903,7 +1030,14 @@ private:
     /// The frame's decisions; false when they are the last frame's (kept at rest) and the quays' faces as many, so the
     /// slots stay as laid out.
     [[nodiscard]] bool decide(const frame::FrameState& state);
-    void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);
+    /// Tile `t`'s decisions at its camera into `d`, with taker `s`'s scratch: each tile's its own, so the tiles of a
+    /// frame are decided on the team's threads at once (decide_tiles).
+    void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d, PolyScratch& s) const;
+    /// The tiles of `tiles` decided on the team's threads and the caller's, the largest first, each into its own
+    /// decisions (the second of its pair).
+    void decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles);
+    /// The threads the tiles' work is shared with (team_), made as the render thread first needs them.
+    [[nodiscard]] Team& team();
     void lay_out();
     /// Where the drawn tiles come from more than one scene, a window among them (GroundFrame::mixed), every fill and
     /// stroke of them ranked in its group by its element across them (geometry::OrderKey, then its pack, then its
@@ -934,7 +1068,8 @@ private:
     // Roads.cpp: the fills' and the plate's twin
     void emit_fills(const frame::FrameState& state, twin::Stream& out, std::int32_t mat, std::int32_t above) const;
     // Water.cpp
-    [[nodiscard]] WaterPiece view_water(const view::Camera& cam, const geometry::GroundTile& g, std::uint32_t i);
+    [[nodiscard]] WaterPiece view_water(const view::Camera& cam, const geometry::GroundTile& g, std::uint32_t i,
+                                        PolyScratch& s) const;
     void decide_water(const view::Camera& cam);
     /// The drawn water pieces' fans at the water's slot with `flags`, counted by the bound pipeline.
     void water_fans(const frame::Recording& r, std::uint32_t flags) const;
@@ -1080,7 +1215,8 @@ private:
         std::uint32_t index = 0;
     };
     /// The ranks across scenes of a drawn tile's fills and strokes, by its handle (rank_across_scenes), and its
-    /// elements' places in their order (by group, then key, then order), made once while its ground lives.
+    /// elements' places in their order (by group, then key, then order), made once while its ground lives; its pack's
+    /// ordinal in the last ranking, and whether its elements lie in `rank_order_`.
     struct TileRanks {
         std::uint32_t handle = 0;
         const geometry::GroundTile* ground = nullptr;
@@ -1089,8 +1225,23 @@ private:
         std::vector<std::uint32_t> fills;
         std::vector<std::uint32_t> strokes;
         std::uint64_t ranked = 0; ///< the last ranking it took part in (`rankings_`)
+        std::uint32_t pack = 0;
+        bool ordered = false;
     };
-    std::vector<TileRanks> ranks_;
+    /// An element in the last ranking's order: its tile's ranks, and its place among their places.
+    struct RankAt {
+        TileRanks* ranks = nullptr;
+        std::uint32_t at = 0;
+    };
+    std::vector<std::unique_ptr<TileRanks>> ranks_;
+    /// The drawn tiles' fills and strokes as the frame's loops read them, each made as its tile lands and kept a few
+    /// frames after it was last drawn (a pinch draws a tile again within a few), and the frames decided.
+    std::vector<std::unique_ptr<TileHot>> hots_;
+    std::uint64_t hot_frames_ = 0;
+    /// The last ranking's elements in their order across the drawn tiles (by group, key, pack and order), each tile's
+    /// once: a ranking keeps it for the tiles still drawn and merges the new ones' into it, and its ranks follow from
+    /// it, whatever the order among elements that compare alike (they take one rank).
+    std::vector<RankAt> rank_order_;
     std::uint64_t rankings_ = 0;
     std::vector<std::uint32_t> ranked_handles_; ///< the drawn tiles ranks_ was made for, sorted
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
@@ -1122,6 +1273,7 @@ private:
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
     double select_ms_ = 0;
+    double helped_ms_ = 0; ///< the team's helpers' CPU time over the select under way
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
     DecisionKey key_;
@@ -1145,6 +1297,10 @@ private:
     // scratch, reused frame to frame
     std::vector<view::Vec3> cam_;
     std::vector<view::Vec2> sp_;
+    /// The threads the tiles are decided on beside the render thread, made from it as it first decides, and each
+    /// taker's scratch.
+    std::unique_ptr<Team> team_;
+    std::vector<PolyScratch> poly_;
 };
 
 /// The ground's GPU objects: its module, its pipeline layout (the frame's sets, then its own), its descriptor sets and
