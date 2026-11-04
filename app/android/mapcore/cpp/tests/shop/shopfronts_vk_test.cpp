@@ -1,15 +1,16 @@
 // The shopfronts' pass on the host's Vulkan (ENGINE.md step 4, the facades and the night; lavapipe): the bundled
 // Westerkerk (ATLAS_TILES_DIR) from 70 m over two walls of shopfronts that show between them every state of the user's
 // rule (4 November) by day and on the wet night, and along a street of 29 from 120 m, drawn through the frame builder
-// and the world with that pass alone beside the composite (the world given the glyphs' globals, the fonts loaded), at
-// rest and moving, at 1x and 4x, at true depth and under the painter switch, against the exact raster of the records
-// the pass gives the GPU (tests/item/item_raster.hpp: the fronts' and the terraces' faces, the glass by day its two
-// stops, the outlines and the lines), then the signs' glyphs (tests/item/glyph_raster.hpp), the awnings' stripes and
-// the night's spill, and at night the open places' glows blended over it in the GPU's order. Each frame's shopfronts
-// are held to their opening hours at its moment: a food place with outdoor seating sets its terrace out while it is
-// open, and by day where its hours say nothing; none while it is closed; its glass lit while it is open. Each switch
-// leaves out its own part alone. The twin's elements are held to the port's by L1; here the GPU draws the pass's
-// records.
+// and the world with that pass alone beside the composite (the world given the glyphs' globals, the fonts loaded), in
+// every configuration and route of the host's device (composite_vk_test's list: on lavapipe 1x and C, each by the
+// render pass and by dynamic rendering), at rest and moving, at true depth and under the painter switch, against the
+// exact raster of the records the pass gives the GPU (tests/item/item_raster.hpp: the fronts' and the terraces' faces,
+// the glass by day its two stops, the outlines and the lines), then the signs' glyphs (tests/item/glyph_raster.hpp),
+// the awnings' stripes and the night's spill, and at night the open places' glows blended over it in the GPU's order.
+// Each frame's shopfronts are held to their opening hours at its moment: a food place with outdoor seating sets its
+// terrace out while it is open, and by day where its hours say nothing; none while it is closed; its glass lit while it
+// is open. Each switch leaves out its own part alone. The twin's elements are held to the port's by L1; here the GPU
+// draws the pass's records.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -221,8 +222,28 @@ struct Wants {
     bool glows = false;
 };
 
-/// Draws `cam` at 1x and 4x, at rest and moving, at true depth and under the painter switch, at moment `th`, and holds
-/// every pixel to the exact raster of the pass's records, its signs' glyphs, its tints and its glows.
+/// The configurations the host's device draws the map's frame in, each route (composite_vk_test's list).
+std::vector<gpu::Configuration> configurations(const gpu::Device& device) {
+    std::vector<gpu::Configuration> out;
+    const bool dynamic = device.enabled().dynamic_rendering && device.enabled().local_read;
+    for (const gpu::FrameConfig c :
+         {gpu::FrameConfig::a, gpu::FrameConfig::b, gpu::FrameConfig::c, gpu::FrameConfig::x1}) {
+        if (!device.facts().supports(c)) continue;
+        const bool one = gpu::Configuration{.config = c}.samples() == vk::SampleCountFlagBits::e1;
+        for (const gpu::Route route : {gpu::Route::renderpass, gpu::Route::dynamic}) {
+            if (route == gpu::Route::dynamic && !dynamic) continue;
+            out.push_back({.config = c,
+                           .route = route,
+                           .form = gpu::FrameForm::composite,
+                           .target = one ? gpu::CompositeTarget::direct : gpu::CompositeTarget::resolve});
+        }
+    }
+    return out;
+}
+
+/// Draws `cam` in every configuration and route of the host's device, at rest and moving, at true depth and under the
+/// painter switch, at moment `th`, and holds every pixel to the exact raster of the pass's records, its signs' glyphs,
+/// its tints and its glows.
 void check_frames(const style::CameraState& cam, const std::string& view, const std::string& pack,
                   const style::ThemeBlock& th, const Wants& wants) {
     auto session = test::open_session();
@@ -232,15 +253,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     constexpr std::uint32_t clear = 0x808080;
     const bool night = th.has(style::theme_flag::night);
-    for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::x1,
-                                                               .route = gpu::Route::renderpass,
-                                                               .form = gpu::FrameForm::composite,
-                                                               .target = gpu::CompositeTarget::direct},
-                                            gpu::Configuration{.config = gpu::FrameConfig::c,
-                                                               .route = gpu::Route::renderpass,
-                                                               .form = gpu::FrameForm::composite,
-                                                               .target = gpu::CompositeTarget::resolve}}) {
-        if (!device.facts().supports(config.config)) continue;
+    const std::vector<gpu::Configuration> configs = configurations(device);
+    REQUIRE(!configs.empty());
+    for (const gpu::Configuration config : configs) {
         for (const bool painter : {false, true}) {
             for (const bool rest : {true, false}) {
                 style::CameraState c = cam;
@@ -321,7 +336,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                 CHECK_MESSAGE(got.wrong == 0, name << ": " << got.first);
                 CHECK(static_cast<double>(got.boundary + got.tied) <= 0.01 * static_cast<double>(got.pixels));
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
-                if (config.config == gpu::FrameConfig::x1 && rest && !painter) {
+                if (config.config == gpu::FrameConfig::x1 && config.route == gpu::Route::renderpass && rest &&
+                    !painter) {
                     // each switch alone: the fronts left out keep their terraces, the terraces left out their fronts,
                     // the glows left out none
                     const auto with = [&](std::uint64_t off) {
