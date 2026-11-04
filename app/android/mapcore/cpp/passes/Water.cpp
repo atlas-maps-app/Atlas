@@ -197,8 +197,9 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     level.stencil_back = down;
     ATLAS_GPU_LET(c1, frame::make_pipeline(context, level, frame::Overdraw::none));
     p.water_count_level = std::move(c1);
-    // the app's map's thin water: where a thin edge's quad lies on water counted once, the count's 1 and the thin bit
-    // turned over (the count cleared, the bit set), so a sample takes it once
+    // the app's map's thin water: where a thin edge's quad lies on water counted once, the count and the thin bit
+    // turned over (the count cleared, the bit set), so a sample takes it once. A ring turns clockwise on the screen
+    // (orient_water's turn, x east and z south): its fan's back faces count its samples down, so once is the count's 7.
     gpu::GraphicsDesc thin = ground_desc(context, p, "ground water thin", "thin_vs", "thin_fs");
     colour_off(thin);
     thin.stencil_test = true;
@@ -206,9 +207,9 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                     .passOp = vk::StencilOp::eInvert,
                     .depthFailOp = vk::StencilOp::eInvert,
                     .compareOp = vk::CompareOp::eEqual,
-                    .compareMask = ground_stencil::water_count,
-                    .writeMask = 1U | ground_stencil::water_thin,
-                    .reference = 1};
+                    .compareMask = ground_stencil::water_count | ground_stencil::water_thin,
+                    .writeMask = ground_stencil::water_count | ground_stencil::water_thin,
+                    .reference = ground_stencil::water_count};
     ATLAS_GPU_LET(th, frame::make_pipeline(context, thin, frame::Overdraw::none));
     p.water_thin = std::move(th);
     // their band over what lies under it at its share, at the water's depth (not over the surface or what lies above

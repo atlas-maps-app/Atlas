@@ -37,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <string_view>
 #include <vector>
@@ -409,13 +410,18 @@ std::vector<TestTile> thin_tiles() {
     return {t};
 }
 
-/// A frame of the thin scene: its pixels with the thin water and without, and the ditches' middles and width on the
-/// screen, device px.
+/// A frame of the thin scene: its pixels with the thin water and without, and on the screen (device px) the ditches'
+/// middles, their width and the rows of their ends, and a point of the plate between the 4th and 5th ditches and the
+/// pond's middle (column, row).
 struct ThinFrame {
     gpu::Pixels on;
     gpu::Pixels off;
     std::array<double, ditches> centre{};
     double width = 0;
+    double north = 0;
+    double south = 0;
+    std::array<double, 2> plate{};
+    std::array<double, 2> pond{};
 };
 
 /// The thin scene at `path` drawn by the ground alone in the app's map, straight down from `distance` over the frame's
@@ -495,16 +501,21 @@ ThinFrame draw_thin(test::Session& session, const std::filesystem::path& path, d
         (thin ? out.on : out.off) = gpu::to_rgba8(*packed);
     }
     ground->draw_thin_water(true);
-    // the ditches' banks on the screen, the same on every row straight down: the ground under two columns' centres a
-    // pixel apart
+    // the scene on the screen, straight down a column and a row for every x and z: the ground under two pixels' centres
+    // a pixel apart both ways
     const auto& framed = (*builder)->state().view;
     ATLAS_REQUIRE_OR_RETURN({}, framed.has_value(), "the frame has a view");
     const view::Camera& cam = framed->camera();
-    const geo::P2 g0 = ground_at(cam, 0.5, size / 2.0, 0.0);
-    const geo::P2 g1 = ground_at(cam, 1.5, size / 2.0, 0.0);
+    const geo::P2 g0 = ground_at(cam, 0.5, 0.5, 0.0);
+    const geo::P2 g1 = ground_at(cam, 1.5, 1.5, 0.0);
     const auto column = [&](double x) { return 0.5 + ((x - g0.x) / (g1.x - g0.x)); };
+    const auto row = [&](double z) { return 0.5 + ((z - g0.z) / (g1.z - g0.z)); };
     for (std::size_t k = 0; k < ditches; ++k) out.centre[k] = column(ditch_x(k));
     out.width = column(ditch_x(0) + (ditch_width / 2)) - column(ditch_x(0) - (ditch_width / 2));
+    out.north = row(0.0);
+    out.south = row(600.0);
+    out.plate = {column(0.5 * (ditch_x(3) + ditch_x(4))), row(200.0)};
+    out.pond = {column(360.0), row(200.0)};
     for (const std::string& m : session.take_messages()) CHECK_MESSAGE(false, m);
     renderer->reset();
     return out;
@@ -568,33 +579,55 @@ TEST_CASE(
         ATLAS_REQUIRE(f.on.width == size && f.off.width == size);
         CHECK(f.width > 0.85);
         CHECK(f.width < 0.95);
-        // the plate's green (between the 4th and 5th ditches) and the water's (the pond's middle)
-        const double plate = green(f.on, 90, 126);
-        const double water = green(f.on, 150, 126);
+        // the plate's green between the 4th and 5th ditches and the water's (the pond's middle)
+        const auto pixel = [](double v) { return static_cast<std::uint32_t>(v); };
+        const double plate = green(f.on, pixel(f.plate[0]), pixel(f.plate[1]));
+        const double water = green(f.on, pixel(f.pond[0]), pixel(f.pond[1]));
         CHECK(plate - water > 100);
-        // each row across each ditch away from its ends (rows 105 to 175 of its 96 to 186): its ink, the share of the
-        // way from the plate's green to the water's of each pixel, summed
+        CHECK(f.south - f.north > 80);
+        // each row across each ditch 3 px and more from its ends: its ink, the share of the way from the plate beside
+        // it (4 and 5 px from the ditch's pixel each side) to the water's green of each pixel within 3 px, summed
+        const std::uint32_t first = pixel(f.north) + 3;
+        const std::uint32_t last = pixel(f.south) - 3;
         double worst_on = 0;
         double worst_off = 0;
         double most = 0;
         std::size_t rows = 0;
+        std::string lines;
         for (const double centre : f.centre) {
             CAPTURE(centre);
+            const std::uint32_t c = pixel(centre);
             const auto ink_of = [&](const gpu::Pixels& px, std::uint32_t y, double& peak) {
+                const double beside =
+                    (green(px, c - 5, y) + green(px, c - 4, y) + green(px, c + 4, y) + green(px, c + 5, y)) / 4;
                 double ink = 0;
-                const auto c = static_cast<std::uint32_t>(centre);
-                for (std::uint32_t x = c - 5; x <= c + 5; ++x) {
-                    const double share = (plate - green(px, x, y)) / (plate - water);
+                for (std::uint32_t x = c - 3; x <= c + 3; ++x) {
+                    const double share = (beside - green(px, x, y)) / (beside - water);
                     ink += share;
                     peak = std::max(peak, share / (f.width / 1.5));
                 }
                 return ink;
             };
-            for (std::uint32_t y = 105; y <= 175; ++y) {
+            std::array<double, 2> band{1e9, -1e9};
+            std::array<double, 2> own{1e9, -1e9};
+            for (std::uint32_t y = first; y <= last; ++y) {
                 double ignored = 0;
-                worst_on = std::max(worst_on, std::abs(ink_of(f.on, y, most) - f.width) / f.width);
-                worst_off = std::max(worst_off, std::abs(ink_of(f.off, y, ignored) - f.width) / f.width);
+                const double with_band = ink_of(f.on, y, most);
+                const double at_own = ink_of(f.off, y, ignored);
+                band = {std::min(band[0], with_band), std::max(band[1], with_band)};
+                own = {std::min(own[0], at_own), std::max(own[1], at_own)};
+                worst_on = std::max(worst_on, std::abs(with_band - f.width) / f.width);
+                worst_off = std::max(worst_off, std::abs(at_own - f.width) / f.width);
                 ++rows;
+            }
+            // and the greens with the band and without across it on the middle row
+            const std::uint32_t mid = (first + last) / 2;
+            lines +=
+                std::format("\n  at {:.3f}: ink {:.3f} to {:.3f} with the band, {:.3f} to {:.3f} at its own width; "
+                            "row {} with/without:",
+                            centre, band[0], band[1], own[0], own[1], mid);
+            for (std::uint32_t x = c - 2; x <= c + 2; ++x) {
+                lines += std::format(" {}/{}", green(f.on, x, mid), green(f.off, x, mid));
             }
         }
         // every pixel the band changes within its 0.75 px and a pixel of a ditch's middle
@@ -612,10 +645,11 @@ TEST_CASE(
             }
         }
         MESSAGE(std::string(weather ? "with weather" : "without weather")
-                << ": " << rows << " rows across " << ditches << " ditches some " << f.width
-                << " px wide, with the band off by " << 100 * worst_on << " % at most, a pixel's most " << most
-                << " of its width's share of 1.5; at its own width off by " << 100 * worst_off << " %; " << near
-                << " pixels changed by the band near the ditches, " << moved << " elsewhere");
+                << ": " << rows << " rows across " << ditches << " ditches some " << f.width << " px wide (rows "
+                << first << " to " << last << " of " << f.north << " to " << f.south << "), plate " << plate
+                << ", water " << water << ", with the band off by " << 100 * worst_on << " % at most, a pixel's most "
+                << most << " of its width's share of 1.5; at its own width off by " << 100 * worst_off << " %; " << near
+                << " pixels changed by the band near the ditches, " << moved << " elsewhere" << lines);
         CHECK(worst_on < 0.06);
         CHECK(most < 1.1);
         CHECK(worst_off > 0.08);
