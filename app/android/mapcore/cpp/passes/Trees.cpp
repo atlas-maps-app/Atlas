@@ -328,11 +328,12 @@ void Trees::select(const frame::FrameState& state, frame::Selectors& selectors) 
 std::uint64_t Trees::camera_parts() const noexcept { return style::camera_part::trees; }
 
 gpu::Result<void> Trees::build(scene::TileBuild& b) const {
-    const geometry::TileTrees g =
-        geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_});
-    if (g.trees.empty()) return {};
-    // a frame cell's level's tile (L13, L12, drawn beyond the finest level's reach): lean records, small crowns
+    // a frame cell's level's tile (L13, L12, drawn beyond the finest level's reach): lean records, small crowns, and no
+    // clumps made for them
     const bool lean = b.tile().header.level < 14;
+    const geometry::TileTrees g =
+        geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_, .lean = lean});
+    if (g.trees.empty()) return {};
     const std::vector<hlsl::uint4> words = tree_words(g, b.origin().x, b.origin().y, b.origin().z, lean);
     ATLAS_GPU_LET(
         range, b.allocate(scene::HeapKind::points, static_cast<std::uint32_t>(words.size() * sizeof(hlsl::uint4)), 16));
