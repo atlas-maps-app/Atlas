@@ -23,9 +23,9 @@
 #   and checked against the index, each decoded by the core's stage P tool (`packer world-check`), and the globe;
 # - publish (only by hand): the draft's scratch deleted, the release published, world-latest's world.json replaced,
 #   and every world release but the last two deleted.
-# Hand-offs go through the draft's assets (scratch-*), as artifacts and the cache are too small. The fine packs stay in
-# the parts their region named; the index names every part. A block at the area's edge holds the area's data alone.
-# world-test, the app's test world, is never a run's.
+# Hand-offs go through the draft's assets (scratch-*), as artifacts and the cache are too small; every upload goes
+# through UPLOAD, which tries again. The fine packs stay in the parts their region named; the index names every part.
+# A block at the area's edge holds the area's data alone. world-test, the app's test world, is never a run's.
 name: World
 
 on:
@@ -71,6 +71,31 @@ env:
   GH_REPO: ${{ github.repository }}
   USER_AGENT: Atlas-world/1 (+https://github.com/atlas-maps-app/Atlas)
   PACKER: app/android/packer/build/install/packer/bin/packer
+  # A release's files put up, each replacing an asset of its name: bash -c "$UPLOAD" upload <tag> <file>... Tried up
+  # to ten times a minute apart, as uploads.github.com may answer a file with a 404 mid-run (Europe's r04, run
+  # 41795215009, 4 November 2026). A failed upload leaves its asset unfinished ("starter"), which the release's own
+  # list of assets, the one gh's --clobber goes by, leaves out: such an asset of the files' names is deleted before
+  # each try, a rerun's first included, so that the name is free.
+  UPLOAD: |
+    TAG=$1
+    shift
+    NAMES=$(printf '%s\n' "${@##*/}")
+    for try in $(seq 10); do
+      if ID=$(gh release view "$TAG" --json databaseId -q .databaseId); then
+        gh api --paginate "repos/$GH_REPO/releases/$ID/assets?per_page=100" -q '.[] | select(.state != "uploaded") | "\(.id) \(.name)"' |
+          while read -r id name; do
+            if grep -qxF "$name" <<< "$NAMES"; then
+              gh api -X DELETE "repos/$GH_REPO/releases/assets/$id" < /dev/null
+            fi
+          done
+      fi
+      gh release upload "$TAG" "$@" --clobber && exit 0
+      if [ "$try" = 10 ]; then break; fi
+      echo "::warning::Not all of ${*##*/} went up into $TAG (try $try of 10); again in a minute"
+      sleep 60
+    done
+    echo "::error::Not all of ${*##*/} went up into $TAG"
+    exit 1
   RELEASE_NOTES: |
     The world's base map for Atlas, built by .github/workflows/world.yml: the packs of L6 to L11 of every L6 block the
     area meets (world-mid-*: a pack per L6 block, its L9 to L11 tiles; world-coarse.*: a pack per L3 block, its L6 to L8
@@ -355,7 +380,7 @@ jobs:
           for z in "$S"/*.zip "$S"/naturalearth/*.zip; do unzip -tq "$z" > /dev/null; done
           tar -cf "$S/scratch-naturalearth.tar" -C "$S/naturalearth" .
           ls -l "$S" "$S/naturalearth"
-          gh release upload "$TAG" "$S/scratch-land-polygons-split-4326.zip" "$S/scratch-simplified-land-polygons-complete-3857.zip" "$S/scratch-naturalearth.tar" --clobber
+          bash -c "$UPLOAD" upload "$TAG" "$S/scratch-land-polygons-split-4326.zip" "$S/scratch-simplified-land-polygons-complete-3857.zip" "$S/scratch-naturalearth.tar"
           { echo "### Sources"; find "$S" -maxdepth 1 -name 'scratch-*' -printf '- %f: %s bytes\n'; } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$LAND" ]; then
             # the stand-in, named in the summary and once in the draft's notes however often the job runs: each zip's
@@ -459,7 +484,7 @@ jobs:
           rm -f filtered.osm.pbf
           sha256sum scratch-filtered.osm.pbf.[0-9][0-9][0-9] > scratch-filtered.sha256
           cat scratch-filtered.sha256
-          gh release upload "$TAG" scratch-filtered.osm.pbf.[0-9][0-9][0-9] scratch-filtered.sha256 --clobber
+          bash -c "$UPLOAD" upload "$TAG" scratch-filtered.osm.pbf.[0-9][0-9][0-9] scratch-filtered.sha256
 
   cut:
     needs: [plan, filter]
@@ -540,7 +565,7 @@ jobs:
             split -b 1900M -d -a 3 "$f" "$f."
             rm -f "$f"
           done
-          gh release upload "$TAG" "$WORK"/cut/scratch-r*.osm.pbf.* --clobber
+          bash -c "$UPLOAD" upload "$TAG" "$WORK"/cut/scratch-r*.osm.pbf.*
 
   blocks:
     needs: [plan, sources, filter, cut]
@@ -614,7 +639,7 @@ jobs:
           shopt -s nullglob
           # its parts (none where its blocks are open sea) and what it hands on
           FILES=("$WORK"/out/world-mid-"$ID".* "$WORK"/out/scratch-"$ID".*)
-          gh release upload "$TAG" "${FILES[@]}" --clobber
+          bash -c "$UPLOAD" upload "$TAG" "${FILES[@]}"
 
   globe:
     needs: [plan, sources]
@@ -647,7 +672,7 @@ jobs:
           mv "$G/scratch-simplified-land-polygons-complete-3857.zip" "$G/simplified-land-polygons-complete-3857.zip"
           "$PACKER" globe "$G/naturalearth" "$G/simplified-land-polygons-complete-3857.zip" "$G/out/world-globe.atlas" --threads 4 | tee "$RUNNER_TEMP/globe.txt"
           ls -l "$G/out"
-          gh release upload "$TAG" "$G/out/world-globe.atlas" --clobber
+          bash -c "$UPLOAD" upload "$TAG" "$G/out/world-globe.atlas"
           { echo "### The globe"; tail -3 "$RUNNER_TEMP/globe.txt" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
 
   assemble:
@@ -743,7 +768,7 @@ jobs:
       - name: Upload
         run: |
           set -euo pipefail
-          gh release upload "$TAG" "$WORK"/out/world-coarse.* "$WORK/out/world.idx" "$WORK/out/world.json" "$WORK/out/world-stats.json" --clobber
+          bash -c "$UPLOAD" upload "$TAG" "$WORK"/out/world-coarse.* "$WORK/out/world.idx" "$WORK/out/world.json" "$WORK/out/world-stats.json"
           {
             echo "### $TAG: $(jq .packs "$WORK/out/world.json") packs in $(jq '.parts | length' "$WORK/out/world.json") parts, $(jq .bytes "$WORK/out/world.json") bytes in all"
             echo "The data of $(jq -r .date "$WORK/out/world.json")."
@@ -783,8 +808,7 @@ jobs:
           if ! gh release view world-latest > /dev/null 2>&1; then
             gh release create world-latest --title "World: the latest" --notes-file "$R/notes.md" --latest=false --target "$GITHUB_SHA"
           fi
-          gh release delete-asset world-latest world.json --yes 2> /dev/null || true
-          gh release upload world-latest "$R/world.json"
+          bash -c "$UPLOAD" upload world-latest "$R/world.json"
           # every world but the last two goes; world-test and world-latest stay
           gh release list --limit 200 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName' |
             { grep -E '^world-[0-9]{8}$' || true; } | sort -r | tail -n +3 | while read -r old; do
