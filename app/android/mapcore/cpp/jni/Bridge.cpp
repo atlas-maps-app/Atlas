@@ -658,11 +658,11 @@ private:
         }
         // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
         // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
-        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there while
-        // the GPU's last figure is 16 ms or more.
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there from a
+        // GPU figure of 16 ms or more until one under 14 ms.
         cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
-        const frame::Cadence::Step step = cadence_.step(
-            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); }, gpu_ns_);
+        const frame::Cadence::Step step =
+            cadence_.step([this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
         if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
@@ -754,10 +754,12 @@ private:
                      static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
         // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
         // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
-        // back after its fence: the percentile does not mind). The cadence's step at 90 Hz takes the same figure.
+        // back after its fence: the percentile does not mind). The cadence takes the same figure for its step at 90 Hz
+        // (the GPU heavy from 16 ms until under 14).
         if ((r.flags & standin::frame_flag::gpu) != 0) {
-            gpu_ns_ = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
-            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns_);
+            const auto gpu_ns = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
+            cadence_.gpu_took(gpu_ns);
+            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns);
         }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
@@ -793,7 +795,6 @@ private:
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
-    std::int64_t gpu_ns_ = 0;          // the GPU's time of the last frame it measured (two frames old), for the cadence
     frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
     frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
