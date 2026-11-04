@@ -2,6 +2,7 @@
 // raster (tests/item/item_raster.hpp), which doors_vk_test and shopfronts_vk_test hold the GPU's frames to on lavapipe.
 #pragma once
 
+#include "base/pymath/PyMath.hpp"
 #include "gen/layouts.hpp"
 #include "tests/item/item_raster.hpp"
 #include "text/SlugBands.hpp"
@@ -19,7 +20,8 @@ namespace atlas::test::items {
 /// The glyphs (a door's number, a sign's text) blended over raster `r` in their order: on each sample their dilated
 /// quad covers (the vertex stage's dilation by half a device pixel) whose depth their own passes (GREATER), at the
 /// coverage the CPU's Slug gives at the pixel's centre, rounded to levels as the GPU blends; such a sample may lie two
-/// levels off. The samples blended over, and the pixels a glyph covers some of.
+/// levels off. A sample within 0.02 px of the quad's edge lies near a boundary, as at a shape's: the rasteriser's
+/// sub-pixel grid decides whether the quad covers it. The samples blended over, and the pixels a glyph covers some of.
 struct Blended {
     std::size_t samples = 0;
     std::size_t pixels = 0;
@@ -89,6 +91,10 @@ inline Blended blend_glyphs(Raster& r, std::span<const layouts::text_slug::Glyph
                 const double sy = py - ty;
                 return std::pair{(i00 * sx) + (i01 * sy), (i10 * sx) + (i11 * sy)};
             };
+            // em x and y a device pixel: a sample's distance from the quad's edges in px
+            const double per_x = pymath::hypot(i00, i01);
+            const double per_y = pymath::hypot(i10, i11);
+            constexpr double tol = 0.02;
             for (int y = iy0; y <= iy1; ++y) {
                 for (int x = ix0; x <= ix1; ++x) {
                     const auto [ex, ey] = em_at(x + 0.5, y + 0.5);
@@ -99,8 +105,13 @@ inline Blended blend_glyphs(Raster& r, std::span<const layouts::text_slug::Glyph
                     for (std::size_t q = 0; q < n; ++q) {
                         const auto [sx, sy] =
                             em_at(x + static_cast<double>(r.samples[q].x), y + static_cast<double>(r.samples[q].y));
-                        if (sx < bx0 || sx > bx1 || sy < by0 || sy > by1) continue;
                         const std::size_t k = (p * n) + q;
+                        const double in_x = std::min(sx - bx0, bx1 - sx) / per_x;
+                        const double in_y = std::min(sy - by0, by1 - sy) / per_y;
+                        if (std::min(in_x, in_y) >= -tol && std::min(std::abs(in_x), std::abs(in_y)) <= tol) {
+                            r.edge[k] = 1;
+                        }
+                        if (sx < bx0 || sx > bx1 || sy < by0 || sy > by1) continue;
                         if (r.covered[k] != 0 && !(depth > r.depth[k])) continue;
                         touched[p] = 1;
                         hlsl::float3& under = r.colour[k];

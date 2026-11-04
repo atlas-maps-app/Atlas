@@ -1,14 +1,15 @@
 // The shopfronts' pass on the host's Vulkan (ENGINE.md step 4, the facades and the night; lavapipe): the bundled
 // Westerkerk (ATLAS_TILES_DIR) from 70 m over two walls of shopfronts that show between them every state of the user's
-// rule (4 November) by day and on the wet night, drawn through the frame builder and the world with that pass alone
-// beside the composite (the world given the glyphs' globals, the fonts loaded), at rest and moving, at 1x and 4x, at
-// true depth and under the painter switch, against the exact raster of the records the pass gives the GPU
-// (tests/item/item_raster.hpp: the fronts' and the terraces' faces, the glass by day its two stops, the outlines and
-// the lines), then the signs' glyphs (tests/item/glyph_raster.hpp), the awnings' stripes and the night's spill, and at
-// night the open places' glows blended over it in the GPU's order. Each frame's shopfronts are held to their opening
-// hours at its moment: a food place with outdoor seating sets its terrace out while it is open, and by day where its
-// hours say nothing; none while it is closed; its glass lit while it is open. Each switch leaves out its own part
-// alone. The twin's elements are held to the port's by L1; here the GPU draws the pass's records.
+// rule (4 November) by day and on the wet night, and along a street of 29 from 120 m, drawn through the frame builder
+// and the world with that pass alone beside the composite (the world given the glyphs' globals, the fonts loaded), at
+// rest and moving, at 1x and 4x, at true depth and under the painter switch, against the exact raster of the records
+// the pass gives the GPU (tests/item/item_raster.hpp: the fronts' and the terraces' faces, the glass by day its two
+// stops, the outlines and the lines), then the signs' glyphs (tests/item/glyph_raster.hpp), the awnings' stripes and
+// the night's spill, and at night the open places' glows blended over it in the GPU's order. Each frame's shopfronts
+// are held to their opening hours at its moment: a food place with outdoor seating sets its terrace out while it is
+// open, and by day where its hours say nothing; none while it is closed; its glass lit while it is open. Each switch
+// leaves out its own part alone. The twin's elements are held to the port's by L1; here the GPU draws the pass's
+// records.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -378,6 +379,17 @@ TEST_CASE("shopfronts: a row of shopfronts, their signs and terraces, and at nig
                  {.shops = 8, .seated = {true, false, true}, .terraces = {false, false, true}});
     check_frames(south, "the row facing south on the wet night", pack, wet_night(),
                  {.shops = 8, .seated = {false, true, true}});
+    // along the street about (-124, -214), its wall's way (0.334388, 0.942436), from 120 m and 70 degrees down: 29
+    // shopfronts, the blades seen edge on with their text down them; by day two places open with their terraces, at
+    // night those two open still, and the open places' glows
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    const double bearing = pymath::degrees(pymath::atan2(0.334388, -0.942436));
+    const style::CameraState along = camera(52.3746 - (-214.05 / 110540.0), 4.8840 + (-124.28 / kx),
+                                            bearing < 0 ? bearing + 360 : bearing, 70.0, 120.0);
+    check_frames(along, "the street of shopfronts by day", pack, test::sunny(),
+                 {.shops = 29, .seated = {true, false, false}, .terraces = {true, false, false}});
+    check_frames(along, "the street of shopfronts on the wet night", pack, wet_night(),
+                 {.shops = 29, .seated = {true, false, false}, .terraces = {true, false, false}, .glows = true});
 }
 
 #endif
