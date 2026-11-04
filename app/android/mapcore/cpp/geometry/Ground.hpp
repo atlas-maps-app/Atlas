@@ -224,6 +224,8 @@ struct Fill {
     /// tile names none).
     std::uint32_t ring = 0;
     bool hole = false;
+    /// Whether its ring's box lies in its cell's core (GroundTile::cores): no wider than core_side either way.
+    bool core = false;
     double level = 0;
     /// Its index in the tile's GPU feature table (its visibility bit).
     std::uint32_t gpu = 0;
@@ -254,8 +256,8 @@ enum class StrokeKind : std::uint8_t {
     park,    ///< draw_over: a national park's edge (line_d(ring, 0.15)), 2.2 dashed 7 on 5 off at .85, no radius cut
 };
 
-/// A tile cell's box over its fills (metres, at their heights) and the widest of their margins: the frame tests a
-/// whole cell before its fills (passes/Ground.cpp).
+/// A tile cell's box over its fills (metres, at their heights) and the widest and the narrowest of their margins: the
+/// frame tests a whole cell before its fills (passes/Ground.cpp).
 struct CellBox {
     double x0 = 0;
     double x1 = -1; ///< empty while x1 < x0
@@ -264,11 +266,16 @@ struct CellBox {
     double y0 = 0;
     double y1 = 0;
     double margin = 0;
+    double least = 0;
     [[nodiscard]] bool empty() const noexcept { return x1 < x0; }
 };
 
 /// The cells a tile has at most (scene/Cells.hpp: 8 × 8).
 inline constexpr std::size_t max_cells = 64;
+
+/// The widest a fill's box is in its cell's core (GroundTile::cores), metres either way: a few large rings (a polder's,
+/// a lake's shore, a long road) stretch a cell's box kilometres past its own, the core's the rest of its fills'.
+inline constexpr double core_side = 500;
 
 /// One stroked element (one SVG path) of a tile: its polylines, painted alike.
 struct Stroke {
@@ -595,8 +602,11 @@ struct GroundTile {
     [[nodiscard]] std::uint32_t woods_first() const noexcept {
         return static_cast<std::uint32_t>(shadows.size() - woods.size());
     }
-    /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole).
+    /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole), and its core: the
+    /// same over those of them no wider than core_side (Fill::core), for the frame to test where the whole cell's box
+    /// reaches past the frame's margin.
     std::array<CellBox, max_cells> cells{};
+    std::array<CellBox, max_cells> cores{};
     /// Bytes it holds (the tile's native bytes).
     [[nodiscard]] std::size_t bytes() const noexcept;
 };

@@ -171,6 +171,12 @@ gpu::Result<void> Buildings::prepare_kept(const frame::PassContext& context) {
 
 bool Buildings::drawn_kept() const noexcept { return kept_ != nullptr && kept_->jobs_now > 0; }
 
+std::string_view Buildings::records_why() const noexcept {
+    if (kept_ == nullptr) return "the walls and roofs drawn as their runs (no kept pipelines)";
+    if (!*kept_->shape_scatter) return "each kept wall decided at each point (no records' pipelines)";
+    return {};
+}
+
 void Buildings::write_kept_jobs(std::uint32_t slot) {
     Kept& k = *kept_;
     if (fade_every_) dithers_ = true;

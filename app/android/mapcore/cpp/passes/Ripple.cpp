@@ -128,19 +128,25 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     }
     // The result is a function of what the layer's draw and the stages read: the camera (the frame's size and density
     // with it), the tiles' places, the reflections' records and the offsets (the fields and the byte tables are the
-    // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake).
-    std::vector<std::uint32_t> key(sizeof(shaders::FrameCamera) / sizeof(std::uint32_t));
-    std::memcpy(key.data(), &state.block.camera, sizeof(shaders::FrameCamera));
-    const auto add = [&](std::uint32_t first, std::size_t n) {
-        key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
-    };
-    add(w.tiles, w.slots - w.tiles);
-    add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
-    add(w.ripple_offsets, 256);
-    add(w.leaf_offsets, 257);
-    if (w.ripple_map != 0) add(w.ripple_map, 9);
-    ripple_stale_ = key != ripple_key_;
-    ripple_key_ = std::move(key);
+    // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake); while
+    // the camera moves it moves with it, and is made again without the reflections' records copied to tell.
+    if (frame_.exact) {
+        std::vector<std::uint32_t> key(sizeof(shaders::FrameCamera) / sizeof(std::uint32_t));
+        std::memcpy(key.data(), &state.block.camera, sizeof(shaders::FrameCamera));
+        const auto add = [&](std::uint32_t first, std::size_t n) {
+            key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
+        };
+        add(w.tiles, w.slots - w.tiles);
+        add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
+        add(w.ripple_offsets, 256);
+        add(w.leaf_offsets, 257);
+        if (w.ripple_map != 0) add(w.ripple_map, 9);
+        ripple_stale_ = key != ripple_key_;
+        ripple_key_ = std::move(key);
+    } else {
+        ripple_key_.clear();
+        ripple_stale_ = true;
+    }
     // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
     // the trees' circles, the streaks' ellipses, grown by the faces' strokes and two pixels of slack), the result's
     // region (that content moved by the displacement's reach and spread by the boxes'), and backwards from it each

@@ -76,7 +76,8 @@ struct Piece {
 
 } // namespace
 
-WaterPiece Ground::view_water(const view::Camera& cam, const geo::GroundTile& g, std::uint32_t i) {
+WaterPiece Ground::view_water(const view::Camera& cam, const geo::GroundTile& g, std::uint32_t i,
+                              PolyScratch& s) const {
     const geo::Fill& fill = g.fills[i];
     WaterPiece w{.fill = i};
     const std::span<const geo::P2> ring = std::span(g.points).subspan(fill.first, fill.count);
@@ -88,7 +89,7 @@ WaterPiece Ground::view_water(const view::Camera& cam, const geo::GroundTile& g,
             v.maybe = true;
             continue;
         }
-        const ProjectedPoly p = project_poly(cam, ring, y, fill.margin, cam_, sp_);
+        const ProjectedPoly p = project_poly(cam, ring, y, fill.margin, s.cs, s.sp);
         if (p.points < 3) continue;
         v = {.points = static_cast<std::uint32_t>(p.points),
              .sum = p.sum,

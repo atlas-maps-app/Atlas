@@ -17,6 +17,7 @@
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "passes/Labels.hpp"
+#include "passes/Walls.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
@@ -32,9 +33,11 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -266,6 +269,19 @@ bool draw_until_still(standin::Session& session, frame::MapFrame& map, const sty
 /// The theme the last frame drew with.
 [[nodiscard]] std::uint32_t drawn_flags(const frame::MapFrame& map) { return map.builder()->state().theme.flags; }
 
+/// What the map's last frame kept of the buildings' triangles and drew from shape records (passes/Kept.cpp's counts),
+/// once the GPU is done with it; none without a frame builder or a buildings pass.
+[[nodiscard]] passes::Buildings::KeptCounts kept_counts(const frame::MapFrame& map, const gpu::Device& device) {
+    device.wait_idle();
+    const frame::FrameBuilder* b = map.builder();
+    if (b == nullptr) return {};
+    for (const std::unique_ptr<frame::Pass>& p : b->passes()) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
+        if (p->name() == "buildings") return static_cast<const passes::Buildings&>(*p).kept_counts();
+    }
+    return {};
+}
+
 } // namespace
 
 TEST_CASE("the theme takes the profile's rules: TONE off for the living map, on for every other profile") {
@@ -436,6 +452,66 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
     }
     // The session's close let go of the map's world and frame behind the close stage: nothing on disk.
     CHECK(marked(dir).empty());
+    CHECK_FALSE(fs::exists(dir / "guard"));
+}
+
+TEST_CASE("VK bench's switch of the kept walls' shape records: taken before the map is made and before its first "
+          "frame, which say why there is no answer yet; then on lavapipe the same walls kept, none drawn from records "
+          "off and the walls' first chunks on, and the next frame builder made takes it") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("records");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+        standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+        CHECK(map.set_shape_records(false) == "no map");
+        CHECK(session.map(&map).empty());
+        CHECK(map.set_shape_records(false) == "no frame drawn yet (the passes not prepared)");
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        map.set_theme(sunny());
+        // A few frames more at the Westerkerk home, each frame slot's last frame known, then the last one's counts.
+        const auto drawn = [&] {
+            for (int i = 0; i < 3; ++i) CHECK(session.draw(home(1), {}).drawn);
+            return kept_counts(map, *started->device);
+        };
+        // Off from before the first frame: walls kept, none drawn from records.
+        CHECK(draw_until_complete(session, map, home(1)) > 0);
+        const passes::Buildings::KeptCounts off = drawn();
+        CHECK(off.kept[0] > 0);
+        CHECK(off.shaped == std::array<std::uint64_t, 3>{});
+        CHECK(off.shape_bytes == 0);
+        // On (lavapipe makes the records' pipelines): the same walls kept, theirs drawn from records, the roofs' not.
+        CHECK(map.set_shape_records(true).empty());
+        const passes::Buildings::KeptCounts on = drawn();
+        CHECK(on.kept == off.kept);
+        CHECK(on.shaped[0] > 0);
+        CHECK(on.shaped[2] == 0);
+        CHECK(on.shape_bytes > 0);
+        // Off again, then the map off and on: its new frame builder takes the switch as it is.
+        CHECK(map.set_shape_records(false).empty());
+        CHECK(session.map(nullptr).empty());
+        CHECK(session.map(&map).empty());
+        CHECK(map.set_shape_records(false) == "no frame drawn yet (the passes not prepared)");
+        CHECK(draw_until_complete(session, map, home(1)) > 0);
+        const passes::Buildings::KeptCounts again = drawn();
+        CHECK(again.kept[0] > 0);
+        CHECK(again.shape_bytes == 0);
+        CHECK(map.set_shape_records(true).empty());
+        CHECK(drawn().shape_bytes > 0);
+        MESSAGE(std::format("walls kept {} of {} triangles, {} drawn from records ({:.2f} MiB of them)", on.kept[0],
+                            on.submitted[0], on.shaped[0], static_cast<double>(on.shape_bytes) / (1 << 20)));
+        session.close();
+    }
     CHECK_FALSE(fs::exists(dir / "guard"));
 }
 
