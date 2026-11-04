@@ -8,8 +8,10 @@
 # - sources: osmdata's land polygons and Natural Earth's layers, fetched once a run into the draft, so no other job asks
 #   those free hosts again; with land=<a draft's tag>, the land polygons that draft holds stand in for osmdata's, the
 #   run's summary and the draft's notes naming the copy's date and SHA-256;
-# - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), then
-#   `osmium extract` into every region, two a pass, each region into the draft;
+# - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), the
+#   filtered file into the draft in parts (scratch-filtered.osm.pbf.000, …), their SHA-256 sums beside them;
+# - cut, a job every two regions: the filtered file from the draft, `osmium extract` into the two regions, each region
+#   into the draft;
 # - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
 #   (world-mid-<region>.000, …) and its coarse tiles, index and numbers handed on through the draft;
 # - globe: `packer globe`, world-globe.atlas;
@@ -91,6 +93,7 @@ jobs:
       bytes: ${{ steps.plan.outputs.bytes }}
       matrix: ${{ steps.plan.outputs.matrix }}
       count: ${{ steps.plan.outputs.count }}
+      extracts: ${{ steps.plan.outputs.extracts }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -185,9 +188,10 @@ jobs:
               echo "weights: the sizes of $(jq '.features | length' "$RUNNER_TEMP/sizes.geojson") extracts in $AREA"
             fi
           fi
-          # two regions an extract's pass: osmium's smart strategy keeps sets of the IDs over the whole planet's range
-          # for each region, several GB each from Europe, and Europe's first run (41777009995, 4 November) lost its
-          # 16 GB runner 47 minutes into a pass of five
+          # two regions a cut job, each job on a runner of its own: osmium's smart strategy keeps, for each region,
+          # sets of the IDs it takes, each over the planet's whole range of IDs (some 1.6 GB a set of nodes, whatever
+          # the region), and Europe's first run (41777009995, 4 November) lost its 16 GB runner 47 minutes into a pass
+          # of five regions
           "$PACKER" world-plan "$P/$NAME.geojson" "$P" --regions "$REGIONS" --group 2 --margin 0.2 "${WEIGHTS[@]}"
           "$PACKER" world-tags > "$P/tags.txt"
           cat "$P/tags.txt"
@@ -196,6 +200,8 @@ jobs:
             echo "bytes=$BYTES"
             echo "matrix=$(jq -c '[.regions[] | {id, blocks, count}]' "$P/regions.json")"
             echo "count=$(jq '.regions | length' "$P/regions.json")"
+            # the cut jobs: extract-<n>.json and its regions
+            echo "extracts=$(jq -c '[.groups | to_entries[] | {n: (.key + 1), regions: (.value | join(", "))}]' "$P/regions.json")"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### $AREA: $(jq .blocks "$P/regions.json") L6 blocks in $(jq '.regions | length' "$P/regions.json") regions"
@@ -276,9 +282,9 @@ jobs:
   filter:
     needs: plan
     runs-on: ubuntu-latest
-    # Europe's 35 GB: its download, osmium's filter (two reads of it) and the regions' extracts (a read of the filtered
-    # file every five regions)
-    timeout-minutes: 340
+    # Europe's 35 GB: its download (5 minutes on 4 November), osmium's filter (two reads of it, 21 minutes) and the
+    # filtered file's upload
+    timeout-minutes: 120
     outputs:
       name: ${{ steps.extract.outputs.name }}
       md5: ${{ steps.extract.outputs.md5 }}
@@ -350,33 +356,101 @@ jobs:
           ls -l "$SMALL/filtered.osm.pbf"
           echo "- filtered to the world's tags: $(stat -c %s "$SMALL/filtered.osm.pbf") bytes" >> "$GITHUB_STEP_SUMMARY"
           df -h / /mnt
-      - name: The regions' extracts
-        env:
-          TS: ${{ steps.extract.outputs.timestamp }}
+      - name: The filtered file into the draft
         run: |
           set -euo pipefail
-          CUT="$BIG/cut"
-          mkdir -p "$CUT"
-          for cfg in "$RUNNER_TEMP"/plan/extract-*.json; do
-            # osmium extract writes no replication time of its own (Belgium's first run, 3 November): each region's header
-            # is given the extract's, which every pack and world.json go by
-            jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$cfg" > "$cfg.dated"
-            # each region's box and margin, with whole ways and multipolygons where they cross its edge
-            # (verbose: its passes' times and its peak memory in the log)
-            time osmium extract -v -c "$cfg.dated" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
-            for f in "$CUT"/scratch-r*.osm.pbf; do
-              if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
-              echo "- ${f##*/}: $(stat -c %s "$f") bytes" >> "$GITHUB_STEP_SUMMARY"
-              # an asset is under 2 GiB: a file goes up in parts (.000, .001, …), joined in order
-              split -b 1900M -d -a 3 "$f" "$f."
-              rm -f "$f"
-            done
-            gh release upload "$TAG" "$CUT"/scratch-r*.osm.pbf.* --clobber
-            rm -f "$CUT"/scratch-r*.osm.pbf.*
+          # for the cut jobs: in parts, as an asset is under 2 GiB, each part's SHA-256 in a list beside them, which
+          # names the parts a cut job joins (a part the draft keeps from an earlier attempt is not in it)
+          cd "$SMALL"
+          split -b 1900M -d -a 3 filtered.osm.pbf scratch-filtered.osm.pbf.
+          rm -f filtered.osm.pbf
+          sha256sum scratch-filtered.osm.pbf.[0-9][0-9][0-9] > scratch-filtered.sha256
+          cat scratch-filtered.sha256
+          gh release upload "$TAG" scratch-filtered.osm.pbf.[0-9][0-9][0-9] scratch-filtered.sha256 --clobber
+
+  cut:
+    needs: [plan, filter]
+    name: extract ${{ matrix.cut.regions }}
+    runs-on: ubuntu-latest
+    # Europe's: the filtered file from the draft (some 8 GB, as Belgium's 699 MB filtered to 162), `osmium extract` into
+    # two regions (three reads of it: some 10 to 20 minutes, by Belgium's 13 seconds for two regions of 162 MB) and the
+    # regions' upload
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      # Europe's ten at once, under the account's 20 jobs
+      max-parallel: 10
+      matrix:
+        cut: ${{ fromJson(needs.plan.outputs.extracts) }}
+    env:
+      N: ${{ matrix.cut.n }}
+      REGIONS: ${{ matrix.cut.regions }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      TS: ${{ needs.filter.outputs.timestamp }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: world-plan
+          path: ${{ runner.temp }}/plan
+      - name: Make room, and osmium
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends osmium-tool
+          osmium --version | head -1
+          # work on whichever disk has more room
+          WORK="$RUNNER_TEMP/world"
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
+            sudo mkdir -p /mnt/world && sudo chown "$(id -u):$(id -g)" /mnt/world && WORK=/mnt/world
+          fi
+          mkdir -p "$WORK/in" "$WORK/cut"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt || true
+          free -m
+      - name: The filtered file
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern scratch-filtered.sha256 --dir "$WORK/in" --clobber
+          PARTS=()
+          while read -r _ part; do PARTS+=(--pattern "$part"); done < "$WORK/in/scratch-filtered.sha256"
+          for attempt in 1 2 3; do
+            if gh release download "$TAG" "${PARTS[@]}" --dir "$WORK/in" --clobber && (cd "$WORK/in" && sha256sum -c --quiet scratch-filtered.sha256); then break; fi
+            if [ "$attempt" = 3 ]; then echo "::error::The filtered file's parts did not come whole"; exit 1; fi
+            sleep 60
           done
+          # joined in the list's order, each part going once read
+          while read -r _ part; do cat "$WORK/in/$part"; rm -f "$WORK/in/$part"; done < "$WORK/in/scratch-filtered.sha256" > "$WORK/filtered.osm.pbf"
+          if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$WORK/filtered.osm.pbf")" != "$TS" ]; then echo "::error::The filtered file is not of the data's time"; exit 1; fi
+          ls -l "$WORK/filtered.osm.pbf"
+      - name: The regions' extracts
+        run: |
+          set -euo pipefail
+          # osmium extract writes no replication time of its own (Belgium's first run, 3 November): each region's header
+          # is given the extract's, which every pack and world.json go by
+          jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$RUNNER_TEMP/plan/extract-$N.json" > "$WORK/extract.json"
+          # each region's box and margin, with whole ways and multipolygons where they cross its edge (verbose: its
+          # passes' times and its peak memory in the log, the time and the peak in the summary too)
+          START=$SECONDS
+          time osmium extract -v -c "$WORK/extract.json" -s smart -d "$WORK/cut" -O "$WORK/filtered.osm.pbf" 2>&1 | tee "$RUNNER_TEMP/extract.txt"
+          {
+            echo "### $REGIONS"
+            echo "- osmium extract: $((SECONDS - START)) s, $(grep -o 'Peak memory used: .*' "$RUNNER_TEMP/extract.txt" || echo 'no peak memory given')"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$WORK/filtered.osm.pbf"
+          for f in "$WORK"/cut/scratch-r*.osm.pbf; do
+            if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
+            echo "- ${f##*/}: $(stat -c %s "$f") bytes" >> "$GITHUB_STEP_SUMMARY"
+            # an asset is under 2 GiB: a file goes up in parts (.000, .001, …), joined in order
+            split -b 1900M -d -a 3 "$f" "$f."
+            rm -f "$f"
+          done
+          gh release upload "$TAG" "$WORK"/cut/scratch-r*.osm.pbf.* --clobber
 
   blocks:
-    needs: [plan, sources, filter]
+    needs: [plan, sources, filter, cut]
     name: ${{ matrix.region.id }} (${{ matrix.region.count }} blocks)
     runs-on: ubuntu-latest
     # The runner's limits: 6 hours, 16 GB of memory, 4 cores
