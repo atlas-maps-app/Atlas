@@ -635,10 +635,18 @@ struct Part {
     std::uint64_t changes = 0;
 };
 
-/// A part's work in the last frame: its own kinds' draws and dispatches, its shared kinds' triangles and dispatches,
-/// whether its step ran or its mode bit is clear.
+/// The kinds a stage that keeps its result runs only where what the result is made of changed since the frame before
+/// (the ripple's layer and fused stages, the lit glow's layers and boxes): a frame may make its result anew for the
+/// frame before's sake, an input that changed at rest (on a slow machine a tile's sun bits that came meanwhile, say),
+/// and the next frame keep it.
+constexpr std::array<std::string_view, 5> made_anew{"ripple layer", "ripple fused", "lit glow layer", "lit glow box",
+                                                    "lit cores layer"};
+
+/// A part's work in the last frame: its own kinds' draws and dispatches (and of them, those of the kinds made anew),
+/// its shared kinds' triangles and dispatches, whether its step ran or its mode bit is clear.
 struct Work {
     std::uint64_t own = 0;
+    std::uint64_t anew = 0;
     std::uint64_t shared = 0;
     bool step = false;
     [[nodiscard]] bool any() const noexcept { return own > 0 || shared > 0 || step; }
@@ -648,7 +656,11 @@ struct Work {
     Work w;
     for (const frame::PassCounters& c : b.counters()) {
         for (const frame::KindCount& k : c.kinds()) {
-            if (std::ranges::find(p.own, k.kind) != p.own.end()) w.own += k.count.draws + k.count.dispatches;
+            if (std::ranges::find(p.own, k.kind) != p.own.end()) {
+                w.own += k.count.draws + k.count.dispatches;
+                if (std::ranges::find(made_anew, k.kind) != made_anew.end())
+                    w.anew += k.count.draws + k.count.dispatches;
+            }
             if (std::ranges::find(p.shared, k.kind) != p.shared.end())
                 w.shared += k.count.triangles + k.count.dispatches;
         }
@@ -1151,9 +1163,9 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         on.reserve(parts.size());
         for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));
         // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
-        // again (a stage that keeps its result while its inputs stand changes the counts from one frame to another,
-        // but not between these two), and the tiles each of the two drew (the cover may take one in or let one go at
-        // rest, a frame's fills and lines more or fewer)
+        // again (a stage that keeps its result while its inputs stand makes it anew where they changed since the frame
+        // before, which the two need not share: its work made anew is left out of their likeness), and the tiles each
+        // of the two drew (the cover may take one in or let one go at rest, a frame's fills and lines more or fewer)
         std::vector<std::vector<Work>> with_off(parts.size());
         std::vector<std::vector<Work>> again(parts.size());
         std::vector<bool> same_tiles(parts.size(), false);
@@ -1194,7 +1206,9 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
                 const std::string_view other = q.name;
                 CAPTURE(other);
                 CHECK(with_off[i][j].any());
-                if (same_tiles[i] && (q.changes & p.bit) == 0U) CHECK(with_off[i][j].own == again[i][j].own);
+                if (same_tiles[i] && (q.changes & p.bit) == 0U) {
+                    CHECK(with_off[i][j].own - with_off[i][j].anew == again[i][j].own - again[i][j].anew);
+                }
                 CHECK(with_off[i][j].step == again[i][j].step);
             }
             if (!same_tiles[i]) ++cover_moved;

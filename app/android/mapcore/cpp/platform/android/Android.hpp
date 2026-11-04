@@ -19,6 +19,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -152,14 +153,23 @@ public:
     void target(std::int64_t target_ns) noexcept;
     /// Reports one frame's work: its CPU time on the render thread and, where known, the GPU's.
     void report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_t gpu_ns) noexcept;
+    /// Holds the threads the frame's work runs on from now on in place of those it holds (`tids`, the render thread
+    /// first and then the ground's helpers: frame/RenderThreads.hpp), so that the boost a frame asks for reaches the
+    /// work it hands them (APerformanceHint_setThreads, API 34; before, the render thread alone). Without a session,
+    /// the next one opened takes them in.
+    void threads(std::span<const std::int32_t> tids);
     [[nodiscard]] bool active() const noexcept { return session_ != nullptr; }
     /// "ADPF 35 (GPU durations)", "ADPF 33", or "none (API 29-32)".
     [[nodiscard]] std::string describe() const;
 
 private:
+    /// The session's threads set to threads_ (API 34).
+    void take_threads() noexcept;
+
     void* session_ = nullptr;
     std::int64_t target_ns_ = 0; // the target last asked for
     bool gpu_ = false;
+    std::vector<pid_t> threads_; // the threads last told (none: the render thread alone, as opened)
 };
 
 /// The tile workers' hints (ENGINE.md gain 8, scene/WorkerHints.hpp): each worker named `atlas-tiles`, at background
