@@ -187,6 +187,8 @@ object WorldAssemble {
      * sources, with the licences' words.
      */
     fun worldJson(a: Assembled, release: String, url: String, index: File, globe: File): String {
+        // the planet's world is OpenStreetMap's own planet file's, an area's world Geofabrik's extract's
+        val from = if (a.facts.sources.any { it.contains(": planet-") }) "From OpenStreetMap's planet file." else "Extracts by Geofabrik."
         val o = buildJsonObject {
             put("format", 1)
             put("release", release)
@@ -201,7 +203,7 @@ object WorldAssemble {
             put("packs", a.index.entries.size)
             put("bytes", a.index.parts.sumOf { it.bytes } + index.length() + globe.length())
             putJsonArray("sources") { for (s in a.facts.sources) add(s) }
-            put("licence", "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0); the world packs are derived databases offered under the ODbL. Extracts by Geofabrik. Land polygons by osmdata.openstreetmap.de. The globe made with Natural Earth.")
+            put("licence", "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0); the world packs are derived databases offered under the ODbL. $from Land polygons by osmdata.openstreetmap.de. The globe made with Natural Earth.")
         }
         return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), o) + "\n"
     }
