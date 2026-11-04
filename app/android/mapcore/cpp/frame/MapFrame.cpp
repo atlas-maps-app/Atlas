@@ -7,6 +7,7 @@
 #include "load/Countries.hpp"
 #include "load/Window.hpp"
 #include "passes/Ground.hpp"
+#include "passes/Walls.hpp"
 
 #include <algorithm>
 #include <format>
@@ -170,6 +171,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     }
     builder_ = std::move(*builder);
     world_ = std::move(*world);
+    (void)apply_shape_records();
     if (wake_) {
         world_->set_wake(wake_);
         // a new moment's light, done ahead off the render thread, wakes the frame that takes it (gain 5)
@@ -222,6 +224,25 @@ void MapFrame::set_screen(bool haze, bool vignette, bool grain) noexcept {
         builder_->set_steps(steps_);
         builder_->set_grain(grain_);
     }
+}
+
+std::string MapFrame::set_shape_records(bool on) {
+    shape_records_ = on;
+    return apply_shape_records();
+}
+
+std::string MapFrame::apply_shape_records() {
+    if (!builder_) return "no map";
+    for (const std::unique_ptr<Pass>& p : builder_->passes()) {
+        if (p->name() != "buildings") continue;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
+        auto& buildings = static_cast<passes::Buildings&>(*p);
+        buildings.most_shape_chunks(shape_records_ ? std::nullopt : std::optional<std::uint32_t>{0});
+        // what the device made is known once the passes are prepared, for the frames' output: by their first frame
+        if (!builder_->holds_prepared()) return "no frame drawn yet (the passes not prepared)";
+        return std::string(buildings.records_why());
+    }
+    return "no buildings pass";
 }
 
 void MapFrame::release(gpu::PipelineWatch* watch) noexcept {

@@ -125,6 +125,12 @@ public:
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
     void set_screen(bool haze, bool vignette, bool grain) noexcept;
+    /// The kept walls' and near cells' shape records on (the default: as many as the frame slot's last frame kept) or
+    /// off from now on, each kept primitive then decided at each point (passes::Buildings::most_shape_chunks(0)), for
+    /// VK bench's comparison of the two at the map's far views (MapCore.shapeRecords); kept for every frame builder
+    /// made. "" where the frames' buildings draw from records, else why they cannot, or not yet (no frame drawn since
+    /// the frame builder or its output was made: what the device makes is known then).
+    [[nodiscard]] std::string set_shape_records(bool on);
     /// The passes the frames record from now on (FrameOptions::passes: a tool's measure of each pass's GPU work), kept
     /// for every frame builder made.
     void set_passes(std::uint64_t passes) noexcept {
@@ -206,6 +212,9 @@ private:
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;
     std::uint64_t passes_ = ~std::uint64_t{0};
+    bool shape_records_ = true;
+    /// set_shape_records' choice on the frame builder's buildings pass: "" where it draws from records, else why not.
+    [[nodiscard]] std::string apply_shape_records();
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
