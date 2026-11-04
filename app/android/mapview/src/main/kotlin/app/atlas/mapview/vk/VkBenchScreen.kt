@@ -1231,7 +1231,8 @@ private class BenchRun(
      * off in turn ([measureRecords]; ENGINE.md gain 1b), a line for each side ([VkBench.recordsLabel]), so that the
      * user's phone measures what deciding each kept wall once saves where the most walls are kept; or why the records
      * cannot be compared there ([MapCore.shapeRecords]). Cut short by the app's going to the background, it is drawn
-     * again once, as [measure] measures a path again.
+     * again once, as [measure] measures a path again. The two lines have the memory of one reading after both sides
+     * (the records' buffers are kept either way), which takes 2 to 3 s on CI's emulator.
      */
     private suspend fun compareRecords(view: VkBench.MapView, path: VkBench.Path) {
         val step = "map ${view.label} ${path.label} records"
@@ -1247,8 +1248,12 @@ private class BenchRun(
         }
         when (compared) {
             is RecordsCompared.Not -> emit(VkBench.recordsSkipped(view, path, compared.why))
-            is RecordsCompared.Sides -> for ((on, side) in listOf(true to compared.on, false to compared.off)) {
-                emit(VkBench.line(VkBench.recordsLabel(view, path, on), side.first, graphicsMb(), nativeMb(), side.second))
+            is RecordsCompared.Sides -> {
+                val graphics = graphicsMb()
+                val native = nativeMb()
+                for ((on, side) in listOf(true to compared.on, false to compared.off)) {
+                    emit(VkBench.line(VkBench.recordsLabel(view, path, on), side.first, graphics, native, side.second))
+                }
             }
         }
     }
