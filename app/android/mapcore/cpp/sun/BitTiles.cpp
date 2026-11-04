@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -31,6 +32,7 @@ void BitTiles::publish(std::vector<std::pair<tiles::TileKey, TileBits>> run, dou
                 e.before = fresh;
                 e.now = std::move(fresh);
                 e.swapped = -std::numeric_limits<double>::infinity(); // a tile's first bits show at once
+                e.came = t;
             } else {
                 e.before = std::move(e.now);
                 e.now = std::move(fresh);
@@ -52,7 +54,7 @@ std::optional<TileView> BitTiles::view(tiles::TileKey key, double t) const {
     if (it == tiles_.end() || !it->second.now) return std::nullopt;
     const Entry& e = it->second;
     const double w = fade_weight(e.swapped, t);
-    return TileView{.now = e.now, .before = w >= 1.0 ? e.now : e.before, .weight = w};
+    return TileView{.now = e.now, .before = w >= 1.0 ? e.now : e.before, .weight = w, .came = e.came};
 }
 
 void BitTiles::forget(tiles::TileKey key) {
@@ -73,8 +75,19 @@ std::size_t BitTiles::size() const {
 std::optional<double> BitTiles::texels(tiles::TileKey key, double t, std::vector<std::uint32_t>& out) const {
     const std::optional<TileView> v = view(key, t);
     if (!v) return std::nullopt;
-    const TileBits& now = *v->now;
-    const TileBits& before = *v->before;
+    texels_of(*v, out);
+    return v->weight;
+}
+
+TileBits by_day(const TileBits& bits) {
+    TileBits day = bits;
+    std::ranges::fill(day.words, ~std::uint64_t{0});
+    return day;
+}
+
+void texels_of(const TileView& v, std::vector<std::uint32_t>& out) {
+    const TileBits& now = *v.now;
+    const TileBits& before = *v.before;
     const std::uint32_t texels = (now.count + 31) / 32;
     for (std::uint32_t i = 0; i < texels; ++i) {
         const auto word = [i](const TileBits& b) -> std::uint32_t {
@@ -85,7 +98,6 @@ std::optional<double> BitTiles::texels(tiles::TileKey key, double t, std::vector
         out.push_back(word(now));
         out.push_back(before.count == now.count ? word(before) : word(now));
     }
-    return v->weight;
 }
 
 } // namespace atlas::sun

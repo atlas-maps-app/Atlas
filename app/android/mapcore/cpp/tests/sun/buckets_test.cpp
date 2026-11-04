@@ -242,6 +242,15 @@ TEST_CASE("sun: the bits a frame draws: the first at once, a swap fading over 30
     const auto w = tiles.texels(k, 20.0, texels);
     ATLAS_REQUIRE(w.has_value());
     CHECK(texels == std::vector<std::uint32_t>{0b0110U, 0b1010U}); // R the new bits, G the old
+    // a tile drawn before its first bits takes them from by day: every sample lit in G, its bits in R
+    const TileBits day = by_day(b);
+    CHECK(day.count == b.count);
+    CHECK(day.words == std::vector<std::uint64_t>{~std::uint64_t{0}});
+    texels.clear();
+    texels_of(
+        {.now = std::make_shared<const TileBits>(b), .before = std::make_shared<const TileBits>(day), .weight = 0},
+        texels);
+    CHECK(texels == std::vector<std::uint32_t>{0b0110U, 0xFFFF'FFFFU});
     tiles.forget(k);
     CHECK(tiles.size() == 0);
 }

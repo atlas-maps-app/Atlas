@@ -408,7 +408,12 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         CHECK(map.drawn_pack() == "amsterdam");
         CHECK((drawn_flags(map) & flag::tone) != 0);
         CHECK(wakes.load() > 0);
-        CHECK_FALSE(map.animating()); // the picture is final: nothing more at this camera
+        // the picture is final once its tiles' first sun bits have faded in from by day (300 ms from their
+        // publication, which may come after the complete picture): nothing more at this camera
+        for (int i = 0; i < 120 && map.animating(); ++i) {
+            if (session.draw(home(1), {}).stale) session.remake();
+        }
+        CHECK_FALSE(map.animating());
         // The world holds K17a's noise fields, kept under the app's cache once made for the frame's size.
         {
             const std::span<frame::GlobalProvider* const> globals = map.world()->globals();
