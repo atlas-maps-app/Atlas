@@ -61,7 +61,7 @@ on:
         type: string
         default: ''
       keep_caches:
-        description: Keep this run's ccache entries for its branch, to measure warm runs of a change to CI (delete them after)
+        description: Keep this run's caches (ccache's, Gradle's, the emulator's SDK archives) for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
 
@@ -96,7 +96,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches, kept as the others are (setup-gradle's own default keeps them on any run of the default branch).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ env.KEEP_CACHES != 'true' }}
       - name: Android SDK 37
         # NDK r30 and the SDK's CMake build the map core (:mapcore), at the versions mapcore/tools.properties pins.
         run: |
@@ -178,12 +181,14 @@ jobs:
           ccache --show-stats
           echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       # benchTiles makes the canal ring the emulator's runs draw: no APK carries a map (ENGINE.md step 3, one pack per
-      # country).
+      # country). testDependencies fetches the external artifacts every module's tests are built and run with (the root
+      # build.gradle.kts), Robolectric's Android among them, so the Gradle entry this job keeps holds them for the test
+      # jobs, which restore apk's entries.
       - name: The APKs and the emulator's map
         id: apk
         run: |
           ccache --zero-stats > /dev/null
-          ./gradlew assembleDebug assembleBench :app:benchTiles --stacktrace
+          ./gradlew assembleDebug assembleBench :app:benchTiles testDependencies --stacktrace
           ccache --show-stats
       # The caches' entries, once the build is done: what this run's compilations used (the hits and the new units),
       # and nothing older, so each entry is one build's size however many runs came before. ccache marks a unit used
@@ -254,6 +259,8 @@ jobs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     defaults:
       run:
         working-directory: app/android
@@ -265,10 +272,14 @@ jobs:
           java-version: 17
       # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
       # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
-      # canal ring's pack, could leave a failure behind a result kept from before).
+      # canal ring's pack, could leave a failure behind a result kept from before). It restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold its tests' artifacts too (testDependencies); what Gradle still
+      # fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -335,6 +346,15 @@ jobs:
           echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
       - name: The app's unit tests
         run: ./gradlew :app:testDebugUnitTest --continue --stacktrace
+      # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
+      # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep the reports and pictures
         if: always()
         uses: actions/upload-artifact@v7
@@ -354,6 +374,8 @@ jobs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     defaults:
       run:
         working-directory: app/android
@@ -365,10 +387,14 @@ jobs:
           java-version: 17
       # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
       # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
-      # canal ring's pack, could leave a failure behind a result kept from before).
+      # canal ring's pack, could leave a failure behind a result kept from before). It restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold its tests' artifacts too (testDependencies); what Gradle still
+      # fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -441,6 +467,15 @@ jobs:
         run: >-
           ./gradlew test testDebugUnitTest -x :app:testDebugUnitTest -x :mapcorecheck:test -x :likeness:testDebugUnitTest
           --continue --stacktrace
+      # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
+      # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep the reports and pictures
         if: always()
         uses: actions/upload-artifact@v7
@@ -471,6 +506,7 @@ jobs:
       actions: write # a push to app deletes the older entries of the job's ccache cache
     env:
       KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     defaults:
       run:
         working-directory: app/android
@@ -482,10 +518,14 @@ jobs:
           java-version: 17
       # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
       # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
-      # canal ring's pack, could leave a failure behind a result kept from before).
+      # canal ring's pack, could leave a failure behind a result kept from before). It restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold its tests' artifacts too (testDependencies); what Gradle still
+      # fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -539,8 +579,7 @@ jobs:
           dir="$RUNNER_TEMP/emulator-vulkan"
           if [ ! -e "$dir/lvp_icd.json" ]; then
             file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
-            curl -fsSLo "$RUNNER_TEMP/$file" "https://dl.google.com/android/repository/$file"
-            echo "$EMULATOR_SHA1  $RUNNER_TEMP/$file" | sha1sum -c -
+            python3 -I ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$file" - "$EMULATOR_SHA1" "$RUNNER_TEMP/$file"
             unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
             rm "$RUNNER_TEMP/$file"
             mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
@@ -579,6 +618,15 @@ jobs:
       - name: The JNI tests
         if: steps.core_host.outcome == 'success'
         run: ./gradlew :mapcorecheck:test -Datlas.numerics.n=100000 --continue --stacktrace
+      # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
+      # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep ccache's entry
         id: ccache_keep
         if: ${{ !cancelled() && steps.core_host.outcome == 'success' && env.KEEP_CACHES == 'true' }}
@@ -625,6 +673,8 @@ jobs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.likeness == 'off') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     defaults:
       run:
         working-directory: app/android
@@ -636,10 +686,14 @@ jobs:
           java-version: 17
       # Gradle's caches are apk's to keep: a test job reads them, so the repository's caches stay bounded, and its tests
       # run on every push instead of coming from Gradle's build cache (where an input a test reads unseen, such as the
-      # canal ring's pack, could leave a failure behind a result kept from before).
+      # canal ring's pack, could leave a failure behind a result kept from before). It restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold its tests' artifacts too (testDependencies); what Gradle still
+      # fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         run: |
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
@@ -692,8 +746,7 @@ jobs:
           dir="$RUNNER_TEMP/emulator-vulkan"
           if [ ! -e "$dir/lvp_icd.json" ]; then
             file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
-            curl -fsSLo "$RUNNER_TEMP/$file" "https://dl.google.com/android/repository/$file"
-            echo "$EMULATOR_SHA1  $RUNNER_TEMP/$file" | sha1sum -c -
+            python3 -I ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$file" - "$EMULATOR_SHA1" "$RUNNER_TEMP/$file"
             unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
             rm "$RUNNER_TEMP/$file"
             mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
@@ -746,6 +799,15 @@ jobs:
           ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.*' -Datlas.likeness.tier=smoke -Datlas.likeness.require=true
           -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }}
           -Datlas.likeness.report=${{ github.workspace }}/likeness --stacktrace
+      # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
+      # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v7
@@ -767,6 +829,11 @@ jobs:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # The SDK's archives (below) are kept as the apk job's caches are.
+      KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
+      # The emulator's system image: the action's api-level, target and arch.
+      IMAGE: system-images;android-35;google_apis;x86_64
     strategy:
       fail-fast: false
       matrix:
@@ -819,16 +886,90 @@ jobs:
       - name: The pinned emulator build
         id: emulator
         run: |
-          build=$(sed -n 's/^emulator\.linux-x86_64\.file=emulator-linux_x64-\([0-9]*\)\.zip$/\1/p' app/android/mapcore/tools.properties)
-          [ -n "$build" ] || { echo "::error::tools.properties names no emulator build"; exit 1; }
-          echo "build=$build" >> "$GITHUB_OUTPUT"
+          pin() { sed -n "s/^emulator\.$1=//p" app/android/mapcore/tools.properties; }
+          file=$(pin linux-x86_64.file); sha1=$(pin linux-x86_64.sha1); version=$(pin version)
+          [ -n "$file" ] && [ -n "$sha1" ] && [ -n "$version" ] || { echo "::error::tools.properties names no emulator build"; exit 1; }
+          { echo "file=$file"; echo "sha1=$sha1"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+      # The packages the action installs with sdkmanager, which unpacks a download as it comes: on 4 November a system
+      # image that came broken failed two emulator jobs ("Error on ZipFile unknown archive", runs 41744358971 and
+      # 41757855839). Here each comes as the archive the SDK repository lists for it now (the system image and the newest
+      # stable emulator, the revisions `sdkmanager --install` takes) or the pinned build, checked against its SHA-1 and
+      # fetched again whole while it does not check out (app/android/ci/sdkpkg.py), and kept in the caches by its package
+      # and revision; a restore that fails is the cache action's warning, and an archive it leaves that does not check out
+      # is said and fetched again. The system image and the newest emulator are installed where sdkmanager finds them, so
+      # the action's sdkmanager fetches neither, and the pinned build replaces the newest just before the emulator starts
+      # (pre-emulator-launch-script), as the action's emulator-build input did after a download of its own, unchecked.
+      - name: The SDK's packages
+        id: sdk
+        run: |
+          set -o pipefail
+          repo=https://dl.google.com/android/repository
+          python3 -I app/android/ci/sdkpkg.py describe "$repo/sys-img/google_apis/sys-img2-3.xml" "$IMAGE" "$RUNNER_TEMP/sdk/image.xml" --prefix image_ | tee -a "$GITHUB_OUTPUT"
+          python3 -I app/android/ci/sdkpkg.py describe "$repo/repository2-3.xml" emulator "$RUNNER_TEMP/sdk/emulator.xml" --prefix emulator_ | tee -a "$GITHUB_OUTPUT"
+      - name: The system image from the caches
+        id: image_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.image_file }}
+          key: sdk-${{ env.IMAGE }}-${{ steps.sdk.outputs.image_revision }}-${{ steps.sdk.outputs.image_sha1 }}
+      - name: The emulators from the caches
+        id: emulators_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.emulator_file }}
+            ${{ runner.temp }}/sdk-archives/${{ steps.emulator.outputs.file }}
+          key: sdk-emulator-${{ steps.sdk.outputs.emulator_revision }}-${{ steps.sdk.outputs.emulator_sha1 }}-${{ steps.emulator.outputs.version }}-${{ steps.emulator.outputs.sha1 }}
+      - name: The SDK's packages, checked
+        env:
+          IMAGE_URL: ${{ steps.sdk.outputs.image_url }}
+          IMAGE_SIZE: ${{ steps.sdk.outputs.image_size }}
+          IMAGE_SHA1: ${{ steps.sdk.outputs.image_sha1 }}
+          IMAGE_FILE: ${{ steps.sdk.outputs.image_file }}
+          EMULATOR_URL: ${{ steps.sdk.outputs.emulator_url }}
+          EMULATOR_SIZE: ${{ steps.sdk.outputs.emulator_size }}
+          EMULATOR_SHA1: ${{ steps.sdk.outputs.emulator_sha1 }}
+          EMULATOR_FILE: ${{ steps.sdk.outputs.emulator_file }}
+          PINNED_SHA1: ${{ steps.emulator.outputs.sha1 }}
+          PINNED_FILE: ${{ steps.emulator.outputs.file }}
+        run: |
+          dir=$RUNNER_TEMP/sdk-archives
+          python3 -I app/android/ci/sdkpkg.py fetch "$IMAGE_URL" "$IMAGE_SIZE" "$IMAGE_SHA1" "$dir/$IMAGE_FILE"
+          python3 -I app/android/ci/sdkpkg.py fetch "$EMULATOR_URL" "$EMULATOR_SIZE" "$EMULATOR_SHA1" "$dir/$EMULATOR_FILE"
+          python3 -I app/android/ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$PINNED_FILE" - "$PINNED_SHA1" "$dir/$PINNED_FILE"
+      # One part keeps the archives for all, once they check out.
+      - name: Keep the system image
+        if: ${{ steps.image_cache.outputs.cache-hit != 'true' && env.KEEP_CACHES == 'true' && (matrix.part == 'vk' || matrix.part == 'all') }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.image_file }}
+          key: ${{ steps.image_cache.outputs.cache-primary-key }}
+      - name: Keep the emulators
+        if: ${{ steps.emulators_cache.outputs.cache-hit != 'true' && env.KEEP_CACHES == 'true' && (matrix.part == 'vk' || matrix.part == 'all') }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.emulator_file }}
+            ${{ runner.temp }}/sdk-archives/${{ steps.emulator.outputs.file }}
+          key: ${{ steps.emulators_cache.outputs.cache-primary-key }}
+      - name: The SDK's packages, installed
+        env:
+          IMAGE_FILE: ${{ steps.sdk.outputs.image_file }}
+          EMULATOR_FILE: ${{ steps.sdk.outputs.emulator_file }}
+          PINNED_FILE: ${{ steps.emulator.outputs.file }}
+        run: |
+          dir=$RUNNER_TEMP/sdk-archives
+          python3 -I app/android/ci/sdkpkg.py install "$dir/$IMAGE_FILE" "$RUNNER_TEMP/sdk/image.xml" "$IMAGE"
+          python3 -I app/android/ci/sdkpkg.py install "$dir/$EMULATOR_FILE" "$RUNNER_TEMP/sdk/emulator.xml" emulator
+          rm "$dir/$IMAGE_FILE"
+          [ "$EMULATOR_FILE" = "$PINNED_FILE" ] || rm "$dir/$EMULATOR_FILE"
+          df -h "$RUNNER_TEMP" "$ANDROID_HOME" | sed 's/^/  /'
       # The hashes the emulator must reproduce (the host build's numerics, sun bits, ground and twin check) are
       # app/android/ci/hashes.env's, which smoke.sh reads: outside the workflows, so a change of the engine's that moves
       # one edits no workflow file (the nightly alpha's token may not tag a commit whose workflow files differ from the
       # default branch's).
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          emulator-build: ${{ steps.emulator.outputs.build }}
           api-level: 35
           arch: x86_64
           target: google_apis
@@ -837,6 +978,9 @@ jobs:
           # lavapipe: Mesa's Vulkan for the guest (the driver the host tests use) and the emulator's own software GLES. The
           # deprecated swiftshader_indirect hung HWUI's first program compile on its host GL pipe on every debug-first run.
           emulator-options: -no-window -gpu lavapipe -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: >-
+            python3 -I app/android/ci/sdkpkg.py install "${{ runner.temp }}/sdk-archives/${{ steps.emulator.outputs.file }}"
+            "${{ runner.temp }}/sdk/emulator.xml" emulator --revision "${{ steps.emulator.outputs.version }}"
           script: bash app/android/ci/smoke.sh apk shots apk-bench
       - name: Keep the screenshots
         if: always()
@@ -904,6 +1048,8 @@ jobs:
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.likeness == 'full') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     strategy:
       fail-fast: false
       matrix:
@@ -920,7 +1066,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep, as in a push's test jobs: it restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold the likeness harness's artifacts too (testDependencies); what
+      # Gradle still fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         # NDK r30 and the SDK's CMake build the map core (:mapcore, app/android/mapcore/tools.properties).
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
@@ -962,8 +1115,7 @@ jobs:
           dir="$RUNNER_TEMP/emulator-vulkan"
           if [ ! -e "$dir/lvp_icd.json" ]; then
             file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
-            curl -fsSLo "$RUNNER_TEMP/$file" "https://dl.google.com/android/repository/$file"
-            echo "$EMULATOR_SHA1  $RUNNER_TEMP/$file" | sha1sum -c -
+            python3 -I ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$file" - "$EMULATOR_SHA1" "$RUNNER_TEMP/$file"
             unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
             rm "$RUNNER_TEMP/$file"
             mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
@@ -1008,6 +1160,13 @@ jobs:
           ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.*' -Datlas.likeness.tier=full -Datlas.likeness.require=true
           -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }}
           -Datlas.likeness.report=${{ github.workspace }}/likeness --stacktrace
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v7
@@ -1120,6 +1279,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.vkcheck != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     permissions:
       contents: write
     defaults:
@@ -1131,7 +1292,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep, as in a push's test jobs: it restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold the likeness harness's artifacts too (testDependencies); what
+      # Gradle still fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         # NDK r30 and the SDK's CMake build the map core (:mapcore, app/android/mapcore/tools.properties).
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
@@ -1149,6 +1317,13 @@ jobs:
         run: |
           ./gradlew :likeness:testDebugUnitTest --tests 'app.atlas.likeness.PhoneRefsTest' "-Datlas.likeness.phone=$PHONE" "-Datlas.likeness.asset=$GITHUB_WORKSPACE/vkcheck" --stacktrace
           echo "name=vkcheck-$(printf '%s' "${PHONE%:*}" | tr -c 'A-Za-z0-9._-' '-')" >> "$GITHUB_OUTPUT"
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.asset.outputs.name }}

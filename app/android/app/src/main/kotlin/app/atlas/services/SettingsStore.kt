@@ -109,6 +109,9 @@ class SettingsStore(private val store: DataStore<Preferences>) {
 
     /** The Map look's Fast refresh ([fastRefreshOn]). */
     val fastRefresh: Flow<Boolean> = data.map { fastRefreshOn(it) }.distinctUntilChanged()
+
+    /** The screen's haze, vignette and grain over the map ([screenEffectsOn]). */
+    val screenEffects: Flow<Triple<Boolean, Boolean, Boolean>> = data.map { screenEffectsOn(it) }.distinctUntilChanged()
 }
 
 /** The map's parts left out (SettingsKeys.MAP_PARTS_OFF, their names); unset, the defaults (MapParts.byDefault). */
@@ -116,6 +119,13 @@ fun leftOutParts(p: Preferences): Set<MapPart> = p[SettingsKeys.MAP_PARTS_OFF]?.
 
 /** Whether the Map look's Fast refresh is on (SettingsKeys.MAP_FAST_REFRESH): on when unset. */
 fun fastRefreshOn(p: Preferences): Boolean = p[SettingsKeys.MAP_FAST_REFRESH] ?: true
+
+/**
+ * The screen's haze, vignette and grain over the map, in that order (SettingsKeys.MAP_HAZE, MAP_VIGNETTE and
+ * MAP_GRAIN): each on when unset.
+ */
+fun screenEffectsOn(p: Preferences): Triple<Boolean, Boolean, Boolean> =
+    Triple(p[SettingsKeys.MAP_HAZE] ?: true, p[SettingsKeys.MAP_VIGNETTE] ?: true, p[SettingsKeys.MAP_GRAIN] ?: true)
 
 /** The shell's settings keys. Features add theirs in their own packages, prefixed with the package name. */
 object SettingsKeys {
@@ -136,8 +146,9 @@ object SettingsKeys {
     val MAP_TILT = doublePreferencesKey("map.tilt")
 
     /**
-     * The screen's haze, vignette and grain over the map: off when unset, as each costs frame time (the user, 27 October:
-     * "disabled by default if they add performance overhead"); on, the renders' look.
+     * The screen's haze, vignette and grain over the map ([screenEffectsOn]): on when unset, the renders' look, since 4
+     * November, for now (the user: "Alpha 22s look by default for now. Haze, vignette and grain on"); from 27 October
+     * off when unset, as each costs frame time ("disabled by default if they add performance overhead").
      */
     val MAP_HAZE = booleanPreferencesKey("map.haze")
 
@@ -168,8 +179,9 @@ object SettingsKeys {
     /**
      * A debug build's switches of the core's parts: the names of the map's parts it leaves out (mapview.MapPart: every
      * layer and effect, each its own switch, and a switch for each group of them), so the map's panel shows on the phone
-     * what each part costs (MapEngine.leaveOut). Unset, every part is drawn but the roofs' edges and the plinths
-     * ([leftOutParts], MapParts.byDefault: the user, 1 November 2026): the clouds' shadows and the water's light too
+     * what each part costs (MapEngine.leaveOut). Unset, every part is drawn but the plinths (the user, 1 November
+     * 2026), the quays' three parts and the water's light but its reflections ([leftOutParts], MapParts.byDefault:
+     * alpha 22's look for now, the user, 4 November 2026); the roofs' edges again since then, and the clouds' shadows
      * since their rework (left out from alpha 19 until it, the user, 28 October 2026).
      */
     val MAP_PARTS_OFF = stringSetPreferencesKey("map.partsOff")
