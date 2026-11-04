@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -112,6 +113,9 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val compression by settings.flow(SettingsKeys.MAP_COMPRESSION, true).collectAsStateWithLifecycle(true)
+    val fastRefresh by settings.fastRefresh.collectAsStateWithLifecycle(true)
+    val view = LocalView.current
+    val fastDisplay = remember(view) { MapEngine.fastRefreshSwitch(view.display) }
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
@@ -202,9 +206,12 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                         partsOff, pacing, timings,
                         // only where the driver obeys its off: elsewhere the screen's compression is the driver's alone
                         compression = compression.takeIf { MapEngine.compressionSwitch },
+                        // only where the display has a mode above 60 Hz: elsewhere neither vote does anything
+                        fastRefresh = fastRefresh.takeIf { fastDisplay },
                         onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } },
                         onTimings = { on -> scope.launch { settings.set(SettingsKeys.MAP_TIMINGS, on) } },
                         onCompression = { on -> scope.launch { settings.set(SettingsKeys.MAP_COMPRESSION, on) } },
+                        onFastRefresh = { on -> scope.launch { settings.set(SettingsKeys.MAP_FAST_REFRESH, on) } },
                     ) { off ->
                         scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
                     }
@@ -301,9 +308,11 @@ private fun ScreenChips(
  * phone what the part costs. A row a group: its own chip first, which turns all of its parts off while any is drawn and
  * on again when none is (dark when all are drawn, grey when some), then the parts listed under it. The map's own layers
  * (the trees, the soft shadows) leave theirs out too. Last, the frame pacing (dark when on, off by default): each frame
- * presented at a timeline its work can make, as alpha 15 drew; the frame timings; and the screen's [compression] (dark
- * when on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
- * images are made without the driver's framebuffer compression.
+ * presented at a timeline its work can make, as alpha 15 drew; the frame timings; the screen's [compression] (dark when
+ * on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
+ * images are made without the driver's framebuffer compression; and the [fastRefresh] (dark when on, as by default;
+ * null where the display has no mode above 60 Hz, and no chip): off, the map's window says its frames come at 60 a
+ * second throughout, as alphas up to 27 said, where it says 120 while the map moves.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -312,9 +321,11 @@ private fun PartChips(
     pacing: Boolean,
     timings: Boolean,
     compression: Boolean?,
+    fastRefresh: Boolean?,
     onPacing: (Boolean) -> Unit,
     onTimings: (Boolean) -> Unit,
     onCompression: (Boolean) -> Unit,
+    onFastRefresh: (Boolean) -> Unit,
     onChange: (Set<MapPart>) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -345,6 +356,7 @@ private fun PartChips(
                 Triple(stringResource(R.string.mine_part_pacing), pacing, onPacing),
                 Triple(stringResource(R.string.mine_part_timings), timings, onTimings),
                 compression?.let { Triple(stringResource(R.string.mine_part_compression), it, onCompression) },
+                fastRefresh?.let { Triple(stringResource(R.string.mine_part_fast_refresh), it, onFastRefresh) },
             )) {
                 TextPill(
                     label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
