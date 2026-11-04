@@ -56,7 +56,8 @@
 // frames at the pinch's end under a finger (not at rest) before the frames held at rest, its last frame not at rest
 // either. Each frame's line names its ripple: made, kept (the last frame's result stands) or off; ATLAS_PINCH_RIPPLE=
 // every makes it every frame, as before its key took what it reads alone (Ground::make_ripple_always), to measure
-// what the kept results save.
+// what the kept results save. ATLAS_PINCH_FILLS_OFF: the kinds of fill every frame leaves out, by
+// geometry::FillKind's names (road, rail, big ...: a kind's share of a picture).
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -785,6 +786,18 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             return nullptr;
         };
         const bool ripple_always = environment("ATLAS_PINCH_RIPPLE") == "every";
+        // the kinds of fill every frame leaves out (ATLAS_PINCH_FILLS_OFF), by geometry::FillKind's names
+        std::uint32_t fills_off = 0U;
+        {
+            const std::string named = std::format(",{},", environment("ATLAS_PINCH_FILLS_OFF"));
+            constexpr std::array<const char*, 11> kinds{"land",   "canopy", "area",   "road",    "rail", "big",
+                                                        "marine", "water",  "runway", "taxiway", "bars"};
+            static_assert(static_cast<std::size_t>(geometry::FillKind::bars) + 1 == kinds.size());
+            for (std::size_t i = 0; i < kinds.size(); ++i) {
+                if (named.find(std::format(",{},", kinds.at(i))) != std::string::npos) fills_off |= 1U << i;
+            }
+            if (fills_off != 0U) MESSAGE(std::format("fills left out: {:#x}", fills_off));
+        }
         // the most chunks of the walls' and near cells' lists drawn from shape records (ATLAS_PINCH_SHAPES), else as
         // the pass sizes them
         std::optional<std::uint32_t> most_shape_chunks;
@@ -806,6 +819,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             c.pack_id = held != nullptr ? held->pack.number : 0;
             passes::Ground* g = ground();
             if (g != nullptr) g->make_ripple_always(ripple_always);
+            if (g != nullptr) g->leave_out_fills(fills_off);
             const std::uint64_t ripples = g != nullptr ? g->ripple_makes() : 0U;
             const auto at = std::chrono::steady_clock::now();
             const standin::Drawn s = session.draw(c, {});

@@ -1010,6 +1010,16 @@ bool Ground::decide(const frame::FrameState& state) {
             }
         }
     }
+    if (left_out_fills_ != 0U) {
+        // the tests' look without some kinds of fill: theirs not drawn
+        for (const DrawnTile& t : f.tiles) {
+            const std::span<const HotFill> hot(t.hot->fills);
+            for (std::uint32_t i = 0; i < hot.size(); ++i) {
+                if (((left_out_fills_ >> static_cast<std::uint32_t>(hot[i].kind)) & 1U) != 0U)
+                    f.drawn[t.decisions + i] = 0;
+            }
+        }
+    }
     return true;
 }
 

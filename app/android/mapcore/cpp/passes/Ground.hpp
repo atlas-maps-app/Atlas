@@ -938,6 +938,10 @@ public:
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
+    /// The tests' look without the fills of some kinds (bit k: geometry::FillKind k): from the next frame on their
+    /// fills are not drawn, every other decision as it was (a kind's share of a picture,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_FILLS_OFF).
+    void leave_out_fills(std::uint32_t kinds) noexcept { left_out_fills_ = kinds; }
     /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
     /// the shadows do).
     void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
@@ -1268,6 +1272,7 @@ private:
     bool keep_soft_ = false;
     bool drew_soft_ = false;
     bool only_setts_ = false;
+    std::uint32_t left_out_fills_ = 0;
     bool no_quays_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
