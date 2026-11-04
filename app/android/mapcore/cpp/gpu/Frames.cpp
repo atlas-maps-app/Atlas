@@ -92,8 +92,11 @@ Result<FrameSlot*> Frames::begin(std::uint64_t number) {
     FrameSlot& slot = slots_[next_];
     next_ = (next_ + 1) % in_flight;
     const vk::raii::Device& d = device_->handle();
+    waited_ms_ = 0;
     if (slot.pending) {
+        const auto waiting = std::chrono::steady_clock::now();
         const vk::Result waited = d.waitForFences(*slot.done, vk::True, UINT64_MAX);
+        waited_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waiting).count();
         if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence");
         read_back(slot);
     }
@@ -229,7 +232,10 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     std::uint32_t image = 0;
     {
         const trace::Section traced("atlas acquire");
+        const auto acquiring = clock::now();
         report.status = output_->acquire(*slot->acquired, image);
+        report.wait_ms =
+            frames_->waited_ms() + std::chrono::duration<double, std::milli>(clock::now() - acquiring).count();
     }
     if (report.status != Acquired::ok && report.status != Acquired::suboptimal) {
         report.gpu = frames_->last_times();

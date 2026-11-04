@@ -5,9 +5,14 @@ import androidx.datastore.preferences.core.preferencesOf
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The map's parts a debug build's Look settings leave out (SettingsStore.kt's leftOutParts): their names, or unset the defaults. */
+/**
+ * The map's parts a debug build's Look settings leave out (SettingsStore.kt's leftOutParts): their names, or unset the
+ * defaults; and the Fast refresh beside them (fastRefreshOn).
+ */
 class PartsSettingsTest {
     @Test
     fun unsetEveryPartButTheRoofEdgesAndThePlinthsIsDrawn() {
@@ -22,5 +27,17 @@ class PartsSettingsTest {
         // every part drawn
         p[SettingsKeys.MAP_PARTS_OFF] = emptySet()
         assertEquals(emptySet<MapPart>(), leftOutParts(p))
+    }
+
+    @Test
+    fun theFastRefreshIsOnUnsetAndAsSetOtherwise() {
+        assertTrue(fastRefreshOn(preferencesOf()))
+        val p = mutablePreferencesOf(SettingsKeys.MAP_FAST_REFRESH to false)
+        assertFalse(fastRefreshOn(p))
+        p[SettingsKeys.MAP_FAST_REFRESH] = true
+        assertTrue(fastRefreshOn(p))
+        // the parts' switches leave it alone
+        p[SettingsKeys.MAP_PARTS_OFF] = setOf(MapPart.RAIN.name)
+        assertTrue(fastRefreshOn(p))
     }
 }

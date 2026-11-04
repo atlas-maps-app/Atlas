@@ -212,6 +212,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** Whether the driver obeys [setCompression]'s off ([Native.compressionSwitch]). */
     val compressionSwitch: Boolean by lazy { core.call(false) { Native.compressionSwitch(it) } }
 
+    /** The Map look's Fast refresh ([Native.setFastRefresh]): off the main thread. */
+    fun setFastRefresh(on: Boolean) = core.call(Unit) { Native.setFastRefresh(it, on) }
+
     /**
      * The app went to the background or memory is short ([level], ComponentCallbacks2's): from TRIM_MEMORY_UI_HIDDEN
      * the frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it and VK bench's

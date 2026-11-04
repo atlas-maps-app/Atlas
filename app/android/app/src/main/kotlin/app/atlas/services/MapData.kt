@@ -279,6 +279,10 @@ class MapData(private val services: Services) {
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_COMPRESSION, true).collect { on -> MapEngine.compression(on) }
         }
+        // the Map look's Fast refresh, as the Look settings have it (on when unset)
+        services.scope.launch {
+            services.settings.fastRefresh.collect { on -> MapEngine.fastRefresh(on) }
+        }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
         // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
         // are read, so the first frame draws what the defaults say
