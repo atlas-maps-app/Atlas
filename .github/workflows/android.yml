@@ -1048,6 +1048,8 @@ jobs:
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.likeness == 'full') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     strategy:
       fail-fast: false
       matrix:
@@ -1064,7 +1066,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep, as in a push's test jobs: it restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold the likeness harness's artifacts too (testDependencies); what
+      # Gradle still fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         # NDK r30 and the SDK's CMake build the map core (:mapcore, app/android/mapcore/tools.properties).
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
@@ -1151,6 +1160,13 @@ jobs:
           ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.*' -Datlas.likeness.tier=full -Datlas.likeness.require=true
           -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }}
           -Datlas.likeness.report=${{ github.workspace }}/likeness --stacktrace
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v7
@@ -1263,6 +1279,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.vkcheck != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
     permissions:
       contents: write
     defaults:
@@ -1274,7 +1292,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's caches are apk's to keep, as in a push's test jobs: it restores apk's entries
+      # (GRADLE_BUILD_ACTION_CACHE_KEY_JOB), which hold the likeness harness's artifacts too (testDependencies); what
+      # Gradle still fetches is said at the end (What Gradle fetched).
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Gradle's caches as restored
+        run: touch "$RUNNER_TEMP/gradle-restored"
       - name: Android SDK 37
         # NDK r30 and the SDK's CMake build the map core (:mapcore, app/android/mapcore/tools.properties).
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
@@ -1292,6 +1317,13 @@ jobs:
         run: |
           ./gradlew :likeness:testDebugUnitTest --tests 'app.atlas.likeness.PhoneRefsTest' "-Datlas.likeness.phone=$PHONE" "-Datlas.likeness.asset=$GITHUB_WORKSPACE/vkcheck" --stacktrace
           echo "name=vkcheck-$(printf '%s' "${PHONE%:*}" | tr -c 'A-Za-z0-9._-' '-')" >> "$GITHUB_OUTPUT"
+      - name: What Gradle fetched
+        if: always()
+        run: |
+          files=${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1
+          [ -d "$files" ] && [ -e "$RUNNER_TEMP/gradle-restored" ] || exit 0
+          fetched=$(find "$files" -type f -newer "$RUNNER_TEMP/gradle-restored" | sed "s|^$files/||" | cut -d/ -f1-3 | sort -u)
+          [ -z "$fetched" ] || echo "::notice::Gradle fetched $(wc -l <<< "$fetched") artifacts its caches did not hold: $(head -20 <<< "$fetched" | paste -sd ' ' -)"
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.asset.outputs.name }}
