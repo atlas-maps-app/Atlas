@@ -71,35 +71,60 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto cut_x = items.cut_x();
     const auto cut_z = items.cut_z();
     const auto kind = items.kind();
+    const auto place = items.place();
+    const auto places = items.places();
+    // A row's points are its tile's, which its place maps into the frame drawn (x0 + sx·x, z0 + sz·z): the eye and the
+    // camera's axes are taken into the place's frame instead (the eye's x as (c.x − x0) / sx and each axis's x times
+    // sx, z alike), once for each run of rows of one place, as a tile's rows are added together. So a row costs what it
+    // did in the frame drawn's own metres, and the frame drawn's own place, which moves nothing, ranks its rows to the
+    // bit as then.
+    std::uint32_t run = std::numeric_limits<std::uint32_t>::max();
+    scene::ItemPlace run_place;
+    double eye_x = 0;
+    double eye_z = 0;
+    view::Vec3 f_in;
+    view::Vec3 r_in;
+    view::Vec3 u_in;
     for (std::size_t i = 0; i < rows; ++i) {
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
         // an item the other kind of frame draws (a bridge's railing of the app's map's set, or of the renders')
         if ((flags[i] & (options.grounded ? scene::item_flag::renders : scene::item_flag::app)) != 0) continue;
+        if (place[i] != run) {
+            run = place[i];
+            run_place = places[run];
+            eye_x = (c.x - run_place.x0) / run_place.sx;
+            eye_z = (c.z - run_place.z0) / run_place.sz;
+            f_in = {f.x * run_place.sx, f.y, f.z * run_place.sz};
+            r_in = {r.x * run_place.sx, r.y, r.z * run_place.sz};
+            u_in = {u.x * run_place.sx, u.y, u.z * run_place.sz};
+        }
         // its cut point beyond the most at which it may be drawn (a door's node), so a frame ranks only what it may
         // draw; first, as most of a city's doors are, and with no depth (no pass reads the depth of a row it does not
         // rank)
         if (max_depth[i] < std::numeric_limits<float>::infinity() &&
-            ((cut_x[i] - c.x) * f.x) - (c.y * f.y) + ((cut_z[i] - c.z) * f.z) > static_cast<double>(max_depth[i])) {
+            ((cut_x[i] - eye_x) * f_in.x) - (c.y * f_in.y) + ((cut_z[i] - eye_z) * f_in.z) >
+                static_cast<double>(max_depth[i])) {
             continue;
         }
         // gatherItems: cc = cam.cam(p); dropped nearer than its minimum depth; sorted by cc[2] + offset
-        const double dx = x[i] - c.x;
+        const double dx = x[i] - eye_x;
         const double dy = y[i] - c.y;
-        const double dz = z[i] - c.z;
-        const double kz = dx * f.x + dy * f.y + dz * f.z;
+        const double dz = z[i] - eye_z;
+        const double kz = dx * f_in.x + dy * f_in.y + dz * f_in.z;
         depth_[i] = kz + offset[i];
         if (kz < static_cast<double>(min_depth[i])) continue;
         // a kind the frame leaves out (its parts left out of the map) takes no slot
         if (selectors.left_out(kind[i])) continue;
         if (options.radius_cut && (flags[i] & scene::item_flag::radius) != 0 &&
-            view::java_hypot(cut_x[i] - options.cut_x, cut_z[i] - options.cut_z) > options.radius) {
+            view::java_hypot(run_place.x(cut_x[i]) - options.cut_x, run_place.z(cut_z[i]) - options.cut_z) >
+                options.radius) {
             continue;
         }
         // The frame sees it: its sphere against the frame and the margin (it may reach in from beyond the edges).
         const auto rad = static_cast<double>(radius[i]);
         if (kz + rad < near) continue;
-        const double kx = dx * r.x + dy * r.y + dz * r.z;
-        const double ky = dx * u.x + dy * u.y + dz * u.z;
+        const double kx = dx * r_in.x + dy * r_in.y + dz * r_in.z;
+        const double ky = dx * u_in.x + dy * u_in.y + dz * u_in.z;
         if (kz > rad) {
             const double s = focal / kz;
             const double px = cx + kx * s;
