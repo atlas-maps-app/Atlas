@@ -138,6 +138,14 @@ public:
     /// Whether a fade is still running (the frame loop asks for another frame).
     [[nodiscard]] bool fading() const noexcept { return fading_; }
 
+    /// Forgets the names drawn (the map leaves them out): each fades in as it comes again, as one coming after the
+    /// first frame does, never at once (ENGINE.md's parts).
+    void forget() noexcept {
+        states_.clear();
+        placed_.clear();
+        fading_ = false;
+    }
+
     /// How many times a name has changed its way, over the life of these names.
     [[nodiscard]] std::uint64_t changes() const noexcept { return changes_; }
 

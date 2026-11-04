@@ -19,7 +19,9 @@
 // makes no stage T, heap bytes or items). A resident tile lacking a pass a part come back wants is built again for
 // those passes alone when a request names it (a top-up: the world asks for its tiles drawn and kept under them), and
 // the render thread takes the passes onto it between frames: the tile under the same handle, its other passes' ranges,
-// items and rows as they were, so it is drawn throughout and its fade, its light and its rows carry on.
+// items and rows as they were, so it is drawn throughout and its fade, its light and its rows carry on. A part left out
+// lets go of the passes it alone wanted in every resident tile (retire_passes: their ranges retired at the frame's
+// fence, their data and items gone), so the heaps hold what is drawn; drawn again, its top-ups build them anew.
 //
 // The workers wait at background priority; while a tile the frame wants in view is queued or under way they run at
 // normal priority, with a hint session of their own told how long each piece of that work takes (ENGINE.md gain 8:
@@ -279,6 +281,8 @@ struct ResidencyStats {
     std::uint64_t released = 0;
     /// tiles built again for the passes a part come back wants (top-ups), taken onto their resident tile
     std::uint64_t topped = 0;
+    /// resident tiles' passes let go of as their parts were all left out (retire_passes), a pass of a tile each
+    std::uint64_t retired = 0;
     /// tiles whose build failed, not asked again until the heaps have the bytes they asked for free and a piece for the
     /// largest range that found none (failing again on them, until a range has gone back to the heaps too)
     std::size_t waiting = 0;
@@ -335,12 +339,19 @@ public:
 
     /// The tiles published since the last call, their items added to `items` (render thread, between frames); a
     /// top-up's passes taken onto its resident tile, which stays under its handle (the new tile in its place, in
-    /// `taken` too), or let go of where that tile has gone meanwhile.
+    /// `taken` too), or let go of where that tile has gone meanwhile or holds them already (the tile as it is now, a
+    /// part left out since having let go of others: retire_passes).
     void take_published(ItemTable& items, std::vector<std::shared_ptr<const ResidentTile>>* taken = nullptr);
 
     /// Lets go of a resident tile: its rows leave `items`, its heap ranges are retired after frame `frame` (render
     /// thread).
     void release(tiles::TileKey key, std::string_view pack, ItemTable& items, std::uint64_t frame);
+    /// Lets go of the passes `passes` (a bit each in the registry's order) of every resident tile that built them (the
+    /// parts they serve all left out: ENGINE.md's parts): their heap ranges retired after frame `frame`, their data
+    /// and items gone (their rows leave `items`), their bits cleared from ResidentTile::built, so that the heaps and
+    /// the cover hold each tile as it is drawn; each tile stays under its handle, its other passes as they were (the
+    /// new tile in its place). Drawn again, a part's top-ups build them anew (lacks). Render thread, between frames.
+    void retire_passes(std::uint64_t passes, ItemTable& items, std::uint64_t frame);
 
     /// The resident tile of `key` in pack `pack` (taken), or null.
     [[nodiscard]] const ResidentTile* find(tiles::TileKey key, std::string_view pack) const noexcept;

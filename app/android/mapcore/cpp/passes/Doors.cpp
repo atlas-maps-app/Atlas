@@ -296,7 +296,9 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         if (doors == nullptr || doors->doors.empty()) continue;
         // a tile's doors once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (!scene::draws_items(tiles, c)) continue;
-        const std::uint32_t fade = dithers ? sh::fade_word(t.place.offset.w, t.place.scale.w) : 0U;
+        // (the doors come back on fading in on the tile: their share of its range, scene::Cover::dither)
+        const std::array<float, 2> range = state.cover->dither(t, pass);
+        const std::uint32_t fade = dithers ? sh::fade_word(range[0], range[1]) : 0U;
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
         // none of its nodes 2 to 75 m deep: the depth is linear, so its box's corners bound it
         double least = 1e300;

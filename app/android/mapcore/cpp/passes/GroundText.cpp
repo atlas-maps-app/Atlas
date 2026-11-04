@@ -274,7 +274,8 @@ void GroundText::update(const frame::FrameState& state) {
     placed_.clear();
     designators_.clear();
     fading_ = false; // a frame that places no names leaves none fading
-    // (the names on the ground: unless the map leaves them out)
+    // (the names on the ground: unless the map leaves them out, when they are forgotten, to fade in when drawn again)
+    if (state.camera.leaves_out(style::camera_part::ground_text)) names_.forget();
     if (!state.view.has_value() || state.camera.leaves_out(style::camera_part::ground_text)) return;
     gather(state);
     const view::Camera& cam = state.view->camera();

@@ -418,7 +418,8 @@ void Things::update(const frame::FrameState& state) {
         words_.insert(words_.end(), std::begin(words), std::end(words));
         // while a tile fades, its records' and its glints' range of the dither (ENGINE.md's standing fades)
         if (dithers_) {
-            const std::uint32_t fade = shaders::fade_word(t.place.offset.w, t.place.scale.w);
+            const std::array<float, 2> range = state.cover->dither(t, me); // the things come back on: their share
+            const std::uint32_t fade = shaders::fade_word(range[0], range[1]);
             fade_words_.insert(fade_words_.end(), n, fade);
             side_fades.insert(side_fades.end(), side, fade);
         }

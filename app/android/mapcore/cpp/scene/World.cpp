@@ -733,6 +733,9 @@ void World::update(const frame::FrameState& state) {
     going_.clear();
     taken_.clear();
     residency_->take_published(items_, &taken_);
+    // a part left out: the passes it alone wanted let go of in every resident tile at this frame's fence, so the heaps
+    // and the cover hold each tile as it is drawn (a part back, its top-ups build them again)
+    residency_->retire_passes(~wanted, items_, state.number);
     if (!active_ || !state.view) {
         // nothing drawn: no coarser pack, and nothing kept of the packs' stage T but what the drawn ones would need
         choose_coarser();
@@ -762,8 +765,9 @@ void World::update(const frame::FrameState& state) {
     frames_.set(view::frame_of(head.frame), seconds);
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
     // The items in the frame drawn, the coarser pack's masked, those of the passes a part drawn wants alone (a kind
-    // whose parts are all left out takes no rank): every resident tile's when the frame, the coarser pack or the mask
-    // changed, else the tiles just taken, and every resident tile's of the passes come back since the last placing.
+    // whose parts are all left out has let go of its items with its passes, retire_passes above): every resident
+    // tile's when the frame, the coarser pack or the mask changed, else the tiles just taken (a part come back on, its
+    // top-ups with its items).
     choose_coarser();
     choose_neighbours(state.camera);
     take_packs();
@@ -775,12 +779,8 @@ void World::update(const frame::FrameState& state) {
         placed_coarser_ = coarser_id;
         placed_mask_ = mask_;
     } else {
-        if (const std::uint64_t back = wanted & ~placed_passes_; back != 0U) {
-            for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t, back);
-        }
         for (const std::shared_ptr<const ResidentTile>& t : taken_) place_items(*t, wanted);
     }
-    placed_passes_ = wanted;
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
     const auto plan_budget =

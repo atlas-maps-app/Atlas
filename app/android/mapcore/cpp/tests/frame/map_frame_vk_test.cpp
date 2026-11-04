@@ -18,6 +18,7 @@
 #include "gpu/Offscreen.hpp"
 #include "passes/Labels.hpp"
 #include "scene/Cover.hpp"
+#include "scene/Heaps.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
@@ -1119,13 +1120,21 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
         // again (a stage that keeps its result while its inputs stand changes the counts from one frame to another,
         // but not between these two), and the tiles each of the two drew (the cover may take one in or let one go at
-        // rest, a frame's fills and lines more or fewer)
+        // rest, a frame's fills and lines more or fewer); then its own once the picture is complete again: a part
+        // whose passes the tiles let go of (ENGINE.md's parts: the buildings, trees, things, region items, doors and
+        // names on the ground) is drawn once their top-ups are taken and faded in, none of it in the frame right after
         std::vector<std::vector<Work>> with_off(parts.size());
         std::vector<std::vector<Work>> again(parts.size());
+        std::vector<Work> back(parts.size());
         std::vector<bool> same_tiles(parts.size(), false);
+        std::vector<int> rebuilt(parts.size(), 0);     // the frames to the picture complete again (0: complete at once)
+        std::vector<double> let_go(parts.size(), 0.0); // the heaps' MB the switch's frame retired (its passes')
         for (std::size_t i = 0; i < parts.size(); ++i) {
             if ((parts[i].bit & scene.base) != 0U || !on[i].any()) continue;
+            const std::uint64_t retired = map.world()->heaps()->stats().retired_bytes;
             CHECK(draw(scene, parts[i].bit));
+            const std::uint64_t now_retired = map.world()->heaps()->stats().retired_bytes;
+            let_go[i] = now_retired > retired ? static_cast<double>(now_retired - retired) / 1.0e6 : 0.0;
             with_off[i].reserve(parts.size());
             for (const Part& q : parts) with_off[i].push_back(work_of(*map.builder(), q));
             const std::vector<std::uint64_t> tiles = drawn_tiles(map);
@@ -1133,6 +1142,13 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             again[i].reserve(parts.size());
             for (const Part& q : parts) again[i].push_back(work_of(*map.builder(), q));
             same_tiles[i] = tiles == drawn_tiles(map);
+            if (!map.complete()) {
+                style::CameraState drawn_again = scene.camera;
+                drawn_again.parts = scene.base;
+                rebuilt[i] = draw_until_complete(session, map, drawn_again);
+                CHECK(rebuilt[i] > 0);
+            }
+            back[i] = work_of(*map.builder(), parts[i]);
         }
         // drawn here: work of its own, its step, or less of what it shares once it is left out
         const auto present = [&](std::size_t i) {
@@ -1151,7 +1167,7 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             CHECK(off.own == 0U);
             CHECK(off.step == false);
             CHECK(off.shared <= on[i].shared);
-            CHECK(again[i][i].any());
+            CHECK(back[i].any());
             // every other part drawn here drawn as with it (its own draws and dispatches, its step), but those drawn
             // with it
             for (std::size_t j = 0; j < parts.size(); ++j) {
@@ -1164,8 +1180,13 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
                 CHECK(with_off[i][j].step == again[i][j].step);
             }
             if (!same_tiles[i]) ++cover_moved;
-            lines += std::format("\n  {}: {} draws and dispatches, {} shared{}; with its switch {}, {}", p.name,
-                                 on[i].own, on[i].shared, on[i].step ? ", its step" : "", off.own, off.shared);
+            lines +=
+                std::format("\n  {}: {} draws and dispatches, {} shared{}; with its switch {}, {}{}", p.name, on[i].own,
+                            on[i].shared, on[i].step ? ", its step" : "", off.own, off.shared,
+                            rebuilt[i] > 0 ? std::format("; its passes let go of ({:.1f} MB of the heaps), back the "
+                                                         "frame after with {} and complete {} frames on",
+                                                         let_go[i], again[i][i].own, rebuilt[i])
+                                           : std::string());
         }
         MESSAGE(std::format("{} ({} of its switches' two frames drew other tiles):{}", scene.name, cover_moved, lines));
     }
@@ -1221,7 +1242,9 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     // every building left out: their items take no rank (the frame's ranks hold no building), and come back
     CHECK(draw(doors, part::buildings));
     const std::size_t ranked_without = map.builder()->state().ranks->order().size();
+    // (drawn again once their top-ups are taken: the buildings were let go of with their part)
     CHECK(draw(doors, 0));
+    CHECK(draw_until_complete(session, map, doors.camera) > 0);
     const std::size_t ranked_with = map.builder()->state().ranks->order().size();
     CHECK(ranked_without < ranked_with);
     MESSAGE(

@@ -610,15 +610,17 @@ void Residency::take_published(ItemTable& items, std::vector<std::shared_ptr<con
         const std::uint64_t k = key_of(t->key, t->pack);
         const auto at = index_.find(k);
         if (p.base) {
-            // A top-up: its passes onto the tile it was built onto, where that one is still resident (else, or with
-            // nothing built, back to the heaps: the GPU never saw them)
-            if (at == index_.end() || resident_[at->second] != p.base || t->built == 0U) {
+            // A top-up: its passes onto the tile it was built onto, where that one is still resident under its handle
+            // and lacks them (as it is now: a part left out since may have let go of others, retire_passes); else, or
+            // with nothing built, back to the heaps: the GPU never saw them
+            const std::shared_ptr<const ResidentTile> onto = at != index_.end() ? resident_[at->second] : nullptr;
+            if (!onto || onto->handle != p.base->handle || (onto->built & t->built) != 0U || t->built == 0U) {
                 each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
                 continue;
             }
-            resident_[at->second] = joined(*p.base, *t, items);
+            resident_[at->second] = joined(*onto, *t, items);
             native_.fetch_add(resident_[at->second]->native_bytes, std::memory_order_relaxed);
-            native_.fetch_sub(p.base->native_bytes, std::memory_order_relaxed);
+            native_.fetch_sub(onto->native_bytes, std::memory_order_relaxed);
             if (taken != nullptr) taken->push_back(resident_[at->second]);
             ++topped;
             continue;
@@ -678,6 +680,62 @@ void Residency::release(tiles::TileKey key, std::string_view pack, ItemTable& it
     resident_.pop_back();
     const std::scoped_lock lock(mutex_);
     ++stats_.released;
+}
+
+void Residency::retire_passes(std::uint64_t passes, ItemTable& items, std::uint64_t frame) {
+    std::uint64_t retired = 0;
+    for (std::shared_ptr<const ResidentTile>& r : resident_) {
+        const std::uint64_t going = r->built & passes;
+        if (going == 0U) continue;
+        // The tile as it is but for those passes: their ranges back to the heaps once frame `frame` is done (the last
+        // that may draw them), their data and items gone, the other passes' runs moved up over the items let go of.
+        auto t = std::make_shared<ResidentTile>(*r);
+        std::vector<std::uint8_t> out(t->items.size(), 0);
+        for (std::size_t p = 0; p < t->passes.size() && p < 64; ++p) {
+            if (!among(going, p)) continue;
+            for (const HeapRange& range : t->passes[p].ranges) {
+                if (range) heaps_.retire(range, frame);
+            }
+            t->passes[p] = {};
+            if (p < t->item_runs.size()) {
+                const auto [first, count] = t->item_runs[p];
+                for (std::size_t i = first; i < std::size_t{first} + count && i < out.size(); ++i) out[i] = 1;
+                t->item_runs[p] = {0U, 0U};
+            }
+            ++retired;
+        }
+        // (a tile without runs, as a test makes one, keeps its items: which pass made each is not known)
+        if (!t->item_runs.empty()) {
+            for (auto& [first, count] : t->item_runs) {
+                if (count == 0) continue;
+                const auto before = static_cast<std::ptrdiff_t>(std::min<std::size_t>(first, out.size()));
+                first -= static_cast<std::uint32_t>(std::count(out.begin(), out.begin() + before, std::uint8_t{1}));
+            }
+            std::size_t kept = 0;
+            for (std::size_t i = 0; i < t->items.size(); ++i) {
+                if (out[i] != 0) {
+                    if (i < t->rows.size()) items.remove(t->rows[i]);
+                    continue;
+                }
+                t->items[kept] = t->items[i];
+                if (i < t->rows.size()) t->rows[kept] = t->rows[i];
+                ++kept;
+            }
+            t->items.resize(kept);
+            t->rows.resize(std::min(t->rows.size(), kept));
+            t->items.shrink_to_fit();
+            t->rows.shrink_to_fit();
+        }
+        t->built &= ~going;
+        t->native_bytes = native_bytes_of(*t);
+        native_.fetch_add(t->native_bytes, std::memory_order_relaxed);
+        native_.fetch_sub(r->native_bytes, std::memory_order_relaxed);
+        r = std::move(t);
+    }
+    if (retired > 0) {
+        const std::scoped_lock lock(mutex_);
+        stats_.retired += retired;
+    }
 }
 
 const ResidentTile* Residency::find(tiles::TileKey key, std::string_view pack) const noexcept {

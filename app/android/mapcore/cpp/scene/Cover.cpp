@@ -110,8 +110,34 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
     for (Shown& s : shown_) {
         if (s.handle == tile.handle) shown = &s;
     }
-    if (shown == nullptr) shown = &shown_.emplace_back(Shown{.handle = tile.handle, .since = seconds, .drawn = false});
+    if (shown == nullptr) {
+        shown = &shown_.emplace_back(
+            Shown{.handle = tile.handle, .since = seconds, .drawn = false, .whole = false, .built = tile.built});
+    }
+    if (!shown->drawn) {
+        // its first entry this frame: the passes its top-up brought since the frame before drew it (a part come back
+        // on) fade in from nothing from now, each over the tile's fade time, its own fade as it was; a pass let go of
+        // since, or faded in, leaves
+        if (fade_seconds_ > 0) {
+            for (std::uint64_t back = tile.built & ~shown->built; back != 0U; back &= back - 1) {
+                shown->tops.push_back({.pass = static_cast<std::uint8_t>(std::countr_zero(back)), .since = seconds});
+            }
+        }
+        shown->built = tile.built;
+        std::erase_if(shown->tops, [&](const Top& t) {
+            return ((tile.built >> t.pass) & 1U) == 0U || !((seconds - t.since) / fade_seconds_ < 1.0);
+        });
+        for (const Top& t : shown->tops) {
+            tops_.push_back({.pass = t.pass,
+                             .since = t.since,
+                             .weight = static_cast<float>(pymath::max(0.0, (seconds - t.since) / fade_seconds_)),
+                             .handle = tile.handle});
+        }
+        if (!shown->tops.empty()) fading_ = true;
+    }
     shown->drawn = true;
+    std::uint64_t topped = 0;
+    for (const Top& t : shown->tops) topped |= std::uint64_t{1} << t.pass;
     const double fade =
         fade_seconds_ > 0 ? pymath::max(0.0, pymath::min(1.0, (seconds - shown->since) / fade_seconds_)) : 1.0;
     if (fade < 1.0) fading_ = true;
@@ -124,7 +150,18 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
                       .fade = static_cast<float>(fade),
                       .place = view.tile_place(p.origin, p.scale, fade),
                       .distance = frustum.distance(box),
-                      .share = frustum.share(box)});
+                      .share = frustum.share(box),
+                      .topped = topped});
+}
+
+std::array<float, 2> Cover::dither(const CoverTile& t, std::size_t pass) const noexcept {
+    const float start = t.place.offset.w;
+    const float end = t.place.scale.w;
+    if (pass >= 64 || ((t.topped >> pass) & 1U) == 0U || t.drawn == nullptr) return {start, end};
+    for (const Top& top : tops_) {
+        if (top.handle == t.drawn->handle && top.pass == pass) return {start, start + ((end - start) * top.weight)};
+    }
+    return {start, end};
 }
 
 void Cover::update(const view::View& view, const view::Frames& frames, const CoverInputs& in,
@@ -155,6 +192,8 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     planned_handles_.clear();
     missing_ = 0;
     fading_ = false;
+    tops_.clear();
+    lacking_ = 0;
     fade_seconds_ = in.fade_seconds;
     fine_far_ = in.fine_far;
     for (Shown& s : shown_) s.drawn = false;
@@ -194,6 +233,9 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     if (!spots_.empty()) count_triangles(residency);
     for (std::size_t p = 0; p < drawn_count_; ++p) emit(p, view, frames, frustum, residency, seconds);
     lay_under(view, frames, frustum, residency, seconds);
+    for (std::size_t i = 0; i < drawn_tiles_; ++i) {
+        if (residency.lacks(*tiles_[i].drawn)) ++lacking_;
+    }
     sort_out(residency);
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
     // stable: tiles at one distance keep the cover's order, on every libc++; those kept under after the tiles drawn,
@@ -646,7 +688,8 @@ void Cover::lay_under(const view::View& view, const view::Frames& frames, const 
 
 void Cover::lay_upright() {
     upright_.clear();
-    dithers_ = !pairs_.empty();
+    // (and while a part come back on fades in on a tile: CoverTile::topped)
+    dithers_ = !pairs_.empty() || !tops_.empty();
     const std::span<const CoverTile> drawn = tiles();
     // A tile drawn keeps the dither's levels from 0 to its fade where it takes over from a tile the frame before drew
     // (kept under it, or still drawn for another place), and all of them where it takes over from none (one fading in

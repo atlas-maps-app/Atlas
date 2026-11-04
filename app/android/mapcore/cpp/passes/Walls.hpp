@@ -75,7 +75,6 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace atlas::scene {
@@ -88,6 +87,13 @@ namespace atlas::passes {
 
 /// The first of a tile's items that are the buildings pass's (its items are consecutive, in its builder's order).
 [[nodiscard]] std::uint32_t first_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
+
+/// Whether `kept` was taken from `now` or a copy of it (one owner), expired or not: its owner lives while it does, so
+/// data made since is never taken for what it held (a tile's pass let go of and built again under the same handle).
+[[nodiscard]] inline bool same_owner(const std::weak_ptr<const void>& kept,
+                                     const std::shared_ptr<const void>& now) noexcept {
+    return !kept.owner_before(now) && !now.owner_before(kept);
+}
 
 /// The pipeline of the walls' and roofs' opaque fills (building_fs), named `name`, with vertex stage `vertex` of
 /// `module` and layout `layout`: at their true depth, writing it and the objects bit (the walls', the roofs' and their
@@ -397,7 +403,10 @@ private:
     }
     std::vector<TileDraw> draws_;
     std::vector<Run> runs_;
-    std::unordered_set<std::uint32_t> rows_written_;
+    /// The tiles (their handles) whose rows are written, and the buildings' data they were written for: a tile's
+    /// buildings let go of and built again (their part left out and drawn again, scene::Residency::retire_passes)
+    /// lie in a new range, written anew.
+    std::unordered_map<std::uint32_t, std::weak_ptr<const void>> rows_written_;
     std::vector<std::uint32_t> drawn_handles_;
     /// The tiles (their handles) with a building nearer than the cells' reach this frame: no other's near cells draw.
     std::vector<std::uint32_t> near_tiles_;
@@ -408,6 +417,8 @@ private:
         std::array<std::uint64_t, 2> moment{};
         std::array<std::uint64_t, 2> asked{};
         std::array<std::uint8_t, 2> read{0, 1};
+        /// The buildings' data its areas were lit for (as rows_written_'s: built again, its new range holds none).
+        std::weak_ptr<const void> of;
     };
     /// The moments the CPU's light has seen (a moment: the frame block's theme), and each tile's areas.
     std::array<std::byte, sizeof(shaders::Theme)> theme_{};

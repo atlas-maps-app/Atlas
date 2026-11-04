@@ -82,6 +82,10 @@ struct CoverTile {
     /// (`fade` is a tile's fade as the picture's completion reckons it; its place's scale.w the fade it is drawn at, 1
     /// for a tile that took over from nothing.)
     bool under = false;
+    /// The passes of a part come back on that fade in on it from nothing, a bit each in the registry's order: a
+    /// top-up's (Residency's), from the first frame that draws them, over the tile's fade time, the tile's own fade
+    /// as it was (ENGINE.md's parts). Each draws its share of the place's range (Cover::dither); 0: none.
+    std::uint64_t topped = 0;
 };
 
 /// Whether entry `c` of `tiles` (Cover::upright) draws its tile's items: a tile drawn for several tiles (a stand-in
@@ -194,8 +198,16 @@ public:
     /// is seen (its features all beyond the view, or none): let go of as not drawn, it was asked for again the next
     /// frame and built again, again and again while the heaps were full (Alkmaar from 5 km, its finest tiles).
     [[nodiscard]] std::span<const std::uint32_t> kept() const noexcept { return kept_; }
-    /// Whether a tile drawn is still fading in (its fade below 1).
+    /// Whether a tile drawn is still fading in (its fade below 1), or a part come back on on one (CoverTile::topped).
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+    /// The range of the dither's levels pass `pass` (its place in the registry) draws entry `t` with
+    /// (shared/fade.slang, fade_word): its place's, offset.w to scale.w, or for a pass come back on that fades in on it
+    /// from nothing (CoverTile::topped) the first part of it, as far as its fade has gone (none at its first frame, all
+    /// at its end).
+    [[nodiscard]] std::array<float, 2> dither(const CoverTile& t, std::size_t pass) const noexcept;
+    /// How many tiles drawn lack a pass a part drawn wants (Residency::lacks: their top-ups not taken yet), which the
+    /// picture's completion waits for (MapFrame::complete).
+    [[nodiscard]] std::size_t lacking() const noexcept { return lacking_; }
     /// The active pack and the coarser one drawn this frame (their store ids; empty: none).
     [[nodiscard]] std::string_view active() const noexcept { return pack_id_; }
     [[nodiscard]] std::string_view coarser() const noexcept { return coarser_id_; }
@@ -299,6 +311,14 @@ private:
     void draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
               const Frustum& frustum, tiles::TileKey wanted, double seconds);
 
+    /// A pass come back on that fades in on a tile (CoverTile::topped): its place in the registry, and since when (the
+    /// first frame that drew it); in tops_, how far it has faded this frame, and the tile's handle.
+    struct Top {
+        std::uint8_t pass = 0;
+        double since = 0;
+        float weight = 0;
+        std::uint32_t handle = 0;
+    };
     /// A resident tile drawn, and when it was first drawn (its fade).
     struct Shown {
         std::uint32_t handle = 0;
@@ -306,6 +326,8 @@ private:
         bool drawn = false; // this frame
         bool whole =
             false; // drawn whole from its first frame, the frame before having drawn nothing it takes over from
+        std::uint64_t built = 0; // the passes it was drawn with (ResidentTile::built), the frame before
+        std::vector<Top> tops;   // its passes come back on, fading in
     };
     /// An ancestor's cells to draw this frame over its missing descendants.
     struct Pending {
@@ -351,6 +373,8 @@ private:
     std::size_t missing_ = 0;
     double fade_seconds_ = 0.18;
     bool fading_ = false;
+    std::vector<Top> tops_; // this frame's passes come back on, fading in (each tile's once)
+    std::size_t lacking_ = 0;
     std::array<Drawn, 2 + max_neighbours> drawn_{};
     std::size_t drawn_count_ = 0;
     std::vector<Spot> spots_;

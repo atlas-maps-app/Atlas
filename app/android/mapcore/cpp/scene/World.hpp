@@ -347,8 +347,6 @@ private:
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;
     std::optional<tiles::GridBox> placed_mask_;
-    /// And the passes whose items were placed (those a part drawn wanted).
-    std::uint64_t placed_passes_ = 0;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;
