@@ -277,6 +277,7 @@ void SunGlobals::rest() {
         l.wanted.clear();
         l.levels = {};
         l.held.clear();
+        l.first_light.clear(); // the by-day copies of tiles mid-fade, which prepare leaves alone while the sun is out
         l.others.clear();
         l.asked_others.clear();
         l.level = 0;

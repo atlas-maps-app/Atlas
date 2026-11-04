@@ -186,6 +186,17 @@ private:
     return c;
 }
 
+/// The tiles world `w`'s cover draws as themselves (a stand-in ancestor has no bits of its own) without their sun bits,
+/// on the CPU or in the frame's buffer, as "z/x/y" each.
+[[nodiscard]] std::vector<std::string> drawn_without_bits(scene::World& w) {
+    std::vector<std::string> out;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue;
+        if (!t.sun || t.sun_base == scene::no_sun) out.push_back(std::format("{}/{}/{}", t.key.z, t.key.x, t.key.y));
+    }
+    return out;
+}
+
 } // namespace
 
 TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range's bytes, and free after the frames") {
@@ -1936,13 +1947,19 @@ TEST_CASE("the sun left out, or every part that reads its bits: no scene, no buc
         }
         CHECK(w.tiles_line().find(" sun off scenes ") != std::string::npos);
     }
-    // Drawn again: its scenes made again and their buckets run, every tile drawn at its finest zoom lit.
+    // Drawn again, the camera held where it was left out: its scenes made again and their buckets run, and once the
+    // sun is idle every tile drawn at its finest zoom lit, though the scenes' tiles and the tiles resident are those
+    // of before (the rest let go of every lane's pack and bucket, so each lane asks again as a new one does).
     settle(moved, 40);
     const scene::SunStats back = w.sun()->stats();
     CHECK(back.on);
     CHECK(back.scenes > on.scenes);
     CHECK(back.runs > on.runs);
     CHECK(lit() > 0);
+    const std::vector<std::string> unlit = drawn_without_bits(w);
+    CHECK_MESSAGE(unlit.empty(), std::format("{} tile(s) drawn without their sun bits after the sun went idle, the "
+                                             "first {}",
+                                             unlit.size(), unlit.empty() ? std::string() : unlit.front()));
     MESSAGE("the sun: " << on.scenes << " scene(s) in " << on.scenes_ms << " ms and " << on.runs << " run(s) of "
                         << on.run_tiles << " tiles in " << on.runs_ms << " ms; none while left out; then "
                         << back.scenes << " and " << back.runs << " with it drawn again; " << w.tiles_line());
@@ -2064,6 +2081,13 @@ TEST_CASE("the sun left out and drawn again: every tile drawn without bits, by d
                 last = l;
             }
             CHECK(settled());
+            // the camera held all along: once the sun is idle and its fades are over, every tile drawn has its bits,
+            // not only some, though the scenes' tiles and the tiles resident are those of before (only the rest's
+            // letting go of every lane's pack and bucket asks for them again)
+            const std::vector<std::string> unlit = drawn_without_bits(w);
+            CHECK_MESSAGE(unlit.empty(), std::format("{} tile(s) drawn without their sun bits after the sun went "
+                                                     "idle, the first {}",
+                                                     unlit.size(), unlit.empty() ? std::string() : unlit.front()));
             return frames;
         };
         for (int k = 0; k < 200 && (k <= 10 || !settled()); ++k) frame(home());
