@@ -758,7 +758,7 @@ const std::vector<Part>& every_part() {
         {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
         {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
         // (the flat detail's stage and draws run while any of its parts is drawn: each told by its mode bit)
-        {.name = "shopfronts",
+        {.name = "shop windows",
          .bit = part::shop_glazing,
          .shared = {"window facades", "window frames", "window glass"},
          .mode_bit = shaders::FRAME_NO_GLAZING},
@@ -781,6 +781,11 @@ const std::vector<Part>& every_part() {
          .own = {"door faces", "door fills", "door outlines", "door numbers"},
          .changes = part::house_numbers},
         {.name = "house numbers", .bit = part::house_numbers, .own = {"door numbers"}, .needs = part::doors},
+        {.name = "shopfronts",
+         .bit = part::shopfronts,
+         .own = {"shop fills", "shop lines", "shop texts", "shop tints"}},
+        {.name = "terraces", .bit = part::terraces, .own = {"terrace fills", "terrace lines"}},
+        {.name = "open places' glow", .bit = part::open_glows, .own = {"open glows"}},
         {.name = "trees", .bit = part::trees, .own = {"trees", "tree fills", "tree sides"}},
         {.name = "leaf filters", .bit = part::leaf_filters, .mode_bit = shaders::FRAME_NO_CROWNS, .needs = part::trees},
         // (its translucent records the lamps' halos and wet streaks at night)
@@ -1134,6 +1139,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         // the canal ring's Main board (its towers, masts and power lines)
         {.name = "the canal ring's Main board",
          .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2),
+         .theme = sunny()},
+        // a wall of shops facing east from 70 m (shopfronts_vk_test.cpp's): their fronts and a café's terrace
+        {.name = "the wall of shops facing east",
+         .camera =
+             camera_at(52.3746 - (297.49641 / 110540.0), 4.8840 + (425.44906 / kx), 269.23868878579214, 60.0, 70.0),
          .theme = sunny()},
     };
     const std::vector<Part>& parts = every_part();

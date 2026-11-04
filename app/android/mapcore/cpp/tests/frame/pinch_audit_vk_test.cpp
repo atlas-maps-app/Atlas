@@ -743,7 +743,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, plinths ...;
             // the water's surface as water_surface, as "water" names the water's light (alpha 19's defaults above)
-            constexpr std::array<const char*, 52> each{
+            constexpr std::array<const char*, 55> each{
                 "ground",          "water_surface",  "canopy",       "ground_lines",     "setts",
                 "ground_text",     "quays",          "sky",          "building_shadows", "park_shadows",
                 "cloud_shadows",   "reflections",    "ripple",       "glitter",          "rings",
@@ -754,7 +754,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 "house_numbers",   "trees",          "leaf_filters", "furniture",        "region_items",
                 "labels",          "routes",         "markers",      "location",         "frosted",
                 "shadow_blur",     "near_cells",     "kept_cull",    "plinths",          "cornices",
-                "quay_waterlines", "quay_tops"};
+                "quay_waterlines", "quay_tops",      "shopfronts",   "terraces",         "open_glows"};
             for (std::size_t i = 0; i < each.size(); ++i) {
                 if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
             }

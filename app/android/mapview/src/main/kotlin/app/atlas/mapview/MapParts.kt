@@ -53,6 +53,9 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     LAMP_POOLS(CameraWriter.PART_LAMP_POOLS, MapPartGroup.NIGHT),
     LAMP_HALOS(CameraWriter.PART_LAMP_HALOS, MapPartGroup.NIGHT),
     LAMP_STREAKS(CameraWriter.PART_LAMP_STREAKS, MapPartGroup.NIGHT),
+
+    /** The glow about a place that is open at night, by its opening hours. */
+    OPEN_GLOWS(CameraWriter.PART_OPEN_GLOWS, MapPartGroup.NIGHT),
     RAIN(CameraWriter.PART_RAIN, MapPartGroup.WEATHER),
     GOLDEN_WASH(CameraWriter.PART_GOLDEN_WASH, MapPartGroup.WEATHER),
     WALLS(CameraWriter.PART_WALLS, MapPartGroup.BUILDINGS),
@@ -80,6 +83,12 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     KIT_DETAILS(CameraWriter.PART_KIT_DETAILS, MapPartGroup.FACADES),
     DOORS(CameraWriter.PART_DOORS, MapPartGroup.FACADES),
     HOUSE_NUMBERS(CameraWriter.PART_HOUSE_NUMBERS, MapPartGroup.FACADES),
+
+    /** A shop's, café's or hotel's front on its street: its frame, glass, awning, sign and blade. */
+    SHOPFRONTS(CameraWriter.PART_SHOPFRONTS, MapPartGroup.FACADES),
+
+    /** A café's or restaurant's tables, chairs and parasols on the pavement while it is open. */
+    TERRACES(CameraWriter.PART_TERRACES, MapPartGroup.FACADES),
     TREES(CameraWriter.PART_TREES, MapPartGroup.TREES),
     LEAF_FILTERS(CameraWriter.PART_LEAF_FILTERS, MapPartGroup.TREES),
     FURNITURE(CameraWriter.PART_FURNITURE, MapPartGroup.TREES),

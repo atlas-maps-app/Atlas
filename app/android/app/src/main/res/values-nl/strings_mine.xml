@@ -403,6 +403,7 @@
     <string name="mine_part_lamp_pools">Lichtplassen</string>
     <string name="mine_part_lamp_halos">Lampenhalo\'s</string>
     <string name="mine_part_lamp_streaks">Lampenstrepen</string>
+    <string name="mine_part_open_glows">Gloed van open zaken</string>
     <string name="mine_part_rain">Regen</string>
     <string name="mine_part_golden_wash">Gouden licht</string>
     <string name="mine_part_walls">Muren</string>
@@ -421,6 +422,8 @@
     <string name="mine_part_kit_details">Traditiedetails</string>
     <string name="mine_part_doors">Deuren</string>
     <string name="mine_part_house_numbers">Huisnummers</string>
+    <string name="mine_part_shopfronts">Winkelpuien</string>
+    <string name="mine_part_terraces">Terrassen</string>
     <string name="mine_part_trees">Bomen</string>
     <string name="mine_part_leaf_filters">Bladfilters</string>
     <string name="mine_part_furniture">Straatmeubilair</string>

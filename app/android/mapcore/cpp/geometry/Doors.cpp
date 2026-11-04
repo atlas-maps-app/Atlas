@@ -79,7 +79,7 @@ TileDoors build_doors(const DoorInput& in) {
              .offset = -0.03,
              .cut_x = d.x,
              .cut_z = d.z,
-             .order = scene::order_of(facades_list, d.node),
+             .order = scene::order_of(facades_list, doors_after | d.node),
              .kind = in.kind,
              .flags = scene::item_flag::radius,
              .slots = {door_slots, door_slots, door_slots, door_slots},

@@ -210,6 +210,10 @@ class EngineStyleTest {
             ),
             Triple(listOf("windows.shop_frame_width"), amsterdam, """stroke-width=\"${css("windows.shop_frame_width")}\"%s/>", P(gq)"""),
             Triple(
+                listOf("windows.shop_glass_open", "windows.shop_glass_closed"), amsterdam,
+                """if (night) (if (openHere) "${value("windows.shop_glass_open")}" else "${value("windows.shop_glass_closed")}") else "url(#glass)"""",
+            ),
+            Triple(
                 listOf("windows.plinth_day", "windows.plinth_night"), amsterdam,
                 """hzc(th, if (!night) "${value("windows.plinth_day")}" else "${value("windows.plinth_night")}")""",
             ),
@@ -279,6 +283,77 @@ class EngineStyleTest {
                 """fs * 0.15, if (!night) "${value("doors.plate_day")}" else "${value("doors.plate_night")}", p[0], p[1] + fs * 0.08, fs,""",
             ),
             Triple(listOf("doors.number_day", "doors.number_night"), amsterdam, """if (!night) "${value("doors.number_day")}" else "${value("doors.number_night")}", num)"""),
+            Triple(
+                listOf("shopfronts.glass_open", "shopfronts.glass_closed"), amsterdam,
+                """val glass = if (night) (if (isOpen) "${value("shopfronts.glass_open")}" else "${value("shopfronts.glass_closed")}")""",
+            ),
+            Triple(
+                listOf("shopfronts.frame_day", "shopfronts.frame_night"), amsterdam,
+                """var sv = face(cam, quad(-W2, W2, 0.0, 2.85, 0.07), if (!night) "${value("shopfronts.frame_day")}" else "${value("shopfronts.frame_night")}") // frame""",
+            ),
+            Triple(
+                listOf("shopfronts.mullion"), amsterdam,
+                """if (a != null && b != null) sv += pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"${value("shopfronts.mullion")}\" stroke-width=\"%.2f\"/>", a[0], a[1], b[0], b[1]""",
+            ),
+            Triple(
+                listOf("shopfronts.awning_width"), amsterdam,
+                """pf(" stroke=\"%s\" stroke-width=\"${css("shopfronts.awning_width")}\"", tohex(mulc(col, 0.6)))""",
+            ),
+            Triple(
+                listOf("shopfronts.stripes_opacity", "shopfronts.stripes_day", "shopfronts.stripes_night"), amsterdam,
+                """fill=\"%s\" opacity=\"${css("shopfronts.stripes_opacity")}\"/>", stripes.joinToString(""), """ +
+                    """if (!night) "${value("shopfronts.stripes_day")}" else "${value("shopfronts.stripes_night")}")""",
+            ),
+            Triple(
+                listOf("shopfronts.sign_outline", "shopfronts.sign_width"), amsterdam,
+                """sv += face(cam, quad(-W2 + 0.2, W2 - 0.2, 3.08, 3.62, 0.09), bg, " stroke=\"${value("shopfronts.sign_outline")}\" stroke-width=\"${css("shopfronts.sign_width")}\"")""",
+            ),
+            Triple(listOf("shopfronts.text"), amsterdam, """val fg = st.fg?.takeIf { it.isNotEmpty() } ?: "${value("shopfronts.text")}""""),
+            Triple(
+                listOf("shopfronts.spill_opacity", "shopfronts.spill"), amsterdam,
+                """pf("<g opacity=\"${css("shopfronts.spill_opacity")}\">%s</g>", face(cam, quad(-2.8, 2.8, 0.0, 0.05, 2.0), "${value("shopfronts.spill")}"))""",
+            ),
+            Triple(
+                listOf("shopfronts.sign_outline"), amsterdam,
+                """if (br0 != null && br1 != null) bsv += pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"${value("shopfronts.sign_outline")}\" stroke-width=\"%.2f\"/>", br0[0]""",
+            ),
+            Triple(
+                listOf("shopfronts.sign_outline", "shopfronts.blade_width"), amsterdam,
+                """bsv += face(cam, blade, bg, " stroke=\"${value("shopfronts.sign_outline")}\" stroke-width=\"${css("shopfronts.blade_width")}\"")""",
+            ),
+            Triple(
+                listOf("shopfronts.wood_day", "shopfronts.wood_night"), amsterdam,
+                """val wood = if (!night) "${value("shopfronts.wood_day")}" else "${value("shopfronts.wood_night")}"""",
+            ),
+            Triple(listOf("shopfronts.chair"), amsterdam, """tbl.add(drawBox(cam, th, chx, chz, 0.42, 0.42, 0.46, "${value("shopfronts.chair")}"))"""),
+            Triple(
+                listOf("shopfronts.chair_leg_width"), amsterdam,
+                """stroke=\"%s\" stroke-width=\"${(value("shopfronts.chair_leg_width") as Double).toInt()}\"/>", p0[0], p0[1], p1[0], p1[1], tohex(mulc(c, 0.8))) + s""",
+            ),
+            Triple(
+                listOf("shopfronts.chair", "shopfronts.chair_back_night"), amsterdam,
+                """), if (!night) "${value("shopfronts.chair")}" else "${value("shopfronts.chair_back_night")}")""",
+            ),
+            Triple(
+                listOf("shopfronts.top_day", "shopfronts.top_night", "shopfronts.top_outline", "shopfronts.top_width"), amsterdam,
+                """tbl.add(face(cam, top, if (!night) "${value("shopfronts.top_day")}" else "${value("shopfronts.top_night")}", """ +
+                    """" stroke=\"${value("shopfronts.top_outline")}\" stroke-width=\"${css("shopfronts.top_width")}\""))""",
+            ),
+            Triple(
+                listOf("shopfronts.pole"), amsterdam,
+                """tbl.add(pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"${value("shopfronts.pole")}\" stroke-width=\"%.2f\"/>", p0[0], p0[1], p1[0], p1[1]""",
+            ),
+            Triple(listOf("shopfronts.panel"), amsterdam, """fan.append(face(cam, tri, tohex(mulc(hx(if (i % 2 != 0) pcol else "${value("shopfronts.panel")}"), shade))))"""),
+            Triple(
+                listOf(
+                    "shopfronts.open_inner", "shopfronts.open_inner_opacity", "shopfronts.open_middle", "shopfronts.open_middle_offset",
+                    "shopfronts.open_middle_opacity", "shopfronts.open_outer", "shopfronts.open_outer_opacity",
+                ),
+                amsterdam,
+                """<radialGradient id=\"open\"><stop offset=\"0\" stop-color=\"${value("shopfronts.open_inner")}\" stop-opacity=\"${css("shopfronts.open_inner_opacity")}\"/>""" +
+                    """<stop offset=\"${css("shopfronts.open_middle_offset")}\" stop-color=\"${value("shopfronts.open_middle")}\" stop-opacity=\"${css("shopfronts.open_middle_opacity")}\"/>""" +
+                    """<stop offset=\"1\" stop-color=\"${value("shopfronts.open_outer")}\" stop-opacity=\"${(value("shopfronts.open_outer_opacity") as Double).toInt()}\"/></radialGradient>""",
+            ),
             Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
             Triple(listOf("items.shaft"), regions, """val shaft = tohex(Amsterdam.light(th, hx("${value("items.shaft")}"), V3(0.0, 0.0, 1.0), !night))"""),
             Triple(

@@ -926,6 +926,20 @@ inline float building_shop_frame_width(FrameWindows w) {
     return asfloat(w.shop.z);
 }
 
+/// A shop's glazing's glass at the moment: by day the plain glass's (amsterdam.py's url(#glass)), at night `night`
+/// (0xRRGGBB), the style's windows.shop_glass_open while one of its building's places is open (open_here: '#FFD08C'),
+/// else its shop_glass_closed ('#0E1119').
+inline BuildingGlass building_shop_glass(FrameWindows w, uint theme_flags, uint night) {
+    if ((theme_flags & THEME_NIGHT) == 0u) {
+        return building_glass(w, theme_flags, BUILDING_WINDOW_PLAIN, 0u, false);
+    }
+    BuildingGlass g;
+    g.top = building_rgb(night);
+    g.bottom = g.top;
+    g.gradient = false;
+    return g;
+}
+
 /// The plinths' colour at the moment, and the cornices'.
 inline float3 building_plinth_colour(FrameWindows w, uint theme_flags) {
     return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.facades.y : w.facades.x);
@@ -945,12 +959,12 @@ inline float building_tenths(uint tenths) {
     return float(tenths) / 10.0f;
 }
 
-// A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read
-// (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6; its
-// glass drawn, bit 7: building_glass_drawn at its frame's half width; a shop's glazing, bit 8: its frame the shops'
-// colour and width, its glass's gradient over its own box), its wall's record among the frame's walls, its painter
-// slot, its span's low end; v1 its span's high end and its first three corners' x, y (CSS px) but the last; then the
-// rest of its five corners. A header 0: the window is not drawn.
+// A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read (4
+// uint4): v0 its header (corners, bits 0-2; lit, bit 3: a shop's glazing's, one of its places open at night; its wall's
+// warehouse flag, bit 4; its style, bits 5-6; its glass drawn, bit 7: building_glass_drawn at its frame's half width; a
+// shop's glazing, bit 8: its frame the shops' colour and width, its glass's gradient over its own box), its wall's
+// record among the frame's walls, its painter slot, its span's low end; v1 its span's high end and its first three
+// corners' x, y (CSS px) but the last; then the rest of its five corners. A header 0: the window is not drawn.
 static const uint BUILDING_WINDOW_RECORD_VECTORS = 4u;
 static const uint BUILDING_WINDOW_LIT = 8u;
 static const uint BUILDING_WINDOW_RECORD_WAREHOUSE = 16u;
@@ -1205,7 +1219,8 @@ inline float2 building_facade_point(BuildingFacadeRecord r, uint v) {
 // lit ones' (CSS px; top below bottom where it has none; a church's windows' glass's as its dark ones' where it draws
 // them); its frames' half width and its sash bars' (CSS px), its reveals' colour (0xBBGGRR, the wall's colour times
 // 0.55 unlit at the moment), and its church windows' leading's width (CSS px); its tile's standing fade (its range of
-// the dither's levels, shared/fade.slang's fade_word), for every part of its windows.
+// the dither's levels, shared/fade.slang's fade_word), for every part of its windows, and its shop glazing's glass at
+// night (0xRRGGBB: its job's open glass where one of its building's places is open, else its closed glass).
 static const uint BUILDING_WALL_RECORD_VECTORS = 4u;
 
 struct BuildingWallRecord {
@@ -1217,6 +1232,7 @@ struct BuildingWallRecord {
     uint reveal;
     float leading;
     uint fade;
+    uint glazing;
 };
 
 inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c, uint4 d) {
@@ -1232,6 +1248,7 @@ inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c, uin
     w.reveal = c.z;
     w.leading = asfloat(c.w);
     w.fade = d.x;
+    w.glazing = d.y;
     return w;
 }
 
