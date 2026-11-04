@@ -419,7 +419,7 @@ inline void blend_faces(Raster& r, std::span<const sh::ItemRecord> faces, const 
             fan.push_back(Tri{v});
         }
         const hlsl::float3 c = sh::tree_rgb(rec.a.y);
-        const float alpha = std::bit_cast<float>(rec.a.z);
+        const auto alpha = std::bit_cast<float>(rec.a.z);
         const auto px0 = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(x0 * density)) - 1);
         const auto py0 = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(y0 * density)) - 1);
         const auto px1 = std::min<std::int64_t>(r.w - 1, static_cast<std::int64_t>(std::ceil(x1 * density)) + 1);

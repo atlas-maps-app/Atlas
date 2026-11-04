@@ -42,8 +42,6 @@ using namespace atlas;
 
 namespace {
 
-namespace sh = atlas::shaders;
-
 struct Scene {
     std::unique_ptr<gpu::Offscreen> output;
     std::unique_ptr<frame::FrameBuilder> builder;

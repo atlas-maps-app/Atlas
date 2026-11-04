@@ -88,8 +88,11 @@ constexpr std::uint32_t facade_detail = 2;
 /// The coverage tables, a face each: the identity, as the ground's text has them until calibrated (D13).
 constexpr std::size_t table_entries = 256 * text::face_count;
 
-/// The builds' serials (OpenHours' keys).
-std::atomic<std::uint64_t> next_serial{1};
+/// A new build's serial (OpenHours' key).
+[[nodiscard]] std::uint64_t next_serial() noexcept {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
 
 [[nodiscard]] gpu::Result<bool> fit(const gpu::Device& device, gpu::Buffer& b, vk::DeviceSize bytes) {
     if (b && b.size() >= bytes) return false;
@@ -517,8 +520,8 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
         }
         return false;
     };
-    const double W2 = geometry::shop_half_width;
-    const std::array<double, 3>& L = state.theme.sun_vector;
+    const double w2 = geometry::shop_half_width;
+    const std::array<double, 3>& sun = state.theme.sun_vector;
     for (const At& a : kept) {
         const geometry::Shopfront& s = a.shop;
         const view::Vec3 nrm = a.nrm;
@@ -533,12 +536,12 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
             const std::uint32_t rank = table[row];
             return rank != sh::RANK_NONE && (sh::rank_detail(rank) & facade_detail) != 0 ? rank : sh::RANK_NONE;
         };
-        // P3(u, y, off) and quad(u0, u1, y0, y1, off)
-        const auto P3 = [&](double u, double y, double off) {
+        // p3(u, y, off) and quad(u0, u1, y0, y1, off)
+        const auto p3 = [&](double u, double y, double off) {
             return view::Vec3{s.qx + (s.ux * u) + (nrm.x * off), y, s.qz + (s.uz * u) + (nrm.z * off)};
         };
         const auto quad = [&](double u0, double u1, double y0, double y1, double off) {
-            return std::array<view::Vec3, 4>{P3(u0, y0, off), P3(u1, y0, off), P3(u1, y1, off), P3(u0, y1, off)};
+            return std::array<view::Vec3, 4>{p3(u0, y0, off), p3(u1, y0, off), p3(u1, y1, off), p3(u0, y1, off)};
         };
         const double sc = cam.focal() / pymath::max(a.d0, 1.0); // s
         const std::uint32_t col = s.colour;
@@ -552,18 +555,18 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
             if (const std::uint32_t rank = rank_of(0); rank != sh::RANK_NONE) {
                 BoardShape b;
                 b.rank = rank;
-                b.frame = face_of(cam, quad(-W2, W2, 0.0, 2.85, 0.07));
+                b.frame = face_of(cam, quad(-w2, w2, 0.0, 2.85, 0.07));
                 b.frame_colour = night ? style.frame.night : style.frame.day;
-                b.glass = face_of(cam, quad(-W2 + 0.12, W2 - 0.12, 0.12, 2.7, 0.08));
+                b.glass = face_of(cam, quad(-w2 + 0.12, w2 - 0.12, 0.12, 2.7, 0.08));
                 b.glass_colour = open ? style.glass_open : style.glass_closed;
                 b.glass_lit = open;
                 for (std::size_t k = 0; k < b.mullions.size(); ++k) {
-                    const double m = k == 0 ? -W2 / 3 : W2 / 3;
-                    b.mullions.at(k) = line_of(cam, P3(m, 0.12, 0.09), P3(m, 2.7, 0.09), pymath::max(0.5, 0.06 * sc));
+                    const double m = k == 0 ? -w2 / 3 : w2 / 3;
+                    b.mullions.at(k) = line_of(cam, p3(m, 0.12, 0.09), p3(m, 2.7, 0.09), pymath::max(0.5, 0.06 * sc));
                 }
                 if (s.category != geometry::ShopCategory::other || brand) { // an awning, out over the pavement
-                    const std::array<view::Vec3, 4> q{P3(-W2 - 0.1, 3.0, 0.1), P3(W2 + 0.1, 3.0, 0.1),
-                                                      P3(W2 + 0.1, 2.55, 1.15), P3(-W2 - 0.1, 2.55, 1.15)};
+                    const std::array<view::Vec3, 4> q{p3(-w2 - 0.1, 3.0, 0.1), p3(w2 + 0.1, 3.0, 0.1),
+                                                      p3(w2 + 0.1, 2.55, 1.15), p3(-w2 - 0.1, 2.55, 1.15)};
                     b.awning = face_of(cam, q);
                     b.awning_plane = plane_of(cam, vcross(vsub(q[1], q[0]), vsub(q[3], q[0])), q[0]);
                     b.awning_colour = mulc(col, night ? 0.5 : 0.95);
@@ -571,21 +574,21 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                     if (s.category == geometry::ShopCategory::food && !brand) {
                         b.stripe_colour = night ? style.stripes.night : style.stripes.day;
                         for (int k = 0; k < 7; ++k) {
-                            const double u0 = (-W2 - 0.1) + ((((2 * W2) + 0.2) * (2 * k)) / 14);
-                            const double u1 = u0 + (((2 * W2) + 0.2) / 14);
-                            const std::array<view::Vec3, 4> sq{P3(u0, 3.0, 0.11), P3(u1, 3.0, 0.11), P3(u1, 2.55, 1.16),
-                                                               P3(u0, 2.55, 1.16)};
+                            const double u0 = (-w2 - 0.1) + ((((2 * w2) + 0.2) * (2 * k)) / 14);
+                            const double u1 = u0 + (((2 * w2) + 0.2) / 14);
+                            const std::array<view::Vec3, 4> sq{p3(u0, 3.0, 0.11), p3(u1, 3.0, 0.11), p3(u1, 2.55, 1.16),
+                                                               p3(u0, 2.55, 1.16)};
                             ShopPoly sp = poly_of(cam, sq, stripe_margin);
                             if (sp.count > 0) b.stripes.push_back(sp);
                         }
                     }
                 }
-                const std::array<view::Vec3, 4> board = quad(-W2 + 0.2, W2 - 0.2, 3.08, 3.62, 0.09);
+                const std::array<view::Vec3, 4> board = quad(-w2 + 0.2, w2 - 0.2, 3.08, 3.62, 0.09);
                 b.sign = face_of(cam, board);
                 b.sign_plane = plane_of(cam, nrm, board[0]);
                 b.sign_colour = bg;
                 // its text, only when the board is seen face-on enough to read
-                const auto c = cam.proj(P3(0, 3.35, 0.1));
+                const auto c = cam.proj(p3(0, 3.35, 0.1));
                 const ShopPoly bsp = poly_of(cam, board, sign_margin);
                 const std::array<double, 2> wh = extent(bsp);
                 const std::string label = brand ? s.brand : text::upper(s.kind);
@@ -605,16 +608,16 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                 shape.board = std::move(b);
             }
             // a blade sign out over the pavement: what you read when you look along a street
-            const double bu = W2 + 0.35;
-            const std::array<view::Vec3, 4> blade{P3(bu, 2.75, 0.18), P3(bu, 2.75, 1.05), P3(bu, 3.55, 1.05),
-                                                  P3(bu, 3.55, 0.18)};
-            const view::Vec3 bp = P3(bu, 3.15, 0.6);
+            const double bu = w2 + 0.35;
+            const std::array<view::Vec3, 4> blade{p3(bu, 2.75, 0.18), p3(bu, 2.75, 1.05), p3(bu, 3.55, 1.05),
+                                                  p3(bu, 3.55, 0.18)};
+            const view::Vec3 bp = p3(bu, 3.15, 0.6);
             const view::Vec3 cb = cam.cam(bp);
             if (const std::uint32_t rank = rank_of(1); rank != sh::RANK_NONE && cb.z > 1.5) {
                 BladeShape bl;
                 bl.rank = rank;
                 bl.bracket =
-                    line_of(cam, P3(bu, 3.62, 0.05), P3(bu, 3.62, 1.1), pymath::max(0.4, 0.05 * cam.focal() / cb.z));
+                    line_of(cam, p3(bu, 3.62, 0.05), p3(bu, 3.62, 1.1), pymath::max(0.4, 0.05 * cam.focal() / cb.z));
                 bl.blade = face_of(cam, blade);
                 bl.plane = plane_of(cam, {s.ux, 0.0, s.uz}, bp);
                 bl.colour = bg;
@@ -716,12 +719,12 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                         const std::array<view::Vec3, 3> tri{ring.at(i), ring.at((i + 1) % ring.size()), apex};
                         view::Vec3 nr = vnorm(vcross(vsub(tri[1], tri[0]), vsub(tri[2], tri[0])));
                         if (nr.y < 0) nr = {-nr.x, -nr.y, -nr.z};
-                        const double shade = vdot(nr, {L[0], L[1], L[2]}) > 0 ? 1.0 : 0.78;
+                        const double shade = vdot(nr, {sun[0], sun[1], sun[2]}) > 0 ? 1.0 : 0.78;
                         tb.panels.at(i) = face_of(cam, tri);
                         tb.panel_colours.at(i) = mulc(i % 2 != 0 ? pc : style.panel, shade);
                     }
                 }
-                shape.tables.push_back(std::move(tb));
+                shape.tables.push_back(tb);
             }
         }
         if (shape.board || shape.blade || !shape.tables.empty()) out.shops.push_back(std::move(shape));
@@ -894,7 +897,7 @@ gpu::Result<void> Shopfronts::build(scene::TileBuild& b) const {
     if (g.shops.empty() && g.places.empty()) return {};
     for (const scene::ItemSpec& item : g.items) b.add_item(item);
     auto kept = std::make_shared<ShopTile>();
-    kept->serial = next_serial.fetch_add(1, std::memory_order_relaxed);
+    kept->serial = next_serial();
     // each shopfront's board among the items: its board, its blade, its tables where it has a terrace
     std::uint32_t at = 0;
     kept->firsts.reserve(g.shops.size());

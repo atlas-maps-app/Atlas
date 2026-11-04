@@ -1134,6 +1134,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         {.name = "the canal ring's Main board",
          .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2),
          .theme = sunny()},
+        // a wall of shops facing east from 70 m (shopfronts_vk_test.cpp's): their fronts and a café's terrace
+        {.name = "the wall of shops facing east",
+         .camera =
+             camera_at(52.3746 - (297.49641 / 110540.0), 4.8840 + (425.44906 / kx), 269.23868878579214, 60.0, 70.0),
+         .theme = sunny()},
     };
     const std::vector<Part>& parts = every_part();
     std::vector<bool> drawn(parts.size(), false); // drawn by default in some scene

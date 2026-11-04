@@ -112,45 +112,46 @@ void emit_shops(const frame::FrameState& state, const passes::ShopFrame& shops, 
             out.at(slot, objects, item);
             out.text({.fill = colour(t.fill)}, t.text, at(t.x), at(t.y), font, node);
         };
+        const auto board_of = [&](std::int64_t id, const passes::BoardShape& b) {
+            const std::uint32_t slot = shaders::rank_slot(b.rank);
+            const std::int32_t item = out.item({.owner = Owner::node, .id = id, .kind = "shopfront"});
+            face(b.frame, slot, objects, item, {.fill = colour(b.frame_colour)});
+            face(b.glass, slot + 1, objects, item,
+                 {.fill = night ? colour(b.glass_colour) : (b.glass_lit ? glass_lit : glass_plain)});
+            for (const passes::ShopLine& m : b.mullions) line(m, slot + 2, item, style.mullion);
+            face(b.awning, slot + 3, objects, item, stroked(b.awning_colour, b.awning_outline, style.awning_width));
+            if (!b.stripes.empty()) {
+                // '<path d="%s" fill="%s" opacity=".85"/>': the stripes' closed subpaths in one path
+                std::vector<std::vector<Point>> rings;
+                std::vector<Subpath> subpaths;
+                rings.reserve(b.stripes.size());
+                subpaths.reserve(b.stripes.size());
+                for (const passes::ShopPoly& p : b.stripes) {
+                    std::vector<Point>& ring = rings.emplace_back();
+                    for (std::uint32_t i = 0; i < p.count; ++i) ring.push_back(point(p.points.at(i)));
+                }
+                for (const std::vector<Point>& ring : rings) subpaths.push_back({.points = ring, .closed = true});
+                out.at(slot + 5, objects, item);
+                out.path({.fill = colour(b.stripe_colour)}, subpaths, {.opacity = style.stripes_opacity});
+            }
+            face(b.sign, slot + 6, objects, item, stroked(b.sign_colour, style.sign_outline, style.sign_width));
+            text_of(b.label, slot + 8, item, text::printed_float(b.label.spacing, 2));
+            if (b.spill.count > 0) {
+                // '<g opacity=".55">%s</g>' of its face
+                const std::int32_t spill = out.group({.node = {.opacity = style.spill_opacity}, .parent = objects});
+                face(b.spill, slot + 9, spill, item, {.fill = colour(style.spill)});
+            }
+        };
+        const auto blade_of = [&](std::int64_t id, const passes::BladeShape& bl) {
+            const std::uint32_t slot = shaders::rank_slot(bl.rank);
+            const std::int32_t item = out.item({.owner = Owner::node, .id = id, .kind = "blade"});
+            line(bl.bracket, slot, item, style.sign_outline);
+            face(bl.blade, slot + 1, objects, item, stroked(bl.colour, style.sign_outline, style.blade_width));
+            text_of(bl.text, slot + 3, item, 0.0F);
+        };
         for (const passes::ShopShape& s : shops.shops) {
-            if (s.board) {
-                const passes::BoardShape& b = *s.board;
-                const std::uint32_t slot = shaders::rank_slot(b.rank);
-                const std::int32_t item = out.item({.owner = Owner::node, .id = s.id, .kind = "shopfront"});
-                face(b.frame, slot, objects, item, {.fill = colour(b.frame_colour)});
-                face(b.glass, slot + 1, objects, item,
-                     {.fill = night ? colour(b.glass_colour) : (b.glass_lit ? glass_lit : glass_plain)});
-                for (const passes::ShopLine& m : b.mullions) line(m, slot + 2, item, style.mullion);
-                face(b.awning, slot + 3, objects, item, stroked(b.awning_colour, b.awning_outline, style.awning_width));
-                if (!b.stripes.empty()) {
-                    // '<path d="%s" fill="%s" opacity=".85"/>': the stripes' closed subpaths in one path
-                    std::vector<std::vector<Point>> rings;
-                    std::vector<Subpath> subpaths;
-                    rings.reserve(b.stripes.size());
-                    for (const passes::ShopPoly& p : b.stripes) {
-                        std::vector<Point>& ring = rings.emplace_back();
-                        for (std::uint32_t i = 0; i < p.count; ++i) ring.push_back(point(p.points.at(i)));
-                    }
-                    for (const std::vector<Point>& ring : rings) subpaths.push_back({.points = ring, .closed = true});
-                    out.at(slot + 5, objects, item);
-                    out.path({.fill = colour(b.stripe_colour)}, subpaths, {.opacity = style.stripes_opacity});
-                }
-                face(b.sign, slot + 6, objects, item, stroked(b.sign_colour, style.sign_outline, style.sign_width));
-                text_of(b.label, slot + 8, item, text::printed_float(b.label.spacing, 2));
-                if (b.spill.count > 0) {
-                    // '<g opacity=".55">%s</g>' of its face
-                    const std::int32_t spill = out.group({.node = {.opacity = style.spill_opacity}, .parent = objects});
-                    face(b.spill, slot + 9, spill, item, {.fill = colour(style.spill)});
-                }
-            }
-            if (s.blade) {
-                const passes::BladeShape& bl = *s.blade;
-                const std::uint32_t slot = shaders::rank_slot(bl.rank);
-                const std::int32_t item = out.item({.owner = Owner::node, .id = s.id, .kind = "blade"});
-                line(bl.bracket, slot, item, style.sign_outline);
-                face(bl.blade, slot + 1, objects, item, stroked(bl.colour, style.sign_outline, style.blade_width));
-                text_of(bl.text, slot + 3, item, 0.0F);
-            }
+            if (s.board) board_of(s.id, *s.board);
+            if (s.blade) blade_of(s.id, *s.blade);
             for (const passes::TableShape& t : s.tables) {
                 const std::uint32_t slot = shaders::rank_slot(t.rank);
                 const std::int32_t item = out.item({.owner = Owner::node, .id = s.id, .kind = "terrace"});

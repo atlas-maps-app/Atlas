@@ -284,6 +284,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                 }
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
+                const double update_ms = s.builder->stage_f_parts().pass_ms.at(s.shops->index());
                 MESSAGE(name << ": " << n.shops << " shopfronts (open, closed, without hours: " << rule.shops[0] << ", "
                              << rule.shops[1] << ", " << rule.shops[2] << "; seated " << rule.seated[0] << ", "
                              << rule.seated[1] << ", " << rule.seated[2] << "; with a terrace " << rule.terraces[0]
@@ -295,7 +296,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                              << got.pixels << " pixels drawn, " << got.agree << " the exact raster's, " << got.boundary
                              << " within 0.02 px of a shape's boundary, " << got.tied
                              << " where two colours tie in depth, " << got.seam << " on the composite's seam, "
-                             << got.wrong << " otherwise");
+                             << got.wrong << " otherwise; the pass's stage F " << update_ms << " ms");
                 CHECK(n.shops >= wants.shops);
                 CHECK(frame.shops.size() == n.shops);
                 CHECK(frame.glows.size() == n.glows);

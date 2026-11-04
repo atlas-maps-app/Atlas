@@ -179,6 +179,14 @@ class L1Test {
     private fun doorKey(key: String): Boolean = "#ffe8e2d6" in key || "Georgia" in key ||
         listOf("path; fill #ff9c9488 ", "path; fill #ff22232a ", "rect; fill #fff2eee4 ", "rect; fill #ff3a3a40 ").any { key.startsWith(it) }
 
+    /**
+     * Whether an element of [key] is a shopfront's (amsterdam.py's shopfront) by a colour no other element of the renders
+     * draws: its frame and mullions by day, its closed glass at night, its sign's and blade's outlines and the blade's
+     * bracket, an open place's spill of light at night, and its terrace's table legs, table tops and parasol poles.
+     */
+    private fun shopKey(key: String): Boolean = key.startsWith("path; fill #ffffc27a ") ||
+        listOf("#ff2a2c2e", "#ff0b0d12", "#ff1e1f22", "#ff6b5442", "#ff1a1714", "#ff9b9182", "#ff5a5048").any { it in key }
+
     private fun knot(r: LiveRegion, name: String, height: Int): LiveView {
         val k = r.ladder.knots.firstOrNull { it.name == name } ?: error("region ${r.id} has no view $name")
         return EngineVersion.knotView(r.frame, k, 412, height)
@@ -261,6 +269,12 @@ class L1Test {
                     println("  doors: $inView of the port's door elements in the view, ${missingDoors.values.sum()} missing")
                     if (missingDoors.isNotEmpty()) failed += "${case.name}: door elements the twin does not draw: $missingDoors"
                     if (case.name.startsWith("doors") && inView == 0) failed += "${case.name}: the port draws no door in the view"
+                    // the shopfronts: every one of the port's in the view the twin's, and the shop cases show some
+                    val shopsInView = portElements.count { shopKey(it.key) } - r.outsideByKey.filterKeys { shopKey(it) }.values.sum()
+                    val missingShops = r.missing.filterKeys { shopKey(it) }
+                    println("  shopfronts: $shopsInView of the port's shopfront elements in the view, ${missingShops.values.sum()} missing")
+                    if (missingShops.isNotEmpty()) failed += "${case.name}: shopfront elements the twin does not draw: $missingShops"
+                    if (case.name.startsWith("shops") && shopsInView == 0) failed += "${case.name}: the port draws no shopfront in the view"
                 }
                 for ((k, n) in r.missing.entries.sortedByDescending { it.value }.take(8)) println("  missing $n × $k")
                 for ((k, n) in r.extra.entries.sortedByDescending { it.value }.take(8)) println("  extra $n × $k")
