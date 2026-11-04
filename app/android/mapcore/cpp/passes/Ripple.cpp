@@ -262,15 +262,23 @@ void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::Fr
     // holds). Nothing of it moves with the time but through the records (a tile's fade, the moment's colours): the
     // ripple's fields stand still, so the key takes no time step. Where it is the last result's, that stands: a map at
     // rest draws frames for other passes' sake (the tiles fading in, the labels), and so does one held still under a
-    // finger. While the camera moves, its words alone tell, without the reflections' records copied: the key is the
-    // camera's alone until it holds still, and the first frame it holds still makes the result once more.
+    // finger. While the camera moves, the view alone tells, without the reflections' records copied: the camera's
+    // words and the drawn tiles' places, which carry the eye (the camera's words keep their basis through a pan or a
+    // pinch); the key is the view's alone until it holds still, and the first frame it holds still makes the result
+    // once more.
     static_assert(sizeof(shaders::FrameCamera) == 28 * sizeof(std::uint32_t));
     std::array<std::uint32_t, 28> camera{};
     std::memcpy(camera.data(), &state.block.camera, sizeof(shaders::FrameCamera));
     const std::span<const std::uint32_t> read = std::span(camera).first(camera_words);
     std::vector<std::uint32_t> key(read.begin(), read.end());
-    const bool held =
-        ripple_key_.size() >= camera_words && std::ranges::equal(read, std::span(ripple_key_).first(camera_words));
+    // each drawn tile's place as the vertex stage reads it (eye_relative): the offset's xyz and the scale's x
+    key.push_back(static_cast<std::uint32_t>(frame_.tiles.size()));
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const std::size_t place = w.tiles + (i * tile_words);
+        for (const std::size_t k : {0U, 1U, 2U, 4U}) key.push_back(words[place + k]);
+    }
+    const std::size_t view = key.size();
+    const bool held = ripple_key_.size() >= view && std::ranges::equal(key, std::span(ripple_key_).first(view));
     if (frame_.exact || held) {
         const auto add = [&](std::uint32_t first, std::size_t n) {
             key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
@@ -278,17 +286,13 @@ void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::Fr
         const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
         key.push_back(frame_.night ? 1U : 0U);
         key.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(rs.windows_opacity)));
-        for (std::uint32_t k = 0; k < w.reflection_count; ++k) {
-            const auto at = static_cast<std::uint32_t>(w.reflections + (k * reflection_words));
-            add(at, reflection_words);
-            // its tile's place as the vertex stage reads it (eye_relative): the offset's xyz and the scale's x
-            const std::size_t place = w.tiles + (std::size_t{words[at]} * tile_words);
-            for (const std::size_t i : {0U, 1U, 2U, 4U}) key.push_back(words[place + i]);
-        }
+        // each reflection's record, its tile's place by its first word among the view's
+        add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
         add(w.ripple_offsets, 256);
         add(w.leaf_offsets, 257);
         if (w.ripple_map != 0) add(w.ripple_map, 9);
         if (w.ripple_plan != 0) add(w.ripple_plan, words.size() - w.ripple_plan); // the plan, the words' last
+        ++ripple_keyed_;
     }
     ripple_stale_ = key != ripple_key_;
     ripple_key_ = std::move(key);

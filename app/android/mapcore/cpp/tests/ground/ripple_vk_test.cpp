@@ -489,6 +489,7 @@ TEST_CASE("ground: the ripple's result is made once a camera, and stands while i
     constexpr int phases = 6;
     passes::Ground* ground = nullptr;
     std::vector<std::uint64_t> makes; // the results made by the end of each frame
+    std::vector<std::uint64_t> keyed; // and the keys that took the reflections' records
     std::vector<bool> drew;
     const auto each = [&](int f, frame::FrameInputs& in) {
         if (f < settled) return;
@@ -504,6 +505,7 @@ TEST_CASE("ground: the ripple's result is made once a camera, and stands while i
     const auto settle = [&] {
         fields->worker().wait_idle();
         makes.push_back(ground->ripple_makes());
+        keyed.push_back(ground->ripple_keyed());
         drew.push_back(ground->drew_ripple());
     };
     const auto a = test::draw_ground(
@@ -518,10 +520,17 @@ TEST_CASE("ground: the ripple's result is made once a camera, and stands while i
     ATLAS_REQUIRE(makes.size() == settled + (4 * phases), makes.size() << " frames");
     REQUIRE_MESSAGE(drew[settled - 1], "the frame drew its reflections without their ripple (the fields not bound?)");
     MESSAGE("the ripple's results made: " << makes[settled - 1] << " over the " << settled << " frames to settle");
-    // the results made over frames `first` to `last` of a phase
-    const auto over = [&](std::size_t phase, std::size_t first, std::size_t last) {
+    // the results made, and the keys that took the records, over frames `first` to `last` of a phase
+    const auto across = [&](const std::vector<std::uint64_t>& v, std::size_t phase, std::size_t first,
+                            std::size_t last) {
         const std::size_t start = std::size_t{settled} + (4 * phase);
-        return makes[start + last] - makes[start + first - 1];
+        return v[start + last] - v[start + first - 1];
+    };
+    const auto over = [&](std::size_t phase, std::size_t first, std::size_t last) {
+        return across(makes, phase, first, last);
+    };
+    const auto keys = [&](std::size_t phase, std::size_t first, std::size_t last) {
+        return across(keyed, phase, first, last);
     };
     CHECK(over(0, 0, 3) == 0); // the same camera and time: the last result stands
     CHECK(over(1, 0, 3) == 0); // a later time: the fields stand still, and nothing the ripple draws moved
@@ -531,6 +540,12 @@ TEST_CASE("ground: the ripple's result is made once a camera, and stands while i
     CHECK(over(4, 0, 1) == 2); // under a finger (no snap), then once more as it holds still
     CHECK(over(4, 2, 3) == 0); // held still: the last result stands, as at rest
     CHECK(over(5, 0, 3) == 4); // moving: made each frame
+    // the reflections' records go into the key at rest and held still, and not while the camera moves: a pan leaves
+    // the camera's words as they were, and the tiles' places tell
+    CHECK(keys(0, 0, 3) + keys(1, 0, 3) + keys(2, 0, 3) + keys(3, 0, 3) == 16);
+    CHECK(keys(4, 0, 0) == 0);
+    CHECK(keys(4, 1, 3) == 3);
+    CHECK(keys(5, 0, 3) == 0);
     for (std::size_t f = settled; f < drew.size(); ++f) CHECK_MESSAGE(drew[f], "frame " << f << " drew no ripple");
 }
 

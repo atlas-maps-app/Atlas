@@ -977,6 +977,9 @@ public:
     /// The tests' look at the ripple's kept result: how many results it has made (its layer drawn and its stages run)
     /// since the pass was made; a frame whose ripple is the last one's makes none.
     [[nodiscard]] std::uint64_t ripple_makes() const noexcept { return ripple_made_; }
+    /// And how many frames' keys took the reflections' records (the camera held still or at rest; a moving frame's key
+    /// is its view's alone).
+    [[nodiscard]] std::uint64_t ripple_keyed() const noexcept { return ripple_keyed_; }
     /// The tests' look at the lit streets' glow: from the next prepare on, its buffers lie in memory the CPU reads, and
     /// each frame copies its layers there too (GlowLayer::glow_copy, core_copy).
     void keep_glow(bool keep) noexcept { keep_glow_ = keep; }
@@ -1285,12 +1288,13 @@ private:
     std::vector<std::uint32_t> glow_key_;
     bool glow_stale_ = true;
     GlowPlan glow_plan_;
-    /// What the last ripple's result was made of (key_ripple: the camera's words alone while it moves), and whether
-    /// this frame's differs; what its stages cover this frame; the results made.
+    /// What the last ripple's result was made of (key_ripple: the view's alone while the camera moves), and whether
+    /// this frame's differs; what its stages cover this frame; the results made, and the keys that took the records.
     std::vector<std::uint32_t> ripple_key_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
     std::uint64_t ripple_made_ = 0;
+    std::uint64_t ripple_keyed_ = 0;
     double select_ms_ = 0;
     double helped_ms_ = 0; ///< the team's helpers' CPU time over the select under way
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
