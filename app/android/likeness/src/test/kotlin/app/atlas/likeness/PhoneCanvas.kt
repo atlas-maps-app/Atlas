@@ -47,7 +47,7 @@ import kotlin.math.min
  *   element packs the phone downloads on a first visit to their boxes placed beside it, `renders` off), and
  *   [LiveRegions] over it as MapData makes it (no Overpass builds), which picks the region a view draws;
  * - the options: [MapEngine.options] after the calls MapData.wire makes with the settings unset
- *   ([MapEngine.screenEffects] with the haze, vignette and grain off, [MapEngine.leaveOut] with [MapParts.byDefault]);
+ *   ([MapEngine.screenEffects] with the haze, vignette and grain on, [MapEngine.leaveOut] with [MapParts.byDefault]);
  * - the frame: [LiveEngine.render] with them, each layer through [SvgParser], rasterised by [EngineFrame.rasterise] with
  *   the CPU filters at the screen's density (at most [MapEngine.maxRasterScale]), as EngineFrames.make does, on
  *   Robolectric's Android Skia; then drawn as MapController.draw draws a frame at rest: the day's earth under it.
@@ -185,10 +185,10 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         // MapData.regions: no Overpass builds; offline here, as every pack the views need is on the "phone"
         regions = LiveRegions(library, { it.run() }, online = { false }, overpass = null, heapBudget = { ((heapMb shl 20) * LiveRegions.SCENE_SHARE).toLong() })
         LiveEngine.workDir = File(work, "engine")
-        // MapData.wire with the settings unset: the screen's effects off, the parts left out by default; and on this
+        // MapData.wire with the settings unset: the screen's effects on, the parts left out by default; and on this
         // branch's canvas the countries whose tiles the core draws, as MapData reads them from the published list
         // (packs-20261029's Netherlands)
-        MapEngine.screenEffects(haze = false, vignette = false, grain = false)
+        MapEngine.screenEffects(haze = true, vignette = true, grain = true)
         MapEngine.leaveOut(MapParts.byDefault)
         MapEngine.countries = if (next) listOf(NETHERLANDS) else emptyList()
     }

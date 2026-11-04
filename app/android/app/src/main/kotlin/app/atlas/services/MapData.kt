@@ -1,5 +1,6 @@
 package app.atlas.services
 
+import androidx.datastore.preferences.core.emptyPreferences
 import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
@@ -249,13 +250,11 @@ class MapData(private val services: Services) {
         MapEngine.windowEdits = {
             services.edits.mapped.map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
         }
-        // the screen's haze, vignette and grain as the Look settings have them (off when unset), handed to the maps as they
-        // change
+        // the screen's haze, vignette and grain as the Look settings have them (on when unset: screenEffectsOn), handed
+        // to the maps before the settings are read, so the first frame draws the defaults, and again as they change
+        screenEffectsOn(emptyPreferences()).let { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         services.scope.launch {
-            services.settings.data
-                .map { Triple(it[SettingsKeys.MAP_HAZE] ?: false, it[SettingsKeys.MAP_VIGNETTE] ?: false, it[SettingsKeys.MAP_GRAIN] ?: false) }
-                .distinctUntilChanged()
-                .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
+            services.settings.screenEffects.collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
         // the Map look's Tone, as the user set it (on at the renders' 1 when unset; off is 0)
         services.scope.launch {
@@ -284,8 +283,8 @@ class MapData(private val services: Services) {
             services.settings.fastRefresh.collect { on -> MapEngine.fastRefresh(on) }
         }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
-        // are read, so the first frame draws what the defaults say
+        // cost: every part but the plinths, the quays and the water's light but its reflections when unset
+        // (MapParts.byDefault); set before the settings are read, so the first frame draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }
