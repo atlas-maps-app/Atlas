@@ -111,6 +111,8 @@ public:
     [[nodiscard]] Result<void> submit(FrameSlot& slot, bool acquired, vk::Semaphore rendered);
     /// The GPU times of the most recently completed frame.
     [[nodiscard]] const GpuTimes& last_times() const noexcept { return last_; }
+    /// How long the last begin waited for its slot's previous frame, ms (0 where it had finished or none was there).
+    [[nodiscard]] double waited_ms() const noexcept { return waited_ms_; }
     /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests).
     void drain();
 
@@ -126,6 +128,7 @@ private:
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;
     GpuTimes last_;
+    double waited_ms_ = 0;
 };
 
 /// What a frame records into, for the content that draws it.
@@ -168,6 +171,7 @@ struct FrameReport {
     std::uint32_t image = 0;
     double record_ms = 0; // recording the commands
     double cpu_ms = 0;    // from the start of the frame to the present returning
+    double wait_ms = 0;   // of cpu_ms, waiting: for the slot's previous frame (the GPU) and the output's image
     GpuTimes gpu;         // the most recent frame the GPU finished (one or two frames earlier)
 };
 

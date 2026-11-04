@@ -187,6 +187,7 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
                              .min_depth = it.kind == RegionItemKind::wood ? wood_depth : least_depth,
                              .radius = sphere(reach, up),
                              .tile = 0,
+                             .cell = layer.cell_of(i),
                              .owner = scene::owner_key(owner, static_cast<std::uint64_t>(it.id))});
         const std::uint32_t slots = region_item_slots(it);
         out.specs.back().slots = {slots, slots, slots, slots};
@@ -257,6 +258,7 @@ void coaster(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind,
                              .min_depth = coaster_depth,
                              .radius = sphere((pymath::dist(p[k - 1], p[k]) / 2) + 12.0, it.h + 2.0),
                              .tile = 0,
+                             .cell = layer.cell_of(i),
                              .owner = scene::owner_key(owner_way, 0)});
         const std::uint32_t slots = region_item_slots(it);
         out.specs.back().slots = {slots, slots, slots, slots};
@@ -344,6 +346,7 @@ void lines(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, T
                                  .min_depth = least_depth,
                                  .radius = sphere(reach, std::abs(height) + 2.0),
                                  .tile = 0,
+                                 .cell = layer.cell_of(i),
                                  .owner = scene::owner_key(owner_way, static_cast<std::uint64_t>(id))});
             const std::uint32_t slots = region_item_slots(it);
             out.specs.back().slots = {slots, slots, slots, slots};
@@ -553,7 +556,7 @@ void roofs(const tl::Tile& tile, const tl::Frame& frame, TileRegionItems& out) {
         spec.flags = scene::item_flag::app;
         spec.radius = sphere(pymath::max(0.08, it.pole / 80) + 0.4, it.h / 2);
         const std::uint32_t slots = region_item_slots(it);
-        spec.slots = {slots, slots, slots, slots};
+        spec.slots = {slots, slots, slots, slots}; // its tower's cell, as the rest of its spec
         out.items.push_back(it);
         out.specs.push_back(spec);
     }

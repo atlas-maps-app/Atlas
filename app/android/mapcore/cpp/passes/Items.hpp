@@ -176,12 +176,16 @@ private:
     std::array<gpu::Buffer, 2> faces_;
     std::array<gpu::Buffer, 2> parts_;
     std::array<gpu::Buffer, 2> sides_;
+    /// While a tile fades, each face's standing fade, then each opaque part's and each translucent one's (ENGINE.md's
+    /// standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline roof_masts_{nullptr}; ///< roof_masts_cs, over the roof masts' jobs
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fills_fading_{nullptr};   ///< the same while a tile fades (items_fills_fading_fs)
     vk::raii::Pipeline parts_pipeline_{nullptr};
     vk::raii::Pipeline sides_pipeline_{nullptr};
 
@@ -190,6 +194,8 @@ private:
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> extra_words_;
     std::vector<std::uint32_t> mast_words_; ///< the roof masts' jobs, before they join words_ as its last
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
 };
 

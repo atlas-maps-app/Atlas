@@ -782,6 +782,8 @@ void World::update(const frame::FrameState& state) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbours_,
                       in.neighbour_tolerances);
     }
+    // what stands up, from the tiles drawn and those kept under the fading ones, their sun filled
+    cover_.lay_upright();
     asked_.assign(cover_.requests().begin(), cover_.requests().end());
     // A switch waiting (choose): the named pack's tiles in view wanted after the frame's own; once they are resident
     // and its own stage T is built, or after incoming_hold seconds, the next frame draws it.

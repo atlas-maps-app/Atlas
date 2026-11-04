@@ -71,6 +71,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -93,6 +94,10 @@ namespace atlas::passes {
 /// kept forms').
 [[nodiscard]] gpu::GraphicsDesc building_desc(const frame::PassContext& context, vk::ShaderModule module,
                                               std::string_view name, const char* vertex, vk::PipelineLayout layout);
+/// Pipeline `desc` while a tile fades (ENGINE.md's standing fades: the pass binds it while Cover::dithers), named
+/// `name`, with its module's fragment stage `fragment`, its own's fading twin, which keeps the samples of its tile's
+/// standing fade (shaders/shared/fade.slang).
+[[nodiscard]] gpu::GraphicsDesc fading_desc(gpu::GraphicsDesc desc, std::string_view name, const char* fragment);
 
 /// The buildings pass.
 class Buildings final : public frame::Pass {
@@ -174,12 +179,26 @@ public:
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
     /// them (read back from that frame's indirect draws, so only once it has finished); none kept where the device
-    /// draws them as their runs (no kept pipelines), every one submitted.
+    /// draws them as their runs (no kept pipelines), every one submitted. Of the kept, the triangles drawn from shape
+    /// records (their primitives decided once: passes/Kept.cpp), the bytes of records the frame wrote (each read back
+    /// by its points), and the bytes both frame slots' records' buffers hold.
     struct KeptCounts {
         std::array<std::uint64_t, 3> submitted{};
         std::array<std::uint64_t, 3> kept{};
+        std::array<std::uint64_t, 3> shaped{};
+        std::uint64_t shape_bytes = 0;
+        std::uint64_t shape_memory = 0;
     };
     [[nodiscard]] KeptCounts kept_counts() const;
+    /// The most chunks of the walls' and of the near cells' kept lists a frame draws from shape records (each primitive
+    /// decided once), the rest decided at each point; unset, as many as its frame slot's last frame kept with a quarter
+    /// more, within the records' budget (passes/Kept.cpp). For the tests, which hold either way of drawing a list, and
+    /// the two in one list, to the same pixels.
+    void most_shape_chunks(std::optional<std::uint32_t> most) noexcept { most_shape_chunks_ = most; }
+    /// Every kept job's tile on the dither's levels from `range`[0] to `range`[1] (its place's offset.w and scale.w:
+    /// ENGINE.md's standing fades), the pass dithering; unset, each tile's own. For the tests, which hold the kept
+    /// walls and near cells drawn from their records to the pixels of each decided at each point while a tile fades.
+    void fade_every(std::optional<std::array<float, 2>> range) noexcept { fade_every_ = range; }
     /// Every tile's buildings built as a level's tile's are (geometry::BuildingInput::lean: each wall its one cell, no
     /// windowed walls, the records lean), so the tests hold the lean records to the twin with every shape of the
     /// synthetic tiles; set before the world builds a tile.
@@ -267,6 +286,13 @@ private:
         std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours at the frame's moment
         std::uint32_t facades = 0;           ///< the walls heap's uint4 of its items' plinths' and cornices' slots
         double distance = 0;                 ///< the tile's distance from the eye (the draws go nearest first)
+        /// Kept under a tile fading in (scene::CoverTile::under: ENGINE.md's standing fades), its cells there: the
+        /// records the CPU makes (the hoist beams, a kit's lines and shadows) keep its items in them alone; 0 for a
+        /// tile drawn, every item.
+        std::uint64_t under = 0;
+        /// Whether it makes those records: not an entry under one fading in of a tile drawn, whose entries drawn make
+        /// them as at rest (scene::draws_items).
+        bool records = true;
     };
 
     /// The roofs' thin edges' pipelines, sets and buffers (below; made in passes/Roofs.cpp).
@@ -331,6 +357,8 @@ private:
 
     std::uint16_t kind_ = 0;
     bool lean_every_ = false;
+    std::optional<std::uint32_t> most_shape_chunks_;
+    std::optional<std::array<float, 2>> fade_every_;
     /// The parts the map leaves out this frame (the camera state's, style::camera_part), from select on.
     std::uint64_t left_out_ = 0;
     [[nodiscard]] bool out(std::uint64_t part) const noexcept { return (left_out_ & part) != 0U; }
@@ -342,6 +370,10 @@ private:
     vk::raii::ShaderModule draw_module_{nullptr};
     vk::raii::Pipeline walls_{nullptr};
     vk::raii::Pipeline roofs_{nullptr};
+    /// The same while a tile fades (building_fading_fs), bound while dithers_ (as are the windows' and the kept
+    /// primitives' fading pipelines).
+    vk::raii::Pipeline walls_fading_{nullptr};
+    vk::raii::Pipeline roofs_fading_{nullptr};
     gpu::Buffer edged_index_;
     gpu::Buffer plain_index_;
     vk::PipelineLayout frame_layout_;
@@ -355,6 +387,12 @@ private:
     std::unique_ptr<Kept> kept_;
 
     // the render thread's, per frame
+    /// What stands up draws dithered this frame (scene::Cover::dithers): the fading pipelines are bound.
+    bool dithers_ = false;
+    /// `fading` while dithers_ (where the pass made it), else `rest`.
+    [[nodiscard]] vk::Pipeline pick(const vk::raii::Pipeline& rest, const vk::raii::Pipeline& fading) const noexcept {
+        return dithers_ && *fading ? *fading : *rest;
+    }
     std::vector<TileDraw> draws_;
     std::vector<Run> runs_;
     std::unordered_set<std::uint32_t> rows_written_;
@@ -443,6 +481,16 @@ struct Buildings::Windows {
     vk::raii::Pipeline beams_pipeline{nullptr};
     vk::raii::Pipeline roof_lines_pipeline{nullptr};
     vk::raii::Pipeline kit_shadows_pipeline{nullptr};
+    /// The same while a tile fades, those whose fragments write no coverage at rest (building_fading_fs,
+    /// window_glass_fading_fs, material_fading_fs); the frames', the beams' and the lines' fragments, which write
+    /// theirs, keep their standing fade's samples among it at rest too.
+    vk::raii::Pipeline near_fading{nullptr};
+    vk::raii::Pipeline facades_fading{nullptr};
+    vk::raii::Pipeline glass_fading{nullptr};
+    vk::raii::Pipeline church_fading{nullptr};
+    vk::raii::Pipeline material_fills_fading{nullptr};
+    vk::raii::Pipeline material_lines_fading{nullptr};
+    vk::raii::Pipeline kit_shadows_fading{nullptr};
     // the render thread's, per frame: the jobs' words (each decide stage's lanes after the jobs), the frame slot they
     // went to, and what they hold (each stage's lanes and its first word; the church windows' records, and the most
     // segments of leading one of them has; the material faces' records)
@@ -471,8 +519,10 @@ struct Buildings::Windows {
 struct Buildings::Kept {
     const gpu::Device* device = nullptr;
     /// Set 2 of the kept pipelines and of the cull's compute stages: the jobs (the CPU's), their candidates' counts and
-    /// places, the kept primitives (as the scatter writes them and the vertex stage reads them) and the lists' chunks'
-    /// indirect draws; a set and a buffer of each a frame slot (the draws' read back, for the counts).
+    /// places, the kept primitives (as the scatter writes them and the vertex stage reads them), the lists' kept counts
+    /// and chunks' indirect draws, and the kept walls' and near cells' shape records (as the shapes' scatter writes
+    /// them and the vertex stage reads them); a set and a buffer of each a frame slot (the draws' read back, for the
+    /// counts and the next frame of the slot's records).
     vk::raii::DescriptorSetLayout set_layout{nullptr};
     vk::raii::DescriptorPool pool{nullptr};
     std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
@@ -480,23 +530,36 @@ struct Buildings::Kept {
     std::array<gpu::Buffer, 2> counts;
     std::array<gpu::Buffer, 2> kept;
     std::array<gpu::Buffer, 2> draws;
+    std::array<gpu::Buffer, 2> shapes;
+    /// The most bytes of shape records a frame slot's buffer holds on the device (passes/Kept.cpp's most_shape_bytes).
+    vk::DeviceSize shape_budget = 0;
     /// The kept draws' layout (the frame's sets, then set 2), the compute stages', their pipelines and the kept walls'
-    /// and roofs' pipelines.
+    /// and roofs' pipelines, decided at each point, and the walls' and near cells' from their records (with the
+    /// records' scatter, none where the device cannot make them: every kept primitive decided at each point), each
+    /// with its pipeline while a tile fades.
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline cull{nullptr};
     vk::raii::Pipeline scan{nullptr};
     vk::raii::Pipeline scatter{nullptr};
+    vk::raii::Pipeline shape_scatter{nullptr};
     vk::raii::Pipeline walls{nullptr};
     vk::raii::Pipeline roofs{nullptr};
+    vk::raii::Pipeline walls_fading{nullptr}; ///< the same while a tile fades (building_fading_fs)
+    vk::raii::Pipeline roofs_fading{nullptr};
+    vk::raii::Pipeline walls_shaped{nullptr};
+    vk::raii::Pipeline walls_shaped_fading{nullptr}; ///< the same while a tile fades (walls_shape_fading_vs)
     // the render thread's, per frame: the jobs' words, the frame slot they went to, their count, and each list's first
-    // chunk draw, chunk draws and primitives submitted
+    // chunk draw, chunk draws, primitives submitted and shape records; each frame slot's, whether its draws hold its
+    // last frame's kept counts
     std::vector<std::uint32_t> words;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
     std::array<std::uint32_t, 3> first_draw{};
     std::array<std::uint32_t, 3> chunks{};
     std::array<std::uint32_t, 3> submitted{};
+    std::array<std::uint32_t, 3> records{};
+    std::array<bool, 2> counted{};
 };
 
 } // namespace atlas::passes

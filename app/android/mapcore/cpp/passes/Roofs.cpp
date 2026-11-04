@@ -40,10 +40,13 @@ constexpr std::uint32_t job_row = 65535;
 } // namespace
 
 gpu::Result<void> Buildings::prepare_roofs(const frame::PassContext& context) {
-    ATLAS_GPU_LET(roofs, frame::make_pipeline(context,
-                                              building_desc(context, *draw_module_, "roofs", "roofs_vs", frame_layout_),
-                                              frame::Overdraw::opaque));
+    const gpu::GraphicsDesc roofs_desc = building_desc(context, *draw_module_, "roofs", "roofs_vs", frame_layout_);
+    ATLAS_GPU_LET(roofs, frame::make_pipeline(context, roofs_desc, frame::Overdraw::opaque));
     roofs_ = std::move(roofs);
+    ATLAS_GPU_LET(roofs_fading,
+                  frame::make_pipeline(context, fading_desc(roofs_desc, "roofs while fading", "building_fading_fs"),
+                                       frame::Overdraw::opaque));
+    roofs_fading_ = std::move(roofs_fading);
     // the polygons' fans: 3 triangles over each primitive's 5 points
     if (!plain_index_) {
         ATLAS_GPU_LET(index,
@@ -77,8 +80,9 @@ gpu::Result<void> Buildings::prepare_strokes(const frame::PassContext& context) 
     s->device = &context.device;
     const vk::raii::Device& d = context.device.handle();
     using Stage = vk::ShaderStageFlagBits;
+    // (the jobs' places give the fading vertex stage its tile's standing fade)
     const std::array bindings{
-        gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
+        gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute | Stage::eVertex},
         gpu::Binding{.slot = 1, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
@@ -103,7 +107,8 @@ gpu::Result<void> Buildings::prepare_strokes(const frame::PassContext& context) 
                             {.name = "roof strokes", .module = "building_draw", .configuration = context.configuration},
                             *draw_module_, "roof_strokes_cs", *s->compute_layout));
     s->decide = std::move(decide);
-    ATLAS_GPU_CHECK(s->draw.prepare(context, *draw_module_, "roof_strokes_vs", *s->layout, "roof"));
+    ATLAS_GPU_CHECK(
+        s->draw.prepare(context, *draw_module_, "roof_strokes_vs", *s->layout, "roof", "roof_strokes_fading_vs"));
     strokes_ = std::move(s);
     return {};
 }
@@ -117,7 +122,7 @@ void Buildings::record_roofs(const frame::Recording& recording) {
         return;
     }
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *roofs_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(roofs_, roofs_fading_));
     cmd.bindIndexBuffer(plain_index_.handle(), 0, vk::IndexType::eUint16);
     for (TileDraw& d : draws_) {
         if (d.plain_runs == 0) continue;
@@ -232,11 +237,20 @@ void Buildings::record_strokes(const frame::Recording& recording) {
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     // set 2 under the frame's sets, which the scene subpass keeps bound
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *s.layout, 2, *s.sets[s.slot], {});
+    // while a tile fades, its jobs for the fading vertex stage to find each record's place in (at.x: how many)
+    if (dithers_) {
+        shaders::BuildingPush push{};
+        push.at = {s.jobs_now, 0U, 0U, 0U};
+        cmd.pushConstants<shaders::BuildingPush>(*s.layout, frame::push_stages, 0, push);
+    }
     const std::uint32_t vertices = s.records_now * shaders::BUILDING_STROKE_VERTICES;
-    s.draw.record(cmd, [&](vk::Pipeline) {
-        cmd.draw(vertices, 1, 0, 0);
-        recording.counters.draw("roof strokes", std::uint64_t{vertices} / 3);
-    });
+    s.draw.record(
+        cmd,
+        [&](vk::Pipeline) {
+            cmd.draw(vertices, 1, 0, 0);
+            recording.counters.draw("roof strokes", std::uint64_t{vertices} / 3);
+        },
+        dithers_);
 }
 
 } // namespace atlas::passes

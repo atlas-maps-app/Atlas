@@ -166,7 +166,9 @@ struct FrameOptions {
     /// paper's grain leaves the composite where its step is off (MapFrame::set_screen clears both).
     bool grain = true;
     /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
-    /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
+    /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another. Where it
+    /// is more than one, a pass may make parts of its own beside the rest (PassContext::threads: the buildings'
+    /// windows).
     std::uint32_t threads = 0;
     /// The screen fields read where the ground lies (the app's map: FrameState::grounded): the clouds' shadows
     /// (COMPOSITE_CLOUD_GROUND) and the water's ripple, each keeping its place while the map moves and scaling with the
@@ -385,7 +387,8 @@ private:
     std::unique_ptr<MarkerBoxes> marker_boxes_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
-    bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
+    bool depth24_ = false;      ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
+    std::uint32_t samples_ = 1; ///< the scene's samples a pixel (the frame block's info.w: the standing fades' dither)
     bool prepared_ = false;
     bool other_passes_said_ = false; ///< built_by said once that a scene's passes are not the frame's
     double stage_f_ms_ = 0;

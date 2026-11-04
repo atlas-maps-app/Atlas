@@ -211,6 +211,14 @@ object Native {
     /** Whether the driver lets the app make the screen's images without its compression ([setCompression]'s off). */
     @JvmStatic external fun compressionSwitch(handle: Long): Boolean
 
+    /**
+     * The Map look's Fast refresh: on (until it is set), the window's frames are said to come at 120 a second while the
+     * map moves and at 60 at rest, with fixed-source compatibility; off, at 60 with default compatibility throughout,
+     * as alphas up to 27 said. Said again at once; the swapchain is untouched. Any thread; it waits for the render
+     * thread.
+     */
+    @JvmStatic external fun setFastRefresh(handle: Long, on: Boolean)
+
     @JvmStatic external fun trimMemory(handle: Long, level: Int)
 
     /**

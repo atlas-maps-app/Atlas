@@ -55,9 +55,12 @@ public:
     explicit operator bool() const noexcept { return window_ != nullptr; }
     [[nodiscard]] std::int32_t width() const noexcept;
     [[nodiscard]] std::int32_t height() const noexcept;
-    /// Asks for `fps` frames a second (ANativeWindow_setFrameRate, API 30; only windows on the display honour it).
-    /// Returns false where this Android has no such call.
-    bool set_frame_rate(float fps) const noexcept;
+    /// Says the window's frames come at `fps` a second (ANativeWindow_setFrameRate, API 30; only windows on the
+    /// display honour it). With FIXED_SOURCE compatibility (`fixed_source`) the display runs at that rate or a
+    /// multiple, and at its top rate under the finger; with DEFAULT at the rate SurfaceFlinger picks for it, with no
+    /// touch boost while the window is on the display. At once, buffers or none. Returns false where this Android has
+    /// no such call.
+    bool set_frame_rate(float fps, bool fixed_source) const noexcept;
 
 private:
     ANativeWindow* window_ = nullptr;
@@ -79,7 +82,8 @@ struct Vsync {
     std::uint32_t preferred = 0;
 };
 
-/// The render thread: a thread with an ALooper, woken by posted tasks and by Choreographer's vsync callbacks.
+/// The render thread: a thread with an ALooper, woken by posted tasks, by Choreographer's vsync callbacks and by its
+/// timer.
 class RenderLoop {
 public:
     /// Starts the thread; `on_start` runs on it first (attaching it to the JVM), `on_stop` last.
@@ -97,6 +101,11 @@ public:
     void run(std::function<void()> task);
     /// Asks Choreographer for the next vsync; `on_vsync` gets it on the render thread (render thread only).
     void request_vsync(std::function<void(const Vsync&)> on_vsync);
+    /// The render thread's one timer: runs `task` on it at `at_ns` (now_ns's clock), in place of a task set before that
+    /// has not run; at once where that time has passed, or where the thread has no timer (render thread only).
+    void set_timer(std::int64_t at_ns, std::function<void()> task);
+    /// Calls off the timer's task, where one is set and has not run (render thread only).
+    void cancel_timer() noexcept;
     [[nodiscard]] bool on_thread() const noexcept { return std::this_thread::get_id() == thread_id_.load(); }
     [[nodiscard]] pid_t tid() const noexcept { return tid_.load(); }
 
@@ -104,6 +113,7 @@ private:
     void loop(const std::stop_token& stop);
     void drain_tasks();
     static int on_wake(int fd, int events, void* data);
+    static int on_timer(int fd, int events, void* data);
     static void on_frame64(std::int64_t frame_ns, void* data);
     static void on_vsync33(const ::AChoreographerFrameCallbackData* data, void* self);
 
@@ -114,6 +124,8 @@ private:
     std::function<void(const Vsync&)> vsync_;
     bool vsync_pending_ = false;
     int wake_fd_ = -1;
+    int timer_fd_ = -1; // the timer (a timerfd); -1 where none could be made
+    std::function<void()> timer_task_;
     std::atomic<std::thread::id> thread_id_;
     std::atomic<pid_t> tid_{0};
     std::atomic<bool> stopping_{false};
@@ -135,6 +147,9 @@ public:
 
     /// Opens a session for thread `tid` with a target of `target_ns` a frame; false where Android has none.
     bool open(pid_t tid, std::int64_t target_ns) noexcept;
+    /// Moves the target a frame's work is to fit to `target_ns` (APerformanceHint_updateTargetWorkDuration), where it
+    /// differs from the last; asked once a change, the call's answer aside. Not positive, or no session: nothing.
+    void target(std::int64_t target_ns) noexcept;
     /// Reports one frame's work: its CPU time on the render thread and, where known, the GPU's.
     void report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_t gpu_ns) noexcept;
     [[nodiscard]] bool active() const noexcept { return session_ != nullptr; }
@@ -143,6 +158,7 @@ public:
 
 private:
     void* session_ = nullptr;
+    std::int64_t target_ns_ = 0; // the target last asked for
     bool gpu_ = false;
 };
 

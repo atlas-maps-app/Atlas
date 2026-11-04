@@ -159,6 +159,22 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
                                    : frames                ? w->frames
                                                            : w->glass;
         made = std::move(pipeline);
+        // the same while a tile fades (the frames' and the beams' fragments keep their standing fade's samples as
+        // they are)
+        if (frames || beams) continue;
+        const char* const fading_name = part == Part::near      ? "window parts while fading"
+                                        : part == Part::facades ? "facades while fading"
+                                        : part == Part::church  ? "church windows while fading"
+                                                                : "window glass while fading";
+        gpu::GraphicsDesc while_fading =
+            fading_desc(desc, fading_name, filled ? "building_fading_fs" : "window_glass_fading_fs");
+        // the glass hands its wall's standing fade on only while fading: window_glass_fs at rest reads none
+        if (!filled) while_fading.vertex = part == Part::church ? "church_window_fading_vs" : "window_glass_fading_vs";
+        ATLAS_GPU_LET(fading, frame::make_pipeline(context, while_fading, frame::Overdraw::opaque));
+        (part == Part::near      ? w->near_fading
+         : part == Part::facades ? w->facades_fading
+         : part == Part::church  ? w->church_fading
+                                 : w->glass_fading) = std::move(fading);
     }
     // the material faces: translucent, each on its wall's plane a lead past its shop glazing's and short of its
     // windows', the test on and writes off, over what lies under them (premultiplied source over, as SVG's opacity);
@@ -190,6 +206,13 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
         (lines ? w->material_lines_pipeline : w->material_fills_pipeline) = std::move(pipeline);
+        ATLAS_GPU_LET(fading,
+                      frame::make_pipeline(
+                          context,
+                          fading_desc(desc, lines ? "material lines while fading" : "material fills while fading",
+                                      "material_fading_fs"),
+                          frame::Overdraw::translucent));
+        (lines ? w->material_lines_fading : w->material_fills_fading) = std::move(fading);
     }
     // a kit roof's tile courses and lit ridges: translucent, a lead over its slopes along each, the test on and writes
     // off, over what lies under them; each line its own (a slope's courses never meet)
@@ -226,6 +249,10 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
         w->kit_shadows_pipeline = std::move(pipeline);
+        ATLAS_GPU_LET(fading,
+                      frame::make_pipeline(context, fading_desc(desc, "kit shadows while fading", "material_fading_fs"),
+                                           frame::Overdraw::translucent));
+        w->kit_shadows_fading = std::move(fading);
     }
     windows_ = std::move(w);
     return {};
@@ -462,8 +489,15 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     // its tile's place, its painter slot and its width (windows.slangh's BuildingBeam)
     std::vector<hlsl::uint4>& beams = s.beam_words;
     beams.clear();
+    // an item of a tile kept under one fading in, in its cells under that one alone (ENGINE.md's standing fades: the
+    // tile's other entries, each its own cells' range of the dither, take the rest; where nothing fades over it, none)
+    const std::span<const std::uint8_t> cells =
+        state.items != nullptr ? state.items->cell() : std::span<const std::uint8_t>();
+    const auto left_under = [&](const TileDraw& d, std::uint32_t row) {
+        return d.under != 0 && (row >= cells.size() || ((d.under >> cells[row]) & 1U) == 0);
+    };
     for (const TileDraw& d : draws_) {
-        if (!weather || d.tile == nullptr || d.tile->beams.empty()) continue;
+        if (!weather || !d.records || d.tile == nullptr || d.tile->beams.empty()) continue;
         shaders::BuildingPush push{};
         std::memcpy(&push, d.push.data(), sizeof push);
         const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
@@ -471,7 +505,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
         for (const BuildingTile::Beam& beam : d.tile->beams) {
             const std::uint32_t row = beam.item < d.rows.size() ? d.rows[beam.item] : shaders::RANK_NONE;
             const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
-            if (rank == shaders::RANK_NONE) continue;
+            if (rank == shaders::RANK_NONE || left_under(d, row)) continue;
             const std::uint32_t detail = shaders::rank_detail(rank);
             if ((detail & shaders::BUILDING_DETAIL_BEAMS) == 0U) continue;
             const bool near = (detail & shaders::BUILDING_DETAIL_NEAR) != 0U;
@@ -496,14 +530,14 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                                std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
         const std::uint32_t row = item < d.rows.size() ? d.rows[item] : shaders::RANK_NONE;
         const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
-        if (rank == shaders::RANK_NONE) return std::nullopt;
+        if (rank == shaders::RANK_NONE || left_under(d, row)) return std::nullopt;
         const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
         return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
                          row < depths.size() ? depths[row] : 0.0};
     };
     for (const bool shadows : {false, true}) {
         for (const TileDraw& d : draws_) {
-            if (!weather || night || !kit || d.tile == nullptr || d.tile->kit_walls.empty()) continue;
+            if (!weather || night || !kit || !d.records || d.tile == nullptr || d.tile->kit_walls.empty()) continue;
             shaders::BuildingPush push{};
             std::memcpy(&push, d.push.data(), sizeof push);
             const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
@@ -545,7 +579,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     // record a course with its slope's turn, and the lit ridges whichever way they turn (windows.slangh's
     // BuildingRoofLine)
     for (const TileDraw& d : draws_) {
-        if (!weather || night || !kit || d.tile == nullptr || (d.tile->courses.empty() && d.tile->ridges.empty())) {
+        if (!weather || night || !kit || !d.records || d.tile == nullptr ||
+            (d.tile->courses.empty() && d.tile->ridges.empty())) {
             continue;
         }
         shaders::BuildingPush push{};
@@ -768,7 +803,7 @@ void Buildings::record_windows(const frame::Recording& recording) {
     // leaves the frame drawn first, as the path's strokes cover its fills.
     constexpr std::uint32_t reveal_vertices = 9;
     if (s.facades_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.facades_pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.facades_pipeline, s.facades_fading));
         cmd.draw(shaders::BUILDING_FACADE_VERTICES, s.facades_now, 0, 0);
         recording.counters.draw("facades", std::uint64_t{s.facades_now} * (shaders::BUILDING_FACADE_VERTICES / 3),
                                 s.facades_now);
@@ -783,12 +818,12 @@ void Buildings::record_windows(const frame::Recording& recording) {
     if (s.churches_now > 0) {
         const std::uint32_t vertices =
             shaders::BUILDING_CHURCH_ARCH_VERTICES + (s.segments_now * shaders::BUILDING_CHURCH_SEGMENT_VERTICES);
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.church);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.church, s.church_fading));
         cmd.draw(vertices, s.churches_now, 0, 0);
         recording.counters.draw("church windows", std::uint64_t{s.churches_now} * (vertices / 3), s.churches_now);
     }
     if (s.nears_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.near);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.near, s.near_fading));
         cmd.draw(shaders::BUILDING_WINDOW_NEAR_VERTICES - reveal_vertices, s.nears_now, reveal_vertices, 0);
         recording.counters.draw(
             "window parts",
@@ -798,7 +833,7 @@ void Buildings::record_windows(const frame::Recording& recording) {
     cmd.draw(s.records_now * shaders::BUILDING_WINDOW_FRAME_VERTICES, 1, 0, 0);
     recording.counters.draw("window frames",
                             std::uint64_t{s.records_now} * (shaders::BUILDING_WINDOW_FRAME_VERTICES / 3));
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.glass);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.glass, s.glass_fading));
     cmd.bindIndexBuffer(plain_index_.handle(), 0, vk::IndexType::eUint16);
     for (std::uint32_t first = 0; first < s.records_now; first += plain_chunk) {
         const std::uint32_t n = std::min(plain_chunk, s.records_now - first);
@@ -807,7 +842,7 @@ void Buildings::record_windows(const frame::Recording& recording) {
         recording.counters.draw("window glass", std::uint64_t{n} * (shaders::BUILDING_WINDOW_GLASS_VERTICES - 2));
     }
     if (s.nears_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.near);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.near, s.near_fading));
         cmd.draw(reveal_vertices, s.nears_now, 0, 0);
         recording.counters.draw("window parts", std::uint64_t{s.nears_now} * (reveal_vertices / 3), s.nears_now);
     }
@@ -823,14 +858,14 @@ void Buildings::record_materials(const frame::Recording& recording) {
     cmd.pushConstants<shaders::BuildingPush>(*s.layout, frame::push_stages, 0, push);
     // the fills (a glass wall's glass, a parking garage's decks), then the lines over them: an instance a record
     if (s.material_fills_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.material_fills_pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.material_fills_pipeline, s.material_fills_fading));
         cmd.draw(shaders::BUILDING_MATERIAL_FILL_VERTICES, s.material_fills_now, 0, 0);
         recording.counters.draw("material fills",
                                 std::uint64_t{s.material_fills_now} * (shaders::BUILDING_MATERIAL_FILL_VERTICES / 3),
                                 s.material_fills_now);
     }
     if (s.material_lines_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.material_lines_pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.material_lines_pipeline, s.material_lines_fading));
         cmd.draw(shaders::BUILDING_MATERIAL_LINE_VERTICES, s.material_lines_now, 0, 0);
         recording.counters.draw("material lines",
                                 std::uint64_t{s.material_lines_now} * (shaders::BUILDING_MATERIAL_LINE_VERTICES / 3),
@@ -867,7 +902,7 @@ void Buildings::record_kit_walls(const frame::Recording& recording) {
         recording.counters.draw("kit lines", std::uint64_t{s.kit_lines_now} * 2, s.kit_lines_now);
     }
     if (s.kit_shadows_now > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.kit_shadows_pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pick(s.kit_shadows_pipeline, s.kit_shadows_fading));
         cmd.draw(shaders::BUILDING_KIT_SHADOW_VERTICES, s.kit_shadows_now, 0, s.kit_lines_now);
         recording.counters.draw("kit shadows", std::uint64_t{s.kit_shadows_now} * 3, s.kit_shadows_now);
     }

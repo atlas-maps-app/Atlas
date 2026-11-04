@@ -139,6 +139,10 @@ struct PassContext {
     /// writes the painter slot it draws at; and the frame's owner fragment module (null outside it).
     bool owners = false;
     vk::ShaderModule owner_module;
+    /// The threads the frame's prepare runs the passes on (FrameBuilder::prepare): where it is more than one, a pass
+    /// may make independent parts of its own at once on threads of their own, each with a context of its own (its
+    /// stats).
+    std::uint32_t threads = 1;
 };
 
 /// What a pass records a phase into.

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import app.atlas.Services
 import app.atlas.nav.AtlasRoot
@@ -28,6 +29,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowDisplayManager
 import java.io.File
 import java.time.Duration
 
@@ -186,6 +188,17 @@ class MineScreenshotTest {
         val noon = java.time.Clock.fixed(java.time.Instant.parse("2026-10-14T11:30:00Z"), java.time.ZoneId.of("Europe/Amsterdam"))
         show(Dest.Layers, testServices(places = true, clock = noon).apply { keepFixtureForecast() })
         capture("mine_layers")
+    }
+
+    @Test
+    fun layersFastRefresh() {
+        // A display with a mode above 60 Hz: the engine parts' last row ends with the Fast refresh, dark (on, as unset).
+        val mode = { id: Int, hz: Float -> ShadowDisplayManager.ModeBuilder.modeBuilder(id).setWidth(824).setHeight(1830).setRefreshRate(hz).build() }
+        ShadowDisplayManager.setSupportedModes(android.view.Display.DEFAULT_DISPLAY, mode(0, 60f), mode(1, 120f)) // 0: the mode it runs
+        val noon = java.time.Clock.fixed(java.time.Instant.parse("2026-10-14T11:30:00Z"), java.time.ZoneId.of("Europe/Amsterdam"))
+        show(Dest.Layers, testServices(places = true, clock = noon).apply { keepFixtureForecast() })
+        compose.onNodeWithContentDescription("Fast refresh").performScrollTo()
+        capture("mine_layers_fast_refresh")
     }
 
     @Test
