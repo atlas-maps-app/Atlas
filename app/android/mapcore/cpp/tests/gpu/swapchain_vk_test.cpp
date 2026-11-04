@@ -83,6 +83,10 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             auto report = (*renderer)->draw(0);
             ATLAS_REQUIRE(report.has_value(), report.error().text());
             presented += report->status == gpu::Acquired::ok ? 1 : 0;
+            // its waits (the slot's previous frame, the swapchain's image) within its time: the rest is the render
+            // thread's own work, what the ADPF hint hears (jni/Bridge.cpp)
+            CHECK(report->wait_ms >= 0.0);
+            CHECK(report->wait_ms <= report->cpu_ms);
         }
         CHECK(presented == 12);
         // A resize: the frames drained, the swapchain remade from the old one (retired by the call, then let go of),

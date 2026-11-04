@@ -14,9 +14,11 @@
 #include "base/build_info.hpp"
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
+#include "frame/Cadence.hpp"
 #include "frame/CompositeCheck.hpp"
 #include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Motion.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
@@ -163,7 +165,7 @@ public:
     [[nodiscard]] gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& instance) override {
         return gpu::make_android_surface(instance, window_.get());
     }
-    bool set_frame_rate(float fps) override { return window_.set_frame_rate(fps); }
+    bool set_frame_rate(float fps, bool fixed_source) override { return window_.set_frame_rate(fps, fixed_source); }
 
 private:
     platform::Window window_;
@@ -457,6 +459,14 @@ public:
     /// there. Any thread: read as the core starts (a device made again after a loss is the same driver's).
     [[nodiscard]] bool compression_switch() const noexcept { return compression_switch_; }
 
+    /// The Map look's Fast refresh: on (until it is set), the window's frames are said to come at 120 a second while
+    /// the map moves and at 60 at rest, with fixed-source compatibility; off, at 60 with default compatibility
+    /// throughout, the vote of alphas up to 27 (Session::set_fast_refresh, ENGINE.md gain 11). Said again at once on
+    /// the render thread; the swapchain is untouched, and no frame is asked for.
+    void fast_refresh(bool on) {
+        on_session([this, on] { session_->set_fast_refresh(on); });
+    }
+
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
         if (camera == nullptr || env->GetDirectBufferAddress(camera) == nullptr ||
@@ -628,6 +638,13 @@ private:
         requested_ = false;
         pacer_.rest();
         session_->rest();
+        // The window's frames come at 60 a second again once the map has been still for a second since it moved
+        // (frame/Motion.hpp): the render thread's timer says so then, unless the map moves again first.
+        if (motion_.rested(platform::now_ns())) {
+            loop_->set_timer(motion_.drop_ns(), [this] {
+                if (!closing_.load() && motion_.drop()) session_->set_moving(false);
+            });
+        }
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
@@ -639,17 +656,14 @@ private:
             session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
             return;
         }
-        // The display's period, from the vsyncs themselves; at most 60 frames a second (D5.8): every vsync at 60 Hz,
-        // every second one at 120 Hz, at 90 Hz every vsync unless the phone runs warm.
-        if (last_vsync_ns_ != 0) {
-            const std::int64_t d = v.frame_ns - last_vsync_ns_;
-            if (d > 4'000'000 && d < 50'000'000) period_ns_ = period_ns_ == 0 ? d : (period_ns_ * 7 + d) / 8;
-        }
-        last_vsync_ns_ = v.frame_ns;
-        const bool every_second =
-            period_ns_ != 0 && (period_ns_ < 10'000'000 || (period_ns_ < 14'000'000 && thermal_.headroom(0) > 0.6F));
-        const std::int64_t min_gap = every_second ? 2 * period_ns_ - 2'000'000 : 0;
-        if (drawn_vsync_ns_ != 0 && v.frame_ns - drawn_vsync_ns_ < min_gap) {
+        // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
+        // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there while
+        // the GPU's last figure is 16 ms or more.
+        cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
+        const frame::Cadence::Step step = cadence_.step(
+            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); }, gpu_ns_);
+        if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
         }
@@ -678,14 +692,27 @@ private:
             rest();
             return;
         }
-        drawn_vsync_ns_ = v.frame_ns;
+        cadence_.drew(v.frame_ns, step);
+        // ADPF's target follows the frames' interval: 11.1 ms at 90 Hz where every vsync draws (the phone cool, the GPU
+        // light), 16.7 ms elsewhere (two periods at 120 Hz; at 90 Hz by the phase and behind a heavy GPU alike), told
+        // only when it changes.
+        hint_.target(cadence_.target_ns(step));
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
         // responsive", and more frames despite more stutter is better there. A debug build's switch paces again
         // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
-        const std::int64_t cadence = period_ns_ == 0 ? 0 : (every_second ? 2 * period_ns_ : period_ns_);
+        const std::int64_t cadence = cadence_.cadence_ns(step);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
+        // The map moves from its second new camera since the loop last rested: the window's frames are said to come at
+        // 120 a second until it has rested a second (frame/Motion.hpp), so that the display stays at 120 Hz where it
+        // has it, through a fling's tail and the camera's animations as under the finger, and pan, lift and pan again
+        // does not switch it at each rest (ENGINE.md gain 11); a drop to 60 to come is off. Said once the frame is out,
+        // so that no frame waits for it; one camera alone, or a tile or a fade at rest, moves nothing.
+        if (motion_.drew(more == JNI_TRUE)) {
+            loop_->cancel_timer();
+            session_->set_moving(true);
+        }
         ask_vsync();
     }
 
@@ -696,8 +723,8 @@ private:
         std::array<frame::Timeline, platform::max_timelines> t{};
         for (std::uint32_t i = 0; i < v.timelines; ++i)
             t.at(i) = {.present_ns = v.presents.at(i), .deadline_ns = v.deadlines.at(i)};
-        const std::size_t pick =
-            pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(), cadence_ns, period_ns_);
+        const std::size_t pick = pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(),
+                                               cadence_ns, cadence_.period_ns());
         return t.at(pick).present_ns;
     }
 
@@ -719,11 +746,18 @@ private:
         if (!d.drawn) return;
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
-        hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
-        // The pacer's work, for the debug switch's pacing: the frame's CPU time and its GPU time, where the GPU's clock
-        // measured it (an earlier frame's, read back after its fence: the percentile does not mind).
+        // ADPF hears the render thread's own work: the frame's time less its waits for the slot's previous frame (the
+        // GPU) and the swapchain's image (the display), as Android's own render thread leaves out its dequeue. With
+        // them in, a frame the GPU or the display held told ADPF the CPU missed its 16.7 ms, and its clocks rose for
+        // nothing (the stutter review, 3 November). The GPU's time as before: an earlier frame's.
+        hint_.report(r.start_ns, (r.end_ns - r.start_ns) - d.wait_ns,
+                     static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
+        // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
+        // back after its fence: the percentile does not mind). The cadence's step at 90 Hz takes the same figure.
         if ((r.flags & standin::frame_flag::gpu) != 0) {
-            pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+            gpu_ns_ = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
+            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns_);
         }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
@@ -758,9 +792,10 @@ private:
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
-    std::int64_t last_vsync_ns_ = 0;
-    std::int64_t drawn_vsync_ns_ = 0;
-    std::int64_t period_ns_ = 0;
+    frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
+    std::int64_t gpu_ns_ = 0;          // the GPU's time of the last frame it measured (two frames old), for the cadence
+    frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
+    frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
@@ -865,6 +900,10 @@ void native_set_pacing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean o
 
 void native_set_compression(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
     if (Core* core = core_of(handle); core != nullptr) core->compression(on == JNI_TRUE);
+}
+
+void native_set_fast_refresh(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->fast_refresh(on == JNI_TRUE);
 }
 
 jboolean native_compression_switch(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
@@ -1474,8 +1513,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 54>& methods() {
-    static const std::array<JNINativeMethod, 54> table{{
+const std::array<JNINativeMethod, 55>& methods() {
+    static const std::array<JNINativeMethod, 55> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1498,6 +1537,7 @@ const std::array<JNINativeMethod, 54>& methods() {
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
         method("setCompression", "(JZ)V", fn(&native_set_compression)),
         method("compressionSwitch", "(J)Z", fn(&native_compression_switch)),
+        method("setFastRefresh", "(JZ)V", fn(&native_set_fast_refresh)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),

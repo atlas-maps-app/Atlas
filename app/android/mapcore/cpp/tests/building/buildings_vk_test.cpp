@@ -1345,6 +1345,29 @@ public:
     return std::move(*pixels);
 }
 
+/// Draws `cam` at moment `th` once more, its inputs the last frame's (no time passes); its pixels.
+[[nodiscard]] std::optional<gpu::Pixels> draw_still(Scene& s, const style::CameraState& cam,
+                                                    const style::ThemeBlock& th) {
+    s.builder->set_inputs({.camera = cam,
+                           .theme = th,
+                           .seconds = s.now,
+                           .mode = frame::Mode::structural,
+                           .scene = s.world.get(),
+                           .palette = frame_palette});
+    auto report = s.renderer->draw(0);
+    if (!report) {
+        FAIL("a frame failed: " << report.error().text());
+        return std::nullopt;
+    }
+    s.renderer->drain();
+    auto pixels = s.output->read(s.output->latest());
+    if (!pixels) {
+        FAIL("the frame could not be read: " << pixels.error().text());
+        return std::nullopt;
+    }
+    return std::move(*pixels);
+}
+
 /// The standard sample positions of a configuration's sample count (Vulkan's, as every device reporting
 /// standardSampleLocations uses).
 [[nodiscard]] std::vector<Pt> sample_positions(vk::SampleCountFlagBits samples) {
@@ -1701,7 +1724,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             const passes::Buildings::KeptCounts kept = s.buildings->kept_counts();
             MESSAGE(name << ": kept walls " << kept.kept[0] << " of " << kept.submitted[0] << ", near cells "
                          << kept.kept[1] << " of " << kept.submitted[1] << ", roofs " << kept.kept[2] << " of "
-                         << kept.submitted[2] << " triangles");
+                         << kept.submitted[2] << " triangles; drawn from shape records " << kept.shaped[0] << ", "
+                         << kept.shaped[1] << " and " << kept.shaped[2] << ", " << kept.shape_bytes
+                         << " bytes of records (their buffers " << kept.shape_memory << ")");
             const passes::Buildings::WindowCounts windows = s.buildings->window_counts();
             MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
@@ -1758,6 +1783,59 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             CHECK(static_cast<double>(r.boundary) <= 0.01 * static_cast<double>(r.pixels));
             CHECK(static_cast<double>(r.tie) <= 0.01 * static_cast<double>(r.pixels));
             CHECK(r.sliver <= 4 * (r.slivers + r.ngons) + 4); // a few pixels each at most
+            // the same pixels however the kept walls and near cells are decided (passes/Kept.cpp): each at each point,
+            // each once into its shape record, and the two in one list (its first chunk from records), the frame's
+            // inputs as they were; the roofs at each point
+            constexpr std::uint32_t every = std::numeric_limits<std::uint32_t>::max();
+            for (const std::uint32_t most : {0U, 1U, every}) {
+                s.buildings->most_shape_chunks(most);
+                const auto still = draw_still(s, c, th);
+                ATLAS_REQUIRE(still.has_value());
+                const passes::Buildings::KeptCounts k = s.buildings->kept_counts();
+                std::size_t differ = 0;
+                for (std::size_t i = 0; i + 4 <= still->rgba.size() && i + 4 <= pixels->rgba.size(); i += 4) {
+                    differ += std::equal(still->rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                                         still->rgba.begin() + static_cast<std::ptrdiff_t>(i + 4),
+                                         pixels->rgba.begin() + static_cast<std::ptrdiff_t>(i))
+                                  ? 0
+                                  : 1;
+                }
+                MESSAGE(name << ", at most " << (most == every ? std::string("every") : std::to_string(most))
+                             << " chunk of records a list: drawn from them " << k.shaped[0] << ", " << k.shaped[1]
+                             << " and " << k.shaped[2] << " triangles; " << differ << " pixels differ");
+                CHECK_MESSAGE(*still == *pixels, name << ", at most " << most << " chunks of records a list");
+                CHECK(k.kept == kept.kept);
+                for (std::size_t l = 0; l < 2; ++l) {
+                    CAPTURE(l);
+                    const std::uint64_t chunk = std::uint64_t{passes::Buildings::edged_chunk} * 14;
+                    if (most == 0) CHECK(k.shaped.at(l) == 0);
+                    if (most == 1) CHECK(k.shaped.at(l) <= std::min(chunk, k.kept.at(l)));
+                    if (most == every) CHECK(k.shaped.at(l) == k.kept.at(l));
+                }
+                CHECK(k.shaped[2] == 0);
+            }
+            // and while a tile fades (ENGINE.md's standing fades): every kept job's tile on the dither's levels from a
+            // quarter to three quarters, the records' pipeline while fading (walls_shape_fading_vs) taking its tile's
+            // fade through the place its record stands for as each decided at each point takes its job's
+            s.buildings->fade_every(std::array<float, 2>{0.25F, 0.75F});
+            std::optional<gpu::Pixels> fading;
+            for (const std::uint32_t most : {0U, every}) {
+                s.buildings->most_shape_chunks(most);
+                const auto still = draw_still(s, c, th);
+                ATLAS_REQUIRE(still.has_value());
+                const passes::Buildings::KeptCounts k = s.buildings->kept_counts();
+                CHECK(k.kept == kept.kept);
+                if (!fading) {
+                    // each at each point: the walls dithered
+                    if (kept.kept[0] + kept.kept[1] > 0) CHECK(*still != *pixels);
+                    fading = *still;
+                    continue;
+                }
+                if (most == every) CHECK(k.shaped[0] + k.shaped[1] == k.kept[0] + k.kept[1]);
+                CHECK_MESSAGE(*still == *fading, name << ", fading, every chunk from records");
+            }
+            s.buildings->fade_every(std::nullopt);
+            s.buildings->most_shape_chunks(std::nullopt);
             for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
             if (const std::string out = environment("ATLAS_BUILDINGS_PPM"); !out.empty()) {
                 CHECK(gpu::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
