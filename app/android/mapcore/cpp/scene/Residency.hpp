@@ -333,6 +333,9 @@ public:
     /// Waits until no request is queued or under way (tests).
     void wait_idle();
     [[nodiscard]] ResidencyStats stats() const;
+    /// Each pass's stage T over the tiles built so far, in the passes' order: its milliseconds and its runs (the
+    /// workers' own times, which order a tile's passes), and before them the tiles' starts (each tile's decoding).
+    [[nodiscard]] std::vector<std::pair<double, std::uint64_t>> pass_times() const;
     /// Stops the workers for good (the world's end: every thread stops before what they share goes).
     void stop();
 
@@ -452,6 +455,8 @@ private:
     std::vector<std::unique_ptr<Scratch>> scratch_;   // decoding's scratch, kept for the next tiles
     std::vector<double> pass_ms_;                     // each pass's time over its runs (the order handed out)
     std::vector<std::uint64_t> pass_runs_;
+    double start_ms_ = 0.0; // the tiles' starts (their decoding) over the tiles taken
+    std::uint64_t start_runs_ = 0;
     std::vector<std::shared_ptr<ResidentTile>> published_;
     std::uint64_t generation_ = 0;
     unsigned busy_ = 0;

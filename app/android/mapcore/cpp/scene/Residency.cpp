@@ -336,6 +336,8 @@ void Residency::work(const std::stop_token& stop, unsigned worker) {
         u.ms += ms;
         bool last = false;
         if (piece.pass < 0) {
+            start_ms_ += ms;
+            ++start_runs_;
             if (ok) {
                 // its passes, the longest first (their mean so far; one not yet timed before them, in the registry's
                 // order), handed out from now on: this worker takes the first
@@ -647,6 +649,15 @@ ResidencyStats Residency::stats() const {
     s.pending = queue_.size() + building_.size() + published_.size();
     s.waiting = failed_.size();
     return s;
+}
+
+std::vector<std::pair<double, std::uint64_t>> Residency::pass_times() const {
+    const std::scoped_lock lock(mutex_);
+    std::vector<std::pair<double, std::uint64_t>> out;
+    out.reserve(pass_ms_.size() + 1);
+    out.emplace_back(start_ms_, start_runs_);
+    for (std::size_t p = 0; p < pass_ms_.size(); ++p) out.emplace_back(pass_ms_[p], pass_runs_[p]);
+    return out;
 }
 
 } // namespace atlas::scene

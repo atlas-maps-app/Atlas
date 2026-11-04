@@ -45,6 +45,11 @@
 // ATLAS_PINCH_OUTWARD), each part's stage F (median and 95th percentile), its frames that drew no tile, those that left
 // a window's place within 12 km without a tile (what alpha 23 drew) and the most such places a frame, and the tiles
 // built more than once over it or that found no room in the heaps.
+// ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
+// target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
+// ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
+// decides each of its frames as at rest (the ground's area test, the pack's hold). ATLAS_PINCH_GRAIN=0: the Look
+// settings' grain off (the paper's grain and the materials', MapFrame::set_screen).
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -611,6 +616,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
              .fade_seconds = fade.empty() ? 0.0 : std::stod(fade),
              .triangle_budget = budget.empty() ? 0U : static_cast<std::uint64_t>(1.0e6 * std::stod(budget))});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        if (environment("ATLAS_PINCH_GRAIN") == "0") map.set_screen(true, true, false);
         MESSAGE(map.set_packs(packs));
         CHECK(session.map(&map).empty());
         auto window = std::make_unique<KeptWindow>();
@@ -683,12 +689,17 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             MESSAGE(std::format("parts left out: {:#x}", always_off));
         }
         const Listed* held = nullptr;
+        // the target moved from the place by this many metres east and north (ATLAS_PINCH_PAN's frames)
+        double moved_east = 0.0;
+        double moved_north = 0.0;
         // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
         // it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
-            style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
+            const double at_lat = lat + (moved_north / 111'320.0);
+            const double at_lon = lon + (moved_east / (111'320.0 * pymath::strict::cos(pymath::radians(lat))));
+            style::CameraState c = camera(screen, at_lat, at_lon, bearing, pitch, d, rest);
             c.parts |= off | always_off;
-            held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
+            held = choose(listed, at_lat, at_lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
             const auto at = std::chrono::steady_clock::now();
             const standin::Drawn s = session.draw(c, {});
@@ -1165,6 +1176,78 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 }
                 for (int k = 0; k < 4; ++k) (void)draw("with every part", d, true, k == 3);
             }
+        }
+        // ATLAS_PINCH_PAN: at each of its distances, the frame settled at rest, then the map panned across the screen
+        // (the target moved to the bearing's right) by ATLAS_PINCH_PAN_STEP px a frame at the target (0.5) over
+        // ATLAS_PINCH_PAN_FRAMES moving frames (12), and at rest again where the pan ended, each frame written as
+        // pan_<d>_<k>.ppm (rest and end the two at rest), to compare frame after frame what a slow pan moves under
+        // a pixel; ATLAS_PINCH_PAN_KEEP=0 writes none (a long pan's frames, each logged: stage F, the tiles built
+        // and the places left without a tile as the map moves on)
+        const bool keep_frames = environment("ATLAS_PINCH_PAN_KEEP") != "0";
+        const bool pan_rest = environment("ATLAS_PINCH_PAN_REST") == "1";
+        for (const double d : numbers(environment("ATLAS_PINCH_PAN"))) {
+            const double step =
+                environment("ATLAS_PINCH_PAN_STEP").empty() ? 0.5 : std::stod(environment("ATLAS_PINCH_PAN_STEP"));
+            const int frames =
+                environment("ATLAS_PINCH_PAN_FRAMES").empty() ? 12 : std::stoi(environment("ATLAS_PINCH_PAN_FRAMES"));
+            const double focal = 1407.0 * screen.density; // the camera's focal length, px
+            const auto write = [&](const std::string& name) {
+                if (!keep_frames) return;
+                auto pixels = kept->kept->read(kept->kept->latest());
+                REQUIRE_MESSAGE(pixels.has_value(), pixels.error().text());
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("pan_{:.0f}_{}.ppm", d, name)).string()));
+            };
+            moved_east = 0.0;
+            moved_north = 0.0;
+            settle(d);
+            write("rest");
+            // what the pan cost: its frames' stage F, the tiles built meanwhile and each pass's stage T for them
+            REQUIRE(map.world() != nullptr);
+            const scene::Residency& residency = map.world()->residency();
+            const std::vector<std::pair<double, std::uint64_t>> times0 = residency.pass_times();
+            const scene::ResidencyStats stats0 = residency.stats();
+            std::vector<double> stage_f;
+            std::size_t holed = 0;
+            for (int k = 1; k <= frames; ++k) {
+                const double s = k * step * d / focal;
+                moved_east = s * pymath::strict::cos(pymath::radians(bearing));
+                moved_north = -s * pymath::strict::sin(pymath::radians(bearing));
+                (void)draw(std::format("pan {:2d}", k), d, pan_rest, true);
+                if (const frame::FrameBuilder* b = map.builder()) stage_f.push_back(b->stage_f_ms());
+                if (map.world()->cover() != nullptr && map.world()->cover()->holes() > 0) ++holed;
+                write(std::format("{:02d}", k));
+            }
+            {
+                const std::vector<std::pair<double, std::uint64_t>> times1 = residency.pass_times();
+                const scene::ResidencyStats stats1 = residency.stats();
+                std::ranges::sort(stage_f);
+                const std::size_t n = stage_f.size();
+                const double p95 = n == 0 ? 0.0 : stage_f.at(std::min(n - 1, ((95 * n) + 99) / 100 - 1));
+                const std::uint64_t built = stats1.built - stats0.built;
+                std::string by;
+                double total = 0.0;
+                for (std::size_t i = 0; i < times1.size() && i < times0.size(); ++i) {
+                    const double ms = times1[i].first - times0[i].first;
+                    total += ms;
+                    if (ms < 0.05) continue;
+                    const frame::FrameBuilder* b = map.builder();
+                    const std::string name = i == 0 ? std::string("decode")
+                                             : b != nullptr && i - 1 < b->passes().size()
+                                                 ? std::string(b->passes()[i - 1]->name())
+                                                 : std::format("pass {}", i - 1);
+                    by += std::format(", {} {:.0f} ms ({:.1f} a tile)", name, ms,
+                                      built > 0 ? ms / static_cast<double>(built) : 0.0);
+                }
+                MESSAGE(std::format("pan at {:.0f} m: {} frames, stage F median {:.1f} ms, p95 {:.1f}, most {:.1f}; "
+                                    "{} frames with a hole; {} tiles built ({} found no room, {} cancelled), the "
+                                    "workers' stage T {:.0f} ms{}",
+                                    d, n, median(stage_f), p95, n == 0 ? 0.0 : stage_f.back(), holed, built,
+                                    stats1.failed - stats0.failed, stats1.cancelled - stats0.cancelled, total, by));
+            }
+            (void)draw("pan end", d, true, true);
+            write("end");
+            moved_east = 0.0;
+            moved_north = 0.0;
         }
     }
     std::error_code ec;
