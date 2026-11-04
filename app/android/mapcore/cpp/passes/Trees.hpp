@@ -56,9 +56,6 @@ struct TreeTile {
 [[nodiscard]] std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double origin_x, double origin_y,
                                                   double origin_z, bool lean = false);
 
-/// The first of a tile's items that are trees (the pass's items are consecutive, in its builder's order).
-[[nodiscard]] std::uint32_t first_tree(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// What the render thread decides for a drawn tree from its item's depth `depth` (as the ranks have it), the camera's
 /// focal length and its crown radius `r`, in double as the port compares: its job's flags (tree.slangh's TREE_JOB_,
 /// nb in bits 8 to 15) and widths: a small crown's radius in w0; the trunk's half widths at its foot and top; the

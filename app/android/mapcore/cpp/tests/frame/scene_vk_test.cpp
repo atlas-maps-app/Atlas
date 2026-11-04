@@ -1162,6 +1162,10 @@ TEST_CASE("a pass whose parts are all left out builds nothing of a tile, and is 
         const auto [first, count] = r.item_runs[1];
         CHECK(first == r.item_runs[0].second);
         CHECK(count == r.item_runs[0].second);
+        // a pass's first row from its run, never the first item of its kind (both probes' items are of kind 0): each
+        // frame's finders, which read every item from the first to find it before
+        CHECK(scene::first_of(r, 1, 0) == first);
+        CHECK(scene::first_of(r, 0, 0) == 0U);
         REQUIRE(r.rows.size() == r.items.size());
         for (std::uint32_t i = first; i < first + count; ++i) {
             CHECK(w.items()->alive(r.rows[i]));

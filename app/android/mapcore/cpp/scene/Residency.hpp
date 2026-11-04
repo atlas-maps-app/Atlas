@@ -123,6 +123,13 @@ struct ResidentTile {
     std::size_t native_bytes = 0;
 };
 
+/// Where pass `pass`'s items begin among resident tile `tile`'s (an index into `items` and `rows`): its run
+/// (ResidentTile::item_runs, by the pass's place among the world's passes, Pass::index), `items.size()` where it made
+/// none. Each frame's (the trees', things', region items' and doors' passes, for every tile they draw), which once read
+/// the items from the first to find it, past every building's and part's. A tile without runs (one a test makes): its
+/// first item of `kind`.
+[[nodiscard]] std::uint32_t first_of(const ResidentTile& tile, std::size_t pass, std::uint16_t kind) noexcept;
+
 /// The workers a pass may share its own work with (TileBuild::share): the residency's, for the pass's tile.
 class Sharer {
 public:

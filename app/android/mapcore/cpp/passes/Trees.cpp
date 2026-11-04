@@ -142,13 +142,6 @@ TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool 
     return c;
 }
 
-std::uint32_t first_tree(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 bool tree_side_right(const shaders::Theme& theme, const view::Camera& camera) noexcept {
     const shaders::double3 l = shaders::theme_sun_vector(theme);
     return (l.x * camera.right().x) + (l.z * camera.right().z) > 0;
@@ -380,7 +373,7 @@ void Trees::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
         if (trees == nullptr || !mine.ranges[0]) continue;
         // a tile's trees once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (!scene::draws_items(tiles, c)) continue;
-        const std::uint32_t first = first_tree(*t.drawn, kind_);
+        const std::uint32_t first = scene::first_of(*t.drawn, me, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         for (std::uint32_t i = 0; i < trees->trees && first + i < rows.size(); ++i) {
             const std::uint32_t row = rows[first + i];

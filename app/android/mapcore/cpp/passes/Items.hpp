@@ -91,9 +91,6 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out);
 
-/// The first of a tile's items that are region items.
-[[nodiscard]] std::uint32_t first_region_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// The region items' pass.
 class Items final : public frame::Pass {
 public:

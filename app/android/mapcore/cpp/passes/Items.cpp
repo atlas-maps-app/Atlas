@@ -478,13 +478,6 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
     out.insert(out.end(), order.begin(), order.end());
 }
 
-std::uint32_t first_region_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 gpu::Result<void> Items::prepare(const frame::PassContext& context) {
     release();
     // none in the owner mode: the likeness harness's owner maps draw no region items yet
@@ -662,7 +655,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
             const view::Vec3 p{x, 0.0, z};
             return convert ? view::convert(t.drawn->frame, *state.ground_frame, p) : p;
         };
-        const std::uint32_t first = first_region_item(*t.drawn, kind_);
+        const std::uint32_t first = scene::first_of(*t.drawn, me, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         // coasters.draw's walk along each track (passes/CoasterWalk.hpp): its radius cut at every fourth of its points
         // and its last; the pieces it draws and the posts it puts (a wooden coaster's braced back to the post before)

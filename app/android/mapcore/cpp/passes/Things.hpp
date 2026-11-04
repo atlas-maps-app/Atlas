@@ -75,9 +75,6 @@ struct ThingChoice {
 [[nodiscard]] std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style,
                                                         const style::PaletteBlock* palette = nullptr);
 
-/// The first of a tile's items that are things.
-[[nodiscard]] std::uint32_t first_thing(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// The street furniture's pass.
 class Things final : public frame::Pass {
 public:

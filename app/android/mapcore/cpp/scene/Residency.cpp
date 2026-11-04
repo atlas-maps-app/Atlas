@@ -62,6 +62,17 @@ void each_range(const ResidentTile& t, const F& f) {
 
 } // namespace
 
+std::uint32_t first_of(const ResidentTile& tile, std::size_t pass, std::uint16_t kind) noexcept {
+    if (pass < tile.item_runs.size()) {
+        const auto [first, count] = tile.item_runs[pass];
+        return count > 0 ? first : static_cast<std::uint32_t>(tile.items.size());
+    }
+    for (std::size_t i = 0; i < tile.items.size(); ++i) {
+        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
+    }
+    return static_cast<std::uint32_t>(tile.items.size());
+}
+
 std::uint64_t Residency::key_of(tiles::TileKey key, std::string_view pack) noexcept {
     // The tile's zoom, column and row, mixed with the pack's id (FNV-1a): a key per tile of a pack.
     std::uint64_t h = 0xCBF2'9CE4'8422'2325ULL;
