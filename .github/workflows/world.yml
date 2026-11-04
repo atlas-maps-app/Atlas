@@ -6,7 +6,8 @@
 #   world-plan`: by the last world's packs' bytes, or for the first by the sizes of the area's own extracts), the tags
 #   the world's profile draws (`packer world-tags`), the draft release;
 # - sources: osmdata's land polygons and Natural Earth's layers, fetched once a run into the draft, so no other job asks
-#   those free hosts again;
+#   those free hosts again; with land=<a draft's tag>, the land polygons that draft holds stand in for osmdata's, the
+#   run's summary and the draft's notes naming the copy's date and SHA-256;
 # - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), then
 #   `osmium extract` into every region, five a pass, each region into the draft;
 # - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
@@ -35,6 +36,10 @@ on:
         default: '20'
       tag:
         description: The draft release's tag (empty for world-YYYYMMDD, today's)
+        required: false
+        default: ''
+      land:
+        description: A world's draft whose land polygons (scratch-land-polygons-*.zip) stand in for osmdata's, by its tag (empty to fetch osmdata's)
         required: false
         default: ''
       publish:
@@ -81,6 +86,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       tag: ${{ steps.run.outputs.tag }}
+      land: ${{ steps.run.outputs.land }}
       url: ${{ steps.plan.outputs.url }}
       bytes: ${{ steps.plan.outputs.bytes }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -107,6 +113,7 @@ jobs:
           AREA: ${{ github.event.inputs.area }}
           REGIONS: ${{ github.event.inputs.regions }}
           TAG: ${{ github.event.inputs.tag }}
+          LAND: ${{ github.event.inputs.land }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = push ]; then
@@ -114,6 +121,7 @@ jobs:
             AREA=$(jq -r '.area // ""' .github/world-run.json)
             REGIONS=$(jq -r '.regions // "" | tostring' .github/world-run.json)
             TAG=$(jq -r '.tag // ""' .github/world-run.json)
+            LAND=$(jq -r '.land // ""' .github/world-run.json)
           fi
           AREA=${AREA:-europe}
           REGIONS=${REGIONS:-20}
@@ -123,7 +131,16 @@ jobs:
           # never world-test (the app's test world) nor world-latest
           if ! [[ "$TAG" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::A world's release is world-YYYYMMDD or world-YYYYMMDD-<word>, not $TAG"; exit 1; fi
           if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
-          { echo "area=$AREA"; echo "regions=$REGIONS"; echo "tag=$TAG"; } >> "$GITHUB_OUTPUT"
+          if [ -n "$LAND" ]; then
+            # the land polygons' stand-in: a world's draft holding both zips (a published release holds no scratch)
+            if ! [[ "$LAND" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::land names a world's draft, not $LAND"; exit 1; fi
+            if [ "$(gh release view "$LAND" --json isDraft -q .isDraft 2> /dev/null || true)" != true ]; then echo "::error::land: $LAND is not a draft"; exit 1; fi
+            NAMES=$(gh release view "$LAND" --json assets -q '.assets[].name')
+            for z in scratch-land-polygons-split-4326.zip scratch-simplified-land-polygons-complete-3857.zip; do
+              if ! grep -qxF "$z" <<< "$NAMES"; then echo "::error::land: $LAND holds no $z"; exit 1; fi
+            done
+          fi
+          { echo "area=$AREA"; echo "regions=$REGIONS"; echo "tag=$TAG"; echo "land=$LAND"; } >> "$GITHUB_OUTPUT"
       - name: The plan
         id: plan
         env:
@@ -202,6 +219,7 @@ jobs:
     timeout-minutes: 100
     env:
       TAG: ${{ needs.plan.outputs.tag }}
+      LAND: ${{ needs.plan.outputs.land }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: osmdata's land polygons and Natural Earth's layers
@@ -213,8 +231,14 @@ jobs:
           # took no connections from about 12:15 UTC on 3 November, and Belgium's second run's sources failed on it)
           get() { curl -fsSL --connect-timeout 60 --retry 60 --retry-delay 60 --retry-max-time 3600 --retry-all-errors -A "$USER_AGENT" -o "$2" "$1"; }
           # the land under the blocks (split, EPSG:4326) and under the globe's L4 and L5 (simplified, EPSG:3857)
-          get https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip "$S/scratch-land-polygons-split-4326.zip"
-          get https://osmdata.openstreetmap.de/download/simplified-land-polygons-complete-3857.zip "$S/scratch-simplified-land-polygons-complete-3857.zip"
+          LANDS=(land-polygons-split-4326 simplified-land-polygons-complete-3857)
+          if [ -z "$LAND" ]; then
+            for l in "${LANDS[@]}"; do get "https://osmdata.openstreetmap.de/download/$l.zip" "$S/scratch-$l.zip"; done
+          else
+            # a stand-in (the land input): the copy a draft holds, as every run's draft holds the one it took until it is
+            # published (osmdata.openstreetmap.de took none for more than 13 hours from 3 November)
+            for l in "${LANDS[@]}"; do gh release download "$LAND" --pattern "scratch-$l.zip" --dir "$S"; done
+          fi
           # the globe's: land at 1:110m and 1:50m, lakes, rivers, glaciers, ice shelves and populated places
           for f in 110m/physical/ne_110m_land 110m/physical/ne_110m_lakes 110m/physical/ne_110m_rivers_lake_centerlines \
             110m/physical/ne_110m_glaciated_areas 110m/cultural/ne_110m_populated_places 50m/physical/ne_50m_land \
@@ -227,6 +251,24 @@ jobs:
           ls -l "$S" "$S/naturalearth"
           gh release upload "$TAG" "$S/scratch-land-polygons-split-4326.zip" "$S/scratch-simplified-land-polygons-complete-3857.zip" "$S/scratch-naturalearth.tar" --clobber
           { echo "### Sources"; find "$S" -maxdepth 1 -name 'scratch-*' -printf '- %f: %s bytes\n'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$LAND" ]; then
+            # the stand-in, named in the summary and once in the draft's notes however often the job runs: each zip's
+            # date (its README's) and SHA-256
+            NOTE="The land polygons are a stand-in, the copy the draft $LAND held, not fetched from osmdata.openstreetmap.de by this run:"
+            for l in "${LANDS[@]}"; do
+              DATE=$(unzip -p "$S/scratch-$l.zip" '*/README.txt' | sed -n 's/^Date of the data used is //p' || true)
+              DATE=${DATE%%$'\n'*}
+              SUM=$(sha256sum "$S/scratch-$l.zip" | cut -d' ' -f1)
+              NOTE+=" $l.zip of the data of ${DATE:-an unknown date}, SHA-256 $SUM;"
+            done
+            NOTE="${NOTE%;}."
+            echo "$NOTE" >> "$GITHUB_STEP_SUMMARY"
+            BODY=$(gh release view "$TAG" --json body -q .body)
+            if ! grep -qF "The land polygons are a stand-in" <<< "$BODY"; then
+              printf '%s\n\n%s\n' "$BODY" "$NOTE" > "$RUNNER_TEMP/notes.md"
+              gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            fi
+          fi
 
   filter:
     needs: plan
