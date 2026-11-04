@@ -120,6 +120,16 @@ class L1Test {
             Case("doors sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "sunny"),
             Case("doors wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "wet"),
             Case("doors far sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 98.86787550282801, -182.6922473097533, 70.0, 91.0) }, "sunny"),
+            // the shopfronts, their signs and terraces and the open places' glows (ENGINE.md step 4, the facades and the
+            // night), which draw with weather; a terrace stands out while its place is open, and by day where its hours say
+            // nothing (the user's rule, 4 November). From 70 m (35 m up): the wall facing east at x 435, a brown café open
+            // by day and a café closed, both open on the wet night and both closed in the grey moment's 13:30; the row
+            // facing south about (-330, 160), a restaurant without opening hours and two places closed on the wet night
+            Case("shops sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "sunny"),
+            Case("shops wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "wet"),
+            Case("shops grey S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "grey"),
+            Case("shops south sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "sunny"),
+            Case("shops south wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "wet"),
         )
         if (g.isFile) {
             out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
@@ -147,6 +157,19 @@ class L1Test {
         val lat = r.frame.lat(x, z)
         val lon = r.frame.lon(x, z)
         return LiveView(lat, lon, LiveCamera.zoom(lat, dist, height.toDouble()), LiveCamera.bearing(119.50786615381202), pitch, 412, height, 440.0)
+    }
+
+    /**
+     * A wall of shopfronts looked at squarely: the point ([qx], [qz]) of the pack's frame on it, its direction
+     * ([ux], [uz]; the wall facing (uz, -ux)), the target 10 m behind it, the map's [pitch], [dist] metres back.
+     */
+    private fun shopsView(r: LiveRegion, qx: Double, qz: Double, ux: Double, uz: Double, pitch: Double, dist: Double, height: Int = 916): LiveView {
+        val x = qx - uz * 10.0
+        val z = qz + ux * 10.0
+        val lat = r.frame.lat(x, z)
+        val lon = r.frame.lon(x, z)
+        val bearing = Math.toDegrees(StrictMath.atan2(-uz, -ux)).let { if (it < 0) it + 360 else it }
+        return LiveView(lat, lon, LiveCamera.zoom(lat, dist, height.toDouble()), LiveCamera.bearing(bearing), pitch, 412, height, 440.0)
     }
 
     /**

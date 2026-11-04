@@ -750,7 +750,7 @@ const std::vector<Part>& every_part() {
         {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
         {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
         // (the flat detail's stage and draws run while any of its parts is drawn: each told by its mode bit)
-        {.name = "shopfronts",
+        {.name = "shop windows",
          .bit = part::shop_glazing,
          .shared = {"window facades", "window frames", "window glass"},
          .mode_bit = shaders::FRAME_NO_GLAZING},
@@ -773,6 +773,11 @@ const std::vector<Part>& every_part() {
          .own = {"door faces", "door fills", "door outlines", "door numbers"},
          .changes = part::house_numbers},
         {.name = "house numbers", .bit = part::house_numbers, .own = {"door numbers"}, .needs = part::doors},
+        {.name = "shopfronts",
+         .bit = part::shopfronts,
+         .own = {"shop fills", "shop lines", "shop texts", "shop tints"}},
+        {.name = "terraces", .bit = part::terraces, .own = {"terrace fills", "terrace lines"}},
+        {.name = "open places' glow", .bit = part::open_glows, .own = {"open glows"}},
         {.name = "trees", .bit = part::trees, .own = {"trees", "tree fills", "tree sides"}},
         {.name = "leaf filters", .bit = part::leaf_filters, .mode_bit = shaders::FRAME_NO_CROWNS, .needs = part::trees},
         // (its translucent records the lamps' halos and wet streaks at night)

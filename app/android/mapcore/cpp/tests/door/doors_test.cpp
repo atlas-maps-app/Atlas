@@ -110,7 +110,7 @@ TEST_CASE("doors: the bundled Westerkerk's addresses on a street wall are doors,
             CHECK(it.cut_x == d.x);
             CHECK(it.cut_z == d.z);
             CHECK((it.flags & scene::item_flag::radius) != 0);
-            CHECK(it.order == scene::order_of(geometry::facades_list, d.node));
+            CHECK(it.order == scene::order_of(geometry::facades_list, geometry::doors_after | d.node));
             CHECK(it.slots[0] == geometry::door_slots);
             CHECK(it.kind == 7);
             CHECK(static_cast<double>(it.radius) >

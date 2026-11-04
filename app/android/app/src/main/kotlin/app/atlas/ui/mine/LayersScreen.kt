@@ -406,6 +406,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.LAMP_POOLS -> R.string.mine_part_lamp_pools
     MapPart.LAMP_HALOS -> R.string.mine_part_lamp_halos
     MapPart.LAMP_STREAKS -> R.string.mine_part_lamp_streaks
+    MapPart.OPEN_GLOWS -> R.string.mine_part_open_glows
     MapPart.RAIN -> R.string.mine_part_rain
     MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
     MapPart.WALLS -> R.string.mine_part_walls
@@ -424,6 +425,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.KIT_DETAILS -> R.string.mine_part_kit_details
     MapPart.DOORS -> R.string.mine_part_doors
     MapPart.HOUSE_NUMBERS -> R.string.mine_part_house_numbers
+    MapPart.SHOPFRONTS -> R.string.mine_part_shopfronts
+    MapPart.TERRACES -> R.string.mine_part_terraces
     MapPart.TREES -> R.string.mine_part_trees
     MapPart.LEAF_FILTERS -> R.string.mine_part_leaf_filters
     MapPart.FURNITURE -> R.string.mine_part_furniture

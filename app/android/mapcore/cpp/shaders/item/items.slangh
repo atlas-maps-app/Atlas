@@ -116,6 +116,7 @@ static const uint ITEM_FACE = 1u;
 static const uint ITEM_SEGMENT = 2u;
 static const uint ITEM_CIRCLE = 3u;
 static const uint ITEM_GLOW = 4u;
+static const uint ITEM_RADIAL = 5u; // a circle filled with its own radial gradient (an open place's glow at night)
 static const uint ITEM_RECORD_KIND = 0xFFu;
 static const uint ITEM_ROUND_START = 256u; // tree.slangh's TREE_ROUND_START and TREE_ROUND_END
 static const uint ITEM_ROUND_END = 512u;
@@ -124,6 +125,7 @@ static const uint ITEM_STROKED = 1024u;   // a face stroked in its own colour: i
 static const uint ITEM_GRADIENT = 2048u;  // a face filled with a gradient across its box: its stops' colours a.y, a.w, e.w
 static const uint ITEM_HIGH = 4096u;      // its middle stop at .65 (.35 otherwise)
 static const uint ITEM_PLANE = 8192u;     // a segment on a plane (a door's outline): its depth's gradient in c.xy
+static const uint ITEM_VERTICAL = 16384u; // a face filled with two stops down its box: a.y at its top, e.w at its foot
 static const uint ITEM_COUNT_SHIFT = 16u; // a face's corners, 3 to 5
 static const uint ITEM_BACK_SHIFT = 24u;  // a translucent segment's look back: its path's segments before it
 
@@ -541,6 +543,20 @@ inline ItemRecord item_glow(float2 at, float radius, float depth) {
     return r;
 }
 
+/// A circle about `at` (as printed) of `radius` filled with a radial gradient of three stops at 0, `middle` and 1, their
+/// colours `c0` to `c2` and opacities `o0` to `o2` (passes/Shopfronts.cpp: an open place's glow at night): c0 in a.y,
+/// c1, c2, o0 and o1 in c, o2 and `middle` in e.xy.
+inline ItemRecord item_radial(float2 at, float radius, uint c0, uint c1, uint c2, float o0, float o1, float o2,
+                              float middle) {
+    ItemRecord r = item_circle(at, radius, c0, 1.0f, 0.0f);
+    r.a.x = ITEM_RADIAL;
+    uint4 c = {c1, c2, asuint(o0), asuint(o1)};
+    uint4 e = {asuint(o2), asuint(middle), 0u, 0u};
+    r.c = c;
+    r.e = e;
+    return r;
+}
+
 inline uint item_count(ItemRecord r) {
     return (r.a.x >> ITEM_COUNT_SHIFT) & 7u;
 }
@@ -646,6 +662,33 @@ inline float4 item_glow_at(float3 c0, float3 c1, float3 c2, float o0, float o1, 
         return g;
     }
     float k = (u - 0.35f) / 0.65f;
+    float3 c = c1 + (c2 - c1) * k;
+    float4 g = {c.x, c.y, c.z, o1 + (o2 - o1) * k};
+    return g;
+}
+
+/// A two-stop face's colour at CSS height `y` down its box from y0 to y1 (objectBoundingBox from 0 to 1, padded):
+/// building_glass_at's.
+inline float3 item_vertical_at(float3 top, float3 bottom, float y0, float y1, float y) {
+    if (!(y1 > y0)) {
+        return top;
+    }
+    float t = (y - y0) / (y1 - y0);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return top + (bottom - top) * t;
+}
+
+/// A radial gradient's colour and opacity at distance t (0 to 1 of its radius): its three stops at 0, `m` and 1, each
+/// channel and the opacity interpolated apart.
+inline float4 item_radial_at(float3 c0, float3 c1, float3 c2, float o0, float o1, float o2, float m, float t) {
+    float u = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    if (u <= m) {
+        float k = u / m;
+        float3 c = c0 + (c1 - c0) * k;
+        float4 g = {c.x, c.y, c.z, o0 + (o1 - o0) * k};
+        return g;
+    }
+    float k = (u - m) / (1.0f - m);
     float3 c = c1 + (c2 - c1) * k;
     float4 g = {c.x, c.y, c.z, o1 + (o2 - o1) * k};
     return g;

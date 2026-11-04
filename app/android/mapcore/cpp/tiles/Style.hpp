@@ -153,6 +153,45 @@ struct DoorsStyle {
     DayNight number;
 };
 
+/// The shopfronts (`shopfronts`, amsterdam.py's shopfront): a shop's frame by day and at night, its glass at night open
+/// and closed (by day the windows' glass and glassLit), its mullions, the awning's stripes by day and at night and
+/// their opacity, the awning's outline's width, the sign's and the blade's outline and their widths, a sign's text
+/// where its brand gives none, the night's spill on the pavement and its opacity; a terrace's wood by day and at night,
+/// its chairs (at night x0.3, draw_box's) and their legs' width, their backs at night, the tables' tops by day and at
+/// night, their outline and its width, the parasols' poles and their light panels; and the open places' glow at night,
+/// the `open` gradient's three stops (colour, opacity; the middle one's offset).
+struct ShopfrontsStyle {
+    DayNight frame;
+    StyleRgb glass_open = 0;
+    StyleRgb glass_closed = 0;
+    StyleRgb mullion = 0;
+    DayNight stripes;
+    float stripes_opacity = 0.0F;
+    float awning_width = 0.0F;
+    StyleRgb sign_outline = 0;
+    float sign_width = 0.0F;
+    float blade_width = 0.0F;
+    StyleRgb text = 0;
+    StyleRgb spill = 0;
+    float spill_opacity = 0.0F;
+    DayNight wood;
+    StyleRgb chair = 0;
+    float chair_leg_width = 0.0F;
+    StyleRgb chair_back_night = 0;
+    DayNight top;
+    StyleRgb top_outline = 0;
+    float top_width = 0.0F;
+    StyleRgb pole = 0;
+    StyleRgb panel = 0;
+    StyleRgb open_inner = 0;
+    float open_inner_opacity = 0.0F;
+    StyleRgb open_middle = 0;
+    float open_middle_offset = 0.0F;
+    float open_middle_opacity = 0.0F;
+    StyleRgb open_outer = 0;
+    float open_outer_opacity = 0.0F;
+};
+
 /// A region's items (`items`): a tower's shaft, its cab's glass by day and at night, its gallery and its antenna, the
 /// night's shadow its gradients mix toward; the steel of cranes, masts, gantries and conveyors, a crane's machinery, a
 /// lighting mast's floodlights and a conveyor's gallery by day and at night; a lighting mast's glow at night, its
@@ -282,6 +321,7 @@ struct Style {
     TreesStyle trees;
     ThingsStyle things;
     DoorsStyle doors;
+    ShopfrontsStyle shopfronts;
     ItemsStyle items;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;
