@@ -225,6 +225,14 @@ public:
     [[nodiscard]] const view::Frames& frames() const noexcept { return frames_; }
     /// The resident tiles and the heaps' use, for the `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
     [[nodiscard]] std::string tiles_line() const;
+    /// The item rows of resident tiles masked again since the world was made: the coarser pack's and the former coarser
+    /// pack's, where the coarser pack or the mask changed. A change of the frame drawn (a frame cell crossed) rewrites
+    /// no row: the places of the frames move (place_of).
+    [[nodiscard]] std::uint64_t items_masked_again() const noexcept { return masked_again_; }
+    /// Every resident tile's items placed as a change of the frame drawn placed them before the places (tests): each
+    /// point converted into the frame drawn (view::convert) and the row's place the frame drawn's own, the picture
+    /// the places are held to. Until the frame drawn changes.
+    void place_items_in_frame();
     /// The triangle governor (ENGINE.md step 5), as the next frame takes it; the bias this frame was planned at, the
     /// triangles it planned at it (the cover's tiles' and the world's: govern), and the highest bias any frame had.
     [[nodiscard]] const Governor& governor() const noexcept { return governor_; }
@@ -277,9 +285,11 @@ private:
     /// where they cannot.
     [[nodiscard]] bool piece_for(std::uint32_t bytes, HeapKind kind,
                                  std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins);
-    /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
-    /// coarser pack's inside the mask.
-    void place_items(const ResidentTile& tile);
+    /// A resident tile's items masked where they are the coarser pack's inside the mask (their points stay in their
+    /// pack frame's metres, which the frame's place maps into the frame drawn).
+    void mask_items(const ResidentTile& tile);
+    /// The place in the item table of the frame `frame`, made as its first tile is taken.
+    [[nodiscard]] std::uint32_t place_of(const view::GroundFrame& frame);
     /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
     void take_packs();
     /// The neighbours' stage T, as built so far (neighbour_packs).
@@ -343,10 +353,13 @@ private:
     std::vector<std::pair<tiles::TileKey, std::string>> going_;
     std::size_t ahead_ = 0; ///< under wanted_mutex_
     double wanted_at_ = -1.0;
-    /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
+    /// What the items' places and masks were last made for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;
     std::optional<tiles::GridBox> placed_mask_;
+    /// The frames the tiles taken came in, each with its place in the item table (its map into the frame drawn).
+    std::vector<std::pair<view::GroundFrame, std::uint32_t>> places_;
+    std::uint64_t masked_again_ = 0;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;

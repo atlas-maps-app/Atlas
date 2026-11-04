@@ -82,11 +82,12 @@ internal object LookHost {
  * calls with the same inputs:
  *
  * - the map: the app's map frame driven as the Bridge drives it ([LookHost]), at true depth as the phone draws it, the
- *   screen's haze, vignette and grain off (MapData.wire with the Look settings unset: MapCore.screenEffects);
+ *   screen's haze, vignette and grain on (MapData.wire with the Look settings unset: MapCore.screenEffects);
  * - the moment: the theme block [CoreMoment] writes for the core (the map's live moment, the clock in five-minute steps,
  *   lit by the forecast's hours: the same Moment today's map draws), for the drawn pack's zone;
  * - each frame's camera state as MapCameraSource writes it at rest: the view, the frame, the pack PackList names, and
- *   the parts the map leaves out by default ([MapParts.byDefault]: the roofs' edges and the plinths);
+ *   the parts the map leaves out by default ([MapParts.byDefault]: the plinths, the quays and the water's light but
+ *   its reflections);
  * - the packs, on alpha 22's path (`-Datlas.phonelook.path=22`, the default): the windows alone, each taken from its
  *   country's tiles as the phone's Windows takes them ([WindowTiles]: the published list, the index, a range of the
  *   tiles held to its SHA-256), the ones the map's world wants (MapCore.wantedWindows), nearest first, until it wants
@@ -267,8 +268,8 @@ internal class PhoneCore(
         check(handle != 0L) { "the host map: ${LookHost.lastError()}" }
         val notes = StringBuilder()
         try {
-            // MapData.wire with the Look settings unset: no haze, vignette or grain
-            LookHost.screen(handle, haze = false, vignette = false, grain = false)
+            // MapData.wire with the Look settings unset: the haze, vignette and grain on
+            LookHost.screen(handle, haze = true, vignette = true, grain = true)
             val taken = ArrayList<String>()
             var drew = ""
             var listed: List<Listed>
@@ -307,7 +308,7 @@ internal class PhoneCore(
             notes.appendLine("camera names ${pack?.id ?: "none"} (#${pack?.number ?: 0}, profile ${pack?.profile ?: 0}); ${listed.size} packs listed after $rounds rounds")
             notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")})")
             val leftOut = MapPart.entries.filter { it.bit and off != 0L }.joinToString(" ") { it.name.lowercase() }.ifEmpty { "none" }
-            notes.appendLine("parts left out: $leftOut; screen: no haze, vignette or grain; true depth")
+            notes.appendLine("parts left out: $leftOut; screen: haze, vignette and grain; true depth")
             notes.appendLine("window version $version")
             notes.appendLine("light " + light(moment))
             notes.appendLine("view lat ${view.lat} lon ${view.lon} zoom ${view.zoom} bearing ${view.bearing} pitch ${view.pitch} ${view.widthDp}x${view.heightDp}dp cy ${view.cyDp} distance ${view.distance}")
