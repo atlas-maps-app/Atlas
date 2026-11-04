@@ -239,21 +239,21 @@ TEST_CASE(
         if (t.fill == 8) CHECK(t.other == 7);
         if (t.fill < 3 || t.fill == 5 || t.fill == 6) CHECK(t.other == t.fill);
     }
-    CHECK(widths(of(thin, 0, {100, 100}, {100, 300}), 6.0, 6.0));
-    CHECK(widths(of(thin, 0, {106, 100}, {106, 300}), 6.0, 6.0));
-    CHECK(of(thin, 0, {100, 100}, {106, 100}).empty());
-    CHECK(of(thin, 0, {100, 300}, {106, 300}).empty());
+    CHECK(widths(of(thin, 0, {.x = 100, .z = 100}, {.x = 100, .z = 300}), 6.0, 6.0));
+    CHECK(widths(of(thin, 0, {.x = 106, .z = 100}, {.x = 106, .z = 300}), 6.0, 6.0));
+    CHECK(of(thin, 0, {.x = 100, .z = 100}, {.x = 106, .z = 100}).empty());
+    CHECK(of(thin, 0, {.x = 100, .z = 300}, {.x = 106, .z = 300}).empty());
     CHECK(std::ranges::count(thin, 1U, &geo::ThinEdge::fill) == 0);
-    CHECK(of(thin, 2, {0, 400}, {0, 408}).empty());
-    CHECK(widths(of(thin, 2, {0, 400}, {150, 400}), 8.0, 8.0));
-    CHECK(widths(of(thin, 2, {0, 408}, {150, 408}), 8.0, 8.0));
+    CHECK(of(thin, 2, {.x = 0, .z = 400}, {.x = 0, .z = 408}).empty());
+    CHECK(widths(of(thin, 2, {.x = 0, .z = 400}, {.x = 150, .z = 400}), 8.0, 8.0));
+    CHECK(widths(of(thin, 2, {.x = 0, .z = 408}, {.x = 150, .z = 408}), 8.0, 8.0));
     CHECK(std::ranges::count(thin, 3U, &geo::ThinEdge::fill) == 4);
     CHECK(std::ranges::count(thin, 4U, &geo::ThinEdge::fill) == 4);
     for (const geo::ThinEdge& t : thin) {
         if (t.fill == 3 || t.fill == 4) CHECK(widths({t}, 6.0, 6.0));
     }
     // the stepped canal's near bank: [100, 120] 6 m across, [120, 140] 12 m
-    std::vector<geo::ThinEdge> stepped = of(thin, 5, {100, 700}, {140, 700});
+    std::vector<geo::ThinEdge> stepped = of(thin, 5, {.x = 100, .z = 700}, {.x = 140, .z = 700});
     ATLAS_REQUIRE(stepped.size() == 2);
     std::ranges::sort(stepped, {}, [](const geo::ThinEdge& t) { return t.a.x + t.b.x; });
     CHECK(std::abs(stepped[0].a.x + stepped[0].b.x - 220) < 1e-9);
@@ -261,7 +261,7 @@ TEST_CASE(
     CHECK(widths({stepped[0]}, 6.0, 6.0));
     CHECK(widths({stepped[1]}, 12.0, 12.0));
     // the basin's south bank: [300, 320] 12 m across to its north bank, [320, 340] 6 m to the island
-    std::vector<geo::ThinEdge> basin = of(thin, 7, {300, 800}, {340, 800});
+    std::vector<geo::ThinEdge> basin = of(thin, 7, {.x = 300, .z = 800}, {.x = 340, .z = 800});
     ATLAS_REQUIRE(basin.size() == 2);
     std::ranges::sort(basin, {}, [](const geo::ThinEdge& t) { return t.a.x + t.b.x; });
     CHECK(std::abs(basin[0].a.x + basin[0].b.x - 620) < 1e-9);
@@ -270,7 +270,7 @@ TEST_CASE(
     CHECK(widths({basin[1]}, 6.0, 6.0));
     CHECK(basin[1].other == 8);
     // the wedge's straight bank: from 4.8 m a tenth along it to 11.2 m at nine tenths (its turn from the west end)
-    const std::vector<geo::ThinEdge> wedge = of(thin, 6, {700, 100}, {800, 100});
+    const std::vector<geo::ThinEdge> wedge = of(thin, 6, {.x = 700, .z = 100}, {.x = 800, .z = 100});
     ATLAS_REQUIRE(wedge.size() == 1);
     const bool west = wedge[0].a.x < wedge[0].b.x;
     CHECK(std::abs((west ? wedge[0].ta : wedge[0].tb) - 4.8) < 1e-9);

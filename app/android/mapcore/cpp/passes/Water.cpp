@@ -411,7 +411,7 @@ void Ground::thin_draws(const frame::Recording& r, std::uint32_t flags, std::arr
         r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0,
                                                                          pc);
         r.frame.cmd.draw(6 * thin.count, 1, 0, static_cast<std::uint32_t>(i));
-        r.counters.draw("ground water", 2 * thin.count);
+        r.counters.draw("ground water", 2 * std::uint64_t{thin.count});
     }
 }
 
