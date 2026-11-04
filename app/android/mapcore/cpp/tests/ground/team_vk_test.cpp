@@ -2,11 +2,15 @@
 // tiles and their mirrors decided on three helpers beside the render thread and on the render thread alone, by day
 // with weather (the reflections) and at night with the hour's weather (the streaks), are the same picture, and a
 // moving frame's decisions over the same tiles (each fill's, stroke's and shadow's, the strokes' widths, the ranks
-// across scenes, the reflections' elements with their faces, circles and streaks) the same to the bit.
+// across scenes, the reflections' elements with their faces, circles and streaks) the same to the bit. The frame tells
+// the platform of the team's threads once a team, the render thread first, as the render thread's hint session takes
+// them in (frame/RenderThreads.hpp; the session itself is Android's).
 #if !defined(__ANDROID__)
 
+#include "frame/RenderThreads.hpp"
 #include "frame/Selectors.hpp"
 #include "passes/Ground.hpp"
+#include "passes/Team.hpp"
 #include "tests/base/require.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
@@ -14,12 +18,18 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <memory>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -75,7 +85,74 @@ namespace {
     return h;
 }
 
+/// The threads the frame says its work runs on, each list as told: what the render thread's hint session would take
+/// in (platform::HintSession::threads, Android's).
+class Told final : public frame::RenderThreads {
+public:
+    void took(std::span<const std::int32_t> tids) override { lists.emplace_back(tids.begin(), tids.end()); }
+    std::vector<std::vector<std::int32_t>> lists;
+};
+
+/// Whether `list` is the render thread `me` and then `helpers` threads beside it, none twice, each one of this
+/// process's (where the host lists them).
+void check_threads(const std::vector<std::int32_t>& list, std::int32_t me, std::size_t helpers) {
+    ATLAS_REQUIRE(list.size() == helpers + 1, list.size() << " threads told");
+    CHECK(list[0] == me);
+    CHECK(std::set<std::int32_t>(list.begin(), list.end()).size() == list.size());
+#if defined(__linux__)
+    for (const std::int32_t tid : list) {
+        CHECK_MESSAGE(std::filesystem::exists("/proc/self/task/" + std::to_string(tid)), tid);
+    }
+#endif
+}
+
 } // namespace
+
+TEST_CASE("ground: the platform is told of its team's threads once a team, the render thread first") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the ground is not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto told = std::make_shared<Told>();
+    frame::FrameOptions options{.steps = 0};
+    options.render_threads = told;
+    const std::int32_t me = passes::thread_id();
+    const std::size_t first = std::clamp(std::thread::hardware_concurrency(), 1U, 4U) - 1;
+    std::vector<std::vector<std::int32_t>> over_frames;
+    std::size_t moving_told = 0;
+    auto d = test::draw_ground(
+        *session, test::home_camera(), test::sunny(), dir, "amsterdam",
+        [&](passes::Ground& g, const frame::FrameState& state) {
+            // the team made as the first tiles were decided, told once over the frames (while its threads live)
+            over_frames = told->lists;
+            ATLAS_REQUIRE(over_frames.size() == 1, over_frames.size() << " lists told over the frames");
+            check_threads(over_frames[0], me, first);
+            frame::Selectors selectors;
+            frame::FrameState m = state;
+            m.rest = false; // every tile decided again, on the team
+            g.select(m, selectors);
+            moving_told = told->lists.size();
+            // made anew: told at its first use, and not again at the next
+            g.decide_on(2);
+            g.select(m, selectors);
+            g.select(m, selectors);
+            ATLAS_REQUIRE(told->lists.size() == 2, told->lists.size() << " lists told");
+            check_threads(told->lists[1], me, 2);
+            // a team of none: the render thread alone
+            g.decide_on(0);
+            g.select(m, selectors);
+            ATLAS_REQUIRE(told->lists.size() == 3, told->lists.size() << " lists told");
+            check_threads(told->lists[2], me, 0);
+        },
+        8, {}, frame::Mode::structural, nullptr, {}, options);
+    ATLAS_REQUIRE(d.has_value(), "the home was not drawn");
+    CHECK(d->decided.tiles.size() > 1);
+    CHECK(moving_told == 1);
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+}
 
 TEST_CASE("ground: its team decides the tiles and their mirrors as the render thread alone does") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");

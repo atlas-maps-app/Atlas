@@ -641,6 +641,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
 
 void Ground::select(const frame::FrameState& state, frame::Selectors& selectors) {
     (void)selectors;
+    render_threads_ = state.render_threads;
     const double started = thread_ms();
     helped_ms_ = 0;
     if (decide(state)) lay_out();
@@ -1017,6 +1018,12 @@ Team& Ground::team() {
         // beside the render thread (this one: the helpers take its priority), three at most
         team_ = std::make_unique<Team>(std::clamp(std::thread::hardware_concurrency(), 1U, 4U) - 1);
         poly_.resize(team_->takers());
+        told_ = false;
+    }
+    // the render thread's hint session takes the helpers in, as their first work comes
+    if (!told_ && render_threads_ != nullptr) {
+        render_threads_->took(team_->threads());
+        told_ = true;
     }
     return *team_;
 }
@@ -1024,6 +1031,7 @@ Team& Ground::team() {
 void Ground::decide_on(unsigned helpers) {
     team_ = std::make_unique<Team>(helpers);
     poly_.resize(team_->takers());
+    told_ = false;
 }
 
 void Ground::decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles) {

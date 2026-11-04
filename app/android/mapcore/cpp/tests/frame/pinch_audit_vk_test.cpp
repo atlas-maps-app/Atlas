@@ -52,7 +52,11 @@
 // each part's stage F (median and 95th percentile), its frames that drew no tile, those that left a window's place
 // within 12 km without a tile (what alpha 23 drew) and the most such places a frame, of its moving frames' drawn tiles
 // those whose ground moved under a pixel since the frame before (the levels' apart from the windows', with their
-// fills), and the tiles built more than once over it or that found no room in the heaps.
+// fills), and the tiles built more than once over it or that found no room in the heaps. ATLAS_PINCH_FINGER: that many
+// frames at the pinch's end under a finger (not at rest) before the frames held at rest, its last frame not at rest
+// either. Each frame's line names its ripple: made, kept (the last frame's result stands) or off; ATLAS_PINCH_RIPPLE=
+// every makes it every frame, as before its key took what it reads alone (Ground::make_ripple_always), to measure
+// what the kept results save.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -477,6 +481,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
     const double from = environment("ATLAS_PINCH_FROM").empty() ? 3000.0 : std::stod(environment("ATLAS_PINCH_FROM"));
     const double to = environment("ATLAS_PINCH_TO").empty() ? 300.0 : std::stod(environment("ATLAS_PINCH_TO"));
     const int steps = environment("ATLAS_PINCH_FRAMES").empty() ? 90 : std::stoi(environment("ATLAS_PINCH_FRAMES"));
+    const int finger = environment("ATLAS_PINCH_FINGER").empty() ? 0 : std::stoi(environment("ATLAS_PINCH_FINGER"));
     const auto block = static_cast<std::uint32_t>(
         environment("ATLAS_PINCH_BLOCK").empty() ? 5UL : std::stoul(environment("ATLAS_PINCH_BLOCK")));
     const std::vector<double> rests = numbers(environment("ATLAS_PINCH_REST"));
@@ -768,6 +773,18 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             return nullptr;
         };
+        // the map's ground pass (none before its first frame), its ripple made every frame where ATLAS_PINCH_RIPPLE
+        // says so
+        const auto ground = [&]() -> passes::Ground* {
+            const frame::FrameBuilder* b = map.builder();
+            if (b == nullptr) return nullptr;
+            for (const std::unique_ptr<frame::Pass>& p : b->passes()) {
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "ground" is passes::Ground
+                if (p->name() == "ground") return &static_cast<passes::Ground&>(*p);
+            }
+            return nullptr;
+        };
+        const bool ripple_always = environment("ATLAS_PINCH_RIPPLE") == "every";
         // the most chunks of the walls' and near cells' lists drawn from shape records (ATLAS_PINCH_SHAPES), else as
         // the pass sizes them
         std::optional<std::uint32_t> most_shape_chunks;
@@ -787,6 +804,9 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             c.parts |= off | always_off;
             held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
+            passes::Ground* g = ground();
+            if (g != nullptr) g->make_ripple_always(ripple_always);
+            const std::uint64_t ripples = g != nullptr ? g->ripple_makes() : 0U;
             const auto at = std::chrono::steady_clock::now();
             const standin::Drawn s = session.draw(c, {});
             if (s.stale) session.remake();
@@ -796,6 +816,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             views_before = std::move(views_now);
             views_now = b != nullptr ? ground_views(*b) : std::vector<GroundView>{};
             if (log) {
+                // the frame's ripple: made, the last frame's kept, or none drawn
+                const passes::Ground* drawn_by = ground();
+                const char* ripple = drawn_by == nullptr || !drawn_by->drew_ripple()              ? "off"
+                                     : drawn_by->ripple_makes() != (drawn_by == g ? ripples : 0U) ? "made"
+                                                                                                  : "kept";
                 // the tiles drawn at their fade, and those kept under them (ENGINE.md's fades)
                 std::size_t fading = 0;
                 std::size_t under = 0;
@@ -808,14 +833,14 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 MESSAGE(std::format("{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
                                     "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments, {} tiles "
                                     "fading over {} kept under; {}; {}; {}; gpu before the main pass {:.1f} ms, in it "
-                                    "{:.1f}, after it {:.1f}; frame {}, gpu of frame {}",
+                                    "{:.1f}, after it {:.1f}; frame {}, gpu of frame {}; ripple {}",
                                     tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
                                     b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k, fading,
                                     under, b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
                                     b != nullptr ? stage_f_parts(*b) + ground_cpu(*b) : std::string(),
                                     s.record.gpu_offscreen_ms, s.record.gpu_main_ms, s.record.gpu_after_ms,
-                                    s.record.frame, s.record.gpu_frame));
+                                    s.record.frame, s.record.gpu_frame, ripple));
                 if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
                     MESSAGE(std::format("{} {:6.0f} m: {}", tag, d, reflections_hash(*b)));
                 }
@@ -1136,10 +1161,18 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             for (int i = 0; i <= steps; ++i) {
                 const double t = static_cast<double>(i) / steps;
                 const double d = from * pymath::strict::pow(to / from, t);
-                (void)draw(std::format("in {:3d}", i), d, i == steps, true);
+                (void)draw(std::format("in {:3d}", i), d, i == steps && finger == 0, true);
                 track(parts.back());
             }
             said("in the pinch");
+            if (finger > 0) {
+                parts.push_back({.name = std::format("{}under a finger at {:.0f} m", round, to)});
+                for (int i = 0; i < finger; ++i) {
+                    (void)draw(std::format("finger {:2d}", i), to, false, true);
+                    track(parts.back());
+                }
+                said(std::format("under a finger at {:.0f} m", to));
+            }
             parts.push_back({.name = std::format("{}held at {:.0f} m", round, to)});
             for (int i = 0; i < 20; ++i) {
                 (void)draw(std::format("held {:2d}", i), to, true, true);
