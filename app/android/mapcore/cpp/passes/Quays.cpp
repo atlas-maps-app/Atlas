@@ -229,7 +229,8 @@ void Ground::decide_quays(const frame::FrameState& state) {
         // the wall faces the camera: vdot(n3, vsub(cam.C, (mx, WY / 2, mz))) > 0
         if ((q.nx * (eye.x - mx)) + (q.nz * (eye.z - mz)) <= 0) continue;
         const bool toward = !f.night && ((q.nx * light[0]) + (q.nz * light[2])) > 0;
-        const bool lit = toward && p.sampled && sun_bit(t, p.sample);
+        // a piece without a sample (its tile drawn before its first bits) lit by day, never as if in the shade
+        const bool lit = toward && (!p.sampled || sun_bit(t, p.sample));
         const QuayColours colours = quay_colours(g, state.palette, f.night);
         const std::uint32_t wall_lit = lit_colour(theme, colours.wall, q.nx, q.nz, toward);
         const std::uint32_t wall_unlit = lit_colour(theme, colours.wall, q.nx, q.nz, false);
@@ -358,7 +359,8 @@ void Ground::write_quays(std::vector<std::uint32_t>& words) {
             }
             continue;
         }
-        const double k = e.sampled ? sun_amount(t, e.sample) : 0.0;
+        // unsampled: before the tile's first bits (by day), or turned from the sun (its lit colour its unlit one)
+        const double k = e.sampled ? sun_amount(t, e.sample) : 1.0;
         const std::uint32_t colour =
             e.kind == QuayFace::Kind::waterline ? lit_mix(e.colour, e.colour, 0.0) : lit_mix(e.lit, e.unlit, k);
         put(e.tile, slot_value, colour, e.kind == QuayFace::Kind::wall, face_of(e, wy), g.origin);

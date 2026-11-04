@@ -76,9 +76,19 @@ struct TileBits {
 /// The bits a frame draws a tile with.
 struct TileView {
     std::shared_ptr<const TileBits> now;
-    std::shared_ptr<const TileBits> before; ///< the same as `now` once a fade is over, or for a tile's first bits
-    double weight = 1.0;                    ///< the fade from `before` (0) to `now` (1)
+    /// The same as `now` once a fade is over, or for a tile's first bits; its bits by day (by_day) while a tile drawn
+    /// before its first bits takes them (scene/SunGlobals.hpp).
+    std::shared_ptr<const TileBits> before;
+    double weight = 1.0; ///< the fade from `before` (0) to `now` (1)
+    double came = 0.0;   ///< when its first bits were published (the frame's clock)
 };
+
+/// Bits `bits` by day: every sample lit, as a tile drawn before its first bits is drawn (its faces as they face the
+/// sun, its crowns lit), which its first bits cross-fade from.
+[[nodiscard]] TileBits by_day(const TileBits& bits);
+
+/// View `v`'s texels: per 32 samples the new bits, then the old (R32G32_UINT), appended to `out`.
+void texels_of(const TileView& v, std::vector<std::uint32_t>& out);
 
 /// Every tile's bits, as the workers publish them.
 class BitTiles {
@@ -114,6 +124,7 @@ private:
         std::shared_ptr<const TileBits> now;
         std::shared_ptr<const TileBits> before;
         double swapped = 0.0;
+        double came = 0.0; ///< its first bits' publication
     };
 
     mutable std::mutex mutex_;

@@ -13,6 +13,7 @@
 #include "passes/World.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
@@ -826,7 +827,9 @@ TEST_CASE("the countries' fades: a tile fades in over 0.18 s over what the frame
                 if (before) path.push_back(mad(now, *before));
             }
             last = now;
-            if (map.complete() && frames > 2) break;
+            // complete and at rest: the tiles' fades over, and their first sun bits faded in from by day (300 ms from
+            // their publication, which may come after the tiles' fades)
+            if (map.complete() && !map.animating() && frames > 2) break;
         }
         MESSAGE(std::format("{} of {} frames drawn, {} of them fading ({} tiles fading, the least fade {:.3f}, {} of "
                             "them over an ancestor; {} kept under them)",
@@ -1020,9 +1023,23 @@ TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels 
             const std::size_t pixels = a.rgba.size() / 4;
             return sum / static_cast<double>(pixels);
         };
+        // the mean of a picture's channels: how light it is
+        const auto light = [](const gpu::Pixels& a) {
+            double sum = 0;
+            for (std::size_t i = 0; i + 3 < a.rgba.size(); i += 4) {
+                sum += int{a.rgba[i]} + a.rgba[i + 1] + a.rgba[i + 2];
+            }
+            const std::size_t pixels = a.rgba.size() / 4;
+            return sum / (3.0 * static_cast<double>(pixels));
+        };
         // then 1.2 km: each L14 fades in as it lands over the L12 the frame before drew there (kept under it, or still
         // drawn for another place), the two tiles' walls, roofs, trees, things, items and doors drawn each on its own
-        // range of the dither
+        // range of the dither; its sun's bits held back until every fade has ended, as on a phone, whose 0.18 s ends
+        // before a tile's bits come (here they come mid-fade or after, as lavapipe's frames go), so that the L14 fades
+        // in before its bits throughout, drawn by day, as the L12 is
+        scene::SunGlobals* sun = map.world()->sun();
+        ATLAS_REQUIRE(sun != nullptr, "the map's world has no sun");
+        sun->hold(true);
         cam.distance = 1'200.0;
         int frames = 0;
         int drawn = 0;
@@ -1076,10 +1093,12 @@ TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels 
         CHECK(cover.upright().size() == cover.tiles().size());
         // each fade starts from the stand-ins' picture, what stands up of the two tiles included, and ends at the
         // tiles' own: no frame shows the fading tile's buildings whole over its ground at its first fade, nor leaves
-        // out the buildings of the tile under it
+        // out the buildings of the tile under it (a dithered pixel shows the one picture or the other, the light the
+        // same throughout)
+        const gpu::Pixels day = last; // the L14 before its bits
         if (first && before) {
             const double start = mad(*first, *before);
-            const double end = mad(last, *before);
+            const double end = mad(day, *before);
             std::string steps;
             for (const double d : path) steps += std::format(" {:.3f}", d);
             MESSAGE(std::format("the first dithered frame {:.3f} from the stand-ins' picture, the last frame {:.3f}; "
@@ -1089,11 +1108,48 @@ TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels 
             for (std::size_t i = 1; i < path.size(); ++i) CHECK(path[i] >= path[i - 1] - 0.05);
             CHECK(std::ranges::all_of(path, [end](double d) { return d < end; }));
         }
+        // Then its bits, made meanwhile: the first frame that draws them draws the L14 by day still, and their
+        // shadows fall in over a swap's 0.3 s; before, the L14 was drawn in the shade until its bits came, darker than
+        // with them, and they showed at once.
+        sun->wait_idle();
+        sun->hold(false);
+        std::optional<gpu::Pixels> released;
+        std::vector<double> lights; // each frame's distance from the picture by day, as the shadows fall in
+        int lit_frames = 0;
+        bool lit = false;
+        const auto lit_until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        while (!lit && std::chrono::steady_clock::now() < lit_until) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            ++lit_frames;
+            last = read();
+            if (!released) released = last;
+            lights.push_back(mad(last, day));
+            lit = !sun->fading() && std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) {
+                return t.sun.has_value() && t.sun_weight >= 1.0F;
+            });
+        }
+        CHECK(lit);
+        if (released) {
+            std::string steps;
+            for (const double d : lights) steps += std::format(" {:.3f}", d);
+            const double shaded = mad(last, day);
+            MESSAGE(
+                std::format("the bits in {} frames, from the picture by day{}; the picture by day {:.2f} light, with "
+                            "the bits {:.2f}",
+                            lit_frames, steps, light(day), light(last)));
+            CHECK(shaded > 1.0);                     // the shadows fell
+            CHECK(mad(*released, day) < shaded / 4); // from by day, not at once
+            CHECK(light(day) > light(last));         // by day before them, never in the shade
+            for (std::size_t i = 1; i < lights.size(); ++i) CHECK(lights[i] >= lights[i - 1] - 0.05);
+        }
         if (!out.empty() && first && before) {
             CHECK(gpu::write_ppm(*before, (fs::path(out) / "standing_fade_before.ppm").string()));
             CHECK(gpu::write_ppm(*first, (fs::path(out) / "standing_fade_first.ppm").string()));
             CHECK(gpu::write_ppm(looks[looks.size() / 2], (fs::path(out) / "standing_fade_middle.ppm").string()));
-            CHECK(gpu::write_ppm(last, (fs::path(out) / "standing_fade_last.ppm").string()));
+            CHECK(gpu::write_ppm(day, (fs::path(out) / "standing_fade_last.ppm").string()));
+            if (released) CHECK(gpu::write_ppm(*released, (fs::path(out) / "standing_fade_released.ppm").string()));
+            CHECK(gpu::write_ppm(last, (fs::path(out) / "standing_fade_lit.ppm").string()));
         }
     }
     std::error_code ec;

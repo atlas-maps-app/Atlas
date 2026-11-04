@@ -172,8 +172,11 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     }
 
     // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
-    // buffer.
+    // buffer. A tile drawn before its first bits is drawn by day, and its first bits cross-fade from by day from their
+    // publication (FirstLight; every entry of a tile the same).
     const double t = now();
+    const bool holding = held_.load(std::memory_order_relaxed);
+    ++prepared_;
     std::vector<std::uint32_t> local(drawn.size(), no_sun);
     for (std::size_t i = 0; i < drawn.size(); ++i) {
         CoverTile& c = drawn[i];
@@ -185,14 +188,38 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
             }
         }
         if (lane == nullptr) continue; // a stand-in ancestor, or a pack without a lane: not in a scene
-        c.sun = lane->bits.view(c.drawn->key, t);
-        if (!c.sun) continue;
-        const auto base = static_cast<std::uint32_t>(texels_.size() / 2);
-        if (const auto w = lane->bits.texels(c.drawn->key, t, texels_)) {
-            local[i] = base;
-            c.sun_weight = static_cast<float>(*w);
-            if (*w < 1.0) fading_ = true;
+        std::optional<sun::TileView> view = holding ? std::nullopt : lane->bits.view(c.drawn->key, t);
+        const std::uint64_t key = c.drawn->key.packed();
+        if (!view) {
+            // by day until its bits come; bits lost mid-fade (the sun off, a hold) fade in anew from their return
+            FirstLight& f = lane->first_light[key];
+            f.seen = prepared_;
+            f.day.reset();
+            continue;
         }
+        if (const auto light = lane->first_light.find(key); light != lane->first_light.end()) {
+            FirstLight& f = light->second;
+            if (!f.day || f.day->count != view->now->count) {
+                if (!f.day) f.since = std::max(view->came, released_.load(std::memory_order_relaxed));
+                f.day = std::make_shared<const sun::TileBits>(sun::by_day(*view->now));
+            }
+            const double w = sun::fade_weight(f.since, t);
+            if (w < 1.0) {
+                f.seen = prepared_;
+                view = sun::TileView{.now = view->now, .before = f.day, .weight = w, .came = view->came};
+            } else {
+                lane->first_light.erase(light);
+            }
+        }
+        c.sun = std::move(view);
+        local[i] = static_cast<std::uint32_t>(texels_.size() / 2);
+        sun::texels_of(*c.sun, texels_);
+        c.sun_weight = static_cast<float>(c.sun->weight);
+        if (c.sun->weight < 1.0) fading_ = true;
+    }
+    // a tile the frame did not draw loses its mark, as the cover forgets its fade: drawn again, it fades in anew
+    for (Lane& l : lanes_) {
+        std::erase_if(l.first_light, [this](const auto& f) { return f.second.seen != prepared_; });
     }
     const std::size_t needed = texels_.size() / 2;
     last_texels_ = needed;
@@ -230,6 +257,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
         for (const auto& t : lane.held) lane.bits.forget(tiles::TileKey::unpack(t.first));
         lane.asked.clear();
         lane.held.clear();
+        lane.first_light.clear();
         lane.wanted.clear();
         lane.levels = {};
         lane.asked_others.clear();
@@ -244,6 +272,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
     // the other packs' solids near them.
     const sun::Bucket bucket = sun::bucket_of(state.theme);
     bool scene_changed = false;
+    bool wanted_more = false; // a tile resident that was not
     if (in.wanted != lane.wanted || in.level != lane.level || levels != lane.levels) {
         using Level = std::pair<std::uint64_t, std::uint8_t>;
         std::vector<Asked> asked;
@@ -278,6 +307,9 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
         for (const auto& [key, level] : lane.held) keep_or_forget(key, level);
         std::ranges::sort(held);
         scene_changed = asked != lane.asked;
+        // A tile of the halo resident now at the level the scene took it at leaves the scene as it was, but its bits
+        // are wanted now, and only the wanted tiles' are made (ask): asked again of the scene as built.
+        wanted_more = !std::ranges::includes(lane.wanted, in.wanted);
         lane.asked = std::move(asked);
         lane.held = std::move(held);
         lane.wanted = in.wanted;
@@ -288,7 +320,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state, const 
         lane.asked_others = lane.others;
         scene_changed = true;
     }
-    if (!lane.asked.empty() && (scene_changed || !lane.have_bucket || bucket.key != lane.bucket)) {
+    if (!lane.asked.empty() && (scene_changed || wanted_more || !lane.have_bucket || bucket.key != lane.bucket)) {
         Build b;
         b.pack = pack;
         b.tiles = lane.asked;

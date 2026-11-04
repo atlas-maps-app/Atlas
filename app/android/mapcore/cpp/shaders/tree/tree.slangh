@@ -66,8 +66,8 @@ static const uint TREE_JOB_VECTORS = 5u;
 
 /// No sun bits for the tile yet.
 static const uint TREE_NO_BITS = 0xFFFFFFFFu;
-/// A frame cell's level's tile without bits (the far level's, or one drawn before its first): its crowns lit whenever
-/// the sun is up, as every one is that no building shades.
+/// A tile without bits (a frame cell's far level's, or one drawn before its first): its crowns lit whenever the sun is
+/// up, as every one is that no building shades.
 static const uint TREE_DAY_BITS = 0xFFFFFFFEu;
 
 /// The tones' table (passes::tree_tones, per moment): the bark, the trunk's sunlit side, then each tint's (deciduous,
@@ -497,7 +497,7 @@ inline bool tree_segment_covers(float2 s, float2 a, float2 b, float half, uint c
 }
 
 /// How lit the crown draws (0 unlit, 1 lit): its sample's sun bit, cross-faded while its tile's bits change (K8's
-/// lit_amount); unlit at night and before its tile's first bits.
+/// lit_amount); unlit at night and without bits (TREE_NO_BITS: a tile drawn before its first has TREE_DAY_BITS).
 inline float tree_sun_amount(uint sample, uint2 texel, bool has, float weight, bool night) {
     if (night || !has) {
         return 0.0f;

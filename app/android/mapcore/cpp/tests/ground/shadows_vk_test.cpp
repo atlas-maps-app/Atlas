@@ -59,8 +59,12 @@ bool inside(const std::vector<std::array<double, 2>>& poly, double x, double y) 
     return w != 0;
 }
 
-/// The frames without their quay walls: their light changes with the sun's too.
-void no_quays(passes::Ground& g) { g.draw_quays(false); }
+/// The frames without their quay walls and the walls' reflections: their light changes with the sun's too, as the
+/// ground's world has no sun bits and a wall facing the sun is lit by day without them.
+void no_walls(passes::Ground& g) {
+    g.draw_quays(false);
+    g.draw_reflections(false);
+}
 
 } // namespace
 
@@ -105,10 +109,10 @@ TEST_CASE("ground: the shadows' union covers the twin's shadow paths, sample for
             }
             tiles = g.decided().tiles.size();
         },
-        40, no_quays);
+        40, no_walls);
     ATLAS_REQUIRE(a.has_value(), "the frame with the sun up was not drawn");
     CHECK(a->decided.shadows);
-    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam", {}, 40, no_quays);
+    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam", {}, 40, no_walls);
     ATLAS_REQUIRE(b.has_value(), "the frame with the sun set was not drawn");
     CHECK_FALSE(b->decided.shadows);
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
@@ -278,11 +282,11 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
         40,
         [](passes::Ground& g) {
             g.keep_soft_shadows(true);
-            g.draw_quays(false);
+            no_walls(g);
         },
         frame::Mode::full);
     ATLAS_REQUIRE(a.has_value(), "the frame with the sun up was not drawn");
-    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam", {}, 40, no_quays, frame::Mode::full);
+    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam", {}, 40, no_walls, frame::Mode::full);
     ATLAS_REQUIRE(b.has_value(), "the frame with the sun set was not drawn");
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
     REQUIRE(soft);
