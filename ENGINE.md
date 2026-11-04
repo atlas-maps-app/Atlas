@@ -1338,10 +1338,11 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
   - the core's builds that Gradle runs (`:mapcorecheck:coreHost`, `:mapcore`'s NDK build) take three jobs at once here and every core on CI; `-Patlas.jobs=<n>` or `ATLAS_JOBS=<n>` sets another number (the NDK build's Vulkan-Hpp units keep their own two);
   - `GRADLE_USER_HOME` on the Download volume;
   - `GRADLE_RO_DEP_CACHE=$HOME/.gradle/caches`.
-- **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time: the Mac has 14 GB and 8 cores.
+- **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time at the job counts above: the Mac is a virtual machine with 10 GiB of memory and 8 cores, and it swaps to its small main disk.
 - **zsh.** The shell is zsh, and a variable does not split into words. Use while-read loops or `--pathspec-from-file`.
 
 **Learned the hard way:**
+- **Memory runs out through the main disk.** macOS swaps to the main disk in 1 GiB files, so its free space is the memory's last reserve. On 4 November five sessions built at once (two C++ builds with 4 and 6 compile jobs, three Gradle builds, the GPU tests), and swap took the 3.4 GB left. At 13:48:31 UTC the kernel could not make another swap file (`vnode_setsize for swap files failed: 28`, no space left). It killed 412 idle processes for low swap within 45 seconds, freeing nothing, and the Mac stopped at 13:49:15 and came back at 13:54, every build and job cut. Keep to the job counts above and leave the main disk its room.
 - **Python's `min`, `max` and `round` go through pymath** (`pymath::min`, `pymath::max`, `pymath::round`), and Kotlin's through `pymath::java`. clang -O2 on arm64 turns a select against zero into `fminnm`, which orders -0.0 below +0.0.
 - **No specialization constants in shaders.** PowerVR's compiler crashed on one; a variant is its own module.
 - **Use `SV_VulkanVertexID` and `SV_VulkanInstanceID`,** never `SV_VertexID` or `SV_InstanceID`: Slang's x86_64 build emitted different bytes for those.
