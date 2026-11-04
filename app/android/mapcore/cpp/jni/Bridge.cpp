@@ -373,6 +373,12 @@ public:
         });
     }
 
+    /// The kept walls' and near cells' shape records for the map from now on, on (the default) or off (VK bench's
+    /// comparison of the two): "" where its buildings draw from them, else why they cannot or not yet.
+    [[nodiscard]] std::string shape_records(bool on) {
+        return on_session([this, on] { return map_->set_shape_records(on); });
+    }
+
     /// The app's labels for the map from now on (null: none).
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
@@ -1282,6 +1288,15 @@ void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze,
     if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
 }
 
+/// The kept walls' and near cells' shape records for the map from now on, `on` (the default) or off, each kept wall
+/// then decided at each point (frame/MapFrame.hpp's set_shape_records, for VK bench): "" where its buildings draw from
+/// them, else why they cannot or not yet.
+jstring native_shape_records(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    return java(env, core->shape_records(on == JNI_TRUE));
+}
+
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
 /// read_label_block: each label at its own size and at the band's top), at `revision`, drawn no smaller than `least` of
 /// their own size; an empty block takes them away.
@@ -1541,8 +1556,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 55>& methods() {
-    static const std::array<JNINativeMethod, 55> table{{
+const std::array<JNINativeMethod, 56>& methods() {
+    static const std::array<JNINativeMethod, 56> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1602,6 +1617,7 @@ const std::array<JNINativeMethod, 55>& methods() {
         method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
         method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
+        method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
