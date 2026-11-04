@@ -42,7 +42,8 @@
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
 #
 # Fails (exit 1) on a crash (a native one symbolised with ndk-stack from the APK's own unstripped libraries), "a frame
-# failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a `vk guard` line outside the planted-crash case (a marker the guard
+# failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a log a check reads not had
+# whole ("DUMP FAILED"), a `vk guard` line outside the planted-crash case (a marker the guard
 # discarded because its process was stopped, not crashed, `vk guard: … not counted`, is reported, not failed), a guest
 # without a Vulkan device, a VK bench that does not finish within 900 s, exceeds configuration C's graphics ceiling,
 # lacks a line for a path of the map or the triangle governor's bias 0 on one (world72's bias, whatever it is), loses its
@@ -117,6 +118,53 @@ if [ -n "$LIMIT" ]; then
   trap 'kill $WATCHDOG 2>/dev/null' EXIT
 fi
 
+# The device dropping off for a moment. On 4 November the emulator's device went offline for a few seconds in the vk
+# part of two runs (41746278806 and 41752266121): the commands of those seconds failed at once ("adb: device offline")
+# and the run went on without them, so the map's phase failed on lines the app was never launched to log, or read a log
+# the drop cut short. adb refuses a command for a device not there before the command reaches it, so such a command is
+# run again once the device is back (`adb reconnect offline`, then up to 120 s for it, where `timeout` is there), which
+# runs it once; the job's log says so. A device still not there fails the command as before (and the watchdog ends the
+# run after 5 minutes). The watchdog's own calls and `$LIMIT adb` run adb itself.
+exec 3>&2
+adb() {
+  local err rc gone
+  err=$(mktemp)
+  command adb "$@" 2> "$err"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q -E "^(adb|error): (device offline|no devices/emulators found|device '.*' not found|device still connecting)\$" "$err"; then
+    gone=$SECONDS
+    command adb reconnect offline > /dev/null 2>&1
+    if { if [ -n "$LIMIT" ]; then timeout 120 adb wait-for-device 2> /dev/null; else command adb wait-for-device; fi; }; then
+      echo "::warning::smoke.sh: adb $* met '$(tail -n 1 "$err")': the device was back $((SECONDS - gone)) s later, and the command ran then" >&3
+      command adb "$@" 2> "$err"; rc=$?
+    else
+      echo "::warning::smoke.sh: adb $* met '$(tail -n 1 "$err")', and the device was not back in $((SECONDS - gone)) s" >&3
+    fi
+  fi
+  cat "$err" >&2; rm -f "$err"
+  return $rc
+}
+
+# The device's log (`logcat -d` with the arguments $@), whole: on the device the dump ends with a line of its own once
+# logcat is done, so one the device's dropping off cut short (run 41752266121's map-transition.txt came empty) is told
+# from a whole one and taken again. One not had whole in three tries fails the run ("DUMP FAILED", at the end: this runs
+# in the checks' pipelines), since a check of a log cut short could pass for want of the lines it looks for.
+logcat_dump() {
+  local file try
+  file=$(mktemp)
+  for try in 1 2 3; do
+    adb shell "logcat -d $* && echo atlas-dump-end" | tr -d '\r' > "$file"
+    if [ "$(tail -n 1 "$file")" = atlas-dump-end ]; then
+      sed '$d' "$file"; rm -f "$file"; return 0
+    fi
+    echo "::warning::smoke.sh: logcat -d $* came cut short (try $try of 3)" >&3
+    sleep 2
+  done
+  rm -f "$file"
+  echo "DUMP FAILED: logcat -d $* not had whole in 3 tries" >&3
+  echo "logcat -d $*" >> "$OUT/.dumps-failed"
+  return 1
+}
+
 # --- helpers ---------------------------------------------------------------------------------------------------------
 
 # Installs APK $1 over what is there, or, signed with another key, in its place.
@@ -131,9 +179,9 @@ fresh_state() {
 }
 
 # The AtlasMap lines logged since marker $1 (threadtime format: date, time, pid, tid, level, tag, message).
-since_marker() { adb logcat -d -v threadtime -s AtlasMap:I | tr -d '\r' | sed -n "/run-marker $1\$/,\$p"; }
+since_marker() { logcat_dump -v threadtime -s AtlasMap:I | sed -n "/run-marker $1\$/,\$p"; }
 # every tag since the marker (the system's ANR lines are not under AtlasMap)
-since_marker_all() { adb logcat -d -v threadtime | tr -d '\r' | sed -n "/run-marker $1\$/,\$p"; }
+since_marker_all() { logcat_dump -v threadtime | sed -n "/run-marker $1\$/,\$p"; }
 
 # How many finished frames (or the last filter probe) are logged since marker $1: today's map's, or the core's first.
 frames_since() { since_marker "$1" | grep -c -e "drawn in" -e "filter probe sblur" -e "vk first frame"; }
@@ -259,8 +307,8 @@ measure() {
   elif grep -q "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt"; then
     echo "vk guard on $s ($run): $(grep -m1 -o 'vk guard: .*' "$OUT/$s.$run.atlasmap.txt")"
   fi
-  if adb logcat -d -b crash | grep -q "$PKG"; then
-    echo "CRASH on $s ($run)"; adb logcat -d -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
+  if logcat_dump -b crash | grep -q "$PKG"; then
+    echo "CRASH on $s ($run)"; logcat_dump -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
     native_trace "$OUT/$s.$run.crash.txt" "$OUT/$s.$run.native.txt"
     adb logcat -c
   fi
@@ -393,8 +441,8 @@ vk_launch() {
 
 # The crash buffer after a run: a crash fails (and is symbolised), unless $2 says it was planted.
 vk_crashes() {
-  if adb logcat -d -b crash | grep -q "$PKG"; then
-    adb logcat -d -b crash > "$OUT/$1.crash.txt"
+  if logcat_dump -b crash | grep -q "$PKG"; then
+    logcat_dump -b crash > "$OUT/$1.crash.txt"
     if [ "${2:-}" = planted ]; then
       echo "planted crash ($1): $(grep -m1 -o 'Abort message: .*' "$OUT/$1.crash.txt" || echo 'the process died')"
     else
@@ -1108,5 +1156,9 @@ else
   grep -v -x truth "$OUT/phases.txt" > "$OUT/phases.new"; mv "$OUT/phases.new" "$OUT/phases.txt"
   RUNS="debug-first"
   for s in home filters; do [ -f "$OUT/$s.debug-first.atlasmap.txt" ] && compose "$s"; done
+fi
+if [ -s "$OUT/.dumps-failed" ]; then
+  echo "DUMP FAILED: $(wc -l < "$OUT/.dumps-failed") dumps of the device's log were not had whole:"; sort "$OUT/.dumps-failed" | uniq -c
+  FAIL=1
 fi
 exit $FAIL
