@@ -25,8 +25,9 @@ class RobolectricAndroidAll(@get:InputFiles @get:PathSensitive(PathSensitivity.N
 
 val robolectricAndroidAll = libs.robolectric.android.all
 // The configurations testDependencies fetches: the Android modules' debug unit tests' (the variant CI tests), the JVM
-// modules' tests', their Kotlin compiler plugins' and Robolectric's Android.
-val testedConfigurations = Regex("^(debugUnitTest|test)[A-Z].*Classpath$|^kotlinCompilerPluginClasspath(DebugUnitTest|Test)$|^robolectricAndroidAll$")
+// modules' tests', their Kotlin compiler plugins', Robolectric's Android and the app's JVM SQLite, whose native library
+// its tests load (sqliteJvm, app/build.gradle.kts; unit-app fetched its kotlin-stdlib 2.1.20 itself on 4 November).
+val testedConfigurations = Regex("^(debugUnitTest|test)[A-Z].*Classpath$|^kotlinCompilerPluginClasspath(DebugUnitTest|Test)$|^robolectricAndroidAll$|^sqliteJvm$")
 subprojects {
     afterEvaluate {
         if (configurations.findByName("testImplementation")?.dependencies?.any { it.group == "org.robolectric" } != true) return@afterEvaluate
