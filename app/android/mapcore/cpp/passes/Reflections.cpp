@@ -667,7 +667,8 @@ void Ground::decide_reflections(const frame::FrameState& state) {
                 const geo::V3 mid{(a.x + bb.x) / 2, hd.mid_y, (a.z + bb.z) / 2};
                 if (geo::vdot(nrm, geo::vsub(eye, mid)) <= 0) continue;
                 const bool toward = !night && geo::vdot(nrm, light) > 0;
-                const bool lit = toward && sampled && sun_bit(t, at);
+                // without its samples (its tile drawn before its first bits) lit by day, never as if in the shade
+                const bool lit = toward && (!sampled || sun_bit(t, at));
                 if (own.made[wi] != k.generation) {
                     // its colours in the moment's light, once a moment
                     own.lit[wi] = mirrored(theme, m.wall, nrm, toward, dk);

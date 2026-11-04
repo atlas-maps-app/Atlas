@@ -1066,14 +1066,18 @@ inline float2 building_outline(BuildingShape s, uint v, float r) {
 }
 
 /// How lit a face draws (0 unlit, 1 lit): by its sample's sun bit, cross-faded while its tile's bits change (K8's
-/// lit_amount); a face lit by day is always lit (its unlit and lit colours are the same at night), and a level's face
-/// where its tile has no bits.
+/// lit_amount); a face lit by day is always lit (its unlit and lit colours are the same at night), and so is a face
+/// with a sample, or a level's, where its tile has no bits yet (by day: never as if in the shade before them). A face
+/// without a sample is unlit, with bits or without.
 inline float building_sun_amount(uint face_flags, uint sample, uint2 texel, uint has_bits, float weight) {
     if ((face_flags & BUILDING_FACE_DAY) != 0u || ((face_flags & BUILDING_FACE_LEVEL) != 0u && has_bits == 0u)) {
         return 1.0f;
     }
-    if (has_bits == 0u || sample == BUILDING_NO_SAMPLE) {
+    if (sample == BUILDING_NO_SAMPLE) {
         return 0.0f;
+    }
+    if (has_bits == 0u) {
+        return 1.0f;
     }
     uint now = (texel.x >> (sample & 31u)) & 1u;
     uint before = (texel.y >> (sample & 31u)) & 1u;

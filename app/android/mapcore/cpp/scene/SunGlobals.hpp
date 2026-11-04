@@ -30,7 +30,11 @@
 // and CoverTile::sun_base and sun_weight say where they begin (in texels from the buffer's start) and how far the swap
 // has faded. The buffer is set 1's sun_bits; it changes, and set 1 with it, only when it grows (the old one kept until
 // the frames that read it have finished). A tile drawn before its first bits (or a stand-in ancestor, which the scene
-// does not hold) has sun_base no_sun.
+// does not hold) has sun_base no_sun, and is drawn by day, as a level's tile without bits: its faces as they face the
+// sun, its crowns lit, never as if in the shade, so that it fades in over the tile it takes over from (lit by day too
+// where that is a level's) in the same light. Its first bits cross-fade from by day (sun::by_day: every sample lit)
+// over a swap's 300 ms from their publication, as a swap does, so its shadows fall in rather than pop; a tile whose
+// first bits came before its first frame shows them at once.
 #pragma once
 
 #include "frame/Globals.hpp"
@@ -49,12 +53,14 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -127,6 +133,11 @@ public:
     }
     /// Whether a tile the cover drew last frame is still cross-fading its bits.
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+    /// Draws every tile as before its first bits while `held`, the bits made and published meanwhile, which come as the
+    /// hold ends (tests: bits that come after a tile's fade, as on a phone, however fast the workers here).
+    void hold(bool held) {
+        if (held_.exchange(held, std::memory_order_relaxed) && !held) released_.store(now(), std::memory_order_relaxed);
+    }
     /// A lane's role this frame: the active pack's, the coarser pack's, a neighbour's.
     enum class LaneOf : std::uint8_t { active = 0, coarser = 1, neighbour = 2 };
     /// The bits, as the workers publish them, of the lane in role `lane` (the first neighbour's for a neighbour; the
@@ -196,6 +207,14 @@ private:
         bool active = false; ///< the active pack's: its bucket runs on all the sun's threads
     };
 
+    /// A tile drawn before its first bits (by day): the frame that last drew it, and once its bits come, when they came
+    /// (their publication, or a hold's end) and its bits by day, which they cross-fade from.
+    struct FirstLight {
+        std::uint64_t seen = 0;
+        double since = 0;
+        std::shared_ptr<const sun::TileBits> day; ///< null until its bits come, and again from a frame without them
+    };
+
     /// One pack's sun: its bits and worker, the render thread's view of its scene, and the builder's.
     struct Lane {
         sun::BitTiles bits;
@@ -212,6 +231,8 @@ private:
         std::vector<std::pair<std::uint64_t, std::uint8_t>> held;
         std::vector<Other> others;       ///< the other packs' solids to hold, sorted
         std::vector<Other> asked_others; ///< those its scene was last asked with
+        /// Its tiles drawn last frame before their first bits, or cross-fading from by day to them (packed key).
+        std::unordered_map<std::uint64_t, FirstLight> first_light;
         std::uint8_t level = 0;
         std::uint64_t bucket = 0;
         bool have_bucket = false;
@@ -275,6 +296,9 @@ private:
     std::size_t capacity_ = 0;                                   ///< texels per half
     std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; ///< old buffers and the last frame that read them
     bool fading_ = false;
+    std::uint64_t prepared_ = 0; ///< the frames prepared (FirstLight::seen)
+    std::atomic<bool> held_{false};
+    std::atomic<double> released_{-std::numeric_limits<double>::infinity()}; ///< the last hold's end
     std::size_t last_texels_ = 0;
     double others_ms_ = 0;
 

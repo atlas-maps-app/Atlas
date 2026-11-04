@@ -19,6 +19,7 @@
 #include "osm/Overpass.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
+#include "sun/BitTiles.hpp"
 #include "sun/Samples.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -737,9 +738,55 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     MESSAGE(w.residency().resident().size() << " resident tiles hold " << native << " native bytes");
 
     // The sun: its scene the resident tiles and their halo, its bits published, every drawn tile's texels in the frame
-    // slot's half of its buffer, as BitTiles gives them.
+    // slot's half of its buffer, as BitTiles gives them. The tiles were drawn before their first bits, by day, so the
+    // bits fade in from by day over 300 ms from their publication: at the time they came (the clock has stood still
+    // since), every sample lit in G, the bits in R, at weight 0.
     REQUIRE(w.sun() != nullptr);
     w.sun()->wait_idle();
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    // a tile's texels in the frame slot's half: its bits at weight 0 from by day
+    const auto from_day = [&w](const scene::CoverTile& t) {
+        std::vector<std::uint32_t> want;
+        sun::texels_of({.now = t.sun->now,
+                        .before = std::make_shared<const sun::TileBits>(sun::by_day(*t.sun->now)),
+                        .weight = 0.0},
+                       want);
+        const std::span<const std::byte> bytes = w.sun()->buffer().bytes();
+        return bytes.size() >= (std::size_t{t.sun_base} * 8) + (want.size() * 4) &&
+               std::memcmp(bytes.data() + (std::size_t{t.sun_base} * 8), want.data(), want.size() * 4) == 0;
+    };
+    std::size_t first_light = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z || !t.sun || t.sun_weight >= 1.0F) continue;
+        CHECK(t.sun_weight == 0.0F);
+        REQUIRE(t.sun_base != scene::no_sun);
+        CHECK(from_day(t));
+        ++first_light;
+    }
+    CHECK(first_light > 0);
+    // Bits lost mid-fade (the sun off, or held) and back a second on fade in anew from their return, drawn by day
+    // meanwhile: at weight 0 again, not whole at once as the fade they cut short would have them.
+    w.sun()->hold(true);
+    ATLAS_REQUIRE((*builder)->derive(61, 1, nullptr));
+    w.update((*builder)->state());
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z == t.key.z) CHECK_FALSE(t.sun.has_value());
+    }
+    now += 1.0;
+    w.sun()->hold(false);
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    std::size_t again = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue;
+        REQUIRE(t.sun.has_value());
+        CHECK(t.sun_weight == 0.0F);
+        REQUIRE(t.sun_base != scene::no_sun);
+        CHECK(from_day(t));
+        ++again;
+    }
+    CHECK(again >= first_light);
     now += 1.0; // past every fade
     ATLAS_REQUIRE((*builder)->derive(61, 1, nullptr));
     w.update((*builder)->state());
@@ -769,7 +816,8 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(lit_tiles > 0);
     MESSAGE("the sun: " << sun_stats.scenes << " scene(s) of " << sun_stats.tiles << " tiles (" << sun_stats.resident
                         << " resident) in " << sun_stats.scene_ms << " ms, " << sun_stats.runs << " run(s), "
-                        << w.sun()->stats().texels << " texels this frame for " << lit_tiles << " drawn tiles");
+                        << w.sun()->stats().texels << " texels this frame for " << lit_tiles << " drawn tiles, "
+                        << first_light << " of them faded in from by day, " << again << " again after a hold");
     // Later frames: the fade completes, nothing more is asked for the same view.
     for (std::uint64_t n = 41; n <= 60; ++n) {
         now = static_cast<double>(n) * 0.016;
