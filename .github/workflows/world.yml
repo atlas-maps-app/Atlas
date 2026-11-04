@@ -9,7 +9,7 @@
 #   those free hosts again; with land=<a draft's tag>, the land polygons that draft holds stand in for osmdata's, the
 #   run's summary and the draft's notes naming the copy's date and SHA-256;
 # - filter: the area's extract and its MD5, `osmium tags-filter` to the profile's tags (the raw file deleted), then
-#   `osmium extract` into every region, five a pass, each region into the draft;
+#   `osmium extract` into every region, two a pass, each region into the draft;
 # - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
 #   (world-mid-<region>.000, …) and its coarse tiles, index and numbers handed on through the draft;
 # - globe: `packer globe`, world-globe.atlas;
@@ -185,7 +185,10 @@ jobs:
               echo "weights: the sizes of $(jq '.features | length' "$RUNNER_TEMP/sizes.geojson") extracts in $AREA"
             fi
           fi
-          "$PACKER" world-plan "$P/$NAME.geojson" "$P" --regions "$REGIONS" --group 5 --margin 0.2 "${WEIGHTS[@]}"
+          # two regions an extract's pass: osmium's smart strategy keeps sets of the IDs over the whole planet's range
+          # for each region, several GB each from Europe, and Europe's first run (41777009995, 4 November) lost its
+          # 16 GB runner 47 minutes into a pass of five
+          "$PACKER" world-plan "$P/$NAME.geojson" "$P" --regions "$REGIONS" --group 2 --margin 0.2 "${WEIGHTS[@]}"
           "$PACKER" world-tags > "$P/tags.txt"
           cat "$P/tags.txt"
           {
@@ -359,7 +362,8 @@ jobs:
             # is given the extract's, which every pack and world.json go by
             jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$cfg" > "$cfg.dated"
             # each region's box and margin, with whole ways and multipolygons where they cross its edge
-            time osmium extract -c "$cfg.dated" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
+            # (verbose: its passes' times and its peak memory in the log)
+            time osmium extract -v -c "$cfg.dated" -s smart -d "$CUT" -O "$SMALL/filtered.osm.pbf"
             for f in "$CUT"/scratch-r*.osm.pbf; do
               if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
               echo "- ${f##*/}: $(stat -c %s "$f") bytes" >> "$GITHUB_STEP_SUMMARY"
