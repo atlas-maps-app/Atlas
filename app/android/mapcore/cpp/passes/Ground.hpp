@@ -108,6 +108,9 @@ inline constexpr std::uint32_t near_clip = 32;  ///< stroke_vs: fixed widths fro
 /// fill_vs: the streets' own draw (the app's map): each off a bridge as wide as its way, the stencil keeping it off the
 /// water; without it, under `wide`, such a street is left to that draw
 inline constexpr std::uint32_t streets = 64;
+/// street_vs and fill_fading_vs: a street narrower on the screen than 1.5 device px drawn 1.5 px wide at the share of
+/// them it covers (ground.slang's least_point; the app's map, with `wide`)
+inline constexpr std::uint32_t least = 128;
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -938,6 +941,10 @@ public:
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
+    /// The tests' look without the fills of some kinds (bit k: geometry::FillKind k): from the next frame on their
+    /// fills are not drawn, every other decision as it was (a kind's share of a picture,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_FILLS_OFF).
+    void leave_out_fills(std::uint32_t kinds) noexcept { left_out_fills_ = kinds; }
     /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
     /// the shadows do).
     void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
@@ -970,6 +977,10 @@ public:
     /// what it reads alone: the base a measure holds the kept results to, tests/frame/pinch_audit_vk_test.cpp's
     /// ATLAS_PINCH_RIPPLE).
     void make_ripple_always(bool always) noexcept { ripple_always_ = always; }
+    /// The tests' switch: the app's map's streets narrower on the screen than 1.5 device px drawn 1.5 px wide at their
+    /// share of them (ground.slang's least_point), else at their own width (on by default; the far flicker's measure,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST).
+    void draw_least_width(bool draw) noexcept { least_width_ = draw; }
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
@@ -1066,7 +1077,13 @@ private:
     [[nodiscard]] gpu::Result<void> make_shadow_pipelines(const frame::PassContext& context, Pipelines& p) const;
     void write_words(const frame::FrameState& state);
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
+    /// The fills above the water (`above`: in the app's map but its streets) or the land, top first at their painter
+    /// depth, of the tiles not fading in.
     void record_fills(const frame::Recording& r, bool above);
+    /// The app's map's streets, after the land and the water: each over what lies under it at its coverage
+    /// (ground.slang's colour_over_fs, 1 but where the least width draws a street narrower than 1.5 device px), so
+    /// first those off a bridge where the stencil holds no water at the street, then those on a bridge over the water.
+    void record_streets(const frame::Recording& r);
     /// The fills of the tiles fading in (ENGINE.md's fades), coarse to fine, after the opaque phase's: each sample
     /// takes its tile's topmost fill alone at the tile's fade over what lies under it, written at that fill's depth.
     void record_fading_fills(const frame::Recording& r);
@@ -1090,11 +1107,15 @@ private:
     void water_screen(const frame::Recording& r, const vk::raii::Pipeline& pipeline, std::array<float, 4> rows,
                       std::array<std::uint32_t, 4> colour) const;
     /// The water's rings at the street counted in the stencil (with weather, w0's bit set where the count is not zero),
-    /// before the fills above the water, so that the app's map's streets keep off it (record_fills).
+    /// before the fills above the water, so that the app's map's streets keep off it (record_streets).
     void record_water_count(const frame::Recording& r);
+    /// The water's surface: with weather wgrad where its rings at their level count, without th['water'] where the
+    /// count is not zero, the count kept for the app's map's streets (record_streets).
     void record_water_opaque(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
-    void record_water_end(const frame::Recording& r);
+    /// The water's clip cleared from the stencil: with weather (`weather`) after the water's elements, without after
+    /// the app's map's streets, for which the water's plain draw keeps its count.
+    void record_water_end(const frame::Recording& r, bool weather);
     void emit_water(const frame::FrameState& state, twin::Stream& out) const;
     // Sky.cpp
     void decide_sky(const view::Camera& cam, const frame::FrameState& state);
@@ -1268,6 +1289,8 @@ private:
     bool keep_soft_ = false;
     bool drew_soft_ = false;
     bool only_setts_ = false;
+    std::uint32_t left_out_fills_ = 0;
+    bool least_width_ = true;
     bool no_quays_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
@@ -1347,7 +1370,10 @@ struct Ground::Pipelines {
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
-    vk::raii::Pipeline fill_streets{nullptr}; ///< the app's map's streets: where the stencil holds no water
+    /// The app's map's streets over what lies under them (record_streets): off a bridge where the stencil holds no
+    /// water, and on a bridge over it.
+    vk::raii::Pipeline fill_streets{nullptr};
+    vk::raii::Pipeline fill_bridges{nullptr};
     vk::raii::Pipeline fill_fading{nullptr};
     vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
     vk::raii::Pipeline plate{nullptr};

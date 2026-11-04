@@ -20,7 +20,11 @@
 // as wide as its way there (each its mirror's words on) and from the frame's bottom edge on, their segments through the
 // near plane kept (GROUND_NEAR_CLIP), where engine mode lays them at the edges of the renders' street and leaves those
 // segments out, as the renders' path does; and its railings stand (with weather) at its street's edges in either kind
-// of frame, though the window holds no street furniture (geometry/Things.cpp's build_things).
+// of frame, though the window holds no street furniture (geometry/Things.cpp's build_things). And a street narrower on
+// the screen than 1.5 device px (from 4 km at 75°, the sett street some 1.3 px) is drawn 1.5 px wide at the share of
+// them it covers (ground.slang's least_point): each column across it as much ink as it is wide, within 6 % where at its
+// own width the samples miss by up to 16 %, no pixel holding more than its share, every pixel it changes within 0.75 px
+// and a pixel of the street's middle, and the wider streets' pixels as they were.
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -212,10 +216,12 @@ style::ThemeBlock dry() {
 }
 
 /// The window drawn by the ground alone (and the street furniture where `things`) at `camera` (in the app's map unless
-/// in engine mode) at `theme`, until its tile is built and faded in.
+/// in engine mode) at `theme`, until its tile is built and faded in; without the fills of the kinds `fills_off` (bit k:
+/// geometry::FillKind k), its thin streets at their own width unless `least` (Ground::draw_least_width).
 std::optional<WindowDraw> draw_window(const test::Session& session, const std::string& path,
                                       const style::CameraState& camera, const Collect& collect,
-                                      const style::ThemeBlock& theme = test::sunny(), bool things = false) {
+                                      const style::ThemeBlock& theme = test::sunny(), bool things = false,
+                                      std::uint32_t fills_off = 0, bool least = true) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -224,6 +230,9 @@ std::optional<WindowDraw> draw_window(const test::Session& session, const std::s
     std::vector<std::unique_ptr<frame::Pass>> passes =
         things ? frame::make_passes(with_things) : frame::make_passes(ground_only);
     passes::Ground* g = test::ground_of(passes);
+    if (g == nullptr) return std::nullopt;
+    g->leave_out_fills(fills_off);
+    g->draw_least_width(least);
     auto builder =
         frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0, .grain = false, .grounded = true});
     if (!builder) return std::nullopt;
@@ -527,6 +536,106 @@ std::vector<geo::P2> centre_of(const geo::GroundTile& g, const geo::Fill& f) {
         out.push_back({.x = (p.x + m.x) / 2, .z = (p.z + m.z) / 2});
     }
     return out;
+}
+
+/// A street's pieces on the screen as the app's map lays it, as wide as its way: between each two of its ribbon's
+/// cross-sections their middles (device px) and half its width there across its direction on the screen, its way's
+/// sides each projected (none where a side reaches the near plane).
+std::vector<Piece> street_pieces(const view::Camera& cam, const geo::GroundTile& g, const geo::Fill& f,
+                                 double density) {
+    std::vector<Piece> out;
+    const std::uint32_t m = f.count / 2;
+    if (m < 2) return out;
+    std::vector<std::array<double, 2>> middle(m);
+    std::vector<std::array<double, 2>> side(m);
+    for (std::uint32_t i = 0; i < m; ++i) {
+        const geo::P2& l = g.points[f.first + i];
+        const geo::P2& r = g.points[f.first + f.count - 1 - i];
+        // each ribbon point twice as far from the centreline (ground.slang's wide_point)
+        const view::Vec3 ka = cam.cam({(1.5 * l.x) - (0.5 * r.x), f.y, (1.5 * l.z) - (0.5 * r.z)});
+        const view::Vec3 kb = cam.cam({(1.5 * r.x) - (0.5 * l.x), f.y, (1.5 * r.z) - (0.5 * l.z)});
+        if (ka.z <= cam.near() || kb.z <= cam.near()) return {};
+        const view::Vec2 a = cam.pc(ka);
+        const view::Vec2 b = cam.pc(kb);
+        middle[i] = {(a.x + b.x) * density / 2, (a.y + b.y) * density / 2};
+        side[i] = {(a.x - b.x) * density, (a.y - b.y) * density};
+    }
+    std::vector<double> width(m);
+    for (std::uint32_t i = 0; i < m; ++i) {
+        const std::array<double, 2>& p = middle[i + 1 < m ? i : i - 1];
+        const std::array<double, 2>& q = middle[i + 1 < m ? i + 1 : i];
+        const double dl = pymath::hypot(q[0] - p[0], q[1] - p[1]);
+        width[i] = dl > 0 ? std::abs((side[i][0] * (q[1] - p[1])) - (side[i][1] * (q[0] - p[0]))) / dl : 0.0;
+    }
+    for (std::uint32_t i = 0; i + 1 < m; ++i) {
+        out.push_back({.a = middle[i], .b = middle[i + 1], .ha = width[i] / 2, .hb = width[i + 1] / 2});
+    }
+    return out;
+}
+
+/// A street's ink across it, column by column where it lies across the screen, at most 4 device px wide and a few px
+/// from its pieces' ends: in each column the coverage its pixels show (each pixel's change from the frame without it,
+/// toward its paint, as a share of the way there) summed down it, against the length the column crosses of it; those
+/// off by over 15 % and 0.15 px, and the worst share. Of its columns narrower than 1.5 px: those whose ink lies in one
+/// pixel alone, and the most a pixel covers of it over its width's share of 1.5.
+struct StreetInk {
+    std::size_t columns = 0;
+    std::size_t off = 0;
+    double worst = 0;
+    std::size_t thin = 0;
+    std::size_t one_pixel = 0;
+    double most = 0;
+};
+
+StreetInk street_ink(const gpu::Pixels& with, const gpu::Pixels& without, const std::vector<Piece>& pieces,
+                     const geo::Rgba& paint) {
+    StreetInk ink;
+    const std::uint32_t w = with.width;
+    const std::uint32_t h = with.height;
+    const std::array<double, 3> to{static_cast<double>(paint.r), static_cast<double>(paint.g),
+                                   static_cast<double>(paint.b)};
+    for (const Piece& p : pieces) {
+        const double dx = p.b[0] - p.a[0];
+        const double dy = p.b[1] - p.a[1];
+        if (std::abs(dx) <= std::abs(dy)) continue;
+        const double cross = pymath::hypot(dx, dy) / std::abs(dx);
+        const double x0 = std::max(std::min(p.a[0], p.b[0]) + 3.0, 0.0);
+        const double x1 = std::min(std::max(p.a[0], p.b[0]) - 3.0, static_cast<double>(w));
+        for (auto x = static_cast<std::int64_t>(std::ceil(x0)); static_cast<double>(x) + 1.0 <= x1; ++x) {
+            const double t = (static_cast<double>(x) + 0.5 - p.a[0]) / dx;
+            const double width = 2 * (p.ha + ((p.hb - p.ha) * t));
+            const double cy = p.a[1] + (dy * t);
+            if (width > 4.0 || cy < 12.0 || cy + 12.0 >= static_cast<double>(h)) continue;
+            double sum = 0;
+            double top = 0;
+            std::size_t inked = 0;
+            for (auto y = static_cast<std::int64_t>(cy) - 12; y <= static_cast<std::int64_t>(cy) + 12; ++y) {
+                const std::size_t i = (static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x);
+                double along = 0;
+                double span = 0;
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const double under = without.rgba[(i * 4) + k];
+                    along += (static_cast<double>(with.rgba[(i * 4) + k]) - under) * (to.at(k) - under);
+                    span += (to.at(k) - under) * (to.at(k) - under);
+                }
+                const double c = span > 0 ? along / span : 0.0;
+                sum += c;
+                top = std::max(top, c);
+                if (c > 0.05) ++inked;
+            }
+            ++ink.columns;
+            const double length = width * cross;
+            const double miss = std::abs(sum - length);
+            ink.worst = std::max(ink.worst, miss / length);
+            if (miss > (0.15 * length) + 0.15) ++ink.off;
+            if (width < 1.5) {
+                ++ink.thin;
+                if (inked < 2) ++ink.one_pixel;
+                ink.most = std::max(ink.most, top / (width / 1.5));
+            }
+        }
+    }
+    return ink;
 }
 
 /// How far a run's ink reaches across its baseline from its anchor, in its units (a designator's: metres).
@@ -1280,6 +1389,121 @@ TEST_CASE("ground: in the app's map a street is as wide as its way on the land a
             CHECK(half.on == half.samples);
         }
     }
+}
+
+TEST_CASE("ground: in the app's map a street narrower on the screen than 1.5 device px is drawn 1.5 px wide at the "
+          "share of them it covers, as much ink across it as it is wide; a wider street as it was") {
+    auto session = test::open_session();
+    if (!session) return;
+    const std::string path = markings_window();
+    ATLAS_REQUIRE(!path.empty());
+    // looking east across the sett street and its bridge from 4 km at 75° while the camera moves (no snap): their
+    // 1,328 m across the frame, the way's 5.5 m foreshortened to some 1.3 device px; the canal's street 815 m nearer
+    // some 2 px. The streets alone: no lines, courses, names, quay walls, shadows or elements on the water
+    style::CameraState camera = test::moving(test::s1_camera(lats[2], street_lon, 90.0, 75.0, 4000.0));
+    camera.flags &= ~style::camera_flag::engine_mode;
+    namespace part = style::camera_part;
+    camera.parts = part::ground_lines | part::setts | part::ground_text | part::quays | part::building_shadows |
+                   part::park_shadows | part::cloud_shadows | part::reflections | part::ripple | part::glitter |
+                   part::rings | part::glints | part::water_streaks;
+    // the streets' pieces: of each street under 1.5 px wide at both ends, with its paint, and of the rest
+    std::vector<std::pair<geo::Rgba, std::vector<Piece>>> thin;
+    std::vector<Piece> wide;
+    const auto streets = [&](const passes::GroundFrame& decided, double density, WindowDraw&) {
+        thin.clear();
+        wide.clear();
+        for (const passes::DrawnTile& t : decided.tiles) {
+            for (const geo::Fill& f : t.ground->fills) {
+                if (f.kind != geo::FillKind::road) continue;
+                std::vector<Piece> narrow;
+                for (const Piece& p : street_pieces(*t.cam, *t.ground, f, density)) {
+                    if (2 * std::max(p.ha, p.hb) < 1.5) {
+                        narrow.push_back(p);
+                    } else {
+                        wide.push_back(p);
+                    }
+                }
+                if (!narrow.empty()) thin.emplace_back(f.paint.day, std::move(narrow));
+            }
+        }
+    };
+    const auto with = draw_window(*session, path, camera, streets);
+    ATLAS_REQUIRE(with.has_value(), "the window was not drawn");
+    const auto own = draw_window(*session, path, camera, streets, test::sunny(), false, 0U, false);
+    ATLAS_REQUIRE(own.has_value(), "the window was not drawn at the streets' own widths");
+    const auto without = draw_window(
+        *session, path, camera, [](const passes::GroundFrame&, double, WindowDraw&) {}, test::sunny(), false,
+        1U << static_cast<std::uint32_t>(geo::FillKind::road));
+    ATLAS_REQUIRE(without.has_value(), "the window was not drawn without its streets");
+    // the thin streets' ink with the least width and at their own widths
+    const auto ink = [&](const gpu::Pixels& px) {
+        StreetInk sum;
+        for (const auto& [paint, pieces] : thin) {
+            const StreetInk s = street_ink(px, without->pixels, pieces, paint);
+            sum.columns += s.columns;
+            sum.off += s.off;
+            sum.worst = std::max(sum.worst, s.worst);
+            sum.thin += s.thin;
+            sum.one_pixel += s.one_pixel;
+            sum.most = std::max(sum.most, s.most);
+        }
+        return sum;
+    };
+    const StreetInk least = ink(with->pixels);
+    const StreetInk at_own = ink(own->pixels);
+    // every pixel the least width changes within its 0.75 px and a pixel of a thin street's middle
+    std::vector<Piece> drawn;
+    for (const auto& [paint, pieces] : thin) {
+        for (Piece p : pieces) {
+            p.ha = 0.75;
+            p.hb = 0.75;
+            drawn.push_back(p);
+        }
+    }
+    std::size_t near = 0;
+    std::size_t moved = 0;
+    // the wider streets' own pixels (on them, a pixel or more from a thin street's): drawn as they were
+    std::size_t on_wide = 0;
+    std::size_t wide_moved = 0;
+    const gpu::Pixels& a = with->pixels;
+    for (std::uint32_t y = 0; y < a.height; ++y) {
+        for (std::uint32_t x = 0; x < a.width; ++x) {
+            const std::size_t i = (std::size_t{y} * a.width) + x;
+            bool differs = false;
+            for (std::size_t k = 0; k < 3; ++k)
+                differs = differs || a.rgba[(i * 4) + k] != own->pixels.rgba[(i * 4) + k];
+            const double cx = static_cast<double>(x) + 0.5;
+            const double cy = static_cast<double>(y) + 0.5;
+            const bool away = beyond(drawn, cx, cy) > 1.0;
+            if (away && beyond(wide, cx, cy) < 0.0) {
+                ++on_wide;
+                if (differs) ++wide_moved;
+            }
+            if (!differs) continue;
+            if (away) {
+                ++moved;
+            } else {
+                ++near;
+            }
+        }
+    }
+    MESSAGE(std::format(
+        "{} thin streets' pieces, {} wider; of {} columns at most 4 px wide ({} under 1.5 px), with the least width {} "
+        "off by over 15 % and 0.15 px (the worst by {:.0f} %), {} with their ink in one pixel, a pixel's most {:.2f} "
+        "of its width's share of 1.5; at their own widths {} off (the worst by {:.0f} %), {} in one pixel, a pixel's "
+        "most {:.2f}; {} pixels changed by it near the thin streets, {} elsewhere; {} pixels on the wider streets, {} "
+        "of them changed",
+        drawn.size(), wide.size(), least.columns, least.thin, least.off, 100 * least.worst, least.one_pixel, least.most,
+        at_own.off, 100 * at_own.worst, at_own.one_pixel, at_own.most, near, moved, on_wide, wide_moved));
+    CHECK(least.thin > 500);
+    CHECK(least.off == 0);
+    CHECK(least.worst < 0.06);
+    CHECK(least.one_pixel == 0);
+    CHECK(least.most < 1.1);
+    CHECK(near > 500);
+    CHECK(moved == 0);
+    CHECK(on_wide > 200);
+    CHECK(wide_moved == 0);
 }
 
 #endif

@@ -13,10 +13,12 @@
 //
 // On the GPU (the opaque ground): first, before what lies above the water, the w0 rings' fans counted in the stencil's
 // three low bits (front faces up, back faces down, wrapping), where that count is not zero the w0 bit set and the count
-// cleared, so the app's map's streets keep off the water (passes/Ground.cpp's record_fills); after what lies above it,
-// the wclip rings' fans counted where the w0 bit is set, then the surface where the count is not zero, at the water's
-// painter depth (opaque: what lies above it was drawn first). Its tint and the end of its clip are translucent phases
-// at their orders, so K16's and K17's water elements draw inside the clip between them.
+// cleared, so the app's map's streets keep off the water (passes/Ground.cpp's record_streets); after what lies above
+// it, the wclip rings' fans counted where the w0 bit is set, then the surface where the count is not zero, at the
+// water's painter depth (opaque: what lies above it was drawn first). Its tint and the end of its clip are translucent
+// phases at their orders, so K16's and K17's water elements draw inside the clip between them. Without weather the w0
+// rings' count is the clip: the surface's plain draw keeps it for the streets, drawn after the land, and it is cleared
+// after them (record_water_end).
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -196,17 +198,12 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     surface.stencil = inside;
     ATLAS_GPU_LET(s, frame::make_pipeline(context, surface, frame::Overdraw::opaque));
     p.water_surface = std::move(s);
-    // without weather: th['water'] where the count is not zero, the count cleared as it goes
+    // without weather: th['water'] where the count is not zero, the count kept for the app's map's streets, which are
+    // drawn after the land (record_streets; record_water_end clears it after them)
     gpu::GraphicsDesc flat = ground_desc(context, p, "ground water plain", "screen_vs", "flat_fs");
     opaque_depth(flat);
     flat.stencil_test = true;
-    flat.stencil = {.failOp = vk::StencilOp::eKeep,
-                    .passOp = vk::StencilOp::eZero,
-                    .depthFailOp = vk::StencilOp::eZero,
-                    .compareOp = vk::CompareOp::eNotEqual,
-                    .compareMask = ground_stencil::water_count,
-                    .writeMask = ground_stencil::water_count,
-                    .reference = 0};
+    flat.stencil = inside;
     ATLAS_GPU_LET(fl, frame::make_pipeline(context, flat, frame::Overdraw::opaque));
     p.water_flat = std::move(fl);
     // the tint inside the clip, translucent
@@ -344,8 +341,8 @@ void Ground::record_water_tint(const frame::Recording& r) {
     r.counters.draw("ground water", 1);
 }
 
-void Ground::record_water_end(const frame::Recording& r) {
-    if (!frame_.water || !frame_.weather) return;
+void Ground::record_water_end(const frame::Recording& r, bool weather) {
+    if (!frame_.water || frame_.weather != weather) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->water_end);
     push(r, 0, 0);
