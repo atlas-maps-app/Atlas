@@ -43,7 +43,9 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "tiles/ExpandedCache.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/WorldIndex.hpp"
 
 #if defined(__ANDROID__)
 #include "platform/android/Android.hpp"
@@ -57,6 +59,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -310,6 +313,46 @@ public:
             ask_frame();
             return said;
         });
+    }
+
+    /// The world's cache of remote packs' heads and chunks (ENGINE.md step 6) for the map from now on.
+    void world_cache(std::shared_ptr<tiles::ExpandedCache> cache) {
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            world_cache_ = cache;
+        }
+        on_session([this, &cache] {
+            map_->set_world_cache(cache);
+            ask_frame();
+        });
+    }
+
+    /// The world's tiles the map wants whose chunks are not on the phone, nearest first (scene::WorldTiles::wants).
+    [[nodiscard]] std::vector<scene::WorldWant> world_wants() {
+        return on_session([this] { return map_->world_wants(); });
+    }
+
+    /// The world's blocks the map's cover reaches without an open pack, nearest first (scene::WorldTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> world_blocks() {
+        return on_session([this] { return map_->world_blocks(); });
+    }
+
+    /// A range of the world pack `id`'s bytes the app fetched, its whole chunks checked and kept in the world's cache
+    /// (tiles::Store::keep) on the caller's thread; the next frame builds the tiles kept. Nothing where the map's world
+    /// holds no such pack of that identity (another version's) or has no cache.
+    [[nodiscard]] std::optional<tiles::KeptChunks>
+    world_keep(const std::string& id, const tiles::Sha256Digest& identity, const tiles::PackBytes& range) {
+        std::shared_ptr<tiles::ExpandedCache> cache;
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            cache = world_cache_;
+        }
+        const std::shared_ptr<const tiles::StorePack> pack = on_session([this, &id] { return map_->world_pack(id); });
+        if (cache == nullptr || pack == nullptr || !pack->remote || pack->identity != identity) return std::nullopt;
+        thread_local tiles::Zstd zstd;
+        tiles::KeptChunks kept = tiles::Store::keep(*cache, *pack, range, zstd);
+        if (!kept.kept.empty()) on_session([this] { ask_frame(); });
+        return kept;
     }
 
     /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
@@ -616,8 +659,10 @@ private:
     /// The app's map (K11): the session draws it while map_on_ (the session's thread alone reads the flag).
     std::unique_ptr<frame::MapFrame> map_;
     bool map_on_ = false;
-    std::atomic<bool> pacing_{false}; // set_pacing
-    bool compression_switch_ = false; // set as the core starts, read only after
+    std::mutex world_cache_mutex_;
+    std::shared_ptr<tiles::ExpandedCache> world_cache_; // world_cache, under world_cache_mutex_
+    std::atomic<bool> pacing_{false};                   // set_pacing
+    bool compression_switch_ = false;                   // set as the core starts, read only after
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
@@ -1028,18 +1073,22 @@ jstring native_map(JNIEnv* env, jclass /*cls*/, jlong handle, jint mode) {
 
 /// The packs the app lists for the map, one per index of the arrays: its id, its number (the camera state's pack_id),
 /// its kind (tiles::PackKind), and a file's path, or an open descriptor's range (an APK asset; the core keeps a
-/// duplicate of the descriptor, the caller closes its own). A line per pack: opened, listed, kept, or why not.
+/// duplicate of the descriptor, the caller closes its own), or a remote world pack's SHA-256 in `identities` (null for
+/// every other pack; ENGINE.md step 6), its length its size: opened from its head in the world's cache, each chunk
+/// loaded from there (tiles::Store::absent). A line per pack: opened, listed, kept, or why not.
 jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids, jlongArray numbers, jintArray kinds,
-                     jobjectArray paths, jintArray fds, jlongArray offsets, jlongArray lengths) {
+                     jobjectArray paths, jintArray fds, jlongArray offsets, jlongArray lengths,
+                     jobjectArray identities) {
     Core* core = core_of(handle);
     if (core == nullptr) return java(env, "no core");
     if (ids == nullptr || numbers == nullptr || kinds == nullptr || paths == nullptr || fds == nullptr ||
-        offsets == nullptr || lengths == nullptr) {
+        offsets == nullptr || lengths == nullptr || identities == nullptr) {
         return java(env, "packs: an array is missing");
     }
     const jsize n = env->GetArrayLength(ids);
     if (env->GetArrayLength(numbers) != n || env->GetArrayLength(kinds) != n || env->GetArrayLength(paths) != n ||
-        env->GetArrayLength(fds) != n || env->GetArrayLength(offsets) != n || env->GetArrayLength(lengths) != n) {
+        env->GetArrayLength(fds) != n || env->GetArrayLength(offsets) != n || env->GetArrayLength(lengths) != n ||
+        env->GetArrayLength(identities) != n) {
         return java(env, "packs: the arrays differ in length");
     }
     std::vector<jlong> number(static_cast<std::size_t>(n));
@@ -1069,6 +1118,22 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.ref.kind = static_cast<tiles::PackKind>(kind[at]);
         p.ref.offset = static_cast<std::uint64_t>(offset[at]);
         p.ref.length = static_cast<std::uint64_t>(length[at]);
+        if (auto* identity = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(identities, i));
+            identity != nullptr) {
+            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base;
+            const bool sized = env->GetArrayLength(identity) == static_cast<jsize>(p.ref.identity.size());
+            if (sized) {
+                env->GetByteArrayRegion(identity, 0, static_cast<jsize>(p.ref.identity.size()),
+                                        reinterpret_cast<jbyte*>( // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                                            p.ref.identity.data()));
+            }
+            env->DeleteLocalRef(identity);
+            if (!world || !sized || !p.ref.path.empty() || fd[at] >= 0 || length[at] <= 0) {
+                refused += std::format("{}: not a remote world pack the map can list\n", p.ref.id);
+                continue;
+            }
+            p.ref.fetch = tiles::Store::absent();
+        }
         // The map's own descriptor, closed when the pack goes (frame/MapFrame.hpp).
         if (fd[at] >= 0) p.ref.fd = ::fcntl(fd[at], F_DUPFD_CLOEXEC, 0);
         packs.push_back(std::move(p));
@@ -1109,6 +1174,181 @@ jlongArray native_wanted_levels(JNIEnv* env, jclass /*cls*/, jlong handle) {
 jlongArray native_levels_in_view(JNIEnv* env, jclass /*cls*/, jlong handle) {
     Core* core = core_of(handle);
     return packed_keys(env, core != nullptr ? core->levels_in_view() : std::vector<tiles::TileKey>{});
+}
+
+/// The world's cache in folder `dir` (ENGINE.md step 6: the world's own LRU of its remote packs' heads and chunks),
+/// within `budget` bytes from now on: one a folder for the process, which every map and the app's checks share, opened
+/// at its first use (its entries listed and checked, so off the main thread).
+std::shared_ptr<tiles::ExpandedCache> world_cache_in(const std::string& dir, std::uint64_t budget, std::string& why) {
+    static std::mutex mutex;
+    static std::map<std::string, std::shared_ptr<tiles::ExpandedCache>> caches;
+    const std::scoped_lock lock(mutex);
+    if (const auto it = caches.find(dir); it != caches.end()) {
+        if (it->second->budget() != budget) it->second->set_budget(budget);
+        return it->second;
+    }
+    auto opened = tiles::ExpandedCache::open(dir, budget);
+    if (!opened) {
+        why = std::format("the world's cache in {}: {}", dir, tiles::describe(opened.error()));
+        return nullptr;
+    }
+    std::shared_ptr<tiles::ExpandedCache> cache(std::move(*opened));
+    caches.emplace(dir, cache);
+    return cache;
+}
+
+/// The map's world keeps its remote packs' heads and chunks in the world's cache in `dir` within `budget` bytes
+/// (world_cache_in); "" or why not.
+jstring native_world_cache(JNIEnv* env, jclass /*cls*/, jlong handle, jstring dir, jlong budget) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
+    std::string why;
+    auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    core->world_cache(std::move(cache));
+    return java(env, "");
+}
+
+/// Whether the world's cache in `dir` holds each pack's head, `identities` their SHA-256s end to end (32 bytes each);
+/// null where the cache does not open.
+jbooleanArray native_world_held(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jbyteArray identities) {
+    if (identities == nullptr || budget <= 0) return nullptr;
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) {
+        log::warn("vk world: {}", why);
+        return nullptr;
+    }
+    const jsize bytes = env->GetArrayLength(identities);
+    const jsize n = bytes / static_cast<jsize>(sizeof(tiles::Sha256Digest));
+    std::vector<jbyte> all(static_cast<std::size_t>(bytes));
+    env->GetByteArrayRegion(identities, 0, bytes, all.data());
+    std::vector<jboolean> held(static_cast<std::size_t>(n));
+    for (jsize i = 0; i < n; ++i) {
+        tiles::CacheKey key{.kind = tiles::CacheKind::pack_head};
+        std::memcpy(key.source.data(), all.data() + (static_cast<std::size_t>(i) * key.source.size()),
+                    key.source.size());
+        held[static_cast<std::size_t>(i)] = cache->holds(key) ? JNI_TRUE : JNI_FALSE;
+    }
+    jbooleanArray out = env->NewBooleanArray(n);
+    if (out != nullptr && n > 0) env->SetBooleanArrayRegion(out, 0, n, held.data());
+    return out;
+}
+
+/// A world pack's head the app fetched into the world's cache in `dir` (tiles::Store::keep_head): the pack of `kind`
+/// (tiles::PackKind) and `length` bytes whose SHA-256 is `identity`, its bytes but its chunks as ranges, each from its
+/// offset in `offsets`. "" or why it was not kept.
+jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jint kind, jlong length,
+                          jbyteArray identity, jlongArray offsets, jobjectArray ranges) {
+    if (identity == nullptr || offsets == nullptr || ranges == nullptr || budget <= 0 || length <= 0) {
+        return java(env, "a world pack's head: an argument is missing");
+    }
+    if (kind != static_cast<jint>(tiles::PackKind::world_mid) &&
+        kind != static_cast<jint>(tiles::PackKind::world_base)) {
+        return java(env, std::format("a world pack's head: not a world pack's kind ({})", kind));
+    }
+    tiles::PackRef ref{.kind = static_cast<tiles::PackKind>(kind), .length = static_cast<std::uint64_t>(length)};
+    if (env->GetArrayLength(identity) != static_cast<jsize>(ref.identity.size())) {
+        return java(env, "a world pack's head: its identity is not a SHA-256");
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(ref.identity.size()),
+        reinterpret_cast<jbyte*>(ref.identity.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const jsize n = env->GetArrayLength(offsets);
+    if (env->GetArrayLength(ranges) != n) return java(env, "a world pack's head: the arrays differ in length");
+    std::vector<jlong> offset(static_cast<std::size_t>(n));
+    env->GetLongArrayRegion(offsets, 0, n, offset.data());
+    std::vector<std::vector<std::byte>> bytes(static_cast<std::size_t>(n));
+    std::vector<tiles::PackBytes> parts;
+    for (jsize i = 0; i < n; ++i) {
+        auto* array = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(ranges, i));
+        if (array == nullptr || offset[static_cast<std::size_t>(i)] < 0)
+            return java(env, "a world pack's head: a range is missing");
+        auto& b = bytes[static_cast<std::size_t>(i)];
+        b.resize(static_cast<std::size_t>(env->GetArrayLength(array)));
+        env->GetByteArrayRegion(
+            array, 0, static_cast<jsize>(b.size()),
+            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+        env->DeleteLocalRef(array);
+        parts.push_back({.offset = static_cast<std::uint64_t>(offset[static_cast<std::size_t>(i)]), .bytes = b});
+    }
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    const auto kept = tiles::Store::keep_head(*cache, ref, parts);
+    return java(env, kept ? std::string() : std::format("a world pack's head: {}", tiles::describe(kept.error())));
+}
+
+/// Empties the world's cache in `dir` of every head and chunk (a new version of the world drops the old one's:
+/// ENGINE.md step 6), its budget `budget` from now on; "" or why not.
+jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget) {
+    if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    cache->evict_to(0);
+    return java(env, "");
+}
+
+/// The world's tiles the map wants whose chunks are not on the phone, nearest first: eight longs each, its pack's block
+/// and its tile (packed), the chunk's offset in the pack and its length, then the pack's SHA-256 as four big-endian
+/// longs.
+jlongArray native_world_wants(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<scene::WorldWant> wants = core != nullptr ? core->world_wants() : std::vector<scene::WorldWant>{};
+    std::vector<jlong> out;
+    out.reserve(wants.size() * 8);
+    for (const scene::WorldWant& w : wants) {
+        const std::optional<tiles::TileKey> block = scene::world_block_of(w.pack);
+        if (!block) continue;
+        out.push_back(static_cast<jlong>(block->packed()));
+        out.push_back(static_cast<jlong>(w.tile.packed()));
+        out.push_back(static_cast<jlong>(w.offset));
+        out.push_back(static_cast<jlong>(w.length));
+        for (std::size_t i = 0; i < w.identity.size(); i += 8) {
+            std::uint64_t v = 0;
+            for (std::size_t j = 0; j < 8; ++j) v = (v << 8U) | std::to_integer<std::uint64_t>(w.identity.at(i + j));
+            out.push_back(static_cast<jlong>(v));
+        }
+    }
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr && !out.empty()) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The world's blocks the map's cover reaches without an open pack, nearest first, their keys packed.
+jlongArray native_world_blocks(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->world_blocks() : std::vector<tiles::TileKey>{});
+}
+
+/// A range of the bytes of the world pack of `block` (packed) and `identity` (its SHA-256) from `offset` the app
+/// fetched: its whole chunks checked and kept in the map's world cache. The number of chunks kept, then the refused
+/// ones' tiles (packed); null where the map's world holds no such pack or no cache.
+jlongArray native_world_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jlong block, jbyteArray identity, jlong offset,
+                             jbyteArray bytes) {
+    Core* core = core_of(handle);
+    tiles::Sha256Digest sha{};
+    if (core == nullptr || bytes == nullptr || identity == nullptr || offset < 0 ||
+        env->GetArrayLength(identity) != static_cast<jsize>(sha.size())) {
+        return nullptr;
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(sha.size()),
+        reinterpret_cast<jbyte*>(sha.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const tiles::TileKey key = tiles::TileKey::unpack(static_cast<std::uint64_t>(block));
+    const std::string id = tiles::world_pack_id({.z = key.z, .x = key.x, .y = key.y});
+    std::vector<std::byte> b(static_cast<std::size_t>(env->GetArrayLength(bytes)));
+    env->GetByteArrayRegion(bytes, 0, static_cast<jsize>(b.size()),
+                            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const auto kept = core->world_keep(id, sha, {.offset = static_cast<std::uint64_t>(offset), .bytes = b});
+    if (!kept) return nullptr;
+    std::vector<jlong> out{static_cast<jlong>(kept->kept.size())};
+    for (const tiles::TileKey& t : kept->refused) out.push_back(static_cast<jlong>(t.packed()));
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
 }
 
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
@@ -1556,8 +1796,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 56>& methods() {
-    static const std::array<JNINativeMethod, 56> table{{
+const std::array<JNINativeMethod, 63>& methods() {
+    static const std::array<JNINativeMethod, 63> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1607,7 +1847,7 @@ const std::array<JNINativeMethod, 56>& methods() {
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
         // The app's map (K11).
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
-        method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
+        method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J[[B)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
@@ -1626,6 +1866,13 @@ const std::array<JNINativeMethod, 56>& methods() {
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
         method("wantedLevels", "(J)[J", fn(&native_wanted_levels)),
         method("levelsInView", "(J)[J", fn(&native_levels_in_view)),
+        method("worldCache", "(JLjava/lang/String;J)Ljava/lang/String;", fn(&native_world_cache)),
+        method("worldHeld", "(Ljava/lang/String;J[B)[Z", fn(&native_world_held)),
+        method("worldHead", "(Ljava/lang/String;JIJ[B[J[[B)Ljava/lang/String;", fn(&native_world_head)),
+        method("worldDrop", "(Ljava/lang/String;J)Ljava/lang/String;", fn(&native_world_drop)),
+        method("worldWants", "(J)[J", fn(&native_world_wants)),
+        method("worldBlocks", "(J)[J", fn(&native_world_blocks)),
+        method("worldKeep", "(JJ[BJ[B)[J", fn(&native_world_keep)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
         method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",

@@ -2,7 +2,9 @@
 // ATLAS_WORLD_DIR (a folder of `packer world`'s world.idx, its parts and `packer globe`'s world-globe.atlas), a camera
 // over the Netherlands from 18 to 1,000 km from its target draws the world's land, water and roads, and the map's
 // picture is complete with no country's pack: the app's path beyond 18 km, where the map said "Zoom in to see the map".
-// With ATLAS_LOOK_OUT, each view is written as <out>/world_<distance>.ppm.
+// With ATLAS_LOOK_OUT, each view is written as <out>/world_<distance>.ppm. The world by ranges (ENGINE.md step 6) is
+// held without ATLAS_WORLD_DIR, by a block and a globe written here: the blocks and tiles a view wants are asked of the
+// app, and drawn once their heads and chunks are kept in the world's cache.
 #include "base/pymath/PyMath.hpp"
 #include "frame/Counters.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -19,6 +21,12 @@
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tests/tiles/world_support.hpp"
+#include "tiles/Checksums.hpp"
+#include "tiles/Container.hpp"
+#include "tiles/ExpandedCache.hpp"
+#include "tiles/Source.hpp"
+#include "tiles/Store.hpp"
 #include "tiles/TileBox.hpp"
 #include "tiles/WorldIndex.hpp"
 #include "view/Camera.hpp"
@@ -38,6 +46,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -1151,6 +1160,139 @@ TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels 
             if (released) CHECK(gpu::write_ppm(*released, (fs::path(out) / "standing_fade_released.ppm").string()));
             CHECK(gpu::write_ppm(last, (fs::path(out) / "standing_fade_lit.ppm").string()));
         }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of the app, and drawn once their heads and "
+          "chunks are kept in the world's cache") {
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-ranges-{}", ::getpid());
+    fs::create_directories(guard);
+    // Amsterdam's L6 block (32, 21), its L9 to L11 tiles over the city, which the app brings by ranges; the globe's L0
+    // and L5 tiles over it, a file on the phone
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> block = test::world_pack(
+        {test::world_tile(9, 262, 168), test::world_tile(10, 525, 336), test::world_tile(11, 1051, 673)}, fine);
+    const std::vector<std::byte> globe =
+        test::world_pack({test::world_tile(0, 0, 0), test::world_tile(5, 16, 10)}, coarse);
+    {
+        std::ofstream out(guard / tiles::world_globe_file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    auto opened = tiles::ExpandedCache::open((guard / "world-cache").string(), std::uint64_t{1} << 24U);
+    ATLAS_REQUIRE(opened);
+    const std::shared_ptr<tiles::ExpandedCache> cache(std::move(*opened));
+    frame::MapPack remote;
+    remote.number = 101;
+    remote.ref.id = "world/6/32/21";
+    remote.ref.kind = tiles::PackKind::world_mid;
+    remote.ref.length = block.size();
+    remote.ref.identity = tiles::Sha256::of(block);
+    remote.ref.fetch = tiles::Store::absent();
+    frame::MapPack base;
+    base.number = 102;
+    base.ref.id = std::string(tiles::world_globe_id);
+    base.ref.kind = tiles::PackKind::world_base;
+    base.ref.path = (guard / tiles::world_globe_file).string();
+    const auto packs = [&] { return std::vector<frame::MapPack>{remote, base}; };
+    // the head as WorldFetch.head brings it: the block's bytes before its chunks and after them
+    const std::span<const std::byte> all(block);
+    auto whole = tiles::Pack::open(std::make_unique<tiles::MemorySource>(all));
+    ATLAS_REQUIRE(whole);
+    const tiles::Section* chunks = tiles::find_section(whole->sections(), "chunks");
+    ATLAS_REQUIRE(chunks != nullptr);
+    const std::uint64_t chunks_end = chunks->offset + chunks->stored;
+    const std::array<tiles::PackBytes, 2> head = {
+        {{.offset = 0, .bytes = all.first(chunks->offset)}, {.offset = chunks_end, .bytes = all.subspan(chunks_end)}}};
+    auto started = gpu::start_guarded({.guard_dir = guard,
+                                       .cache_file = guard / "pipelines.bin",
+                                       .system = "host-test-system",
+                                       .build = "world-ranges-test",
+                                       .present = true,
+                                       .spirv = 42});
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        map.set_world_cache(cache);
+        CHECK(map.set_packs(packs()).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<KeptWindow>(), size, why), why);
+        map.set_theme(sunny());
+        const style::CameraState cam = camera(52.37, 4.89, 0.0, 0.0, 30'000.0);
+        // draws the camera until `done` holds, at most a minute
+        const auto draw_until = [&](const auto& done) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                if (done()) return true;
+                scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+                if (tiles != nullptr) tiles->wait_idle();
+            }
+            return false;
+        };
+        const auto block_asked = [&] {
+            const std::vector<tiles::TileKey> blocks = map.world_blocks();
+            return std::ranges::find(blocks, tiles::TileKey(6, 32, 21)) != blocks.end();
+        };
+        // no head on the phone: the block does not open, and the view asks for it (the globe draws meanwhile)
+        CHECK(draw_until(block_asked));
+        CHECK(map.world_pack(remote.ref.id) == nullptr);
+        CHECK(map.world_wants().empty());
+        // its head kept, the packs handed again: the block opens, and is asked for no more
+        ATLAS_REQUIRE(tiles::Store::keep_head(*cache, remote.ref, head));
+        MESSAGE(map.set_packs(packs()));
+        const std::shared_ptr<const tiles::StorePack> pack = map.world_pack(remote.ref.id);
+        ATLAS_REQUIRE(pack != nullptr);
+        CHECK(pack->remote);
+        // its tiles the view wants are asked for, each its chunk's range in the pack; the picture waits for them
+        CHECK(draw_until([&] { return !map.world_wants().empty() && !block_asked(); }));
+        const scene::WorldFrame* waiting = map.world()->world_tiles()->frame();
+        ATLAS_REQUIRE(waiting != nullptr);
+        CHECK(waiting->wanted > 0);
+        // the app's part (WorldReads): each step keeps the chunks wanted, a range of the pack each
+        tiles::Zstd zstd;
+        std::set<std::uint64_t> asked;
+        std::size_t kept = 0;
+        const auto all_drawn = [&] {
+            for (const scene::WorldWant& w : map.world_wants()) {
+                CHECK(w.pack == remote.ref.id);
+                CHECK(w.identity == remote.ref.identity);
+                const auto table = pack->pack.chunks().chunks();
+                const auto c = std::ranges::find_if(table, [&](const tiles::ChunkRef& r) { return r.tile == w.tile; });
+                ATLAS_REQUIRE_OR_RETURN(false, c != table.end());
+                CHECK(w.offset == c->offset);
+                CHECK(w.length == c->stored);
+                asked.insert(w.tile.packed());
+                kept += tiles::Store::keep(*cache, *pack,
+                                           {.offset = w.offset, .bytes = all.subspan(w.offset, w.length)}, zstd)
+                            .kept.size();
+            }
+            const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+            return f != nullptr && f->wanted == 0 && !f->fading && map.world_wants().empty();
+        };
+        CHECK(draw_until(all_drawn));
+        CHECK(!asked.empty());
+        CHECK(kept >= asked.size());
+        const scene::WorldTiles* tiles = map.world()->world_tiles();
+        const scene::WorldFrame* f = tiles->frame();
+        ATLAS_REQUIRE(f != nullptr);
+        std::set<std::uint64_t> drawn;
+        for (const scene::WorldDraw& d : f->draws) {
+            if (d.tile->key.z >= 9) drawn.insert(d.tile->key.packed());
+        }
+        MESSAGE(std::format("{} of the block's tiles asked for, {} chunks kept, {} drawn; {} draws in all, {} bare",
+                            asked.size(), kept, drawn.size(), f->draws.size(), f->bare));
+        CHECK(std::ranges::includes(drawn, asked));
+        CHECK(tiles->stats().failed == 0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

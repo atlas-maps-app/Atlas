@@ -142,11 +142,21 @@ internal class CoreMap(
         return on
     }
 
-    /** Hands the core the packs as listed now, if they changed since the last time (off the main thread). */
+    /**
+     * Hands the core the packs as listed now, if they changed since the last time (off the main thread). The world's
+     * remote packs open from their heads in the world's cache, so the core is told of it first: a pack it cannot open
+     * is not handed again until the list changes.
+     */
     fun handPacks(): String {
         packs.load()
         if (packs.revision == packsRevision) return ""
         packsRevision = packs.revision
+        if (packs.worldRefs.any { it.identity != null }) {
+            MapEngine.worldCacheDir()?.let { dir ->
+                val why = core.worldCache(dir.path, MapEngine.worldCacheBytes)
+                if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk world: the world's cache not opened: $why")
+            }
+        }
         return core.packs(packs.refs())
     }
 

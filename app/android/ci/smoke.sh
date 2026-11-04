@@ -58,8 +58,8 @@
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
 # frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
-# switch without its lines, no honest state under atlas.vk.off, or (once world-test is published) a world that does not
-# come or draw whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
+# switch without its lines, no honest state under atlas.vk.off, or a world that does not come from world-latest or draw
+# whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -70,7 +70,7 @@
 # draw: the canal ring, android.yml's apk job's :app:benchTiles, as no APK carries a map).
 # A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
 # of "screens vk pills map world truth" (the default, all of them: the debug loop over the screens; VK facts, bench and
-# the crash guard; the frosted pills; the map drawn by the core; the world beyond the countries from world-test; the
+# the crash guard; the frosted pills; the map drawn by the core; the world beyond the countries from world-latest; the
 # truth phase, which ATLAS_BENCH=0 skips too);
 # ATLAS_SCREENS_SKIP, screens another part opens; ATLAS_SCREENS_PART=<k>/<n>, every n-th of the screens left from the
 # k-th, in the app's order. The part writes the app's whole list (screens-all.txt), its own screens (screens.txt) and
@@ -910,37 +910,42 @@ if has_phase map; then
   adb logcat -d > "$OUT/logcat.map.txt"
 fi
 
-# --- the world beyond the countries (ENGINE.md step 5) -----------------------------------------------------------------
+# --- the world beyond the countries (ENGINE.md steps 5 and 6) --------------------------------------------------------
 
-# The world as a phone takes it from the world-test release, as the map's phase takes the Netherlands' tiles from
-# packs-latest: the app's data cleared and the home opened on the Westerkerk (atlas.ci: the canal ring put on the device)
-# with the world's fetch on (atlas.ci.world: CI's other runs ask no server for it, as they build no windows), and the
-# world script (atlas.vk.script world) out to 25 km pitched 60° (the canal ring's tiles beside the world) and to 100 km
-# pitched 30°. world.idx and the globe must come at the first start (`vk world: world.idx (<n> packs) and
-# world-globe.atlas on the phone`), the Westerkerk's block's parts as the view first enters it (`vk world: parts …`),
-# and each view's picture be final with the core's last rest there saying the world drew it (`vk tiles … world <n>
-# drawn finest <z> wanted 0 bare 0`: every tile it wants resident, no cell without one; at 100 km a level of the
-# block's packs, 6 or finer, where the globe holds L0 to L3), with no crash or ANR. While world-test is not published
-# (the user's yes) the phase says so and draws nothing: the app's fetch then finds no release and asks again every ten
-# minutes. The lines go to world.txt, the screens to world-25km.png and world-100km.png.
-WORLD_TEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-test
+# The world as a phone takes it from the release world-latest points at, as the map's phase takes the Netherlands' tiles
+# from packs-latest: the app's data cleared and the home opened on the Westerkerk (atlas.ci: the canal ring put on the
+# device) with the world's fetch on (atlas.ci.world: CI's other runs ask no server for it, as they build no windows),
+# and the world script (atlas.vk.script world) out to 25 km pitched 60° (the canal ring's tiles beside the world) and
+# to 100 km pitched 30°. world.json's release, its world.idx and its globe must come at the first start (`vk world:
+# world.idx (<n> packs) and world-globe.atlas of <release> on the phone`, the release world-latest's world.json names),
+# the heads of the packs the views reach (`vk world: the head of world/<z>/<x>/<y> …`) and the chunks of the tiles they
+# want by ranges (`vk world: <n> chunks (<k> kB) in <m> ranges on the phone`, n at least 1), and each view's picture be
+# final with the core's last rest there saying the world drew it (`vk tiles … world <n> drawn finest <z> wanted 0 bare
+# 0`: every tile it wants resident, no cell without one; at 100 km a level of the block's packs, 6 or finer, where the
+# globe holds L0 to L3), with no crash or ANR. The lines go to world.txt, the screens to world-25km.png and
+# world-100km.png.
+WORLD_LATEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-latest
 world_phase() {
-  local code km next line rest at drawn finest wanted bare
-  code=$(curl -s -r 0-0 -L -o /dev/null -w '%{http_code}' "$WORLD_TEST/world.idx")
-  if [ "$code" != 200 ] && [ "$code" != 206 ]; then
-    echo "WARNING: world: world-test is not published (HTTP $code for its world.idx): no world to draw yet"
+  local release km next line rest at drawn finest wanted bare chunks n k r
+  release=$(curl -sfL --retry 5 --retry-all-errors --max-time 60 "$WORLD_LATEST/world.json" |
+    python3 -I -c 'import json, sys; print(json.load(sys.stdin)["release"])' 2>/dev/null)
+  if [ -z "$release" ]; then
+    echo "WORLD FAILED: world-latest's world.json did not come or names no release"; FAIL=1
     return
   fi
+  echo "world: world-latest is $release"
   fresh_state
   vk_launch world --es atlas.screen home --ez atlas.ci true --ez atlas.ci.world true --ez atlas.vk.ci true --es atlas.vk.script world
   if wait_line world 300 "vk world: world.idx"; then
-    echo "world: $(since_marker world | grep -m1 -o 'vk world: world.idx.*' | sed 's/^vk world: //')"
+    line=$(since_marker world | grep -m1 -o 'vk world: world.idx.*')
+    echo "world: ${line#vk world: }"
+    [[ $line == *" of $release on the phone" ]] || { echo "WORLD FAILED: the phone took another release than world-latest's $release"; FAIL=1; }
   else
     echo "WORLD FAILED: world.idx and the globe were not on the phone within 300 s"; FAIL=1
   fi
   for km in 25 100; do
     if [ "$km" = 25 ]; then next="world out to 100 km"; else next="back"; fi
-    # the script waits up to 300 s for the packs, then 300 s for the picture, and holds it 15 s
+    # the script waits up to 300 s for the packs' heads, then 300 s for the picture, and holds it 15 s
     if ! wait_line world 700 "vk script: world at $km km "; then
       echo "WORLD FAILED: the world script did not reach its view at $km km"; FAIL=1; break
     fi
@@ -964,11 +969,20 @@ world_phase() {
   done
   wait_line world 300 "vk script done" || { echo "WORLD FAILED: the world script did not finish"; FAIL=1; }
   since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|transition)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
-  if grep -q '^vk world: parts ' "$OUT/world.txt"; then
-    echo "world: $(grep -m1 '^vk world: parts ' "$OUT/world.txt" | sed 's/^vk world: //')"
+  if grep -q '^vk world: the head of world/.* on the phone$' "$OUT/world.txt"; then
+    echo "world: $(grep -c '^vk world: the head of world/.* on the phone$' "$OUT/world.txt") packs' heads, the first $(grep -m1 '^vk world: the head of ' "$OUT/world.txt" | sed 's/^vk world: the head of //')"
   else
-    echo "WORLD FAILED: no part of the Westerkerk's block came (no 'vk world: parts' line)"; FAIL=1
+    echo "WORLD FAILED: no pack's head came (no 'vk world: the head of …' line)"; FAIL=1
   fi
+  chunks=$(sed -n 's/^vk world: \([0-9]*\) chunks (\([0-9]*\) kB) in \([0-9]*\) ranges on the phone$/\1 \2 \3/p' "$OUT/world.txt" |
+    awk '{ n += $1; k += $2; r += $3 } END { if (NR) printf "%d %d %d", n, k, r }')
+  read -r n k r <<< "${chunks:-0 0 0}"
+  if [ "$n" -gt 0 ]; then
+    echo "world: $n chunks ($k kB) in $r ranges"
+  else
+    echo "WORLD FAILED: no tile's chunk came (no 'vk world: <n> chunks … on the phone' line with n above 0)"; FAIL=1
+  fi
+  grep '^vk world: .*not \(fetched\|kept\|opened\)\|^vk world: .* refused' "$OUT/world.txt" | head -5 | sed 's/^/world: /'
   vk_crashes world; vk_anr world
   adb shell am force-stop $PKG
 }

@@ -191,6 +191,7 @@ public:
     }
     /// The world's tiles beyond the countries' (ENGINE.md step 5), once the store holds a world pack; else null.
     [[nodiscard]] WorldTiles* world_tiles() noexcept { return world_tiles_.get(); }
+    [[nodiscard]] const WorldTiles* world_tiles() const noexcept { return world_tiles_.get(); }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
     [[nodiscard]] std::span<const std::string_view> pass_names() const noexcept override { return pass_names_; }

@@ -1001,8 +1001,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             // country's whose tiles it draws (its window on its way), today's map elsewhere.
             placedCountries = MapEngine.countries
             val wanted = Transition.pathOf(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance)
-            // beyond the countries' reach the world draws: the app fetches the blocks a view enters
-            if (view.distance > PackList.LEVELS_REACH) MapEngine.worldPlace(view.lat, view.lon)
             // Where the core's own cover stands in for the place's window on its way, today's map's last frame is not
             // drawn either (the paper and the windows' line meanwhile): none of its other look shows in the country.
             // Where the world draws (beyond the countries' reach) no window is on its way: offline too, the map is final.
@@ -1029,6 +1027,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 MapEngine.windows()?.let { w ->
                     scope.launch(Dispatchers.IO) {
                         if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
+                    }
+                }
+                // the world's packs the view wants (ENGINE.md step 6): a block's head, then its tiles' chunks by ranges
+                MapEngine.worldReads?.let { r ->
+                    scope.launch(Dispatchers.IO) {
+                        if (runCatching { r.step(c.core) }.getOrDefault(false)) main.post(repack)
                     }
                 }
                 // what the windows do now is what the map is, where the place's window has not come yet
