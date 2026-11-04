@@ -2,7 +2,8 @@
 // thread, so at its priority (a thread takes the priority of the one that makes it; Light.cpp lowers its own), each
 // run hands its items out in turn to them and to the calling thread, and returns once every item is done. Each item's
 // work writes only its own results, which the caller merges in the items' order after, so a run's result is the same
-// on any number of threads and in any order they take the items.
+// on any number of threads and in any order they take the items. The render thread's hint session takes the helpers in
+// (frame/RenderThreads.hpp: on Android, APerformanceHint_setThreads), so that the boost a frame asks for reaches them.
 #pragma once
 
 #include <atomic>
@@ -11,15 +12,20 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <span>
 #include <stop_token>
 #include <thread>
 #include <vector>
 
 namespace atlas::passes {
 
+/// This thread's id as the kernel knows it: gettid on Android and Linux (the ids ADPF's sessions take), the thread's
+/// Mach port on Apple's.
+[[nodiscard]] std::int32_t thread_id() noexcept;
+
 class Team {
 public:
-    /// A team of `helpers` threads beside the caller's (0: the caller alone).
+    /// A team of `helpers` threads beside the caller's (0: the caller alone), once each of them has started.
     explicit Team(unsigned helpers);
     Team(const Team&) = delete;
     Team& operator=(const Team&) = delete;
@@ -29,6 +35,8 @@ public:
 
     /// The threads a run takes items on: the caller (taker 0) and the helpers (1 on).
     [[nodiscard]] unsigned takers() const noexcept { return static_cast<unsigned>(helpers_.size()) + 1; }
+    /// The takers' threads (thread_id), by taker: the one that made the team first, then each helper's.
+    [[nodiscard]] std::span<const std::int32_t> threads() const noexcept { return threads_; }
 
     /// `job(item, taker)` for each item below `items`, once each, on whichever thread takes it first; returns once
     /// every one is done, with the helpers' CPU time over their items (milliseconds: the caller's is its own thread's).
@@ -52,6 +60,8 @@ private:
     std::atomic<std::uint64_t> next_{0};
     std::atomic<std::size_t> finished_{0}; ///< the run's items done
     std::atomic<std::uint64_t> helped_{0}; ///< the helpers' CPU time over the run's items, nanoseconds
+    std::vector<std::int32_t> threads_;    ///< by taker: each helper writes its own as it starts (mutex_)
+    unsigned started_ = 0;                 ///< the helpers that have written theirs (mutex_)
     std::vector<std::jthread> helpers_; ///< last: they start once every member above is made, and stop before they go
 };
 

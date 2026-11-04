@@ -29,6 +29,7 @@
 
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
+#include "frame/RenderThreads.hpp"
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
@@ -957,17 +958,25 @@ public:
     /// The tests' look at the water: from the next frame on, no glints (K17's rect after the tint).
     void draw_wind_glints(bool draw) noexcept { no_wind_glints_ = !draw; }
     /// The tests' look at the team: from the next frame on, the tiles and their mirrors decided on `helpers` threads
-    /// beside the caller's (0: the caller's alone), so that a test holds the team's decisions to one thread's.
+    /// beside the caller's (0: the caller's alone), so that a test holds the team's decisions to one thread's; the
+    /// platform is told of the new team's threads at its first use, as of the first team's.
     void decide_on(unsigned helpers);
     /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
     /// frame copies its resolved layer there too (RippleLayer::layer_copy).
     void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
     /// The tests' switch: the ripple's stages apart, even where the fused stages could take them (on by default).
     void fuse_ripple(bool fuse) noexcept { fuse_ripple_ = fuse; }
+    /// The tests' switch: the ripple made again every frame, its last result never standing (as before its key took
+    /// what it reads alone: the base a measure holds the kept results to, tests/frame/pinch_audit_vk_test.cpp's
+    /// ATLAS_PINCH_RIPPLE).
+    void make_ripple_always(bool always) noexcept { ripple_always_ = always; }
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
     [[nodiscard]] bool drew_ripple() const noexcept { return drew_ripple_; }
+    /// The tests' look at the ripple's kept result: how many results it has made (its layer drawn and its stages run)
+    /// since the pass was made; a frame whose ripple is the last one's makes none.
+    [[nodiscard]] std::uint64_t ripple_makes() const noexcept { return ripple_made_; }
     /// The tests' look at the lit streets' glow: from the next prepare on, its buffers lie in memory the CPU reads, and
     /// each frame copies its layers there too (GlowLayer::glow_copy, core_copy).
     void keep_glow(bool keep) noexcept { keep_glow_ = keep; }
@@ -1036,7 +1045,8 @@ private:
     /// The tiles of `tiles` decided on the team's threads and the caller's, the largest first, each into its own
     /// decisions (the second of its pair).
     void decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles);
-    /// The threads the tiles' work is shared with (team_), made as the render thread first needs them.
+    /// The threads the tiles' work is shared with (team_), made as the render thread first needs them; the platform
+    /// told of them at their first use (FrameState::render_threads), once a team.
     [[nodiscard]] Team& team();
     void lay_out();
     /// Where the drawn tiles come from more than one scene, a window among them (GroundFrame::mixed), every fill and
@@ -1140,8 +1150,15 @@ private:
     /// Whether this frame draws the reflections rippled: some are drawn, the fields are bound in full mode
     /// (FRAME_FIELDS), the ripple is wanted, and prepare made its objects.
     [[nodiscard]] bool rippled(const frame::FrameState& state) const noexcept;
-    /// The displacement's 256 offsets at the frame (fx::ripple_displacement through an exact fma) into its words.
+    /// The displacement's 256 offsets at the frame (fx::ripple_displacement through an exact fma) into its words, and
+    /// the leaf filter's, the water's map and the stages' plan; then whether the last result stands (key_ripple).
     void write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    /// What the stages cover (ripple_plan_), the result's region spread by `moved` (the displacement's reach), into
+    /// the words: the plan, their last.
+    void plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved);
+    /// Whether this frame's ripple is made again (ripple_stale_): what the result is made of, in the words written,
+    /// against the last frame's (ripple_key_).
+    void key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state);
     /// Before the main pass: the reflections into the layer, then the filter's stages over it.
     void record_ripple_layer(const frame::Recording& r);
     /// The rippled reflections composited inside the water's clip at the group's opacity.
@@ -1259,6 +1276,7 @@ private:
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
+    bool ripple_always_ = false;
     bool drew_ripple_ = false;
     bool keep_glow_ = false;
     bool drew_glow_ = false;
@@ -1267,11 +1285,12 @@ private:
     std::vector<std::uint32_t> glow_key_;
     bool glow_stale_ = true;
     GlowPlan glow_plan_;
-    /// What the last ripple's result was made of (write_ripple), and whether this frame's differs; what its stages
-    /// cover this frame.
+    /// What the last ripple's result was made of (key_ripple: the camera's words alone while it moves), and whether
+    /// this frame's differs; what its stages cover this frame; the results made.
     std::vector<std::uint32_t> ripple_key_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
+    std::uint64_t ripple_made_ = 0;
     double select_ms_ = 0;
     double helped_ms_ = 0; ///< the team's helpers' CPU time over the select under way
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
@@ -1301,6 +1320,8 @@ private:
     /// taker's scratch.
     std::unique_ptr<Team> team_;
     std::vector<PolyScratch> poly_;
+    frame::RenderThreads* render_threads_ = nullptr; ///< the frame's (FrameState::render_threads), as it selects
+    bool told_ = false;                              ///< the platform was told of team_'s threads
 };
 
 /// The ground's GPU objects: its module, its pipeline layout (the frame's sets, then its own), its descriptor sets and

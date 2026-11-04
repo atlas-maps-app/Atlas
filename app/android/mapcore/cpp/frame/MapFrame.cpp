@@ -130,7 +130,11 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
 
 std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& cache, gpu::PipelineWatch* watch) {
     if (made()) return {};
-    FrameOptions frame_options{.steps = steps_, .grain = grain_, .grounded = true, .passes = passes_};
+    FrameOptions frame_options{.steps = steps_,
+                               .grain = grain_,
+                               .grounded = true,
+                               .passes = passes_,
+                               .render_threads = options_.render_threads};
     if (options_.clear) frame_options.clear = *options_.clear;
     auto builder = FrameBuilder::create(device, cache, make_passes(), frame_options, watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());

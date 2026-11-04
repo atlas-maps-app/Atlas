@@ -376,6 +376,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.mode = inputs_.mode;
     state_.rest = cam.has(style::camera_flag::rest);
     state_.slot = slot;
+    state_.render_threads = options_.render_threads.get();
     state_.labels = inputs_.labels;
     state_.markers = inputs_.markers;
     state_.routes = inputs_.routes;

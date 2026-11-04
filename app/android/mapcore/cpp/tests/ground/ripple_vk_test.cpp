@@ -5,7 +5,8 @@
 // reflections shows wgrad's rect under the tint), the frame is that result written back as sRGB at the group's opacity
 // over wgrad, under the tint at .12, within 2.5 levels: the frame stores the surface, the composite and the tint, each
 // blended in 8 bits (the bare water alone, two of them, lies within 1.6 levels of its model on lavapipe), where a
-// result read at the wrong pixel would be tens of levels off at the reflections' edges.
+// result read at the wrong pixel would be tens of levels off at the reflections' edges. The result is made once a
+// camera: frames that draw the same reflections at the same camera, at rest or held still under a finger, keep it.
 #if !defined(__ANDROID__)
 
 #include "fx/FieldCache.hpp"
@@ -21,6 +22,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -462,6 +464,74 @@ TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples
     CHECK(astray == 0);
     CHECK(checked > 1000);
     CHECK(wrong <= checked / 200);
+}
+
+TEST_CASE("ground: the ripple's result is made once a camera, and stands while it holds still, at rest or not") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the ripple is not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto made = fx::FieldCache::create(*session->device, {.threads = 3});
+    ATLAS_REQUIRE(made.has_value(), made.error().text());
+    const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
+    // a degree off the home's view: the ladder snaps a camera within 1 m and 0.05° of it onto the view's own, where a
+    // hair's move would leave nothing the ripple reads moved
+    style::CameraState home = test::home_camera();
+    home.bearing += 1.0;
+    const style::ThemeBlock day = test::sunny();
+    // after the camera settles at rest, four frames apiece: at its camera and time again; at a later time (the ripple's
+    // fields stand still, so nothing it draws moves); the wind risen (its displacement's tables); the camera moved by
+    // a hair; held there under a finger (not at rest: no snap); moving by a hair a frame
+    constexpr int settled = 40;
+    constexpr int phases = 6;
+    passes::Ground* ground = nullptr;
+    std::vector<std::uint64_t> makes; // the results made by the end of each frame
+    std::vector<bool> drew;
+    const auto each = [&](int f, frame::FrameInputs& in) {
+        if (f < settled) return;
+        const int phase = (f - settled) / 4;
+        in.camera = home;
+        in.theme = day;
+        if (phase >= 1) in.seconds = 1.0;
+        if (phase >= 2) in.theme.wind = day.wind + 6.0;
+        if (phase >= 3) in.camera.longitude += 1e-6;
+        if (phase >= 4) in.camera = test::moving(in.camera);
+        if (phase >= 5) in.camera.longitude += 1e-6 * ((f - settled) % 4 + 1);
+    };
+    const auto settle = [&] {
+        fields->worker().wait_idle();
+        makes.push_back(ground->ripple_makes());
+        drew.push_back(ground->drew_ripple());
+    };
+    const auto a = test::draw_ground(
+        *session, home, day, dir, "amsterdam", {}, settled + (4 * phases),
+        [&](passes::Ground& g) {
+            quiet(g);
+            ground = &g;
+        },
+        frame::Mode::full, fields, settle, {.steps = 0}, false, each);
+    ATLAS_REQUIRE(a.has_value(), "the home was not drawn with its ripple");
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    ATLAS_REQUIRE(makes.size() == settled + (4 * phases), makes.size() << " frames");
+    REQUIRE_MESSAGE(drew[settled - 1], "the frame drew its reflections without their ripple (the fields not bound?)");
+    MESSAGE("the ripple's results made: " << makes[settled - 1] << " over the " << settled << " frames to settle");
+    // the results made over each phase's frames, after the frame before it
+    const auto over = [&](int phase, int first, int last) {
+        const auto at = [&](int k) { return makes[static_cast<std::size_t>(settled + (4 * phase) + k)]; };
+        return at(last) - (first == 0 ? makes[static_cast<std::size_t>(settled + (4 * phase) - 1)] : at(first - 1));
+    };
+    CHECK(over(0, 0, 3) == 0); // the same camera and time: the last result stands
+    CHECK(over(1, 0, 3) == 0); // a later time: the fields stand still, and nothing the ripple draws moved
+    CHECK(over(2, 0, 3) == 1); // the wind risen: made again once, as the frame takes the new moment
+    CHECK(over(3, 0, 0) == 1); // the camera moved: made again
+    CHECK(over(3, 1, 3) == 0);
+    CHECK(over(4, 0, 1) == 2); // under a finger (no snap), then once more as it holds still
+    CHECK(over(4, 2, 3) == 0); // held still: the last result stands, as at rest
+    CHECK(over(5, 0, 3) == 4); // moving: made each frame
+    for (std::size_t f = settled; f < drew.size(); ++f) CHECK_MESSAGE(drew[f], "frame " << f << " drew no ripple");
 }
 
 #endif

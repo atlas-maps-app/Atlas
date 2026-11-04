@@ -52,6 +52,13 @@ constexpr std::uint32_t group_side = 8;
 /// A reflection's record in the words (ground.slang's QUAY_WORDS).
 constexpr std::size_t reflection_words = 16;
 
+/// A tile's record in the tile table (ground.slang's TILE_WORDS), its place first (camera.slang's TilePlace).
+constexpr std::size_t tile_words = 20;
+
+/// The words of the frame's camera the ripple reads (shared/camera.slang's FrameCamera): its six float4s and flags.x,
+/// not flags.y, the frame's number.
+constexpr std::size_t camera_words = 25;
+
 /// The fused stages' tile (ripple_fused_cs: a workgroup's result pixels a side) and the most the blur passes' reaches
 /// may sum to along an axis for them (ripple.slang's RIPPLE_TILE and RIPPLE_REACH).
 constexpr std::uint32_t ripple_tile = 16;
@@ -126,27 +133,12 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
                                                    state.camera.width_px, state.camera.height_px);
         for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
     }
-    // The result is a function of what the layer's draw and the stages read: the camera (the frame's size and density
-    // with it), the tiles' places, the reflections' records and the offsets (the fields and the byte tables are the
-    // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake); while
-    // the camera moves it moves with it, and is made again without the reflections' records copied to tell.
-    if (frame_.exact) {
-        std::vector<std::uint32_t> key(sizeof(shaders::FrameCamera) / sizeof(std::uint32_t));
-        std::memcpy(key.data(), &state.block.camera, sizeof(shaders::FrameCamera));
-        const auto add = [&](std::uint32_t first, std::size_t n) {
-            key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
-        };
-        add(w.tiles, w.slots - w.tiles);
-        add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
-        add(w.ripple_offsets, 256);
-        add(w.leaf_offsets, 257);
-        if (w.ripple_map != 0) add(w.ripple_map, 9);
-        ripple_stale_ = key != ripple_key_;
-        ripple_key_ = std::move(key);
-    } else {
-        ripple_key_.clear();
-        ripple_stale_ = true;
-    }
+    plan_ripple(words, state, d.reach);
+    key_ripple(words, state);
+}
+
+void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved) {
+    Words& w = *words_;
     // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
     // the trees' circles, the streaks' ellipses, grown by the faces' strokes and two pixels of slack), the result's
     // region (that content moved by the displacement's reach and spread by the boxes'), and backwards from it each
@@ -220,8 +212,8 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
             }
         }
     }
-    std::int32_t spread_x = d.reach;
-    std::int32_t spread_y = d.reach;
+    std::int32_t spread_x = moved;
+    std::int32_t spread_y = moved;
     for (const auto& r : reach) {
         spread_x += r[0];
         spread_y += r[1];
@@ -256,6 +248,48 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
                                     : std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(pass.left + pass.right)));
         box(pass.region);
     }
+}
+
+void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state) {
+    const Words& w = *words_;
+    // The result is a function of what the layer's draw and the stages read, and of nothing else: the camera as the
+    // vertex stage projects with it (its basis, principal point, focal length, frame and density, the output's turn,
+    // and its bits: the snap at rest, the depth's format; not the frame's number, which none of them reads), each
+    // reflection's record with its tile's place (the offset and the frame's scale along x: not the tile's fade, which
+    // the records' colours carry where it shows), the window rows' opacity and the night's bit, the offsets' tables,
+    // the water's map and the stages' plan (the fields and the byte tables are the size's, which the camera's frame
+    // holds). Nothing of it moves with the time but through the records (a tile's fade, the moment's colours): the
+    // ripple's fields stand still, so the key takes no time step. Where it is the last result's, that stands: a map at
+    // rest draws frames for other passes' sake (the tiles fading in, the labels), and so does one held still under a
+    // finger. While the camera moves, its words alone tell, without the reflections' records copied: the key is the
+    // camera's alone until it holds still, and the first frame it holds still makes the result once more.
+    static_assert(sizeof(shaders::FrameCamera) == 28 * sizeof(std::uint32_t));
+    std::array<std::uint32_t, 28> camera{};
+    std::memcpy(camera.data(), &state.block.camera, sizeof(shaders::FrameCamera));
+    const auto camera_end = camera.begin() + static_cast<std::ptrdiff_t>(camera_words);
+    std::vector<std::uint32_t> key(camera.begin(), camera_end);
+    const bool held = ripple_key_.size() >= camera_words && std::equal(camera.begin(), camera_end, ripple_key_.begin());
+    if (frame_.exact || held) {
+        const auto add = [&](std::uint32_t first, std::size_t n) {
+            key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
+        };
+        const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
+        key.push_back(frame_.night ? 1U : 0U);
+        key.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(rs.windows_opacity)));
+        for (std::uint32_t k = 0; k < w.reflection_count; ++k) {
+            const auto at = static_cast<std::uint32_t>(w.reflections + (k * reflection_words));
+            add(at, reflection_words);
+            // its tile's place as the vertex stage reads it (eye_relative): the offset's xyz and the scale's x
+            const std::size_t place = w.tiles + (std::size_t{words[at]} * tile_words);
+            for (const std::size_t i : {0U, 1U, 2U, 4U}) key.push_back(words[place + i]);
+        }
+        add(w.ripple_offsets, 256);
+        add(w.leaf_offsets, 257);
+        if (w.ripple_map != 0) add(w.ripple_map, 9);
+        if (w.ripple_plan != 0) add(w.ripple_plan, words.size() - w.ripple_plan); // the plan, the words' last
+    }
+    ripple_stale_ = key != ripple_key_;
+    ripple_key_ = std::move(key);
 }
 
 gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelines& p) const {
@@ -477,7 +511,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     drew_ripple_ = false;
     const Words& w = *words_;
     if (!rippled(r.state) || w.reflection_count == 0) return;
-    if (drew && !ripple_stale_) {
+    if (drew && !ripple_stale_ && !ripple_always_) {
         // the last frame's result stands: the buffers hold it, and the composite reads them again
         drew_ripple_ = true;
         return;
@@ -492,6 +526,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
         drew_ripple_ = true;
         return;
     }
+    ++ripple_made_;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const gpu::Sync& sync = r.frame.sync;
     using S = vk::PipelineStageFlagBits2;
