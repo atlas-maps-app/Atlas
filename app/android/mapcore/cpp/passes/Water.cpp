@@ -19,6 +19,19 @@
 // phases at their orders, so K16's and K17's water elements draw inside the clip between them. Without weather the w0
 // rings' count is the clip: the surface's plain draw keeps it for the streets, drawn after the land, and it is cleared
 // after them (record_water_end).
+//
+// The app's map's thin water (4 November, the far flicker; the streets' least width's rule, ground.slang's
+// least_point): a canal or a ditch narrower on the screen than 1.5 device px takes 0 to 4 quarters of its pixels'
+// samples as the camera moves, so it flickered. Stage T measures the water's width across each edge of its pieces to
+// the other bank (geometry/Water.hpp's thin_edges, GroundGpu::thin). Where it is narrower than 1.5 px at either end of
+// such a stretch and the frame draws both banks' pieces, the stretch's quad from its bank across the water sets the
+// thin bit where the water is counted once and clears the count there (record_water_thin), so the surface leaves those
+// samples to the band: after the land and the plate, along the water's middle 1.5 px wide at the share of them the
+// water covers (as wide as the water where wider), in the surface's colour with its tint over it, at the water's depth
+// (so not over the surface, nor over what lies above the water), each sample once (both banks draw it), before the
+// streets (record_water_band). The reflections, the glints, the glitter and the rings keep the water's own samples:
+// their clip is the count or the thin bit, never the band beyond the water. The tint leaves the thin bit's samples
+// (the band holds it). The thin bit is cleared with the clip (record_water_end).
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -184,6 +197,48 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     level.stencil_back = down;
     ATLAS_GPU_LET(c1, frame::make_pipeline(context, level, frame::Overdraw::none));
     p.water_count_level = std::move(c1);
+    // the app's map's thin water: where a thin edge's quad lies on water counted once, the count's 1 and the thin bit
+    // turned over (the count cleared, the bit set), so a sample takes it once
+    gpu::GraphicsDesc thin = ground_desc(context, p, "ground water thin", "thin_vs", "thin_fs");
+    colour_off(thin);
+    thin.stencil_test = true;
+    thin.stencil = {.failOp = vk::StencilOp::eKeep,
+                    .passOp = vk::StencilOp::eInvert,
+                    .depthFailOp = vk::StencilOp::eInvert,
+                    .compareOp = vk::CompareOp::eEqual,
+                    .compareMask = ground_stencil::water_count,
+                    .writeMask = 1U | ground_stencil::water_thin,
+                    .reference = 1};
+    ATLAS_GPU_LET(th, frame::make_pipeline(context, thin, frame::Overdraw::none));
+    p.water_thin = std::move(th);
+    // their band over what lies under it at its share, at the water's depth (not over the surface or what lies above
+    // the water), each sample once by the band's bit
+    gpu::GraphicsDesc band = ground_desc(context, p, "ground water band", "thin_band_vs", "thin_fs");
+    translucent(band);
+    band.depth_write = true;
+    band.stencil_test = true;
+    band.stencil = {.failOp = vk::StencilOp::eKeep,
+                    .passOp = vk::StencilOp::eReplace,
+                    .depthFailOp = vk::StencilOp::eKeep,
+                    .compareOp = vk::CompareOp::eNotEqual,
+                    .compareMask = ground_stencil::water_band,
+                    .writeMask = ground_stencil::water_band,
+                    .reference = ground_stencil::water_band};
+    ATLAS_GPU_LET(bd, frame::make_pipeline(context, band, frame::Overdraw::translucent));
+    p.water_band = std::move(bd);
+    // the band's bit cleared over the frame
+    gpu::GraphicsDesc band_end = ground_desc(context, p, "ground water band end", "screen_vs", "flat_fs");
+    colour_off(band_end);
+    band_end.stencil_test = true;
+    band_end.stencil = {.failOp = vk::StencilOp::eZero,
+                        .passOp = vk::StencilOp::eZero,
+                        .depthFailOp = vk::StencilOp::eZero,
+                        .compareOp = vk::CompareOp::eAlways,
+                        .compareMask = 0,
+                        .writeMask = ground_stencil::water_band,
+                        .reference = 0};
+    ATLAS_GPU_LET(be, frame::make_pipeline(context, band_end, frame::Overdraw::none));
+    p.water_band_end = std::move(be);
     // the surface where the count is not zero: wgrad (with weather), at the water's depth, opaque
     const vk::StencilOpState inside{.failOp = vk::StencilOp::eKeep,
                                     .passOp = vk::StencilOp::eKeep,
@@ -213,30 +268,34 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     tint.stencil = inside;
     ATLAS_GPU_LET(ti, frame::make_pipeline(context, tint, frame::Overdraw::translucent));
     p.water_tint = std::move(ti);
+    // the water's elements' clip: where the count is not zero or the thin bit is set (the thin water's own samples)
+    vk::StencilOpState water = inside;
+    water.compareMask = ground_stencil::water_count | ground_stencil::water_thin;
     // the reflections inside the clip (Reflections.cpp): in the renders' order, each written at its slot's depth
     gpu::GraphicsDesc mirrored = ground_desc(context, p, "ground water reflections", "reflection_vs", "reflection_fs");
     translucent(mirrored);
     mirrored.depth_write = true;
     mirrored.stencil_test = true;
-    mirrored.stencil = inside;
+    mirrored.stencil = water;
     ATLAS_GPU_LET(rf, frame::make_pipeline(context, mirrored, frame::Overdraw::translucent));
     p.reflection = std::move(rf);
     // the rippled reflections inside the clip (Ripple.cpp): the filter's result at the group's opacity, at its slot
     gpu::GraphicsDesc rippled = ground_desc(context, p, "ground water ripple", "screen_vs", "ripple_fs");
     translucent(rippled);
     rippled.stencil_test = true;
-    rippled.stencil = inside;
+    rippled.stencil = water;
     ATLAS_GPU_LET(rc, frame::make_pipeline(context, rippled, frame::Overdraw::translucent));
     p.ripple_composite = std::move(rc);
     // the glints inside the clip (Glints.cpp): the filter's result from the moment's table at the rect's opacity
     gpu::GraphicsDesc glints = ground_desc(context, p, "ground water glints", "screen_vs", "glints_fs");
     translucent(glints);
     glints.stencil_test = true;
-    glints.stencil = inside;
+    glints.stencil = water;
     ATLAS_GPU_LET(gn, frame::make_pipeline(context, glints, frame::Overdraw::translucent));
     p.wind_glints = std::move(gn);
     // the sun's glitter (Glitter.cpp): screened over the water, each sample once by the first glint to reach it
-    // (inside the clip, its w0 bit still set: then cleared), per sample where the device can
+    // (inside the clip, its w0 bit still set: then cleared; the thin bit lies under w0's, so the test is w0's with
+    // either), per sample where the device can
     gpu::GraphicsDesc glitter = ground_desc(context, p, "ground water glitter", "glitter_vs", "glitter_fs");
     translucent(glitter);
     glitter.blends[0] = gpu::Blend::screen();
@@ -245,7 +304,8 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                        .passOp = vk::StencilOp::eZero,
                        .depthFailOp = vk::StencilOp::eKeep,
                        .compareOp = vk::CompareOp::eLess,
-                       .compareMask = ground_stencil::water_count | ground_stencil::water_w0,
+                       .compareMask =
+                           ground_stencil::water_count | ground_stencil::water_thin | ground_stencil::water_w0,
                        .writeMask = ground_stencil::water_w0,
                        .reference = ground_stencil::water_w0};
     glitter.sample_shading = context.device.enabled().sample_rate_shading;
@@ -256,7 +316,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     gpu::GraphicsDesc rings = ground_desc(context, p, "ground water rings", "screen_vs", "rings_fs");
     translucent(rings);
     rings.stencil_test = true;
-    rings.stencil = inside;
+    rings.stencil = water;
     ATLAS_GPU_LET(rg, frame::make_pipeline(context, rings, frame::Overdraw::translucent));
     p.rings = std::move(rg);
     // the clip's end: its bits cleared over the frame
@@ -268,7 +328,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                    .depthFailOp = vk::StencilOp::eZero,
                    .compareOp = vk::CompareOp::eAlways,
                    .compareMask = 0,
-                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0,
+                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin,
                    .reference = 0};
     ATLAS_GPU_LET(e, frame::make_pipeline(context, end, frame::Overdraw::none));
     p.water_end = std::move(e);
@@ -314,16 +374,69 @@ void Ground::record_water_opaque(const frame::Recording& r) {
     const Pipelines& p = *pipelines_;
     const style::ThemeBlock* th = &r.state.theme;
     if (!frame_.weather) {
-        // every drawn ring in th['water'], at the street (record_water_count counted them)
+        // every drawn ring in th['water'], at the street (record_water_count counted them), but the thin water's
+        record_water_thin(r, 0);
         water_screen(r, p.water_flat, {0.0F, 0.0F, 1.0F, 0.0F}, {0U, 0U, rgba(th->water).packed(), 0U});
         return;
     }
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *p.water_count_level);
     water_fans(r, ground_flag::water_level);
+    record_water_thin(r, ground_flag::water_level);
     // wgrad: water_top at max(0, hy) to water_bot at the frame's bottom
     water_screen(r, p.water_surface,
                  {static_cast<float>(frame_.wgrad_y1), static_cast<float>(frame_.wgrad_y2), 1.0F, 0.0F},
                  {rgba(th->water_top).packed(), rgba(th->water_bottom).packed(), 0U, 0U});
+}
+
+bool Ground::thin_water() const noexcept {
+    if (!frame_.water || !frame_.grounded || !thin_water_) return false;
+    return std::ranges::any_of(frame_.tiles, [](const DrawnTile& t) {
+        return t.ground->layout.thin.count != 0 && static_cast<bool>(t.pass->ranges[0]);
+    });
+}
+
+void Ground::thin_draws(const frame::Recording& r, std::uint32_t flags, std::array<float, 4> rows,
+                        std::array<std::uint32_t, 4> colour) const {
+    const Words& w = *words_;
+    layouts::ground_ground::PushConstants pc{};
+    pc.at = {w.tiles, w.slots, w.theme, w.runs};
+    pc.rows = {rows[0], rows[1], rows[2], rows[3]};
+    pc.colour = {colour[0], colour[1], colour[2], colour[3]};
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const DrawnTile& t = frame_.tiles[i];
+        const geo::Words thin = t.ground->layout.thin;
+        if (thin.count == 0 || !t.pass->ranges[0]) continue;
+        // a draw a tile: thin_of finds a vertex's record from the tile's first (six vertices a record)
+        pc.mode = {flags, slot(geo::group::water, 0, 0), (t.pass->ranges[0].offset / 4) + thin.first, 0U};
+        r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0,
+                                                                         pc);
+        r.frame.cmd.draw(6 * thin.count, 1, 0, static_cast<std::uint32_t>(i));
+        r.counters.draw("ground water", 2 * thin.count);
+    }
+}
+
+void Ground::record_water_thin(const frame::Recording& r, std::uint32_t flags) {
+    if (!thin_water()) return;
+    r.frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->water_thin);
+    thin_draws(r, flags, {}, {});
+}
+
+void Ground::record_water_band(const frame::Recording& r) {
+    if (!thin_water()) return;
+    const style::ThemeBlock& th = r.state.theme;
+    r.frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->water_band);
+    // the surface's colour (with weather wgrad, as record_water_opaque draws it, and its tint over it at
+    // record_water_tint's opacity; else th['water']), at the edges' height there (their level or the street)
+    if (frame_.weather) {
+        thin_draws(r, ground_flag::water_level,
+                   {static_cast<float>(frame_.wgrad_y1), static_cast<float>(frame_.wgrad_y2),
+                    frame_.night ? 0.04F : 0.12F, 0.0F},
+                   {rgba(th.water_top).packed(), rgba(th.water_bottom).packed(), rgba(th.water).packed(), 0U});
+    } else {
+        const std::uint32_t c = rgba(th.water).packed();
+        thin_draws(r, 0, {}, {c, c, c, 0U});
+    }
+    water_screen(r, pipelines_->water_band_end, {}, {});
 }
 
 void Ground::record_water_tint(const frame::Recording& r) {

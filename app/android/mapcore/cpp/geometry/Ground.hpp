@@ -485,6 +485,13 @@ struct LineGpu {
 };
 static_assert(sizeof(LineGpu) == 16);
 
+/// The words of a thin edge's GPU record (GroundGpu::thin, ground.slang's thin_of): its ends (x, z as f32 from the
+/// tile's origin), its widths at them (each in thin_units a metre, 16 bits, the first's low), its piece's fill and its
+/// other bank's.
+inline constexpr std::uint32_t thin_words = 7;
+/// A metre of a thin edge's widths.
+inline constexpr double thin_units = 1024.0;
+
 /// A word range of a heap range: [first, first + count) words, or of records.
 struct Words {
     std::uint32_t first = 0;
@@ -504,6 +511,7 @@ struct GroundGpu {
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
+    Words thin;     ///< the water's thin edges (thin_edges), thin_words words each
     Words fills;    ///< FillGpu records
     Words points;   ///< two words each
     Words lines_at; ///< LineGpu records (the polylines, in the tile's order)
@@ -531,6 +539,7 @@ struct GroundLayout {
     Words below;
     Words canopy;
     Words fans;
+    Words thin;
     Words fills;
     Words points;
     Words lines_at;
@@ -549,6 +558,8 @@ struct GroundTile {
     std::vector<Polyline> polylines;
     /// The tile's south-west corner at street level in the pack's frame (its GPU positions are relative to it).
     P2 origin;
+    /// Its north-east corner: with `origin` its box, along whose sides the water's pieces are cut (thin_edges).
+    P2 far_corner;
     /// Where its words lie in its heap ranges (the pass's, once packed).
     GroundLayout layout;
     /// Each polyline's first point's word in the lines range (pack's layout: the polylines' points in order).

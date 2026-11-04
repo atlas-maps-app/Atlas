@@ -17,6 +17,10 @@
 //     it moves, where 4 samples a pixel would step.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
+//   - thin_vs, thin_band_vs and thin_fs: the app's map's thin water (passes/Water.cpp), where the water is narrower on
+//     the screen than LEAST_PX across a thin edge of its pieces (geometry/Water.hpp's thin_edges): the edge's quad
+//     across the water leaves the count there to its band, LEAST_PX wide along the water's middle at the share of
+//     them the water covers (thin_of), in the surface's colour with its tint.
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
 //     (render's #sky: sky_top to sky_hor between two rows), the water's surface (#wgrad, or th['water'] without
 //     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy);
@@ -475,6 +479,113 @@ FillOut water_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID
     return o;
 }
 
+// ---------------------------------------------------------------- the water's thin edges (passes/Water.cpp)
+
+/// A thin edge's record (geometry/Ground.hpp's GroundGpu::thin), its words, and a metre of its widths.
+static const uint THIN_WORDS = 7u;
+static const float THIN_UNITS = 1024.0f;
+
+/// A thin edge's quad, two triangles over its corners: 0 and 1 its ends on its bank, 2 and 3 across from 1 and 0.
+static const uint THIN_VERTICES = 6u;
+static const uint thin_corners[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+
+struct ThinOut {
+    float4 position : SV_Position;
+    float cover : COLOR0;
+};
+
+/// The water's width on the screen at a thin edge's end w on its bank, wm across the water from it, at height y,
+/// device px: across its direction there, measured as least_point measures a street's; LEAST_PX where a point reaches
+/// the near plane (it is near) or the direction has none.
+float thin_px(uint tile, float y, float2 w, float2 wm) {
+    float2 across = w - wm;
+    float l = length(across);
+    if (!(l > 0.0f)) {
+        return LEAST_PX;
+    }
+    float2 c = 0.5f * (w + wm);
+    float2 along = float2(-across.y, across.x) * (LEAST_ALONG / l);
+    float2 a = c + along;
+    float2 b = c - along;
+    TilePlace t = place_of(tile);
+    float3 kw = camera_of(frame.camera, eye_relative(t, float3(w.x, y, w.y)));
+    float3 km = camera_of(frame.camera, eye_relative(t, float3(wm.x, y, wm.y)));
+    float3 ka = camera_of(frame.camera, eye_relative(t, float3(a.x, y, a.y)));
+    float3 kb = camera_of(frame.camera, eye_relative(t, float3(b.x, y, b.y)));
+    if (min(min(kw.z, km.z), min(ka.z, kb.z)) <= frame.camera.frame.w) {
+        return LEAST_PX;
+    }
+    float2 d = css_of(frame.camera, ka) - css_of(frame.camera, kb);
+    float2 s = css_of(frame.camera, kw) - css_of(frame.camera, km);
+    float ld = length(d);
+    if (!(ld > 0.0f)) {
+        return LEAST_PX;
+    }
+    return abs(s.x * d.y - s.y * d.x) / ld * frame.camera.frame.z;
+}
+
+/// A thin edge's vertex: THIN_VERTICES a record, from the tile's first record's word (push.mode.z: a draw a tile),
+/// its tile the instance. Drawn where the frame draws its piece and its other bank's at the draw's height (water_vs's
+/// bits) and the water is narrower on the screen than LEAST_PX at either of its ends; else folded. Its quad from the
+/// edge on its bank across the water to the other bank (`band` false), or its band along the water's middle, at each
+/// end LEAST_PX wide at the share of them the water covers there (`cover`, least_point's) where narrower, else as wide
+/// as the water.
+ThinOut thin_of(uint index, uint tile, bool band) {
+    uint at = push.mode.z + THIN_WORDS * (index / THIN_VERTICES);
+    uint corner = index % THIN_VERTICES;
+    ThinOut o;
+    o.cover = 1.0f;
+    uint f = ground_word(at + 5u);
+    uint other = ground_word(at + 6u);
+    bool level = (push.mode.x & GROUND_WATER_LEVEL) != 0u;
+    uint bits = level ? tile_word(tile, 14u) : tile_word(tile, 13u);
+    if ((push.mode.x & GROUND_VISIBLE_ALL) == 0u && !(bit(bits, f) && bit(bits, other))) {
+        o.position = FOLDED;
+        return o;
+    }
+    uint base = tile_word(tile, 8u);
+    float y = level ? asfloat(ground_word(base + tile_word(tile, 10u) + 5u * f)) : 0.0f;
+    float2 a = float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+    float2 b = float2(asfloat(ground_word(at + 2u)), asfloat(ground_word(at + 3u)));
+    uint widths = ground_word(at + 4u);
+    // into the water: the left of the edge's direction (x east, z south)
+    float2 e = b - a;
+    float2 n = float2(-e.y, e.x) / length(e);
+    float2 fa = a + n * (float(widths & 0xFFFFu) / THIN_UNITS);
+    float2 fb = b + n * (float(widths >> 16u) / THIN_UNITS);
+    float pa = thin_px(tile, y, a, fa);
+    float pb = thin_px(tile, y, b, fb);
+    if (!(min(pa, pb) < LEAST_PX)) {
+        o.position = FOLDED;
+        return o;
+    }
+    uint q = thin_corners[corner];
+    bool at_b = q == 1u || q == 2u;
+    float2 w = at_b ? b : a;
+    float2 wm = at_b ? fb : fa;
+    float2 p = q >= 2u ? wm : w;
+    float px = at_b ? pb : pa;
+    if (band && px < LEAST_PX) {
+        float2 c = 0.5f * (w + wm);
+        p = c + (p - c) * (LEAST_PX / max(px, 1.0e-4f));
+        o.cover = px / LEAST_PX;
+    }
+    o.position = place(tile, float3(p.x, y, p.y), push.mode.y);
+    return o;
+}
+
+/// A thin edge's quad across the water (thin_of): where it lies on water counted once, the count left to the band.
+[shader("vertex")]
+ThinOut thin_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    return thin_of(index, tile, false);
+}
+
+/// A thin edge's band along the water's middle (thin_of).
+[shader("vertex")]
+ThinOut thin_band_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    return thin_of(index, tile, true);
+}
+
 // ---------------------------------------------------------------- the ground shadows (passes/Shadows.cpp)
 
 /// A shadow record's flags (geometry/Ground.hpp's shadow_flag).
@@ -859,6 +970,19 @@ ColourOut flat_fs(ScreenOut v) {
     float a = push.rows.z;
     ColourOut o;
     o.colour = float4(c.rgb * a, a);
+    return o;
+}
+
+/// The water's thin edges' band's colour (thin_band_vs): the water's surface there (gradient_at: with weather wgrad,
+/// else push.colour.x and .y both th['water']) with its tint over it (push.colour.z at push.rows.z), at the band's
+/// share of the pixels it is drawn over (cover_of), premultiplied.
+[shader("fragment")]
+ColourOut thin_fs(ThinOut v) {
+    float2 css = css_of_output(frame.camera, v.position.xy);
+    float3 c = lerp(gradient_at(css.y).rgb, unpack(push.colour.z).rgb, push.rows.z);
+    float a = cover_of(v.cover);
+    ColourOut o;
+    o.colour = float4(c * a, a);
     return o;
 }
 

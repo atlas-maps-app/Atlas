@@ -91,6 +91,11 @@ inline constexpr std::uint32_t water_count = 0x07;
 inline constexpr std::uint32_t shadows = 0x08;
 inline constexpr std::uint32_t canopy = 0x10;
 inline constexpr std::uint32_t water_w0 = 0x40;
+/// The app's map's thin water (passes/Water.cpp): where its pieces lie narrower than 1.5 px, their count cleared for
+/// the band (the shadows' bit, from the opaque ground to the water's end: their union comes after it), and the band's
+/// samples drawn (the canopy's, in the opaque ground alone: cleared after the band, before the canopy's union).
+inline constexpr std::uint32_t water_thin = shadows;
+inline constexpr std::uint32_t water_band = canopy;
 } // namespace ground_stencil
 
 /// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
@@ -981,6 +986,10 @@ public:
     /// share of them (ground.slang's least_point), else at their own width (on by default; the far flicker's measure,
     /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST).
     void draw_least_width(bool draw) noexcept { least_width_ = draw; }
+    /// The tests' switch: the app's map's water narrower on the screen than 1.5 device px drawn as a band 1.5 px wide
+    /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
+    /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
+    void draw_thin_water(bool draw) noexcept { thin_water_ = draw; }
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
@@ -1110,8 +1119,23 @@ private:
     /// before the fills above the water, so that the app's map's streets keep off it (record_streets).
     void record_water_count(const frame::Recording& r);
     /// The water's surface: with weather wgrad where its rings at their level count, without th['water'] where the
-    /// count is not zero, the count kept for the app's map's streets (record_streets).
+    /// count is not zero, the count kept for the app's map's streets (record_streets); in the app's map, where its thin
+    /// edges lie narrower than 1.5 px, the count left to their band first (record_water_thin).
     void record_water_opaque(const frame::Recording& r);
+    /// Whether the frame draws the water's thin edges: the app's map's, under its switch (draw_thin_water).
+    [[nodiscard]] bool thin_water() const noexcept;
+    /// The drawn tiles' thin edges by the bound pipeline (thin_vs, thin_band_vs), a draw a tile, with the draw's
+    /// flags, rows and colours (each tile's first record's word in mode's third).
+    void thin_draws(const frame::Recording& r, std::uint32_t flags, std::array<float, 4> rows,
+                    std::array<std::uint32_t, 4> colour) const;
+    /// Where the water's thin edges lie narrower than 1.5 px, on water counted once: the thin bit set and the count
+    /// cleared, so the surface leaves it to their band (record_water_band); `flags` the count's (its level's or the
+    /// street's).
+    void record_water_thin(const frame::Recording& r, std::uint32_t flags);
+    /// The water's thin edges' band, after the land and the plate, before the app's map's streets: along the water's
+    /// middle at least 1.5 px wide at the share of them it covers, in the surface's colour with its tint, at the
+    /// water's depth, each sample once; its stencil bit cleared after it.
+    void record_water_band(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
     /// The water's clip cleared from the stencil: with weather (`weather`) after the water's elements, without after
     /// the app's map's streets, for which the water's plain draw keeps its count.
@@ -1291,6 +1315,7 @@ private:
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
+    bool thin_water_ = true;
     bool no_quays_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
@@ -1389,6 +1414,10 @@ struct Ground::Pipelines {
     vk::raii::Pipeline water_flat{nullptr};
     vk::raii::Pipeline water_tint{nullptr};
     vk::raii::Pipeline water_end{nullptr};
+    /// The app's map's thin water (record_water_thin, record_water_band).
+    vk::raii::Pipeline water_thin{nullptr};
+    vk::raii::Pipeline water_band{nullptr};
+    vk::raii::Pipeline water_band_end{nullptr};
     // Sky.cpp
     vk::raii::Pipeline sky{nullptr};
     vk::raii::Pipeline sun_glow{nullptr};

@@ -5,7 +5,11 @@
 // with an island; the frame drawn straight down through the world and the ground pass on lavapipe is held, pixel by
 // pixel, to a CPU raster of the same rings by the nonzero rule at the standard 4x sample positions: without weather
 // (every ring's own fill, islands undrawn) and with it (w0 at the street, wclip at the water level, clipped by w0, the
-// island land).
+// island land). And in the app's map, water narrower on the screen than 1.5 device px (passes/Water.cpp's thin water):
+// a ditch some 0.9 px wide seen straight down while the camera moves an eighth of a pixel at a time, its rows each as
+// much ink across them as it is wide wherever it lies on the samples, no pixel holding more than its share of 1.5 px,
+// where at its own width the samples miss by up to 17 %; every pixel it changes within 0.75 px and a pixel of the
+// ditch's middle, a pond beside it as it was, and the ditch from nearer, 3 px wide, as it was.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -16,6 +20,7 @@
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Ground.hpp"
+#include "scene/Cover.hpp"
 #include "scene/World.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
@@ -23,13 +28,17 @@
 #include "tests/tiles/support.hpp"
 #include "tiles/layers/Ground.hpp"
 #include "tiles/layers/Water.hpp"
+#include "view/Camera.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <span>
+#include <string_view>
 #include <vector>
 
 using namespace atlas;
@@ -367,6 +376,143 @@ void check_scene(test::Session& session, const std::filesystem::path& path, cons
     }
 }
 
+/// The thin scene, in the app's map: a ditch 6 m wide and 800 m long from 100 m south of the frame's origin, 300 m east
+/// of it, and a pond 60 m across 200 m east of the ditch.
+std::vector<TestTile> thin_tiles() {
+    return {{.key = {14, 8414, 5384},
+             .pieces = {{.pts = {{297, 100}, {303, 100}, {303, 900}, {297, 900}}, .hole = false, .index = 0},
+                        {.pts = {{500, 470}, {560, 470}, {560, 530}, {500, 530}}, .hole = false, .index = 1}}}};
+}
+
+/// The thin scene's frame: 192 device px a side at a density of 1.
+constexpr std::uint32_t thin_size = 192;
+
+/// A frame of the thin scene: its pixels with the thin water and without, and the ditch's middle and width on the
+/// screen along the frame's middle row, device px.
+struct ThinFrame {
+    gpu::Pixels on;
+    gpu::Pixels off;
+    double centre = 0;
+    double width = 0;
+};
+
+/// The thin scene at `path` drawn by the ground alone in the app's map, straight down from `distance` over the ditch's
+/// middle while the camera moves, without weather or with it: for each of `shifts`, the camera that many device px east
+/// of it (so the ditch as far west of the frame's middle column), once the tile is built and faded in.
+std::vector<ThinFrame> draw_thin(test::Session& session, const std::filesystem::path& path, double distance,
+                                 std::span<const double> shifts, bool weather) {
+    const gpu::Device& device = *session.device;
+    constexpr std::uint32_t size = thin_size;
+    style::ThemeBlock th = test::sunny();
+    th.ground = {.r = 0xD6, .g = 0xCF, .b = 0xC2, .a = 255};
+    th.water = {.r = 0, .g = 0, .b = 255, .a = 255};
+    th.water_top = {.r = 200, .g = 30, .b = 30, .a = 255};
+    th.water_bottom = {.r = 200, .g = 30, .b = 30, .a = 255};
+    if (!weather) th.flags = style::theme_flag::water_gradient; // a fixed moment: no weather
+    // the ground alone (no lines, shadows, quay walls or elements on the water)
+    namespace part = style::camera_part;
+    const double focal = (size / 2.0) / pymath::tan(pymath::radians(view::field_of_view) / 2);
+    const auto camera_at = [&](double shift) {
+        const double east = 300.0 + (shift * distance / focal);
+        style::CameraState c =
+            test::moving(test::s1_camera(lat0 - (500.0 / kz), lon0 + (east / kx), 0.0, 0.0, distance, size / 2.0));
+        c.flags &= ~style::camera_flag::engine_mode;
+        c.parts = part::ground_lines | part::setts | part::ground_text | part::quays | part::building_shadows |
+                  part::park_shadows | part::cloud_shadows | part::reflections | part::ripple | part::glitter |
+                  part::rings | part::glints | part::water_streaks;
+        c.density = 1.0;
+        c.width_px = c.height_px = size;
+        c.width_dp = c.height_dp = size;
+        c.principal_x = size / 2.0;
+        return c;
+    };
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE_OR_RETURN({}, cache.has_value(), cache.error().text());
+    constexpr std::array<std::string_view, 3> ground_only{"composite", "frosted", "ground"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
+    passes::Ground* ground = test::ground_of(passes);
+    auto builder =
+        frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0, .grain = false, .grounded = true});
+    ATLAS_REQUIRE_OR_RETURN({}, builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = 1, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE_OR_RETURN({}, world.has_value(), world.error().text());
+    ATLAS_REQUIRE_OR_RETURN(
+        {}, (*world)->store().add({.id = "thin", .kind = tiles::PackKind::bundled, .path = path.string()}),
+        "the synthetic pack opens");
+    (*world)->set_active("thin");
+    auto output = gpu::Offscreen::create(device, {.width = size, .height = size}, 2);
+    ATLAS_REQUIRE_OR_RETURN({}, output.has_value(), output.error().text());
+    const auto inputs = [&](const style::CameraState& c) {
+        return frame::FrameInputs{
+            .camera = c, .theme = th, .seconds = now, .mode = frame::Mode::structural, .scene = world->get()};
+    };
+    const style::CameraState first = camera_at(shifts.front());
+    (*builder)->set_inputs(inputs(first));
+    const gpu::Configuration config{.config = gpu::FrameConfig::c,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::resolve};
+    auto renderer = gpu::Renderer::create(device, **output, **builder, config);
+    ATLAS_REQUIRE_OR_RETURN({}, renderer.has_value(), renderer.error().text());
+    const auto draw = [&](const style::CameraState& c) {
+        (*builder)->set_inputs(inputs(c));
+        auto report = (*renderer)->draw(0);
+        ATLAS_REQUIRE(report.has_value(), report.error().text());
+        (*renderer)->drain();
+    };
+    // until its tile is built and faded in
+    bool settled = false;
+    for (int f = 0; f < 61 && !settled; ++f) {
+        now = static_cast<double>(f) * 0.25;
+        draw(first);
+        (*world)->residency().wait_idle();
+        const scene::Cover& cover = *(*world)->cover();
+        settled = f > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
+                  std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
+    }
+    CHECK(settled);
+    std::vector<ThinFrame> out;
+    for (const double shift : shifts) {
+        const style::CameraState c = camera_at(shift);
+        ThinFrame t;
+        for (const bool thin : {true, false}) {
+            ground->draw_thin_water(thin);
+            draw(c);
+            auto packed = (*output)->read_packed((*output)->latest());
+            ATLAS_REQUIRE_OR_RETURN({}, packed.has_value(), packed.error().text());
+            (thin ? t.on : t.off) = gpu::to_rgba8(*packed);
+        }
+        ground->draw_thin_water(true);
+        // the ditch's banks on the screen along the middle row: the ground under two columns' centres a pixel apart
+        const auto& framed = (*builder)->state().view;
+        ATLAS_REQUIRE_OR_RETURN({}, framed.has_value(), "the frame has a view");
+        const view::Camera& cam = framed->camera();
+        const geo::P2 g0 = ground_at(cam, 0.5, size / 2.0, 0.0);
+        const geo::P2 g1 = ground_at(cam, 1.5, size / 2.0, 0.0);
+        const double west = 0.5 + ((297.0 - g0.x) / (g1.x - g0.x));
+        const double east = 0.5 + ((303.0 - g0.x) / (g1.x - g0.x));
+        t.centre = 0.5 * (west + east);
+        t.width = east - west;
+        out.push_back(std::move(t));
+    }
+    for (const std::string& m : session.take_messages()) CHECK_MESSAGE(false, m);
+    renderer->reset();
+    return out;
+}
+
+/// A pixel's green, 0-255.
+double green(const gpu::Pixels& px, std::uint32_t x, std::uint32_t y) {
+    return px.rgba[((std::size_t{y} * px.width + x) * 4) + 1];
+}
+
+/// Whether pixel (x, y) differs in its colour between `a` and `b`.
+bool differs(const gpu::Pixels& a, const gpu::Pixels& b, std::uint32_t x, std::uint32_t y) {
+    const std::size_t i = (std::size_t{y} * a.width + x) * 4;
+    return a.rgba[i] != b.rgba[i] || a.rgba[i + 1] != b.rgba[i + 1] || a.rgba[i + 2] != b.rgba[i + 2];
+}
+
 } // namespace
 
 TEST_CASE(
@@ -392,6 +538,92 @@ TEST_CASE("ground: a water ring and its island cut at a tile's edge draw as the 
     }
     const auto dir = std::filesystem::path(ATLAS_TEST_SCRATCH) / "ground";
     check_scene(*session, write_pack(dir, "water-cut.atlas", cut_tiles(), lon_edge), cut_rings(), lon_edge, "cut");
+}
+
+TEST_CASE(
+    "ground: in the app's map water narrower on the screen than 1.5 device px is drawn 1.5 px wide at the share of "
+    "them it covers, as much ink across it as it is wide wherever it lies on the samples; wider water and a "
+    "nearer view as they were") {
+    auto session = test::open_session();
+    if (!session) return;
+    if (!session->device->facts().supports(gpu::FrameConfig::c)) {
+        MESSAGE("no 4x configuration here");
+        return;
+    }
+    const auto dir = std::filesystem::path(ATLAS_TEST_SCRATCH) / "ground";
+    const std::filesystem::path path = write_pack(dir, "water-thin.atlas", thin_tiles());
+    // from 1,970 m the ditch's 6 m some 0.9 px: the camera an eighth of a pixel further east each time, and a 32nd off
+    // the quarters the samples lie on across a row, so that the band's edges never meet one
+    std::array<double, 8> shifts{};
+    for (std::size_t k = 0; k < shifts.size(); ++k) shifts[k] = (static_cast<double>(k) + 0.25) / 8;
+    constexpr std::uint32_t size = thin_size;
+    for (const bool weather : {false, true}) {
+        CAPTURE(weather);
+        const std::vector<ThinFrame> frames = draw_thin(*session, path, 1970.0, shifts, weather);
+        ATLAS_REQUIRE(frames.size() == shifts.size());
+        // each row across the ditch away from its ends (rows 36 to 156) and the pond's (91 to 101, 30 px east of it):
+        // its ink, the share of the way from the plate's green to the water's (the pond's middle) of each pixel, summed
+        double worst_on = 0;
+        double worst_off = 0;
+        double most = 0;
+        std::size_t rows = 0;
+        std::size_t near = 0;
+        std::size_t moved = 0;
+        for (const ThinFrame& f : frames) {
+            CAPTURE(f.centre);
+            CHECK(f.width > 0.85);
+            CHECK(f.width < 0.95);
+            const auto ink_of = [&](const gpu::Pixels& px, std::uint32_t y, double& peak) {
+                const double plate = green(px, 20, size / 2);
+                const double water = green(px, 130, size / 2);
+                CHECK(plate - water > 100);
+                double ink = 0;
+                const auto c = static_cast<std::uint32_t>(f.centre);
+                for (std::uint32_t x = c - 5; x <= c + 5; ++x) {
+                    const double share = (plate - green(px, x, y)) / (plate - water);
+                    ink += share;
+                    peak = std::max(peak, share / (f.width / 1.5));
+                }
+                return ink;
+            };
+            for (std::uint32_t y = 50; y <= 140; ++y) {
+                double ignored = 0;
+                worst_on = std::max(worst_on, std::abs(ink_of(f.on, y, most) - f.width) / f.width);
+                worst_off = std::max(worst_off, std::abs(ink_of(f.off, y, ignored) - f.width) / f.width);
+                ++rows;
+            }
+            // every pixel the band changes within its 0.75 px and a pixel of the ditch's middle
+            for (std::uint32_t y = 0; y < size; ++y) {
+                for (std::uint32_t x = 0; x < size; ++x) {
+                    if (!differs(f.on, f.off, x, y)) continue;
+                    if (std::abs(static_cast<double>(x) + 0.5 - f.centre) <= 1.75) {
+                        ++near;
+                    } else {
+                        ++moved;
+                    }
+                }
+            }
+        }
+        MESSAGE((weather ? "with weather" : "without weather")
+                << ": " << rows << " rows across the ditch some " << frames.front().width
+                << " px wide, with the band off by " << 100 * worst_on << " % at most, a pixel's most " << most
+                << " of its width's share of 1.5; at its own width off by " << 100 * worst_off << " %; " << near
+                << " pixels changed by the band near the ditch, " << moved << " elsewhere");
+        CHECK(worst_on < 0.06);
+        CHECK(most < 1.1);
+        CHECK(worst_off > 0.08);
+        CHECK(near > 100);
+        CHECK(moved == 0);
+        // from 591 m the ditch some 3 px: the band not drawn
+        const std::vector<ThinFrame> nearer = draw_thin(*session, path, 591.0, std::span(shifts).first(1), weather);
+        ATLAS_REQUIRE(nearer.size() == 1);
+        CHECK(nearer[0].width > 2.8);
+        std::size_t changed = 0;
+        for (std::uint32_t y = 0; y < size; ++y) {
+            for (std::uint32_t x = 0; x < size; ++x) changed += differs(nearer[0].on, nearer[0].off, x, y) ? 1 : 0;
+        }
+        CHECK(changed == 0);
+    }
 }
 
 #endif

@@ -602,6 +602,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
                       .below = gpu.below,
                       .canopy = gpu.canopy,
                       .fans = gpu.fans,
+                      .thin = gpu.thin,
                       .fills = gpu.fills,
                       .points = gpu.points,
                       .lines_at = gpu.lines_at,
@@ -627,13 +628,14 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     b.out().ranges[0] = ground_range;
     b.out().ranges[1] = lines_range;
     // the governor's count: its fills, the canopy, the water's fans and the shadows' triangles (three index words
-    // each), and its lines' segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
+    // each), the water's thin edges' (two in each of their two draws: passes/Water.cpp's thin water) and its lines'
+    // segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
     const std::uint64_t points = gpu.points.count;
     const std::uint64_t segments = points > ground->polylines.size() ? points - ground->polylines.size() : 0;
     b.out().triangles = ((std::uint64_t{gpu.above.count} + gpu.below.count + gpu.canopy.count + gpu.fans.count +
                           gpu.shadow_draw.count + gpu.woods_draw.count) /
                          3) +
-                        (2 * segments);
+                        (4 * std::uint64_t{gpu.thin.count}) + (2 * segments);
     const std::size_t bytes = ground->bytes();
     b.keep(std::shared_ptr<const geo::GroundTile>(std::move(ground)), bytes);
     return {};
@@ -1370,7 +1372,8 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     // the app's map's streets, after the land and the water (record_streets): over what lies under them at their
     // coverage, top first at their painter depth (the fills over them drawn already, those under them deeper); on a
     // bridge over the water, off a bridge where the stencil holds no water at the street (its count, or with weather
-    // w0's bit: record_water_count draws it first, and the water's plain draw keeps the count for them)
+    // w0's bit: record_water_count draws it first, and the water's plain draw keeps the count for them; or the thin
+    // water's bit, where its count was left to the band)
     gpu::GraphicsDesc bridges = ground_desc(context, p, "ground bridges", "street_vs", "colour_over_fs");
     scene_blend(bridges, gpu::Blend::over());
     opaque_depth(bridges);
@@ -1383,7 +1386,8 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
                        .passOp = vk::StencilOp::eKeep,
                        .depthFailOp = vk::StencilOp::eKeep,
                        .compareOp = vk::CompareOp::eEqual,
-                       .compareMask = ground_stencil::water_count | ground_stencil::water_w0,
+                       .compareMask =
+                           ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin,
                        .writeMask = 0,
                        .reference = 0};
     ATLAS_GPU_LET(fs, frame::make_pipeline(context, streets, frame::Overdraw::translucent));
@@ -1679,14 +1683,15 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     switch (phase) {
     case phase_opaque:
         // top first: the quay walls (the tail's, over the shadows), what lies above the water, the water, the land, the
-        // plate, then the app's map's streets over what lies under them, and the sky; the water's count before what
-        // lies above it, which the app's map's streets keep off
+        // plate, then the app's map's thin water's band and streets over what lies under them, and the sky; the
+        // water's count before what lies above it, which the app's map's streets keep off
         record_quays(r);
         record_water_count(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, false);
         record_plate(r);
+        record_water_band(r);
         if (!frame_.out(style::camera_part::ground)) record_streets(r);
         record_water_end(r, false);
         if (!only_setts_ && !frame_.out(style::camera_part::sky)) {
