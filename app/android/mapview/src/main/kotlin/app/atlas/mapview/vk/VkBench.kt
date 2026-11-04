@@ -267,7 +267,7 @@ object VkBench {
      * [mapViews]' views: the home's about [home], and the board's three about [board] by [camera]'s yaw, pitch and
      * distance. The records are compared ([MapView.compared]) on the home's pinch, out to [MAP_FAR], and on pitch70's
      * turn, the horizon in view: the paths that keep the most walls (the governor's 12.1 M triangles planned at 4.4 km
-     * of the pinch and at 70° turning, scene/Governor.hpp).
+     * of the pinch and at 70° turning, scene/Governor.hpp); on CI's bench at the home's pinch alone ([recordsCompared]).
      */
     private fun views(home: LatLon?, board: LatLon?, camera: PackList.ViewCamera?): List<MapView> = buildList {
         if (home != null) {
@@ -345,6 +345,15 @@ object VkBench {
      * and 60), off then on in CI's two.
      */
     fun recordsOn(i: Int, n: Int): Boolean = (n - i) / 2 % 2 == 0
+
+    /**
+     * Whether the records are compared at [view] ([MapView.compared]) in a bench of [length] whose map stage draws
+     * [views]: at each view with a compared path on the full and quick benches, and at the first alone on CI's (the
+     * home's pinch over the canal ring), where each setting waits for the frame in flight, a far frame takes about 2 s
+     * on the emulator, and a comparison adds 2 to 5 s.
+     */
+    fun recordsCompared(view: MapView, views: List<MapView>, length: Length): Boolean =
+        view.compared != null && (length != Length.CI || view == views.firstOrNull { it.compared != null })
 
     /**
      * A slice of a records' comparison: the records [on] or off from [fromNs] (once the core had them so) until [untilNs]

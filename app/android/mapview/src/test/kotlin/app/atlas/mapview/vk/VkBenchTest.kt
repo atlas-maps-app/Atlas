@@ -121,6 +121,13 @@ class VkBenchTest {
         assertEquals("map world72 orbit", VkBench.mapLabel(far, VkBench.Path.ORBIT))
         // The records are compared where the most walls are kept: the home's pinch and pitch70's turn.
         assertEquals(listOf(VkBench.Path.PINCH, null, VkBench.Path.ORBIT, null), views.map { it.compared })
+        // The full and quick benches compare them at both; CI's at the first alone, the home's pinch where it is drawn.
+        for (length in listOf(VkBench.Length.FULL, VkBench.Length.QUICK)) {
+            assertEquals(listOf(true, false, true, false), views.map { VkBench.recordsCompared(it, views, length) })
+        }
+        assertEquals(listOf(true, false, false, false), views.map { VkBench.recordsCompared(it, views, VkBench.Length.CI) })
+        val boards = VkBench.mapViews(null, region, board)
+        assertEquals(listOf(false, true, false), boards.map { VkBench.recordsCompared(it, boards, VkBench.Length.CI) })
     }
 
     @Test

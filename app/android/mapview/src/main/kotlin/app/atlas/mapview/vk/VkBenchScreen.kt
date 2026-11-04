@@ -938,8 +938,8 @@ private class BenchRun(
      * are drawn over the phone's own packs ([VkBench.installedViews]), so a phone measures the governor's bias and
      * world72's p95 over its own tiles, each line naming the pack it is drawn over so that none is taken for CI's canal
      * ring's. At the views that keep the most walls, the compared path ([VkBench.MapView.compared]) is drawn on with the
-     * kept walls' shape records on and off in turn, a line each ([compareRecords]). The map goes off after (the next
-     * step's bench call takes the window back).
+     * kept walls' shape records on and off in turn, a line each ([compareRecords]); on CI's bench at the first of them
+     * alone ([VkBench.recordsCompared]). The map goes off after (the next step's bench call takes the window back).
      */
     private suspend fun mapStage() {
         val surface = switchHost(VkHost.SURFACE, "the map")
@@ -995,7 +995,7 @@ private class BenchRun(
                     val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}" +
                         if (governor.isEmpty()) "" else " $governor"
                     emit(VkBench.line(label, s, graphicsMb(), nativeMb(), extra))
-                    if (path == view.compared) compareRecords(view, path)
+                    if (path == view.compared && VkBench.recordsCompared(view, views, plan)) compareRecords(view, path)
                 }
             }
         } finally {
