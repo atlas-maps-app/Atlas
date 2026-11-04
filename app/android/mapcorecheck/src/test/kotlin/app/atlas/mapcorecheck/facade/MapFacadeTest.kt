@@ -67,6 +67,7 @@ class MapFacadeTest {
             try {
                 // Before the map is made the packs are listed; once it is, they open in its world.
                 assertEquals("amsterdam listed\n", packs(handle, tiles, "amsterdam"))
+                assertEquals("no map", Native.shapeRecords(handle, true)) // VK bench's switch: no frames to draw yet
                 assertEquals("", Native.map(handle, 1))
                 assertEquals("amsterdam kept\ngrachten opened\n", packs(handle, tiles, "amsterdam", "grachten"))
                 assertEquals("amsterdam kept\ngrachten kept\n", packs(handle, tiles, "amsterdam", "grachten"))
@@ -185,6 +186,12 @@ class MapFacadeTest {
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
                 Native.screen(handle, true, true, true)
+
+                // The kept walls' shape records off, then on again (VK bench's comparison): taken, but what the device
+                // makes is known only once a frame is drawn, which hosts have no window for (map_frame_vk_test holds the
+                // frames drawn either way).
+                assertEquals("no frame drawn yet (the passes not prepared)", Native.shapeRecords(handle, false))
+                assertEquals("no frame drawn yet (the passes not prepared)", Native.shapeRecords(handle, true))
 
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))

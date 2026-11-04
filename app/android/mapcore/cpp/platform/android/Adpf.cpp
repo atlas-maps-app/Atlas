@@ -86,6 +86,7 @@ bool HintSession::open(pid_t tid, std::int64_t target_ns) noexcept {
     session_ = a.create_session(manager, tids, 1, target_ns);
     gpu_ = session_ != nullptr && a.gpu();
     target_ns_ = target_ns;
+    if (session_ != nullptr && !threads_.empty()) take_threads(); // told before it opened
     return session_ != nullptr;
 }
 
@@ -112,6 +113,22 @@ void HintSession::report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_
         }
     }
     (void)a.report(session_, cpu_ns);
+}
+
+void HintSession::threads(std::span<const std::int32_t> tids) {
+    threads_.assign(tids.begin(), tids.end());
+    if (session_ != nullptr) take_threads();
+}
+
+void HintSession::take_threads() noexcept {
+    const HintApi& a = api();
+    if (a.set_threads == nullptr || threads_.empty()) return; // API 33: the render thread alone
+    const int e = a.set_threads(session_, threads_.data(), threads_.size());
+    if (e != 0) {
+        log::warn("vk frame: the render thread's hint session refused its {} threads ({})", threads_.size(), e);
+    } else {
+        log::info("vk frame: the render thread's hint session holds it and {} helpers", threads_.size() - 1);
+    }
 }
 
 std::string HintSession::describe() const {

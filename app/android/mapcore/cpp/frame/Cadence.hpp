@@ -1,14 +1,14 @@
 // The frame loop's cadence on the display (plan-vector D5.8, ENGINE.md gain 11): at most 60 frames a second, every
 // vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is cool and 60 a second by phase
 // where it runs warm (one vsync and two in turn, where every second one gave 45 until 3 November), and every second one
-// there behind a GPU of 16 ms or more; a frame that comes later than that is never held back. The display's period is
-// the spacing of the vsync's frame timelines, which SurfaceFlinger spaces by the app's vsync period (API 33); before
-// API 33, the shortest of the last gaps between the vsyncs the loop received, each a whole number of periods. Until 3
-// November it was the mean of those gaps: after a frame longer than a refresh the loop's next vsync comes two periods
-// on, so at 120 Hz the mean settled at 11 to 12 ms, and on a warm phone the limit took that for 90 Hz and kept the
-// frames 22 ms apart, past the vsync at 16.7 ms: frames of 7 to 11 ms showed at 40 to 52 a second instead of 60 (the
-// stutter review of 3 November). Portable and pure, so the hosts test it; the frame loop (jni/Bridge.cpp) asks it at
-// each vsync, and Warmth whether the phone runs warm.
+// there behind a GPU of 16 ms or more, until it takes under 14 ms; a frame that comes later than that is never held
+// back. The display's period is the spacing of the vsync's frame timelines, which SurfaceFlinger spaces by the app's
+// vsync period (API 33); before API 33, the shortest of the last gaps between the vsyncs the loop received, each a
+// whole number of periods. Until 3 November it was the mean of those gaps: after a frame longer than a refresh the
+// loop's next vsync comes two periods on, so at 120 Hz the mean settled at 11 to 12 ms, and on a warm phone the limit
+// took that for 90 Hz and kept the frames 22 ms apart, past the vsync at 16.7 ms: frames of 7 to 11 ms showed at 40 to
+// 52 a second instead of 60 (the stutter review of 3 November). Portable and pure, so the hosts test it; the frame loop
+// (jni/Bridge.cpp) asks it at each vsync and tells it the GPU's figures, and asks Warmth whether the phone runs warm.
 #pragma once
 
 #include <algorithm>
@@ -43,6 +43,10 @@ public:
     /// holding the render thread a few ms a frame, for 8 to 17 ms more lag, uneven from frame to frame, at 55 or 48
     /// frames a second where every second vsync gives 45 (the stutter review's fourth check, 3 November).
     static constexpr std::int64_t heavy_gpu_ns = 16'000'000;
+    /// The GPU's time under which it is light again. Between the two the step stays as it was, and ADPF's target with
+    /// it: with the one threshold a GPU about 16 ms switched them from frame to frame, a cool phone's target between
+    /// 11.1 and 16.7 ms each time (the engine agent's review, 4 November).
+    static constexpr std::int64_t light_gpu_ns = 14'000'000;
     /// What a vsync may fall short of the time its frame is due, and still draw.
     static constexpr std::int64_t slack_ns = 2'000'000;
 
@@ -68,14 +72,19 @@ public:
     /// The display's period, ns: 0 until known.
     [[nodiscard]] std::int64_t period_ns() const noexcept { return period_ns_; }
 
-    /// Which vsyncs may draw: every second one under the fast period; under the warm one, every second one too behind a
-    /// heavy GPU (`gpu_ns`, the GPU's time of the last frame it measured, two frames old; 0 where none was), else by
-    /// the phase where `warm()` says the phone runs warm (asked only there), else every one; every one at slower
-    /// displays.
+    /// The GPU took `gpu_ns` for the last frame it measured (two frames old: the frame loop reads it back after the
+    /// slot's fence). It is heavy from a figure of heavy_gpu_ns until one under light_gpu_ns.
+    void gpu_took(std::int64_t gpu_ns) noexcept {
+        heavy_ = gpu_ns >= heavy_gpu_ns || (heavy_ && gpu_ns >= light_gpu_ns);
+    }
+
+    /// Which vsyncs may draw: every second one under the fast period; under the warm one, every second one too while
+    /// the GPU is heavy (gpu_took; never before a figure came), else by the phase where `warm()` says the phone runs
+    /// warm (asked only there), else every one; every one at slower displays.
     template <class Warm>
-    [[nodiscard]] Step step(const Warm& warm, std::int64_t gpu_ns) const {
+    [[nodiscard]] Step step(const Warm& warm) const {
         if (period_ns_ == 0 || period_ns_ >= warm_ns) return Step::every;
-        if (period_ns_ < fast_ns || gpu_ns >= heavy_gpu_ns) return Step::second;
+        if (period_ns_ < fast_ns || heavy_) return Step::second;
         return warm() ? Step::phase : Step::every;
     }
 
@@ -121,6 +130,7 @@ private:
     std::int64_t drawn_ns_ = 0;
     std::int64_t phase_ns_ = 0; // when the phase lets the next frame draw: a sixtieth of a second after the last one's
     std::int64_t period_ns_ = 0;
+    bool heavy_ = false; // the GPU heavy (gpu_took): from a figure of heavy_gpu_ns until one under light_gpu_ns
 };
 
 /// Whether the phone runs warm, for the limit at 90 Hz: its thermal headroom over 0.6 (the share of its thermal

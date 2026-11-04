@@ -59,6 +59,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -170,6 +171,26 @@ public:
 private:
     platform::Window window_;
 };
+
+/// The threads the map's frame runs on as the ground last told them (frame/RenderThreads.hpp), for the render thread's
+/// hint session to take in once the frame is out (render thread only).
+class TookThreads final : public frame::RenderThreads {
+public:
+    void took(std::span<const std::int32_t> tids) override {
+        tids_.assign(tids.begin(), tids.end());
+        fresh_ = true;
+    }
+    /// The threads told since the last call, or none.
+    [[nodiscard]] std::optional<std::span<const std::int32_t>> take() noexcept {
+        if (!fresh_) return std::nullopt;
+        fresh_ = false;
+        return std::span<const std::int32_t>(tids_);
+    }
+
+private:
+    std::vector<std::int32_t> tids_;
+    bool fresh_ = false;
+};
 #endif
 
 /// The process's core.
@@ -204,7 +225,8 @@ public:
         core->map_ = std::make_unique<frame::MapFrame>(
             map_workers(), [self] { self->wake(); },
             frame::MapOptions{.cache_dir = options.cache_dir,
-                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); }});
+                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); },
+                              .render_threads = core->took_threads_});
 #else
         (void)env;
         core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr,
@@ -349,6 +371,12 @@ public:
             map_->set_screen(haze, vignette, grain);
             ask_frame();
         });
+    }
+
+    /// The kept walls' and near cells' shape records for the map from now on, on (the default) or off (VK bench's
+    /// comparison of the two): "" where its buildings draw from them, else why they cannot or not yet.
+    [[nodiscard]] std::string shape_records(bool on) {
+        return on_session([this, on] { return map_->set_shape_records(on); });
     }
 
     /// The app's labels for the map from now on (null: none).
@@ -658,11 +686,11 @@ private:
         }
         // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
         // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
-        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there while
-        // the GPU's last figure is 16 ms or more.
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there from a
+        // GPU figure of 16 ms or more until one under 14 ms.
         cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
-        const frame::Cadence::Step step = cadence_.step(
-            [this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); }, gpu_ns_);
+        const frame::Cadence::Step step =
+            cadence_.step([this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
         if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
@@ -752,12 +780,18 @@ private:
         // nothing (the stutter review, 3 November). The GPU's time as before: an earlier frame's.
         hint_.report(r.start_ns, (r.end_ns - r.start_ns) - d.wait_ns,
                      static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The ground's helpers, as its team is made (once the frame is out, so that no frame waits for the call): the
+        // run the render thread waits for them in is in its own time above, so the boost that time asks for reaches
+        // them too (API 34).
+        if (const auto tids = took_threads_->take()) hint_.threads(*tids);
         // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
         // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
-        // back after its fence: the percentile does not mind). The cadence's step at 90 Hz takes the same figure.
+        // back after its fence: the percentile does not mind). The cadence takes the same figure for its step at 90 Hz
+        // (the GPU heavy from 16 ms until under 14).
         if ((r.flags & standin::frame_flag::gpu) != 0) {
-            gpu_ns_ = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
-            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns_);
+            const auto gpu_ns = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
+            cadence_.gpu_took(gpu_ns);
+            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns);
         }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
@@ -777,6 +811,7 @@ private:
     JavaVM* vm_ = nullptr;
     JNIEnv* render_env_ = nullptr;
     platform::HintSession hint_;
+    std::shared_ptr<TookThreads> took_threads_ = std::make_shared<TookThreads>(); // the map's frame's threads
     platform::Thermal thermal_;
     frame::Pacer pacer_; // the presentation each frame asks for under the debug switch's pacing (set_pacing)
     jobject source_ = nullptr;
@@ -793,7 +828,6 @@ private:
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
-    std::int64_t gpu_ns_ = 0;          // the GPU's time of the last frame it measured (two frames old), for the cadence
     frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
     frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
@@ -1254,6 +1288,15 @@ void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze,
     if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
 }
 
+/// The kept walls' and near cells' shape records for the map from now on, `on` (the default) or off, each kept wall
+/// then decided at each point (frame/MapFrame.hpp's set_shape_records, for VK bench): "" where its buildings draw from
+/// them, else why they cannot or not yet.
+jstring native_shape_records(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    return java(env, core->shape_records(on == JNI_TRUE));
+}
+
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
 /// read_label_block: each label at its own size and at the band's top), at `revision`, drawn no smaller than `least` of
 /// their own size; an empty block takes them away.
@@ -1513,8 +1556,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 55>& methods() {
-    static const std::array<JNINativeMethod, 55> table{{
+const std::array<JNINativeMethod, 56>& methods() {
+    static const std::array<JNINativeMethod, 56> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1574,6 +1617,7 @@ const std::array<JNINativeMethod, 55>& methods() {
         method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
         method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
+        method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),

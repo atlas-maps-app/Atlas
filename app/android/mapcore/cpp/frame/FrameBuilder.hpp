@@ -28,6 +28,7 @@
 #include "frame/Pass.hpp"
 #include "frame/PassRegistry.hpp"
 #include "frame/Ranks.hpp"
+#include "frame/RenderThreads.hpp"
 #include "frame/Selectors.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -142,6 +143,8 @@ struct FrameState {
     /// The boxes the markers take this frame, for the labels, which update after the markers: emptied before the
     /// passes update (frame/MarkerBoxes.hpp).
     MarkerBoxes* marker_boxes = nullptr;
+    /// Where a pass tells the platform of the threads the frame's work runs on (FrameOptions::render_threads), or null.
+    RenderThreads* render_threads = nullptr;
 };
 
 /// The builder's choices, made once.
@@ -180,6 +183,9 @@ struct FrameOptions {
     /// default. A tool measuring what each pass costs the GPU leaves one out at a time (tests/frame/
     /// pinch_audit_vk_test.cpp's ATLAS_PINCH_COST); a pass left out still selects and updates, and records nothing.
     std::uint64_t passes = ~std::uint64_t{0};
+    /// Where the passes tell the platform of the threads the frame's work runs on, each time the ground makes its team
+    /// (frame/RenderThreads.hpp: the render thread's hint session on Android); none by default.
+    std::shared_ptr<RenderThreads> render_threads;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before

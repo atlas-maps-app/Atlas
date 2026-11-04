@@ -1300,13 +1300,19 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
     for (Stroke& s : out.strokes) {
         if (s.line_count > 0) s.near = near_box(std::span<const P2>(out.points).subspan(s.line, s.line_count));
     }
-    // each cell's box over its fills, at their heights, and their widest margin
-    for (const Fill& f : out.fills) {
-        if (f.kind == FillKind::water || f.cell >= max_cells || f.count == 0) continue;
-        CellBox& c = out.cells[f.cell];
+    // each cell's box over its fills, at their heights, and their widest and narrowest margins; and its core's, over
+    // those no wider than core_side
+    const auto grow = [](CellBox& c, const Fill& f) {
         if (c.empty()) {
-            c = {.x0 = f.x0, .x1 = f.x1, .z0 = f.z0, .z1 = f.z1, .y0 = f.y, .y1 = f.y, .margin = f.margin};
-            continue;
+            c = {.x0 = f.x0,
+                 .x1 = f.x1,
+                 .z0 = f.z0,
+                 .z1 = f.z1,
+                 .y0 = f.y,
+                 .y1 = f.y,
+                 .margin = f.margin,
+                 .least = f.margin};
+            return;
         }
         c.x0 = pm::min(c.x0, f.x0);
         c.x1 = pm::max(c.x1, f.x1);
@@ -1315,6 +1321,13 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         c.y0 = pm::min(c.y0, f.y);
         c.y1 = pm::max(c.y1, f.y);
         c.margin = pm::max(c.margin, f.margin);
+        c.least = pm::min(c.least, f.margin);
+    };
+    for (Fill& f : out.fills) {
+        if (f.kind == FillKind::water || f.cell >= max_cells || f.count == 0) continue;
+        grow(out.cells[f.cell], f);
+        f.core = f.x1 - f.x0 <= core_side && f.z1 - f.z0 <= core_side;
+        if (f.core) grow(out.cores[f.cell], f);
     }
     // the shadows' casters: the solids and trees the sun's march reads at this level
     auto casters = std::make_shared<sun::TileCasters>(sun::solids_of(tile, head, level));
