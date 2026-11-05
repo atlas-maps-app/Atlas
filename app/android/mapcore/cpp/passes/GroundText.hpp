@@ -90,7 +90,9 @@ public:
     /// Its stage T serves the names on the ground (style::camera_part::ground_text).
     [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     /// The pack-level stage T: the pack's canal names whole (text::pack_canals; a frame cell's windows each a source of
-    /// their own), which the renders' rule reads once the pack is drawn (FrameState::active_pack, neighbour_packs).
+    /// their own), which the renders' rule reads once the pack is drawn (FrameState::active_pack, neighbour_packs). A
+    /// new composition of a frame cell decodes only the windows new to it, and keeps the earlier names where its finest
+    /// level is as it was (scene::PackBuild::before).
     [[nodiscard]] gpu::Result<void> build_pack(scene::PackBuild& build) const override;
     /// Set 1's glyphs (GlyphGlobals, below), and the fonts from `resources` where they hold them (the map's: the APK's
     /// assets, a host's repo; a face loaded already stays): the font source is the map's option, and without one the

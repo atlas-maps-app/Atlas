@@ -82,6 +82,15 @@ public:
     /// it until they let go.
     bool remove(std::string_view id);
 
+    /// Holds the frame cells' compositions while a listing's packs go and come (MapFrame::set_packs): a window joining
+    /// or leaving its cell changes the cell's windows alone, and release() composes each cell they changed once, so a
+    /// listing of k windows of a cell composes and opens it once, not k times (or 2k, each window built again leaving
+    /// and joining). A window is refused as it joins, as before, where the cell's composition would refuse it.
+    void hold();
+    /// Ends the hold: each cell whose windows changed since hold() composed once, in the order they last changed (its
+    /// pack replaced, as add's; or gone with its last window).
+    void release();
+
     /// The id of the pack holding the windows of the frame cell `cell` (an L10 tile): `cells/<z>/<x>/<y>`.
     [[nodiscard]] static std::string cell_id(TileKey cell);
 
@@ -124,13 +133,14 @@ public:
     }
 
 private:
-    /// A window in its cell: its id, its tile and chunk, its bytes, its head's and style's.
+    /// A window in its cell: its id, its tile and chunk, its bytes, its head's, its style read (shared by every window
+    /// of the same style and the cell's compositions: tiles::PackStyle).
     struct Window {
         std::string id;
         ChunkRef chunk;
         std::shared_ptr<const ByteSource> source;
         std::vector<std::byte> head;
-        std::vector<std::byte> style;
+        std::shared_ptr<const PackStyle> style;
         Frame frame;
         std::string style_version;
     };
@@ -146,12 +156,18 @@ private:
     void insert(std::shared_ptr<const StorePack> entry);
     /// The pack of `cell`'s windows, or nothing for a cell without one; under cells_mutex_.
     [[nodiscard]] Result<std::shared_ptr<const StorePack>> compose(const Cell& cell) const;
+    /// Notes that `cell`'s windows changed while held (its composition left for release), last; under cells_mutex_.
+    void touch(TileKey cell);
 
     ExpandedCache* cache_;
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order
     mutable std::mutex cells_mutex_;                      ///< taken before mutex_, never after
     std::vector<Cell> cells_;
+    bool held_ = false;            ///< hold(): compositions wait for release (under cells_mutex_)
+    std::vector<TileKey> touched_; ///< the cells changed while held, the last changed last (under cells_mutex_)
+    std::shared_ptr<const PackStyle> window_style_; ///< the last window's style, which the next shares where it is
+                                                    ///< the same (under cells_mutex_)
 };
 
 } // namespace atlas::tiles

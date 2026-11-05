@@ -626,14 +626,23 @@ void World::release_idle(double seconds, std::uint64_t frame) {
 void World::take_packs() {
     // The packs' own stage T: asked once per pack drawn for the passes the parts drawn want, and again for those a part
     // come back wants, taken as it is built; what was built of a pack the store no longer holds (let go of, or added
-    // again) goes when the packs drawn change or a pack arrives.
+    // again) goes when the packs drawn change or a pack arrives. A pack is asked for with what was built of an earlier
+    // composition of its id (a frame cell's, before its newest windows or levels' tiles joined), which its passes may
+    // take again (PackBuild::before): the names of a cell a level's tile joins are the earlier ones, not built again.
     const std::uint64_t wanted = residency_->wanted();
-    pack_stage_->want(active_, wanted);
-    if (coarser_) pack_stage_->want(coarser_, wanted);
+    const auto want = [this, wanted](const std::shared_ptr<const tiles::StorePack>& pack) {
+        std::shared_ptr<const ResidentPack> before;
+        for (const std::shared_ptr<const ResidentPack>& p : packs_) {
+            if (p->id == pack->id && p->source != pack) before = p;
+        }
+        pack_stage_->want(pack, wanted, before);
+    };
+    if (active_) want(active_);
+    if (coarser_) want(coarser_);
     for (const std::shared_ptr<const tiles::StorePack>& n : neighbours_) {
-        if (n) pack_stage_->want(n, wanted);
+        if (n) want(n);
     }
-    if (incoming_) pack_stage_->want(incoming_, wanted);
+    if (incoming_) want(incoming_);
     pack_stage_->take(arrived_);
     if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbours_ == last_neighbours_) {
         return;
@@ -1215,11 +1224,15 @@ std::string World::tiles_line() const {
                         static_cast<double>(planned_triangles_) / 1.0e6,
                         static_cast<double>(options_.triangle_budget) / 1.0e6);
     // the sun (off while it or every part that reads its bits is left out: ENGINE.md's parts): its scenes and runs so
-    // far with their own milliseconds, the tiles their buckets computed, and the texels the last frame wrote
+    // far with their own milliseconds, the tiles their buckets computed, and the texels the last frame wrote; the
+    // scenes kept as built with tiles of their halo made whole, and the tallest solids' working out (its milliseconds
+    // and the tiles it decoded)
     if (sun_) {
         const SunStats s = sun_->stats();
-        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} texels {}", s.on ? "on" : "off",
-                            s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.texels);
+        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} texels {} wholes {} {:.0f} ms "
+                            "maxh {:.0f} ms decoded {}",
+                            s.on ? "on" : "off", s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.texels,
+                            s.wholes, s.wholes_ms, s.maxh_ms, s.maxh_tiles);
     }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;

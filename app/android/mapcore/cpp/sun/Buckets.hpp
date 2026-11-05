@@ -66,8 +66,11 @@ public:
     /// The grid over every tile's solids, in the tiles' order; `scene_maxh` is the scene's tallest solid
     /// (Samples.hpp's scene_maxh). `chunks` are the tiles' chunk hashes (for the disk cache; empty: none kept).
     Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::Sha256Digest> chunks = {});
+    /// `from` with its tiles as `tiles`: the same tiles with the same solids, some made whole that were their solids
+    /// alone (a tile of the halo come resident: SunGlobals). Its grid is `from`'s, shared, and so are its chunks.
+    Scene(const Scene& from, std::vector<SunTile> tiles);
 
-    [[nodiscard]] const Grid& grid() const noexcept { return grid_; }
+    [[nodiscard]] const Grid& grid() const noexcept { return *grid_; }
     [[nodiscard]] std::span<const SunTile> tiles() const noexcept { return tiles_; }
     /// Where tile `t`'s solids begin in the grid.
     [[nodiscard]] PrismId base(std::size_t t) const noexcept { return base_[t]; }
@@ -85,7 +88,7 @@ private:
     std::vector<SunTile> tiles_;
     std::vector<PrismId> base_;
     std::vector<tiles::Sha256Digest> chunks_;
-    Grid grid_;
+    std::shared_ptr<const Grid> grid_;
 };
 
 /// The tiles a sun scene holds for `resident` tiles of `pack`: every chunk of their level whose reach comes within

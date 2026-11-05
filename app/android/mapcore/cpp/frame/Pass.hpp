@@ -243,7 +243,9 @@ public:
     /// The pack-level stage T of the pass: what it derives from a whole pack rather than a tile (D13's canal names:
     /// each name's first way in source order across the pack's label layer), once per pack, on a worker, when the
     /// pack becomes the active or the coarser one (scene/Packs.hpp); kept with the pack (scene::PackBuild::keep) and
-    /// read in FrameState::active_pack and coarser_pack. It must not touch the pass's own state.
+    /// read in FrameState::active_pack and coarser_pack. What it kept of an earlier composition of the pack's id (a
+    /// frame cell's) comes with it (scene::PackBuild::before), to take again what still holds. It must not touch the
+    /// pass's own state.
     [[nodiscard]] virtual gpu::Result<void> build_pack(scene::PackBuild& build) const {
         (void)build;
         return {};

@@ -99,12 +99,27 @@ std::vector<std::shared_ptr<frame::GlobalProvider>> GroundText::providers(const 
 }
 
 gpu::Result<void> GroundText::build_pack(scene::PackBuild& b) const {
-    auto canals = text::pack_canals(b.pack().pack, b.pack().kind == tiles::PackKind::window);
+    // What it kept of an earlier composition of the same frame cell (scene::PackBuild::before): its windows' reads are
+    // taken again, the windows new to the cell alone decoded; where the cell's finest level is as it was (a level's
+    // tile joined) its names themselves, kept for the new composition, so nothing is built.
+    const scene::PassPack* before = b.before();
+    const std::shared_ptr<const text::PackCanals> earlier =
+        before != nullptr ? std::static_pointer_cast<const text::PackCanals>(before->cpu) : nullptr;
+    auto canals = text::pack_canals(b.pack().pack, b.pack().kind == tiles::PackKind::window, earlier);
     if (!canals) return gpu::fail(std::format("the canal names: {}", tiles::describe(canals.error())));
-    auto kept = std::make_shared<text::PackCanals>(std::move(*canals));
-    std::size_t bytes = sizeof(text::PackCanals) + (kept->candidates.capacity() * sizeof(text::CanalCandidate));
-    for (const text::CanalCandidate& c : kept->candidates) bytes += c.name.capacity();
-    b.keep(std::shared_ptr<const text::PackCanals>(std::move(kept)), bytes);
+    if (earlier != nullptr && *canals == earlier) {
+        b.keep(earlier, before->cpu_bytes);
+        return {};
+    }
+    const text::PackCanals& kept = **canals;
+    std::size_t bytes = sizeof(text::PackCanals) + (kept.candidates.capacity() * sizeof(text::CanalCandidate));
+    for (const text::CanalCandidate& c : kept.candidates) bytes += c.name.capacity();
+    bytes += kept.tiles.capacity() * sizeof(std::shared_ptr<const text::CanalRead>);
+    for (const std::shared_ptr<const text::CanalRead>& t : kept.tiles) {
+        bytes += sizeof(text::CanalRead) + (t->read.capacity() * sizeof(text::CanalCandidate));
+        for (const text::CanalCandidate& c : t->read) bytes += c.name.capacity();
+    }
+    b.keep(std::move(*canals), bytes);
     return {};
 }
 

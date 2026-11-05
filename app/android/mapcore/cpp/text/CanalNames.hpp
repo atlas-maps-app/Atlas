@@ -18,12 +18,15 @@
 #pragma once
 
 #include "text/GroundText.hpp"
+#include "tiles/Checksums.hpp"
+#include "tiles/Chunks.hpp"
 #include "tiles/Error.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/Style.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -56,6 +59,14 @@ struct CanalCandidate {
 /// A tile's canal name candidates: its label layer's source-0 features, their points in `frame`'s metres.
 void canal_candidates(const tiles::Layer& labels, const tiles::Frame& frame, std::vector<CanalCandidate>& out);
 
+/// What one tile of a pack's finest level gave the canal names: its candidates as its label layer holds them (their
+/// group its tile's for a frame cell's windows), known by its tile and its bytes' digest (tiles::ChunkRef::sha256).
+struct CanalRead {
+    tiles::TileKey tile;
+    tiles::Sha256Digest sha256{};
+    std::vector<CanalCandidate> read;
+};
+
 /// A render pack's canal names, whole (what the renders' S['labels'] holds of them): every candidate of the label
 /// layers of its finest level, by source order, each once; the region's canal water level (the style's state.water_y,
 /// amsterdam.py's WATER_Y) and the style's canal names.
@@ -63,11 +74,26 @@ struct PackCanals {
     std::vector<CanalCandidate> candidates;
     double water_level = -1.5;
     tiles::CanalNamesStyle look;
+    /// What they were made of, for a later composition of the same frame cell (pack_canals' `before`): each tile of
+    /// the finest level as it was read, in the pack's chunk order, its points in `frame`'s metres; and of those, the
+    /// tiles this one decoded (the others taken from an earlier one's).
+    std::vector<std::shared_ptr<const CanalRead>> tiles;
+    tiles::Frame frame;
+    bool windows = false;
+    std::uint32_t decoded = 0;
 };
 
 /// `pack`'s canal names (a pack-level stage T: some milliseconds for the canal ring's 652), or the first tile's error.
 /// `windows`: the pack is a frame cell's windows, each tile a source of its own (CanalCandidate::group its tile).
 [[nodiscard]] tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack, bool windows = false);
+
+/// The same names, with what an earlier composition of the same frame cell read (`before`, its names, or null): a
+/// tile of the finest level it read, the same tile with the same bytes in the same frame, is taken from it rather than
+/// decoded again, and the names are sorted out of the tiles' candidates in the pack's chunk order as pack_canals sorts
+/// them. Where every tile of the finest level, the frame and the style's canal names are as they were (a level's tile
+/// joined, which keeps no labels), `before` itself: nothing is built.
+[[nodiscard]] tiles::Result<std::shared_ptr<const PackCanals>>
+pack_canals(const tiles::Pack& pack, bool windows, const std::shared_ptr<const PackCanals>& before);
 
 /// The group of a pack's own candidates where a frame reads several packs' names (CanalCandidate::group): its id
 /// hashed (FNV-1a), below every window's tile key, so a render pack's names come before the windows'.

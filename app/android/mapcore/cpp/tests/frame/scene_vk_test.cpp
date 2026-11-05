@@ -197,6 +197,41 @@ private:
     return out;
 }
 
+/// A pass of the camera parts `parts` whose stage T places `count` ranges of the heaps' points on each tile, of
+/// `bytes[z - 12]` bytes each at zoom z (12 to 14): the heaps' room a test sizes.
+class RoomProbe final : public frame::Pass {
+public:
+    RoomProbe(std::uint64_t parts, std::string_view name, std::uint32_t count,
+              std::array<std::uint32_t, 3> bytes) noexcept
+        : parts_(parts), name_(name), count_(count), bytes_(bytes) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return name_; }
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override { return parts_; }
+    [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return {}; }
+    [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
+        (void)c;
+        return {};
+    }
+    void release() noexcept override {}
+    void record(const frame::Recording& r, std::uint32_t phase) override {
+        (void)r;
+        (void)phase;
+    }
+    [[nodiscard]] gpu::Result<void> build(scene::TileBuild& b) const override {
+        const std::uint32_t z = std::clamp<std::uint32_t>(b.tile().header.level, 12, 14);
+        for (std::uint32_t k = 0; k < count_; ++k) {
+            ATLAS_GPU_LET(range, b.allocate(scene::HeapKind::points, bytes_.at(z - 12), 16));
+            b.out().ranges.at(k) = range;
+        }
+        b.out().cell_first.assign(b.tile().cells.size() + 1, 0);
+        return {};
+    }
+
+private:
+    std::uint64_t parts_;
+    std::string_view name_;
+    std::uint32_t count_;
+    std::array<std::uint32_t, 3> bytes_;
+};
 } // namespace
 
 TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range's bytes, and free after the frames") {
@@ -992,6 +1027,26 @@ TEST_CASE("a tile of the sun's halo that comes resident gets its bits, though th
         CHECK_MESSAGE(t.sun.has_value(), std::format("{}/{}/{} drawn without its sun bits after the sun went idle",
                                                      t.key.z, t.key.x, t.key.y));
     }
+    // The tile made whole as it came resident (its solids alone while it was the halo's) has the bits a scene built
+    // with it resident from the start gives it, to the bit, and so has the other: the sun left out and drawn again
+    // builds that scene.
+    CHECK(again.wholes == asked.wholes + 1);
+    const auto words = [&w, &now](const tiles::TileKey& k) {
+        const auto v = w.sun()->bits().view(k, now.load());
+        return v ? v->now->words : std::vector<std::uint64_t>{};
+    };
+    const std::vector<std::uint64_t> made_whole = words(beside);
+    const std::vector<std::uint64_t> alone_bits = words(alone);
+    REQUIRE(!made_whole.empty());
+    REQUIRE(!alone_bits.empty());
+    style::CameraState out = above(edge, 4.888);
+    out.parts = style::camera_part::sun;
+    settle(out);
+    CHECK_FALSE(w.sun()->bits().view(beside, now).has_value());
+    settle(above(edge, 4.888));
+    CHECK(w.sun()->stats().scenes > again.scenes);
+    CHECK(words(beside) == made_whole);
+    CHECK(words(alone) == alone_bits);
     MESSAGE(std::format("the sun's scene {} tiles, built {} time(s), {} then {} run(s); {} then {} resident",
                         again.tiles, again.scenes, asked.runs, again.runs, first.size(), second.size()));
     (void)session->take_messages();
@@ -3820,4 +3875,267 @@ TEST_CASE("a pass's providers come with the world, made with the world's resourc
     }
     const auto messages = session->take_messages();
     CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+}
+
+TEST_CASE(
+    "a top-up that finds no room, of a tile the cover asks for, is made room for: the spare tiles go (ENGINE.md's "
+    "parts)") {
+    // Two windows either side of an L13's edge, P east and Q west, each with a house beside the edge, under one L12,
+    // the trees' pass left out, P's window not listed yet (its place drawn by its L13): seen from 7 km over the edge
+    // (each place at its L13, the L12 kept under them), then from 300 m (Q drawn, its L13 spare). The heaps then hold
+    // 1 KB free; P's window comes, and the trees with it: P's place asks for P, and for the L12 as its ancestor while
+    // P comes, resident and lacking the trees. P (1.5 KB, reckoned 0.5 KB while no tile's trees are known) finds no
+    // room, nor does the L12's top-up (4 KB). With 4 KB more free, P fits and the L12's top-up after it does not, so
+    // room is made for it: the spare L13 goes. Reckoned as needing none, nothing went: its range fits the free piece,
+    // so it is not stuck, which makes room whatever it needs. (The cover asks for no tile it draws or merely keeps:
+    // their top-ups wait for the idle tiles to go.)
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-top-up-room";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey around = tiles::tile_of(14, 523'000'000, 47'500'000);
+    // P the west child of its L13, Q beside it the east child of the L13 west of it, under the same L12
+    const tiles::TileKey p(14, (around.x & ~3U) | 2U, around.y);
+    const tiles::TileKey q(14, p.x - 1, p.y);
+    const tiles::TileKey p13(13, p.x >> 1U, p.y >> 1U);
+    const tiles::TileKey q13(13, q.x >> 1U, q.y >> 1U);
+    const tiles::TileKey l12(12, p.x >> 2U, p.y >> 2U);
+    ATLAS_REQUIRE(p13 != q13 && l12 == tiles::TileKey(12, q.x >> 2U, q.y >> 2U));
+    const std::array<std::int32_t, 4> box = tiles::tile_box(p);
+    const double lat = (box[0] + box[2]) / 2e7;
+    const double edge = box[1] / 1e7; // P's west edge, Q's east
+    const double dlat = 40.0 / 110540.0;
+    const double metre = 1.0 / (111320.0 * pymath::cos(pymath::radians(lat))); // a metre east, in degrees
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    for (const auto& [place, west] : {std::pair{q, edge - (50 * metre)}, {p, edge + (10 * metre)}}) {
+        std::string geometry;
+        for (const auto& [a, o] :
+             {std::pair{0.0, 0.0}, {0.0, 40 * metre}, {dlat, 40 * metre}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, west + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":7,"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            geometry);
+        auto built =
+            load::build_window(std::as_bytes(std::span(json.data(), json.size())), place, load::place_of(place));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", place.x, place.y), std::move(built->pack));
+    }
+    const std::array<std::span<const std::byte>, 2> windows{std::span<const std::byte>(packs[0].second),
+                                                            std::span<const std::byte>(packs[1].second)};
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 3); // the two L13 tiles and their L12
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in on every tile, 8 KB on an L13; the trees', two ranges of 4 KB on a level's tile, of 512
+    // bytes on a window
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<RoomProbe>(~std::uint64_t{0}, "ground probe", 1,
+                                                 std::array<std::uint32_t, 3>{256, 8192, 512}));
+    passes.push_back(std::make_unique<RoomProbe>(style::camera_part::trees, "tree probe", 2,
+                                                 std::array<std::uint32_t, 3>{4096, 4096, 512}));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    // heaps of 32 KB, and no tile let go of for being idle: the room is make_room's to make
+    constexpr std::uint64_t total = 32768;
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1,
+                                       .idle_seconds = 1e6,
+                                       .forget_seconds = 1e6,
+                                       .heaps = {.initial = total, .total = total},
+                                       .sun = {.enabled = false},
+                                       .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const auto add = [&](const std::pair<std::string, std::vector<std::byte>>& pack) {
+        std::string file = pack.first;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.second.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.second.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + pack.first, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    };
+    add(packs[0]); // Q's window, and the levels; P's comes later
+    for (std::size_t i = 2; i < packs.size(); ++i) add(packs[i]);
+    style::CameraState c = home();
+    c.latitude = lat + (dlat / 2);
+    c.longitude = edge;
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.parts = style::camera_part::trees;
+    std::uint64_t n = 0;
+    // each frame's retired ranges freed after it, as the heaps' globals do as a frame is recorded
+    const auto frames = [&](std::uint64_t count) {
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.heaps()->bound(n);
+            w.heaps()->collect(n);
+        }
+    };
+    const auto resident = [&w](const tiles::TileKey& k) -> std::shared_ptr<const scene::ResidentTile> {
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            if (t->key == k) return t;
+        }
+        return nullptr;
+    };
+    // what the residency holds and the cover asks for, said where a step fails
+    const auto said = [&]() {
+        std::string s = "resident";
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            s += std::format(" {}/{}/{}:{}", t->key.z, t->key.x, t->key.y, t->built);
+        }
+        s += "; asked";
+        for (const auto& r : w.cover()->requests()) s += std::format(" {}/{}/{}", r.key.z, r.key.x, r.key.y);
+        s += "; spare";
+        for (const auto& t : w.cover()->spare()) s += std::format(" {}/{}/{}", t.key.z, t.key.x, t.key.y);
+        return std::format("{}; free {}; {}", s, w.heaps()->free_bytes(), w.tiles_line());
+    };
+    c.distance = 7000.0;
+    frames(2);
+    w.set_active(std::format("window/14/{}/{}", q.x, q.y));
+    frames(40);
+    ATLAS_REQUIRE(resident(p13) != nullptr && resident(q13) != nullptr, "both L13 drawn from 7 km: " + said());
+    ATLAS_REQUIRE(resident(l12) != nullptr, "the L12 kept under them: " + said());
+    c.distance = 300.0;
+    frames(40);
+    ATLAS_REQUIRE(resident(q) != nullptr, "Q drawn from 300 m: " + said());
+    ATLAS_REQUIRE(std::ranges::any_of(w.cover()->spare(), [&](const auto& s) { return s.key == q13; }),
+                  "Q's L13 spare under it: " + said());
+    // 1 KB free in one piece, and 4 KB the test lets go of later
+    const std::uint64_t free = w.heaps()->free_bytes();
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == free);
+    ATLAS_REQUIRE(free > 5120);
+    auto blocker = w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(free - 5120));
+    ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
+    auto back = w.heaps()->allocate(scene::HeapKind::points, 4096);
+    ATLAS_REQUIRE(back.has_value(), back.error().text());
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == 1024);
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == 1024);
+    // P's window and the trees come: P and the L12's top-up find no room (Q's top-up takes the 1 KB).
+    add(packs[1]);
+    c.parts = 0;
+    const std::uint64_t failed = w.residency().stats().failed;
+    frames(1);
+    ATLAS_REQUIRE(resident(p) == nullptr, "P found no room: " + said());
+    CHECK_MESSAGE(w.residency().stats().failed >= failed + 2, said());
+    CHECK((resident(l12)->built & 0b10U) == 0U);
+    // 4 KB back: P fits, the L12's top-up after it does not, and the spare L13 goes for it.
+    w.heaps()->retire(*back, 0);
+    w.heaps()->collect(0);
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == 4096, said());
+    frames(6);
+    CHECK_MESSAGE(resident(q13) == nullptr, "no room was made for the L12's top-up: " << said());
+    CHECK_MESSAGE(resident(p) != nullptr, said());
+    (void)session->take_messages();
+}
+
+TEST_CASE("the sun left out while a run is under way: once it is out, no bits of that run come, though the run would "
+          "have ended since (ENGINE.md's parts)") {
+    // A named moment's run on one thread, its tiles kept on disk as each is done, so the test sees it under way (as
+    // buckets_test's cancelled run does): the sun is left out then, and none of the run's bits come after, though its
+    // worker would have ended it. Without the rest stopping the run (sun::Worker::cancel), they came as it ended, into
+    // the bits of a sun left out.
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's rest under a run is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    const std::filesystem::path disk = std::filesystem::path(ATLAS_TEST_SCRATCH) / "sun-rest-under-way";
+    std::error_code ignored;
+    std::filesystem::remove_all(disk, ignored);
+    std::atomic<double> now{0};
+    auto world = scene::World::create(
+        *session->device, (*builder)->passes(),
+        {.workers = 3, .sun = {.threads = 1, .cache_dir = disk.string()}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    const auto files = [&disk] {
+        std::error_code ec;
+        std::size_t count = 0;
+        for (auto it = std::filesystem::directory_iterator(disk, ec);
+             !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+            ++count;
+        }
+        return count;
+    };
+    style::CameraState c = home();
+    std::uint64_t n = 0;
+    const auto frame = [&](const style::ThemeBlock& theme) {
+        (*builder)->set_inputs({.camera = c, .theme = theme, .scene = &w});
+        ++n;
+        now = now.load() + 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+    };
+    // Each try a named moment of its own (a low sun: long marches), until the sun is left out with a run under way:
+    // a tile of it done and kept, none published, and its other tiles not done once it is out.
+    c.distance = 1500.0; // the pack's three tiles in view: a run of several tiles
+    bool caught = false;
+    for (int attempt = 0; attempt < 6 && !caught; ++attempt) {
+        style::ThemeBlock theme = sun_at(200.0 + (7.0 * attempt), 9.0);
+        theme.moment = style::MomentName::sunny;
+        c.parts = 0;
+        const std::size_t kept = files();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        while (files() == kept && w.sun()->bits().size() == 0 && std::chrono::steady_clock::now() < until) {
+            frame(theme);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const std::size_t asked = w.sun()->stats().resident; // the run's tiles
+        const bool under_way = files() > kept && w.sun()->bits().size() == 0;
+        c.parts = style::camera_part::sun;
+        frame(theme);
+        w.sun()->wait_idle();
+        if (!under_way) continue; // ended before it was seen under way: tried again, the sun left out between
+        const std::size_t done = files() - kept;
+        caught = done < asked; // its other tiles not done
+        for (int k = 0; k < 4; ++k) frame(theme);
+        w.sun()->wait_idle();
+        CHECK_MESSAGE(w.sun()->bits().size() == 0,
+                      "bits of the run under way came after the sun was left out (try " << attempt << ")");
+        CHECK(drawn_without_bits(w).size() ==
+              static_cast<std::size_t>(std::ranges::count_if(
+                  w.cover()->tiles(), [](const scene::CoverTile& t) { return t.drawn->key.z == t.key.z; })));
+        // drawn again, its runs come as before
+        c.parts = 0;
+        for (int k = 0; k < 4; ++k) frame(theme);
+        w.sun()->wait_idle();
+        frame(theme);
+        CHECK(w.sun()->bits().size() > 0);
+        MESSAGE("try " << attempt << ": " << done << " of the run's " << asked
+                       << " tiles done as the sun was left out");
+    }
+    CHECK_MESSAGE(caught, "no run was seen under way as the sun was left out");
+    std::filesystem::remove_all(disk, ignored);
+    (void)session->take_messages();
 }

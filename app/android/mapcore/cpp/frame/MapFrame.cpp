@@ -100,6 +100,9 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
     std::string out;
     std::vector<MapPack> kept;
     kept.reserve(packs.size());
+    // The listing's windows join and leave their frame cells, and each cell they change is composed and opened once,
+    // at its end (tiles::Store::hold), however many of its windows it brings.
+    if (world_) world_->store().hold();
     // The packs no longer listed, or listed with other bytes, leave the world first.
     {
         const auto listed = places_by_id(packs);
@@ -147,6 +150,7 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
         out += std::format("{} {}\n", p.ref.id, world_ ? "opened" : "listed");
         kept.push_back(std::move(p));
     }
+    if (world_) world_->store().release();
     packs_ = std::move(kept);
     // A number the app no longer lists leaves the choice to the world.
     if (active_number_ != 0 &&
@@ -235,7 +239,9 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
             fields_ = held;
         }
     }
-    // The packs listed so far open in the new world; one that no longer opens is dropped, saying why.
+    // The packs listed so far open in the new world, each frame cell composed once; one that no longer opens is
+    // dropped, saying why.
+    world_->store().hold();
     std::erase_if(packs_, [this](MapPack& p) {
         const std::string why = open(p);
         if (why.empty()) return false;
@@ -243,6 +249,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
         close_owned(p.ref);
         return true;
     });
+    world_->store().release();
     world_->set_active(active_id_);
     return {};
 }

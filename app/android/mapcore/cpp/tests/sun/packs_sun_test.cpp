@@ -2,7 +2,9 @@
 // (Gradle's bundled tiles, or the packs CI keeps): the bundled check over the Westerkerk equals the host build's hash
 // (bundled_check_expected, which the app's VK facts holds the emulator's Bionic to), and with ATLAS_SUN_EXPECT naming
 // the JVM's sun-bits.txt (MT/sun/SunParityTest.kt: `sun bits <pack> <level> <sun x y z bits> <sha256>`, the boards'
-// suns and levels), every scene's bits equal the JVM's, on whichever host runs this.
+// suns and levels), every scene's bits equal the JVM's, on whichever host runs this. A scene made as the sun's builder
+// makes it (each tile decoded once, its halo's tiles their solids alone, one made whole as it comes resident) gives
+// its tiles the bits a scene of every tile whole gives them.
 #include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
@@ -23,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -164,6 +167,109 @@ TEST_CASE("sun: a tile's bits from its 220 m halo alone are its bits in the whol
                 halo.size(), " of ", tiles.size(), " tiles");
         CHECK(got.begin()->second == all.at(tiles[r].key.packed()));
     }
+}
+
+TEST_CASE(
+    "sun: a scene as the sun's builder makes it, each tile decoded once and its halo's tiles their solids alone, "
+    "gives a resident tile its bits; a halo tile made whole in it then gets the bits it had with every tile whole") {
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the real packs are not checked here");
+        return;
+    }
+    auto pack = atlas::test::open_pack((std::filesystem::path(dir) / "grachten.atlas").string());
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const auto view = pack->head()->view("grachten_home");
+    ATLAS_REQUIRE(view.has_value());
+    const std::uint8_t level = view->tolerance;
+    const tl::RenderHead& head = *pack->head();
+    const Region region = region_of(*pack->style());
+    const auto whole = scene_of(*pack, level, {});
+    ATLAS_REQUIRE(whole != nullptr);
+    // the resident tile: the one with the most solids, and its halo
+    const auto all_tiles = whole->tiles();
+    std::size_t densest = 0;
+    for (std::size_t t = 1; t < all_tiles.size(); ++t) {
+        if (all_tiles[t].solids.size() > all_tiles[densest].solids.size()) densest = t;
+    }
+    const tl::TileKey resident = all_tiles[densest].key;
+    const std::array<tl::TileKey, 1> wanted{resident};
+    const std::vector<tl::TileKey> halo = halo_of(*pack, wanted);
+    ATLAS_REQUIRE(halo.size() > 1);
+    // the scene of the halo as it was built, every tile made whole (make_tile, each decoded twice)
+    const auto every = scene_of(*pack, level, halo);
+    ATLAS_REQUIRE(every != nullptr);
+    // as the builder makes it: each tile decoded once, its decks taken and the rest of it started (start_tile) or its
+    // solids alone (solids_tile), and the resident tile's quay walls once every deck is known (finish_tile)
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    atlas::Arena arena(4U << 20U, atlas::Growth::grows, "sun builder test");
+    std::vector<Deck> decks;
+    std::vector<SunTile> made;
+    std::optional<TileStart> start;
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < halo.size(); ++i) {
+        const tl::ChunkRef* c = pack->chunks().find(halo[i]);
+        ATLAS_REQUIRE(c != nullptr);
+        arena.reset();
+        auto tile = pack->decode(*c, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        collect_decks(*tile, head, level, decks);
+        if (halo[i] == resident) {
+            start = start_tile(*tile, head, region, level);
+            made.emplace_back();
+            at = i;
+        } else {
+            made.push_back(solids_tile(*tile, head.frame, level));
+        }
+    }
+    ATLAS_REQUIRE(start.has_value());
+    made[at] = finish_tile(std::move(*start), region, decks);
+    const auto maxh = scene_maxh(*pack, level);
+    ATLAS_REQUIRE(maxh.has_value());
+    const auto built = std::make_shared<const Scene>(std::move(made), *maxh);
+    ATLAS_REQUIRE(built->tiles().size() == every->tiles().size());
+    for (std::size_t i = 0; i < halo.size(); ++i) {
+        const SunTile& t = built->tiles()[i];
+        const SunTile& e = every->tiles()[i];
+        CHECK(t.key == e.key);
+        CHECK(t.whole == (i == at));
+        CHECK(t.solids.size() == e.solids.size()); // the grid holds the same solids
+        if (i == at) CHECK(t.samples.size() == e.samples.size());
+    }
+    const Sun sun = sun_vector(220.0, 24.0); // a low afternoon sun: long marches
+    const auto before = bits_of(*every, sun);
+    const auto got = bits_of(*built, sun, wanted);
+    ATLAS_REQUIRE(got.size() == 1);
+    CHECK(got.at(resident.packed()) == before.at(resident.packed()));
+    // A tile of the halo comes resident: made whole in the scene as built (its grid shared), its bits are those it
+    // had with every tile whole, and the resident tile's stay.
+    std::size_t next = halo.size();
+    for (std::size_t i = 0; i < halo.size(); ++i) {
+        if (i != at && (next == halo.size() || every->tiles()[i].samples.size() > every->tiles()[next].samples.size()))
+            next = i;
+    }
+    ATLAS_REQUIRE(next < halo.size());
+    ATLAS_REQUIRE(every->tiles()[next].samples.size() > 0);
+    std::vector<SunTile> again(built->tiles().begin(), built->tiles().end());
+    {
+        const tl::ChunkRef* c = pack->chunks().find(halo[next]);
+        arena.reset();
+        auto tile = pack->decode(*c, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        again[next] = make_tile(*tile, head, region, level, decks);
+    }
+    const Scene whole_again(*built, std::move(again));
+    CHECK(&whole_again.grid() == &built->grid());
+    const std::array<tl::TileKey, 2> both{resident, halo[next]};
+    const auto both_bits = bits_of(whole_again, sun, both);
+    ATLAS_REQUIRE(both_bits.size() == 2);
+    CHECK(both_bits.at(resident.packed()) == before.at(resident.packed()));
+    CHECK(both_bits.at(halo[next].packed()) == before.at(halo[next].packed()));
+    MESSAGE("tile ", resident.x, "/", resident.y, " and ", halo[next].x, "/", halo[next].y, ": a halo of ", halo.size(),
+            " tiles, ", decks.size(), " decks");
 }
 
 TEST_CASE("sun: the bundled packs' bits are the host build's") {

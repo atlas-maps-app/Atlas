@@ -23,11 +23,22 @@
 
 namespace atlas::tiles {
 
+/// A render pack's `style`, read: its tables and its values (Style::of). Read once and shared by the packs whose
+/// `style` sections hold the same bytes: a frame cell's windows and the cell's compositions of them (tiles/Store.hpp),
+/// where each new window would read and parse the same 7.8 KB again, twice (its own pack's and its cell's new one).
+struct PackStyle {
+    StyleTables tables;
+    Style style;
+};
+
 /// An opened pack: format 3 (render tiles, which the core draws) or format 2 (an element pack: its container only).
 class Pack {
 public:
     /// Opens the pack in `source`: header, directory, chunk table; for a render pack `reach`, `rhead` and `style` too.
-    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source);
+    /// With `style`, a render pack whose `style` section holds the bytes `style` was read from (checked: the section is
+    /// read and compared, never parsed) shares it; one whose section holds other bytes reads its own.
+    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source,
+                                           const std::shared_ptr<const PackStyle>& style = nullptr);
 
     Pack(const Pack&) = delete;
     Pack& operator=(const Pack&) = delete;
@@ -44,8 +55,10 @@ public:
 
     /// `rhead`, the style's values and the `style` section's tables (render packs only; null for an element pack).
     [[nodiscard]] const RenderHead* head() const noexcept { return head_ ? &*head_ : nullptr; }
-    [[nodiscard]] const Style* style() const noexcept { return style_ ? &*style_ : nullptr; }
-    [[nodiscard]] const StyleTables* style_tables() const noexcept { return style_tables_ ? &*style_tables_ : nullptr; }
+    [[nodiscard]] const Style* style() const noexcept { return style_ ? &style_->style : nullptr; }
+    [[nodiscard]] const StyleTables* style_tables() const noexcept { return style_ ? &style_->tables : nullptr; }
+    /// The style read, to share with a pack whose `style` section holds the same bytes (open's `style`).
+    [[nodiscard]] const std::shared_ptr<const PackStyle>& shared_style() const noexcept { return style_; }
 
     /// A chunk's stored (compressed) bytes: in place for a mapped pack, else copied into `scratch`.
     [[nodiscard]] Result<std::span<const std::byte>> stored(const ChunkRef& chunk,
@@ -71,8 +84,7 @@ private:
     std::vector<Section> sections_;
     ChunkTable chunks_;
     std::optional<RenderHead> head_;
-    std::optional<StyleTables> style_tables_;
-    std::optional<Style> style_;
+    std::shared_ptr<const PackStyle> style_;
 };
 
 /// A section's bytes as stored, checked against its CRC-32, then decompressed by its method (stored or zstd) into an

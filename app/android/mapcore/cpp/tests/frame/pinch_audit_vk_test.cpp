@@ -62,6 +62,12 @@
 // ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
 // decides each of its frames as at rest (the ground's area test, the pack's hold). ATLAS_PINCH_GRAIN=0: the Look
 // settings' grain off (the paper's grain and the materials', MapFrame::set_screen).
+// ATLAS_PINCH_ARRIVE=<n>: ATLAS_PINCH_TILES' packs handed over n a frame before the pinch, nearest the target first,
+// as the app hands its windows and levels' tiles over as they come (each set_packs the whole list so far), each frame
+// at the pinch's start at rest with the world's threads then let finish; each frame's set_packs milliseconds and the
+// active pack's tallest solid scanned whole at each of its zooms (sun::scene_maxh, as SunGlobals::maxh scanned a pack
+// it had not seen) logged with the tiles' line (the sun's scenes), and the `vk packs` lines say each composition's
+// stage T.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -74,7 +80,10 @@
 #include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
+#include "scene/World.hpp"
 #include "standin/Session.hpp"
 #include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
@@ -105,6 +114,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -583,6 +593,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
         }
     }
+    const std::size_t tiles_first = listed.size(); // ATLAS_PINCH_TILES' packs, from here to tiles_end
     // ATLAS_PINCH_TILES: folders of packs as the phone keeps what it took from a country's tiles (each
     // `<z>-<x>-<y>.atlas`: a place's window, L14, or a frame cell's level's tile, L13 or L12), listed as the app lists
     // them (windows, named by their tiles) where they lie within ATLAS_PINCH_RADIUS km of the target (40 by default)
@@ -633,6 +644,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         }
         MESSAGE(std::format("{} packs listed from {}", found.size(), dirs));
     }
+    const std::size_t tiles_end = listed.size();
     REQUIRE(!listed.empty());
     std::vector<frame::MapPack> packs;
     packs.reserve(listed.size());
@@ -693,7 +705,16 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
              .triangle_budget = budget.empty() ? 0U : static_cast<std::uint64_t>(1.0e6 * std::stod(budget))});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
         if (environment("ATLAS_PINCH_GRAIN") == "0") map.set_screen(true, true, false);
-        MESSAGE(map.set_packs(packs));
+        // ATLAS_PINCH_ARRIVE: the first list without ATLAS_PINCH_TILES' packs, which come a few a frame (below)
+        const std::string arrive = environment("ATLAS_PINCH_ARRIVE");
+        {
+            std::vector<frame::MapPack> first = packs;
+            if (!arrive.empty()) {
+                first.erase(first.begin() + static_cast<std::ptrdiff_t>(tiles_first),
+                            first.begin() + static_cast<std::ptrdiff_t>(tiles_end));
+            }
+            MESSAGE(map.set_packs(first));
+        }
         CHECK(session.map(&map).empty());
         auto window = std::make_unique<KeptWindow>();
         KeptWindow* kept = window.get();
@@ -1163,6 +1184,80 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 builds[{t->pack, t->key.packed()}].insert(t->published);
             }
         };
+        // ATLAS_PINCH_ARRIVE: ATLAS_PINCH_TILES' packs n a frame, nearest the target first (by their tiles' middles)
+        if (!arrive.empty()) {
+            const std::size_t per = std::max<std::size_t>(1, std::stoul(arrive));
+            const std::vector<Listed> all = listed;
+            std::vector<std::size_t> order;
+            for (std::size_t i = tiles_first; i < tiles_end; ++i) order.push_back(i);
+            const double cos_lat = pymath::cos(pymath::radians(lat));
+            std::ranges::stable_sort(order, {}, [&all, lat, lon, cos_lat](std::size_t i) {
+                const std::array<double, 4>& b = all[i].box; // south, west, north, east
+                return pymath::hypot(((b[0] + b[2]) / 2 - lat) * 110540.0,
+                                     ((b[1] + b[3]) / 2 - lon) * 111320.0 * cos_lat);
+            });
+            listed.erase(listed.begin() + static_cast<std::ptrdiff_t>(tiles_first), listed.end());
+            std::vector<frame::MapPack> now(packs.begin(), packs.begin() + static_cast<std::ptrdiff_t>(tiles_first));
+            const std::vector<frame::MapPack> after(packs.begin() + static_cast<std::ptrdiff_t>(tiles_end),
+                                                    packs.end());
+            std::vector<double> set_ms;
+            double scanned_ms = 0;
+            for (std::size_t k = 0; k < order.size(); k += per) {
+                held = nullptr; // the list grows: what it named is named again
+                for (std::size_t j = k; j < std::min(order.size(), k + per); ++j) {
+                    listed.push_back(all[order[j]]);
+                    now.push_back(packs[order[j]]);
+                }
+                std::vector<frame::MapPack> list = now;
+                list.insert(list.end(), after.begin(), after.end());
+                const auto at = std::chrono::steady_clock::now();
+                const std::string answer = map.set_packs(list);
+                set_ms.push_back(
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - at).count());
+                // what it opened, and any it could not
+                std::size_t opened = 0;
+                std::string refused;
+                {
+                    std::stringstream lines(answer);
+                    for (std::string line; std::getline(lines, line);) {
+                        if (line.ends_with(" opened") || line.ends_with(" listed")) {
+                            ++opened;
+                        } else if (!line.ends_with(" kept")) {
+                            refused += (refused.empty() ? "" : "; ") + line;
+                        }
+                    }
+                }
+                (void)draw(std::format("arrive {:3d}", k / per), from, true, true);
+                scene::World* w = map.world();
+                if (w == nullptr) continue;
+                w->residency().wait_idle();
+                w->pack_stage().wait_idle();
+                if (w->sun() != nullptr) w->sun()->wait_idle();
+                // the active pack's tallest solid at each of its zooms as a pack not seen before was scanned
+                double scan = 0;
+                if (const tiles::StorePack* a = w->active(); a != nullptr && a->pack.head() != nullptr) {
+                    for (const std::uint8_t z : a->pack.head()->levels) {
+                        const auto t0 = std::chrono::steady_clock::now();
+                        (void)sun::scene_maxh(a->pack, 0, z);
+                        scan +=
+                            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    }
+                }
+                scanned_ms += scan;
+                MESSAGE(std::format("arrive {:3d}: {} packs, set_packs {:.2f} ms opening {}{}, active {}, its tallest "
+                                    "scanned whole in {:.1f} ms; {}",
+                                    k / per, list.size(), set_ms.back(), opened,
+                                    refused.empty() ? std::string() : " (refused: " + refused + ")",
+                                    w->active() != nullptr ? w->active()->id : "-", scan, map.tiles_line()));
+            }
+            listed = all;
+            held = nullptr;
+            MESSAGE(std::format("arrived: {} packs in {} lists, set_packs median {:.2f} ms, most {:.2f}, all {:.1f}; "
+                                "the active packs' tallest scanned whole in {:.1f} ms",
+                                order.size(), set_ms.size(), median(set_ms),
+                                set_ms.empty() ? 0.0 : *std::ranges::max_element(set_ms),
+                                std::accumulate(set_ms.begin(), set_ms.end(), 0.0), scanned_ms));
+        }
         for (int cycle = 1; cycle <= cycles; ++cycle) {
             parts.clear();
             builds.clear();

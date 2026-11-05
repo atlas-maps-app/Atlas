@@ -232,7 +232,13 @@ void Store::insert(std::shared_ptr<const StorePack> entry) {
 Result<void> Store::add_window(const PackRef& ref) {
     auto source = shared_source(ref);
     if (!source) return std::unexpected(source.error());
-    auto pack = Pack::open(std::make_unique<SharedSource>(*source));
+    // A window of the style the last one had shares it, read and compared but not parsed again (tiles::PackStyle).
+    std::shared_ptr<const PackStyle> style;
+    {
+        const std::scoped_lock lock(cells_mutex_);
+        style = window_style_;
+    }
+    auto pack = Pack::open(std::make_unique<SharedSource>(*source), style);
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render() || pack->head() == nullptr) {
         return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
@@ -249,23 +255,22 @@ Result<void> Store::add_window(const PackRef& ref) {
         (void)remove(ref.id);
         return {};
     }
+    // What its cell's composition would refuse it for (compose_pack: a chunk without bytes, a tile twice, below) is
+    // refused as it joins, so that a held cell composes at release with no window to take back (its chunk table holds
+    // its tile's size within max_tile_bytes already).
+    if (chunks[0].stored == 0) return std::unexpected(error(Fault::missing, Site::chunk, chunks[0].tile.packed()));
     Window w{.id = ref.id,
              .chunk = chunks[0],
              .source = *source,
+             .head = std::vector<std::byte>(head.bytes().begin(), head.bytes().end()),
+             .style = pack->shared_style(),
              .frame = head.frame,
              .style_version = std::string(head.style_version)};
-    Zstd zstd;
-    for (const Section& section : pack->sections()) {
-        if (section.name != section_head && section.name != section_style) continue;
-        auto bytes = read_section(**source, section, section.name == section_head ? Site::head : Site::style,
-                                  max_section_raw, zstd);
-        if (!bytes) return std::unexpected(bytes.error());
-        (section.name == section_head ? w.head : w.style) = std::move(*bytes);
-    }
     const TileKey tile = w.chunk.tile;
     const auto shift = static_cast<std::uint32_t>(tile.z - cell_level);
     const TileKey cell(cell_level, tile.x >> shift, tile.y >> shift);
     const std::scoped_lock lock(cells_mutex_);
+    window_style_ = w.style;
     auto it = std::ranges::find_if(cells_, [&](const Cell& c) { return c.key.packed() == cell.packed(); });
     if (it == cells_.end()) it = cells_.insert(cells_.end(), Cell{.key = cell, .windows = {}});
     // every window of a cell in one frame and of one derivation (their tiles are drawn together)
@@ -278,8 +283,16 @@ Result<void> Store::add_window(const PackRef& ref) {
         }
         break;
     }
+    // a tile once in a cell (another window's of another id: compose_pack's duplicate)
+    if (std::ranges::any_of(it->windows, [&](const Window& o) { return o.id != w.id && o.chunk.tile == tile; })) {
+        return std::unexpected(error(Fault::duplicate, Site::chunk_table, tile.packed()));
+    }
     std::erase_if(it->windows, [&](const Window& o) { return o.id == w.id; });
     it->windows.push_back(std::move(w));
+    if (held_) {
+        touch(cell);
+        return {};
+    }
     auto composed = compose(*it);
     if (!composed) {
         it->windows.pop_back();
@@ -326,13 +339,46 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
     const std::string manifest =
         std::format(R"({{"layout":"render-tiles","payload":{},"builder":"core cell","cell":"{}","windows":{}}})",
                     payload_version, name, cell.windows.size());
-    auto source =
-        compose_pack(chunks, {.levels = levels, .manifest = manifest, .head = *head_bytes, .style = first.style});
+    auto source = compose_pack(
+        chunks, {.levels = levels, .manifest = manifest, .head = *head_bytes, .style = first.style->tables.bytes()});
     if (!source) return std::unexpected(source.error());
-    auto pack = Pack::open(std::move(*source));
+    // its style the first window's, read once (the section holds its bytes)
+    auto pack = Pack::open(std::move(*source), first.style);
     if (!pack) return std::unexpected(pack.error());
     return std::make_shared<const StorePack>(
         StorePack{.id = name, .kind = PackKind::window, .identity = {}, .remote = false, .pack = std::move(*pack)});
+}
+
+void Store::touch(TileKey cell) {
+    std::erase(touched_, cell);
+    touched_.push_back(cell);
+}
+
+void Store::hold() {
+    const std::scoped_lock lock(cells_mutex_);
+    held_ = true;
+}
+
+void Store::release() {
+    const std::scoped_lock lock(cells_mutex_);
+    held_ = false;
+    for (const TileKey& key : touched_) {
+        const std::string name = cell_id(key);
+        const auto it = std::ranges::find_if(cells_, [&](const Cell& c) { return c.key.packed() == key.packed(); });
+        if (it == cells_.end()) { // its last window left
+            const std::scoped_lock packs(mutex_);
+            std::erase_if(packs_, [&](const auto& p) { return p->id == name; });
+            continue;
+        }
+        if (auto composed = compose(*it)) {
+            insert(std::move(*composed));
+        } else {
+            log::warn("tiles: the windows of {} no longer compose: {}", name, describe(composed.error()));
+            const std::scoped_lock packs(mutex_);
+            std::erase_if(packs_, [&](const auto& p) { return p->id == name; });
+        }
+    }
+    touched_.clear();
 }
 
 bool Store::remove(std::string_view id) {
@@ -341,6 +387,12 @@ bool Store::remove(std::string_view id) {
         for (auto it = cells_.begin(); it != cells_.end(); ++it) {
             if (std::erase_if(it->windows, [&](const Window& w) { return w.id == id; }) == 0) continue;
             const std::string name = cell_id(it->key);
+            if (held_) {
+                const TileKey key = it->key;
+                if (it->windows.empty()) cells_.erase(it);
+                touch(key);
+                return true;
+            }
             if (it->windows.empty()) {
                 cells_.erase(it);
                 const std::scoped_lock packs(mutex_);

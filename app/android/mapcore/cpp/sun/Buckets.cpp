@@ -111,7 +111,16 @@ Scene::Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::S
         base_.push_back(static_cast<PrismId>(b.size()));
         for (std::uint32_t s = 0; s < t.solids.size(); ++s) b.add(t.solids.xs(s), t.solids.zs(s), t.solids.h[s]);
     }
-    grid_ = std::move(b).build(scene_maxh);
+    grid_ = std::make_shared<const Grid>(std::move(b).build(scene_maxh));
+}
+
+Scene::Scene(const Scene& from, std::vector<SunTile> tiles)
+    : tiles_(std::move(tiles)), base_(from.base_), chunks_(from.chunks_), grid_(from.grid_) {
+    ATLAS_ASSERT(tiles_.size() == from.tiles_.size(), "a scene made whole holds the same tiles");
+    for (std::size_t t = 0; t < tiles_.size(); ++t) {
+        ATLAS_DEBUG_ASSERT(tiles_[t].key == from.tiles_[t].key && tiles_[t].solids.h == from.tiles_[t].solids.h,
+                           "a scene made whole holds the same solids");
+    }
 }
 
 std::uint64_t Scene::context(std::size_t t) const noexcept {

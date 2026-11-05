@@ -99,6 +99,9 @@ public:
     /// The live map's bands, nearest first (at least one; the last without an end).
     [[nodiscard]] std::span<const HeadBand> bands() const noexcept { return bands_; }
 
+    /// The section's bytes, as read.
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return bytes_; }
+
     /// The ladder index a frame loads at: the view's when the ladder snapped the camera onto `view` (nothing when the
     /// head has no such view), else the band of `distance`, the eye's metres from its target.
     [[nodiscard]] std::optional<std::uint8_t> tolerance_of(std::optional<std::string_view> view,
@@ -137,6 +140,9 @@ public:
 
     /// Every table, in the section's order.
     [[nodiscard]] std::span<const std::pair<std::string_view, Value>> tables() const noexcept { return tables_; }
+
+    /// The decompressed section's bytes, as read.
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return bytes_; }
 
 private:
     friend Result<StyleTables> read_style(std::vector<std::byte> raw);
