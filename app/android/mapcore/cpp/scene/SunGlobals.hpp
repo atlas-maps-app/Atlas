@@ -296,7 +296,7 @@ private:
     [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
     /// The scene of `b`, and its decks and own tiles' chunks (Lane::built_decks, built_chunks).
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b, std::vector<sun::Deck>& decks,
-                                                          std::vector<tiles::Sha256Digest>& chunks);
+                                                          std::vector<tiles::Sha256Digest>& own);
     /// `scene`, built for `b`'s tiles as `lane` holds them, with the tiles `b` wants made whole where they are their
     /// solids alone; null where one of them holds another chunk now (the scene is built anew).
     [[nodiscard]] std::shared_ptr<const sun::Scene> make_whole(const sun::Scene& scene, const Build& b,

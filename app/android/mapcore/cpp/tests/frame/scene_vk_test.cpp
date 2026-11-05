@@ -4327,9 +4327,10 @@ TEST_CASE("a top-up of a stand-in that finds no piece makes no room: the stand-i
     ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == free);
     constexpr std::uint32_t back_bytes = 3584;
     constexpr std::uint64_t kept_free = 1024;
-    ATLAS_REQUIRE(free > 3 * (back_bytes + 512) + kept_free);
-    auto blocker = w.heaps()->allocate(scene::HeapKind::points,
-                                       static_cast<std::uint32_t>(free - 3 * (back_bytes + 512) - kept_free));
+    constexpr std::uint64_t backs_apart = std::uint64_t{3} * (back_bytes + 512); // the pieces, each with 512 B after it
+    ATLAS_REQUIRE(free > backs_apart + kept_free);
+    auto blocker =
+        w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(free - backs_apart - kept_free));
     ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
     std::vector<scene::HeapRange> backs;
     for (int k = 0; k < 3; ++k) {
@@ -4353,7 +4354,7 @@ TEST_CASE("a top-up of a stand-in that finds no piece makes no room: the stand-i
     // 10.5 KB back in three pieces, and from 300 m: P and the L12's top-up fit, and the L13's waits for a piece.
     for (const scene::HeapRange& r : backs) w.heaps()->retire(r, 0);
     w.heaps()->collect(0);
-    ATLAS_REQUIRE(w.heaps()->free_bytes() == 3 * back_bytes + kept_free, said());
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == (std::uint64_t{3} * back_bytes) + kept_free, said());
     ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) < 4096, said());
     c.distance = 300.0;
     frames(1);

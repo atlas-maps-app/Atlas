@@ -349,6 +349,7 @@ TEST_CASE("a frame cell composed window by window names its canals as composed a
 
     // The cell's levels joining change no tile of the finest level: what was kept stays, nothing read.
     std::vector<std::span<const std::byte>> windows;
+    windows.reserve(made.size());
     for (const Made& m : made) windows.emplace_back(m.pack);
     const auto levels = load::build_levels(windows);
     ATLAS_REQUIRE(levels.has_value(), levels.error().what);

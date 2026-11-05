@@ -1308,9 +1308,10 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 if (const tiles::StorePack* a = w->active(); a != nullptr && a->pack.head() != nullptr) {
                     for (const std::uint8_t z : a->pack.head()->levels) {
                         const auto t0 = std::chrono::steady_clock::now();
-                        (void)sun::scene_maxh(a->pack, 0, z);
+                        const tiles::Result<double> maxh = sun::scene_maxh(a->pack, 0, z);
                         scan +=
                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                        CHECK(maxh.has_value());
                     }
                 }
                 scanned_ms += scan;

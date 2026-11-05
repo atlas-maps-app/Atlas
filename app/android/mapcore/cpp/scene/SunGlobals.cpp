@@ -629,7 +629,8 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         held.push_back(&o);
     }
     for (std::size_t i = 0; i < b.tiles.size(); ++i) {
-        if (starts[i]) made[i] = sun::finish_tile(std::move(*starts[i]), region, decks);
+        std::optional<sun::TileStart>& start = starts[i];
+        if (start.has_value()) made[i] = sun::finish_tile(std::move(*start), region, decks);
     }
     // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds, at
     // each zoom it holds tiles of. A frame cell's L13 holds its places' records as stage P derived them from all the
