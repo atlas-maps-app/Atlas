@@ -643,6 +643,88 @@ TEST_CASE("tiles: the world's cover check finds a cell's ground short of its are
     CHECK(crossing.outside == 1);
 }
 
+/// A pack of one L6 world tile, its head of `profile`, its style `style`'s bytes.
+std::vector<std::byte> styled_pack(std::vector<std::byte> style, Profile profile) {
+    constexpr std::array<std::uint8_t, 1> levels = {6};
+    TileBytes tile = world_tile(6, 32, 21);
+    const std::vector<ChunkBytes> chunks = {chunk_of(tile)};
+    atlas::test::PackOptions options;
+    options.head = atlas::test::head_bytes(levels, profile);
+    options.style = std::move(style);
+    return atlas::test::pack_bytes(chunks, levels, format_render, options);
+}
+
+TEST_CASE("tiles: a world pack is drawn in the world's style where one is given, whatever its own style lacks") {
+    // the world's style (the core's own, load::world_style: ENGINE.md step 5's style in one place), here the test
+    // style's, and a world pack built before the style file had its shopfronts (as world-test's of 1 November, which
+    // the core of 4 November refused: "style windows.shop_glass_open: missing")
+    auto tables = read_style(atlas::test::style_bytes());
+    ATLAS_REQUIRE(tables, describe(tables.error()));
+    const auto world = Style::of(*tables);
+    ATLAS_REQUIRE(world, describe(world.error()));
+    REQUIRE(world->shopfronts.glass_open != 0);
+    std::vector<atlas::test::values::Field> lacking = atlas::test::style_tables();
+    CHECK(std::erase_if(lacking, [](const atlas::test::values::Field& t) { return t.first == "shopfronts"; }) == 1);
+    const std::vector<std::byte> old_style = atlas::test::style_bytes(lacking);
+    const std::vector<std::byte> old = styled_pack(old_style, Profile::world_base);
+
+    SUBCASE("in its own style it is refused, the table it lacks its error") {
+        auto pack = Pack::open(std::make_unique<MemorySource>(old));
+        ATLAS_REQUIRE(!pack);
+        CHECK(pack.error().fault == Fault::missing);
+        CHECK(pack.error().site == Site::style);
+    }
+    SUBCASE("in the world's it opens, its tables its own and its values the world's") {
+        auto pack = Pack::open(std::make_unique<MemorySource>(old), &*world);
+        ATLAS_REQUIRE(pack, describe(pack.error()));
+        ATLAS_REQUIRE(pack->style() != nullptr && pack->style_tables() != nullptr);
+        CHECK(pack->style()->shopfronts.glass_open == world->shopfronts.glass_open);
+        CHECK(pack->style()->windows.shop_glass_open == world->windows.shop_glass_open);
+        CHECK(!pack->style_tables()->table("shopfronts"));
+        CHECK(pack->verify());
+    }
+    SUBCASE("a pack of another profile keeps its own style, and so is refused") {
+        for (const Profile profile : {Profile::living, Profile::region}) {
+            CAPTURE(static_cast<int>(profile));
+            auto pack = Pack::open(std::make_unique<MemorySource>(styled_pack(old_style, profile)), &*world);
+            ATLAS_REQUIRE(!pack);
+            CHECK(pack.error().site == Site::style);
+        }
+    }
+    SUBCASE("a world pack's style is still read: one of another payload version is refused") {
+        std::vector<std::byte> other = atlas::test::style_bytes();
+        other.at(4) ^= std::byte{0x80}; // the payload version's low byte, after the magic
+        auto pack = Pack::open(std::make_unique<MemorySource>(styled_pack(other, Profile::world_base)), &*world);
+        ATLAS_REQUIRE(!pack);
+        CHECK(pack.error().fault == Fault::bad_version);
+    }
+    SUBCASE("the store opens the world's packs in its world style, from a file and by ranges alike") {
+        TempDir dir;
+        write_file(dir.path() + "/old.atlas", old);
+        Store own;
+        CHECK(!own.add({.id = "old", .kind = PackKind::world_mid, .path = dir.path() + "/old.atlas"}));
+        Store store;
+        store.set_world_style(&*world);
+        auto added = store.add({.id = "old", .kind = PackKind::world_mid, .path = dir.path() + "/old.atlas"});
+        ATLAS_REQUIRE(added, describe(added.error()));
+        const auto fetch = [&old](std::uint64_t offset, std::span<std::byte> out) -> Result<void> {
+            if (offset > old.size() || out.size() > old.size() - offset)
+                return std::unexpected(error(Fault::io, Site::file));
+            std::copy_n(old.begin() + static_cast<std::ptrdiff_t>(offset), out.size(), out.begin());
+            return {};
+        };
+        auto fetched = store.add({.id = "fetched", .kind = PackKind::world_mid, .length = old.size(), .fetch = fetch});
+        ATLAS_REQUIRE(fetched, describe(fetched.error()));
+        const auto packs = store.packs();
+        ATLAS_REQUIRE(packs.size() == 2);
+        for (const auto& p : packs) {
+            CAPTURE(p->id);
+            ATLAS_REQUIRE(p->pack.style() != nullptr);
+            CHECK(p->pack.style()->shopfronts.glass_open == world->shopfronts.glass_open);
+        }
+    }
+}
+
 TEST_CASE("tiles: the packer's world packs and globe, when ATLAS_WORLD_DIR names them") {
     const std::string dir = atlas::test::environment("ATLAS_WORLD_DIR");
     if (dir.empty()) {
