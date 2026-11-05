@@ -256,20 +256,23 @@ private:
     [[nodiscard]] std::vector<tiles::TileKey> want_levels(const view::View& view, const style::CameraState& camera,
                                                           const view::GroundFrame& frame) const;
     /// Room for the tiles the frame asks for, where tiles that only stand in hold it (ENGINE.md one pack per country,
-    /// step 7: the heaps full of windows zooming out, of levels zooming in). In the order
-    /// the residency builds them, each is asked for while the heaps' free bytes hold what the cover expects of it and
-    /// of those before it (a resident one, nothing more); once one does not fit, or waits for a range to go back to the
-    /// heaps (Residency::Wait::stuck: their bytes free hold no piece for it), the coarsest of those left that is not
-    /// resident takes the room first (zooming out, a frame cell's L12, which then stands in at sixteen places): the
-    /// tiles of the places in view that nothing draws, stands in or would go (the cover's spare), then, while the room
-    /// coming is short of it (the heaps' free and retiring bytes, and the stand-ins that go once the tiles asked for
-    /// before it come; for a tile that waits for a range, those alone but the free), stand-ins one by one, those whose
-    /// places keep a backup first, then those at its own places, the fewest holes first. It is asked for once the room
-    /// is there, the rest held back until then (Request::held). Where what can go is short of it, of the stand-ins only
+    /// step 7: the heaps full of windows zooming out, of levels zooming in): the first `own` of asked_, the cover's
+    /// requests, then the top-ups of the tiles a place in view plans or keeps (ENGINE.md's parts). In the order the
+    /// residency builds them, the top-ups after all of the cover's, each is asked for while the heaps' free bytes hold
+    /// what the cover expects of it and of those before it (a resident one, nothing more, but a top-up that found no
+    /// room the bytes it asked for); once one does not fit, or waits for a range to go back to the heaps
+    /// (Residency::Wait::stuck: their bytes free hold no piece for it), the coarsest of those left that is not resident
+    /// takes the room first (zooming out, a frame cell's L12, which then stands in at sixteen places): the tiles of the
+    /// places in view that nothing draws, stands in or would go (the cover's spare), then, while the room coming is
+    /// short of it (the heaps' free and retiring bytes, and the stand-ins that go once the tiles asked for before it
+    /// come; for a tile that waits for a range, those alone but the free), stand-ins one by one, those whose places
+    /// keep a backup first, then those at its own places, the fewest holes first. It is asked for once the room is
+    /// there, the rest held back until then (Request::held). Where what can go is short of it, of the stand-ins only
     /// those at its places that keep a backup go, and the tiles asked for before it come first where their coming lets
-    /// another go, else every tile is asked for as before. What goes is let go of as the next frame begins (going_),
-    /// before its covers.
-    void make_room();
+    /// another go, else every tile is asked for as before. For a top-up (the one the room goes to resident) only what
+    /// nothing draws goes, the spare tiles and those that make it a piece, no stand-in. What goes is let go of as the
+    /// next frame begins (going_), before its covers.
+    void make_room(std::size_t own);
     /// make_room's piece of `bytes` for a tile whose largest range (of kind `kind`) finds none though the heaps hold
     /// its bytes free: whether the tiles going already, those nothing draws, keeps or asks for, and `stand_ins` (those
     /// whose places all keep another resident level) can make one where a range of its kind may lie, joined to the
