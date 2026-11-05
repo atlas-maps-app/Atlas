@@ -93,9 +93,10 @@ inline constexpr std::uint32_t canopy = 0x10;
 inline constexpr std::uint32_t water_w0 = 0x40;
 /// The app's map's thin water (passes/Water.cpp): where its pieces lie narrower than 1.5 px, their count cleared for
 /// the band (the shadows' bit, from the opaque ground to the water's end: their union comes after it), and the band's
-/// samples drawn (the canopy's, in the opaque ground alone: cleared after the band, before the canopy's union).
+/// samples drawn (the walls' material lines' bit, building/windows.slangh's BUILDING_MATERIAL_STENCIL, from the band
+/// to the water's end: the lines take it in their phase at order 999, after it), both cleared with the clip.
 inline constexpr std::uint32_t water_thin = shadows;
-inline constexpr std::uint32_t water_band = canopy;
+inline constexpr std::uint32_t water_band = 0x20;
 } // namespace ground_stencil
 
 /// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
@@ -1134,7 +1135,7 @@ private:
     void record_water_thin(const frame::Recording& r, std::uint32_t flags);
     /// The water's thin edges' band, after the land and the plate, before the app's map's streets: along the water's
     /// middle at least 1.5 px wide at the share of them it covers, in the surface's colour with its tint, at the
-    /// water's depth, each sample once; its stencil bit cleared after it.
+    /// water's depth, each sample once by its stencil bit, which record_water_end clears with the clip.
     void record_water_band(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
     /// The water's clip cleared from the stencil: with weather (`weather`) after the water's elements, without after
@@ -1417,7 +1418,6 @@ struct Ground::Pipelines {
     /// The app's map's thin water (record_water_thin, record_water_band).
     vk::raii::Pipeline water_thin{nullptr};
     vk::raii::Pipeline water_band{nullptr};
-    vk::raii::Pipeline water_band_end{nullptr};
     // Sky.cpp
     vk::raii::Pipeline sky{nullptr};
     vk::raii::Pipeline sun_glow{nullptr};
