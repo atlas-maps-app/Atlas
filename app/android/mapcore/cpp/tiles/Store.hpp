@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,6 +59,19 @@ struct StorePack {
     Pack pack;
 };
 
+/// A range of a remote pack's bytes the app fetched: its offset in the pack, and the bytes.
+struct PackBytes {
+    std::uint64_t offset = 0;
+    std::span<const std::byte> bytes;
+};
+
+/// What Store::keep made of a range of a remote pack's chunks: the tiles whose chunks it kept, and those whose bytes
+/// were not their chunk's (each checked against its SHA-256), which it refused.
+struct KeptChunks {
+    std::vector<TileKey> kept;
+    std::vector<TileKey> refused;
+};
+
 /// A chunk of a tile, and the pack it is in.
 struct StoreHit {
     std::shared_ptr<const StorePack> pack;
@@ -66,8 +80,35 @@ struct StoreHit {
 
 class Store {
 public:
-    /// A store that keeps remote packs' heads and chunks in `cache` (null: remote packs are fetched every time).
-    explicit Store(ExpandedCache* cache = nullptr) noexcept : cache_(cache) {}
+    /// A store that keeps remote packs' heads and chunks in `cache` (null: remote packs are fetched every time), which
+    /// outlives it.
+    explicit Store(ExpandedCache* cache = nullptr) noexcept : cache_(std::shared_ptr<ExpandedCache>(), cache) {}
+
+    /// The cache remote packs' heads and chunks are kept in from now on (the world's, ENGINE.md step 6: the app gives
+    /// it once the map is made); null: none.
+    void set_cache(std::shared_ptr<ExpandedCache> cache);
+    /// The cache remote packs' heads and chunks are kept in, or null.
+    [[nodiscard]] std::shared_ptr<ExpandedCache> cache() const;
+
+    /// A remote pack's fetch where the app brings its bytes itself (the world's, ENGINE.md step 6): a read the cache
+    /// does not hold is absent (Fault::missing, Site::file, its offset), so the pack opens only from a head kept in the
+    /// cache (keep_head) and a chunk loads only once kept there (keep). The world's tiles want such a chunk again once
+    /// the cache has changed (scene::WorldTiles).
+    [[nodiscard]] static RangeSource::Fetch absent();
+
+    /// A remote pack's head the app fetched (`ranges`: the pack's bytes but its `chunks` section, ENGINE.md step 6),
+    /// kept in `cache` under `ref`'s identity as opening the pack would keep it, once the pack opens from them alone (a
+    /// world pack in `world_style` where one is given, as the store opens it: set_world_style): its header, directory,
+    /// chunk table and sections, its levels the world's of `ref`'s kind (L6 to L11 for world_mid, L0 to L5 for
+    /// world_base). Else nothing is kept.
+    [[nodiscard]] static Result<void> keep_head(ExpandedCache& cache, const PackRef& ref,
+                                                std::span<const PackBytes> ranges, const Style* world_style = nullptr);
+
+    /// The chunks of `pack` (a remote pack) lying whole in `range`, each checked against its SHA-256 and kept in
+    /// `cache` as fetched (stored, zstd); those whose bytes are not their chunk's are refused. A chunk only partly in
+    /// the range is neither.
+    [[nodiscard]] static KeptChunks keep(ExpandedCache& cache, const StorePack& pack, const PackBytes& range,
+                                         Zstd& zstd);
 
     /// The style the world's packs are drawn in (Pack::open: the core's own, load::world_style), or null for each
     /// pack's own. Set before any pack is added (scene::World does as it is made).
@@ -163,7 +204,8 @@ private:
     /// Notes that `cell`'s windows changed while held (its composition left for release), last; under cells_mutex_.
     void touch(TileKey cell);
 
-    ExpandedCache* cache_;
+    mutable std::mutex cache_mutex_;
+    std::shared_ptr<ExpandedCache> cache_; ///< under cache_mutex_
     const Style* world_style_ = nullptr;
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order

@@ -210,6 +210,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     }
     builder_ = std::move(*builder);
     world_ = std::move(*world);
+    world_->store().set_cache(world_cache_); // before the packs open in it: a remote pack's head is kept there
     (void)apply_shape_records();
     if (wake_) {
         world_->set_wake(wake_);
@@ -416,6 +417,29 @@ std::vector<tiles::TileKey> MapFrame::wanted_levels() const {
 
 std::vector<tiles::TileKey> MapFrame::levels_in_view() const {
     return world_ ? world_->levels_in_view() : std::vector<tiles::TileKey>{};
+}
+
+void MapFrame::set_world_cache(std::shared_ptr<tiles::ExpandedCache> cache) {
+    world_cache_ = std::move(cache);
+    if (world_) world_->store().set_cache(world_cache_);
+}
+
+std::vector<scene::WorldWant> MapFrame::world_wants() const {
+    const scene::WorldTiles* tiles = world_ ? world_->world_tiles() : nullptr;
+    return tiles != nullptr ? tiles->wants() : std::vector<scene::WorldWant>{};
+}
+
+std::vector<tiles::TileKey> MapFrame::world_blocks() const {
+    const scene::WorldTiles* tiles = world_ ? world_->world_tiles() : nullptr;
+    return tiles != nullptr ? tiles->blocks() : std::vector<tiles::TileKey>{};
+}
+
+std::shared_ptr<const tiles::StorePack> MapFrame::world_pack(std::string_view id) const {
+    if (!world_) return nullptr;
+    for (const auto& p : world_->store().packs()) {
+        if (p->id == id) return p;
+    }
+    return nullptr;
 }
 
 } // namespace atlas::frame

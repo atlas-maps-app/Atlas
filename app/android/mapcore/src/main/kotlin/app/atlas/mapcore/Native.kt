@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 25
+    const val ABI = 26
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -244,8 +244,9 @@ object Native {
     /**
      * The packs the map draws from, replacing the last list, one per index: its id, its number (the camera state's
      * pack id), its kind (`CP/tiles/Store.hpp`'s PackKind), and a file's path or an open descriptor's range (an APK
-     * asset: the core keeps a duplicate of the descriptor, the caller closes its own). A line per pack: opened, listed,
-     * kept, or why not.
+     * asset: the core keeps a duplicate of the descriptor, the caller closes its own), or a remote world pack's SHA-256
+     * in [identities] (null for every other pack; ENGINE.md step 6: its head and chunks in the world's cache alone). A
+     * line per pack: opened, listed, kept, or why not.
      */
     @JvmStatic external fun packs(
         handle: Long,
@@ -256,6 +257,7 @@ object Native {
         fds: IntArray,
         offsets: LongArray,
         lengths: LongArray,
+        identities: Array<ByteArray?>,
     ): String
 
     /** The moment's theme for the map (`state.ThemeBlock`'s 256 bytes in a direct buffer); "" or why it was refused. */
@@ -293,6 +295,50 @@ object Native {
      * (ENGINE.md one pack per country, step 7), each its tile's key packed as [wantedWindows]'.
      */
     @JvmStatic external fun levelsInView(handle: Long): LongArray
+
+    /**
+     * The map's world keeps its remote packs' heads and chunks in the world's cache in [dir] within [budget] bytes from
+     * now on (ENGINE.md step 6: one for the process, which [worldHeld] and [worldHead] share); "" or why not.
+     */
+    @JvmStatic external fun worldCache(handle: Long, dir: String, budget: Long): String
+
+    /** Whether the world's cache in [dir] holds each pack's head, [identities] their SHA-256s end to end; null where it does not open. */
+    @JvmStatic external fun worldHeld(dir: String, budget: Long, identities: ByteArray): BooleanArray?
+
+    /**
+     * A world pack's head into the world's cache in [dir]: the pack of [kind] and [length] bytes whose SHA-256 is
+     * [identity], its bytes but its `chunks` section as [ranges], each from its offset in [offsets]; kept once the pack
+     * opens from them alone. "" or why not.
+     */
+    @JvmStatic external fun worldHead(
+        dir: String,
+        budget: Long,
+        kind: Int,
+        length: Long,
+        identity: ByteArray,
+        offsets: LongArray,
+        ranges: Array<ByteArray>,
+    ): String
+
+    /** Empties the world's cache in [dir] of every head and chunk (a new version of the world drops the old one's); "" or why not. */
+    @JvmStatic external fun worldDrop(dir: String, budget: Long): String
+
+    /**
+     * The world's tiles the map wants whose chunks are not on the phone, nearest first: eight numbers each, its pack's
+     * block and its tile (keys packed as [wantedWindows]'), the chunk's offset in the pack and its length, then the
+     * pack's SHA-256 as four big-endian longs.
+     */
+    @JvmStatic external fun worldWants(handle: Long): LongArray
+
+    /** The world's blocks the map's cover reaches without an open pack, nearest first, keys packed as [wantedWindows]'. */
+    @JvmStatic external fun worldBlocks(handle: Long): LongArray
+
+    /**
+     * A range of the bytes of the world pack of [block] (packed) and [identity] (its SHA-256) from [offset]: its whole
+     * chunks checked and kept in the map's world cache. The chunks kept, then the refused ones' tiles (packed); null
+     * where the map's world holds no such pack or no cache.
+     */
+    @JvmStatic external fun worldKeep(handle: Long, block: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
 
     /**
      * Window ([z], [x], [y])'s kept data (Overpass's JSON of its query, in the file at [kept], which the core maps)

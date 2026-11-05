@@ -41,10 +41,13 @@ class PackList(
      */
     private val bench: () -> List<File> = { emptyList() },
     /**
-     * The world's folder on the phone (ENGINE.md step 5: world.idx, the parts it names and world-globe.atlas), or null
-     * for none: its packs are listed to the core as ranges of their parts and the globe, drawn beyond 18 km.
+     * The world's folder on the phone (ENGINE.md step 6: world.idx and world-globe.atlas), or null for none: the globe is
+     * listed to the core, and each pack of the index whose head is in the world's cache ([worldHeld]) as a remote pack,
+     * drawn beyond 18 km.
      */
     private val world: () -> File? = { null },
+    /** Whether the world's cache holds each pack's head, by their SHA-256s (MapCore.worldHeld); none by default. */
+    private val worldHeld: (List<ByteArray>) -> BooleanArray = { BooleanArray(it.size) },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -175,8 +178,9 @@ class PackList(
         // a file gone (evicted, or listed no longer) is forgotten: one written there again is read
         heads.keys.retainAll(seen)
         val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
+        val worldKey = { r: MapCore.PackRef -> listOf(r.id, r.path, r.offset, r.length, r.identity?.contentHashCode()) }
         if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
-            worldOut.map { listOf(it.id, it.path, it.offset, it.length) } != worldRefs.map { listOf(it.id, it.path, it.offset, it.length) }
+            worldOut.map(worldKey) != worldRefs.map(worldKey)
         ) {
             packs = out
             worldRefs = worldOut
@@ -187,19 +191,19 @@ class PackList(
     }
 
     /**
-     * The world in [dir]: each pack of its world.idx a range of its part (one shorter than its range is left out), and
-     * the globe beside it by its file's time and size.
+     * The world in [dir]: each pack of its world.idx whose head the world's cache holds, as a remote pack by its SHA-256
+     * and length (its chunks loaded from the cache as they come), and the globe beside it by its file's time and size.
      */
     private fun worldOf(dir: File): List<MapCore.PackRef> {
         val out = ArrayList<MapCore.PackRef>()
         val idx = File(dir, "world.idx")
         if (idx.isFile) {
             val index = WorldIndex.read(idx.readBytes())
-            for (e in index.entries) {
-                val part = File(dir, index.parts[e.part].name)
-                if (part.length() < e.offset + e.length) continue
+            val held = worldHeld(index.entries.map { it.sha256 })
+            for ((i, e) in index.entries.withIndex()) {
+                if (i >= held.size || !held[i]) continue
                 val id = "world/${e.z}/${e.x}/${e.y}"
-                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.WORLD_MID, path = part.path, offset = e.offset, length = e.length)
+                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.WORLD_MID, length = e.length, identity = e.sha256)
             }
         }
         val globe = File(dir, WORLD_GLOBE)

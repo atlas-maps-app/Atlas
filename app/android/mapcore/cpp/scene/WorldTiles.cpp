@@ -13,6 +13,7 @@
 #include <mapbox/earcut.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <format>
@@ -159,6 +160,24 @@ void each_row(const tl::Layer& layer, std::uint32_t cells, const F& f) {
 }
 
 } // namespace
+
+std::optional<tl::TileKey> world_block_of(std::string_view id) noexcept {
+    constexpr std::string_view prefix = "world/";
+    if (!id.starts_with(prefix)) return std::nullopt;
+    id.remove_prefix(prefix.size());
+    std::array<std::uint32_t, 3> v{};
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const auto [end, ec] = std::from_chars(id.data(), id.data() + id.size(), v.at(i));
+        if (ec != std::errc{}) return std::nullopt;
+        id.remove_prefix(static_cast<std::size_t>(end - id.data()));
+        if (i + 1 < v.size()) {
+            if (!id.starts_with('/')) return std::nullopt;
+            id.remove_prefix(1);
+        }
+    }
+    if (!id.empty() || v[0] > world_finest) return std::nullopt;
+    return tl::TileKey(static_cast<std::uint8_t>(v[0]), v[1], v[2]);
+}
 
 double world_level_start(std::uint8_t z) noexcept { return std::ldexp(l11_start, int{world_finest} - int{z}); }
 
@@ -329,9 +348,19 @@ void WorldTiles::wait_idle() {
     idle_cv_.wait(lock, [this] { return queue_.empty() && building_ == ~std::uint64_t{0}; });
 }
 
-void WorldTiles::take_style() {
+std::vector<WorldWant> WorldTiles::wants() const {
+    const std::scoped_lock lock(mutex_);
+    return wants_;
+}
+
+std::vector<tl::TileKey> WorldTiles::blocks() const {
+    const std::scoped_lock lock(mutex_);
+    return blocks_;
+}
+
+bool WorldTiles::take_style() {
     const std::vector<std::shared_ptr<const tl::StorePack>> open = store_.packs();
-    if (open == seen_packs_) return;
+    if (open == seen_packs_) return false;
     seen_packs_ = open;
     style_pack_.reset();
     for (const std::shared_ptr<const tl::StorePack>& p : open) {
@@ -339,6 +368,29 @@ void WorldTiles::take_style() {
             style_pack_ = p;
             break;
         }
+    }
+    std::vector<const tl::StorePack*> world;
+    for (const std::shared_ptr<const tl::StorePack>& p : open) {
+        if (is_world(*p)) world.push_back(p.get());
+    }
+    if (world == seen_world_) return false;
+    seen_world_ = std::move(world);
+    open_blocks_.clear();
+    for (const tl::StorePack* p : seen_world_) {
+        if (const auto block = world_block_of(p->id)) open_blocks_.insert(block->packed());
+    }
+    return true;
+}
+
+void WorldTiles::let_go_of_gone() {
+    for (auto it = resident_.begin(); it != resident_.end();) {
+        const WorldTile& t = *it->second;
+        if (t.pack == nullptr || std::ranges::find(seen_world_, t.pack.get()) != seen_world_.end()) {
+            ++it;
+            continue;
+        }
+        let_go(t);
+        it = resident_.erase(it);
     }
 }
 
@@ -358,11 +410,15 @@ void WorldTiles::run(const std::stop_token& stop) {
             building_ = key.packed();
         }
         const auto started = std::chrono::steady_clock::now();
+        // the cache's writes as the build begins: a chunk kept meanwhile makes the tile's absence stale at once
+        const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
+        const std::uint64_t writes = cache != nullptr ? cache->writes() : 0;
         bool no_room = false;
+        std::optional<WorldWant> absent;
         std::unique_ptr<WorldTile> tile;
         {
             const trace::Section traced("atlas world tile");
-            tile = build(key, scratch, no_room);
+            tile = build(key, scratch, no_room, absent);
         }
         std::function<void()> wake;
         {
@@ -373,6 +429,9 @@ void WorldTiles::run(const std::stop_token& stop) {
                 built_.push_back(std::move(tile));
             } else if (no_room) {
                 no_room_.push_back(key);
+            } else if (absent) {
+                // its chunk not on the phone yet: wanted from the app, and built once the cache has changed
+                absent_.insert_or_assign(key.packed(), Absent{.want = std::move(*absent), .writes = writes});
             } else {
                 ++stats_.failed;
                 failed_keys_.push_back(key.packed());
@@ -387,12 +446,21 @@ void WorldTiles::run(const std::stop_token& stop) {
     }
 }
 
-std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room) {
+std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room,
+                                             std::optional<WorldWant>& absent) {
     const std::optional<tl::StoreHit> hit = world_hit(store_, key);
     if (!hit) return nullptr;
     scratch.arena.reset();
     const auto tile = store_.decode(*hit, scratch.zstd, scratch.decoder, scratch.arena, scratch.raw);
     if (!tile) {
+        if (hit->pack->remote && tile.error().fault == tl::Fault::missing && tile.error().site == tl::Site::file) {
+            absent = WorldWant{.tile = key,
+                               .pack = hit->pack->id,
+                               .identity = hit->pack->identity,
+                               .offset = hit->chunk->offset,
+                               .length = hit->chunk->stored};
+            return nullptr;
+        }
         log::warn("vk world: tile {}/{}/{}: {}", key.z, key.x, key.y, tl::describe(tile.error()));
         return nullptr;
     }
@@ -404,6 +472,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     const WorldGeometry g = build_world_geometry(*tile, style_pack ? style_pack->pack.style() : nullptr);
     auto out = std::make_unique<WorldTile>();
     out->key = key;
+    out->pack = hit->pack;
     out->box = {tile->header.south, tile->header.west, tile->header.north, tile->header.east};
     out->triangles = g.triangles;
     out->segments = g.segments;
@@ -451,7 +520,8 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
                         std::uint64_t number, double seconds, double reach) {
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
-    take_style();
+    const bool world_changed = take_style();
+    const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
     // what the worker built since the last frame, and what found no room
     std::vector<tl::TileKey> again;
     {
@@ -463,13 +533,33 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         }
         built_.clear();
         again.swap(no_room_);
+        if (world_changed) {
+            // other world packs (a new version of the world, a block's head come): what failed or was absent is tried
+            // again from them, and the globe's levels are asked for again where its pack changed
+            failed_keys_.clear();
+            absent_.clear();
+        }
+        if (cache != nullptr) {
+            // chunks kept since a tile's build began: it is built again (from the cache where it now holds its chunk)
+            const std::uint64_t writes = cache->writes();
+            std::erase_if(absent_, [writes](const auto& a) { return a.second.writes != writes; });
+        }
+    }
+    if (world_changed) {
+        let_go_of_gone();
+        if (std::ranges::none_of(resident_, [](const auto& r) { return r.second->pinned; })) pinned_asked_ = false;
     }
     drawing_ = false;
     frame_.draws.clear();
     frame_.wanted = 0;
     frame_.fading = false;
     frame_.bare = 0;
-    if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) return;
+    if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) {
+        const std::scoped_lock lock(mutex_);
+        wants_.clear();
+        blocks_.clear();
+        return;
+    }
     // The globe's coarse levels, kept resident from the first frame on: every tile the store holds there.
     std::vector<tl::TileKey> wanted;
     if (!pinned_asked_) {
@@ -483,6 +573,7 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             }
         }
     }
+    std::vector<tl::TileKey> blocks;
     if (distance > world_from) {
         drawing_ = true;
         const double far = world_far(distance, camera.eye().y);
@@ -494,6 +585,22 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             return it->second;
         };
         const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held, reach);
+        // the blocks the cover reaches whose world pack is not open, nearest first: the app fetches their heads
+        std::vector<std::pair<double, tl::TileKey>> reached;
+        const auto reach_block = [&](const WorldLeaf& leaf, std::uint8_t level) {
+            const auto up = static_cast<std::uint32_t>(leaf.key.z - level);
+            const tl::TileKey b(level, leaf.key.x >> up, leaf.key.y >> up);
+            if (!open_blocks_.contains(b.packed())) reached.emplace_back(leaf.distance, b);
+        };
+        for (const WorldLeaf& leaf : leaves) {
+            if (leaf.key.z >= world_coarse_first) reach_block(leaf, world_coarse_block);
+            if (leaf.key.z >= world_fine_first) reach_block(leaf, world_fine_block);
+        }
+        std::ranges::stable_sort(reached, [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& [d, b] : reached) {
+            if (std::ranges::none_of(blocks, [&b](const tl::TileKey& k) { return k.packed() == b.packed(); }))
+                blocks.push_back(b);
+        }
         std::map<std::uint64_t, std::uint64_t> cells; // by packed key: coarse to fine, then by column and row
         std::vector<std::pair<double, tl::TileKey>> asked;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
@@ -577,12 +684,22 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         for (const tl::TileKey& k : wanted) {
             const std::uint64_t p = k.packed();
             if (resident_.contains(p) || p == building_ || std::ranges::find(failed_keys_, p) != failed_keys_.end() ||
+                absent_.contains(p) ||
                 std::ranges::any_of(queue_, [p](const tl::TileKey& q) { return q.packed() == p; })) {
                 continue;
             }
             queue_.push_back(k);
         }
         queued = !queue_.empty();
+        // what is wanted of the app: the chunks absent, in the frame's order, and the blocks reached without a pack
+        wants_.clear();
+        std::unordered_set<std::uint64_t> listed;
+        for (const tl::TileKey& k : wanted) {
+            const auto it = absent_.find(k.packed());
+            if (it != absent_.end() && !resident_.contains(k.packed()) && listed.insert(k.packed()).second)
+                wants_.push_back(it->second.want);
+        }
+        blocks_ = std::move(blocks);
     }
     if (queued) wake_worker_.notify_one();
     frame_.buffer = heaps_->buffers().low;
