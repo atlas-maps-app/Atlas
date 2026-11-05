@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       area:
-        description: The Geofabrik extract the world is built from, by its id in Geofabrik's index
+        description: The Geofabrik extract the world is built from, by its id in Geofabrik's index, or planet for OpenStreetMap's planet file
         required: false
         default: europe
       regions:
@@ -48,7 +48,7 @@ on:
         required: false
         default: ''
       publish:
-        description: A checked draft world-YYYYMMDD to publish instead of building one (world-latest then points at it)
+        description: A checked draft world-YYYYMMDD or world-YYYYMMDD-planet to publish instead of building one (world-latest then points at it)
         required: false
         default: ''
   # A run of the workflow's own branch before it lands, its inputs in .github/world-run.json
@@ -105,8 +105,9 @@ env:
 
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The world packs are derived databases and are themselves available under
-    the ODbL. Extracts by Geofabrik (https://download.geofabrik.de); land polygons by osmdata.openstreetmap.de, from
-    OpenStreetMap's data; the globe made with Natural Earth (public domain, https://www.naturalearthdata.com).
+    the ODbL. Extracts by Geofabrik (https://download.geofabrik.de), or the whole world from OpenStreetMap's planet file
+    (https://planet.openstreetmap.org); land polygons by osmdata.openstreetmap.de, from OpenStreetMap's data; the globe
+    made with Natural Earth (public domain, https://www.naturalearthdata.com).
 
 jobs:
   plan:
@@ -190,30 +191,61 @@ jobs:
           size() { curl -fsSIL --retry 5 --retry-delay 10 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
           curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
           NAME=${AREA//\//-}
-          if ! jq -e --arg a "$AREA" '{type: "FeatureCollection", features: [.features[] | select(.properties.id == $a)]} | select(.features | length == 1)' \
-            "$RUNNER_TEMP/index.json" > "$P/$NAME.geojson"; then
-            echo "::error::Geofabrik's index has no extract $AREA"
-            exit 1
+          if [ "$AREA" = planet ]; then
+            # the whole world: OpenStreetMap's planet file, whose -latest goes on to the dated one (planet-YYMMDD.osm.pbf)
+            # on the OSMF's open-data copy, its MD5 file beside it; its polygon the world the map draws
+            URL=https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf
+            STEM=planet
+            WHO="OpenStreetMap's planet file"
+            jq -n '{type: "Polygon", coordinates: [[[-180, -85.0511], [180, -85.0511], [180, 85.0511], [-180, 85.0511], [-180, -85.0511]]]}' > "$P/$NAME.geojson"
+          else
+            if ! jq -e --arg a "$AREA" '{type: "FeatureCollection", features: [.features[] | select(.properties.id == $a)]} | select(.features | length == 1)' \
+              "$RUNNER_TEMP/index.json" > "$P/$NAME.geojson"; then
+              echo "::error::Geofabrik's index has no extract $AREA"
+              exit 1
+            fi
+            URL=$(jq -r '.features[0].properties.urls.pbf' "$P/$NAME.geojson")
+            STEM=$(basename "$URL" -latest.osm.pbf)
+            WHO="Geofabrik's extract"
           fi
-          URL=$(jq -r '.features[0].properties.urls.pbf' "$P/$NAME.geojson")
           BYTES=$(size "$URL")
           echo "$AREA: $URL, $BYTES bytes"
-          WEIGHTS=()
-          STEM=$(basename "$URL" -latest.osm.pbf)
+          # the extract the last world was built of, by its file less its day (europe-261102.osm.pbf: europe)
+          LAST=
+          LASTSTEM=
           if gh release download world-latest --pattern world.json --dir "$RUNNER_TEMP/latest" 2> /dev/null &&
             LAST=$(jq -r .release "$RUNNER_TEMP/latest/world.json") &&
-            jq -e --arg s ": $STEM-" '.sources[0] | contains($s)' "$RUNNER_TEMP/latest/world.json" > /dev/null &&
             gh release download "$LAST" --pattern world.idx --dir "$RUNNER_TEMP/latest" 2> /dev/null; then
+            LASTSTEM=$(jq -r '.sources[0] | sub("^.*: "; "") | sub("-[0-9]{6}\\.osm\\.pbf$"; "")' "$RUNNER_TEMP/latest/world.json")
+          fi
+          WEIGHTS=()
+          if [ -n "$LASTSTEM" ] && [ "$LASTSTEM" = "$STEM" ]; then
             # the last world's weights where it was built of the same extract: each L6 block's fine pack's bytes
             WEIGHTS=(--weights-index "$RUNNER_TEMP/latest/world.idx")
             echo "weights: $LAST's packs"
           else
-            # the first world's: the sizes of the area's own extracts (Geofabrik's children of it), each over its polygon
-            jq -c --arg a "$AREA" '[.features[] | select(.properties.parent == $a)]' "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
+            # the first world's: extracts' sizes, each over its polygon: the area's own (Geofabrik's children of it), or
+            # the planet's Geofabrik's leaves (the extracts with none under them, whose polygons hug their land closer
+            # than a whole country's: Australia's reaches far out to sea) but those under the last world's area, whose
+            # blocks that world's packs weigh, as many bytes as its extract
+            LASTID=
+            if [ "$AREA" = planet ] && [ -n "$LASTSTEM" ]; then
+              LASTID=$(jq -r --arg f "/$LASTSTEM-latest.osm.pbf" 'first(.features[] | select(.properties.urls.pbf | endswith($f)) | .properties.id) // ""' "$RUNNER_TEMP/index.json")
+            fi
+            if [ "$AREA" = planet ]; then
+              jq -c --arg last "$LASTID" '(.features | map(.properties | {key: .id, value: (.parent // "")}) | from_entries) as $up
+                | ([.features[].properties.parent // empty] | unique) as $parents
+                | def under: (. // "") as $i | $i != "" and ($i == $last or ($up[$i] | under));
+                  [.features[] | select(.properties.id as $i | (any($parents[]; . == $i) | not) and ($i | under | not))]' \
+                "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
+            else
+              jq -c --arg a "$AREA" '[.features[] | select(.properties.parent == $a)]' "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
+            fi
             if [ "$(jq length "$RUNNER_TEMP/children.json")" -gt 0 ]; then
-              jq -r '.[].properties | [.id, .urls.pbf] | @tsv' "$RUNNER_TEMP/children.json" | while IFS=$'\t' read -r id url; do
-                printf '%s\t%s\n' "$id" "$(size "$url")"
-              done > "$RUNNER_TEMP/sizes.tsv"
+              # four at a time (the planet's 301 leaves of 4 November took one to four seconds each, one by one)
+              export -f size
+              jq -r '.[].properties | .id, .urls.pbf' "$RUNNER_TEMP/children.json" |
+                xargs -P 4 -n 2 bash -c 'printf "%s\t%s\n" "$1" "$(size "$2")"' size > "$RUNNER_TEMP/sizes.tsv"
               jq --rawfile s "$RUNNER_TEMP/sizes.tsv" '
                 ($s | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $b
                 | {type: "FeatureCollection", features: [.[] | select(($b[.properties.id] // 0) > 0) | .properties.bytes = $b[.properties.id]]}' \
@@ -221,21 +253,27 @@ jobs:
               WEIGHTS=(--weights-sizes "$RUNNER_TEMP/sizes.geojson")
               echo "weights: the sizes of $(jq '.features | length' "$RUNNER_TEMP/sizes.geojson") extracts in $AREA"
             fi
+            if [ -n "$LASTID" ]; then
+              LASTBYTES=$(size "$(jq -r --arg a "$LASTID" 'first(.features[] | select(.properties.id == $a)) | .properties.urls.pbf' "$RUNNER_TEMP/index.json")")
+              WEIGHTS+=(--weights-index "$RUNNER_TEMP/latest/world.idx" --index-bytes "$LASTBYTES")
+              echo "weights: $LAST's packs in $LASTID's blocks, as its extract's $LASTBYTES bytes"
+            fi
           fi
-          # two regions a cut job, each job on a runner of its own: osmium's smart strategy keeps, for each region,
-          # sets of the IDs it takes, each over the planet's whole range of IDs (some 1.6 GB a set of nodes, whatever
-          # the region), and Europe's first run (41777009995, 4 November) lost its 16 GB runner 47 minutes into a pass
-          # of five regions
+          # two regions a pass of osmium, two passes a cut job, each job on a runner of its own: osmium's smart
+          # strategy keeps, for each region, sets of the IDs it takes, each over the planet's whole range of IDs (some
+          # 1.6 GB a set of nodes, whatever the region), and Europe's first run (41777009995, 4 November) lost its 16 GB
+          # runner 47 minutes into a pass of five regions; two passes a job halve the filtered file's downloads
           "$PACKER" world-plan "$P/$NAME.geojson" "$P" --regions "$REGIONS" --group 2 --margin 0.2 "${WEIGHTS[@]}"
           "$PACKER" world-tags > "$P/tags.txt"
           cat "$P/tags.txt"
           {
             echo "url=$URL"
             echo "bytes=$BYTES"
+            echo "who=$WHO"
             echo "matrix=$(jq -c '[.regions[] | {id, blocks, count}]' "$P/regions.json")"
             echo "count=$(jq '.regions | length' "$P/regions.json")"
-            # the cut jobs: extract-<n>.json and its regions
-            echo "extracts=$(jq -c '[.groups | to_entries[] | {n: (.key + 1), regions: (.value | join(", "))}]' "$P/regions.json")"
+            # the cut jobs: two of the configurations each (extract-<n>.json, a pass of osmium each), and their regions
+            echo "extracts=$(jq -c '[.groups | to_entries | range(0; length; 2) as $i | .[$i:$i + 2] | {n: (map(.key + 1 | tostring) | join(" ")), regions: (map(.value | join(", ")) | join(", "))}]' "$P/regions.json")"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### $AREA: $(jq .blocks "$P/regions.json") L6 blocks in $(jq '.regions | length' "$P/regions.json") regions"
@@ -246,6 +284,7 @@ jobs:
         id: day
         env:
           URL: ${{ steps.plan.outputs.url }}
+          WHO: ${{ steps.plan.outputs.who }}
           TAG: ${{ steps.run.outputs.tag }}
         run: |
           set -euo pipefail
@@ -253,13 +292,15 @@ jobs:
           # mirror's copy, which may be a day or two older; the MD5 file beside the file served names the dated extract
           # it is (3 November: Europe's -latest went to ftp5.gwdg.de's of 1 November, and download.geofabrik.de had no
           # europe-latest.osm.pbf.md5; 4 November: ftp5.gwdg.de's of 2 November), and its header, in its first 128 KB,
-          # gives the time its data is current to
+          # gives the time its data is current to (the planet's -latest goes to its dated file on the OSMF's open-data
+          # copy, its MD5 file beside it, and its header has no sequence)
           FROM=$(curl -fsSIL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o /dev/null -w '%{url_effective}' "$URL")
           curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/extract.md5" "$FROM.md5"
           read -r MD5 NAME < "$RUNNER_TEMP/extract.md5" || true
           if ! [[ "$MD5" =~ ^[0-9a-f]{32}$ && "$NAME" =~ ^[A-Za-z0-9_-]+\.osm\.pbf$ ]]; then echo "::error::$FROM.md5 names no extract"; exit 1; fi
           curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -r 0-131071 -o "$RUNNER_TEMP/extract.head" "$FROM"
-          cat > "$RUNNER_TEMP/header.py" << 'EOF'
+          # the reader goes with the plan, for the filter job's check of the filtered file's header
+          cat > "$RUNNER_TEMP/plan/header.py" << 'EOF'
           # the replication time and sequence of a PBF file's OSMHeader block (its fields 32 and 33), the time as
           # osmium fileinfo gives it
           import datetime, struct, sys, zlib
@@ -306,7 +347,7 @@ jobs:
           time = datetime.datetime.fromtimestamp(header[32], datetime.timezone.utc)
           print(time.strftime("%Y-%m-%dT%H:%M:%SZ"), header.get(33, "none"))
           EOF
-          HEAD=$(python3 -I "$RUNNER_TEMP/header.py" "$RUNNER_TEMP/extract.head")
+          HEAD=$(python3 -I "$RUNNER_TEMP/plan/header.py" "$RUNNER_TEMP/extract.head")
           read -r TS SEQ <<< "$HEAD"
           if ! [[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then echo "::error::$NAME's header gives no replication time"; exit 1; fi
           DAY=${TS:0:4}${TS:5:2}${TS:8:2}
@@ -325,7 +366,7 @@ jobs:
             echo "md5=$MD5"
             echo "name=$NAME"
             echo "timestamp=$TS"
-            echo "data=The OpenStreetMap data is Geofabrik's extract $NAME (MD5 $MD5), current to $TS by its header's replication time, sequence $SEQ."
+            echo "data=The OpenStreetMap data is $WHO $NAME (MD5 $MD5), current to $TS by its header's replication time, sequence $SEQ."
           } >> "$GITHUB_OUTPUT"
           echo "- The extract: $NAME, MD5 $MD5, its data of $TS (sequence $SEQ), so the draft $TAG" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
@@ -405,8 +446,8 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     # Europe's 35 GB: its download (5 minutes on 4 November), osmium's filter (two reads of it, 21 minutes) and the
-    # filtered file's upload
-    timeout-minutes: 120
+    # filtered file's upload; the planet's 96 GB some 80 to 95 minutes by those
+    timeout-minutes: 180
     outputs:
       name: ${{ steps.extract.outputs.name }}
       md5: ${{ steps.extract.outputs.md5 }}
@@ -428,7 +469,9 @@ jobs:
       - name: Make room, and osmium
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          # the toolchains this job does not use too: the planet's 96 GB and a part of its filtered file at a time
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell \
+            /usr/local/share/chromium /usr/share/swift /usr/local/julia* /opt/microsoft /opt/google /opt/az /usr/local/lib/node_modules
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends osmium-tool
@@ -439,7 +482,8 @@ jobs:
           sudo mkdir -p /mnt/world && sudo chown "$(id -u):$(id -g)" /mnt/world
           if [ "$(df --output=avail -B1 /mnt/world | tail -1)" -gt "$(df --output=avail -B1 "$ROOT" | tail -1)" ]; then BIG=/mnt/world SMALL=$ROOT; else BIG=$ROOT SMALL=/mnt/world; fi
           df -h / /mnt
-          if [ "$(df --output=avail -B1 "$BIG" | tail -1)" -lt $((BYTES + (2 << 30))) ]; then echo "::error::$BIG has too little room for the extract's $BYTES bytes"; exit 1; fi
+          # the extract, a part of the filtered file and the 5 GiB the filter keeps free
+          if [ "$(df --output=avail -B1 "$BIG" | tail -1)" -lt $((BYTES + (8 << 30))) ]; then echo "::error::$BIG has too little room for the extract's $BYTES bytes"; exit 1; fi
           { echo "BIG=$BIG"; echo "SMALL=$SMALL"; } >> "$GITHUB_ENV"
       - name: The extract
         id: extract
@@ -462,29 +506,69 @@ jobs:
           { echo "name=$NAME"; echo "md5=$MD5"; echo "timestamp=$TS"; } >> "$GITHUB_OUTPUT"
           echo "RAW=$RAW" >> "$GITHUB_ENV"
           echo "### $NAME: $(stat -c %s "$RAW") bytes, MD5 $MD5, its data of $TS" >> "$GITHUB_STEP_SUMMARY"
-      - name: Filter
+      - name: Filter, into the draft
         env:
           TS: ${{ steps.extract.outputs.timestamp }}
         run: |
           set -euo pipefail
-          # what the world's profile draws, with the nodes and members it refers to; the raw extract then goes
-          time osmium tags-filter "$RAW" -e "$RUNNER_TEMP/plan/tags.txt" -o "$SMALL/filtered.osm.pbf"
-          rm -f "$RAW"
-          if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$SMALL/filtered.osm.pbf")" != "$TS" ]; then echo "::error::The filtered file lost the data's time"; exit 1; fi
-          ls -l "$SMALL/filtered.osm.pbf"
-          echo "- filtered to the world's tags: $(stat -c %s "$SMALL/filtered.osm.pbf") bytes" >> "$GITHUB_STEP_SUMMARY"
-          df -h / /mnt
-      - name: The filtered file into the draft
-        run: |
-          set -euo pipefail
-          # for the cut jobs: in parts, as an asset is under 2 GiB, each part's SHA-256 in a list beside them, which
-          # names the parts a cut job joins (a part the draft keeps from an earlier attempt is not in it)
+          # what the world's profile draws, with the nodes and members it refers to, into the draft as osmium writes it,
+          # for the cut jobs: in parts of 1900 MiB, as an asset is under 2 GiB, each part's SHA-256 in a list beside
+          # them, which names the parts a cut job joins (a part the draft keeps from an earlier attempt is not in it).
+          # Each part goes up and is deleted once written, as the planet's raw file and its filtered copy do not fit
+          # a runner's disk together (96 and some 27 GB of 112), and the job stops while under 5 GiB are free. Each
+          # object keeps its version and time, as Geofabrik's extracts have them, and no user or changeset.
           cd "$SMALL"
-          split -b 1900M -d -a 3 filtered.osm.pbf scratch-filtered.osm.pbf.
-          rm -f filtered.osm.pbf
-          sha256sum scratch-filtered.osm.pbf.[0-9][0-9][0-9] > scratch-filtered.sha256
+          rm -f scratch-filtered.sha256 scratch-filtered.osm.pbf.[0-9][0-9][0-9] filtered.head
+          cat > "$RUNNER_TEMP/parts.py" << 'EOF'
+          # standard input into parts of argv[2] bytes in the current folder, each one's SHA-256 into the list as it is
+          # written, then put up into the draft argv[1] by UPLOAD and deleted; it stops while under argv[3] bytes are
+          # free once a part is written; the input's first 128 KB kept in filtered.head
+          import hashlib, os, shutil, subprocess, sys
+
+          tag, part, floor = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+          src = sys.stdin.buffer
+          n = total = 0
+          with open("scratch-filtered.sha256", "w") as listing:
+              while True:
+                  name = "scratch-filtered.osm.pbf.%03d" % n
+                  h = hashlib.sha256()
+                  size = 0
+                  with open(name, "wb") as f:
+                      while size < part:
+                          chunk = src.read(min(8 << 20, part - size))
+                          if not chunk:
+                              break
+                          if n == 0 and size == 0:
+                              with open("filtered.head", "wb") as head:
+                                  head.write(chunk[:131072])
+                          f.write(chunk)
+                          h.update(chunk)
+                          size += len(chunk)
+                  if size == 0:
+                      os.remove(name)
+                      break
+                  free = shutil.disk_usage(".").free
+                  if free < floor:
+                      sys.exit("%d bytes free once %s was written, under the %d the filter keeps" % (free, name, floor))
+                  listing.write("%s  %s\n" % (h.hexdigest(), name))
+                  listing.flush()
+                  subprocess.run(["bash", "-c", os.environ["UPLOAD"], "upload", tag, name], check=True, stdout=sys.stderr)
+                  os.remove(name)
+                  total += size
+                  n += 1
+          if n == 0:
+              sys.exit("nothing came to cut into parts")
+          print("%d bytes in %d parts" % (total, n))
+          EOF
+          time osmium tags-filter "$RAW" -e "$RUNNER_TEMP/plan/tags.txt" -f pbf,add_metadata=version+timestamp -o - |
+            python3 -I "$RUNNER_TEMP/parts.py" "$TAG" $((1900 << 20)) $((5 << 30)) | tee "$RUNNER_TEMP/parts.txt"
+          rm -f "$RAW"
+          read -r FILTERED_TS _ <<< "$(python3 -I "$RUNNER_TEMP/plan/header.py" filtered.head)"
+          if [ "$FILTERED_TS" != "$TS" ]; then echo "::error::The filtered file lost the data's time"; exit 1; fi
           cat scratch-filtered.sha256
-          bash -c "$UPLOAD" upload "$TAG" scratch-filtered.osm.pbf.[0-9][0-9][0-9] scratch-filtered.sha256
+          bash -c "$UPLOAD" upload "$TAG" scratch-filtered.sha256
+          echo "- filtered to the world's tags: $(tail -1 "$RUNNER_TEMP/parts.txt")" >> "$GITHUB_STEP_SUMMARY"
+          df -h / /mnt
 
   cut:
     needs: [plan, filter]
@@ -548,15 +632,16 @@ jobs:
           set -euo pipefail
           # osmium extract writes no replication time of its own (Belgium's first run, 3 November): each region's header
           # is given the extract's, which every pack and world.json go by
-          jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$RUNNER_TEMP/plan/extract-$N.json" > "$WORK/extract.json"
-          # each region's box and margin, with whole ways and multipolygons where they cross its edge (verbose: its
-          # passes' times and its peak memory in the log, the time and the peak in the summary too)
-          START=$SECONDS
-          time osmium extract -v -c "$WORK/extract.json" -s smart -d "$WORK/cut" -O "$WORK/filtered.osm.pbf" 2>&1 | tee "$RUNNER_TEMP/extract.txt"
-          {
-            echo "### $REGIONS"
-            echo "- osmium extract: $((SECONDS - START)) s, $(grep -o 'Peak memory used: .*' "$RUNNER_TEMP/extract.txt" || echo 'no peak memory given')"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "### $REGIONS" >> "$GITHUB_STEP_SUMMARY"
+          # each of the job's configurations a pass of its own, two regions each (N: their numbers)
+          for c in $N; do
+            jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$RUNNER_TEMP/plan/extract-$c.json" > "$WORK/extract.json"
+            # each region's box and margin, with whole ways and multipolygons where they cross its edge (verbose: its
+            # passes' times and its peak memory in the log, the time and the peak in the summary too)
+            START=$SECONDS
+            time osmium extract -v -c "$WORK/extract.json" -s smart -d "$WORK/cut" -O "$WORK/filtered.osm.pbf" 2>&1 | tee "$RUNNER_TEMP/extract.txt"
+            echo "- osmium extract of extract-$c.json: $((SECONDS - START)) s, $(grep -o 'Peak memory used: .*' "$RUNNER_TEMP/extract.txt" || echo 'no peak memory given')" >> "$GITHUB_STEP_SUMMARY"
+          done
           rm -f "$WORK/filtered.osm.pbf"
           for f in "$WORK"/cut/scratch-r*.osm.pbf; do
             if [ "$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$f")" != "$TS" ]; then echo "::error::${f##*/} lost the data's time"; exit 1; fi
@@ -678,7 +763,10 @@ jobs:
   assemble:
     needs: [plan, blocks, globe]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Europe's 12 minutes for 112,525 tiles (world-check 2); the planet's land is some 2 million tiles, as Mercator's
+    # tiles crowd towards the poles and Antarctica's ice is land (about a million of them), world-check alone some 40
+    # minutes at Europe's rate
+    timeout-minutes: 240
     env:
       TAG: ${{ needs.plan.outputs.tag }}
       COUNT: ${{ needs.plan.outputs.count }}
@@ -789,7 +877,7 @@ jobs:
       - name: Publish
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^world-[0-9]{8}$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD, not $TAG"; exit 1; fi
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-planet)?$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD or world-YYYYMMDD-planet, not $TAG"; exit 1; fi
           if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != true ]; then echo "::error::$TAG is not a draft"; exit 1; fi
           R="$RUNNER_TEMP/publish"
           mkdir -p "$R"
@@ -811,7 +899,7 @@ jobs:
           bash -c "$UPLOAD" upload world-latest "$R/world.json"
           # every world but the last two goes; world-test and world-latest stay
           gh release list --limit 200 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName' |
-            { grep -E '^world-[0-9]{8}$' || true; } | sort -r | tail -n +3 | while read -r old; do
+            { grep -E '^world-[0-9]{8}(-planet)?$' || true; } | LC_ALL=C sort -r | tail -n +3 | while read -r old; do
             gh release delete "$old" --cleanup-tag --yes
           done
           echo "### $TAG published; world-latest names it" >> "$GITHUB_STEP_SUMMARY"

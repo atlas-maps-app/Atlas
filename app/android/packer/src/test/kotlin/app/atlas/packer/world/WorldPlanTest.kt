@@ -1,5 +1,6 @@
 package app.atlas.packer.world
 
+import app.atlas.packer.UsageException
 import app.atlas.rendertiles.model.Grid
 import app.atlas.tiles.WorldIndex
 import kotlinx.serialization.json.Json
@@ -9,6 +10,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -64,7 +66,7 @@ class WorldPlanTest {
     }
 
     @Test
-    fun theSizesSpreadOverTheirExtractsAndAnExtractWithinOthersIsLeftOut() {
+    fun theSizesSpreadOverTheirExtractsEachCountedOnce() {
         // two extracts side by side, a small one inside the east (Monaco in France) and one of the two put together
         // (Geofabrik's dach of Germany, Austria and Switzerland)
         val json = Json.parseToJsonElement(
@@ -73,8 +75,9 @@ class WorldPlanTest {
         )
         val lines = ArrayList<String>()
         val weights = WorldPlan.Weights.ofSizes(json, lines::add)
-        // west lies in block 33/21 alone, east in 34/21; both's bytes and those of the one inside east are theirs
-        assertEquals(listOf("world-plan: left out as within the others: both, inside"), lines)
+        // west lies in block 33/21 alone, east in 34/21; both's bytes are theirs, and east holds the one inside it,
+        // which keeps its own 50 of east's 1000 in its corner of 34/21
+        assertEquals(listOf("world-plan: left out as made of the others: both", "world-plan: less the extracts within them: east (1)"), lines)
         assertEquals(setOf(33 to 21, 34 to 21), weights.of.keys)
         assertEquals(3000.0, weights.of.getValue(33 to 21), 1e-6)
         assertEquals(1000.0, weights.of.getValue(34 to 21), 1e-6)
@@ -87,6 +90,46 @@ class WorldPlanTest {
             ),
         )
         assertEquals(mapOf((32 to 21) to 100.0, (33 to 21) to 200.0), WorldPlan.Weights.ofIndex(index).of)
+    }
+
+    @Test
+    fun anExtractReachingFurtherOutToSeaThanItsPartsKeepsOnlyItsBytesBeyondTheirs() {
+        // west and east, and a region of the two whose polygon reaches six degrees further north, out to sea (Geofabrik's
+        // us-south of its states): too little of it is theirs for it to be left out, so its parts keep their bytes and
+        // it weighs only what it holds beyond them, over its whole polygon
+        fun weights(regionBytes: Long, lines: MutableList<String> = ArrayList()) = WorldPlan.Weights.ofSizes(
+            Json.parseToJsonElement(
+                """{"type":"FeatureCollection","features":[${geojson(6.0, 49.0, 11.25, 52.0, 3000, "west")},${geojson(11.25, 49.0, 16.5, 52.0, 1000, "east")},""" +
+                    """${geojson(6.0, 49.0, 16.5, 58.0, regionBytes, "region")}]}""",
+            ),
+            lines::add,
+        )
+        val lines = ArrayList<String>()
+        val exact = weights(4000, lines)
+        assertEquals(listOf("world-plan: less the extracts within them: region (2)"), lines)
+        assertEquals(mapOf((33 to 21) to 3000.0, (34 to 21) to 1000.0), exact.of)
+        // 300 bytes beyond its parts', spread over its six blocks: every byte counted once (each block's share by the
+        // area of its piece, each piece's by the cosine of its own latitude: to a tenth of a percent of the 300)
+        val more = weights(4300)
+        assertEquals(setOf(33 to 19, 34 to 19, 33 to 20, 34 to 20, 33 to 21, 34 to 21), more.of.keys)
+        assertEquals(4300.0, more.of.values.sum(), 0.3)
+        assertTrue(more.of.getValue(33 to 21) in 3000.0..3100.0)
+        assertTrue(more.of.getValue(33 to 19) in 1.0..100.0)
+    }
+
+    @Test
+    fun aLastWorldOfAnotherExtractWeighsItsBlocksAsItsExtractsBytesBesideTheOthersSizes() {
+        // the last world's packs (300 bytes) as its extract's 600, added to the other extracts' sizes
+        val sizes = WorldPlan.Weights(mapOf((33 to 21) to 3000.0, (34 to 21) to 1000.0), "the extracts' sizes")
+        val index = WorldPlan.Weights(mapOf((32 to 21) to 100.0, (33 to 21) to 200.0), "the last run's fine packs")
+        val w = WorldPlan.Weights.combined(sizes, index, 600)
+        assertEquals(mapOf((32 to 21) to 200.0, (33 to 21) to 3400.0, (34 to 21) to 1000.0), w.of)
+        assertEquals("the last run's fine packs as 600 bytes, and the extracts' sizes", w.from)
+        // both kinds of weights take the extract's bytes, and only they do
+        for (args in listOf(listOf("--weights-index", "a.idx", "--weights-sizes", "s.geojson"), listOf("--weights-index", "a.idx", "--index-bytes", "600"), listOf("--weights-sizes", "s.geojson", "--index-bytes", "600"))) {
+            assertThrows(UsageException::class.java) { WorldPlan.run(listOf("world-plan", "area.geojson", "out") + args) {} }
+        }
+        assertThrows(UsageException::class.java) { WorldPlan.run(listOf("world-plan", "area.geojson", "out", "--weights-index", "a.idx", "--weights-sizes", "s.geojson", "--index-bytes", "0")) {} }
     }
 
     @Test
