@@ -160,7 +160,8 @@ RangeSource::Fetch Store::absent() {
     };
 }
 
-Result<void> Store::keep_head(ExpandedCache& cache, const PackRef& ref, std::span<const PackBytes> ranges) {
+Result<void> Store::keep_head(ExpandedCache& cache, const PackRef& ref, std::span<const PackBytes> ranges,
+                              const Style* world_style) {
     auto state = std::make_shared<std::vector<RemoteState::Range>>();
     for (const PackBytes& r : ranges) {
         if (r.offset > ref.length || r.bytes.size() > ref.length - r.offset) {
@@ -168,10 +169,11 @@ Result<void> Store::keep_head(ExpandedCache& cache, const PackRef& ref, std::spa
         }
         state->push_back({r.offset, std::vector<std::byte>(r.bytes.begin(), r.bytes.end())});
     }
-    auto pack =
-        Pack::open(std::make_unique<RangeSource>(ref.length, [state](std::uint64_t offset, std::span<std::byte> out) {
-            return read_ranges(*state, offset, out);
-        }));
+    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length,
+                                                         [state](std::uint64_t offset, std::span<std::byte> out) {
+                                                             return read_ranges(*state, offset, out);
+                                                         }),
+                           world_style);
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
     if (auto levels = world_levels(*pack, ref.kind); !levels) return levels;

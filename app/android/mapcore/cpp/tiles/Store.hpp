@@ -97,11 +97,12 @@ public:
     [[nodiscard]] static RangeSource::Fetch absent();
 
     /// A remote pack's head the app fetched (`ranges`: the pack's bytes but its `chunks` section, ENGINE.md step 6),
-    /// kept in `cache` under `ref`'s identity as opening the pack would keep it, once the pack opens from them alone:
-    /// its header, directory, chunk table and sections, its levels the world's of `ref`'s kind (L6 to L11 for
-    /// world_mid, L0 to L5 for world_base). Else nothing is kept.
+    /// kept in `cache` under `ref`'s identity as opening the pack would keep it, once the pack opens from them alone (a
+    /// world pack in `world_style` where one is given, as the store opens it: set_world_style): its header, directory,
+    /// chunk table and sections, its levels the world's of `ref`'s kind (L6 to L11 for world_mid, L0 to L5 for
+    /// world_base). Else nothing is kept.
     [[nodiscard]] static Result<void> keep_head(ExpandedCache& cache, const PackRef& ref,
-                                                std::span<const PackBytes> ranges);
+                                                std::span<const PackBytes> ranges, const Style* world_style = nullptr);
 
     /// The chunks of `pack` (a remote pack) lying whole in `range`, each checked against its SHA-256 and kept in
     /// `cache` as fetched (stored, zstd); those whose bytes are not their chunk's are refused. A chunk only partly in

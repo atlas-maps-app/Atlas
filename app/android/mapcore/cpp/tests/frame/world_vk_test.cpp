@@ -11,6 +11,7 @@
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "load/PackStyle.hpp"
 #include "passes/Ground.hpp"
 #include "passes/World.hpp"
 #include "scene/Cover.hpp"
@@ -1248,7 +1249,7 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
         CHECK(map.world_pack(remote.ref.id) == nullptr);
         CHECK(map.world_wants().empty());
         // its head kept, the packs handed again: the block opens, and is asked for no more
-        ATLAS_REQUIRE(tiles::Store::keep_head(*cache, remote.ref, head));
+        ATLAS_REQUIRE(tiles::Store::keep_head(*cache, remote.ref, head, load::world_style()));
         MESSAGE(map.set_packs(packs()));
         const std::shared_ptr<const tiles::StorePack> pack = map.world_pack(remote.ref.id);
         ATLAS_REQUIRE(pack != nullptr);

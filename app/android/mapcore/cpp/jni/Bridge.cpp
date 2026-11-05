@@ -30,6 +30,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
 #include "labels/Sprites.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Window.hpp"
 #include "markers/Markers.hpp"
 #include "osm/Diff.hpp"
@@ -1276,7 +1277,8 @@ jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget
     std::string why;
     const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
     if (cache == nullptr) return java(env, why);
-    const auto kept = tiles::Store::keep_head(*cache, ref, parts);
+    // as the map's store opens the pack: a world pack in the core's world style (ENGINE.md step 5)
+    const auto kept = tiles::Store::keep_head(*cache, ref, parts, load::world_style());
     return java(env, kept ? std::string() : std::format("a world pack's head: {}", tiles::describe(kept.error())));
 }
 

@@ -630,7 +630,7 @@ TEST_CASE("tiles: the world's cover check finds a cell's ground short of its are
 std::vector<std::byte> styled_pack(std::vector<std::byte> style, Profile profile) {
     constexpr std::array<std::uint8_t, 1> levels = {6};
     TileBytes tile = world_tile(6, 32, 21);
-    const std::vector<ChunkBytes> chunks = {chunk_of(tile)};
+    const std::vector<atlas::test::ChunkBytes> chunks = {atlas::test::chunk_of(tile)};
     atlas::test::PackOptions options;
     options.head = atlas::test::head_bytes(levels, profile);
     options.style = std::move(style);
@@ -705,6 +705,38 @@ TEST_CASE("tiles: a world pack is drawn in the world's style where one is given,
             ATLAS_REQUIRE(p->pack.style() != nullptr);
             CHECK(p->pack.style()->shopfronts.glass_open == world->shopfronts.glass_open);
         }
+    }
+    SUBCASE("the head the app brings is kept in the world's style, as the store opens the pack, and not in its own") {
+        TempDir dir;
+        auto cache = ExpandedCache::open(dir.path() + "/cache", std::uint64_t{1} << 22U);
+        ATLAS_REQUIRE(cache);
+        const PackRef ref{.id = "world/6/32/21",
+                          .kind = PackKind::world_mid,
+                          .length = old.size(),
+                          .fetch = Store::absent(),
+                          .identity = Sha256::of(old)};
+        auto whole = Pack::open(std::make_unique<MemorySource>(std::span<const std::byte>(old)), &*world);
+        ATLAS_REQUIRE(whole, describe(whole.error()));
+        const Section* section = find_section(whole->sections(), "chunks");
+        ATLAS_REQUIRE(section != nullptr);
+        const std::uint64_t end = section->offset + section->stored;
+        ATLAS_REQUIRE(end < old.size()); // rhead and style follow the chunks
+        const std::span<const std::byte> all(old);
+        const std::array<PackBytes, 2> head = {
+            {{.offset = 0, .bytes = all.first(section->offset)}, {.offset = end, .bytes = all.subspan(end)}}};
+        CHECK(!Store::keep_head(**cache, ref, head));
+        CHECK((*cache)->entries() == 0);
+        ATLAS_REQUIRE(Store::keep_head(**cache, ref, head, &*world));
+        CHECK((*cache)->entries() == 1);
+        Store store(cache->get());
+        store.set_world_style(&*world);
+        auto added = store.add(ref);
+        ATLAS_REQUIRE(added, describe(added.error()));
+        const auto packs = store.packs();
+        ATLAS_REQUIRE(packs.size() == 1);
+        CHECK(packs.front()->remote);
+        ATLAS_REQUIRE(packs.front()->pack.style() != nullptr);
+        CHECK(packs.front()->pack.style()->shopfronts.glass_open == world->shopfronts.glass_open);
     }
 }
 
