@@ -295,10 +295,9 @@ inline ItemJob item_job(uint4 w0, uint4 w1, uint4 w2, uint4 w3, uint4 w4) {
     return j;
 }
 
-/// A tile-local point's eye-relative frame metres on the bent ground (camera.slang's placed), and frame metres'
-/// camera coordinates.
-inline float3 item_eye(FrameCamera c, TilePlace place, float3 local) {
-    return placed(c, place, local);
+/// A tile-local point's eye-relative frame metres, and frame metres' camera coordinates.
+inline float3 item_eye(TilePlace place, float3 local) {
+    return eye_relative(place, local);
 }
 
 /// The depth of a part in painter slot `slot`: at true depth its reciprocal depth near / kz (at most 1), `lead` leads

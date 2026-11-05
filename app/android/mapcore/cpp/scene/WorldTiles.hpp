@@ -25,8 +25,10 @@
 // takes each tile's box on the bent ground and, once the world is the sphere, passes over a tile wholly behind the
 // horizon. Stage T cuts each triangle and segment longer than its level keeps (a chord of it sags from the bent
 // ground by half a pixel at the level's start: 12 km at L11), so every level's tiles are as round as their pixels,
-// and the world pass draws each tile's coarse ancestor at L3 (the floor, always resident) under it, so the sub-pixel
-// cracks where tiles of two levels meet show the ground's colours. The poles' caps beyond Mercator's 85.05° are two
+// and the world pass draws each tile's coarse ancestor at L3 (the floor, always resident; an L3 tile's or a coarser
+// one's at its parent's level) under it, so the sub-pixel cracks where tiles of two levels meet show the ground's
+// colours. An ancestor's cells over a tile are taken by their boxes (Cells.hpp's cells_overlapping), as the packer cuts
+// its rows of equal latitude. The poles' caps beyond Mercator's 85.05° are two
 // grids of their own, from 84° (under the tiles' last degree): the sea in the north, Antarctica's land in the south.
 //
 // Thread-safe as the world uses it: update and frame on the render thread; the worker its own.

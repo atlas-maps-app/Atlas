@@ -145,7 +145,7 @@ Box world_box(const WorldBend& b, const view::GroundFrame& f, const DegreeBox& g
     // neighbours, and the dropped ground from a straight line by the drop times a quarter of their distance squared
     const double step_lat = pymath::radians(std::abs(g.north - g.south)) / static_cast<double>(lattice - 1);
     const double step_lon = pymath::radians(std::abs(g.east - g.west)) / static_cast<double>(lattice - 1);
-    const double a = std::hypot(step_lat, step_lon);
+    const double a = pymath::hypot(step_lat, step_lon);
     const double bulge = r_earth * (1.0 - pymath::cos(std::min(a, 3.0) / 2.0));
     const double sx = std::abs(x1 - x0) / static_cast<double>(lattice - 1);
     const double sz = std::abs(z1 - z0) / static_cast<double>(lattice - 1);
@@ -170,9 +170,9 @@ bool before_horizon(const WorldBend& b, const DegreeBox& g) noexcept {
     const Lattice l = lattice_of(b, g);
     const double step_lat = pymath::radians(std::abs(g.north - g.south)) / static_cast<double>(lattice - 1);
     const double step_lon = pymath::radians(std::abs(g.east - g.west)) / static_cast<double>(lattice - 1);
-    const double pad = std::hypot(step_lat, step_lon) / 2.0;
-    const double horizon = std::acos(r_earth / d);
-    const double reach = std::cos(std::min(horizon + pad, 3.14159));
+    const double pad = pymath::hypot(step_lat, step_lon) / 2.0;
+    const double horizon = pymath::acos(r_earth / d);
+    const double reach = pymath::cos(std::min(horizon + pad, 3.14159));
     for (std::size_t i = 0; i < lattice; ++i) {
         for (std::size_t j = 0; j < lattice; ++j) {
             const view::Vec3 o = offset_of(b, l.sin_lat.at(i), l.cos_lat.at(i), l.sin_lon.at(j), l.cos_lon.at(j));

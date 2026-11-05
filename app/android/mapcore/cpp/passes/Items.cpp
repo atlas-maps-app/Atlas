@@ -790,14 +790,16 @@ void Items::update(const frame::FrameState& state) {
             item_extra(it, camera, state.theme, state.block.theme, style->items, d.ax, d.az, d.bx, d.bz, extra_words_);
         }
         const std::uint32_t flags = d.choice.flags | (high ? shaders::ITEM_JOB_HIGH : 0U);
-        const std::uint32_t words[] = {bits(t.place.offset.x),
-                                       bits(t.place.offset.y),
-                                       bits(t.place.offset.z),
-                                       bits(t.place.offset.w),
-                                       bits(t.place.scale.x),
-                                       bits(t.place.scale.y),
-                                       bits(t.place.scale.z),
-                                       bits(t.place.scale.w),
+        // its tile's place, bent (scene::bent_place)
+        const shaders::TilePlace place = scene::bent_place(state.block.camera, t);
+        const std::uint32_t words[] = {bits(place.offset.x),
+                                       bits(place.offset.y),
+                                       bits(place.offset.z),
+                                       bits(place.offset.w),
+                                       bits(place.scale.x),
+                                       bits(place.scale.y),
+                                       bits(place.scale.z),
+                                       bits(place.scale.w),
                                        (mine.ranges[0].offset / 16) + (d.item * shaders::ITEM_VECTORS),
                                        flags,
                                        shaders::rank_slot(d.rank),

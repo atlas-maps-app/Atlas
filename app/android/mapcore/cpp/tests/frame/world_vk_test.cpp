@@ -11,6 +11,7 @@
 #include "gpu/Offscreen.hpp"
 #include "passes/Ground.hpp"
 #include "passes/World.hpp"
+#include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
@@ -20,6 +21,7 @@
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/TileBox.hpp"
 #include "tiles/WorldIndex.hpp"
 #include "view/Bend.hpp"
@@ -692,7 +694,8 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
                 if (ak.z >= k.z) return false;
                 const auto gap = static_cast<std::uint32_t>(k.z - ak.z);
                 if ((k.x >> gap) != ak.x || (k.y >> gap) != ak.y) return false;
-                const std::uint64_t over = scene::cells_over(scene::world_cells_per_side, gap, k.x, k.y);
+                const std::uint64_t over =
+                    scene::cells_overlapping(scene::world_cells_per_side, tiles::tile_box(ak), tiles::tile_box(k));
                 return (a.cells & over) == over;
             });
             under += held ? 1 : 0;
@@ -1211,7 +1214,7 @@ struct DiscCount {
     const view::Vec3& e = c.eye();
     const view::Vec3 to{-e.x, -view::earth_radius - e.y, -e.z}; // the sphere's centre from the eye
     const double d = std::sqrt((to.x * to.x) + (to.y * to.y) + (to.z * to.z));
-    const double limb = d > view::earth_radius ? std::asin(view::earth_radius / d) : std::numbers::pi;
+    const double limb = d > view::earth_radius ? pymath::asin(view::earth_radius / d) : std::numbers::pi;
     const double margin = 2.0 / (c.focal() * v.device().density);
     DiscCount n;
     for (std::uint32_t y = 0; y < p.height; ++y) {
@@ -1223,7 +1226,7 @@ struct DiscCount {
                                (c.right().z * kx) + (c.up().z * ky) + c.forward().z};
             const double len = std::sqrt((r.x * r.x) + (r.y * r.y) + (r.z * r.z));
             const double cosine = ((r.x * to.x) + (r.y * to.y) + (r.z * to.z)) / (len * d);
-            if (std::acos(std::clamp(cosine, -1.0, 1.0)) >= limb - margin) continue;
+            if (pymath::acos(std::clamp(cosine, -1.0, 1.0)) >= limb - margin) continue;
             ++n.disc;
             const std::size_t i = 4 * ((std::size_t{y} * p.width) + x);
             const int r8 = p.rgba[i];
@@ -1286,8 +1289,10 @@ TEST_CASE("the bend: a sweep from 1 km to 60,000 km in 120 steps at Amsterdam, T
             double lon;
         };
         constexpr int steps = 120;
-        for (const Place place : {Place{"amsterdam", 52.37, 4.89}, Place{"tokyo", 35.68, 139.69},
-                                  Place{"sea", 35.0, -40.0}, Place{"south", -85.0, 0.0}}) {
+        for (const Place place :
+             {Place{.name = "amsterdam", .lat = 52.37, .lon = 4.89},
+              Place{.name = "tokyo", .lat = 35.68, .lon = 139.69}, Place{.name = "sea", .lat = 35.0, .lon = -40.0},
+              Place{.name = "south", .lat = -85.0, .lon = 0.0}}) {
             // the globe resident and the place's tiles in at 20 km first, then out in a frame a step, moving
             style::CameraState cam = camera(place.lat, place.lon, 0.0, 0.0, 20'000.0);
             cam.pack_id = 0;
@@ -1383,8 +1388,10 @@ TEST_CASE(
             double pitch;
             double bearing;
         };
-        for (const Pole pole : {Pole{"north", 85.0, 0.0, 0.0}, Pole{"south", -85.0, 0.0, 0.0},
-                                Pole{"north_pitched", 85.0, 45.0, 0.0}, Pole{"south_pitched", -85.0, 45.0, 180.0}}) {
+        for (const Pole pole : {Pole{.name = "north", .lat = 85.0, .pitch = 0.0, .bearing = 0.0},
+                                Pole{.name = "south", .lat = -85.0, .pitch = 0.0, .bearing = 0.0},
+                                Pole{.name = "north_pitched", .lat = 85.0, .pitch = 45.0, .bearing = 0.0},
+                                Pole{.name = "south_pitched", .lat = -85.0, .pitch = 45.0, .bearing = 180.0}}) {
             // 2,500 km: the pole, 5 degrees beyond the target, lies 12 degrees from the frame's middle (18 to its edge)
             style::CameraState cam = camera(pole.lat, 20.0, pole.bearing, pole.pitch, 2'500'000.0);
             cam.pack_id = 0;

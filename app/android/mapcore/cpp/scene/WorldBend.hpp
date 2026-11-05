@@ -59,10 +59,10 @@ struct DegreeBox {
 /// target's): flat and dropped up to 150 km, as box_of's with no top, down by the drop at its farthest point from the
 /// target and at its nearest; then its points on a 5 × 5 lattice placed by world_point and padded by how far the
 /// ground between them can bulge.
-[[nodiscard]] Box world_box(const WorldBend& b, const view::GroundFrame& f, const DegreeBox& box) noexcept;
+[[nodiscard]] Box world_box(const WorldBend& b, const view::GroundFrame& f, const DegreeBox& g) noexcept;
 
 /// Whether any of a ground box can lie in front of the sphere's horizon: false only for one wholly behind it, and true
 /// wherever the world is not the sphere yet (w₂ under 1).
-[[nodiscard]] bool before_horizon(const WorldBend& b, const DegreeBox& box) noexcept;
+[[nodiscard]] bool before_horizon(const WorldBend& b, const DegreeBox& g) noexcept;
 
 } // namespace atlas::scene

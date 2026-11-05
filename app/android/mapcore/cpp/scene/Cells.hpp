@@ -68,4 +68,13 @@ private:
 [[nodiscard]] std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t x,
                                        std::uint32_t y) noexcept;
 
+/// The cells of a tile of grid box `tile` ([south, west, north, east]) over the grid box `part`: the bits of its n × n
+/// cells as the packer cuts them (WorldGeometry.cellBoxes and Cells.cellOf: rows of equal latitude from the north,
+/// columns of equal longitude from the west) that overlap `part` by more than the grid's rounding. A world tile's
+/// ancestor draws these over it: the descendant's rows are Mercator's, so where an ancestor spans degrees of latitude
+/// the cell cells_over finds by key may lie beside it (the globe's 3/4/2 has its third row of cells end at 53.75° N,
+/// where 6/32/20 under it reaches 55.78° N).
+[[nodiscard]] std::uint64_t cells_overlapping(std::uint8_t per_side, const std::array<std::int32_t, 4>& tile,
+                                              const std::array<std::int32_t, 4>& part) noexcept;
+
 } // namespace atlas::scene

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstring>
 #include <numbers>
+#include <utility>
 
 namespace atlas::passes {
 
@@ -89,7 +90,8 @@ std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, boo
         out[k + wp::kinds] = (night ? geometry::darken(c, lawn ? 0.18 : 0.2) : c).packed();
     }
     // the south pole's cap: Antarctica's ice, as the globe's glaciers are drawn
-    if (const std::optional<std::uint16_t> g = style->land_kind("glacier"); g && *g + wp::kinds < wp::size) {
+    if (const std::optional<std::uint16_t> g = style->land_kind("glacier");
+        g && std::cmp_less(*g + wp::kinds, wp::size)) {
         out[wp::south_cap] = out[*g + wp::kinds];
     }
     return out;

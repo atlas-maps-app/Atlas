@@ -753,4 +753,20 @@ void Cover::sort_out(const Residency& residency) {
     }
 }
 
+shaders::TilePlace bent_place(const shaders::FrameCamera& camera, const CoverTile& t) noexcept {
+    shaders::TilePlace place = t.place;
+    const auto drop = static_cast<double>(camera.device.w);
+    if (drop == 0.0 || t.drawn == nullptr) return place;
+    const ResidentTile& r = *t.drawn;
+    const Box box = box_of(r.reach.box, r.reach.top_cm, r.frame);
+    // its middle relative to the eye (camera.slang's eye_relative), less the camera's target's
+    const double dx = static_cast<double>(place.offset.x) +
+                      ((((box.x0 + box.x1) * 0.5) - r.origin.x) * static_cast<double>(place.scale.x)) -
+                      static_cast<double>(hlsl::asfloat(camera.flags.z));
+    const double dz = static_cast<double>(place.offset.z) + (((box.z0 + box.z1) * 0.5) - r.origin.z) -
+                      static_cast<double>(hlsl::asfloat(camera.flags.w));
+    place.offset.y = static_cast<float>(static_cast<double>(place.offset.y) - (drop * ((dx * dx) + (dz * dz))));
+    return place;
+}
+
 } // namespace atlas::scene

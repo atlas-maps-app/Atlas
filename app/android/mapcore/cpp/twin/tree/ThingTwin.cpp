@@ -50,7 +50,7 @@ void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& thi
         passes::thing_choice(things.kinds[thing], things.posts[thing], depth, focal_, night_, weather_, wet_);
     if (!choice.drawn) return;
     shaders::ThingJob j{};
-    j.place = tile.place;
+    j.place = scene::bent_place(camera_, tile);
     j.flags = choice.flags;
     j.slot = shaders::rank_slot(rank);
     j.a = choice.a;

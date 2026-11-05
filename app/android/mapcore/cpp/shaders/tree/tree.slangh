@@ -243,7 +243,7 @@ inline float3 tree_local(TreeHeader t, float dx, float y, float dz) {
 
 /// The camera coordinates of a tile-local point.
 inline float3 tree_camera(FrameCamera c, TilePlace place, float3 local) {
-    return camera_of(c, placed(c, place, local));
+    return camera_of(c, eye_relative(place, local));
 }
 
 /// Whether the port's proj gives a point for camera coordinates k (`if c[2] < s.near: return None`).

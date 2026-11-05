@@ -83,6 +83,14 @@ struct CoverTile {
     bool under = false;
 };
 
+/// The place a tile's tree and item jobs take where the ground bends (view::View::drop): its place lowered by the
+/// bend's drop at the middle of its drawn tile's reach, from the frame's camera as the vertex stages read it
+/// (camera.slang's bent: FrameCamera device.w and flags.z, flags.w). The ground bends by the vertex; what stands on a
+/// tile bends with its tile, as their stages place it without the bend (shaders/spirv.budget holds them at their
+/// bytes). Across a tile a few km wide the two part by a few metres at the countries' reach, a fraction of a pixel. The
+/// place itself, bit for bit, where nothing bends.
+[[nodiscard]] shaders::TilePlace bent_place(const shaders::FrameCamera& camera, const CoverTile& t) noexcept;
+
 /// Whether entry `c` of `tiles` (Cover::upright) draws its tile's items: a tile drawn for several tiles (a stand-in
 /// ancestor, its cells over each) draws them once, at its first entry, those under a tile fading in too (its entries
 /// under, after the tiles drawn, draw none); a tile kept under one fading in draws at each of its entries the items in

@@ -86,7 +86,7 @@ void TreeTwin::tree(const scene::CoverTile& tile, const passes::TreeTile& trees,
     const passes::TreeChoice choice =
         passes::tree_choice(depth, focal_, trees.r[tree], weather_, night_, right_, trees.lean);
     shaders::TreeJob j{};
-    j.place = tile.place;
+    j.place = scene::bent_place(camera_, tile);
     j.flags = choice.flags;
     j.slot = shaders::rank_slot(rank);
     j.first = 0;

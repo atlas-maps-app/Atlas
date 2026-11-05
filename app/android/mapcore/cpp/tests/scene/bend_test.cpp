@@ -4,6 +4,7 @@
 // 120 steps at Amsterdam, Tokyo, the open sea and 85° S, no step moves a ground point on the screen more than the zoom
 // alone does.
 #include "base/hlsl.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "scene/WorldBend.hpp"
 #include "view/Bend.hpp"
@@ -42,7 +43,7 @@ constexpr view::Device device{.density = 2.625, .width_px = 1079, .height_px = 2
 
 /// The frame centred on a place, as scene/World.cpp's where no pack is.
 [[nodiscard]] view::GroundFrame centred(double lat, double lon) {
-    return {.lat0 = lat, .lon0 = lon, .kx = 111'320.0 * std::cos(lat * radian), .kz = 110'540.0};
+    return {.lat0 = lat, .lon0 = lon, .kx = 111'320.0 * pymath::cos(lat * radian), .kz = 110'540.0};
 }
 
 /// The point `metres` along the ground from (lat, lon) toward bearing `bearing` (degrees from north): the great
@@ -51,9 +52,10 @@ constexpr view::Device device{.density = 2.625, .width_px = 1079, .height_px = 2
     const double d = metres / r_earth;
     const double p = lat * radian;
     const double t = bearing * radian;
-    const double p2 = std::asin((std::sin(p) * std::cos(d)) + (std::cos(p) * std::sin(d) * std::cos(t)));
-    const double l2 = (lon * radian) +
-                      std::atan2(std::sin(t) * std::sin(d) * std::cos(p), std::cos(d) - (std::sin(p) * std::sin(p2)));
+    const double p2 =
+        pymath::asin((pymath::sin(p) * pymath::cos(d)) + (pymath::cos(p) * pymath::sin(d) * pymath::cos(t)));
+    const double l2 = (lon * radian) + pymath::atan2(pymath::sin(t) * pymath::sin(d) * pymath::cos(p),
+                                                     pymath::cos(d) - (pymath::sin(p) * pymath::sin(p2)));
     return {p2 / radian, std::remainder(l2 / radian, 360.0)};
 }
 
@@ -91,7 +93,7 @@ TEST_CASE("the bend's weights: nothing up to 18 km, the drop whole from 150 km a
     CHECK(view::sphere_weight(599'400.0) > 1.0 - 1e-5);
     double last = 0;
     for (int i = 0; i <= 1000; ++i) {
-        const double d = 10'000.0 * std::pow(100.0, i / 1000.0);
+        const double d = 10'000.0 * pymath::pow(100.0, i / 1000.0);
         const double w = view::drop_weight(d) + view::sphere_weight(d);
         CHECK(w >= last);
         last = w;
@@ -137,11 +139,12 @@ TEST_CASE("the sphere's float sines and cosines are within a few float ulps of b
     for (int i = -40'000; i <= 40'000; ++i) {
         const float x = static_cast<float>(i) * 1e-4F;
         const hlsl::float2 sc = hlsl::sin_cos(x);
-        const double xd = static_cast<double>(x);
-        worst = std::max({worst, std::abs(static_cast<double>(sc.x) - std::sin(xd)),
-                          std::abs(static_cast<double>(sc.y) - std::cos(xd))});
+        const auto xd = static_cast<double>(x);
+        worst = std::max({worst, std::abs(static_cast<double>(sc.x) - pymath::sin(xd)),
+                          std::abs(static_cast<double>(sc.y) - pymath::cos(xd))});
         if (std::abs(xd) < 0.01 && xd != 0.0) {
-            worst_near = std::max(worst_near, std::abs((static_cast<double>(sc.x) - std::sin(xd)) / std::sin(xd)));
+            worst_near =
+                std::max(worst_near, std::abs((static_cast<double>(sc.x) - pymath::sin(xd)) / pymath::sin(xd)));
         }
     }
     MESSAGE(std::format("sin_cos: {:.3g} off at most, {:.3g} of sin x within 0.01 of 0", worst, worst_near));
@@ -155,8 +158,8 @@ TEST_CASE("the sphere's points in float are where binary64 puts them, near the t
         scene::WorldBend b;
         b.lat = lat;
         b.lon = lon;
-        b.sin_lat = std::sin(lat * radian);
-        b.cos_lat = std::cos(lat * radian);
+        b.sin_lat = pymath::sin(lat * radian);
+        b.cos_lat = pymath::cos(lat * radian);
         double far_worst = 0;
         double near_worst = 0;
         for (int i = -10; i <= 10; ++i) {
@@ -169,8 +172,9 @@ TEST_CASE("the sphere's points in float are where binary64 puts them, near the t
                     const hlsl::float3 f = hlsl::on_sphere(
                         static_cast<float>(dlat * radian), static_cast<float>(dlon * radian),
                         static_cast<float>(b.sin_lat), static_cast<float>(b.cos_lat), static_cast<float>(r_earth));
-                    const double off = std::hypot(static_cast<double>(f.x) - o.x, static_cast<double>(f.y) - o.y,
-                                                  static_cast<double>(f.z) - o.z);
+                    const double off =
+                        pymath::hypot(std::array{static_cast<double>(f.x) - o.x, static_cast<double>(f.y) - o.y,
+                                                 static_cast<double>(f.z) - o.z});
                     double& worst = step > 1.0 ? far_worst : near_worst;
                     worst = std::max(worst, off);
                 }
@@ -190,7 +194,8 @@ TEST_CASE("the walk's boxes hold the ground the world pass draws, and the horizo
     const double lat = 52.37;
     const double lon = 4.89;
     const view::GroundFrame f = centred(lat, lon);
-    for (const Case c : {Case{60.0, 50'000.0}, Case{45.0, 300'000.0}, Case{89.0, 3'000'000.0}}) {
+    for (const Case c : {Case{.pitch = 60.0, .dist = 50'000.0}, Case{.pitch = 45.0, .dist = 300'000.0},
+                         Case{.pitch = 89.0, .dist = 3'000'000.0}}) {
         const view::View v(spec_of(c.pitch, c.dist), device);
         const scene::WorldBend b = scene::world_bend(v, f);
         CHECK(b.lat == doctest::Approx(lat));
@@ -239,9 +244,10 @@ TEST_CASE("the sweep: from 1 km to 60,000 km in 120 steps no ground point moves 
         double lon;
     };
     constexpr int steps = 120;
-    const double k = std::pow(60'000.0, 1.0 / steps); // the zoom's factor a step
-    for (const Place place : {Place{"Amsterdam", 52.37, 4.89}, Place{"Tokyo", 35.68, 139.69},
-                              Place{"the open sea", 35.0, -40.0}, Place{"85° S", -85.0, 0.0}}) {
+    const double k = pymath::pow(60'000.0, 1.0 / steps); // the zoom's factor a step
+    for (const Place place :
+         {Place{.name = "Amsterdam", .lat = 52.37, .lon = 4.89}, Place{.name = "Tokyo", .lat = 35.68, .lon = 139.69},
+          Place{.name = "the open sea", .lat = 35.0, .lon = -40.0}, Place{.name = "85° S", .lat = -85.0, .lon = 0.0}}) {
         const view::GroundFrame f = centred(place.lat, place.lon);
         std::vector<std::array<double, 2>> points;
         for (const double metres : {300.0, 3'000.0, 30'000.0, 300'000.0, 1'000'000.0, 3'000'000.0, 6'000'000.0}) {
@@ -252,7 +258,7 @@ TEST_CASE("the sweep: from 1 km to 60,000 km in 120 steps no ground point moves 
         double worst_at = 0;
         int compared = 0;
         for (int i = 0; i <= steps; ++i) {
-            const double dist = 1'000.0 * std::pow(k, i);
+            const double dist = 1'000.0 * pymath::pow(k, i);
             const view::View v(spec_of(90.0, dist), device);
             const view::Camera& cam = v.camera();
             const scene::WorldBend b = scene::world_bend(v, f);
@@ -269,9 +275,10 @@ TEST_CASE("the sweep: from 1 km to 60,000 km in 120 steps no ground point moves 
                     (s->x < -100.0 || s->x > cam.width() + 100.0 || s->y < -100.0 || s->y > cam.height() + 100.0)) {
                     s.reset();
                 }
-                if (s && last[p]) {
-                    const double moved = std::hypot(s->x - last[p]->x, s->y - last[p]->y);
-                    const double r = std::hypot(last[p]->x - centre.x, last[p]->y - centre.y);
+                const std::optional<view::Vec2> before = last[p];
+                if (s && before) {
+                    const double moved = pymath::hypot(s->x - before->x, s->y - before->y);
+                    const double r = pymath::hypot(before->x - centre.x, before->y - centre.y);
                     const double zoom = (1.0 - (1.0 / k)) * r;
                     const double ratio = moved / (zoom + 0.5);
                     ++compared;

@@ -73,8 +73,8 @@ Box Frustum::bent(const Box& box) const noexcept {
     return b;
 }
 
-bool Frustum::sees(const Box& unbent) const noexcept {
-    const auto k = corners(camera_, bent(unbent));
+bool Frustum::sees(const Box& box) const noexcept {
+    const auto k = corners(camera_, bent(box));
     for (std::size_t p = 0; p < normals_.size(); ++p) {
         const bool outside =
             std::ranges::all_of(k, [&](const view::Vec3& c) { return dot(c, normals_[p]) < offsets_[p]; });
@@ -83,8 +83,8 @@ bool Frustum::sees(const Box& unbent) const noexcept {
     return !std::ranges::all_of(k, [&](const view::Vec3& c) { return c.z > far_; });
 }
 
-double Frustum::share(const Box& unbent) const noexcept {
-    const auto k = corners(camera_, bent(unbent));
+double Frustum::share(const Box& box) const noexcept {
+    const auto k = corners(camera_, bent(box));
     double x0 = std::numeric_limits<double>::infinity();
     double x1 = -x0;
     double y0 = x0;
@@ -104,12 +104,12 @@ double Frustum::share(const Box& unbent) const noexcept {
     return w > 0 && h > 0 ? cw * ch / (w * h) : 0.0;
 }
 
-double Frustum::distance(const Box& unbent) const noexcept {
-    const Box box = bent(unbent);
+double Frustum::distance(const Box& box) const noexcept {
+    const Box b = bent(box);
     const view::Vec3& e = camera_.eye();
-    const double dx = e.x < box.x0 ? box.x0 - e.x : (e.x > box.x1 ? e.x - box.x1 : 0.0);
-    const double dy = e.y < box.y0 ? box.y0 - e.y : (e.y > box.y1 ? e.y - box.y1 : 0.0);
-    const double dz = e.z < box.z0 ? box.z0 - e.z : (e.z > box.z1 ? e.z - box.z1 : 0.0);
+    const double dx = e.x < b.x0 ? b.x0 - e.x : (e.x > b.x1 ? e.x - b.x1 : 0.0);
+    const double dy = e.y < b.y0 ? b.y0 - e.y : (e.y > b.y1 ? e.y - b.y1 : 0.0);
+    const double dz = e.z < b.z0 ? b.z0 - e.z : (e.z > b.z1 ? e.z - b.z1 : 0.0);
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
@@ -146,6 +146,34 @@ std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t
     std::uint64_t bits = 0;
     for (std::uint32_t r = 0; r < k; ++r) {
         for (std::uint32_t c = 0; c < k; ++c) bits |= std::uint64_t{1} << ((cy + r) * n + cx + c);
+    }
+    return bits;
+}
+
+std::uint64_t cells_overlapping(std::uint8_t per_side, const std::array<std::int32_t, 4>& tile,
+                                const std::array<std::int32_t, 4>& part) noexcept {
+    const std::int64_t n = per_side;
+    if (n == 0 || n > 8) return 0;
+    // two levels' edges on the grid (tile_box's, the cells' ceilings) part by a unit or two where they agree
+    constexpr std::int64_t rounding = 16;
+    const std::int64_t south = tile[0];
+    const std::int64_t west = tile[1];
+    const std::int64_t north = tile[2];
+    const std::int64_t east = tile[3];
+    // WorldGeometry.cellBoxes: row r's north edge north − ⌈r · (north − south) / n⌉, column k's west edge
+    // west + ⌈k · (east − west) / n⌉
+    const auto row = [&](std::int64_t r) { return north - pymath::floor_div((r * (north - south)) + n - 1, n); };
+    const auto column = [&](std::int64_t k) { return west + pymath::floor_div((k * (east - west)) + n - 1, n); };
+    std::uint64_t bits = 0;
+    for (std::int64_t r = 0; r < n; ++r) {
+        if (std::min<std::int64_t>(row(r), part[2]) - std::max<std::int64_t>(row(r + 1), part[0]) <= rounding) continue;
+        for (std::int64_t k = 0; k < n; ++k) {
+            if (std::min<std::int64_t>(column(k + 1), part[3]) - std::max<std::int64_t>(column(k), part[1]) <=
+                rounding) {
+                continue;
+            }
+            bits |= std::uint64_t{1} << static_cast<std::uint32_t>((r * n) + k);
+        }
     }
     return bits;
 }

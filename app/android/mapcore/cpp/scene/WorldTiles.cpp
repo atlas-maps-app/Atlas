@@ -3,6 +3,7 @@
 
 #include "base/arena.hpp"
 #include "base/log.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "base/trace.hpp"
 #include "gpu/Frames.hpp"
 #include "tiles/Grid.hpp"
@@ -148,7 +149,7 @@ private:
     [[nodiscard]] static double length_squared(Point a, Point b) noexcept {
         const double lat = (static_cast<double>(a.lat) + static_cast<double>(b.lat)) * 0.5e-7;
         const double dx = static_cast<double>(std::int64_t{b.lon} - a.lon) * 1e-7 * metres_per_degree_x *
-                          std::cos(lat * (std::numbers::pi / 180.0));
+                          pymath::cos(lat * (std::numbers::pi / 180.0));
         const double dz = static_cast<double>(std::int64_t{b.lat} - a.lat) * 1e-7 * metres_per_degree_z;
         return (dx * dx) + (dz * dz);
     }
@@ -695,7 +696,9 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             return nullptr;
         };
         // where the ground bends, the floor: each leaf drawn finer than it has its resident ancestor there (or the
-        // nearest coarser) drawn under it, so where tiles of two levels meet their sub-pixel cracks show its ground
+        // nearest coarser) drawn under it, so where tiles of two levels meet their sub-pixel cracks show its ground;
+        // a leaf drawn at it or coarser has its drawer's parent level's under it (where L2 tiles meet L3's, from
+        // 9,600 km out, their seam has an L2 tile under it, whose edge is its L2 neighbour's)
         const bool floored = bend.drop > 0.0;
         for (const WorldLeaf& leaf : leaves) {
             const tl::TileKey& h = leaf.holder;
@@ -711,15 +714,16 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 ++frame_.bare;
                 continue;
             }
-            // and while the drawer fades in, the nearest resident ancestor under it, down to one faded in or the globe
+            // and while the drawer fades in, the nearest resident ancestor under it, down to one faded in or the globe;
+            // each an ancestor's cells over the leaf by their boxes, its rows being of equal latitude, not Mercator's
+            const std::array<std::int32_t, 4> leaf_box = tl::tile_box(leaf.key);
             for (WorldTile* t = drawer; t != nullptr; t = fade_of(*t) < 1.0 ? ancestor(t->key, t->key.z) : nullptr) {
-                const auto gap = static_cast<std::uint32_t>(leaf.key.z - t->key.z);
-                cells[t->key.packed()] |= cells_over(world_cells_per_side, gap, leaf.key.x, leaf.key.y);
+                cells[t->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
             }
-            if (floored && drawer->key.z > world_floor) {
-                if (const WorldTile* f = ancestor(leaf.key, world_floor + 1); f != nullptr) {
-                    const auto gap = static_cast<std::uint32_t>(leaf.key.z - f->key.z);
-                    cells[f->key.packed()] |= cells_over(world_cells_per_side, gap, leaf.key.x, leaf.key.y);
+            if (floored && drawer->key.z > 0) {
+                const int level = std::min<int>(world_floor, drawer->key.z - 1);
+                if (const WorldTile* f = ancestor(leaf.key, level + 1); f != nullptr) {
+                    cells[f->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(f->key), leaf_box);
                 }
             }
         }

@@ -439,14 +439,16 @@ void Trees::update(const frame::FrameState& state) {
         // a tile without bits (a level's, or one drawn before its first): its crowns lit by day (TREE_DAY_BITS), never
         // drawn as if in the shade
         const std::uint32_t sun = t.sun_base == scene::no_sun ? shaders::TREE_DAY_BITS : t.sun_base;
-        const std::uint32_t words[] = {bits(t.place.offset.x),
-                                       bits(t.place.offset.y),
-                                       bits(t.place.offset.z),
-                                       bits(t.place.offset.w),
-                                       bits(t.place.scale.x),
-                                       bits(t.place.scale.y),
-                                       bits(t.place.scale.z),
-                                       bits(t.place.scale.w),
+        // its tile's place, bent (scene::bent_place)
+        const shaders::TilePlace place = scene::bent_place(state.block.camera, t);
+        const std::uint32_t words[] = {bits(place.offset.x),
+                                       bits(place.offset.y),
+                                       bits(place.offset.z),
+                                       bits(place.offset.w),
+                                       bits(place.scale.x),
+                                       bits(place.scale.y),
+                                       bits(place.scale.z),
+                                       bits(place.scale.w),
                                        (mine.ranges[0].offset / 16) + (d.tree * vectors),
                                        choice.flags,
                                        shaders::rank_slot(d.rank),
