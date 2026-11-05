@@ -227,11 +227,12 @@ class MineStateTest {
             assertTrue("$kept", kept.startsWith(s.dirs.files))
             assertFalse("$kept", kept.startsWith(s.dirs.cache))
         }
-        // the code names the cache only for what comes again by itself: today's map's work and the map's noise
+        // the code names the cache for nothing: today's map's work and its noise, which came again by themselves, were all
+        // it held, and left the phone on 5 November
         val android = File(System.getProperty("atlas.repo")!!, "app/android")
         val uses = listOf("app", "mapview").flatMap { m -> File(android, "$m/src/main").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() }
             .flatMap { f -> f.readLines().map { it.trim() }.filter { "dirs.cache" in it && !it.startsWith("*") && !it.startsWith("//") }.map { "${f.name}: $it" } }
-        assertTrue(uses.toString(), uses.isNotEmpty() && uses.all { "LiveEngine.workDir" in it || "useCacheDir" in it })
+        assertTrue(uses.toString(), uses.isEmpty())
     }
 
     @Test
