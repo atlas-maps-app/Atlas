@@ -30,14 +30,16 @@
 //     every nearer face, as the renders paint it after its fill. None in the owner mode (its map takes a face's pixels
 //     where its fill drew); where the device cannot make them, the roofs are drawn without them.
 //   - The windows (ENGINE.md step 4, the facades: shaders/building/windows.slangh): stage F writes this frame slot's
-//     jobs (each drawn tile's runs of windowed walls, at most 64 a job); before the main pass (the decide phase) each
-//     wall's parts are decided once into records, each part by a stage of its own over the walls that have it
+//     jobs (each drawn tile's runs of windowed walls, at most 64 a job, with each one's shop glazing open or not at
+//     night: one of its building's places open at the moment, its tile's hours answered once a minute,
+//     passes/OpenHours.hpp; and the glazing's two glasses at night, ShopGlass); before the main pass (the decide phase)
+//     each wall's parts are decided once into records, each part by a stage of its own over the walls that have it
 //     (windows_cs each window, window_facades_cs the flat detail, church_windows_cs a church's windows,
-//     window_materials_cs the material faces), and each wall into its own (its plane, its dark and lit windows'
-//     boxes for the glass's gradients) by the first of them it has; in the objects phase, after the walls and
-//     roofs, one draw draws every window's frame (its outline dilated by the frames' half width, round joins) and
-//     another its glass, opaque, on its wall's plane a lead over the wall's cells. None in the owner mode (a window
-//     is its wall's owner's).
+//     window_materials_cs the material faces), and each wall into its own (its plane, its dark and lit windows' boxes
+//     for the glass's gradients, its shop glazing's glass at night) by the first of them it has; in the
+//     objects phase, after the walls and roofs, one draw draws every window's frame (its outline dilated by the frames'
+//     half width, round joins) and another its glass, opaque, on its wall's plane a lead over the wall's cells. None in
+//     the owner mode (a window is its wall's owner's).
 //   - A tradition's kit's walls (trad_wall's, with weather): its stucco ground floor's band and its corner boards are
 //     the walls' and roofs' primitives (the plain list's, drawn on their wall's plane at leads of their own over its
 //     cells); stage F lays each frame's boards' lines (a record a line, where the view resolves them) and eaves'
@@ -60,6 +62,7 @@
 #include "gpu/Memory.hpp"
 #include "gpu/Pipelines.hpp"
 #include "passes/ObjectStrokes.hpp"
+#include "passes/OpenHours.hpp"
 #include "scene/Heaps.hpp"
 #include "style/Palette.hpp"
 #include "twin/building/BuildingTile.hpp"
@@ -104,6 +107,10 @@ namespace atlas::passes {
 /// `name`, with its module's fragment stage `fragment`, its own's fading twin, which keeps the samples of its tile's
 /// standing fade (shaders/shared/fade.slang).
 [[nodiscard]] gpu::GraphicsDesc fading_desc(gpu::GraphicsDesc desc, std::string_view name, const char* fragment);
+
+/// The shop floors' glazing's glass at night in the style of the frame's active pack (its windows, as the frame block
+/// takes them: FrameBuilder); none without a pack.
+[[nodiscard]] ShopGlass shop_glass_of(const frame::FrameState& state) noexcept;
 
 /// The buildings pass.
 class Buildings final : public frame::Pass {
@@ -377,6 +384,9 @@ private:
     mutable Emitted emitted_;
     mutable std::vector<twin::ElementDepth> depths_;
     Lighting lighting_;
+    /// The shop floors' hours' answers at the frame's moment (their glazing at night): the render thread's, the
+    /// jobs' and emit's.
+    mutable OpenHours hours_;
 
     // made in prepare
     vk::raii::ShaderModule draw_module_{nullptr};

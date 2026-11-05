@@ -339,8 +339,9 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             const std::uint32_t window_slot = material_slot + shaders::building_material_slots(w.material);
             const hlsl::float4 wall_plane = shaders::building_window_plane(cam, place, f);
             if (facades) {
-                // its shop glazing by day (its own path, after its cells), its plinth and cornice for its building's
-                if ((w.flags & shaders::BUILDING_WINDOW_GLAZING) != 0U && !night) {
+                // its shop glazing (its own path, after its cells; at night lit while one of its building's places is
+                // open), its plinth and cornice for its building's
+                if ((w.flags & shaders::BUILDING_WINDOW_GLAZING) != 0U) {
                     const shaders::BuildingWindowShape g = shaders::building_window_over(
                         shaders::building_window_cut(cam, place, shaders::building_glazing(wall, f.normal)),
                         shaders::BUILDING_GLAZING_AREA);
@@ -356,8 +357,9 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                             points_.push_back({.x = v.x, .y = v.y});
                         }
                         subpaths_.push_back({.points = points_, .closed = true});
+                        const bool open = night && passes::shop_open(b, wall.item, answers_);
                         const shaders::BuildingGlass glass =
-                            shaders::building_glass(paints, theme_flags, shaders::BUILDING_WINDOW_PLAIN, 0U, false);
+                            shaders::building_shop_glass(paints, theme_flags, open ? glass_.open : glass_.closed);
                         Style style{};
                         style.fill =
                             glass.gradient ? Paint::gradient(gradients_.glass) : Paint::colour(argb_of(glass.top));

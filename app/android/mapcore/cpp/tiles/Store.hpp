@@ -69,6 +69,10 @@ public:
     /// A store that keeps remote packs' heads and chunks in `cache` (null: remote packs are fetched every time).
     explicit Store(ExpandedCache* cache = nullptr) noexcept : cache_(cache) {}
 
+    /// The style the world's packs are drawn in (Pack::open: the core's own, load::world_style), or null for each
+    /// pack's own. Set before any pack is added (scene::World does as it is made).
+    void set_world_style(const Style* style) noexcept { world_style_ = style; }
+
     /// Opens a pack and adds it (replacing one of the same id). A remote pack opens from its cached head when the cache
     /// has it, so it opens offline; else its head is fetched and cached. A window (PackKind::window: a pack of one L14
     /// tile the core built, load/Window.hpp, or of one tile of one of the cell's levels, load/Levels.hpp) joins the
@@ -160,6 +164,7 @@ private:
     void touch(TileKey cell);
 
     ExpandedCache* cache_;
+    const Style* world_style_ = nullptr;
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order
     mutable std::mutex cells_mutex_;                      ///< taken before mutex_, never after

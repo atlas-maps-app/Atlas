@@ -120,6 +120,16 @@ class L1Test {
             Case("doors sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "sunny"),
             Case("doors wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "wet"),
             Case("doors far sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 98.86787550282801, -182.6922473097533, 70.0, 91.0) }, "sunny"),
+            // the shopfronts, their signs and terraces and the open places' glows (ENGINE.md step 4, the facades and the
+            // night), which draw with weather; a terrace stands out while its place is open, and by day where its hours say
+            // nothing (the user's rule, 4 November). From 70 m (35 m up): the wall facing east at x 435, a brown café open
+            // by day and a café closed, both open on the wet night and both closed in the grey moment's 13:30; the row
+            // facing south about (-330, 160), a restaurant without opening hours and two places closed on the wet night
+            Case("shops sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "sunny"),
+            Case("shops wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "wet"),
+            Case("shops grey S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "grey"),
+            Case("shops south sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "sunny"),
+            Case("shops south wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "wet"),
         )
         if (g.isFile) {
             out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
@@ -150,11 +160,39 @@ class L1Test {
     }
 
     /**
+     * A wall of shopfronts looked at squarely: the point ([qx], [qz]) of the pack's frame on it, its direction
+     * ([ux], [uz]; the wall facing (uz, -ux)), the target 10 m behind it, the map's [pitch], [dist] metres back.
+     */
+    private fun shopsView(r: LiveRegion, qx: Double, qz: Double, ux: Double, uz: Double, pitch: Double, dist: Double, height: Int = 916): LiveView {
+        val x = qx - uz * 10.0
+        val z = qz + ux * 10.0
+        val lat = r.frame.lat(x, z)
+        val lon = r.frame.lon(x, z)
+        val bearing = Math.toDegrees(StrictMath.atan2(-uz, -ux)).let { if (it < 0) it + 360 else it }
+        return LiveView(lat, lon, LiveCamera.zoom(lat, dist, height.toDouble()), LiveCamera.bearing(bearing), pitch, 412, height, 440.0)
+    }
+
+    /**
      * Whether an element of [key] is a door's (amsterdam.py's facade_details): its path, stroked in the outline's colour, its
      * stoop's, its plate's rect or its number's text, by day or at night.
      */
     private fun doorKey(key: String): Boolean = "#ffe8e2d6" in key || "Georgia" in key ||
         listOf("path; fill #ff9c9488 ", "path; fill #ff22232a ", "rect; fill #fff2eee4 ", "rect; fill #ff3a3a40 ").any { key.startsWith(it) }
+
+    /**
+     * Whether an element of [key] is a shopfront's (amsterdam.py's shopfront) by a colour no other element of the renders
+     * draws: its frame and mullions by day, its closed glass at night, its sign's and blade's outlines and the blade's
+     * bracket, an open place's spill of light at night, and its terrace's table legs, table tops and parasol poles.
+     */
+    private fun shopKey(key: String): Boolean = key.startsWith("path; fill #ffffc27a ") ||
+        listOf("#ff2a2c2e", "#ff0b0d12", "#ff1e1f22", "#ff6b5442", "#ff1a1714", "#ff9b9182", "#ff5a5048").any { it in key }
+
+    /**
+     * Whether an element of [key] is a shop floor's glazing at night (amsterdam.py's open_here): its glass while one of its
+     * building's places is open or while none is, in the glazing's night frame.
+     */
+    private fun glazingKey(key: String): Boolean =
+        (key.startsWith("path; fill #ffffd08c ") || key.startsWith("path; fill #ff0e1119 ")) && "stroke #ff30343e " in key
 
     private fun knot(r: LiveRegion, name: String, height: Int): LiveView {
         val k = r.ladder.knots.firstOrNull { it.name == name } ?: error("region ${r.id} has no view $name")
@@ -238,6 +276,18 @@ class L1Test {
                     println("  doors: $inView of the port's door elements in the view, ${missingDoors.values.sum()} missing")
                     if (missingDoors.isNotEmpty()) failed += "${case.name}: door elements the twin does not draw: $missingDoors"
                     if (case.name.startsWith("doors") && inView == 0) failed += "${case.name}: the port draws no door in the view"
+                    // the shopfronts: every one of the port's in the view the twin's, and the shop cases show some
+                    val shopsInView = portElements.count { shopKey(it.key) } - r.outsideByKey.filterKeys { shopKey(it) }.values.sum()
+                    val missingShops = r.missing.filterKeys { shopKey(it) }
+                    println("  shopfronts: $shopsInView of the port's shopfront elements in the view, ${missingShops.values.sum()} missing")
+                    if (missingShops.isNotEmpty()) failed += "${case.name}: shopfront elements the twin does not draw: $missingShops"
+                    if (case.name.startsWith("shops") && shopsInView == 0) failed += "${case.name}: the port draws no shopfront in the view"
+                    // the shop floors' glazing at night, lit while one of its building's places is open: every one of the
+                    // port's in the view the twin's
+                    val glazingInView = portElements.count { glazingKey(it.key) } - r.outsideByKey.filterKeys { glazingKey(it) }.values.sum()
+                    val missingGlazing = r.missing.filterKeys { glazingKey(it) }
+                    println("  night glazing: $glazingInView of the port's shop glazings in the view, ${missingGlazing.values.sum()} missing")
+                    if (missingGlazing.isNotEmpty()) failed += "${case.name}: shop glazing the twin does not draw at night: $missingGlazing"
                 }
                 for ((k, n) in r.missing.entries.sortedByDescending { it.value }.take(8)) println("  missing $n × $k")
                 for ((k, n) in r.extra.entries.sortedByDescending { it.value }.take(8)) println("  extra $n × $k")

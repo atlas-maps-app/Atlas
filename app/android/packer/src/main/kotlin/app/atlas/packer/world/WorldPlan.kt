@@ -36,16 +36,18 @@ import kotlin.math.cos
  * the longer side of their box where the weight is shared as the regions to come are, until there are as many regions
  * as asked: each a rectangle of blocks (those of the area in it), built by a job of its own from an extract cut by its
  * blocks' box and a margin. The weights: the last run's fine packs' bytes by block (its index), else extracts' sizes
- * spread over their polygons by area, else even; a block of none (the open sea, where Planetiler finds nothing) still
- * weighs a hundredth of the mean, its tiles being walked all the same.
+ * spread over their polygons by area, else even, or a last world of another extract within the area by its packs, as many
+ * bytes as its extract, and the other extracts by their sizes (the planet's first run, after Europe's); a block of none
+ * (the open sea, where Planetiler finds nothing) still weighs a hundredth of the mean, its tiles being walked all the same.
  */
 object WorldPlan {
     const val USAGE = """packer world-plan <area.geojson> <out-dir> [--regions N] [--group N] [--margin DEG]
-                   [--weights-index world.idx | --weights-sizes sizes.geojson]
+                   [--weights-index world.idx] [--weights-sizes sizes.geojson] [--index-bytes N]
       The regions of a world's run (world.yml's plan): the L6 blocks the area's polygons meet (a GeoJSON geometry,
       feature or feature collection), weighted by the last run's fine packs' bytes (--weights-index, its world.idx) or
-      by extracts' sizes spread over their polygons by area (--weights-sizes: features with a "bytes" property; one that
-      covers another is left out), else evenly, and split into N regions (20 unless given) of about equal weight, each a
+      by extracts' sizes spread over their polygons by area (--weights-sizes: features with a "bytes" property; one made
+      of others is left out, one holding others counts its bytes less theirs), else evenly, and split into N regions (20
+      unless given) of about equal weight, each a
       rectangle of blocks. <out-dir>/regions.json lists each region's id, blocks, weight and the box its extract is cut by
       (its blocks', the margin beyond: 0.2° unless given); extract-1.json, … are osmium extract's configurations, N
       regions a pass (--group, 5 unless given)."""
@@ -72,13 +74,16 @@ object WorldPlan {
         val regions = int("--regions", 20, 1..200)
         val group = int("--group", 5, 1..50)
         val margin = options["--margin"]?.let { it.toDoubleOrNull()?.takeIf { m -> m in 0.0..2.0 } ?: throw UsageException("bad --margin '$it': want 0 to 2 degrees") } ?: 0.2
-        if ("--weights-index" in options && "--weights-sizes" in options) throw UsageException("give --weights-index or --weights-sizes, not both")
+        val both = "--weights-index" in options && "--weights-sizes" in options
+        if (both != ("--index-bytes" in options)) throw UsageException("--weights-index with --weights-sizes takes --index-bytes, the bytes of the extract the index's world was built of, and only then")
+        val indexBytes = options["--index-bytes"]?.let { it.toLongOrNull()?.takeIf { n -> n > 0 } ?: throw UsageException("bad --index-bytes '$it': want a count of bytes") }
         val area = File(positional[0])
         if (!area.isFile) throw UsageException("no area $area")
         val outDir = File(positional[1])
         val geometry = GeoJson.geometry(Json.parseToJsonElement(area.readText()))
-        val weights = options["--weights-index"]?.let { f -> Weights.ofIndex(WorldIndex.read(File(f).readBytes())) }
-            ?: options["--weights-sizes"]?.let { f -> Weights.ofSizes(Json.parseToJsonElement(File(f).readText()), out) }
+        val index = options["--weights-index"]?.let { f -> Weights.ofIndex(WorldIndex.read(File(f).readBytes())) }
+        val sizes = options["--weights-sizes"]?.let { f -> Weights.ofSizes(Json.parseToJsonElement(File(f).readText()), out) }
+        val weights = if (index != null && sizes != null && indexBytes != null) Weights.combined(sizes, index, indexBytes) else index ?: sizes
         val plan = plan(geometry, weights, regions)
         write(plan, outDir, group, margin, area.nameWithoutExtension)
         out("world-plan: ${plan.blocks} L6 blocks of ${area.name} in ${plan.regions.size} regions (${plan.weighted}):")
@@ -86,7 +91,7 @@ object WorldPlan {
         return 0
     }
 
-    private val VALUED = setOf("--regions", "--group", "--margin", "--weights-index", "--weights-sizes")
+    private val VALUED = setOf("--regions", "--group", "--margin", "--weights-index", "--weights-sizes", "--index-bytes")
 
     /** A region: its id, its blocks (rows from the north, each from the west) and their weight. */
     class Region(val id: String, val blocks: List<Pair<Int, Int>>, val weight: Double)
@@ -103,10 +108,12 @@ object WorldPlan {
 
             /**
              * Extracts' sizes ("bytes", a feature's property) spread over the blocks by the share of each extract's area
-             * in each (degrees² by the cosine of the latitude). Largest first, an extract nine tenths of whose area the
-             * others kept cover holds their data and is left out: others put together (Geofabrik's dach of Germany,
-             * Austria and Switzerland, the alps, britain-and-ireland) or one inside another (Monaco in France, which is
-             * kept).
+             * in each (degrees² by the cosine of the latitude), each extract's data counted once. Largest first, an
+             * extract nine tenths of whose area smaller ones kept cover is made of them and is left out (Geofabrik's dach
+             * of Germany, Austria and Switzerland, the alps, us of its states). Then, smallest first, each counts its bytes
+             * less those the extracts within it (nine tenths of whose area it covers) count, never below none: one inside
+             * another (Monaco in France, Beijing in Hebei), or the parts of one whose polygon reaches further out to sea
+             * than theirs (Geofabrik's us-south of its states, sea of South-East Asia's countries), which keep their own.
              */
             fun ofSizes(json: JsonElement, log: (String) -> Unit = {}): Weights {
                 val features = json.jsonObject.getValue("features").jsonArray.map { it.jsonObject }.mapNotNull { f ->
@@ -116,26 +123,51 @@ object WorldPlan {
                 }
                 val areas = features.map { area(it.second) }
                 val kept = features.indices.filter { areas[it] > 0 }.toMutableSet()
-                val within = ArrayList<String>()
+                val madeOf = ArrayList<String>()
                 for (a in kept.sortedByDescending { areas[it] }) {
                     val g = features[a].second
-                    val others = kept.filter { it != a && g.envelopeInternal.intersects(features[it].second.envelopeInternal) }
+                    val parts = kept.filter { it != a && areas[it] < areas[a] && g.envelopeInternal.intersects(features[it].second.envelopeInternal) }
                         .map { g.intersection(features[it].second) }.filter { !it.isEmpty }
-                    if (others.isNotEmpty() && area(UnaryUnionOp.union(others)) >= 0.9 * areas[a]) {
+                    if (parts.isNotEmpty() && area(UnaryUnionOp.union(parts)) >= 0.9 * areas[a]) {
                         kept -= a
-                        within += features[a].first
+                        madeOf += features[a].first
                     }
                 }
-                if (within.isNotEmpty()) log("world-plan: left out as within the others: ${within.sorted().joinToString()}")
+                if (madeOf.isNotEmpty()) log("world-plan: left out as made of the others: ${madeOf.sorted().joinToString()}")
+                val own = LinkedHashMap<Int, Double>()
+                val holding = ArrayList<String>()
+                for (e in kept.sortedBy { areas[it] }) {
+                    val g = features[e].second
+                    val inside = own.keys.filter { g.envelopeInternal.intersects(features[it].second.envelopeInternal) && area(g.intersection(features[it].second)) >= 0.9 * areas[it] }
+                    own[e] = maxOf(0.0, features[e].third - inside.sumOf { own.getValue(it) })
+                    if (inside.isNotEmpty()) holding += "${features[e].first} (${inside.size})"
+                }
+                if (holding.isNotEmpty()) log("world-plan: less the extracts within them: ${holding.sorted().joinToString()}")
                 val out = HashMap<Pair<Int, Int>, Double>()
                 for (k in kept.sorted()) {
-                    val (_, g, bytes) = features[k]
+                    val g = features[k].second
+                    val bytes = own.getValue(k)
+                    if (bytes <= 0) continue
                     for (b in blocksMeeting(g)) {
                         val share = area(g.intersection(box(b.first, b.second))) / areas[k]
                         if (share > 0) out.merge(b, bytes * share, Double::plus)
                     }
                 }
                 return Weights(out, "the extracts' sizes")
+            }
+
+            /**
+             * A last world of another extract within the area ([index], its fine packs' bytes by block) as many bytes in
+             * all as that extract ([indexBytes]), added to the other extracts' [sizes] (the planet's first run after
+             * Europe's: Europe's blocks by its packs, the rest by Geofabrik's extracts but Europe's own). Where the two
+             * hold the same data (European Russia, in Europe's extract and Russia's), a block weighs it twice: its region
+             * comes out smaller, never longer to build.
+             */
+            fun combined(sizes: Weights, index: Weights, indexBytes: Long): Weights {
+                val packs = index.of.values.sum()
+                val out = HashMap(sizes.of)
+                if (packs > 0) for ((b, v) in index.of) out.merge(b, v * indexBytes / packs, Double::plus)
+                return Weights(out, "${index.from} as $indexBytes bytes, and ${sizes.from}")
             }
         }
     }

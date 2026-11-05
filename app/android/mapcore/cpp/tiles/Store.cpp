@@ -163,7 +163,7 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
         const std::scoped_lock lock(state->mutex);
         state->recording = !cached;
     }
-    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)));
+    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)), world_style_);
     if (!pack && cached) {
         // a cached head that no longer opens (another pack under the same identity, or damage): fetch it afresh
         cache_->remove(head_key);
@@ -194,15 +194,15 @@ Result<void> Store::add(const PackRef& ref) {
     } else if (names_range(ref)) {
         auto source = open_range(ref);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (ref.fd >= 0) {
         auto source = MappedSource::open(ref.fd, ref.offset, ref.length);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (!ref.path.empty()) {
         auto source = MappedSource::open(ref.path);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     }
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
@@ -238,7 +238,7 @@ Result<void> Store::add_window(const PackRef& ref) {
         const std::scoped_lock lock(cells_mutex_);
         style = window_style_;
     }
-    auto pack = Pack::open(std::make_unique<SharedSource>(*source), style);
+    auto pack = Pack::open(std::make_unique<SharedSource>(*source), nullptr, style);
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render() || pack->head() == nullptr) {
         return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
@@ -343,7 +343,7 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
         chunks, {.levels = levels, .manifest = manifest, .head = *head_bytes, .style = first.style->tables.bytes()});
     if (!source) return std::unexpected(source.error());
     // its style the first window's, read once (the section holds its bytes)
-    auto pack = Pack::open(std::move(*source), first.style);
+    auto pack = Pack::open(std::move(*source), nullptr, first.style);
     if (!pack) return std::unexpected(pack.error());
     return std::make_shared<const StorePack>(
         StorePack{.id = name, .kind = PackKind::window, .identity = {}, .remote = false, .pack = std::move(*pack)});

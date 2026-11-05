@@ -82,8 +82,9 @@ TEST_CASE("the tables hold the documented offsets and numbers") {
     CHECK(value("CameraWriter.PART_SHADOW_BLUR") == 45U);
     CHECK(value("CameraWriter.PART_KEPT_CULL") == 47U);
     CHECK(value("CameraWriter.PART_QUAY_TOPS") == 51U);
-    CHECK(value("CameraWriter.PART_SUN") == 52U);
-    CHECK(value("CameraWriter.PARTS") == 53U);
+    CHECK(value("CameraWriter.PART_OPEN_GLOWS") == 54U);
+    CHECK(value("CameraWriter.PART_SUN") == 55U);
+    CHECK(value("CameraWriter.PARTS") == 56U);
     std::set<std::string_view> names;
     for (const auto& c : atlas::style::layout_constants()) {
         CHECK(names.insert(c.name).second);

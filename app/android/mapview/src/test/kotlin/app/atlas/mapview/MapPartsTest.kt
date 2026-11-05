@@ -6,9 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The map's parts (MapParts.kt): a bit each of the camera state's parts, every one once; the defaults (every part
- * drawn but the roofs' edges and the plinths, the clouds' shadows and the water's light again since their rework); and
- * the group switches.
+ * The map's parts (MapParts.kt): a bit each of the camera state's parts, every one once; the defaults (alpha 22's
+ * look for now: every part drawn but the plinths, the quays and the water's light but its reflections, the roofs'
+ * edges and the clouds' shadows among those drawn); and the group switches.
  */
 class MapPartsTest {
     @Test
@@ -23,11 +23,15 @@ class MapPartsTest {
     }
 
     @Test
-    fun everyPartButTheRoofEdgesAndThePlinthsIsDrawnByDefaultTheCloudsShadowsAndTheWatersLightAmongThem() {
-        // the user, 1 November: "Roof edges off by default for now", then of the plinths: "And the thin dark band off by
-        // default"
-        assertEquals(setOf(MapPart.ROOF_EDGES, MapPart.PLINTHS), MapParts.byDefault)
+    fun everyPartButThePlinthsTheQuaysAndTheWatersLightButItsReflectionsIsDrawnByDefault() {
+        // the user, 1 November, of the plinths: "And the thin dark band off by default"; then 4 November: "Alpha 22s
+        // look by default for now. Haze, vignette and grain on, everything quay off, for water only reflections on",
+        // and "And roof edges back on"
+        val quays = setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)
+        val water = setOf(MapPart.RIPPLE, MapPart.GLITTER, MapPart.RINGS, MapPart.GLINTS, MapPart.WATER_STREAKS)
+        assertEquals(setOf(MapPart.PLINTHS) + quays + water, MapParts.byDefault)
         assertTrue(MapPart.entries.filter { it !in MapParts.byDefault }.all { it.drawn })
+        assertTrue(MapPart.REFLECTIONS.drawn && MapPart.ROOF_EDGES.drawn && MapPart.CLOUD_SHADOWS.drawn)
         assertEquals(
             setOf(MapPart.REFLECTIONS, MapPart.RIPPLE, MapPart.GLITTER, MapPart.RINGS, MapPart.GLINTS, MapPart.WATER_STREAKS),
             MapPartGroup.WATER_LIGHT.parts,
@@ -39,10 +43,12 @@ class MapPartsTest {
         val weather = MapPartGroup.WEATHER.parts
         assertTrue(MapPart.RAIN in weather && MapPart.CLOUD_SHADOWS in weather && MapPart.RINGS in weather)
         assertTrue(MapPart.WET_CORES in weather && MapPart.LAMP_STREAKS in weather)
-        // from the defaults one tap leaves all of the weather out, the next takes it all in again
+        // from the defaults one tap leaves all of the weather out, the next takes it all in again, the rings on the
+        // water among it, which the defaults leave out with the water's light
         val off = MapParts.toggled(MapParts.byDefault, MapPartGroup.WEATHER)
         assertEquals(MapParts.byDefault + weather, off)
-        assertEquals(MapParts.byDefault, MapParts.toggled(off, MapPartGroup.WEATHER))
+        assertEquals(MapParts.byDefault - weather, MapParts.toggled(off, MapPartGroup.WEATHER))
+        assertTrue(MapPart.RINGS in MapParts.byDefault)
         // with the clouds' shadows alone left out, one tap leaves the rest of the weather out too, the next takes it all in
         val cloudless = MapParts.toggled(setOf(MapPart.CLOUD_SHADOWS), MapPartGroup.WEATHER)
         assertTrue(cloudless.containsAll(weather))
@@ -65,6 +71,9 @@ class MapPartsTest {
         // a quay wall's faces and a facade's flat detail each their own switch ("Every part gets its own switch")
         assertTrue(MapPartGroup.GROUND.listed.containsAll(setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)))
         assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOP_GLAZING, MapPart.PLINTHS, MapPart.CORNICES)))
+        // a shop's front and its terrace each their own switch with the facades, its glow at night with the night's lights
+        assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOPFRONTS, MapPart.TERRACES)))
+        assertTrue(MapPart.OPEN_GLOWS in MapPartGroup.NIGHT.listed)
         // one part's switch alone
         assertEquals(MapParts.byDefault + MapPart.RAIN, MapParts.toggled(MapParts.byDefault, MapPart.RAIN))
         assertEquals(setOf(MapPart.RAIN), MapParts.toggled(setOf(MapPart.RAIN, MapPart.RIPPLE), MapPart.RIPPLE))

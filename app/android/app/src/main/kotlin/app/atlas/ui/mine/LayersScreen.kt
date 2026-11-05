@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import app.atlas.ui.kit.cssLinear
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Sun
@@ -72,6 +73,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.services.SettingsKeys
+import app.atlas.services.screenEffectsOn
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
@@ -102,9 +104,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val saved by settings.flow(SettingsKeys.MAP_LAYERS).collectAsStateWithLifecycle(null)
     val threeD by settings.flow(SettingsKeys.MAP_3D, true).collectAsStateWithLifecycle(true)
-    val haze by settings.flow(SettingsKeys.MAP_HAZE, false).collectAsStateWithLifecycle(false)
-    val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
-    val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
+    val effects by settings.screenEffects.collectAsStateWithLifecycle(screenEffectsOn(emptyPreferences()))
+    val (haze, vignette, grain) = effects
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
     val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
     val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
@@ -407,6 +408,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.LAMP_POOLS -> R.string.mine_part_lamp_pools
     MapPart.LAMP_HALOS -> R.string.mine_part_lamp_halos
     MapPart.LAMP_STREAKS -> R.string.mine_part_lamp_streaks
+    MapPart.OPEN_GLOWS -> R.string.mine_part_open_glows
     MapPart.RAIN -> R.string.mine_part_rain
     MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
     MapPart.WALLS -> R.string.mine_part_walls
@@ -425,6 +427,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.KIT_DETAILS -> R.string.mine_part_kit_details
     MapPart.DOORS -> R.string.mine_part_doors
     MapPart.HOUSE_NUMBERS -> R.string.mine_part_house_numbers
+    MapPart.SHOPFRONTS -> R.string.mine_part_shopfronts
+    MapPart.TERRACES -> R.string.mine_part_terraces
     MapPart.TREES -> R.string.mine_part_trees
     MapPart.LEAF_FILTERS -> R.string.mine_part_leaf_filters
     MapPart.FURNITURE -> R.string.mine_part_furniture

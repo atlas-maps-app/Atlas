@@ -10,13 +10,16 @@ import app.atlas.mapcore.state.CameraWriter
  * "disabling instead of hiding? This makes troubleshooting easier too"): a pass whose parts are all left out builds
  * nothing of the tiles that come, and the sun works only while it and a part that reads its bits are drawn; a part
  * switched on again is built for the tiles in view, which stay drawn as they are meanwhile. Each is listed in one
- * [group] (its home), and [drawn] is its default. The clouds' shadows and the water's light were left out from alpha
- * 19 (the user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these
- * need to be worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows
- * on the ground) brought a moving frame with them to within about a millisecond and a half of one without them. The
- * roofs' edges and the plinths are left out by default (the user, 1 November: "Roof edges off by default for now",
- * then of the plinths: "And the thin dark band off by default"), and a quay wall's faces and a facade's flat detail
- * each have their own switch ("Every part gets its own switch").
+ * [group] (its home), and [drawn] is its default. The clouds' shadows and the water's light were left out from alpha 19
+ * (the user, 28 October: "turn off cloud shadows and water light by default without them it runs pretty well these need
+ * to be worked on later") until their rework (ENGINE.md step 4: the water's light on by default, the cloud shadows on
+ * the ground) brought a moving frame with them to within about a millisecond and a half of one without them. The
+ * plinths are left out by default (the user, 1 November: "And the thin dark band off by default"), and a quay wall's
+ * faces and a facade's flat detail each have their own switch ("Every part gets its own switch"). Since 4 November the
+ * map has alpha 22's look by default, for now: every part of the quays and the water's light but its reflections are
+ * left out, and the roofs' edges, left out from 1 November ("Roof edges off by default for now"), are drawn again (the
+ * user: "Alpha 22s look by default for now. Haze, vignette and grain on, everything quay off, for water only
+ * reflections on", then "And roof edges back on").
  */
 enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = true) {
     GROUND(CameraWriter.PART_GROUND, MapPartGroup.GROUND),
@@ -26,13 +29,13 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     SETTS(CameraWriter.PART_SETTS, MapPartGroup.GROUND),
     GROUND_TEXT(CameraWriter.PART_GROUND_TEXT, MapPartGroup.GROUND),
     /** The quay walls' brick faces, down to the water. */
-    QUAYS(CameraWriter.PART_QUAYS, MapPartGroup.GROUND),
+    QUAYS(CameraWriter.PART_QUAYS, MapPartGroup.GROUND, drawn = false),
 
     /** The dark band at the water's level under a quay wall. */
-    QUAY_WATERLINES(CameraWriter.PART_QUAY_WATERLINES, MapPartGroup.GROUND),
+    QUAY_WATERLINES(CameraWriter.PART_QUAY_WATERLINES, MapPartGroup.GROUND, drawn = false),
 
     /** The light stone top along a quay wall at the street's level. */
-    QUAY_TOPS(CameraWriter.PART_QUAY_TOPS, MapPartGroup.GROUND),
+    QUAY_TOPS(CameraWriter.PART_QUAY_TOPS, MapPartGroup.GROUND, drawn = false),
     SKY(CameraWriter.PART_SKY, MapPartGroup.GROUND),
     BUILDING_SHADOWS(CameraWriter.PART_BUILDING_SHADOWS, MapPartGroup.SHADOWS),
 
@@ -48,18 +51,21 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     SUN(CameraWriter.PART_SUN, MapPartGroup.SHADOWS),
     CLOUD_SHADOWS(CameraWriter.PART_CLOUD_SHADOWS, MapPartGroup.WEATHER),
     REFLECTIONS(CameraWriter.PART_REFLECTIONS, MapPartGroup.WATER_LIGHT),
-    RIPPLE(CameraWriter.PART_RIPPLE, MapPartGroup.WATER_LIGHT),
-    GLITTER(CameraWriter.PART_GLITTER, MapPartGroup.WATER_LIGHT),
-    RINGS(CameraWriter.PART_RINGS, MapPartGroup.WATER_LIGHT),
-    GLINTS(CameraWriter.PART_GLINTS, MapPartGroup.WATER_LIGHT),
+    RIPPLE(CameraWriter.PART_RIPPLE, MapPartGroup.WATER_LIGHT, drawn = false),
+    GLITTER(CameraWriter.PART_GLITTER, MapPartGroup.WATER_LIGHT, drawn = false),
+    RINGS(CameraWriter.PART_RINGS, MapPartGroup.WATER_LIGHT, drawn = false),
+    GLINTS(CameraWriter.PART_GLINTS, MapPartGroup.WATER_LIGHT, drawn = false),
 
     /** The night's light streaks on the water, which drew with the reflections until each part had its switch. */
-    WATER_STREAKS(CameraWriter.PART_WATER_STREAKS, MapPartGroup.WATER_LIGHT),
+    WATER_STREAKS(CameraWriter.PART_WATER_STREAKS, MapPartGroup.WATER_LIGHT, drawn = false),
     LIT_STREETS(CameraWriter.PART_LIT_STREETS, MapPartGroup.NIGHT),
     WET_CORES(CameraWriter.PART_WET_CORES, MapPartGroup.NIGHT),
     LAMP_POOLS(CameraWriter.PART_LAMP_POOLS, MapPartGroup.NIGHT),
     LAMP_HALOS(CameraWriter.PART_LAMP_HALOS, MapPartGroup.NIGHT),
     LAMP_STREAKS(CameraWriter.PART_LAMP_STREAKS, MapPartGroup.NIGHT),
+
+    /** The glow about a place that is open at night, by its opening hours. */
+    OPEN_GLOWS(CameraWriter.PART_OPEN_GLOWS, MapPartGroup.NIGHT),
     RAIN(CameraWriter.PART_RAIN, MapPartGroup.WEATHER),
     GOLDEN_WASH(CameraWriter.PART_GOLDEN_WASH, MapPartGroup.WEATHER),
     WALLS(CameraWriter.PART_WALLS, MapPartGroup.BUILDINGS),
@@ -67,7 +73,7 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     /** The walls' near cells, nearer than 460 m: without them the walls are drawn plain, as farther away. */
     NEAR_CELLS(CameraWriter.PART_NEAR_CELLS, MapPartGroup.BUILDINGS),
     ROOFS(CameraWriter.PART_ROOFS, MapPartGroup.BUILDINGS),
-    ROOF_EDGES(CameraWriter.PART_ROOF_EDGES, MapPartGroup.BUILDINGS, drawn = false),
+    ROOF_EDGES(CameraWriter.PART_ROOF_EDGES, MapPartGroup.BUILDINGS),
 
     /** The walls' and roofs' cull on the GPU: without it they are drawn as their runs, every primitive submitted. */
     KEPT_CULL(CameraWriter.PART_KEPT_CULL, MapPartGroup.BUILDINGS),
@@ -87,6 +93,12 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
     KIT_DETAILS(CameraWriter.PART_KIT_DETAILS, MapPartGroup.FACADES),
     DOORS(CameraWriter.PART_DOORS, MapPartGroup.FACADES),
     HOUSE_NUMBERS(CameraWriter.PART_HOUSE_NUMBERS, MapPartGroup.FACADES),
+
+    /** A shop's, café's or hotel's front on its street: its frame, glass, awning, sign and blade. */
+    SHOPFRONTS(CameraWriter.PART_SHOPFRONTS, MapPartGroup.FACADES),
+
+    /** A café's or restaurant's tables, chairs and parasols on the pavement while it is open. */
+    TERRACES(CameraWriter.PART_TERRACES, MapPartGroup.FACADES),
     TREES(CameraWriter.PART_TREES, MapPartGroup.TREES),
     LEAF_FILTERS(CameraWriter.PART_LEAF_FILTERS, MapPartGroup.TREES),
     FURNITURE(CameraWriter.PART_FURNITURE, MapPartGroup.TREES),
@@ -133,7 +145,10 @@ enum class MapPartGroup(private val also: () -> Set<MapPart> = { emptySet() }) {
 
 /** The parts the map leaves out, as the settings keep them (their names) and as the camera state carries them. */
 object MapParts {
-    /** The parts left out until the user switches one: the roofs' edges and the plinths. */
+    /**
+     * The parts left out until the user switches one: the plinths, the quays' brick faces, waterlines and tops,
+     * and the water's light but its reflections (alpha 22's look, for now).
+     */
     val byDefault: Set<MapPart> = MapPart.entries.filterTo(mutableSetOf()) { !it.drawn }
 
     /** The camera state's word of [parts]. */

@@ -53,6 +53,7 @@ private:
 gpu::Result<std::unique_ptr<World>>
 World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::Pass>> passes, WorldOptions options) {
     std::unique_ptr<World> w(new World(std::move(options))); // NOLINT(cppcoreguidelines-owning-memory)
+    w->store_.set_world_style(w->options_.world_style);
     ATLAS_GPU_LET(heaps, Heaps::create(device, w->options_.heaps));
     w->heaps_ = std::move(heaps);
     w->options_.heaps.total = w->heaps_->budget().total; // within its two buffers' parts
@@ -546,9 +547,56 @@ std::vector<tiles::TileKey> World::levels_in_view() const {
     return levels_drawn_;
 }
 
-void World::place_items(const ResidentTile& tile, std::uint64_t passes) {
-    const std::optional<view::GroundFrame>& drawn = frames_.current();
-    const bool convert = drawn && *drawn != tile.frame;
+namespace {
+
+/// Frame `from`'s place in the frame drawn: view::convert's map of it, each axis scaled by the two frames' metres a
+/// degree (z's by 1, every frame's kz the port's 110540) and moved; the frame drawn's own, and with none drawn, moves
+/// nothing.
+[[nodiscard]] ItemPlace place_in(const view::GroundFrame& from,
+                                 const std::optional<view::GroundFrame>& drawn) noexcept {
+    if (!drawn || *drawn == from) return {};
+    const view::GroundFrame& to = *drawn;
+    return {.x0 = (from.lon0 - to.lon0) * to.kx,
+            .sx = to.kx / from.kx,
+            .z0 = (to.lat0 - from.lat0) * to.kz,
+            .sz = to.kz / from.kz};
+}
+
+} // namespace
+
+std::uint32_t World::place_of(const view::GroundFrame& frame) {
+    for (const auto& [f, place] : places_) {
+        if (f == frame) return place;
+    }
+    const std::uint32_t place = items_.add_place(place_in(frame, frames_.current()));
+    places_.emplace_back(frame, place);
+    return place;
+}
+
+void World::place_items_in_frame() {
+    const std::optional<view::GroundFrame> drawn = frames_.current();
+    for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) {
+        for (std::size_t i = 0; i < t->rows.size() && i < t->items.size(); ++i) {
+            const std::uint32_t row = t->rows[i];
+            if (!items_.alive(row)) continue;
+            ItemSpec placed = t->items[i];
+            if (drawn.has_value() && *drawn != t->frame) {
+                const view::Vec3 p = view::convert(t->frame, *drawn, {placed.x, placed.y, placed.z});
+                const view::Vec3 cut = view::convert(t->frame, *drawn, {placed.cut_x, 0.0, placed.cut_z});
+                placed.x = p.x;
+                placed.y = p.y;
+                placed.z = p.z;
+                placed.cut_x = cut.x;
+                placed.cut_z = cut.z;
+            }
+            placed.flags = items_.flags()[row];
+            items_.update(row, placed);
+            items_.set_place(row, 0);
+        }
+    }
+}
+
+void World::mask_items(const ResidentTile& tile) {
     const bool coarse = coarser_ && tile.pack == coarser_->id && mask_;
     // The mask in the tile's own frame (its items' reference points are its pack frame's metres).
     double x0 = 0;
@@ -562,33 +610,10 @@ void World::place_items(const ResidentTile& tile, std::uint64_t passes) {
         z0 = f.z(mask_->north);
         z1 = f.z(mask_->south);
     }
-    const auto place = [&](std::size_t i) {
+    for (std::size_t i = 0; i < tile.rows.size() && i < tile.items.size(); ++i) {
         const ItemSpec& spec = tile.items[i];
-        ItemSpec placed = spec;
-        if (convert) {
-            const view::Vec3 p = view::convert(tile.frame, *drawn, {spec.x, spec.y, spec.z});
-            const view::Vec3 cut = view::convert(tile.frame, *drawn, {spec.cut_x, 0.0, spec.cut_z});
-            placed.x = p.x;
-            placed.y = p.y;
-            placed.z = p.z;
-            placed.cut_x = cut.x;
-            placed.cut_z = cut.z;
-        }
         const bool inside = coarse && spec.cut_x >= x0 && spec.cut_x <= x1 && spec.cut_z >= z0 && spec.cut_z <= z1;
-        placed.flags =
-            static_cast<std::uint16_t>(inside ? (spec.flags | item_flag::masked) : (spec.flags & ~item_flag::masked));
-        items_.update(tile.rows[i], placed);
-    };
-    const std::size_t n = std::min(tile.rows.size(), tile.items.size());
-    if (tile.item_runs.empty()) { // a tile without its passes' runs: every item
-        for (std::size_t i = 0; i < n; ++i) place(i);
-        return;
-    }
-    // the items of the passes asked for alone, each pass's run (its kinds' parts left out, the others take no rank)
-    for (std::size_t p = 0; p < tile.item_runs.size(); ++p) {
-        if (!Residency::among(passes, p)) continue;
-        const auto [first, count] = tile.item_runs[p];
-        for (std::size_t i = first; i < std::size_t{first} + count && i < n; ++i) place(i);
+        items_.set_flag(tile.rows[i], item_flag::masked, inside);
     }
 }
 
@@ -742,6 +767,11 @@ void World::update(const frame::FrameState& state) {
     going_.clear();
     taken_.clear();
     residency_->take_published(items_, &taken_);
+    // each tile taken in its pack frame's place: its rows' points stay as its builders gave them
+    for (const std::shared_ptr<const ResidentTile>& t : taken_) {
+        const std::uint32_t place = place_of(t->frame);
+        for (const std::uint32_t row : t->rows) items_.set_place(row, place);
+    }
     // a part left out: the passes it alone wanted let go of in every resident tile at this frame's fence, so the heaps
     // and the cover hold each tile as it is drawn (a part back, its top-ups build them again)
     residency_->retire_passes(~wanted, items_, state.number);
@@ -773,22 +803,29 @@ void World::update(const frame::FrameState& state) {
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
-    // The items in the frame drawn, the coarser pack's masked, those of the passes a part drawn wants alone (a kind
-    // whose parts are all left out has let go of its items with its passes, retire_passes above): every resident
-    // tile's when the frame, the coarser pack or the mask changed, else the tiles just taken (a part come back on, its
-    // top-ups with its items).
+    // The items in the frame drawn: where it changed (a frame cell crossed) each frame's place moves, and no row. The
+    // coarser pack's masked: every resident tile's of it and of the pack that was coarser when the coarser pack or the
+    // mask changed, else the tiles just taken (a part come back on, its top-ups with their items; a kind whose parts
+    // are all left out has let go of its items with its passes, retire_passes above).
     choose_coarser();
     choose_neighbours(state.camera);
     take_packs();
     take_neighbour_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
-    if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
-        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t, wanted);
+    if (placed_frame_ != frames_.current()) {
+        for (const auto& [frame, place] : places_) items_.move_place(place, place_in(frame, frames_.current()));
         placed_frame_ = frames_.current();
+    }
+    if (placed_coarser_ != coarser_id || placed_mask_ != mask_) {
+        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) {
+            if (t->pack != coarser_id && t->pack != placed_coarser_) continue;
+            mask_items(*t);
+            masked_again_ += t->rows.size();
+        }
         placed_coarser_ = coarser_id;
         placed_mask_ = mask_;
     } else {
-        for (const std::shared_ptr<const ResidentTile>& t : taken_) place_items(*t, wanted);
+        for (const std::shared_ptr<const ResidentTile>& t : taken_) mask_items(*t);
     }
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;

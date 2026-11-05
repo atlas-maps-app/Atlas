@@ -24,7 +24,9 @@
 // moment, lit ahead on the pass's own thread (ENGINE.md gain 5), is held frame by frame to the frames drawn from
 // scratch at each moment: every frame one moment whole, the new one from the frame that takes it on, in both frame
 // slots, its light copied in and none of it lit on the render thread. With the user's palette's guesses off, a guessed
-// roof's shape is drawn as the plain box in its place, held to the twin alike. The validation layer stays silent.
+// roof's shape is drawn as the plain box in its place, held to the twin alike. At night the shop floors' glazing is
+// lit where one of its building's places is open and dark where none is (the Westerkerk home at 21:30), held to the
+// twin alike. The validation layer stays silent.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -58,8 +60,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -70,6 +74,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1233,7 +1238,10 @@ public:
     WithPalette& operator=(WithPalette&&) = delete;
 };
 
-/// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
+/// Draws `cam` until the world has built every tile the cover wants and their fades are over, then until the sun has
+/// settled: its workers idle, nothing published since the frame before and no tile's bits cross-fading. The sun's
+/// fades run on its own steady clock, not on the frames' seconds (SunGlobals::now), so a frame drawn while one runs
+/// differs from its still redraw (draw_still), which shows that fade further on. The last frame's pixels.
 [[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
     s.builder->set_inputs({.camera = cam,
                            .theme = th,
@@ -1286,20 +1294,42 @@ public:
         }
         if (built && s.world->sun() != nullptr) s.world->sun()->wait_idle();
     }
-    // one more, with every tile taken and settled
-    s.now += 0.25;
-    s.builder->set_inputs({.camera = cam,
-                           .theme = th,
-                           .seconds = s.now,
-                           .mode = frame::Mode::structural,
-                           .scene = s.world.get(),
-                           .palette = frame_palette});
-    auto report = s.renderer->draw(0);
-    if (!report) {
-        FAIL("a frame failed: " << report.error().text());
-        return std::nullopt;
+    // one more, with every tile taken and settled, and more until the sun has settled: bits the last frames asked for
+    // (a halo tile come resident asks again) or a tile's first bits after a frame that drew it by day fade in over
+    // sun::fade_seconds of its clock
+    scene::SunGlobals* sun = s.world->sun();
+    const auto sun_work = [sun] {
+        const scene::SunStats st = sun != nullptr ? sun->stats() : scene::SunStats{};
+        return std::array<std::uint64_t, 4>{st.scenes, st.failed, st.runs, st.cached};
+    };
+    for (int n = 0;; ++n) {
+        const std::array<std::uint64_t, 4> before = sun_work();
+        s.now += 0.25;
+        s.builder->set_inputs({.camera = cam,
+                               .theme = th,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get(),
+                               .palette = frame_palette});
+        auto report = s.renderer->draw(0);
+        if (!report) {
+            FAIL("a frame failed: " << report.error().text());
+            return std::nullopt;
+        }
+        s.renderer->drain();
+        if (sun == nullptr) break;
+        sun->wait_idle();
+        if (!sun->fading() && sun_work() == before) break;
+        if (n == 40) {
+            MESSAGE("the sun not settled after 40 more frames");
+            s.settled = false;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the fades' clock is the sun's own
     }
-    s.renderer->drain();
+    s.lit = std::ranges::all_of(s.world->cover()->tiles(), [](const scene::CoverTile& t) {
+        return t.sun_base != scene::no_sun && t.sun.has_value() && t.sun_weight >= 1.0F;
+    });
     auto pixels = s.output->read(s.output->latest());
     if (!pixels) {
         FAIL("the frame could not be read: " << pixels.error().text());
@@ -1642,15 +1672,23 @@ bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-vari
 /// The windows' decide stages a frame runs (passes::Buildings::WindowStage's order).
 using Stages = std::array<bool, passes::Buildings::window_stages>;
 
+/// The least shop glazings a frame draws lit at night (one of their building's places open) and dark.
+struct Glazings {
+    std::size_t open = 0;
+    std::size_t closed = 0;
+};
+
 /// Draws `cam` in X1 and C, at rest and moving, at moment `th` over `packs`, and holds every pixel to the exact raster
 /// of the pass's twin; the twin emits at least `least` elements. With `then`, the first frame's moment changes to it
 /// (the CPU's light lights every drawn tile again) and that frame is held to the twin too. With `painter`, under the
 /// painter switch: the renders' order, held to the twin's painter order. The frame lays at least `least_kit` records of
 /// a kit's walls' lines and eaves' shadows. Each windows' decide stage runs where the frame has its part, over the
-/// walls that have it; with `stages`, the frame runs those alone.
+/// walls that have it; with `stages`, the frame runs those alone. With `glazings`, the twin draws at least so many
+/// shop glazings lit and dark at night (the GPU's, pixel for pixel).
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
                   const style::ThemeBlock& th, std::size_t least, const style::ThemeBlock* then = nullptr,
-                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr) {
+                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr,
+                  const Glazings* glazings = nullptr) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -1738,6 +1776,28 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << windows.roof_lines << " roof lines; a kit's walls' " << windows.kit_lines << " lines and "
                          << windows.kit_shadows << " eaves' shadows");
             CHECK(windows.kit_lines + windows.kit_shadows >= least_kit);
+            // the shop floors' glazing the twin draws (its shop windows' glass): at night lit while one of its
+            // building's places is open, else dark
+            const passes::ShopGlass paints = passes::shop_glass_of(s.builder->state());
+            const auto is = [](hlsl::float3 a, hlsl::float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; };
+            std::size_t open = 0;
+            std::size_t closed = 0;
+            std::size_t glazed = 0;
+            for (const twin::ElementDepth& e : s.buildings->depths()) {
+                for (const twin::WindowsDepth& wd : e.windows) {
+                    if (!wd.shop) continue;
+                    ++glazed;
+                    open += is(wd.glass.top, shaders::building_rgb(paints.open)) ? 1 : 0;
+                    closed += is(wd.glass.top, shaders::building_rgb(paints.closed)) ? 1 : 0;
+                }
+            }
+            MESSAGE(name << ": " << glazed << " shop glazings, " << open << " lit as open and " << closed
+                         << " dark as closed");
+            if (glazings != nullptr) {
+                CHECK(open >= glazings->open);
+                CHECK(closed >= glazings->closed);
+                CHECK(open + closed == glazed);
+            }
             // each decide stage dispatched where it has walls (its lanes), and those its part's alone: the windows'
             // where the frame decides windows, the churches' where church windows, the material faces' where their
             // records; none past the frame's facade walls
@@ -2435,6 +2495,25 @@ TEST_CASE("buildings: the Westerkerk home drawn on the host's Vulkan, pixel for 
         return;
     }
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home", bundled_packs(dir), sunny(), 1000);
+}
+
+TEST_CASE(
+    "buildings: the Westerkerk home at night drawn on the host's Vulkan, the shop floors' glazing lit where one of "
+    "their places is open and dark where none is, pixel for pixel the exact shapes of its twin") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    // Thursday 1 October 2026 at 21:30 (amsterdam.py's open_here): the cafés and bars open, the shops closed (of the
+    // 318 glazings in the view, 17 lit and 301 dark)
+    style::ThemeBlock night = sunny();
+    night.flags |= style::theme_flag::night;
+    night.hour = 21;
+    night.minute = 30;
+    const Glazings both{.open = 12, .closed = 250};
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home at night", bundled_packs(dir), night, 1000, nullptr, false, 0,
+                 nullptr, &both);
 }
 
 TEST_CASE("buildings: the Main board drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {

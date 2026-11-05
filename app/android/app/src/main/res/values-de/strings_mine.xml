@@ -404,6 +404,7 @@
     <string name="mine_part_lamp_pools">Lichtkegel</string>
     <string name="mine_part_lamp_halos">Laternenhalos</string>
     <string name="mine_part_lamp_streaks">Laternenstreifen</string>
+    <string name="mine_part_open_glows">Schein offener Orte</string>
     <string name="mine_part_rain">Regen</string>
     <string name="mine_part_golden_wash">Goldenes Licht</string>
     <string name="mine_part_walls">Wände</string>
@@ -422,6 +423,8 @@
     <string name="mine_part_kit_details">Traditionsdetails</string>
     <string name="mine_part_doors">Türen</string>
     <string name="mine_part_house_numbers">Hausnummern</string>
+    <string name="mine_part_shopfronts">Ladenfronten</string>
+    <string name="mine_part_terraces">Terrassen</string>
     <string name="mine_part_trees">Bäume</string>
     <string name="mine_part_leaf_filters">Blattfilter</string>
     <string name="mine_part_furniture">Stadtmobiliar</string>

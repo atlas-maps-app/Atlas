@@ -31,7 +31,8 @@ Result<std::vector<std::byte>> read_section(const ByteSource& source, const Sect
     return std::unexpected(error(Fault::unsupported, site, static_cast<std::uint64_t>(section.method)));
 }
 
-Result<Pack> Pack::open(std::unique_ptr<ByteSource> source, const std::shared_ptr<const PackStyle>& style) {
+Result<Pack> Pack::open(std::unique_ptr<ByteSource> source, const Style* world_style,
+                        const std::shared_ptr<const PackStyle>& style) {
     Pack p;
     p.source_ = std::move(source);
     const ByteSource& src = *p.source_;
@@ -70,15 +71,21 @@ Result<Pack> Pack::open(std::unique_ptr<ByteSource> source, const std::shared_pt
         levels = p.head_->levels;
         auto style_bytes = read_section(src, *style_section, Site::style, max_section_raw, zstd);
         if (!style_bytes) return std::unexpected(style_bytes.error());
-        if (style && std::ranges::equal(*style_bytes, style->tables.bytes())) {
+        const bool world = world_style != nullptr && p.head_->profile == Profile::world_base;
+        if (style && style->world == world && std::ranges::equal(*style_bytes, style->tables.bytes())) {
             p.style_ = style;
         } else {
             auto s = read_style(std::move(*style_bytes));
             if (!s) return std::unexpected(s.error());
-            auto typed = Style::of(*s);
-            if (!typed) return std::unexpected(typed.error());
-            p.style_ =
-                std::make_shared<const PackStyle>(PackStyle{.tables = std::move(*s), .style = std::move(*typed)});
+            if (world) {
+                p.style_ = std::make_shared<const PackStyle>(
+                    PackStyle{.tables = std::move(*s), .style = *world_style, .world = true});
+            } else {
+                auto typed = Style::of(*s);
+                if (!typed) return std::unexpected(typed.error());
+                p.style_ =
+                    std::make_shared<const PackStyle>(PackStyle{.tables = std::move(*s), .style = std::move(*typed)});
+            }
         }
     }
 

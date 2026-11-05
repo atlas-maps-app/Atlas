@@ -29,15 +29,20 @@ namespace atlas::tiles {
 struct PackStyle {
     StyleTables tables;
     Style style;
+    bool world = false; ///< its values the world style's (Pack::open's `world_style`), not its tables'
 };
 
 /// An opened pack: format 3 (render tiles, which the core draws) or format 2 (an element pack: its container only).
 class Pack {
 public:
     /// Opens the pack in `source`: header, directory, chunk table; for a render pack `reach`, `rhead` and `style` too.
-    /// With `style`, a render pack whose `style` section holds the bytes `style` was read from (checked: the section is
-    /// read and compared, never parsed) shares it; one whose section holds other bytes reads its own.
-    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source,
+    /// A world pack (`rhead`'s profile world_base) is drawn in `world_style` where one is given, the core's own
+    /// (load::world_style, ENGINE.md step 5: the world's style in one place): its `style` section is read and kept,
+    /// its magic, payload version and values' form checked, but not typed, so a value of the style file it lacks does
+    /// not refuse it. Every other pack's style is its own. With `style`, a render pack whose `style` section holds the
+    /// bytes `style` was read from (checked: the section is read and compared, never parsed) and which is drawn in the
+    /// same kind of style (the world's, or its own) shares it; any other reads its own.
+    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source, const Style* world_style = nullptr,
                                            const std::shared_ptr<const PackStyle>& style = nullptr);
 
     Pack(const Pack&) = delete;

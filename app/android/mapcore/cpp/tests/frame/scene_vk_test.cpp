@@ -42,6 +42,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -1200,9 +1201,12 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     }
     CHECK(active_tiles > 0);
     CHECK(coarser_tiles > 0);
-    // The canal ring's items: in the frame drawn (the Westerkerk's), masked where their reference point is inside.
+    // The canal ring's items: their points their tiles' own, their place mapping them into the frame drawn (the
+    // Westerkerk's) as view::convert does, to rounding; masked where their reference point is inside.
     const view::GroundFrame drawn = w.frames().current().value_or(view::GroundFrame{});
     const tiles::Frame& cf = w.coarser()->pack.head()->frame;
+    const std::span<const scene::ItemPlace> places = w.items()->places();
+    const std::span<const std::uint32_t> place = w.items()->place();
     std::size_t masked = 0;
     std::size_t shown = 0;
     std::size_t converted = 0;
@@ -1211,9 +1215,13 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
             const scene::ItemSpec& spec = t->items[i];
             const std::uint32_t row = t->rows[i];
             const bool is_masked = (w.items()->flags()[row] & scene::item_flag::masked) != 0;
+            const scene::ItemPlace& at = places[place[row]];
+            CHECK(w.items()->x()[row] == spec.x);
+            CHECK(w.items()->z()[row] == spec.z);
             if (t->pack == "amsterdam") {
                 CHECK_FALSE(is_masked);
-                CHECK(w.items()->x()[row] == spec.x);
+                CHECK(at.x(spec.x) == spec.x); // the frame drawn's place moves nothing
+                CHECK(at.z(spec.z) == spec.z);
                 continue;
             }
             const bool inside = spec.cut_x >= cf.x(mask.west) && spec.cut_x <= cf.x(mask.east) &&
@@ -1221,9 +1229,9 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
             CHECK(is_masked == inside);
             (inside ? masked : shown) += 1;
             const view::Vec3 p = view::convert(t->frame, drawn, {spec.x, spec.y, spec.z});
-            CHECK(w.items()->x()[row] == p.x);
-            CHECK(w.items()->z()[row] == p.z);
-            converted += (w.items()->x()[row] != spec.x) ? 1U : 0U;
+            CHECK(std::abs(at.x(spec.x) - p.x) < 1e-6);
+            CHECK(std::abs(at.z(spec.z) - p.z) < 1e-6);
+            converted += (at.x(spec.x) != spec.x) ? 1U : 0U;
         }
     }
     CHECK(masked > 0);

@@ -104,10 +104,13 @@ object CameraWriter {
     const val PART_CORNICES = 49
     const val PART_QUAY_WATERLINES = 50
     const val PART_QUAY_TOPS = 51
-    const val PART_SUN = 52
+    const val PART_SHOPFRONTS = 52
+    const val PART_TERRACES = 53
+    const val PART_OPEN_GLOWS = 54
+    const val PART_SUN = 55
 
     /** How many parts there are: the bits of [parts] past them are 0. */
-    const val PARTS = 53
+    const val PARTS = 56
 
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0

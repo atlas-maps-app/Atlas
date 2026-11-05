@@ -56,7 +56,10 @@
 // frames at the pinch's end under a finger (not at rest) before the frames held at rest, its last frame not at rest
 // either. Each frame's line names its ripple: made, kept (the last frame's result stands) or off; ATLAS_PINCH_RIPPLE=
 // every makes it every frame, as before its key took what it reads alone (Ground::make_ripple_always), to measure
-// what the kept results save.
+// what the kept results save. ATLAS_PINCH_FILLS_OFF: the kinds of fill every frame leaves out, by
+// geometry::FillKind's names (road, rail, big ...: a kind's share of a picture). ATLAS_PINCH_LEAST=0: the app's map's
+// streets narrower than 1.5 device px at their own width (Ground::draw_least_width), the far flicker's base;
+// ATLAS_PINCH_THIN=0: its water narrower than that as it lies (Ground::draw_thin_water).
 // ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
 // target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
 // ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
@@ -768,18 +771,62 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, plinths ...;
             // the water's surface as water_surface, as "water" names the water's light (alpha 19's defaults above)
-            constexpr std::array<const char*, 53> each{
-                "ground",          "water_surface",  "canopy",       "ground_lines",     "setts",
-                "ground_text",     "quays",          "sky",          "building_shadows", "park_shadows",
-                "cloud_shadows",   "reflections",    "ripple",       "glitter",          "rings",
-                "glints",          "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
-                "lamp_halos",      "lamp_streaks",   "rain",         "golden_wash",      "walls",
-                "roofs",           "roof_edges",     "windows",      "window_depth",     "shop_glazing",
-                "church_windows",  "material_faces", "hoist_beams",  "kit_details",      "doors",
-                "house_numbers",   "trees",          "leaf_filters", "furniture",        "region_items",
-                "labels",          "routes",         "markers",      "location",         "frosted",
-                "shadow_blur",     "near_cells",     "kept_cull",    "plinths",          "cornices",
-                "quay_waterlines", "quay_tops",      "sun"};
+            constexpr std::array<const char*, 56> each{"ground",
+                                                       "water_surface",
+                                                       "canopy",
+                                                       "ground_lines",
+                                                       "setts",
+                                                       "ground_text",
+                                                       "quays",
+                                                       "sky",
+                                                       "building_shadows",
+                                                       "park_shadows",
+                                                       "cloud_shadows",
+                                                       "reflections",
+                                                       "ripple",
+                                                       "glitter",
+                                                       "rings",
+                                                       "glints",
+                                                       "water_streaks",
+                                                       "lit_streets",
+                                                       "wet_cores",
+                                                       "lamp_pools",
+                                                       "lamp_halos",
+                                                       "lamp_streaks",
+                                                       "rain",
+                                                       "golden_wash",
+                                                       "walls",
+                                                       "roofs",
+                                                       "roof_edges",
+                                                       "windows",
+                                                       "window_depth",
+                                                       "shop_glazing",
+                                                       "church_windows",
+                                                       "material_faces",
+                                                       "hoist_beams",
+                                                       "kit_details",
+                                                       "doors",
+                                                       "house_numbers",
+                                                       "trees",
+                                                       "leaf_filters",
+                                                       "furniture",
+                                                       "region_items",
+                                                       "labels",
+                                                       "routes",
+                                                       "markers",
+                                                       "location",
+                                                       "frosted",
+                                                       "shadow_blur",
+                                                       "near_cells",
+                                                       "kept_cull",
+                                                       "plinths",
+                                                       "cornices",
+                                                       "quay_waterlines",
+                                                       "quay_tops",
+                                                       "shopfronts",
+                                                       "terraces",
+                                                       "open_glows",
+                                                       "sun"};
             for (std::size_t i = 0; i < each.size(); ++i) {
                 if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
             }
@@ -812,6 +859,24 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             return nullptr;
         };
         const bool ripple_always = environment("ATLAS_PINCH_RIPPLE") == "every";
+        // the kinds of fill every frame leaves out (ATLAS_PINCH_FILLS_OFF), by geometry::FillKind's names
+        std::uint32_t fills_off = 0U;
+        {
+            const std::string named = std::format(",{},", environment("ATLAS_PINCH_FILLS_OFF"));
+            constexpr std::array<const char*, 11> kinds{"land",   "canopy", "area",   "road",    "rail", "big",
+                                                        "marine", "water",  "runway", "taxiway", "bars"};
+            static_assert(static_cast<std::size_t>(geometry::FillKind::bars) + 1 == kinds.size());
+            for (std::size_t i = 0; i < kinds.size(); ++i) {
+                if (named.find(std::format(",{},", kinds.at(i))) != std::string::npos) fills_off |= 1U << i;
+            }
+            if (fills_off != 0U) MESSAGE(std::format("fills left out: {:#x}", fills_off));
+        }
+        // the app's map's thin streets at their own width (ATLAS_PINCH_LEAST=0)
+        const bool least_width = environment("ATLAS_PINCH_LEAST") != "0";
+        if (!least_width) MESSAGE("the streets at their own width, however thin");
+        // and its thin water as it lies (ATLAS_PINCH_THIN=0)
+        const bool thin_water = environment("ATLAS_PINCH_THIN") != "0";
+        if (!thin_water) MESSAGE("the water as it lies, however thin");
         // the most chunks of the walls' and near cells' lists drawn from shape records (ATLAS_PINCH_SHAPES), else as
         // the pass sizes them
         std::optional<std::uint32_t> most_shape_chunks;
@@ -838,6 +903,9 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             c.pack_id = held != nullptr ? held->pack.number : 0;
             passes::Ground* g = ground();
             if (g != nullptr) g->make_ripple_always(ripple_always);
+            if (g != nullptr) g->leave_out_fills(fills_off);
+            if (g != nullptr) g->draw_least_width(least_width);
+            if (g != nullptr) g->draw_thin_water(thin_water);
             const std::uint64_t ripples = g != nullptr ? g->ripple_makes() : 0U;
             const auto at = std::chrono::steady_clock::now();
             const standin::Drawn s = session.draw(c, {});
@@ -946,13 +1014,15 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                         } else if (name == "ground") {
                             if (const auto* g = t->passes[i].cpu_as<geometry::GroundTile>()) {
                                 const geometry::GroundLayout& l = g->layout;
-                                // geometry::pack's records: a vertex 3 words, a fill 5, a polyline 4, a shadow's
-                                // point 2 and its record 5; the lines' points every word before the polylines
+                                // geometry::pack's records: a vertex 3 words, a fill 5, a thin edge 7, a polyline 4,
+                                // a shadow's point 2 and its record 5; the lines' points every word before the
+                                // polylines
                                 add("vertices", 12ULL * l.vertices.count);
                                 add("above", 4ULL * l.above.count);
                                 add("below", 4ULL * l.below.count);
                                 add("canopy", 4ULL * l.canopy.count);
                                 add("fans", 4ULL * l.fans.count);
+                                add("thin", 4ULL * geometry::thin_words * l.thin.count);
                                 add("fills", 20ULL * l.fills.count);
                                 add("points", 4ULL * l.lines_at.first);
                                 add("lines_at", 16ULL * l.lines_at.count);

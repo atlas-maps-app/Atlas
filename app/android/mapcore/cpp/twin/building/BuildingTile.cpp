@@ -297,6 +297,10 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.item_facades = g.item_facades;
     layout.item_facades.resize(k, geometry::no_facade);
     for (std::uint32_t i = 0; i < k; ++i) out[layout.facades_at + (i / 4)][i % 4] = layout.item_facades[i];
+    // the shop floors' hours (the frame's jobs and the twin light their glazing at night by them)
+    layout.hours = g.hours;
+    layout.item_hours_first = g.item_hours_first;
+    layout.item_hours = g.item_hours;
     // the n-gons whole, for the twin: their rings in the pieces' floats
     layout.rings.clear();
     layout.ring_points.clear();
@@ -634,6 +638,15 @@ double corner_boards_reach(double focal) {
         }
     }
     return std::bit_cast<double>(hi_bits);
+}
+
+bool shop_open(const BuildingTile& b, std::uint32_t item, std::span<const std::int8_t> answers) noexcept {
+    if (item + 1 >= b.item_hours_first.size()) return false;
+    for (std::uint32_t k = b.item_hours_first[item]; k < b.item_hours_first[item + 1]; ++k) {
+        const std::uint32_t h = b.item_hours[k];
+        if (h < answers.size() && answers[h] == 1) return true;
+    }
+    return false;
 }
 
 std::uint16_t church_leading(double depth, double focal) {
