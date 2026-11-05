@@ -648,7 +648,10 @@ constexpr std::array<std::string_view, 5> made_anew{"ripple layer", "ripple fuse
                                                     "lit cores layer"};
 
 /// A part's work in the last frame: its own kinds' draws and dispatches (and of them, those of the kinds made anew),
-/// its shared kinds' triangles and dispatches, whether its step ran or its mode bit is clear.
+/// its shared kinds' triangles and dispatches but those of the kinds made anew, which a frame makes or keeps as their
+/// inputs changed whatever the part (at the golden moment, where no streaks are drawn, the water's streaks once showed
+/// 27,638 such triangles with everything on, the ripple's layer made anew in that frame, and 1 with their switch),
+/// whether its step ran or its mode bit is clear.
 struct Work {
     std::uint64_t own = 0;
     std::uint64_t anew = 0;
@@ -666,7 +669,8 @@ struct Work {
                 if (std::ranges::find(made_anew, k.kind) != made_anew.end())
                     w.anew += k.count.draws + k.count.dispatches;
             }
-            if (std::ranges::find(p.shared, k.kind) != p.shared.end())
+            if (std::ranges::find(p.shared, k.kind) != p.shared.end() &&
+                std::ranges::find(made_anew, k.kind) == made_anew.end())
                 w.shared += k.count.triangles + k.count.dispatches;
         }
     }
@@ -679,7 +683,9 @@ struct Work {
 /// The parts the map's switches leave out, as the frame's counters name their work.
 const std::vector<Part>& every_part() {
     static const std::vector<Part> parts{
-        {.name = "land and roads", .bit = part::ground, .own = {"ground above", "ground land", "ground plate"}},
+        {.name = "land and roads",
+         .bit = part::ground,
+         .own = {"ground above", "ground land", "ground plate", "ground streets", "ground bridges"}},
         {.name = "water", .bit = part::water, .own = {"ground water"}},
         {.name = "canopy", .bit = part::canopy, .own = {"ground canopy"}},
         // (a big road's lines go with its asphalt)
@@ -752,7 +758,7 @@ const std::vector<Part>& every_part() {
         {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
         {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
         // (the flat detail's stage and draws run while any of its parts is drawn: each told by its mode bit)
-        {.name = "shopfronts",
+        {.name = "shop windows",
          .bit = part::shop_glazing,
          .shared = {"window facades", "window frames", "window glass"},
          .mode_bit = shaders::FRAME_NO_GLAZING},
@@ -775,6 +781,11 @@ const std::vector<Part>& every_part() {
          .own = {"door faces", "door fills", "door outlines", "door numbers"},
          .changes = part::house_numbers},
         {.name = "house numbers", .bit = part::house_numbers, .own = {"door numbers"}, .needs = part::doors},
+        {.name = "shopfronts",
+         .bit = part::shopfronts,
+         .own = {"shop fills", "shop lines", "shop texts", "shop tints"}},
+        {.name = "terraces", .bit = part::terraces, .own = {"terrace fills", "terrace lines"}},
+        {.name = "open places' glow", .bit = part::open_glows, .own = {"open glows"}},
         {.name = "trees", .bit = part::trees, .own = {"trees", "tree fills", "tree sides"}},
         {.name = "leaf filters", .bit = part::leaf_filters, .mode_bit = shaders::FRAME_NO_CROWNS, .needs = part::trees},
         // (its translucent records the lamps' halos and wet streaks at night)
@@ -1128,6 +1139,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         // the canal ring's Main board (its towers, masts and power lines)
         {.name = "the canal ring's Main board",
          .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2),
+         .theme = sunny()},
+        // a wall of shops facing east from 70 m (shopfronts_vk_test.cpp's): their fronts and a café's terrace
+        {.name = "the wall of shops facing east",
+         .camera =
+             camera_at(52.3746 - (297.49641 / 110540.0), 4.8840 + (425.44906 / kx), 269.23868878579214, 60.0, 70.0),
          .theme = sunny()},
     };
     const std::vector<Part>& parts = every_part();

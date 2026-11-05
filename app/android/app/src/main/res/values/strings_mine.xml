@@ -403,6 +403,7 @@
     <string name="mine_part_lamp_pools">Lamp pools</string>
     <string name="mine_part_lamp_halos">Lamp halos</string>
     <string name="mine_part_lamp_streaks">Lamp streaks</string>
+    <string name="mine_part_open_glows">Open places\' glow</string>
     <string name="mine_part_rain">Rain</string>
     <string name="mine_part_golden_wash">Golden wash</string>
     <string name="mine_part_walls">Walls</string>
@@ -412,7 +413,7 @@
     <string name="mine_part_roof_edges">Roof edges</string>
     <string name="mine_part_windows">Windows</string>
     <string name="mine_part_window_depth">Window depth</string>
-    <string name="mine_part_shop_glazing">Shopfronts</string>
+    <string name="mine_part_shop_glazing">Shop windows</string>
     <string name="mine_part_plinths">Plinths</string>
     <string name="mine_part_cornices">Cornices</string>
     <string name="mine_part_church_windows">Church windows</string>
@@ -421,6 +422,8 @@
     <string name="mine_part_kit_details">Tradition details</string>
     <string name="mine_part_doors">Doors</string>
     <string name="mine_part_house_numbers">House numbers</string>
+    <string name="mine_part_shopfronts">Shopfronts</string>
+    <string name="mine_part_terraces">Terraces</string>
     <string name="mine_part_trees">Trees</string>
     <string name="mine_part_leaf_filters">Leaf filters</string>
     <string name="mine_part_furniture">Street furniture</string>

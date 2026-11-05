@@ -485,6 +485,13 @@ struct LineGpu {
 };
 static_assert(sizeof(LineGpu) == 16);
 
+/// The words of a thin edge's GPU record (GroundGpu::thin, ground.slang's thin_of): its ends (x, z as f32 from the
+/// tile's origin), its widths at them (each in thin_units a metre, 16 bits, the first's low), its piece's fill and its
+/// other bank's.
+inline constexpr std::uint32_t thin_words = 7;
+/// A metre of a thin edge's widths.
+inline constexpr double thin_units = 1024.0;
+
 /// A word range of a heap range: [first, first + count) words, or of records.
 struct Words {
     std::uint32_t first = 0;
@@ -499,11 +506,12 @@ struct GroundGpu {
     Words vertices; ///< three words each
     Words above;    ///< the opaque fills above the water (draw_over's, the roads, the areas), top first: indices
     /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
-    /// app's map draws again by themselves (passes/Ground.cpp's record_fills).
+    /// app's map draws by themselves after the land, `above` without them (passes/Ground.cpp's record_streets).
     Words streets;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
+    Words thin;     ///< the water's thin edges (thin_edges), thin_words words each
     Words fills;    ///< FillGpu records
     Words points;   ///< two words each
     Words lines_at; ///< LineGpu records (the polylines, in the tile's order)
@@ -531,6 +539,7 @@ struct GroundLayout {
     Words below;
     Words canopy;
     Words fans;
+    Words thin;
     Words fills;
     Words points;
     Words lines_at;
@@ -549,6 +558,8 @@ struct GroundTile {
     std::vector<Polyline> polylines;
     /// The tile's south-west corner at street level in the pack's frame (its GPU positions are relative to it).
     P2 origin;
+    /// Its north-east corner: with `origin` its box, along whose sides the water's pieces are cut (thin_edges).
+    P2 far_corner;
     /// Where its words lie in its heap ranges (the pass's, once packed).
     GroundLayout layout;
     /// Each polyline's first point's word in the lines range (pack's layout: the polylines' points in order).
@@ -631,7 +642,7 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out);
 [[nodiscard]] tiles::Result<std::uint64_t> ground_check(const tiles::Pack& pack);
 
 /// The host build's hash of the ground's check.
-inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
+inline constexpr std::uint64_t ground_check_expected = 0xC804'5FA0'8E1B'C9BBULL;
 
 /// `ground <hash> ok`, or `ground <hash> FAIL expected <hash>`, or `ground unavailable: <why>`, for the bundled pack in
 /// `pack`.

@@ -1096,6 +1096,28 @@ GroundGpu pack(const GroundTile& g) {
     out.below = put(below);
     out.canopy = put(canopy);
     out.fans = put(fans);
+    // the water's thin edges (ground.slang's thin_of)
+    std::vector<ThinRing> rings;
+    for (std::uint32_t f = 0; f < g.fills.size(); ++f) {
+        const Fill& fill = g.fills[f];
+        if (fill.kind == FillKind::water) rings.push_back({.first = fill.first, .count = fill.count, .fill = f});
+    }
+    const std::vector<ThinEdge> thin = thin_edges(
+        g.points, rings, {.x = pm::min(g.origin.x, g.far_corner.x), .z = pm::min(g.origin.z, g.far_corner.z)},
+        {.x = pm::max(g.origin.x, g.far_corner.x), .z = pm::max(g.origin.z, g.far_corner.z)});
+    out.thin = {.first = static_cast<std::uint32_t>(w.size()), .count = static_cast<std::uint32_t>(thin.size())};
+    const auto units = [](double t) {
+        return static_cast<std::uint32_t>(pm::min(std::round(t * thin_units), 65535.0));
+    };
+    for (const ThinEdge& t : thin) {
+        w.push_back(bits(static_cast<float>(t.a.x - g.origin.x)));
+        w.push_back(bits(static_cast<float>(t.a.z - g.origin.z)));
+        w.push_back(bits(static_cast<float>(t.b.x - g.origin.x)));
+        w.push_back(bits(static_cast<float>(t.b.z - g.origin.z)));
+        w.push_back(units(t.ta) | (units(t.tb) << 16U));
+        w.push_back(t.fill);
+        w.push_back(t.other);
+    }
     out.fills = {.first = static_cast<std::uint32_t>(w.size()), .count = static_cast<std::uint32_t>(g.fills.size())};
     for (const Fill& fill : g.fills) {
         // a water piece's record holds its water level (water_vs draws it at the street or there)
@@ -1292,6 +1314,7 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
                         std::uint8_t level, P2 origin) {
     GroundTile out;
     out.origin = origin;
+    out.far_corner = {.x = head.frame.x(tile.header.east), .z = head.frame.z(tile.header.north)};
     Builder(tile, head, style, level, out).build();
     // the boxes of the lines draw_over's radius cut samples
     for (Fill& f : out.fills) {

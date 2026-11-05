@@ -569,6 +569,17 @@ ItemOut place_face(ItemRecord r, uint index, uint vertex, uint fade) {
         x1 = max(x1, item_point(r, i).x);
     }
     float4 paint = {x0, x1, asfloat(r.a.w), asfloat(r.a.z)};
+    if ((r.a.x & ITEM_VERTICAL) != 0u) {
+        // a two-stop face's box is its height
+        float y0 = item_point(r, 0u).y;
+        float y1 = y0;
+        for (uint i = 1u; i < n; ++i) {
+            y0 = min(y0, item_point(r, i).y);
+            y1 = max(y1, item_point(r, i).y);
+        }
+        paint.x = y0;
+        paint.y = y1;
+    }
     o.paint = paint;
     uint2 stops = {r.a.w, r.e.w};
     o.stops = stops;
@@ -681,7 +692,7 @@ bool part_covers(ItemRecord r, float2 s) {
     if (kind == ITEM_SEGMENT) {
         return tree_segment_covers(s, a, item_point(r, 1u), asfloat(r.a.w), r.a.x);
     }
-    if (kind == ITEM_CIRCLE || kind == ITEM_GLOW) {
+    if (kind == ITEM_CIRCLE || kind == ITEM_GLOW || kind == ITEM_RADIAL) {
         return tree_circle_covers(s, a, asfloat(r.a.w));
     }
     return false;
@@ -716,7 +727,10 @@ uint shape_coverage(ItemOut v) {
 /// A face's colour at `v`: its own or its gradient's at the pixel's centre, with mat's grain.
 float4 face_colour(ItemOut v) {
     float3 colour = v.colour;
-    if ((v.kind.x & ITEM_GRADIENT) != 0u) {
+    if ((v.kind.x & ITEM_VERTICAL) != 0u) {
+        float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
+        colour = item_vertical_at(v.colour, tree_rgb(v.stops.y), v.paint.x, v.paint.y, centre.y);
+    } else if ((v.kind.x & ITEM_GRADIENT) != 0u) {
         float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
         colour = item_gradient_at(v.colour, tree_rgb(v.stops.x), tree_rgb(v.stops.y), (v.kind.x & ITEM_HIGH) != 0u,
                                   v.paint.x, v.paint.y, centre.x);
@@ -819,6 +833,43 @@ ItemTarget items_sides_fs(ItemOut v) {
     ItemTarget o;
     float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame));
     o.colour = float4(c * alpha, alpha);
+    o.coverage = mask;
+    return o;
+}
+
+/// A translucent face's fan (a shopfront's awning's stripes, its spill at night; passes/Shopfronts.cpp): its colour at
+/// its opacity (a.z), premultiplied, with mat's grain, on every sample the rasteriser covers that its tile's standing
+/// fade keeps.
+[shader("fragment")]
+ItemTarget items_tints_fs(ItemOut v) {
+    uint mask = fade_mask(int2(v.position.xy), frame.info.w, v.kind.w);
+    if (mask == 0u) {
+        discard;
+    }
+    float4 c = face_colour(v);
+    float alpha = v.paint.w;
+    ItemTarget o;
+    o.colour = float4(c.xyz * alpha, alpha);
+    o.coverage = mask;
+    return o;
+}
+
+/// An open place's glow at night (ITEM_RADIAL, a translucent record): its gradient at the pixel's centre, premultiplied,
+/// on the samples it covers that its tile's standing fade keeps; drawn after every object, outside the objects' group,
+/// so with no grain.
+[shader("fragment")]
+ItemTarget items_radials_fs(ItemOut v) {
+    uint mask = coverage_of(v);
+    if (mask == 0u) {
+        discard;
+    }
+    ItemRecord r = record_at(item_sides, v.kind.z);
+    float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
+    float2 d = centre - v.shape.xy;
+    float4 g = item_radial_at(v.colour, tree_rgb(r.c.x), tree_rgb(r.c.y), asfloat(r.c.z), asfloat(r.c.w),
+                              asfloat(r.e.x), asfloat(r.e.y), sqrt(d.x * d.x + d.y * d.y) / v.shape.z);
+    ItemTarget o;
+    o.colour = float4(g.xyz * g.w, g.w);
     o.coverage = mask;
     return o;
 }

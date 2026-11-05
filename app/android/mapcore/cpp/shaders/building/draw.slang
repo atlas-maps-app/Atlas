@@ -616,8 +616,10 @@ StrokeVertex roof_strokes_fading_vs(uint vertex : SV_VulkanVertexID) {
 /// how many, 16-23, each one's transoms, 24-31), its material face's first fill record and first line record
 /// (WINDOW_NO_NEAR: none), how many lines its glass's floors take or its decks or balconies how many records, bits
 /// 0-11, and its mullions' or ribs' n or its balconies' width in hundredths, 12-31 (passes::material_choice), and its
-/// ribs' colour, four a uint4.
-static const uint WINDOW_JOB_VECTORS = 149u;
+/// ribs' colour, four a uint4; then whether each one's shop glazing is open at night (in x and y, bit k % 32 of word k /
+/// 32: one of its building's places is, amsterdam.py's open_here; passes::shop_open) and the glazing's glass at night
+/// while open and while not (z and w, 0xRRGGBB: the style's windows.shop_glass_open and shop_glass_closed).
+static const uint WINDOW_JOB_VECTORS = 150u;
 static const uint WINDOW_JOB_RECORDS = 5u;
 static const uint WINDOW_JOB_NEARS = 21u;
 static const uint WINDOW_JOB_WIDTHS = 37u;
@@ -627,6 +629,7 @@ static const uint WINDOW_JOB_MATERIAL_FILLS = 85u;
 static const uint WINDOW_JOB_MATERIAL_LINES = 101u;
 static const uint WINDOW_JOB_MATERIALS = 117u;
 static const uint WINDOW_JOB_RIBS = 133u;
+static const uint WINDOW_JOB_OPEN = 149u;
 static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
 /// A lane of a decide stage (Buildings::write_window_jobs, after the jobs: a word each, four a uint4): its wall's turn
 /// in its job (bits 0-5), whether the stage writes the wall's record (bit 6: the wall's first stage of the church
@@ -639,6 +642,19 @@ static const uint WINDOW_LANE_JOB_SHIFT = 7u;
 uint window_job_word(uint at, uint list, uint i) {
     uint4 v = window_jobs[at + list + i / 4u];
     return v[i % 4u];
+}
+
+/// Whether wall `i`'s shop glazing is open at night (its job's open bits).
+bool window_job_open(uint at, uint i) {
+    uint4 v = window_jobs[at + WINDOW_JOB_OPEN];
+    return ((v[i / 32u] >> (i % 32u)) & 1u) != 0u;
+}
+
+/// Wall `i`'s shop glazing's glass at night (0xRRGGBB): its job's open glass where its open bit is set, else its closed
+/// glass.
+uint window_job_glazing(uint at, uint i) {
+    uint4 v = window_jobs[at + WINDOW_JOB_OPEN];
+    return ((v[i / 32u] >> (i % 32u)) & 1u) != 0u ? v.z : v.w;
 }
 
 /// The lane thread `thread` of workgroup `group` takes among a decide stage's (a workgroup 64 of them, a row of
@@ -723,7 +739,8 @@ float2 window_no_box() {
 }
 
 /// The lane's wall's record, which the stage that owns it writes: its plane, its dark and lit windows' boxes, its
-/// frames' and sash bars' half widths, its reveals' colour and its church windows' leading's width.
+/// frames' and sash bars' half widths, its reveals' colour, its church windows' leading's width and its shop glazing's
+/// glass at night.
 void window_wall_out(WindowLane l, float4 plane, float2 dark, float2 lit, float leading) {
     uint widths = window_job_word(l.at, WINDOW_JOB_WIDTHS, l.k);
     float frame_half = window_frame_half(l);
@@ -733,7 +750,7 @@ void window_wall_out(WindowLane l, float4 plane, float2 dark, float2 lit, float 
     uint reveal_word = l.p.sun.w + l.span.x + l.k;
     uint4 reveals = walls_vector(reveal_word / 4u);
     uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
-    uint4 fade = {fade_word(l.p.place.offset.w, l.p.place.scale.w), 0u, 0u, 0u};
+    uint4 fade = {fade_word(l.p.place.offset.w, l.p.place.scale.w), window_job_glazing(l.at, l.k), 0u, 0u};
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
     window_walls_out[l.record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
@@ -855,11 +872,11 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     }
 }
 
-/// A wall's flat detail: its shop glazing (by day: the open shops at night come with the night) into the window record
-/// after its windows', and its plinth (low nearer than 300 m) and cornice (nearer than 520 m) into its facade record,
-/// at its building's slots after its walls, each but those the frame's mode leaves out (FRAME_NO_GLAZING, _PLINTHS,
-/// _CORNICES). The only stage of the frames whose walls come no nearer than the facades' 760 m (with weather: about
-/// z 17 on the phone).
+/// A wall's flat detail: its shop glazing (at night lit while one of its building's places is open) into the window
+/// record after its windows', and its plinth (low nearer than 300 m) and cornice (nearer than 520 m) into its facade
+/// record, at its building's slots after its walls, each but those the frame's mode leaves out (FRAME_NO_GLAZING,
+/// _PLINTHS, _CORNICES). The only stage of the frames whose walls come no nearer than the facades' 760 m (with weather:
+/// about z 17 on the phone).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -877,14 +894,15 @@ void window_facades_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID
     uint count = building_window_count(l.w, detail);
     if (building_window_records(l.w, l.rank) > count) {
         BuildingWindowShape g = building_window_nothing();
-        if (facades && (theme_flags & THEME_NIGHT) == 0u && (mode & FRAME_NO_GLAZING) == 0u) {
+        if (facades && (mode & FRAME_NO_GLAZING) == 0u) {
             g = building_window_over(
                 building_window_cut(frame.camera, l.p.place, building_glazing(l.wall, l.f.normal)),
                 BUILDING_GLAZING_AREA);
         }
         float shop_half = 0.5f * building_shop_frame_width(frame.windows);
+        bool open = (theme_flags & THEME_NIGHT) != 0u && window_job_open(l.at, l.k);
         BuildingWindowRecord record =
-            building_window_record(g, false, building_glass_drawn(g, shop_half), true, l.w, l.record, slots.first);
+            building_window_record(g, open, building_glass_drawn(g, shop_half), true, l.w, l.record, slots.first);
         uint out_at = (window_job_word(l.at, WINDOW_JOB_RECORDS, l.k) + count) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
         window_records_out[out_at + 1u] = record.v1;
@@ -1194,7 +1212,8 @@ GlassOut window_glass_at(uint vertex, out uint fade) {
     bool lit = (r.v0.x & BUILDING_WINDOW_LIT) != 0u;
     uint style = (r.v0.x >> BUILDING_WINDOW_RECORD_STYLE_SHIFT) & 3u;
     uint flags = (r.v0.x & BUILDING_WINDOW_RECORD_WAREHOUSE) != 0u ? BUILDING_WINDOW_WAREHOUSE : 0u;
-    BuildingGlass g = building_glass(frame.windows, frame.theme.flags.x, style, flags, lit);
+    BuildingGlass g = shop ? building_shop_glass(frame.windows, frame.theme.flags.x, wall.glazing)
+                           : building_glass(frame.windows, frame.theme.flags.x, style, flags, lit);
     float2 box = lit ? wall.lit : wall.dark;
     if (shop) {
         // a shop's glazing is a path of its own: its gradient spans its own box

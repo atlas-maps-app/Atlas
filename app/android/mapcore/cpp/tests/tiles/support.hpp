@@ -50,11 +50,12 @@ template <class T>
     return value != nullptr ? std::string(value) : std::string();
 }
 
-/// Opens the pack file at `path`, mapped.
-[[nodiscard]] inline tiles::Result<tiles::Pack> open_pack(const std::string& path) {
+/// Opens the pack file at `path`, mapped: a world pack in `world_style` where one is given (tiles::Pack::open).
+[[nodiscard]] inline tiles::Result<tiles::Pack> open_pack(const std::string& path,
+                                                          const tiles::Style* world_style = nullptr) {
     auto source = tiles::MappedSource::open(path);
     if (!source) return std::unexpected(source.error());
-    return tiles::Pack::open(std::move(*source));
+    return tiles::Pack::open(std::move(*source), world_style);
 }
 
 /// A little-endian sink with LEB128 varints, as rendertiles' LeSink.
@@ -747,6 +748,8 @@ using Field = std::pair<std::string_view, ValueBytes>;
                             {"shop_frame_day", v::text("#2A2D30")},
                             {"shop_frame_night", v::text("#30343E")},
                             {"shop_frame_width", v::real(0.8)},
+                            {"shop_glass_open", v::text("#FFD08C")},
+                            {"shop_glass_closed", v::text("#0E1119")},
                             {"plinth_day", v::text("#47443F")},
                             {"plinth_night", v::text("#121318")},
                             {"cornice_day", v::text("#E6E1D6")},
@@ -783,6 +786,23 @@ using Field = std::pair<std::string_view, ValueBytes>;
                           {"plate_night", v::text("#3A3A40")},
                           {"number_day", v::text("#1E2A44")},
                           {"number_night", v::text("#B9C0D0")}})},
+        {"shopfronts", v::map({{"frame_day", v::text("#2A2C2E")},      {"frame_night", v::text("#0C0D10")},
+                               {"glass_open", v::text("#FFD08C")},     {"glass_closed", v::text("#0B0D12")},
+                               {"mullion", v::text("#2A2C2E")},        {"stripes_day", v::text("#F4EFE6")},
+                               {"stripes_night", v::text("#3A3A40")},  {"stripes_opacity", v::real(0.85)},
+                               {"awning_width", v::real(0.4)},         {"sign_outline", v::text("#1E1F22")},
+                               {"sign_width", v::real(0.4)},           {"blade_width", v::real(0.5)},
+                               {"text", v::text("#FFFFFF")},           {"spill", v::text("#FFC27A")},
+                               {"spill_opacity", v::real(0.55)},       {"wood_day", v::text("#6B5442")},
+                               {"wood_night", v::text("#1A1714")},     {"chair", v::text("#3E3A36")},
+                               {"chair_leg_width", v::real(1.0)},      {"chair_back_night", v::text("#121214")},
+                               {"top_day", v::text("#E9E3D6")},        {"top_night", v::text("#2A2826")},
+                               {"top_outline", v::text("#9B9182")},    {"top_width", v::real(0.3)},
+                               {"pole", v::text("#5A5048")},           {"panel", v::text("#F4EFE6")},
+                               {"open_inner", v::text("#FFE2A8")},     {"open_inner_opacity", v::real(0.95)},
+                               {"open_middle", v::text("#FFC878")},    {"open_middle_offset", v::real(0.3)},
+                               {"open_middle_opacity", v::real(0.45)}, {"open_outer", v::text("#FFC878")},
+                               {"open_outer_opacity", v::real(0.0)}})},
         {"items", v::map({{"shaft", v::text("#C9C6BE")},
                           {"glass_day", v::text("#7F98AA")},
                           {"glass_night", v::text("#1A2230")},
@@ -886,6 +906,8 @@ struct PackOptions {
     std::vector<SectionBytes> extra;
     /// Style tables after style_tables()'s (a region's `tradition`).
     std::vector<values::Field> style_tables;
+    /// Another `style` (its bytes before compression) in place of style_tables()'s.
+    std::optional<std::vector<std::byte>> style;
 };
 
 /// A format-3 pack of `chunks`, with `rhead` for `levels`, as Format3Writer lays it out (D1's container).
@@ -923,7 +945,7 @@ struct PackOptions {
         sections.push_back({"rhead", head, head.size(), tiles::Method::stored});
         std::vector<values::Field> tables = style_tables();
         tables.insert(tables.end(), options.style_tables.begin(), options.style_tables.end());
-        const auto style = style_bytes(tables);
+        const auto style = options.style.value_or(style_bytes(tables));
         sections.push_back({"style", zstd_frame(style), style.size(), tiles::Method::zstd});
     }
     sections.insert(sections.end(), options.extra.begin(), options.extra.end());

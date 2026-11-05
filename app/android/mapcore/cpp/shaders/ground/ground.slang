@@ -9,11 +9,18 @@
 //     order and sub-element (geometry/Ground.hpp), in its day or night colour or the theme's. A fill the frame does not
 //     draw (the renders' cull and area test, decided on the CPU) folds its triangles away. In the app's map a street, a
 //     big road's asphalt and a runway's or a taxiway's pavement are as wide as their way (GROUND_WIDE), where the
-//     renders lay them half as wide; a street off a bridge is drawn by the streets' own draw (GROUND_STREETS), where the
-//     stencil holds no water at the street (passes/Ground.cpp's record_fills), so it keeps off the canals that a
-//     bridge's street crosses.
+//     renders lay them half as wide; the streets are drawn by their own draws after the land (passes/Ground.cpp's
+//     record_streets, street_vs with colour_over_fs), over what lies under them: off a bridge (GROUND_STREETS) where
+//     the stencil holds no water at the street, so that a street keeps off the canals that a bridge's street crosses,
+//     then on a bridge over the water; and a street narrower on the screen than LEAST_PX device px is drawn LEAST_PX
+//     wide at the share of them its width covers (GROUND_LEAST, least_point), so that its colour across it holds while
+//     it moves, where 4 samples a pixel would step.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
+//   - thin_vs, thin_band_vs and thin_fs: the app's map's thin water (passes/Water.cpp), where the water is narrower on
+//     the screen than LEAST_PX across a thin edge of its pieces (geometry/Water.hpp's thin_edges): the edge's quad
+//     across the water leaves the count there to its band, LEAST_PX wide along the water's middle at the share of
+//     them the water covers (thin_of), in the surface's colour with its tint.
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
 //     (render's #sky: sky_top to sky_hor between two rows), the water's surface (#wgrad, or th['water'] without
 //     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy);
@@ -111,6 +118,7 @@ static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Rippl
 static const uint GROUND_WIDE = 16u;       // fill_vs: the ribbons' pavements as wide as their ways (the app's map)
 static const uint GROUND_NEAR_CLIP = 32u;  // stroke_vs: a line of a fixed width from the near plane on (the app's map)
 static const uint GROUND_STREETS = 64u;    // fill_vs: the streets' own draw, each off a bridge (with GROUND_WIDE)
+static const uint GROUND_LEAST = 128u;     // street_vs: a thin street LEAST_PX wide at its coverage (with GROUND_WIDE)
 
 /// The painter groups whose fills are ribbons as wide as their ways in the app's map (geometry::group): S['roads'], a
 /// group a class from road up to draw_over's; draw_over's big roads (over + 1), their asphalt its one fill; and its
@@ -220,6 +228,13 @@ struct FillOut {
 #endif
 };
 
+/// A street's fill in the app's map (street_vs, fill_fading_vs): fill_vs's with its share of the pixels it is drawn
+/// over, below 1 where the least width draws it wider than it is (least_point).
+struct StreetOut {
+    FillOut fill;
+    float cover : COLOR2;
+};
+
 /// Whether the fill is in render's `mat` group (with K17a's mat: its colour stage's switch).
 void set_mat(inout FillOut o, bool on) {
 #if defined(ATLAS_GROUND_MAT)
@@ -233,29 +248,74 @@ bool in_mat(uint group) {
     return group == 4u || (group >= 8u && group < 32u) || group >= 64u;
 }
 
-/// A ribbon's vertex v at (x, z), as wide as its way (GROUND_WIDE): render's ribbon(pts, w / 2) lays its sides w / 4
-/// from the centreline, half the way's width, where a big road's edge lines lie at w / 2 - 0.5, a runway's threshold
-/// bars and designators reach w / 2 and a sett road's courses run across w, so each side point moves twice as far from
-/// the centreline, the middle of it and its mirror on the other side. The ribbon's vertices are its left side, then its
+/// The point mirroring a ribbon's vertex v across its centreline. The ribbon's vertices are its left side, then its
 /// right side reversed, so a point and its mirror sum to the same s throughout; its quads are the triangles (l, l + 1,
-/// s - l - 1) and (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle tells s, the first kind where
-/// its second corner follows its first. The tile's triangle lists follow its vertices' words, 3 a vertex, and hold
-/// whole triangles, so a word's corner is its place past the tile's first word, mod 3.
-float2 wide_point(uint tile, uint index, uint v, float2 p) {
+/// s - l - 1) and (l, s - l - 1, s - l) (geometry::pack), so the vertex's own triangle (its word `index`) tells s, the
+/// first kind where its second corner follows its first. The tile's triangle lists follow its vertices' words, 3 a
+/// vertex, and hold whole triangles, so a word's corner is its place past the tile's first word, mod 3.
+float2 mirror_point(uint tile, uint index, uint v) {
     uint base = tile_word(tile, 8u);
     uint t0 = index - (index - base) % 3u;
     uint a = ground_word(t0);
     uint b = ground_word(t0 + 1u);
     uint s = ground_word(t0 + 2u) + (b == a + 1u ? b : a);
     uint at = base + tile_word(tile, 9u) + 3u * (s - v);
-    float2 m = float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+    return float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+}
+
+/// A ribbon's vertex p with its mirror m (mirror_point), as wide as its way (GROUND_WIDE): render's ribbon(pts, w / 2)
+/// lays its sides w / 4 from the centreline, half the way's width, where a big road's edge lines lie at w / 2 - 0.5, a
+/// runway's threshold bars and designators reach w / 2 and a sett road's courses run across w, so each side point
+/// moves twice as far from the centreline, the middle of it and its mirror on the other side.
+float2 wide_point(float2 p, float2 m) {
     return 2.0f * p - 0.5f * (p + m);
 }
 
+/// The least width a street is drawn at on the screen, device px (GROUND_LEAST).
+static const float LEAST_PX = 1.5f;
+/// How far least_point looks along a street either way of its centreline for its direction on the screen (metres).
+static const float LEAST_ALONG = 32.0f;
+
+/// A street's vertex w as wide as its way (wide_point) and its mirror's wm, at height y: where the street is narrower
+/// on the screen than LEAST_PX device px, measured across its direction there at its centreline, both move out from the
+/// centreline to LEAST_PX apart and `cover` takes the street's width over LEAST_PX, the share of them it covers, so
+/// that across it the street keeps its colour's sum as the renders' analytic coverage gives a thin path its share of a
+/// pixel, where 4 samples a pixel give it 0 to 4 quarters as it moves: a street 1 px wide is drawn 1.5 px wide at 2/3.
+/// The vertex and its mirror measure the same width (each of their differences only changes its sign), so the two move
+/// apart alike. A street whose points reach the near plane is as it was (it is wide there).
+float2 least_point(uint tile, float y, float2 w, float2 wm, inout float cover) {
+    float2 across = w - wm;
+    float l = length(across);
+    if (!(l > 0.0f)) {
+        return w;
+    }
+    float2 c = 0.5f * (w + wm);
+    float2 along = float2(-across.y, across.x) * (LEAST_ALONG / l);
+    float2 a = c + along;
+    float2 b = c - along;
+    TilePlace t = place_of(tile);
+    float3 kw = camera_of(frame.camera, eye_relative(t, float3(w.x, y, w.y)));
+    float3 km = camera_of(frame.camera, eye_relative(t, float3(wm.x, y, wm.y)));
+    float3 ka = camera_of(frame.camera, eye_relative(t, float3(a.x, y, a.y)));
+    float3 kb = camera_of(frame.camera, eye_relative(t, float3(b.x, y, b.y)));
+    if (min(min(kw.z, km.z), min(ka.z, kb.z)) <= frame.camera.frame.w) {
+        return w;
+    }
+    // the street's direction on the screen and its width across it, device px (none where the direction has none)
+    float2 d = css_of(frame.camera, ka) - css_of(frame.camera, kb);
+    float2 s = css_of(frame.camera, kw) - css_of(frame.camera, km);
+    float px = abs(s.x * d.y - s.y * d.x) / length(d) * frame.camera.frame.z;
+    if (!(px < LEAST_PX)) {
+        return w;
+    }
+    cover = px / LEAST_PX;
+    return c + (w - c) * (LEAST_PX / max(px, 1.0e-4f));
+}
+
 /// A fill's vertex: its index from the ground heap at word `index` (the draw's firstVertex counts the words), its tile
-/// the instance (the draw's firstInstance).
-[shader("vertex")]
-FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+/// the instance (the draw's firstInstance); where `least` and the draw's GROUND_LEAST say, a street at least LEAST_PX
+/// wide and `cover` its share of them (least_point).
+FillOut fill_of(uint index, uint tile, bool least, inout float cover) {
     uint base = tile_word(tile, 8u);
     uint v = ground_word(index);
     uint at = base + tile_word(tile, 9u) + 3u * v;
@@ -277,13 +337,19 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     uint order = ranks != 0u ? words[ranks + f] : ground_word(r + 2u);
     uint c = repainted((push.mode.x & GROUND_NIGHT) != 0u ? ground_word(r + 4u) : ground_word(r + 3u));
     if ((push.mode.x & GROUND_WIDE) != 0u && wide_group(gs & 0xFFFFu, gs >> 16u)) {
-        // a street off a bridge in the streets' own draw only, one on a bridge (over the water) in the draw of the rest
+        // a street off a bridge in the streets' own draw only, one on a bridge (over the water) in a draw without the
+        // flag (the bridges', a fading tile's rest)
         if (street_group(gs & 0xFFFFu) && (y < BRIDGE_Y) != ((push.mode.x & GROUND_STREETS) != 0u)) {
             o.position = FOLDED;
             o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
             return o;
         }
-        float2 w = wide_point(tile, index, v, float2(x, z));
+        float2 q = float2(x, z);
+        float2 m = mirror_point(tile, index, v);
+        float2 w = wide_point(q, m);
+        if (least && (push.mode.x & GROUND_LEAST) != 0u && street_group(gs & 0xFFFFu)) {
+            w = least_point(tile, y, w, wide_point(m, q), cover);
+        }
         x = w.x;
         z = w.y;
     }
@@ -292,6 +358,23 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     // a translucent fill (the canopy's union is composited instead): premultiplied by the screen pass's opacity
     o.colour = float4(p.rgb, 1.0f);
     set_mat(o, in_mat(gs & 0xFFFFu));
+    return o;
+}
+
+/// A fill's vertex (fill_of).
+[shader("vertex")]
+FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    float cover = 1.0f;
+    return fill_of(index, tile, false, cover);
+}
+
+/// A street's vertex in the app's map (passes/Ground.cpp's record_streets): fill_of's, a thin one at least LEAST_PX
+/// wide at its share of them.
+[shader("vertex")]
+StreetOut street_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    StreetOut o;
+    o.cover = 1.0f;
+    o.fill = fill_of(index, tile, true, o.cover);
     return o;
 }
 
@@ -310,19 +393,27 @@ ColourOut colour_fs(FillOut v) {
     return o;
 }
 
-/// A fill of a tile fading in (passes/Ground.cpp's record_fading_fills): fill_vs's, at its tile's fade (its place's
-/// scale.w) as its alpha.
+/// A fill of a tile fading in (passes/Ground.cpp's record_fading_fills): street_vs's, a thin street as wide as at rest,
+/// at its tile's fade (its place's scale.w) as its alpha.
 [shader("vertex")]
-FillOut fill_fading_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
-    FillOut o = fill_vs(index, tile);
-    o.colour.a = asfloat(tile_word(tile, 7u));
+StreetOut fill_fading_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    StreetOut o = street_vs(index, tile);
+    o.fill.colour.a = asfloat(tile_word(tile, 7u));
     return o;
 }
 
-/// colour_fs's colour at the fill's alpha, premultiplied (a tile fading in, blended over what lies under it).
+/// A street's share of the pixels it is drawn over (StreetOut.cover): 1 from 0.999 on, so that a fill drawn whole is
+/// drawn as it always was whatever its interpolation makes of a 1.
+float cover_of(float cover) {
+    return cover < 0.999f ? cover : 1.0f;
+}
+
+/// colour_fs's colour at the fill's alpha and its share (cover_of), premultiplied, over what lies under it: a tile
+/// fading in (record_fading_fills), the app's map's streets (record_streets).
 [shader("fragment")]
-ColourOut colour_fading_fs(FillOut v) {
-    ColourOut o = colour_fs(v);
+ColourOut colour_over_fs(StreetOut v) {
+    ColourOut o = colour_fs(v.fill);
+    o.colour.a *= cover_of(v.cover);
     o.colour = float4(o.colour.rgb * o.colour.a, o.colour.a);
     return o;
 }
@@ -386,6 +477,113 @@ FillOut water_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID
     // the stencil's count only: the depth is the water's surface slot, never tested
     o.position = place(tile, float3(x, y, z), push.mode.y);
     return o;
+}
+
+// ---------------------------------------------------------------- the water's thin edges (passes/Water.cpp)
+
+/// A thin edge's record (geometry/Ground.hpp's GroundGpu::thin), its words, and a metre of its widths.
+static const uint THIN_WORDS = 7u;
+static const float THIN_UNITS = 1024.0f;
+
+/// A thin edge's quad, two triangles over its corners: 0 and 1 its ends on its bank, 2 and 3 across from 1 and 0.
+static const uint THIN_VERTICES = 6u;
+static const uint thin_corners[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+
+struct ThinOut {
+    float4 position : SV_Position;
+    float cover : COLOR0;
+};
+
+/// The water's width on the screen at a thin edge's end w on its bank, wm across the water from it, at height y,
+/// device px: across its direction there, measured as least_point measures a street's; LEAST_PX where a point reaches
+/// the near plane (it is near) or the direction has none.
+float thin_px(uint tile, float y, float2 w, float2 wm) {
+    float2 across = w - wm;
+    float l = length(across);
+    if (!(l > 0.0f)) {
+        return LEAST_PX;
+    }
+    float2 c = 0.5f * (w + wm);
+    float2 along = float2(-across.y, across.x) * (LEAST_ALONG / l);
+    float2 a = c + along;
+    float2 b = c - along;
+    TilePlace t = place_of(tile);
+    float3 kw = camera_of(frame.camera, eye_relative(t, float3(w.x, y, w.y)));
+    float3 km = camera_of(frame.camera, eye_relative(t, float3(wm.x, y, wm.y)));
+    float3 ka = camera_of(frame.camera, eye_relative(t, float3(a.x, y, a.y)));
+    float3 kb = camera_of(frame.camera, eye_relative(t, float3(b.x, y, b.y)));
+    if (min(min(kw.z, km.z), min(ka.z, kb.z)) <= frame.camera.frame.w) {
+        return LEAST_PX;
+    }
+    float2 d = css_of(frame.camera, ka) - css_of(frame.camera, kb);
+    float2 s = css_of(frame.camera, kw) - css_of(frame.camera, km);
+    float ld = length(d);
+    if (!(ld > 0.0f)) {
+        return LEAST_PX;
+    }
+    return abs(s.x * d.y - s.y * d.x) / ld * frame.camera.frame.z;
+}
+
+/// A thin edge's vertex: THIN_VERTICES a record, from the tile's first record's word (push.mode.z: a draw a tile),
+/// its tile the instance. Drawn where the frame draws its piece and its other bank's at the draw's height (water_vs's
+/// bits) and the water is narrower on the screen than LEAST_PX at either of its ends; else folded. Its quad from the
+/// edge on its bank across the water to the other bank (`band` false), or its band along the water's middle, at each
+/// end LEAST_PX wide at the share of them the water covers there (`cover`, least_point's) where narrower, else as wide
+/// as the water.
+ThinOut thin_of(uint index, uint tile, bool band) {
+    uint at = push.mode.z + THIN_WORDS * (index / THIN_VERTICES);
+    uint corner = index % THIN_VERTICES;
+    ThinOut o;
+    o.cover = 1.0f;
+    uint f = ground_word(at + 5u);
+    uint other = ground_word(at + 6u);
+    bool level = (push.mode.x & GROUND_WATER_LEVEL) != 0u;
+    uint bits = level ? tile_word(tile, 14u) : tile_word(tile, 13u);
+    if ((push.mode.x & GROUND_VISIBLE_ALL) == 0u && !(bit(bits, f) && bit(bits, other))) {
+        o.position = FOLDED;
+        return o;
+    }
+    uint base = tile_word(tile, 8u);
+    float y = level ? asfloat(ground_word(base + tile_word(tile, 10u) + 5u * f)) : 0.0f;
+    float2 a = float2(asfloat(ground_word(at)), asfloat(ground_word(at + 1u)));
+    float2 b = float2(asfloat(ground_word(at + 2u)), asfloat(ground_word(at + 3u)));
+    uint widths = ground_word(at + 4u);
+    // into the water: the left of the edge's direction (x east, z south)
+    float2 e = b - a;
+    float2 n = float2(-e.y, e.x) / length(e);
+    float2 fa = a + n * (float(widths & 0xFFFFu) / THIN_UNITS);
+    float2 fb = b + n * (float(widths >> 16u) / THIN_UNITS);
+    float pa = thin_px(tile, y, a, fa);
+    float pb = thin_px(tile, y, b, fb);
+    if (!(min(pa, pb) < LEAST_PX)) {
+        o.position = FOLDED;
+        return o;
+    }
+    uint q = thin_corners[corner];
+    bool at_b = q == 1u || q == 2u;
+    float2 w = at_b ? b : a;
+    float2 wm = at_b ? fb : fa;
+    float2 p = q >= 2u ? wm : w;
+    float px = at_b ? pb : pa;
+    if (band && px < LEAST_PX) {
+        float2 c = 0.5f * (w + wm);
+        p = c + (p - c) * (LEAST_PX / max(px, 1.0e-4f));
+        o.cover = px / LEAST_PX;
+    }
+    o.position = place(tile, float3(p.x, y, p.y), push.mode.y);
+    return o;
+}
+
+/// A thin edge's quad across the water (thin_of): where it lies on water counted once, the count left to the band.
+[shader("vertex")]
+ThinOut thin_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    return thin_of(index, tile, false);
+}
+
+/// A thin edge's band along the water's middle (thin_of).
+[shader("vertex")]
+ThinOut thin_band_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    return thin_of(index, tile, true);
 }
 
 // ---------------------------------------------------------------- the ground shadows (passes/Shadows.cpp)
@@ -772,6 +970,19 @@ ColourOut flat_fs(ScreenOut v) {
     float a = push.rows.z;
     ColourOut o;
     o.colour = float4(c.rgb * a, a);
+    return o;
+}
+
+/// The water's thin edges' band's colour (thin_band_vs): the water's surface there (gradient_at: with weather wgrad,
+/// else push.colour.x and .y both th['water']) with its tint over it (push.colour.z at push.rows.z), at the band's
+/// share of the pixels it is drawn over (cover_of), premultiplied.
+[shader("fragment")]
+ColourOut thin_fs(ThinOut v) {
+    float2 css = css_of_output(frame.camera, v.position.xy);
+    float3 c = lerp(gradient_at(css.y).rgb, unpack(push.colour.z).rgb, push.rows.z);
+    float a = cover_of(v.cover);
+    ColourOut o;
+    o.colour = float4(c * a, a);
     return o;
 }
 

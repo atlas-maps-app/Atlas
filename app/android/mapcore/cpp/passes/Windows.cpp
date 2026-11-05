@@ -27,8 +27,10 @@ namespace {
 /// walls' first window record, its first near record (no_near: none), its windows' widths (where it draws church
 /// windows, their leading's), its facade record (no_near: none), its church windows (no_near: none drawn; its first
 /// church record, how many, each one's transoms), its material face's first fill record and first line record
-/// (no_near: none), its count word (MaterialChoice::counts) and its ribs' colour, from these words.
-constexpr std::uint32_t job_words = 596;
+/// (no_near: none), its count word (MaterialChoice::counts) and its ribs' colour, from these words; then whether each
+/// one's shop glazing is open at night (bit k % 32 of word job_open + k / 32: shop_open) and the glazing's glass at
+/// night while open and while not (ShopGlass, words job_open + 2 and + 3).
+constexpr std::uint32_t job_words = 600;
 constexpr std::uint32_t job_records = 20;
 constexpr std::uint32_t job_nears = 84;
 constexpr std::uint32_t job_widths = 148;
@@ -38,6 +40,7 @@ constexpr std::uint32_t job_material_fills = 340;
 constexpr std::uint32_t job_material_lines = 404;
 constexpr std::uint32_t job_materials = 468;
 constexpr std::uint32_t job_ribs = 532;
+constexpr std::uint32_t job_open = 596;
 constexpr std::uint32_t no_near = 0xFFFF'FFFFU;
 /// The most windowed walls a job decides, the lanes a decide stage's workgroup takes, and the workgroups a row covers.
 constexpr std::uint32_t job_size = 64;
@@ -284,6 +287,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     const std::span<const double> depths = state.ranks->depth();
     const bool weather = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
     const bool night = (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U;
+    const ShopGlass shop_glass = shop_glass_of(state);
     const double focal = state.view ? state.view->camera().focal() : 0.0;
     const auto frame_width = static_cast<double>(shaders::building_window_frame_width(state.block.windows));
     // the parts the map leaves out that their reach does not (Buildings::select): a church's own windows, whose
@@ -314,6 +318,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     for (const TileDraw& d : draws_) {
         if (d.window_runs == 0 || d.tile == nullptr) continue;
         const BuildingTile& b = *d.tile;
+        // at night a shop floor's glazing is lit while one of its building's places is open (amsterdam.py's
+        // open_here): the tile's hours answered once a minute
+        std::span<const std::int8_t> answers;
+        if (night && weather && !b.hours.empty()) answers = hours_.of(b.serial, b.hours, state.theme);
         const auto row_of = [&](std::uint32_t wall) {
             const std::uint16_t item = b.window_items[wall];
             return item < d.rows.size() ? d.rows[item] : shaders::RANK_NONE;
@@ -393,6 +401,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                 w[at + 17] = n;
                 w[at + 18] = walls;
                 w[at + 19] = d.facades;
+                w[at + job_open + 2] = shop_glass.open;
+                w[at + job_open + 3] = shop_glass.closed;
                 for (std::uint32_t k = 0; k < n; ++k) {
                     const std::uint32_t wall = first + k;
                     const std::uint32_t row = row_of(wall);
@@ -404,6 +414,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                                          (detail & shaders::BUILDING_DETAIL_FACADES) != 0U;
                     w[at + job_records + k] = records;
                     records += windows + (glazing ? 1U : 0U);
+                    if (glazing && shop_open(b, b.window_items[wall], answers)) {
+                        w[at + job_open + (k / 32)] |= 1U << (k % 32);
+                    }
                     // no material face, unless one is reserved below (a church's cap passes over the rest)
                     w[at + job_material_fills + k] = no_near;
                     w[at + job_material_lines + k] = no_near;

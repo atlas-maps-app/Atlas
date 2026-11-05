@@ -30,6 +30,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -386,6 +387,13 @@ struct TileBuildings {
     std::vector<KitWall> kit_walls;
     /// The tile's sun samples the buildings take (K8's count before the tile's trees, quays and windows).
     std::uint32_t samples = 0;
+    /// The opening hours of the places of the buildings whose walls have shop glazing (amsterdam.py's open_here: at
+    /// night a shop floor's glazing is lit while one of its building's places is open), each distinct one once, and
+    /// each item's among them: [item_hours_first[i], item_hours_first[i + 1]) of item_hours. All three empty where
+    /// none of those buildings has a place with hours.
+    std::vector<std::string> hours;
+    std::vector<std::uint32_t> item_hours_first;
+    std::vector<std::uint32_t> item_hours;
 };
 
 /// The region's values the buildings read (sun/Samples.hpp's Region: the port's module state after the region's load).

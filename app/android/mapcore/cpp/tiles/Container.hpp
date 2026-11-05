@@ -27,7 +27,11 @@ namespace atlas::tiles {
 class Pack {
 public:
     /// Opens the pack in `source`: header, directory, chunk table; for a render pack `reach`, `rhead` and `style` too.
-    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source);
+    /// A world pack (`rhead`'s profile world_base) is drawn in `world_style` where one is given, the core's own
+    /// (load::world_style, ENGINE.md step 5: the world's style in one place): its `style` section is read and kept,
+    /// its magic, payload version and values' form checked, but not typed, so a value of the style file it lacks does
+    /// not refuse it. Every other pack's style is its own.
+    [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source, const Style* world_style = nullptr);
 
     Pack(const Pack&) = delete;
     Pack& operator=(const Pack&) = delete;

@@ -253,7 +253,7 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
         const std::scoped_lock lock(state->mutex);
         state->recording = !cached;
     }
-    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)));
+    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)), world_style_);
     if (!pack && cached) {
         // a cached head that no longer opens (another pack under the same identity, or damage): fetch it afresh
         cache->remove(head_key);
@@ -284,15 +284,15 @@ Result<void> Store::add(const PackRef& ref) {
     } else if (names_range(ref)) {
         auto source = open_range(ref);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (ref.fd >= 0) {
         auto source = MappedSource::open(ref.fd, ref.offset, ref.length);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (!ref.path.empty()) {
         auto source = MappedSource::open(ref.path);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     }
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));

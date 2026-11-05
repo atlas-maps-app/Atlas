@@ -37,6 +37,9 @@ import app.atlas.render.py.PyFmt
  * - a fill the twin draws in pieces (its rings clipped at tile edges): fills of the same key inside the port's element
  *   whose union covers what it covers of the view, point for point but within [EPS] of their outlines, count as that
  *   one element and are listed as in pieces (whether the pieces are an intended deviation, the pixels decide: L2);
+ * - a path whose coordinates differ more than a print step only beyond the view, each of its edges drawing in the view
+ *   what the other's does to a print step: the same in the view, counted apart (a vertex just in front of the eye
+ *   plane projects thousands of px off the frame, where the vertex stage's floats move it by tenths);
  * - otherwise the nearest element of the same key overlapping it, whose coordinates differ.
  *
  * A pair out of its place is reordered when no element of another key it passes, among the anchors, overlaps it in the
@@ -98,6 +101,8 @@ object L1Diff {
         var matched = 0
         var exact = 0
         var oneStep = 0
+        /** Paths whose coordinates differ more than a print step beyond the view alone, the same in it (sameInView). */
+        var beyondView = 0
         var differs = 0
         /** Port elements the twin draws in pieces, and the pieces. */
         var inPieces = 0
@@ -124,7 +129,7 @@ object L1Diff {
         val firstSlivers = ArrayList<String>()
 
         fun summary(): String = "L1 $layer: port $port in the view ($outside outside), twin $twin ($twinOutside outside), matched $matched " +
-            "(exact $exact, one step $oneStep, differing $differs; $inPieces in $pieces pieces), reordered $reordered, out of order $outOfOrder, " +
+            "(exact $exact, one step $oneStep, beyond the view $beyondView, differing $differs; $inPieces in $pieces pieces), reordered $reordered, out of order $outOfOrder, " +
             "missing ${missing.values.sum()}, extra ${extra.values.sum()}, slivers $slivers"
     }
 
@@ -766,6 +771,85 @@ object L1Diff {
         return w
     }
 
+    /**
+     * Whether paths [p] and [t] of one shape, coordinates more than a print step apart, draw the same in the view: each
+     * vertex in it (grown by their paints' reach) prints a step at most from the other's, and each edge's part in it lies
+     * within a step of the other's (their Hausdorff distance), so what they cover of it is the same but at their
+     * outlines. Beyond the view a coordinate may differ more than a float keeps there (worst): a vertex just in front of
+     * the eye plane projects thousands of px off the frame, where the vertex stage's float sum of a tile-local point and
+     * its tile's offset (camera.slang's eye_relative: hundreds of metres each, to 2^-24 of that) moves it by tenths of a
+     * px against the port's doubles (a flat roof under a camera 70 m back, 11,300 px below the frame: 0.5 px), and the
+     * edges it ends move by thousandths in the view.
+     */
+    private fun sameInView(p: Seen, t: Seen): Boolean {
+        if (p.e.kind != "path" || p.shape != t.shape || p.tenths.size != t.tenths.size) return false
+        val v = p.v
+        val grow = maxOf(p.e.reach * scale(p.e.matrix), t.e.reach * scale(t.e.matrix))
+        val box = doubleArrayOf(v.x0 - grow, v.y0 - grow, v.x1 + grow, v.y1 + grow)
+        fun inside(r: DoubleArray, i: Int) = r[2 * i] >= box[0] && r[2 * i] <= box[2] && r[2 * i + 1] >= box[1] && r[2 * i + 1] <= box[3]
+        val step = 0.1 * maxOf(scale(p.e.matrix), scale(t.e.matrix)) + 1e-3 // a print step, and the floats' noise of its tenths
+        val pr = p.rings
+        val tr = t.rings
+        for (k in pr.indices) {
+            val a = pr[k]
+            val b = tr[k]
+            val n = a.size / 2
+            for (i in 0 until n) {
+                if ((inside(a, i) || inside(b, i)) && worst(p.tenths, p.from(k) + 2 * i, t.tenths, t.from(k) + 2 * i, 2) > 1) return false
+            }
+            // a fill closes every ring; a stroke alone, its closed subpaths
+            val edges = if (p.closed[k] || p.e.fills) n else n - 1
+            for (i in 0 until edges) {
+                val j = (i + 1) % n
+                val sa = clip(a, i, j, box)
+                val sb = clip(b, i, j, box)
+                if (sa == null && sb == null) continue
+                if (sa == null || sb == null) {
+                    val s = sa ?: sb!!
+                    if (Math.hypot(s[2] - s[0], s[3] - s[1]) > step) return false
+                    continue
+                }
+                if (hausdorff(sa, sb) > step) return false
+            }
+        }
+        return true
+    }
+
+    /** The part of ring [r]'s edge from point [i] to point [j] inside [box] (x0 y0 x1 y1), as x y x y, or null (Liang–Barsky). */
+    private fun clip(r: DoubleArray, i: Int, j: Int, box: DoubleArray): DoubleArray? {
+        val ax = r[2 * i]
+        val ay = r[2 * i + 1]
+        val dx = r[2 * j] - ax
+        val dy = r[2 * j + 1] - ay
+        var t0 = 0.0
+        var t1 = 1.0
+        val p = doubleArrayOf(-dx, dx, -dy, dy)
+        val q = doubleArrayOf(ax - box[0], box[2] - ax, ay - box[1], box[3] - ay)
+        for (k in 0 until 4) {
+            if (p[k] == 0.0) {
+                if (q[k] < 0) return null
+            } else {
+                val t = q[k] / p[k]
+                if (p[k] < 0) t0 = maxOf(t0, t) else t1 = minOf(t1, t)
+            }
+        }
+        if (t0 > t1) return null
+        return doubleArrayOf(ax + t0 * dx, ay + t0 * dy, ax + t1 * dx, ay + t1 * dy)
+    }
+
+    /** The distance of (x, y) from segment [s] (x y x y). */
+    private fun toSegment(x: Double, y: Double, s: DoubleArray): Double {
+        val dx = s[2] - s[0]
+        val dy = s[3] - s[1]
+        val len = dx * dx + dy * dy
+        val t = if (len == 0.0) 0.0 else (((x - s[0]) * dx + (y - s[1]) * dy) / len).coerceIn(0.0, 1.0)
+        return Math.hypot(x - (s[0] + t * dx), y - (s[1] + t * dy))
+    }
+
+    /** The Hausdorff distance of two segments: the farthest of either's ends from the other (a point's distance from a segment is convex along another). */
+    private fun hausdorff(a: DoubleArray, b: DoubleArray): Double =
+        maxOf(maxOf(toSegment(a[0], a[1], b), toSegment(a[2], a[3], b)), maxOf(toSegment(b[0], b[1], a), toSegment(b[2], b[3], a)))
+
     /** How far a matched element's box may lie from the port's: 0.2 px, or a float's precision far beyond the frame (worst). */
     private fun boxSlack(v: Double): Double = maxOf(0.2, Math.abs(v) / (1 shl 20))
 
@@ -942,8 +1026,13 @@ object L1Diff {
                     continue
                 }
             }
+            if (sameInView(p, t)) {
+                r.beyondView++
+                place(i, best, p)
+                continue
+            }
             r.differs++
-            if (r.firstDiffering.size < 5) r.firstDiffering += "${t.e.where}: port ${p.vertices.joinToString(" ") { p1(it) }} [${p.shape}], " +
+            if (r.firstDiffering.size < 5) r.firstDiffering += "${t.e.where} ${shortKey(t.e.key)}: port ${p.vertices.joinToString(" ") { p1(it) }} [${p.shape}], " +
                 "twin ${t.vertices.joinToString(" ") { p1(it) }} [${t.shape}]"
         }
 
@@ -967,7 +1056,7 @@ object L1Diff {
         }
         r.port = ps.size - hiddenP
         r.twin = ts.size - hiddenT
-        r.matched = r.exact + r.oneStep + r.differs + r.inPieces
+        r.matched = r.exact + r.oneStep + r.beyondView + r.differs + r.inPieces
         return r
     }
 

@@ -200,13 +200,21 @@ inline constexpr std::uint64_t cornices = 1ULL << 49U;
 inline constexpr std::uint64_t quay_waterlines = 1ULL << 50U;
 /// The light stone top along a quay wall at the street's level.
 inline constexpr std::uint64_t quay_tops = 1ULL << 51U;
+// The shops (passes/Shopfronts.hpp), each its own switch.
+/// A mapped shop's, café's or hotel's front on its street wall: its frame, glass, awning, sign and blade.
+inline constexpr std::uint64_t shopfronts = 1ULL << 52U;
+/// A café's or a restaurant's terrace on the pavement: its tables, chairs and parasols.
+inline constexpr std::uint64_t terraces = 1ULL << 53U;
+/// The open places' glow at night.
+inline constexpr std::uint64_t open_glows = 1ULL << 54U;
 /// Every part version 3 knows; a state with another is refused.
-inline constexpr std::uint64_t known = (1ULL << 52U) - 1U;
+inline constexpr std::uint64_t known = (1ULL << 55U) - 1U;
 
-/// The facades' detail: every part of a facade wall (ENGINE.md step 4, the facades), its doors and numbers too.
+/// The facades' detail: every part of a facade wall (ENGINE.md step 4, the facades), its doors and numbers, its
+/// shopfronts and their terraces too.
 inline constexpr std::uint64_t facade_detail = windows | window_depth | shop_glazing | plinths | cornices |
                                                church_windows | material_faces | hoist_beams | kit_details | doors |
-                                               house_numbers;
+                                               house_numbers | shopfronts | terraces;
 /// Every part of the buildings pass (the doors are a pass of their own).
 inline constexpr std::uint64_t buildings = walls | roofs | roof_edges | windows | window_depth | shop_glazing |
                                            plinths | cornices | church_windows | material_faces | hoist_beams |
