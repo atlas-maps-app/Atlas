@@ -357,6 +357,7 @@ object MapEngine {
         packList ?: PackList(
             windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
             world = { worldDir() },
+            worldHeld = { ids -> worldCacheDir()?.let { MapCore.worldHeld(it.path, worldCacheBytes, ids) } ?: BooleanArray(ids.size) },
         )
             .also { packList = it }
     }
@@ -431,17 +432,26 @@ object MapEngine {
     /** Where the windows the phone took or built are kept: [keptDir]'s `windows/`; null where nothing is kept. */
     fun windowsDir(): File? = keptDir?.let { File(it, "windows") }
 
-    /** Where the world is kept (ENGINE.md step 5: world.idx, its parts and the globe): [keptDir]'s `world/`. */
+    /** Where the world is kept (ENGINE.md step 6: world.json, world.idx and the globe): [keptDir]'s `world/`. */
     fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
+    /** The world's own cache of its packs' heads and chunks (ENGINE.md step 6, the core's LRU): [worldDir]'s `cache/`. */
+    fun worldCacheDir(): File? = worldDir()?.let { File(it, "cache") }
+
+    /** The world cache's budget in bytes (ENGINE.md step 6: 256 MB, which a setting raises); the app sets it. */
+    @Volatile
+    var worldCacheBytes: Long = WORLD_CACHE_BYTES
+
+    /** 256 MB: the world cache's budget unless the user raised it. */
+    const val WORLD_CACHE_BYTES = 256L shl 20
+
     /**
-     * Told of the place a map's camera looks at from beyond the countries' reach ([PackList.LEVELS_REACH]), as it moves
-     * there: the app fetches the world's packs of a block a view first enters (ENGINE.md step 5, world-test's fetch:
-     * app.atlas.tiles.WorldFetch) and calls [invalidate] once they are on the phone. Called on the main thread with
-     * each camera there: it must return at once. Nothing by default.
+     * The world's packs by ranges as the maps' views want them (ENGINE.md step 6), once the app has its world's files
+     * ([WorldReads]: each map asks it for a step twice a second, as for its windows); null before, and in CI's runs but
+     * their world phase.
      */
     @Volatile
-    var worldPlace: (lat: Double, lon: Double) -> Unit = { _, _ -> }
+    var worldReads: app.atlas.mapview.vk.WorldReads? = null
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null

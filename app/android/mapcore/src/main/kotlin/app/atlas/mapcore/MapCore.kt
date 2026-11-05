@@ -26,6 +26,44 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         /** The façade's ABI, checked against the library's at load. */
         const val ABI = Native.ABI
 
+        /** A SHA-256's bytes (world.idx's pack identities). */
+        private const val SHA256 = 32
+
+        /** The numbers of one of [worldWants]' wants (Native.worldWants). */
+        private const val WANT = 8
+
+        /**
+         * Whether the world's cache in [dir] holds each pack's head (ENGINE.md step 6), by [identities] (their SHA-256s):
+         * all false where the core does not load or the cache does not open. Off the main thread: the cache's first use
+         * in the process lists its entries.
+         */
+        fun worldHeld(dir: String, budget: Long, identities: List<ByteArray>): BooleanArray {
+            if (identities.isEmpty() || Native.load() != null) return BooleanArray(identities.size)
+            val all = ByteArray(identities.size * SHA256)
+            identities.forEachIndexed { i, id -> id.copyInto(all, i * SHA256) }
+            return Native.worldHeld(dir, budget, all)?.takeIf { it.size == identities.size } ?: BooleanArray(identities.size)
+        }
+
+        /**
+         * A world pack's head the app fetched into the world's cache in [dir] (ENGINE.md step 6): the pack of [kind]
+         * ([PackRef.WORLD_MID] or [PackRef.WORLD_BASE]) and [length] bytes whose SHA-256 is [identity], its bytes but its
+         * `chunks` section as [ranges] (each its offset in the pack and its bytes), kept once the pack opens from them
+         * alone. "" or why not. Off the main thread.
+         */
+        fun worldHead(dir: String, budget: Long, kind: Int, length: Long, identity: ByteArray, ranges: List<Pair<Long, ByteArray>>): String {
+            Native.load()?.let { return it.ifEmpty { "the core did not load" } }
+            return Native.worldHead(dir, budget, kind, length, identity, LongArray(ranges.size) { ranges[it].first }, Array(ranges.size) { ranges[it].second })
+        }
+
+        /**
+         * Empties the world's cache in [dir] of every head and chunk (ENGINE.md step 6: a new version of the world drops
+         * the old one's), within [budget] bytes from now on. "" or why not. Off the main thread.
+         */
+        fun worldDrop(dir: String, budget: Long): String {
+            Native.load()?.let { return it.ifEmpty { "the core did not load" } }
+            return Native.worldDrop(dir, budget)
+        }
+
         @Volatile
         private var process: MapCore? = null
 
@@ -237,7 +275,20 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * [packs] returns). With a [path], [offset] and [length] are the file's time and size as the app listed it: a file
      * built again at the same path (a window's) is new bytes, which the core opens anew.
      */
-    class PackRef(val id: String, val number: Long, val kind: Int, val path: String = "", val fd: Int = -1, val offset: Long = 0, val length: Long = 0) {
+    class PackRef(
+        val id: String,
+        val number: Long,
+        val kind: Int,
+        val path: String = "",
+        val fd: Int = -1,
+        val offset: Long = 0,
+        val length: Long = 0,
+        /**
+         * A remote world pack's SHA-256 (world.idx's; ENGINE.md step 6), with [length] its size and no [path]: the core
+         * opens it from its head in the world's cache ([worldHead]) and loads each chunk the cache holds ([worldKeep]).
+         */
+        val identity: ByteArray? = null,
+    ) {
         companion object {
             /** The APK's tiles (the Westerkerk, the canal ring). */
             const val BUNDLED = 0
@@ -249,8 +300,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             const val WINDOW = 2
 
             /**
-             * A pack of the world's mid-zoom base (ENGINE.md step 5): a range of its part, [path] the part's and [offset] and
-             * [length] the range (world.idx's), drawn beyond 18 km under every country's tiles.
+             * A pack of the world's mid-zoom base (ENGINE.md steps 5 and 6): a remote pack by its [identity] and [length]
+             * (world.idx's), opened from its head in the world's cache, drawn beyond 18 km under every country's tiles.
              */
             const val WORLD_MID = 3
 
@@ -278,6 +329,7 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             Array(packs.size) { packs[it].id }, LongArray(packs.size) { packs[it].number }, IntArray(packs.size) { packs[it].kind },
             Array(packs.size) { packs[it].path }, IntArray(packs.size) { packs[it].fd },
             LongArray(packs.size) { packs[it].offset }, LongArray(packs.size) { packs[it].length },
+            Array(packs.size) { packs[it].identity },
         )
     }
 
@@ -370,6 +422,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         /** Its pack's id among the map's packs. */
         val id: String get() = "window/$z/$x/$y"
 
+        /** Its key packed as the core's (z << 48 | x << 24 | y). */
+        val packed: Long get() = (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong()
+
         /** The box whose data it needs: south, west, north, east, degrees (its tile's grown by the core's margin). */
         fun box(): DoubleArray = Native.windowBox(z, x, y)
 
@@ -445,6 +500,49 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun levelsInView(): List<Window> =
         core.call(emptyList()) { h -> Native.levelsInView(h).map { Window.of(it) } }
+
+    /**
+     * The map's world keeps its remote packs' heads and chunks in the world's cache in [dir] within [budget] bytes from
+     * now on (ENGINE.md step 6: the world's own LRU, one for the process); "" or why not. Off the main thread.
+     */
+    fun worldCache(dir: String, budget: Long): String = core.call("the core is closed") { Native.worldCache(it, dir, budget) }
+
+    /**
+     * A world tile the map wants whose chunk is not on the phone: its pack's [block] and [identity] (its SHA-256), its
+     * [tile], the chunk's [offset] in the pack and its [length].
+     */
+    class WorldWant(val block: Window, val identity: ByteArray, val tile: Window, val offset: Long, val length: Long)
+
+    /**
+     * The world's tiles the map wants now whose chunks are not on the phone (ENGINE.md step 6), nearest first: the app
+     * fetches their ranges and hands them over ([worldKeep]). Empty before the world draws. Off the main thread.
+     */
+    fun worldWants(): List<WorldWant> = core.call(emptyList()) { h ->
+        val w = Native.worldWants(h)
+        List(w.size / WANT) { i ->
+            val at = WANT * i
+            val identity = java.nio.ByteBuffer.allocate(32).putLong(w[at + 4]).putLong(w[at + 5]).putLong(w[at + 6]).putLong(w[at + 7]).array()
+            WorldWant(Window.of(w[at]), identity, Window.of(w[at + 1]), w[at + 2], w[at + 3])
+        }
+    }
+
+    /**
+     * The world's blocks the map's cover reaches without an open pack (ENGINE.md step 6), nearest first: an L3 block's
+     * coarse pack, an L6 block's fine one; the app fetches the head of each its index has. Off the main thread.
+     */
+    fun worldBlocks(): List<Window> = core.call(emptyList()) { h -> Native.worldBlocks(h).map { Window.of(it) } }
+
+    /** What [worldKeep] made of a range: the chunks it kept, and the tiles whose bytes were refused. */
+    class WorldKept(val kept: Int, val refused: List<Window>)
+
+    /**
+     * A range of the bytes of the world pack of [block] and [identity] from [offset] (ENGINE.md step 6): its whole
+     * chunks checked against their SHA-256 and kept in the world's cache, and the map's next frame builds them. Null
+     * where the map's world holds no such pack (another version's) or no cache. Off the main thread.
+     */
+    fun worldKeep(block: Window, identity: ByteArray, offset: Long, bytes: ByteArray): WorldKept? = core.call(null) { h ->
+        Native.worldKeep(h, block.packed, identity, offset, bytes)?.let { r -> WorldKept(r[0].toInt(), List(r.size - 1) { Window.of(r[it + 1]) }) }
+    }
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
