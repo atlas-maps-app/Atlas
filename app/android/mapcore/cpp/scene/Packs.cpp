@@ -167,6 +167,9 @@ void PackStage::work(const std::stop_token& stop) {
             published = published_callback_;
         }
         if (published) published();
+        // The job goes before the stage is idle, and with it what it was handed of the composition before: kept to the
+        // loop's next turn, a composition the World let go of outlived wait_idle (packs_vk_test's pack added again).
+        job = {};
         {
             const std::scoped_lock lock(mutex_);
             busy_ = false;
