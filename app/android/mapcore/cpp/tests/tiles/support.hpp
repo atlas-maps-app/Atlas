@@ -50,11 +50,12 @@ template <class T>
     return value != nullptr ? std::string(value) : std::string();
 }
 
-/// Opens the pack file at `path`, mapped.
-[[nodiscard]] inline tiles::Result<tiles::Pack> open_pack(const std::string& path) {
+/// Opens the pack file at `path`, mapped: a world pack in `world_style` where one is given (tiles::Pack::open).
+[[nodiscard]] inline tiles::Result<tiles::Pack> open_pack(const std::string& path,
+                                                          const tiles::Style* world_style = nullptr) {
     auto source = tiles::MappedSource::open(path);
     if (!source) return std::unexpected(source.error());
-    return tiles::Pack::open(std::move(*source));
+    return tiles::Pack::open(std::move(*source), world_style);
 }
 
 /// A little-endian sink with LEB128 varints, as rendertiles' LeSink.
@@ -905,6 +906,8 @@ struct PackOptions {
     std::vector<SectionBytes> extra;
     /// Style tables after style_tables()'s (a region's `tradition`).
     std::vector<values::Field> style_tables;
+    /// Another `style` (its bytes before compression) in place of style_tables()'s.
+    std::optional<std::vector<std::byte>> style;
 };
 
 /// A format-3 pack of `chunks`, with `rhead` for `levels`, as Format3Writer lays it out (D1's container).
@@ -942,7 +945,7 @@ struct PackOptions {
         sections.push_back({"rhead", head, head.size(), tiles::Method::stored});
         std::vector<values::Field> tables = style_tables();
         tables.insert(tables.end(), options.style_tables.begin(), options.style_tables.end());
-        const auto style = style_bytes(tables);
+        const auto style = options.style.value_or(style_bytes(tables));
         sections.push_back({"style", zstd_frame(style), style.size(), tiles::Method::zstd});
     }
     sections.insert(sections.end(), options.extra.begin(), options.extra.end());

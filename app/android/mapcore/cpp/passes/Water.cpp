@@ -31,7 +31,8 @@
 // (so not over the surface, nor over what lies above the water), each sample once (both banks draw it), before the
 // streets (record_water_band). The reflections, the glints, the glitter and the rings keep the water's own samples:
 // their clip is the count or the thin bit, never the band beyond the water. The tint leaves the thin bit's samples
-// (the band holds it). The thin bit is cleared with the clip (record_water_end).
+// (the band holds it). The thin bit and the band's are cleared with the clip (record_water_end), not by a pass of
+// their own.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -213,7 +214,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     ATLAS_GPU_LET(th, frame::make_pipeline(context, thin, frame::Overdraw::none));
     p.water_thin = std::move(th);
     // their band over what lies under it at its share, at the water's depth (not over the surface or what lies above
-    // the water), each sample once by the band's bit
+    // the water), each sample once by the band's bit (cleared with the clip, record_water_end)
     gpu::GraphicsDesc band = ground_desc(context, p, "ground water band", "thin_band_vs", "thin_fs");
     translucent(band);
     band.depth_write = true;
@@ -227,19 +228,6 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                     .reference = ground_stencil::water_band};
     ATLAS_GPU_LET(bd, frame::make_pipeline(context, band, frame::Overdraw::translucent));
     p.water_band = std::move(bd);
-    // the band's bit cleared over the frame
-    gpu::GraphicsDesc band_end = ground_desc(context, p, "ground water band end", "screen_vs", "flat_fs");
-    colour_off(band_end);
-    band_end.stencil_test = true;
-    band_end.stencil = {.failOp = vk::StencilOp::eZero,
-                        .passOp = vk::StencilOp::eZero,
-                        .depthFailOp = vk::StencilOp::eZero,
-                        .compareOp = vk::CompareOp::eAlways,
-                        .compareMask = 0,
-                        .writeMask = ground_stencil::water_band,
-                        .reference = 0};
-    ATLAS_GPU_LET(be, frame::make_pipeline(context, band_end, frame::Overdraw::none));
-    p.water_band_end = std::move(be);
     // the surface where the count is not zero: wgrad (with weather), at the water's depth, opaque
     const vk::StencilOpState inside{.failOp = vk::StencilOp::eKeep,
                                     .passOp = vk::StencilOp::eKeep,
@@ -320,7 +308,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     rings.stencil = water;
     ATLAS_GPU_LET(rg, frame::make_pipeline(context, rings, frame::Overdraw::translucent));
     p.rings = std::move(rg);
-    // the clip's end: its bits cleared over the frame
+    // the clip's end: its bits and the thin water's cleared over the frame
     gpu::GraphicsDesc end = ground_desc(context, p, "ground water end", "screen_vs", "flat_fs");
     colour_off(end);
     end.stencil_test = true;
@@ -329,7 +317,8 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                    .depthFailOp = vk::StencilOp::eZero,
                    .compareOp = vk::CompareOp::eAlways,
                    .compareMask = 0,
-                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin,
+                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin |
+                                ground_stencil::water_band,
                    .reference = 0};
     ATLAS_GPU_LET(e, frame::make_pipeline(context, end, frame::Overdraw::none));
     p.water_end = std::move(e);
@@ -437,7 +426,6 @@ void Ground::record_water_band(const frame::Recording& r) {
         const std::uint32_t c = rgba(th.water).packed();
         thin_draws(r, 0, {}, {c, c, c, 0U});
     }
-    water_screen(r, pipelines_->water_band_end, {}, {});
 }
 
 void Ground::record_water_tint(const frame::Recording& r) {

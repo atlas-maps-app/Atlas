@@ -3,7 +3,8 @@
 // bundled packs', each bundled pack's head written again from its values is its own bytes, the style the core composes
 // for the living map and for the canal ring (with the region's R as the packer had it) is the bundled pack's, and so
 // are the head and the style the core makes from what the packer knows of each (its frame, the port's engine version,
-// its source and R), byte for byte.
+// its source and R), byte for byte; and the style the core draws every world pack in is the one the packer writes into
+// each (a world's globe at the core's style version, ATLAS_WORLD_DIR).
 #include "load/Amsterdam.hpp"
 #include "load/PackHead.hpp"
 #include "load/PackStyle.hpp"
@@ -152,6 +153,46 @@ TEST_CASE("load: the core writes the bundled packs' heads and styles byte for by
         ATLAS_REQUIRE(style.has_value());
         CHECK_MESSAGE(*style == g.style, difference(*style, g.style));
     }
+}
+
+TEST_CASE("load: the world's style is the style file's, at UTC, made once, as the packer writes each world pack's") {
+    const tl::Style* world = load::world_style();
+    ATLAS_REQUIRE(world != nullptr);
+    CHECK(load::world_style() == world);
+    // the style file's values, as the living map's style has them, and amsterdam.py's module values
+    const auto living = load::style_section({.palette = load::amsterdam_palette(), .state = {}});
+    ATLAS_REQUIRE(living.has_value());
+    auto read = tl::read_style(*living);
+    ATLAS_REQUIRE(read.has_value(), tl::describe(read.error()));
+    const auto typed = tl::Style::of(*read);
+    ATLAS_REQUIRE(typed.has_value(), tl::describe(typed.error()));
+    CHECK(world->shopfronts.glass_open != 0);
+    CHECK(world->shopfronts.glass_open == typed->shopfronts.glass_open);
+    CHECK(world->windows.shop_glass_open == typed->windows.shop_glass_open);
+    CHECK(world->quay_colour == typed->quay_colour);
+    CHECK(!world->tone);
+    CHECK(!world->paris);
+    // a world built at the core's style version (ATLAS_WORLD_DIR: world.yml's output, or a draft's files): its globe's
+    // style is the world's, byte for byte, so the world looks as it did when each pack was drawn in its own style
+    const std::string dir = atlas::test::environment("ATLAS_WORLD_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the world's style is not compared with a world's globe here");
+        return;
+    }
+    auto globe = atlas::test::open_pack(dir + "/world-globe.atlas", world);
+    ATLAS_REQUIRE(globe.has_value(), tl::describe(globe.error()));
+    const tl::RenderHead* head = globe->head();
+    ATLAS_REQUIRE(head != nullptr);
+    if (head->style_version != load::style_version()) {
+        MESSAGE("the world's globe was built at style " << head->style_version << ", the core's is "
+                                                        << load::style_version() << ": their styles are not compared");
+        return;
+    }
+    const std::optional<Sections> s = sections_of(*globe);
+    ATLAS_REQUIRE(s.has_value());
+    const auto section = load::world_style_section();
+    ATLAS_REQUIRE(section.has_value());
+    CHECK_MESSAGE(*section == s->style, difference(*section, s->style));
 }
 
 TEST_CASE("load: the core makes the bundled packs' heads and styles from what the packer knows (ATLAS_TILES_DIR)") {
