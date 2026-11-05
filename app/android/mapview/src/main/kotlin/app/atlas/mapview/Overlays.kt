@@ -108,7 +108,7 @@ data class AreaOverlay(val id: String, val centre: LatLon, val radiusM: Double, 
  * The building the app asks about (FillIn's question, the board's look), the way or relation [id]: drawn plain (no
  * windows, no facade detail), its walls in one flat colour [wall] (0xRRGGBB: the board's grey before an answer, the
  * answer's colour as the board draws it after), and [hatched] while the question is open. The core draws it so
- * (MapCore.ask); today's map does not.
+ * (MapCore.ask).
  */
 @Immutable
 data class AskedBuilding(val id: app.atlas.model.OsmId, val wall: Int, val hatched: Boolean)

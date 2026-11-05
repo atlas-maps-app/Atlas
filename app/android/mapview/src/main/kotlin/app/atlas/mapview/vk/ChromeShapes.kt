@@ -26,7 +26,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.toSize
 import app.atlas.mapcore.state.CameraWriter
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -100,7 +100,7 @@ class ChromeShapes {
             end()
             return slot
         }
-        Log.w(EngineFrames.TAG, "vk chrome: more than $MAX_SHAPES shapes; this one has no glass from the core")
+        Log.w(MapEngine.TAG, "vk chrome: more than $MAX_SHAPES shapes; this one has no glass from the core")
         return -1
     }
 
@@ -346,7 +346,7 @@ class ChromeShapes {
     private var logView: View? = null
     private val logLine = Runnable {
         logPending = false
-        Log.i(EngineFrames.TAG, describe())
+        Log.i(MapEngine.TAG, describe())
     }
 
     /** Hears each frame [view]'s window lays out (and logs the shapes a moment after they change). Main thread. */

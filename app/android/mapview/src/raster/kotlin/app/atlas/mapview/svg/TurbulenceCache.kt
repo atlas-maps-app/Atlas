@@ -540,7 +540,7 @@ class TurbulenceCache(
         const val DEFAULT_MAX_BYTES = 64L shl 20
         const val DEFAULT_MAX_DISK_BYTES = 160L shl 20
 
-        /** The cache the map's filters use, set by [app.atlas.mapview.MapEngine.useCacheDir]; null computes every frame's noise. */
+        /** The cache the raster's filters use, which a test sets; null computes every frame's noise. */
         @Volatile
         var shared: TurbulenceCache? = null
 

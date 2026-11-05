@@ -13,6 +13,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true }
+    // The CPU raster of the renders' SVG, today's map's on the phone until the core drew every place (ENGINE.md step 3):
+    // in tests alone, as the likeness oracle (:likeness compiles the same folder into its tests), never in the APK.
+    sourceSets { getByName("test") { kotlin.srcDir("src/raster/kotlin") } }
     testOptions {
         unitTests {
             // Robolectric draws real pixels (native graphics) at SDK 34, the highest JDK 17 runs.
@@ -38,9 +41,8 @@ android {
 }
 
 dependencies {
-    // The engine: the 1:1 port of render/ (and its region packs); the screens still hand the map a tile source.
+    // The port of render/ the core's moment and the packs' readers still come from (ENGINE.md step 7 moves them).
     api(project(":render"))
-    api(project(":anchor"))
     api(project(":places"))
     // The map's core (plan-vector D19): the C++23 Vulkan engine and its Kotlin façade.
     api(project(":mapcore"))
@@ -53,6 +55,8 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    // The renders' SVG model and parser the CPU raster draws (src/raster), and their test fixtures.
+    testImplementation(project(":anchor"))
     testImplementation(testFixtures(project(":anchor")))
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)

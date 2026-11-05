@@ -23,8 +23,8 @@ import java.time.ZoneId
  * windows).
  *
  * Per camera it names the pack the frame draws ([choose]): the window whose box holds the target, which the core draws
- * with its frame cell's pack (D3: one profile a frame). The transitional rule asks it whether the core has tiles at a
- * place ([covers]). Thread-safe: the list is replaced whole ([load], on a background thread).
+ * with its frame cell's pack (D3: one profile a frame), and says whether the core has tiles at a place ([covers]),
+ * which the map's line follows. Thread-safe: the list is replaced whole ([load], on a background thread).
  */
 class PackList(
     /** The folder of the windows on the phone ([Windows]), or null for none. */
@@ -111,7 +111,7 @@ class PackList(
     var worldRefs: List<MapCore.PackRef> = emptyList()
         private set
 
-    /** Whether the world is on the phone: the core draws every camera beyond [LEVELS_REACH] ([Transition.pathOf]). */
+    /** Whether the world is on the phone: the core draws every camera beyond [LEVELS_REACH] from it. */
     val hasWorld: Boolean get() = worldRefs.isNotEmpty()
 
     /** Whether the world draws a camera [distance] metres from its target: on the phone, and beyond [LEVELS_REACH]. */
@@ -138,7 +138,7 @@ class PackList(
         }
         // the windows on the phone: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
-        // the place is today's map's (Windows does not fetch such a window again for a week); nor one of another
+        // the place is the core's own cover (Windows does not fetch such a window again for a week); nor one of another
         // version than a window built now (another stage P or style: an earlier APK built it), so a frame cell's
         // windows are of one version
         val version = windowVersion()
@@ -223,8 +223,8 @@ class PackList(
     fun named(lat: Double, lon: Double): Pack? = choose(lat, lon) ?: packs.minByOrNull { gap(it.box, lat, lon) }
 
     /**
-     * Whether the core has tiles for a camera on [lat], [lon], [distance] metres from it (the transitional rule's
-     * place): a pack holds the target, and the target is within the cover's reach ([CORE_REACH]); or, where a frame
+     * Whether the core has tiles for a camera on [lat], [lon], [distance] metres from it (the map's place, which its
+     * line follows): a pack holds the target, and the target is within the cover's reach ([CORE_REACH]); or, where a frame
      * cell's level's tile on the phone holds it, within the levels' reach ([LEVELS_REACH]).
      */
     fun covers(lat: Double, lon: Double, distance: Double): Boolean = when {
@@ -249,7 +249,7 @@ class PackList(
         /**
          * How far it reaches within a country whose tiles hold its frame cells' levels (ENGINE.md one pack per country,
          * step 7): the core draws to 30 km of the eye (scene::WorldOptions::levels_far), where the top of a view pitched
-         * 48° from a target 18 km away lies; beyond, today's map.
+         * 48° from a target 18 km away lies; beyond, the world's (ENGINE.md step 5).
          */
         const val LEVELS_REACH = 18_000.0
 

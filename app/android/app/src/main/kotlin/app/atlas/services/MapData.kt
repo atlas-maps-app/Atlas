@@ -21,8 +21,6 @@ import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.RegionBuilder
 import app.atlas.render.data.inTurns
 import app.atlas.render.live.HttpGet
-import app.atlas.render.live.LiveEngine
-import app.atlas.render.live.LiveRegions
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
@@ -47,9 +45,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The map's data: the engine's region packs (the Westerkerk bundled in the app, the renders' packs downloaded when the
- * camera is in their box, packs built here from Overpass where none reaches), kept in the app's files and used offline;
- * and the forecast that lights the live moment. [wire] hands them to every map ([MapEngine]).
+ * The map's data: the sources of the windows the core draws (ENGINE.md step 3: a country's tiles, Atlas's window packs,
+ * the element packs on the phone, Overpass), the world beyond the countries, and the forecast that lights the live
+ * moment. [wire] hands them to every map ([MapEngine]).
  */
 class MapData(private val services: Services) {
     /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
@@ -81,10 +79,11 @@ class MapData(private val services: Services) {
 
     /**
      * The element packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the
-     * regions keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]): today's
-     * map's and the features' data. The bundled pack is installed on first use (a copy of 627 KB, once), on whichever
-     * background thread asks first, before anything is chosen. No region's render pack is fetched beside its element
-     * pack (`renders` off): the core draws the windows alone (ENGINE.md step 3, one pack per country).
+     * regions keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]): the
+     * features' data, and the windows' where nothing else gives a window's ([localWindow]). The bundled pack is installed
+     * on first use (a copy of 627 KB, once), on whichever background thread asks first, before anything is chosen. No
+     * region's render pack is fetched beside its element pack (`renders` off): the core draws the windows alone
+     * (ENGINE.md step 3, one pack per country).
      */
     val packs: PackLibrary by lazy {
         val regionPacks = File(services.dirs.regions, "atlas")
@@ -155,15 +154,47 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * Which region a view draws, and getting it ready. Today's map builds no area of its own from Overpass any more
-     * (null): the core's windows build every place (ENGINE.md step 3), and a second build of the same streets only
-     * asked the same busy servers twice and showed "building 0 of 0 KB" where it never came.
+     * Window [w]'s data from the element packs on the phone ([packs]; ENGINE.md step 3, the windows' local lane): those
+     * that meet its box ([PackWindows]). Online, where none does, a published pack holding the window's middle is fetched
+     * first and kept, as today's map fetched it until 5 November (its list read, and a pack that did not come asked for
+     * again, at most every [PUBLISHED_RETRY_MS]). Null where no pack holds any of it. Blocks: the windows' own thread.
      */
-    val regions: LiveRegions by lazy {
-        LiveRegions(
-            packs, worker, online = ::online, overpass = null, onChange = { MapEngine.invalidate() },
-            engineCountry = { p -> MapEngine.countryAt(p.lat, p.lon) != null },
-        )
+    private fun localWindow(w: MapCore.Window): app.atlas.mapview.vk.Windows.Packed? {
+        val b = w.box()
+        val box = BBox(b[1], b[0], b[3], b[2])
+        var here = packs.local().filter { it.bbox.intersects(box) }
+        if (here.isEmpty() && online()) {
+            val now = System.currentTimeMillis()
+            val entry = published().firstOrNull { box.center in it.bbox && packs.local(it.id) == null } ?: return null
+            if (packFailed[entry.id]?.let { now - it < PUBLISHED_RETRY_MS } == true) return null
+            try {
+                packs.download(entry)
+            } catch (e: IOException) {
+                packFailed[entry.id] = now
+                android.util.Log.w("AtlasMap", "vk window ${w.id}: the pack ${entry.id} did not come: ${e.message}")
+                return null
+            }
+            android.util.Log.i("AtlasMap", "vk window ${w.id}: the pack ${entry.id} fetched (${entry.bytes} bytes)")
+            here = packs.local().filter { it.bbox.intersects(box) }
+        }
+        if (here.isEmpty()) return null
+        return PackWindows.answer(here.map { it.file }, box)
+    }
+
+    @Volatile
+    private var publishedAskedAt = 0L
+
+    /** When each published pack last failed to come (ms), asked for again [PUBLISHED_RETRY_MS] later. */
+    private val packFailed = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** The published packs, their list read once (again while none came, every [PUBLISHED_RETRY_MS] at most). */
+    private fun published(): List<PackLibrary.Entry> {
+        val known = packs.published
+        if (known.isNotEmpty()) return known
+        val now = System.currentTimeMillis()
+        if (now - publishedAskedAt < PUBLISHED_RETRY_MS) return known
+        publishedAskedAt = now
+        return runCatching { packs.refresh() }.getOrDefault(emptyList())
     }
 
     /**
@@ -181,14 +212,9 @@ class MapData(private val services: Services) {
 
     /** Hands the map engine its data. */
     fun wire() {
-        LiveEngine.workDir = File(services.dirs.cache, "engine")
-        // the CPU filters' noise, kept across frames and launches and warmed up for the screen now (in the app's own
-        // cache, not in a test's folder)
-        if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
         // the windows the phone took or built, which the map draws offline: in the app's files, never cleared by Android
         if (services.config.root == null) MapEngine.useKeptDir(services.dirs.engine)
         MapEngine.weather = weather
-        MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
         // is of the last day where one answers; built again after a week from the changes since. Where the user switched
         // Overpass off, none is asked (and none rested for it), and the map says so.
@@ -210,6 +236,10 @@ class MapData(private val services: Services) {
         MapEngine.windowTiles = { w ->
             windowTiles.window(w.z, w.x, w.y, MapCore.Window.version())?.let { app.atlas.mapview.vk.Windows.Tiled(it.bytes, it.date, it.pack) }
         }
+        // and where neither gives a window's data, the element packs on the phone (an offline region's map, a place's
+        // published pack fetched for it): before Overpass, and offline too
+        MapEngine.windowLocal = { w -> localWindow(w) }
+        MapEngine.localKept = { packs.local().isNotEmpty() }
         // a country downloaded whole (the Maps board): its windows come from it offline too
         MapEngine.tilesKept = { regionFiles.keepsTiles() }
         // and the windows taken from it are the first the windows' budget lets go: they come back from the phone at once
@@ -347,5 +377,8 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
+
+        /** How long the windows wait to ask for the renders' list or one of its packs again where none came (ms), as today's map did. */
+        private const val PUBLISHED_RETRY_MS = 60_000L
     }
 }

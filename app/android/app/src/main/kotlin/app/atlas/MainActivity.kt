@@ -58,12 +58,7 @@ class MainActivity : ComponentActivity() {
         // The bench shortcut: CI's home frame (the Westerkerk) on the phone, with the phone's own location and the windows
         // the phone takes from the Netherlands' tiles
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
-        // CI's debug screen: the SVG filter probes through the GPU's AGSL path (the map view's FilterProbesScreen)
-        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
-            setContent { app.atlas.mapview.FilterProbesScreen() }
-            return
-        }
-        // CI's other debug screen: what the phone's OpenGL ES offers (logcat gets it too)
+        // CI's debug screen: what the phone's OpenGL ES offers (logcat gets it too)
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_GLCAPS) {
             setContent { app.atlas.mapview.GlCapsScreen() }
             return
@@ -109,11 +104,7 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
         if (intent.getBooleanExtra(EXTRA_CI_GLASS, false)) services.ciGlass = true
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
-        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
-            setContent { app.atlas.mapview.FilterProbesScreen() }
-            return
-        }
-        // CI's other debug screen: what the phone's OpenGL ES offers (logcat gets it too)
+        // CI's debug screen: what the phone's OpenGL ES offers (logcat gets it too)
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_GLCAPS) {
             setContent { app.atlas.mapview.GlCapsScreen() }
             return
@@ -247,9 +238,6 @@ class MainActivity : ComponentActivity() {
         }
         const val SCREEN_LIST = "list"
 
-        /** CI: the map view's SVG filter probes through AGSL, the GPU path, against the CPU's. */
-        const val SCREEN_FILTERS = "filters"
-
         /** CI: the device facts and the OpenGL ES capabilities (not in [screenList]: the bench run opens it by name). */
         const val SCREEN_GLCAPS = "glcaps"
 
@@ -334,8 +322,8 @@ class MainActivity : ComponentActivity() {
         private const val SHORTCUT_GLCAPS = "bench-glcaps"
         const val CI_SCREENS_FILE = "ci_screens.txt"
 
-        /** Every screen CI opens: the app's ([CiScreens]) and the map view's filter probes. */
-        fun screenList(): String = CiScreens.list() + " " + SCREEN_FILTERS
+        /** Every screen CI opens: the app's ([CiScreens]). */
+        fun screenList(): String = CiScreens.list()
 
         /** The back stack an intent asks for, or null to keep what is there. */
         fun stackFor(intent: Intent): List<Dest>? {

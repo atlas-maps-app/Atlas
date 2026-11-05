@@ -13,7 +13,6 @@ import app.atlas.mapcore.state.MarkerBlock
 import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.GroundPick
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
@@ -39,10 +38,10 @@ import java.util.concurrent.TimeoutException
 
 /**
  * One map's side of the core (plan-vector K11): the camera it hands the core at each vsync ([source], written into
- * [camera]'s buffer), the packs it hands over ([bind], [handPacks]), the moment ([moment]), the transitional rule's
- * state ([transition]), what the core said of the frames it presented (complete or not), the first frame's line, and
- * the debug panel's numbers ([panelLine]). The map (`MapController`) makes one while `MapEngine.core` is ready and
- * draws today's map over the core as [transition] says.
+ * [camera]'s buffer), the packs it hands over ([bind], [handPacks]), the moment ([moment]), the paper over it at the
+ * start ([cover]), what the core said of the frames it presented (complete or not), the first frame's line, and the
+ * debug panel's numbers ([panelLine]). The map (`MapController`) makes one while `MapEngine.core` is ready; the core
+ * draws every place through it.
  *
  * One map draws through the core at a time (the core has one window): the one bound last ([bind]); a map that goes
  * turns the core's map off only if it is still that one ([close]).
@@ -56,7 +55,7 @@ internal class CoreMap(
     private val onChange: Runnable,
 ) {
     val camera = CameraState()
-    val transition = Transition { Log.i(EngineFrames.TAG, it) }
+    val cover = StartCover()
 
     /** Whether the last frame the core presented was complete. */
     @Volatile
@@ -138,7 +137,7 @@ internal class CoreMap(
             core.map(true, texture)
         }
         val packs = said.lines().filter { it.isNotBlank() }.joinToString(", ")
-        Log.i(EngineFrames.TAG, "vk map on (${if (texture) "texture" else "surface"}): ${packs.ifEmpty { "no packs" }}" + (if (on.isEmpty()) "" else "; $on"))
+        Log.i(MapEngine.TAG, "vk map on (${if (texture) "texture" else "surface"}): ${packs.ifEmpty { "no packs" }}" + (if (on.isEmpty()) "" else "; $on"))
         return on
     }
 
@@ -174,7 +173,7 @@ internal class CoreMap(
             lastPalette = palette
             night = theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0
         } else {
-            Log.w(EngineFrames.TAG, "vk moment: $why")
+            Log.w(MapEngine.TAG, "vk moment: $why")
         }
         return why
     }

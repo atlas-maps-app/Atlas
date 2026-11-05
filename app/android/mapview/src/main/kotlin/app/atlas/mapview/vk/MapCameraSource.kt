@@ -57,7 +57,7 @@ internal class MapCameraSource(
         val principalXDp: Double,
         val widthPx: Int,
         val heightPx: Int,
-        /** The frame in whole dp, rounded as today's map rounds them (MapController.liveView). */
+        /** The frame in whole dp, rounded as MapController.liveView rounds them. */
         val widthDp: Int,
         val heightDp: Int,
         val density: Double,
@@ -67,7 +67,7 @@ internal class MapCameraSource(
         /** The pack drawn (PackList's number) and its profile (CameraWriter.PROFILE_*), 0 for the world's own choice. */
         val pack: Long,
         val profile: Int,
-        /** Whether the core draws at all now (the transitional rule hides it under today's map otherwise). */
+        /** Whether the core draws at all now: always, since today's map left the phone (the transitional rule hid it under that map). */
         val draw: Boolean,
         /** Where the user is, where the core draws the location's puck; null where it draws none. */
         val location: Location? = null,

@@ -338,8 +338,8 @@ fun GlCapsScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         report = withContext(Dispatchers.Default) {
             val lines = DeviceFacts.lines(context) + GlCaps.probe().lines()
-            for (l in lines) Log.i(EngineFrames.TAG, "glcaps $l")
-            Log.i(EngineFrames.TAG, "glcaps done")
+            for (l in lines) Log.i(MapEngine.TAG, "glcaps $l")
+            Log.i(MapEngine.TAG, "glcaps done")
             lines
         }
     }

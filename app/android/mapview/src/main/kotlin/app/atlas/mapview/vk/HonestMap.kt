@@ -24,7 +24,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.mapcore.MapCore
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.MapController
 import app.atlas.mapview.MapEngine
 import kotlinx.coroutines.Dispatchers
@@ -35,14 +34,14 @@ import kotlinx.coroutines.withContext
  * T2's honest state (plan-vector T2, K11): where the phone's graphics driver cannot draw the map (no usable Vulkan, the
  * crash guard turned it off for this driver, or the debug switch `atlas.vk.off`), the map's place says so instead of a
  * map, with the reason and the VK facts to copy; the rest of the app works around it (search, places, routes, lists).
- * Today's map is no fallback for it (T2). Logged once as `vk honest: <reason>`, which smoke.sh reads.
+ * No other map stands in for it (T2). Logged once as `vk honest: <reason>`, which smoke.sh reads.
  */
 @Composable
 internal fun HonestMap(reason: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf("") }
-    LaunchedEffect(reason) { Log.i(EngineFrames.TAG, "vk honest: $reason") }
+    LaunchedEffect(reason) { Log.i(MapEngine.TAG, "vk honest: $reason") }
     Box(modifier.fillMaxSize().background(Color(MapController.DAY_EARTH)), contentAlignment = Alignment.Center) {
         Column(
             Modifier.padding(32.dp).widthIn(max = 340.dp).background(Color.White, RoundedCornerShape(16.dp)).padding(20.dp),

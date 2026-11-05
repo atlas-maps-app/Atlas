@@ -8,7 +8,7 @@
 # and every check still runs on every push (29 October: "Make sure no quality is lost"): the APKs (apk), the app's
 # unit tests (unit-app), every other module's (unit-rest), the JNI tests against the core's host build (mapcorecheck)
 # and the likeness smoke tier (likeness) are jobs of their own, and once the APKs are built the emulator's work runs
-# in five parts, each on an emulator of its own: the home and the filters with the bench APK's truth phase, the Vulkan
+# in five parts, each on an emulator of its own: the home with the bench APK's truth phase, the Vulkan
 # core's phases (VK facts, bench and the crash guard, the frosted pills, the map, the world), and every other screen
 # in three shares. emulator-coverage then holds the parts to having opened each screen the app lists, and run each
 # phase, once.
@@ -24,7 +24,7 @@ on:
     # nightly: the likeness harness's full tier and its history (plan-vector D16), on the work branch
     - cron: '23 2 * * *'
   workflow_dispatch:
-    # A run by hand (gh workflow run android.yml --ref <branch> -f tests=false -f screens="home filters"): the device loop
+    # A run by hand (gh workflow run android.yml --ref <branch> -f tests=false -f screens="home"): the device loop
     # for the engine's speed and memory, without the unit tests, on one emulator with every phase.
     inputs:
       tests:
@@ -36,7 +36,7 @@ on:
         type: string
         default: ''
       wait:
-        description: Seconds to wait for the home's map and the filter probes
+        description: Seconds to wait for the home's map
         type: number
         default: 180
       bench:
@@ -782,7 +782,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: cache/likeness/refs
-          key: likeness-refs-smoke-${{ runner.arch }}-${{ hashFiles('app/android/render/src/main/**', 'app/android/anchor/src/main/**', 'app/android/anchor/src/testFixtures/**', 'app/android/mapview/src/main/kotlin/app/atlas/mapview/svg/**', 'app/android/mapview/src/main/assets/svgfonts/**', 'app/android/likeness/**', 'app/android/mapcorecheck/src/test/resources/likeness/cases/**', 'app/android/gradle/libs.versions.toml') }}
+          key: likeness-refs-smoke-${{ runner.arch }}-${{ hashFiles('app/android/render/src/main/**', 'app/android/anchor/src/main/**', 'app/android/anchor/src/testFixtures/**', 'app/android/mapview/src/main/kotlin/app/atlas/mapview/svg/**', 'app/android/mapview/src/raster/**', 'app/android/mapview/src/main/assets/svgfonts/**', 'app/android/likeness/**', 'app/android/mapcorecheck/src/test/resources/likeness/cases/**', 'app/android/gradle/libs.versions.toml') }}
       - name: References
         id: references
         # a cold smoke build must take no more than 4 minutes (K4's acceptance)
@@ -818,7 +818,7 @@ jobs:
 
   emulator:
     # The real thing: the APK on an Android emulator, opened on each screen, with screenshots and frame timings, in
-    # parts on emulators of their own (smoke.sh's ATLAS_PHASES and ATLAS_SCREENS_*): bench, the home and the filters
+    # parts on emulators of their own (smoke.sh's ATLAS_PHASES and ATLAS_SCREENS_*): bench, the home
     # at the debug build's first launch and then the bench APK's truth phase, which tables both; vk, VK facts, VK bench
     # and the crash guard, the frosted pills, the map drawn by the core and the world beyond the countries from the
     # world-test release (once published), in that order on one emulator (the map's launches find the pipeline cache
@@ -870,9 +870,9 @@ jobs:
             echo "ATLAS_PACKS=bench-packs"
             case "$PART" in
               all) echo "ATLAS_SCREENS=$SCREENS" ;;
-              bench) echo "ATLAS_SCREENS=home filters"; echo "ATLAS_PHASES=screens truth" ;;
+              bench) echo "ATLAS_SCREENS=home"; echo "ATLAS_PHASES=screens truth" ;;
               vk) echo "ATLAS_PHASES=vk pills map world" ;;
-              screens-*) echo "ATLAS_SCREENS_SKIP=home filters"; echo "ATLAS_SCREENS_PART=${PART#screens-}/3"; echo "ATLAS_PHASES=screens" ;;
+              screens-*) echo "ATLAS_SCREENS_SKIP=home"; echo "ATLAS_SCREENS_PART=${PART#screens-}/3"; echo "ATLAS_PHASES=screens" ;;
               *) echo "::error::no part $PART"; exit 1 ;;
             esac
           } | tee -a "$GITHUB_ENV"
@@ -1146,7 +1146,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: cache/likeness/refs
-          key: likeness-refs-full-${{ matrix.shard }}-${{ runner.arch }}-${{ hashFiles('app/android/render/src/main/**', 'app/android/anchor/src/main/**', 'app/android/anchor/src/testFixtures/**', 'app/android/mapview/src/main/kotlin/app/atlas/mapview/svg/**', 'app/android/mapview/src/main/assets/svgfonts/**', 'app/android/likeness/**', 'app/android/mapcorecheck/src/test/resources/likeness/cases/**', 'app/android/gradle/libs.versions.toml') }}
+          key: likeness-refs-full-${{ matrix.shard }}-${{ runner.arch }}-${{ hashFiles('app/android/render/src/main/**', 'app/android/anchor/src/main/**', 'app/android/anchor/src/testFixtures/**', 'app/android/mapview/src/main/kotlin/app/atlas/mapview/svg/**', 'app/android/mapview/src/raster/**', 'app/android/mapview/src/main/assets/svgfonts/**', 'app/android/likeness/**', 'app/android/mapcorecheck/src/test/resources/likeness/cases/**', 'app/android/gradle/libs.versions.toml') }}
       - name: References
         run: ./gradlew :likeness:testDebugUnitTest --tests 'app.atlas.likeness.ReferencesTest' -Datlas.likeness.tier=full -Datlas.likeness.shard=${{ matrix.shard }}/2 -Plikeness.heap=7g --stacktrace
       - name: Keep the references
