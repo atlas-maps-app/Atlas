@@ -292,7 +292,8 @@ class HomeViewModel(
      * CI's scripted look at the world beyond the countries (ENGINE.md step 5; smoke.sh's world phase, with
      * `atlas.ci.world`): once the core's first picture is final, the camera goes out from the start to each of
      * [WORLD_VIEWS] in turn, waits there for the world's packs of the start's block (the first start's index and globe,
-     * then the block's parts, which the view's first frames there ask for) and then for the map's picture to be final,
+     * then those packs' heads, which the view's first frames there ask for) and then for the map's picture to be final
+     * (the chunks of the tiles in view, which its frames ask for by ranges),
      * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then back. `vk script …` lines mark each step for smoke.sh,
      * which reads the world's fetch (`vk world` lines) and the core's rests (`vk tiles … world` lines) between them.
      */
@@ -322,13 +323,17 @@ class HomeViewModel(
         log("vk script done")
     }
 
-    /** Whether the world's index, its globe and the parts holding [place]'s packs are on the phone (WorldFetch's files). */
+    /**
+     * Whether the world's index and its globe are on the phone (WorldFetch's files) and the maps have the packs holding
+     * [place] (their heads in the world's cache, so PackList lists them).
+     */
     private suspend fun worldHere(place: LatLon): Boolean = withContext(Dispatchers.IO) {
         val dir = MapEngine.worldDir() ?: return@withContext false
         val idx = java.io.File(dir, app.atlas.tiles.WorldFetch.INDEX)
         if (!idx.isFile || !java.io.File(dir, app.atlas.tiles.WorldFetch.GLOBE).isFile) return@withContext false
         val index = runCatching { app.atlas.tiles.WorldIndex.read(idx.readBytes()) }.getOrNull() ?: return@withContext false
-        app.atlas.tiles.WorldFetch.missing(dir, index, place.lat, place.lon).isEmpty()
+        val listed = MapEngine.packs().worldRefs.mapTo(HashSet()) { it.id }
+        app.atlas.tiles.WorldFetch.packsAt(index, place.lat, place.lon).all { app.atlas.tiles.WorldFetch.idOf(it) in listed }
     }
 
     /** Waits until the map's status passes [test], at most [timeoutMs]; false where it did not. */
@@ -508,7 +513,7 @@ class HomeViewModel(
          */
         private val WORLD_VIEWS = listOf(25 to 60.0, 100 to 30.0)
 
-        /** How long the script waits for the world's packs, then for the picture: world-test's 92 MB over the emulator's network. */
+        /** How long the script waits for the world's packs' heads, then for the picture: the index, the globe's 9.7 MB and the chunks over the emulator's network. */
         private const val WORLD_WAIT_MS = 300_000L
         private const val WORLD_SETTLE_MS = 10_000L
         private const val WORLD_HOLD_MS = 15_000L

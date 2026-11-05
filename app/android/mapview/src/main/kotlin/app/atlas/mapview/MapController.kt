@@ -923,8 +923,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val c = core
         if (c != null && c.packs.loaded) {
             placedCountries = MapEngine.countries
-            // beyond the countries' reach the world draws: the app fetches the blocks a view enters
-            if (view.distance > PackList.LEVELS_REACH) MapEngine.worldPlace(view.lat, view.lon)
             val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance)
             if (at != place) {
                 place = at
@@ -939,6 +937,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 MapEngine.windows()?.let { w ->
                     scope.launch(Dispatchers.IO) {
                         if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
+                    }
+                }
+                // the world's packs the view wants (ENGINE.md step 6): a block's head, then its tiles' chunks by ranges
+                MapEngine.worldReads?.let { r ->
+                    scope.launch(Dispatchers.IO) {
+                        if (runCatching { r.step(c.core) }.getOrDefault(false)) main.post(repack)
                     }
                 }
                 // what the windows do now is what the map is, where the place's window has not come yet

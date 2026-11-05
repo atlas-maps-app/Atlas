@@ -1,14 +1,13 @@
 package app.atlas.tiles
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.math.PI
@@ -18,70 +17,165 @@ import kotlin.math.ln
 import kotlin.math.tan
 
 /**
- * The world's files on the phone (ENGINE.md step 5, the part of step 6's fetch that world-test needs): `world.idx` and
- * the globe at the first start, then the part holding a block's packs when a view first enters the block, each whole,
+ * The world's files on the phone (ENGINE.md step 6, "Fetch and keep"): `world.json` from the release `world-latest` at
+ * most once a day, then the index and the globe of the release it names at the first start and at each new version,
  * into the world's folder ([dir]: the kept folder's `world/`, which PackList lists for the core). A file is written
- * beside its place (`<name>.download`) and moved there only once it is complete and checked: the index read, the globe
- * as long as its answer said, a part as long as the index says with every pack in it of the SHA-256 the index names.
- * So the core never lists a file half written, nor a pack it would refuse. Whole files until step 6, which takes a
- * block's packs by ranges into the world's own cache (world-test's parts are 9.1 and 73.2 MB). Every request says only
- * who is asking ([Http.USER_AGENT]). Blocking: call it off the main thread, one call at a time.
+ * beside its place (`<name>.download`) and moved there once it is as long as world.json says and of the SHA-256 it
+ * names, so the core never lists a file half written. A new version drops the old one: its index and globe replaced,
+ * and [drop] called (the app empties the world's cache of heads and chunks). The packs themselves come by ranges as the
+ * map's views want them ([head], [range]: mapview's WorldReads, into the core's cache). Every request says only who is
+ * asking ([Http.USER_AGENT]). Blocking: call it off the main thread, one [start] at a time.
  */
 class WorldFetch(
     private val dir: File,
-    private val base: String = WORLD_TEST,
+    private val latest: String = WORLD_LATEST,
     client: OkHttpClient = Http.client,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val drop: () -> Unit = {},
 ) {
-    // a part takes minutes on a phone's network: no limit on the whole call, only on each wait for bytes; nor through
-    // the app's HTTP cache, which would keep a second copy of each part (PackDownloader's reasons)
+    // the globe takes a while on a phone's network: no limit on the whole call, only on each wait for bytes; nor through
+    // the app's HTTP cache, which would keep a second copy (PackDownloader's reasons)
     private val client = client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
-    /** The index on the phone, once [start] found or fetched it; null before. */
+    // the scheme world.json came on (https): its release's files must come on it too
+    private val scheme = latest.substringBefore("://")
+
+    /** A release of the world as world.json names it: its tag, where its files are, its index and globe. */
+    class Release(val tag: String, val url: String, val index: File, val globe: File) {
+        /** One of its files as world.json lists it: name, bytes and SHA-256 (hex). */
+        class File(val name: String, val bytes: Long, val sha256: String)
+    }
+
+    /** The world on the phone once [start] found or fetched it: its release and its index. */
+    class World(val release: Release, val index: WorldIndex)
+
+    /** The world on the phone, once [start] found or fetched it; null before. */
     @Volatile
-    var index: WorldIndex? = null
+    var world: World? = null
         private set
 
-    /** World.idx and the globe, each fetched where the folder lacks it (the first start). Throws where one cannot be had. */
-    @Synchronized
-    fun start() {
-        dir.mkdirs()
-        val idx = File(dir, INDEX)
-        if (!idx.isFile) fetch(INDEX, idx) { WorldIndex.read(it.readBytes()) }
-        index = WorldIndex.read(idx.readBytes())
-        val globe = File(dir, GLOBE)
-        if (!globe.isFile) fetch(GLOBE, globe) {}
+    /** The index on the phone, once [start] found or fetched it; null before. */
+    val index: WorldIndex? get() = world?.index
+
+    /** Whether world.json was asked for a day ago or more (or never, or the clock went back): [start] asks again. */
+    fun due(): Boolean {
+        val asked = runCatching { File(dir, ASKED).readText().trim().toLong() }.getOrNull() ?: return true
+        val t = now()
+        return t - asked >= DAY_MS || t < asked
     }
 
     /**
-     * The parts holding the packs of the place at [lat], [lon]: its L6 tile's fine pack and its L3 tile's coarse pack,
-     * each part fetched where the folder lacks it. Returns the parts fetched: none where the folder holds them, where no
-     * pack holds the place (open sea, or beyond the blocks built), or before [start]. Throws where one cannot be had.
+     * world.json, asked for where it is [due] (else the phone's), then the index and the globe of the release it names,
+     * each fetched where the phone has another release's or none; a new release drops the old one ([drop]). Returns
+     * whether the world on the phone changed (the maps take their packs again). Throws where world.json, the index or
+     * the globe cannot be had and the phone has no whole world to go on with.
      */
     @Synchronized
-    fun enter(lat: Double, lon: Double): List<String> {
-        val index = index ?: return emptyList()
-        return missing(dir, index, lat, lon).map { number ->
-            val part = index.parts[number]
-            fetch(part.name, File(dir, part.name)) { checkPart(it, number, index) }
-            part.name
+    fun start(): Boolean {
+        dir.mkdirs()
+        val json = File(dir, JSON)
+        if (due() || !json.isFile) {
+            val asked = now()
+            val fetched = runCatching {
+                fetch(latest + JSON, json, -1, null) { readRelease(it.readText(), scheme) }
+                File(dir, ASKED).writeText("$asked\n")
+            }
+            val phone = world ?: onPhone()
+            if (fetched.isFailure && phone != null) {
+                // the phone's world goes on until world-latest answers
+                val changed = world == null
+                world = phone
+                return changed
+            }
+            fetched.getOrThrow()
+        }
+        val release = readRelease(json.readText(), scheme)
+        val kept = runCatching { File(dir, RELEASE).readText().trim() }.getOrNull()
+        val idx = File(dir, INDEX)
+        val globe = File(dir, GLOBE)
+        val same = kept == release.tag && idx.length() == release.index.bytes && globe.length() == release.globe.bytes
+        if (!same) {
+            // the new release's index and globe beside the old ones, then both moved in: the old version dropped
+            val newIdx = File(dir, "$INDEX.new")
+            val newGlobe = File(dir, "$GLOBE.new")
+            try {
+                fetch(release.url + release.index.name, newIdx, release.index.bytes, release.index.sha256) { WorldIndex.read(it.readBytes()) }
+                fetch(release.url + release.globe.name, newGlobe, release.globe.bytes, release.globe.sha256) {}
+                File(dir, RELEASE).delete()
+                idx.delete()
+                globe.delete()
+                if (!newIdx.renameTo(idx) || !newGlobe.renameTo(globe)) throw IOException("the world's $INDEX and $GLOBE not moved into place")
+                File(dir, RELEASE).writeText(release.tag + "\n")
+            } finally {
+                newIdx.delete()
+                newGlobe.delete()
+            }
+            if (kept != null && kept != release.tag) drop()
+        }
+        val before = world
+        val now = World(release, WorldIndex.read(idx.readBytes()))
+        world = now
+        return before == null || before.release.tag != now.release.tag || !same
+    }
+
+    /** The world as the phone keeps it (world.json, and its release's index and globe), or null where it is not whole. */
+    private fun onPhone(): World? = runCatching {
+        val release = readRelease(File(dir, JSON).readText(), scheme)
+        val idx = File(dir, INDEX)
+        val whole = File(dir, RELEASE).readText().trim() == release.tag && idx.length() == release.index.bytes &&
+            File(dir, GLOBE).length() == release.globe.bytes
+        if (whole) World(release, WorldIndex.read(idx.readBytes())) else null
+    }.getOrNull()
+
+    /**
+     * The head of pack [e] of the world on the phone (ENGINE.md step 6): its bytes but its `chunks` section, as ranges
+     * (each its offset in the pack and its bytes), which the core keeps in the world's cache. Its first [HEAD_FIRST]
+     * bytes, then what of the head lies past them, a request each: the rest of its directory where it runs past them,
+     * the rest before its chunks, and the sections after them (one request for a pack no longer than [HEAD_FIRST]).
+     */
+    fun head(e: WorldIndex.Entry): List<Pair<Long, ByteArray>> {
+        var first = range(e, 0, minOf(e.length, HEAD_FIRST.toLong()).toInt())
+        val need = directoryEnd(first)
+        if (need > first.size) first += range(e, first.size.toLong(), need - first.size)
+        val (start, end) = chunksOf(first, e.length)
+        val before = if (start <= first.size) first.copyOf(start.toInt()) else first + range(e, first.size.toLong(), (start - first.size).toInt())
+        if (end >= e.length) return listOf(0L to before)
+        val after = if (first.size >= e.length) first.copyOfRange(end.toInt(), e.length.toInt()) else range(e, end, (e.length - end).toInt())
+        return listOf(0L to before, end to after)
+    }
+
+    /** Bytes [offset] to [offset] + [length] of pack [e] of the world on the phone: one range of its part. */
+    fun range(e: WorldIndex.Entry, offset: Long, length: Int): ByteArray {
+        val w = world ?: throw IOException("the world is not on the phone yet")
+        require(offset >= 0 && length > 0 && offset + length <= e.length) { "bytes $offset to ${offset + length} of a pack of ${e.length}" }
+        val url = w.release.url + w.index.parts[e.part].name
+        val a = e.offset + offset
+        val req = Http.request(url).header("Accept-Encoding", "identity").header("Range", "bytes=$a-${a + length - 1}")
+        client.newCall(req.build()).execute().use { r ->
+            if (r.code != 206 || PackDownloader.rangeStart(r.header("Content-Range")) != a) {
+                throw HttpStatusException(r.code, "HTTP ${r.code} (${r.header("Content-Range")}) for bytes $a to ${a + length} of $url")
+            }
+            val out = ByteArray(length)
+            var done = 0
+            val source = r.body.source()
+            while (done < length) {
+                val n = source.read(out, done, length - done)
+                if (n < 0) throw IOException("$url: bytes $a to ${a + length} cut short at ${a + done}")
+                done += n
+            }
+            return out
         }
     }
 
-    /** A place a map looks at: its target's latitude and longitude. */
-    data class Place(val lat: Double, val lon: Double)
-
     /**
-     * The world's fetch for the life of the process: [start] once the phone is [online], then [enter] for each place a
-     * map looks at from beyond 18 km ([places], null before the first), the latest only while a part comes. What failed
-     * is tried again, for the latest place, once the phone is online: [firstWait] on, doubling to [longestWait] while it
-     * fails, or at once where the phone loses its network and comes back meanwhile; a place moved to meanwhile waits
-     * too, so a pan asks nothing at each frame. A phone's network goes now and then: on 1 November CI's emulator moved
-     * from its Wi-Fi to its mobile network as the first part was asked for, and the ten minutes then left without a try
-     * kept the world phase's parts from coming. [said] gets the `vk world` lines (CI's world phase reads them), [landed]
-     * is called as each file is in place. Blocking calls: run it off the main thread. Never returns.
+     * The world's files for the life of the process: [start] once the phone is [online], then again each day (world.json
+     * at most once a day). What failed is tried again once the phone is online: [firstWait] on, doubling to
+     * [longestWait] while it fails, or at once where the phone loses its network and comes back meanwhile (a phone's
+     * network goes now and then: on 1 November CI's emulator moved from its Wi-Fi to its mobile network as the world was
+     * asked for). [said] gets the `vk world` lines (CI's world phase reads them), [landed] is called as the world on the
+     * phone changes. Blocking calls: run it off the main thread. Never returns.
      */
     suspend fun follow(
-        places: StateFlow<Place?>,
         online: StateFlow<Boolean>,
         said: (String) -> Unit,
         landed: () -> Unit,
@@ -89,108 +183,167 @@ class WorldFetch(
         longestWait: Long = LONGEST_WAIT_MS,
     ): Nothing {
         var wait = firstWait
-        suspend fun again() {
+        while (true) {
+            online.first { it }
+            val started = runCatching { start() }
+            val w = world
+            if (started.isSuccess && w != null) {
+                if (started.getOrThrow()) {
+                    said("$INDEX (${w.index.entries.size} packs) and $GLOBE of ${w.release.tag} on the phone")
+                    landed()
+                }
+                wait = firstWait
+                // the next look at world.json once a day has passed since the last
+                while (!due()) delay(DUE_CHECK_MS)
+                continue
+            }
+            said("not on the phone yet: ${started.exceptionOrNull()?.message}")
             withTimeoutOrNull(wait) {
                 online.first { !it }
                 online.first { it }
             }
             wait = (wait * 2).coerceAtMost(longestWait)
         }
-        while (true) {
-            online.first { it }
-            val started = runCatching { start() }
-            if (started.isSuccess) break
-            said("not on the phone yet: ${started.exceptionOrNull()?.message}")
-            again()
-        }
-        said("$INDEX (${index?.entries?.size ?: 0} packs) and $GLOBE on the phone")
-        landed()
-        wait = firstWait
-        var done: Place? = null
-        while (true) {
-            val p = combine(places, online) { place, on -> place?.takeIf { on && it != done } }.filterNotNull().first()
-            val got = runCatching { enter(p.lat, p.lon) }
-            val parts = got.getOrNull()
-            if (parts == null) {
-                said("a block's packs not fetched: ${got.exceptionOrNull()?.message}")
-                again()
-                continue
-            }
-            done = p
-            wait = firstWait
-            if (parts.isNotEmpty()) {
-                said("parts ${parts.joinToString()} on the phone")
-                landed()
-            }
-        }
     }
 
-    /** Fetches [name] of the release into [target] by way of `<target>.download`, moved into place once [check] passes. */
-    private fun fetch(name: String, target: File, check: (File) -> Unit) {
+    /**
+     * Fetches [url] into [target] by way of `<target>.download`, moved into place once it is [bytes] long (-1: as its
+     * answer said) with the SHA-256 [sha256] (null: any) and [check] passes.
+     */
+    private fun fetch(url: String, target: File, bytes: Long, sha256: String?, check: (File) -> Unit) {
         val partial = File(target.path + ".download")
         try {
             partial.delete()
-            client.newCall(Http.request(base + name).header("Accept-Encoding", "identity").build()).execute().use { r ->
-                if (r.code != 200) throw HttpStatusException(r.code, "HTTP ${r.code} fetching $name")
+            client.newCall(Http.request(url).header("Accept-Encoding", "identity").build()).execute().use { r ->
+                if (r.code != 200) throw HttpStatusException(r.code, "HTTP ${r.code} fetching $url")
                 val declared = r.body.contentLength()
-                partial.outputStream().use { out -> r.body.byteStream().copyTo(out, BUFFER) }
-                if (declared >= 0 && partial.length() != declared) throw IOException("$name: ${partial.length()} bytes of $declared")
+                val digest = MessageDigest.getInstance("SHA-256")
+                partial.outputStream().use { out ->
+                    val source = r.body.byteStream()
+                    val buf = ByteArray(BUFFER)
+                    while (true) {
+                        val n = source.read(buf)
+                        if (n < 0) break
+                        digest.update(buf, 0, n)
+                        out.write(buf, 0, n)
+                    }
+                }
+                val want = if (bytes >= 0) bytes else declared
+                if (want >= 0 && partial.length() != want) throw IOException("$url: ${partial.length()} bytes of $want")
+                if (sha256 != null && hex(digest.digest()) != sha256) {
+                    throw PackDownloader.ChecksumException("$url is not the file world.json names")
+                }
             }
             check(partial)
-            if (!partial.renameTo(target)) throw IOException("$name: not moved into place")
+            target.delete()
+            if (!partial.renameTo(target)) throw IOException("$url: not moved into place")
         } finally {
             partial.delete()
         }
     }
 
-    /** Part [number] in [f]: as long as [index] says, and every pack in it of the SHA-256 the index names. */
-    private fun checkPart(f: File, number: Int, index: WorldIndex) {
-        val part = index.parts[number]
-        if (f.length() != part.bytes) throw IOException("${part.name}: ${f.length()} bytes, ${part.bytes} in the index")
-        val buf = ByteArray(BUFFER)
-        RandomAccessFile(f, "r").use { file ->
-            for (e in index.entries) {
-                if (e.part != number) continue
-                val digest = MessageDigest.getInstance("SHA-256")
-                file.seek(e.offset)
-                var left = e.length
-                while (left > 0) {
-                    val n = file.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
-                    if (n < 0) throw IOException("${part.name}: pack ${e.z}/${e.x}/${e.y} cut short")
-                    digest.update(buf, 0, n)
-                    left -= n
-                }
-                if (!digest.digest().contentEquals(e.sha256)) {
-                    throw PackDownloader.ChecksumException("${part.name}: pack ${e.z}/${e.x}/${e.y} is not the one the index names")
-                }
-            }
-        }
-    }
-
     companion object {
-        /** The world-test release (ENGINE.md step 5's step 3: the Netherlands' world packs and the globe). */
-        const val WORLD_TEST = "https://github.com/atlas-maps-app/Atlas/releases/download/world-test/"
+        /** The release world.yml's publish points at the newest world (ENGINE.md step 5): its world.json alone. */
+        const val WORLD_LATEST = "https://github.com/atlas-maps-app/Atlas/releases/download/world-latest/"
 
-        /** The index's file and the globe's (the core's tiles/WorldIndex.hpp, PackList's). */
+        /** world.json, the index's file and the globe's (the core's tiles/WorldIndex.hpp, PackList's). */
+        const val JSON = "world.json"
         const val INDEX = "world.idx"
         const val GLOBE = "world-globe.atlas"
 
+        /** The release the index and the globe on the phone are of, and when world.json was last asked for. */
+        private const val RELEASE = "world.release"
+        private const val ASKED = "world.asked"
+
         private const val BUFFER = 1 shl 16
+
+        /** A day: world.json is asked for at most once in it. */
+        const val DAY_MS = 24 * 3_600_000L
+        /** How often [follow] looks whether world.json is [due]. */
+        internal const val DUE_CHECK_MS = 3_600_000L
+
+        /** A head's first request: the container's header, its manifest and directory, and most of what follows. */
+        const val HEAD_FIRST = 64 shl 10
 
         /** [follow]'s first wait after a failure, and its longest. */
         const val FIRST_WAIT_MS = 15_000L
         const val LONGEST_WAIT_MS = 600_000L
 
-        /**
-         * The parts of [index] holding the packs of the place at [lat], [lon] (its L6 tile's fine pack, its L3 tile's
-         * coarse pack) that [dir] lacks, by number, fine first: a part is moved into place only once whole and checked,
-         * so one as long as the index says is on the phone. None where no pack holds the place.
-         */
-        fun missing(dir: File, index: WorldIndex, lat: Double, lon: Double): List<Int> =
+        /** The container's header: `ATLASPCK`, a zero byte, the format, two zero bytes, the manifest's and directory's lengths (big-endian u32). */
+        private const val HEADER = 20
+        private const val MAGIC = "ATLASPCK"
+
+        /** A directory entry after its name: offset, stored and raw lengths (big-endian u64), CRC-32 (u32) and method. */
+        private const val ENTRY = 29
+
+        /** world.json's release: its tag, where its files are (on [scheme], world-latest's), its index and globe. */
+        fun readRelease(text: String, scheme: String = "https"): Release {
+            val o = Json.parseObject(text)
+            require(o.int("format") == 1) { "world.json of format ${o["format"]}" }
+            fun file(name: String): Release.File {
+                val f = requireNotNull(o.obj(name)) { "world.json without its $name" }
+                val sha = f.str("sha256")?.lowercase()
+                require(sha != null && SHA256.matches(sha)) { "world.json's $name without its SHA-256" }
+                val bytes = f.long("bytes")
+                require(bytes != null && bytes > 0) { "world.json's $name without its length" }
+                return Release.File(requireNotNull(f.str("name")) { "world.json's $name without its name" }, bytes, sha)
+            }
+            val tag = requireNotNull(o.str("release")) { "world.json without its release" }
+            val url = requireNotNull(o.str("url")) { "world.json without its files' place" }.let { if (it.endsWith("/")) it else "$it/" }
+            require(url.startsWith("$scheme://")) { "world.json's files not on $scheme: $url" }
+            return Release(tag, url, file("index"), file("globe"))
+        }
+
+        private val SHA256 = Regex("[0-9a-f]{64}")
+
+        /** Where a pack's manifest and directory end, by its first bytes [first] (its header's lengths). */
+        fun directoryEnd(first: ByteArray): Int {
+            require(first.size >= HEADER && String(first, 0, MAGIC.length, Charsets.US_ASCII) == MAGIC) { "not an Atlas pack" }
+            val b = ByteBuffer.wrap(first)
+            val end = HEADER + (b.getInt(12).toLong() and 0xFFFFFFFFL) + (b.getInt(16).toLong() and 0xFFFFFFFFL)
+            require(end <= Int.MAX_VALUE) { "a pack's directory of $end bytes" }
+            return end.toInt()
+        }
+
+        /** The `chunks` section of a pack of [length] bytes whose first bytes, through its directory, are [first]: its start and end. */
+        fun chunksOf(first: ByteArray, length: Long): Pair<Long, Long> {
+            val end = directoryEnd(first)
+            require(first.size >= end) { "a pack's directory runs past the bytes read" }
+            val b = ByteBuffer.wrap(first)
+            var at = HEADER + b.getInt(12)
+            while (at < end) {
+                var n = 0
+                var shift = 0
+                while (true) {
+                    require(at < end && shift < 35) { "a pack's directory cut short" }
+                    val c = first[at++].toInt() and 0xFF
+                    n = n or ((c and 0x7F) shl shift)
+                    if (c and 0x80 == 0) break
+                    shift += 7
+                }
+                require(n <= end - at - ENTRY) { "a section's name runs past the directory" }
+                val name = String(first, at, n, Charsets.UTF_8)
+                at += n
+                val offset = b.getLong(at)
+                val stored = b.getLong(at + 8)
+                at += ENTRY
+                if (name == "chunks") {
+                    require(offset >= end && stored >= 0 && offset + stored <= length) { "a pack's chunks lie past it" }
+                    return offset to offset + stored
+                }
+            }
+            throw IOException("a pack without chunks")
+        }
+
+        /** The packs of [index] holding the place at [lat], [lon]: its L6 tile's fine pack and its L3 tile's coarse pack, where it has them. */
+        fun packsAt(index: WorldIndex, lat: Double, lon: Double): List<WorldIndex.Entry> =
             listOf(WorldIndex.FINE_BLOCK, WorldIndex.COARSE_BLOCK).mapNotNull { level ->
                 val (x, y) = tileOf(lat, lon, level)
-                index.find(level, x, y)?.part
-            }.distinct().filter { File(dir, index.parts[it].name).length() != index.parts[it].bytes }
+                index.find(level, x, y)
+            }
+
+        /** The store's id of a world pack (the core's tiles::world_pack_id): `world/<z>/<x>/<y>`, its block. */
+        fun idOf(e: WorldIndex.Entry): String = "world/${e.z}/${e.x}/${e.y}"
 
         /** Web Mercator's tile at [level] holding [lat], [lon] (clamped to the tiles' 85.05°). */
         fun tileOf(lat: Double, lon: Double, level: Int): Pair<Int, Int> {
@@ -200,6 +353,8 @@ class WorldFetch(
             val y = floor((1.0 - ln(tan(la) + 1.0 / cos(la)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
             return x to y
         }
+
+        private fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
 
         private const val MAX_LAT = 85.0511287798066
     }

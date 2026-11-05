@@ -34,8 +34,9 @@ namespace atlas::jni {
 /// every layer and effect, style::camera_part). 24: Native.blurLine (VK facts' blur check, passes/BlurCheck.hpp). 25:
 /// Native.painter gone (the phone draws true depth alone since 30 October; the core keeps the painter's order for its
 /// own checks), and Native.wantedLevels and levelsInView (a frame cell's levels' tiles the map wants, and those it
-/// draws, ENGINE.md one pack per country, step 7).
-inline constexpr jint abi = 25;
+/// draws, ENGINE.md one pack per country, step 7). 26: the world's fetch (ENGINE.md step 6): Native.packs' remote world
+/// packs by their SHA-256, and Native.worldCache, worldHeld, worldHead, worldWants, worldBlocks and worldKeep.
+inline constexpr jint abi = 26;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

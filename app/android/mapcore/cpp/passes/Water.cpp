@@ -31,7 +31,11 @@
 // (so not over the surface, nor over what lies above the water), each sample once (both banks draw it), before the
 // streets (record_water_band). The reflections, the glints, the glitter and the rings keep the water's own samples:
 // their clip is the count or the thin bit, never the band beyond the water. The tint leaves the thin bit's samples
-// (the band holds it). The thin bit is cleared with the clip (record_water_end).
+// (the band holds it). The thin bit and the band's are cleared with the clip (record_water_end), not by a pass of
+// their own. The vertex stage decides each stretch, so the CPU leaves out beforehand, by chunks of a tile's stretches
+// in their order, those it would fold every one of (cull_thin): wider on the screen than 1.5 px at both ends of each
+// by a bound that never overstates it, off the screen with their bands' reach or before the near plane, or on pieces
+// the frame does not draw; the rest draw in runs, the frame's pixels as without the cull.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -42,6 +46,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <span>
 
 namespace atlas::passes {
 
@@ -89,7 +94,72 @@ struct Piece {
 
 [[nodiscard]] geo::Rgba rgba(const style::Rgb8& c) noexcept { return {.r = c.r, .g = c.g, .b = c.b, .a = 255}; }
 
+/// The most runs a drawn tile's thin edges are drawn in (Ground::cull_thin), and the fewest edges left out between two
+/// runs: two runs nearer each other are joined, the edges between them drawn and folded, since a draw costs more
+/// than the vertex stage's work on that many edges.
+constexpr std::size_t thin_runs_most = 4;
+constexpr std::uint32_t thin_runs_apart = 2 * geo::thin_chunk;
+
 } // namespace
+
+ThinView::ThinView(const shaders::FrameCamera& c) {
+    const auto d = [](float v) { return static_cast<double>(v); };
+    const std::array<double, 3> r{d(c.right.x), d(c.right.y), d(c.right.z)};
+    const std::array<double, 3> u{d(c.up.x), d(c.up.y), d(c.up.z)};
+    forward = {d(c.forward.x), d(c.forward.y), d(c.forward.z)};
+    const double focal = d(c.forward.w);
+    const double cx = d(c.right.w);
+    const double cy = d(c.up.w);
+    // the view's CSS px: its device px over the density, as clip_of maps them
+    const double width = 2.0 * d(c.device.z) / d(c.device.x);
+    const double height = 2.0 * d(c.device.z) / d(c.device.y);
+    const double m = 2.0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        sides[0][i] = (focal * r[i]) + ((cx + m) * forward[i]);
+        sides[1][i] = ((width + m - cx) * forward[i]) - (focal * r[i]);
+        sides[2][i] = ((cy + m) * forward[i]) - (focal * u[i]);
+        sides[3][i] = (focal * u[i]) + ((height + m - cy) * forward[i]);
+    }
+    near = d(c.frame.w);
+    px = focal * d(c.frame.z);
+}
+
+bool thin_folded(const geo::ThinChunk& k, const shaders::TilePlace& p, const ThinView& v, double y0, double y1) {
+    const auto sx = static_cast<double>(p.scale.x);
+    if (!(sx > 0.0)) return false;
+    // its eye-relative box (eye_relative's), a centimetre out for the vertex stage's float
+    const auto ox = static_cast<double>(p.offset.x);
+    const auto oy = static_cast<double>(p.offset.y);
+    const auto oz = static_cast<double>(p.offset.z);
+    std::array<double, 3> lo{(k.x0 * sx) + ox - 0.01, y0 + oy - 0.01, k.z0 + oz - 0.01};
+    std::array<double, 3> hi{(k.x1 * sx) + ox + 0.01, y1 + oy + 0.01, k.z1 + oz + 0.01};
+    // the most and the least of n · p over the box
+    const auto most = [&lo, &hi](const std::array<double, 3>& n) {
+        double s = 0;
+        for (std::size_t i = 0; i < 3; ++i) s += pymath::max(n[i] * lo[i], n[i] * hi[i]);
+        return s;
+    };
+    const auto least = [&lo, &hi](const std::array<double, 3>& n) {
+        double s = 0;
+        for (std::size_t i = 0; i < 3; ++i) s += pymath::min(n[i] * lo[i], n[i] * hi[i]);
+        return s;
+    };
+    if (most(v.forward) < v.near) return true;
+    const double h = -hi[1];
+    double far = 0;
+    for (std::size_t i = 0; i < 3; ++i) far += pymath::max(lo[i] * lo[i], hi[i] * hi[i]);
+    const double depth = least(v.forward);
+    if (!(h > 0.0) || !(depth > 0.0) || !(4.0 * depth * depth >= far)) return false;
+    const double per_metre = v.px * h * pymath::min(1.0, sx) / far;
+    if (per_metre * k.least >= 1.05 * 1.5) return true;
+    const double reach = (1.05 * 0.75 * pymath::max(1.0, sx) / per_metre) + 0.01;
+    lo[0] -= reach;
+    hi[0] += reach;
+    lo[2] -= reach;
+    hi[2] += reach;
+    return least(v.forward) > 0.0 &&
+           std::ranges::any_of(v.sides, [&most](const std::array<double, 3>& n) { return most(n) < 0.0; });
+}
 
 WaterPiece Ground::view_water(const view::Camera& cam, const geo::GroundTile& g, std::uint32_t i,
                               PolyScratch& s) const {
@@ -213,7 +283,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     ATLAS_GPU_LET(th, frame::make_pipeline(context, thin, frame::Overdraw::none));
     p.water_thin = std::move(th);
     // their band over what lies under it at its share, at the water's depth (not over the surface or what lies above
-    // the water), each sample once by the band's bit
+    // the water), each sample once by the band's bit (cleared with the clip, record_water_end)
     gpu::GraphicsDesc band = ground_desc(context, p, "ground water band", "thin_band_vs", "thin_fs");
     translucent(band);
     band.depth_write = true;
@@ -227,19 +297,6 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                     .reference = ground_stencil::water_band};
     ATLAS_GPU_LET(bd, frame::make_pipeline(context, band, frame::Overdraw::translucent));
     p.water_band = std::move(bd);
-    // the band's bit cleared over the frame
-    gpu::GraphicsDesc band_end = ground_desc(context, p, "ground water band end", "screen_vs", "flat_fs");
-    colour_off(band_end);
-    band_end.stencil_test = true;
-    band_end.stencil = {.failOp = vk::StencilOp::eZero,
-                        .passOp = vk::StencilOp::eZero,
-                        .depthFailOp = vk::StencilOp::eZero,
-                        .compareOp = vk::CompareOp::eAlways,
-                        .compareMask = 0,
-                        .writeMask = ground_stencil::water_band,
-                        .reference = 0};
-    ATLAS_GPU_LET(be, frame::make_pipeline(context, band_end, frame::Overdraw::none));
-    p.water_band_end = std::move(be);
     // the surface where the count is not zero: wgrad (with weather), at the water's depth, opaque
     const vk::StencilOpState inside{.failOp = vk::StencilOp::eKeep,
                                     .passOp = vk::StencilOp::eKeep,
@@ -320,7 +377,7 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     rings.stencil = water;
     ATLAS_GPU_LET(rg, frame::make_pipeline(context, rings, frame::Overdraw::translucent));
     p.rings = std::move(rg);
-    // the clip's end: its bits cleared over the frame
+    // the clip's end: its bits and the thin water's cleared over the frame
     gpu::GraphicsDesc end = ground_desc(context, p, "ground water end", "screen_vs", "flat_fs");
     colour_off(end);
     end.stencil_test = true;
@@ -329,7 +386,8 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
                    .depthFailOp = vk::StencilOp::eZero,
                    .compareOp = vk::CompareOp::eAlways,
                    .compareMask = 0,
-                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin,
+                   .writeMask = ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin |
+                                ground_stencil::water_band,
                    .reference = 0};
     ATLAS_GPU_LET(e, frame::make_pipeline(context, end, frame::Overdraw::none));
     p.water_end = std::move(e);
@@ -389,12 +447,57 @@ void Ground::record_water_opaque(const frame::Recording& r) {
                  {rgba(th->water_top).packed(), rgba(th->water_bottom).packed(), 0U, 0U});
 }
 
-bool Ground::thin_water() const noexcept {
-    if (!frame_.water || !frame_.grounded || !thin_water_) return false;
-    return std::ranges::any_of(frame_.tiles, [](const DrawnTile& t) {
-        return t.ground->layout.thin.count != 0 && static_cast<bool>(t.pass->ranges[0]);
-    });
+void Ground::cull_thin(const frame::FrameState& state) {
+    GroundFrame& f = frame_;
+    f.thin_runs.clear();
+    if (!f.water || !f.grounded || !thin_water_ || !state.view) return;
+    const ThinView view(state.block.camera);
+    // the bits and heights thin_of reads: with weather its pieces' at their level, without at the street
+    const std::uint8_t bit = f.weather ? drawn_bit::level : drawn_bit::street;
+    for (std::size_t i = 0; i < f.tiles.size(); ++i) {
+        const DrawnTile& t = f.tiles[i];
+        if (t.ground->layout.thin.count == 0 || !t.pass->ranges[0]) continue;
+        const auto drawn = [&f, &t, bit](std::uint32_t fill) { return (f.drawn[t.decisions + fill] & bit) != 0; };
+        const std::size_t from = f.thin_runs.size();
+        for (const geo::ThinChunk& k : t.ground->thin_chunks) {
+            if (thin_folded(k, t.place, view, f.weather ? k.y0 : 0.0, f.weather ? k.y1 : 0.0)) {
+                continue;
+            }
+            // on pieces the frame draws: none of its pairs both drawn (where it names them all)
+            if (k.pairs <= geo::thin_pairs && std::ranges::none_of(std::span(k.pair.data(), k.pairs),
+                                                                   [&drawn](const std::array<std::uint32_t, 2>& q) {
+                                                                       return drawn(q[0]) && drawn(q[1]);
+                                                                   })) {
+                continue;
+            }
+            // the run before it extended over fewer than thin_runs_apart edges left out
+            if (f.thin_runs.size() > from &&
+                k.first - (f.thin_runs.back().first + f.thin_runs.back().count) < thin_runs_apart) {
+                f.thin_runs.back().count = k.first + k.count - f.thin_runs.back().first;
+            } else {
+                f.thin_runs.push_back({.tile = static_cast<std::uint32_t>(i), .first = k.first, .count = k.count});
+            }
+        }
+        // at most thin_runs_most a tile: the two nearest each other joined, over and over
+        while (f.thin_runs.size() - from > thin_runs_most) {
+            std::size_t best = from;
+            std::uint32_t least = std::numeric_limits<std::uint32_t>::max();
+            for (std::size_t j = from; j + 1 < f.thin_runs.size(); ++j) {
+                const std::uint32_t gap = f.thin_runs[j + 1].first - (f.thin_runs[j].first + f.thin_runs[j].count);
+                if (gap < least) {
+                    least = gap;
+                    best = j;
+                }
+            }
+            GroundFrame::ThinRun& a = f.thin_runs[best];
+            const GroundFrame::ThinRun& b = f.thin_runs[best + 1];
+            a.count = b.first + b.count - a.first;
+            f.thin_runs.erase(f.thin_runs.begin() + static_cast<std::ptrdiff_t>(best) + 1);
+        }
+    }
 }
+
+bool Ground::thin_water() const noexcept { return !frame_.thin_runs.empty(); }
 
 void Ground::thin_draws(const frame::Recording& r, std::uint32_t flags, std::array<float, 4> rows,
                         std::array<std::uint32_t, 4> colour) const {
@@ -403,16 +506,20 @@ void Ground::thin_draws(const frame::Recording& r, std::uint32_t flags, std::arr
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     pc.rows = {rows[0], rows[1], rows[2], rows[3]};
     pc.colour = {colour[0], colour[1], colour[2], colour[3]};
-    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
-        const DrawnTile& t = frame_.tiles[i];
-        const geo::Words thin = t.ground->layout.thin;
-        if (thin.count == 0 || !t.pass->ranges[0]) continue;
-        // a draw a tile: thin_of finds a vertex's record from the tile's first (six vertices a record)
-        pc.mode = {flags, slot(geo::group::water, 0, 0), (t.pass->ranges[0].offset / 4) + thin.first, 0U};
-        r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0,
-                                                                         pc);
-        r.frame.cmd.draw(6 * thin.count, 1, 0, static_cast<std::uint32_t>(i));
-        r.counters.draw("ground water", 2 * std::uint64_t{thin.count});
+    std::uint32_t tile = std::numeric_limits<std::uint32_t>::max();
+    for (const GroundFrame::ThinRun& run : frame_.thin_runs) {
+        if (run.tile != tile) {
+            // thin_of finds a vertex's record from its tile's first, six vertices a record
+            tile = run.tile;
+            const DrawnTile& t = frame_.tiles[tile];
+            pc.mode = {flags, slot(geo::group::water, 0, 0),
+                       (t.pass->ranges[0].offset / 4) + t.ground->layout.thin.first, 0U};
+            r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0,
+                                                                             pc);
+        }
+        // a draw a run, from its first record's first vertex
+        r.frame.cmd.draw(6 * run.count, 1, 6 * run.first, tile);
+        r.counters.draw("ground water", 2 * std::uint64_t{run.count});
     }
 }
 
@@ -437,7 +544,6 @@ void Ground::record_water_band(const frame::Recording& r) {
         const std::uint32_t c = rgba(th.water).packed();
         thin_draws(r, 0, {}, {c, c, c, 0U});
     }
-    water_screen(r, pipelines_->water_band_end, {}, {});
 }
 
 void Ground::record_water_tint(const frame::Recording& r) {

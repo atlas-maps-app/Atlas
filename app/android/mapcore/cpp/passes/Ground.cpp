@@ -586,7 +586,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
         geo::build_ground(b.tile(), b.head(), b.style(), b.level(), {.x = b.origin().x, .z = b.origin().z}));
     // the reflections' mirrors whatever the camera, here rather than on the render thread
     prepare_reflections(*ground);
-    const geo::GroundGpu gpu = geo::pack(*ground);
+    geo::GroundGpu gpu = geo::pack(*ground);
     // fill_vs's wide_point finds a vertex's triangle by its word's place past the range's first, mod 3
     ATLAS_ASSERT(gpu.vertices.first == 0 && gpu.above.first % 3 == 0 && gpu.streets.first % 3 == 0 &&
                  gpu.below.first % 3 == 0);
@@ -610,6 +610,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
                       .shadows = gpu.shadows,
                       .shadow_draw = gpu.shadow_draw,
                       .woods_draw = gpu.woods_draw};
+    ground->thin_chunks = std::move(gpu.thin_chunks);
     // the shadows' points are the GPU's now (the twin draws the port's own hulls from the casters)
     ground->shadow_points = {};
     // every range first, then the writes (Heaps' writer holds a lock)
@@ -1614,10 +1615,12 @@ std::uint64_t Ground::words_hash() const noexcept {
 }
 
 void Ground::update(const frame::FrameState& state) {
+    frame_.thin_runs.clear();
     if (!frame_.valid) return;
     lay_designators(state);
     if (pipelines_ == nullptr || words_ == nullptr) return;
     write_words(state);
+    cull_thin(state);
 }
 
 void Ground::lay_designators(const frame::FrameState& state) const {

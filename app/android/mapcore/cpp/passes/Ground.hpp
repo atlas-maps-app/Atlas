@@ -93,9 +93,10 @@ inline constexpr std::uint32_t canopy = 0x10;
 inline constexpr std::uint32_t water_w0 = 0x40;
 /// The app's map's thin water (passes/Water.cpp): where its pieces lie narrower than 1.5 px, their count cleared for
 /// the band (the shadows' bit, from the opaque ground to the water's end: their union comes after it), and the band's
-/// samples drawn (the canopy's, in the opaque ground alone: cleared after the band, before the canopy's union).
+/// samples drawn (the walls' material lines' bit, building/windows.slangh's BUILDING_MATERIAL_STENCIL, from the band
+/// to the water's end: the lines take it in their phase at order 999, after it), both cleared with the clip.
 inline constexpr std::uint32_t water_thin = shadows;
-inline constexpr std::uint32_t water_band = canopy;
+inline constexpr std::uint32_t water_band = 0x20;
 } // namespace ground_stencil
 
 /// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
@@ -520,6 +521,35 @@ inline constexpr std::uint8_t street = 1;
 inline constexpr std::uint8_t level = 2;
 } // namespace drawn_bit
 
+/// The frame's camera as Ground::cull_thin tests the app's map's thin edges with it (passes/Water.cpp), in
+/// eye-relative metres: the planes through the eye of the view's sides 2 CSS px out (css_of's x within [-2, width + 2],
+/// y within [-2, height + 2], for the snap at rest and the vertex stage's float), its forward axis and the near plane,
+/// and the device px a unit of tangent spans.
+struct ThinView {
+    std::array<std::array<double, 3>, 4> sides{};
+    std::array<double, 3> forward{};
+    double near = 0;
+    double px = 0;
+
+    explicit ThinView(const shaders::FrameCamera& c);
+};
+
+/// Whether thin_of folds every thin edge of chunk `k` at tile place `p`, drawn at heights y0 to y1 (its pieces'
+/// levels, or the street), or draws it wholly off the screen: its box before the near plane, where thin_px is
+/// LEAST_PX at both ends of each edge; or, where the box lies within 60 degrees of the view's axis (its least depth at
+/// least half its farthest point's distance, so that the vertex stage's float keeps thin_px within 5 % and the snap at
+/// rest moves no corner across a side), its water at least LEAST_PX wide on the screen at both ends of each edge, or
+/// the box, with the bands' reach beyond their water, wholly in front of the eye and off the screen. thin_px's width at
+/// an end w with the point wm across the water from it is at least px · W · H · min(1, sx) / D² device px for the
+/// water's width W, the eye's height H over it, the tile's x scale sx and the farther D of w and wm from the eye: the
+/// eye and the line along the edge through their middle (thin_px's direction on the screen) span a plane from which
+/// the rays to w and wm lie at angles whose sines are at least W · H · min(1, sx) / (2 · D²), and on the screen a
+/// point lies at least focal times that sine from the line in which the plane cuts it, w and wm on either side. A band
+/// drawn wider than its water reaches LEAST_PX / 2 over its width's share of a px beyond its middle: at most
+/// 0.75 · max(1, sx) metres over that bound a metre.
+[[nodiscard]] bool thin_folded(const geometry::ThinChunk& k, const shaders::TilePlace& p, const ThinView& v, double y0,
+                               double y1);
+
 /// One element of the coaster tracks' shadows (draw_over's, in coasters.draw's order), each its own path: a post's,
 /// from its foot along the ground (its track's point `first`), or a run of its track's points' shadows ahead of the
 /// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest). In
@@ -587,6 +617,14 @@ struct GroundFrame {
     std::vector<std::uint8_t> stroke_drawn; ///< per stroke of the drawn tiles (DrawnTile::strokes)
     std::vector<double> stroke_width;       ///< per stroke: its width this frame, CSS px (as printed at rest)
     std::vector<std::uint8_t> shadow_drawn; ///< per shadow of the drawn tiles (DrawnTile::shadows): drawn
+    /// The app's map's thin edges the vertex stage may draw this frame (Ground::cull_thin), by drawn tile in `tiles`'
+    /// order: runs of a tile's edges (its place in `tiles`, the first edge among its own and their count).
+    struct ThinRun {
+        std::uint32_t tile = 0;
+        std::uint32_t first = 0;
+        std::uint32_t count = 0;
+    };
+    std::vector<ThinRun> thin_runs;
     /// Whether the drawn tiles come from more than one scene with a window among them (a window beside another pack's
     /// tiles, or two windows: a frame cell's pack holds a scene a window): the ground is then ordered by its elements
     /// across them (geometry::OrderKey), each drawn fill and stroke at its rank among its group's, as one scene holding
@@ -1122,10 +1160,15 @@ private:
     /// count is not zero, the count kept for the app's map's streets (record_streets); in the app's map, where its thin
     /// edges lie narrower than 1.5 px, the count left to their band first (record_water_thin).
     void record_water_opaque(const frame::Recording& r);
-    /// Whether the frame draws the water's thin edges: the app's map's, under its switch (draw_thin_water).
+    /// The app's map's thin edges (under its switch, draw_thin_water) that the vertex stage may draw this frame
+    /// (GroundFrame::thin_runs), by thin_chunk: a chunk left out where thin_of surely folds every edge of it, wider
+    /// than 1.5 px at both ends, off the screen with its bands, before the near plane, or on pieces the frame does not
+    /// draw; runs of the rest, two runs fewer than 128 edges apart joined and at most 4 a tile (the nearest joined).
+    void cull_thin(const frame::FrameState& state);
+    /// Whether the frame draws any of the water's thin edges (cull_thin's runs).
     [[nodiscard]] bool thin_water() const noexcept;
-    /// The drawn tiles' thin edges by the bound pipeline (thin_vs, thin_band_vs), a draw a tile, with the draw's
-    /// flags, rows and colours (each tile's first record's word in mode's third).
+    /// The drawn tiles' thin edges by the bound pipeline (thin_vs, thin_band_vs), a draw a run of a tile's
+    /// (cull_thin), with the draw's flags, rows and colours (each tile's first record's word in mode's third).
     void thin_draws(const frame::Recording& r, std::uint32_t flags, std::array<float, 4> rows,
                     std::array<std::uint32_t, 4> colour) const;
     /// Where the water's thin edges lie narrower than 1.5 px, on water counted once: the thin bit set and the count
@@ -1134,7 +1177,7 @@ private:
     void record_water_thin(const frame::Recording& r, std::uint32_t flags);
     /// The water's thin edges' band, after the land and the plate, before the app's map's streets: along the water's
     /// middle at least 1.5 px wide at the share of them it covers, in the surface's colour with its tint, at the
-    /// water's depth, each sample once; its stencil bit cleared after it.
+    /// water's depth, each sample once by its stencil bit, which record_water_end clears with the clip.
     void record_water_band(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
     /// The water's clip cleared from the stencil: with weather (`weather`) after the water's elements, without after
@@ -1417,7 +1460,6 @@ struct Ground::Pipelines {
     /// The app's map's thin water (record_water_thin, record_water_band).
     vk::raii::Pipeline water_thin{nullptr};
     vk::raii::Pipeline water_band{nullptr};
-    vk::raii::Pipeline water_band_end{nullptr};
     // Sky.cpp
     vk::raii::Pipeline sky{nullptr};
     vk::raii::Pipeline sun_glow{nullptr};

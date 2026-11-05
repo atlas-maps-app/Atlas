@@ -207,7 +207,7 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
 
 Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> payload) {
     const std::uint64_t size = cache_header_bytes + payload.size();
-    if (size > budget_) return std::unexpected(error(Fault::too_big, Site::cache, size));
+    if (size > budget()) return std::unexpected(error(Fault::too_big, Site::cache, size));
     const std::vector<std::byte> bytes = encode(key, payload);
     const std::string path = path_of(key.digest());
     const std::string name = path.substr(directory_.size() + 1);
@@ -236,7 +236,7 @@ Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> 
     if (const auto it = index_.find(name); it != index_.end()) total_ -= it->second.bytes;
     index_[name] = {.bytes = size, .used = ++clock_, .generation = serial};
     total_ += size;
-    evict_locked(budget_, &name);
+    evict_locked(budget(), &name);
     return {};
 }
 
@@ -278,6 +278,21 @@ void ExpandedCache::evict_locked(std::uint64_t budget, const std::string* keep) 
         (void)::unlink(std::format("{}/{}", directory_, v).c_str());
     }
 }
+
+void ExpandedCache::set_budget(std::uint64_t budget) {
+    const std::scoped_lock lock(mutex_);
+    budget_.store(budget, std::memory_order_relaxed);
+    evict_locked(budget, nullptr);
+}
+
+bool ExpandedCache::holds(const CacheKey& key) const {
+    const std::string path = path_of(key.digest());
+    const std::string name = path.substr(directory_.size() + 1);
+    const std::scoped_lock lock(mutex_);
+    return index_.contains(name);
+}
+
+std::uint64_t ExpandedCache::writes() const { return writes_.load(std::memory_order_relaxed); }
 
 std::uint64_t ExpandedCache::bytes() const {
     const std::scoped_lock lock(mutex_);
