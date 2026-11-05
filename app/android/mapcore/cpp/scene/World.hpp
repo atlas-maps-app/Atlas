@@ -93,6 +93,9 @@ struct WorldOptions {
     /// What the residency's workers tell the platform (ENGINE.md gain 8: platform::WorkerSession on Android, their
     /// priority and their hint session), or none: they stay at background priority.
     std::shared_ptr<WorkerHints> hints;
+    /// The style the world's packs are drawn in (tiles::Store::set_world_style: the core's own, load::world_style,
+    /// which MapFrame gives), or none: each pack's own.
+    const tiles::Style* world_style = nullptr;
 };
 
 /// The world.

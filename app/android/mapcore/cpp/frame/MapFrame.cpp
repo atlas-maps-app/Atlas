@@ -5,6 +5,7 @@
 #include "frame/PassRegistry.hpp"
 #include "fx/FieldCache.hpp"
 #include "load/Countries.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Window.hpp"
 #include "passes/Ground.hpp"
 #include "passes/Walls.hpp"
@@ -166,7 +167,8 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
          .native_budget = static_cast<std::size_t>(heaps.total),
          .resources = options_.resources,
          .clock = std::move(clock),
-         .hints = options_.worker_hints ? options_.worker_hints() : nullptr});
+         .hints = options_.worker_hints ? options_.worker_hints() : nullptr,
+         .world_style = load::world_style()});
     if (!world) {
         const gpu::Announced named =
             gpu::announce_release({.kind = "frame", .detail = "(the map's frame builder)"}, watch);
