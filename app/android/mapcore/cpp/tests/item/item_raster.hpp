@@ -456,45 +456,57 @@ inline void blend_faces(Raster& r, std::span<const sh::ItemRecord> faces, const 
     }
 }
 
-/// Radial records (ITEM_RADIAL: an open place's glow at night) blended over raster `r` in their order, the depth test
-/// off: each sample its circle covers at its gradient at the pixel's centre, a level a blend.
-inline void blend_radials(Raster& r, std::span<const sh::ItemRecord> glows, const sh::FrameBlock& block) {
+/// Radial records (ITEM_RADIAL) blended over raster `r` in their order at their gradient at the pixel's centre, a level
+/// a blend: an open place's glow at night on each sample its circle covers, the depth test off; its pool on the ground
+/// with the daylight (its ry in e.z) on each sample of its ellipse's box whose depth passes (GREATER, writing none),
+/// the gradient's circle stretched to the box (nothing beyond the ellipse, where it reaches its last stop's 0).
+inline void blend_radials(Raster& r, std::span<const sh::ItemRecord> radials, const sh::FrameBlock& block) {
     const sh::FrameCamera& cam = block.camera;
     const std::size_t n = r.samples.size();
     const auto density = static_cast<double>(cam.frame.z);
     const double tol = 0.02 / density;
     const auto f = [](std::uint32_t v) { return std::bit_cast<float>(v); };
-    for (const sh::ItemRecord& rec : glows) {
+    for (const sh::ItemRecord& rec : radials) {
         if ((rec.a.x & sh::ITEM_RECORD_KIND) != sh::ITEM_RADIAL) continue;
         const hlsl::float2 a = sh::item_point(rec, 0);
         const float radius = f(rec.a.w);
+        const float ry = f(rec.e.z);
+        const bool pool = ry > 0.0F;
+        const auto depth = static_cast<double>(f(rec.d.z));
         const double e = static_cast<double>(radius) + 1.0;
+        const double ey = static_cast<double>(pool ? ry : radius) + 1.0;
         const auto px0 = std::max<std::int64_t>(
             0, static_cast<std::int64_t>(std::floor((static_cast<double>(a.x) - e) * density)) - 1);
         const auto py0 = std::max<std::int64_t>(
-            0, static_cast<std::int64_t>(std::floor((static_cast<double>(a.y) - e) * density)) - 1);
+            0, static_cast<std::int64_t>(std::floor((static_cast<double>(a.y) - ey) * density)) - 1);
         const auto px1 = std::min<std::int64_t>(
             r.w - 1, static_cast<std::int64_t>(std::ceil((static_cast<double>(a.x) + e) * density)) + 1);
         const auto py1 = std::min<std::int64_t>(
-            r.h - 1, static_cast<std::int64_t>(std::ceil((static_cast<double>(a.y) + e) * density)) + 1);
+            r.h - 1, static_cast<std::int64_t>(std::ceil((static_cast<double>(a.y) + ey) * density)) + 1);
         for (std::int64_t y = py0; y <= py1; ++y) {
             for (std::int64_t x = px0; x <= px1; ++x) {
                 const hlsl::float2 centre =
                     sh::css_of_output(cam, hlsl::float2{static_cast<float>(x) + 0.5F, static_cast<float>(y) + 0.5F});
-                const float dx = centre.x - a.x;
-                const float dy = centre.y - a.y;
+                const float dx = pool ? (centre.x - a.x) / radius : centre.x - a.x;
+                const float dy = pool ? (centre.y - a.y) / ry : centre.y - a.y;
+                const float t = pool ? std::sqrt((dx * dx) + (dy * dy)) : std::sqrt((dx * dx) + (dy * dy)) / radius;
                 const hlsl::float4 g =
                     sh::item_radial_at(sh::tree_rgb(rec.a.y), sh::tree_rgb(rec.c.x), sh::tree_rgb(rec.c.y), f(rec.c.z),
-                                       f(rec.c.w), f(rec.e.x), f(rec.e.y), std::sqrt((dx * dx) + (dy * dy)) / radius);
+                                       f(rec.c.w), f(rec.e.x), f(rec.e.y), t);
+                if (pool && !(g.w > 0.0F)) continue;
                 for (std::size_t q = 0; q < n; ++q) {
                     const hlsl::float2 dev{static_cast<float>(x) + r.samples[q].x,
                                            static_cast<float>(y) + r.samples[q].y};
                     const hlsl::float2 s = sh::css_of_output(cam, dev);
                     const std::size_t k = (((static_cast<std::size_t>(y) * r.w) + static_cast<std::size_t>(x)) * n) + q;
-                    const double d = pymath::hypot(static_cast<double>(s.x) - static_cast<double>(a.x),
-                                                   static_cast<double>(s.y) - static_cast<double>(a.y));
-                    if (std::abs(d - static_cast<double>(radius)) <= tol) r.edge[k] = 1;
-                    if (!sh::tree_circle_covers(s, a, radius)) continue;
+                    if (pool) {
+                        if (r.covered[k] != 0 && !(depth > r.depth[k])) continue;
+                    } else {
+                        const double d = pymath::hypot(static_cast<double>(s.x) - static_cast<double>(a.x),
+                                                       static_cast<double>(s.y) - static_cast<double>(a.y));
+                        if (std::abs(d - static_cast<double>(radius)) <= tol) r.edge[k] = 1;
+                        if (!sh::tree_circle_covers(s, a, radius)) continue;
+                    }
                     const hlsl::float3 under = r.colour[k];
                     const hlsl::float3 c{g.x, g.y, g.z};
                     const hlsl::float3 over = (c * g.w) + (under * (1.0F - g.w));

@@ -12,7 +12,9 @@
 //   - each table of its terrace, in its own item (the kind "terrace"): its leg, each chair's leg, seat and back, its
 //     top (filled and stroked .3), by day its parasol's pole and twelve panels.
 // And at night each open place's glow: a circle filled with the `open` gradient, after every object (the renders'
-// `glow`, before wfx, the haze and fin), outside any group and item.
+// `glow`, before wfx, the haze and fin), outside any group and item; with the daylight (ATLAS_DAYLIGHT) its pool on the
+// ground, an ellipse filled with the `openpool` gradient in the ground's image, after the lamps' pools (the renders'
+// `pools`) at the pass's ground tail slot, outside any group and item.
 // At rest every coordinate is as the SVG prints it ('%.1f', read back as SvgParser reads it); every text's size always
 // is, as its glyphs are shaped at it.
 #pragma once
@@ -26,8 +28,9 @@ struct FrameState;
 
 namespace atlas::twin {
 
-/// Emits the shops `shops` (shop_shapes') of frame `state` with the active pack's shopfront colours `style` into `out`.
+/// Emits the shops `shops` (shop_shapes') of frame `state` with the active pack's shopfront colours `style` into `out`,
+/// their pools at painter slot `pool_slot` (the pass's ground tail slot).
 void emit_shops(const frame::FrameState& state, const passes::ShopFrame& shops, const tiles::ShopfrontsStyle& style,
-                Stream& out);
+                std::uint32_t pool_slot, Stream& out);
 
 } // namespace atlas::twin

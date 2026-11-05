@@ -46,7 +46,7 @@ constexpr Paint black = Paint::colour(0xFF00'0000U);
 } // namespace
 
 void emit_shops(const frame::FrameState& state, const passes::ShopFrame& shops, const tiles::ShopfrontsStyle& style,
-                Stream& out) {
+                std::uint32_t pool_slot, Stream& out) {
     if (shops.shops.empty() && shops.glows.empty()) return;
     const bool night = state.theme.has(style::theme_flag::night);
     const bool rest = state.rest;
@@ -174,6 +174,26 @@ void emit_shops(const frame::FrameState& state, const passes::ShopFrame& shops, 
         }
     }
     if (shops.glows.empty()) return;
+    if (!shops.pools.empty()) {
+        // with the daylight their pools: '<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="url(#openpool)"/>' in
+        // the ground's `pools`, after the lamps'
+        const std::array<float, 3> pool_offsets{0.0F, passes::open_pool_middle, 1.0F};
+        const std::array<std::uint32_t, 3> pool_colours{
+            folded(passes::open_pool_colours[0], passes::open_pool_opacities[0]),
+            folded(passes::open_pool_colours[1], passes::open_pool_opacities[1]),
+            folded(passes::open_pool_colours[2], passes::open_pool_opacities[2])};
+        const std::int32_t openpool = out.gradient({.id = "openpool",
+                                                    .radial = true,
+                                                    .coords = {0.5F, 0.5F, 0.5F, 0.5F, 0.5F},
+                                                    .units = Units::bounding_box,
+                                                    .offsets = pool_offsets,
+                                                    .colours = pool_colours});
+        out.layer(Layer::ground);
+        out.at(pool_slot, out.root());
+        for (const passes::PoolShape& p : shops.pools)
+            out.ellipse({.fill = Paint::gradient(openpool)}, at(p.cx), at(p.cy), at(p.rx), at(p.ry));
+        out.layer(Layer::objects);
+    }
     // the night's glows: '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#open)"/>', after every object and before wfx,
     // the haze and fin (Stream::after's)
     const std::array<float, 3> offsets{0.0F, style.open_middle_offset, 1.0F};
