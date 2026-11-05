@@ -532,6 +532,16 @@ bool differs(const gpu::Pixels& a, const gpu::Pixels& b, std::uint32_t x, std::u
     return a.rgba[i] != b.rgba[i] || a.rgba[i + 1] != b.rgba[i + 1] || a.rgba[i + 2] != b.rgba[i + 2];
 }
 
+/// Whether pixel (x, y) of a w × h frame lies on the composite's seam, where lavapipe shades its triangle twice in
+/// place (buildings_vk_test.cpp's on_seam).
+[[nodiscard]] bool on_seam(std::size_t x, std::size_t y, std::size_t w, std::size_t h) noexcept {
+    const std::uint64_t above = std::uint64_t{y} * w;
+    const std::uint64_t below = above + w;
+    const std::uint64_t left = std::uint64_t{x} * h;
+    const std::uint64_t right = left + h;
+    return above < right && below > left;
+}
+
 } // namespace
 
 TEST_CASE(
@@ -586,13 +596,16 @@ TEST_CASE(
         CHECK(plate - water > 100);
         CHECK(f.south - f.north > 80);
         // each row across each ditch 3 px and more from its ends: its ink, the share of the way from the plate beside
-        // it (4 and 5 px from the ditch's pixel each side) to the water's green of each pixel within 3 px, summed
+        // it (4 and 5 px from the ditch's pixel each side) to the water's green of each pixel within 3 px, summed; but
+        // not a row that reads a pixel on the composite's seam, where a pixel of unlike samples takes a 16th of the
+        // contrast more or less (lavapipe shades it twice in place; ditches 5 to 7 cross it)
         const std::uint32_t first = pixel(f.north) + 3;
         const std::uint32_t last = pixel(f.south) - 3;
         double worst_on = 0;
         double worst_off = 0;
         double most = 0;
         std::size_t rows = 0;
+        std::size_t seamed = 0;
         std::string lines;
         for (const double centre : f.centre) {
             CAPTURE(centre);
@@ -608,9 +621,19 @@ TEST_CASE(
                 }
                 return ink;
             };
+            const auto on_the_seam = [&](std::uint32_t y) {
+                for (std::uint32_t x = c - 5; x <= c + 5; ++x) {
+                    if (on_seam(x, y, size, size)) return true;
+                }
+                return false;
+            };
             std::array<double, 2> band{1e9, -1e9};
             std::array<double, 2> own{1e9, -1e9};
             for (std::uint32_t y = first; y <= last; ++y) {
+                if (on_the_seam(y)) {
+                    ++seamed;
+                    continue;
+                }
                 double ignored = 0;
                 const double with_band = ink_of(f.on, y, most);
                 const double at_own = ink_of(f.off, y, ignored);
@@ -646,11 +669,12 @@ TEST_CASE(
         }
         MESSAGE(std::string(weather ? "with weather" : "without weather")
                 << ": " << rows << " rows across " << ditches << " ditches some " << f.width << " px wide (rows "
-                << first << " to " << last << " of " << f.north << " to " << f.south << "), plate " << plate
-                << ", water " << water << ", with the band off by " << 100 * worst_on << " % at most, a pixel's most "
-                << most << " of its width's share of 1.5; at its own width off by " << 100 * worst_off << " %; " << near
+                << first << " to " << last << " of " << f.north << " to " << f.south << ", " << seamed
+                << " on the composite's seam left out), plate " << plate << ", water " << water
+                << ", with the band off by " << 100 * worst_on << " % at most, a pixel's most " << most
+                << " of its width's share of 1.5; at its own width off by " << 100 * worst_off << " %; " << near
                 << " pixels changed by the band near the ditches, " << moved << " elsewhere" << lines);
-        CHECK(worst_on < 0.06);
+        CHECK(worst_on < 0.01);
         CHECK(most < 1.1);
         CHECK(worst_off > 0.08);
         CHECK(near > 1000);
