@@ -13,22 +13,26 @@
 //     rule (4 November), its terrace only while it is open and by day where its hours say nothing: its tables, each
 //     its leg, two chairs, its top and by day a parasol, none on the water. Every face as face() keeps it (Camera.poly
 //     within 300 px, from 0.12 px²; the stripes within 200 px, unchecked), every line as the port strokes it. And at
-//     night each open place's glow: a circle max(3, 5 f / z) px about its node 1.5 m up, from 2 m deep.
+//     night each open place's glow: a circle max(3, 5 f / z) px about its node 1.5 m up, from 2 m deep; with the
+//     daylight (amsterdam.py's DAYLIGHT, the theme's flag) max(4, 8 f / z) px, over its pool on the ground: an ellipse
+//     about its node at y .05, rx 11 m at its depth, ry the picture's height of 11 m along z from it (at least 1).
 //   - Records, the CPU's (shaders/item/items.slangh, drawn through the items' stages): the faces (the glass by day its
 //     two stops down its box, ITEM_VERTICAL; a polygon of more than five corners as fan pieces of five), their
 //     outlines as round-capped segments on their planes, the lines butt-capped; the stripes and the spill translucent
 //     faces (items_tints_fs); the texts' glyphs, Slug's (wall_text_vs and wall_text_fs) in `Geist, Helvetica,
 //     sans-serif` 800 at the size the SVG prints, screen-upright at their board's nearest depth (the blade's turned by
-//     90° down it); the glows, radial records (items_radials_fs). At rest every corner, end, anchor and size is as the
-//     SVG prints it.
+//     90° down it); the glows and the pools, radial records (items_radials_fs; a pool's with its ry). At rest every
+//     corner, end, anchor and size is as the SVG prints it.
 //   - Record: the faces' fans and the lines in the objects slot (the fronts', then the terraces'); the texts in the
 //     translucent slot with the doors' numbers, before every object's translucent part; the tints after the items'
-//     translucent parts; the glows after every object, the depth test off. None in the owner mode.
+//     translucent parts; the glows after every object, the depth test off; the pools on the ground after its own pools
+//     (its translucent order 900), at the pass's ground tail slot's painter depth with the test on, so every object
+//     hides them. None in the owner mode.
 //   - Depth: every corner and end at its own reciprocal depth; a front's parts lead 21 to 24 steps of 2^-16 over their
 //     wall (its windows take 20 at most), so a front covers its wall's windows, plinth and glazing. Under the painter
 //     switch every part at its item's slots (a board ten, a blade four, a table twenty-two).
 //   - The twin (emit): each element as the port prints it, at its item's slots (twin/shop/ShopTwin.hpp); the glows
-//     after every object, outside any item.
+//     after every object, the pools in the ground's image at the pass's ground tail slot, both outside any item.
 #pragma once
 
 #include "frame/Pass.hpp"
@@ -195,10 +199,30 @@ struct GlowShape {
     std::uint32_t fade = 0;
 };
 
-/// What the frame draws of the shops: the shopfronts and the glows, each in S['nodes'] order.
+/// An open place's pool on the ground at night with the daylight (amsterdam.py's `openpool`, ATLAS_DAYLIGHT): its
+/// node, its ellipse about the place's foot at y .05 (CSS px, unsnapped: rx 11 m at its depth, ry the picture's height
+/// of 11 m along z from it, at least 1) and its standing fade.
+struct PoolShape {
+    std::uint32_t node = 0;
+    double cx = 0;
+    double cy = 0;
+    double rx = 0;
+    double ry = 0;
+    std::uint32_t fade = 0;
+};
+
+/// The `openpool` gradient (amsterdam.py's defs, as the lamps' `pool` in passes/Pools.cpp: the renders' constants, no
+/// style key): its stops' colours and opacities at 0, open_pool_middle and 1.
+inline constexpr std::array<std::uint32_t, 3> open_pool_colours{0xFFD89AU, 0xFFC070U, 0xFFB060U};
+inline constexpr std::array<float, 3> open_pool_opacities{0.75F, 0.28F, 0.0F};
+inline constexpr float open_pool_middle = 0.45F;
+
+/// What the frame draws of the shops: the shopfronts, the glows and with the daylight the pools under them, each in
+/// S['nodes'] order.
 struct ShopFrame {
     std::vector<ShopShape> shops;
     std::vector<GlowShape> glows;
+    std::vector<PoolShape> pools;
 };
 
 /// The pass's item kinds.
@@ -234,27 +258,33 @@ public:
     void release() noexcept override;
     void kinds(frame::Selectors& selectors) override;
     void select(const frame::FrameState& state, frame::Selectors& selectors) override;
+    [[nodiscard]] std::uint32_t ground_tail_slots(const frame::FrameState& state) const override;
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The phases: the fronts and terraces (objects); their texts (translucent, with the doors' numbers); the stripes
-    /// and spill (translucent, after the items' translucent parts); the glows (translucent, after every object).
+    /// and spill (translucent, after the items' translucent parts); the glows (translucent, after every object); with
+    /// the daylight the pools (translucent, on the ground right after its own pools, passes/Ground.hpp's
+    /// ground_order::pools, at the pass's ground tail slot: under every object).
     static constexpr std::uint32_t draw_phase = 0;
     static constexpr std::uint32_t texts_phase = 1;
     static constexpr std::uint32_t tints_phase = 2;
     static constexpr std::uint32_t glows_phase = 3;
+    static constexpr std::uint32_t pools_phase = 4;
+    static constexpr std::int32_t pools_order = 901;
     static constexpr std::int32_t texts_order = 999;
     static constexpr std::int32_t tints_order = 1013;
     static constexpr std::int32_t glows_order = 1100;
 
-    /// What the last frame drew: its shopfronts, tables and glows, and its records and glyphs (the faces the fronts'
-    /// and the terraces' opaque ones, then the tints).
+    /// What the last frame drew: its shopfronts, tables, glows and pools, and its records and glyphs (the faces the
+    /// fronts' and the terraces' opaque ones, then the tints).
     struct Counts {
         std::uint32_t shops = 0;
         std::uint32_t tables = 0;
         std::uint32_t glows = 0;
+        std::uint32_t pools = 0;
         std::uint32_t front_faces = 0;
         std::uint32_t terrace_faces = 0;
         std::uint32_t tints = 0;
@@ -268,11 +298,13 @@ public:
     [[nodiscard]] std::span<const shaders::ItemRecord> faces() const noexcept;
     [[nodiscard]] std::span<const shaders::ItemRecord> parts() const noexcept;
     [[nodiscard]] std::span<const shaders::ItemRecord> glows() const noexcept;
+    [[nodiscard]] std::span<const shaders::ItemRecord> pools() const noexcept;
     [[nodiscard]] std::span<const layouts::text_slug::GlyphDraw> glyphs() const noexcept { return glyphs_; }
 
 private:
-    static constexpr std::array<frame::Phase, 4> phase_list{{
+    static constexpr std::array<frame::Phase, 5> phase_list{{
         {.slot = frame::Slot::objects, .order = 0, .id = draw_phase},
+        {.slot = frame::Slot::translucent, .order = pools_order, .id = pools_phase},
         {.slot = frame::Slot::translucent, .order = texts_order, .id = texts_phase},
         {.slot = frame::Slot::translucent, .order = tints_order, .id = tints_phase},
         {.slot = frame::Slot::translucent, .order = glows_order, .id = glows_phase},
@@ -290,6 +322,7 @@ private:
     void record_texts(const frame::Recording& recording);
     void record_tints(const frame::Recording& recording);
     void record_glows(const frame::Recording& recording);
+    void record_pools(const frame::Recording& recording);
 
     ShopKinds kinds_;
     Counts counts_;
@@ -304,9 +337,9 @@ private:
     std::array<vk::raii::DescriptorSet, 2> sets_{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
     std::array<gpu::Buffer, 2> faces_buffer_;
     std::array<gpu::Buffer, 2> parts_buffer_;
-    std::array<gpu::Buffer, 2> glows_buffer_;
+    std::array<gpu::Buffer, 2> glows_buffer_; ///< the glows, then the pools
     std::array<gpu::Buffer, 2> glyphs_buffer_;
-    /// While a tile fades, each face's standing fade, then each part's, then each glow's (bound always)
+    /// While a tile fades, each face's standing fade, then each part's, then each glow's and each pool's (bound always)
     std::array<gpu::Buffer, 2> fades_buffer_;
     gpu::Buffer tables_;
     vk::raii::PipelineLayout layout_{nullptr};
@@ -315,6 +348,7 @@ private:
     vk::raii::Pipeline parts_pipeline_{nullptr};
     vk::raii::Pipeline tints_{nullptr};
     vk::raii::Pipeline glows_pipeline_{nullptr};
+    vk::raii::Pipeline pools_pipeline_{nullptr};
     vk::raii::Pipeline texts_{nullptr};
     vk::raii::Pipeline texts_fading_{nullptr}; ///< the same while a tile fades (wall_text_fading_fs)
 
@@ -322,6 +356,7 @@ private:
     std::vector<shaders::ItemRecord> faces_;
     std::vector<shaders::ItemRecord> parts_;
     std::vector<shaders::ItemRecord> glows_;
+    std::vector<shaders::ItemRecord> pools_;
     std::vector<layouts::text_slug::GlyphDraw> glyphs_;
     std::vector<std::uint32_t> fade_words_;
     bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)

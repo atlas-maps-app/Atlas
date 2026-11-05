@@ -6,7 +6,8 @@
 // render pass and by dynamic rendering), at rest and moving, at true depth and under the painter switch, against the
 // exact raster of the records the pass gives the GPU (tests/item/item_raster.hpp: the fronts' and the terraces' faces,
 // the glass by day its two stops, the outlines and the lines), then the signs' glyphs (tests/item/glyph_raster.hpp),
-// the awnings' stripes and the night's spill, and at night the open places' glows blended over it in the GPU's order.
+// the awnings' stripes and the night's spill, and at night the open places' glows blended over it in the GPU's order
+// (with the daylight, ATLAS_DAYLIGHT, larger and first their pools on the ground, under every object).
 // Each frame's shopfronts are held to their opening hours at its moment: a food place with outdoor seating sets its
 // terrace out while it is open, and by day where its hours say nothing; none while it is closed; its glass lit while it
 // is open. Each switch leaves out its own part alone. The twin's elements are held to the port's by L1; here the GPU
@@ -159,6 +160,14 @@ struct Scene {
     return b;
 }
 
+/// The same night with the daylight (RenderOptions.daylight, amsterdam.py's DAYLIGHT): the open places' glows larger,
+/// each over its pool on the ground.
+[[nodiscard]] style::ThemeBlock wet_daylight_night() {
+    style::ThemeBlock b = wet_night();
+    b.flags |= style::theme_flag::daylight;
+    return b;
+}
+
 /// What the frame's shopfronts say against their opening hours at its moment: how many are open, closed and without
 /// hours, how many of each with outdoor seating draw a terrace, and how many break the user's rule.
 struct Rule {
@@ -242,8 +251,8 @@ std::vector<gpu::Configuration> configurations(const gpu::Device& device) {
 }
 
 /// Draws `cam` in every configuration and route of the host's device, at rest and moving, at true depth and under the
-/// painter switch, at moment `th`, and holds every pixel to the exact raster of the pass's records, its signs' glyphs,
-/// its tints and its glows.
+/// painter switch, at moment `th`, and holds every pixel to the exact raster of the pass's records, its pools, its
+/// signs' glyphs, its tints and its glows.
 void check_frames(const style::CameraState& cam, const std::string& view, const std::string& pack,
                   const style::ThemeBlock& th, const Wants& wants) {
     auto session = test::open_session();
@@ -253,6 +262,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     constexpr std::uint32_t clear = 0x808080;
     const bool night = th.has(style::theme_flag::night);
+    const bool daylight = th.has(style::theme_flag::daylight);
     const std::vector<gpu::Configuration> configs = configurations(device);
     REQUIRE(!configs.empty());
     for (const gpu::Configuration config : configs) {
@@ -274,6 +284,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                 REQUIRE(faces.size() == opaque + n.tints);
                 test::items::Raster r = test::items::raster(faces.first(opaque), s.shops->parts(), {}, {}, state.block,
                                                             config, pixels->width, pixels->height, clear);
+                test::items::blend_radials(r, s.shops->pools(), state.block);
                 const test::items::Blended b = test::items::blend_glyphs(r, s.shops->glyphs(), state.block.camera);
                 test::items::blend_faces(r, faces.subspan(opaque), state.block);
                 test::items::blend_radials(r, s.shops->glows(), state.block);
@@ -294,9 +305,11 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                 ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
                 std::size_t texts = 0;
                 std::size_t circles = 0;
+                std::size_t ellipses = 0;
                 for (const twin::Element& e : decoded.document.elements) {
                     texts += e.kind == twin::Op::text ? 1U : 0U;
                     circles += e.kind == twin::Op::circle ? 1U : 0U;
+                    ellipses += e.kind == twin::Op::ellipse && e.layer == twin::Layer::ground ? 1U : 0U;
                 }
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
@@ -305,17 +318,19 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                              << rule.shops[1] << ", " << rule.shops[2] << "; seated " << rule.seated[0] << ", "
                              << rule.seated[1] << ", " << rule.seated[2] << "; with a terrace " << rule.terraces[0]
                              << ", " << rule.terraces[1] << ", " << rule.terraces[2] << "), " << n.tables << " tables, "
-                             << n.glows << " glows; " << texts << " texts and " << circles << " glows in the twin; "
-                             << n.front_faces << " + " << n.terrace_faces << " faces (" << vertical << " two-stop), "
-                             << n.tints << " tints, " << n.front_parts << " + " << n.terrace_parts << " lines, "
-                             << n.glyphs << " glyphs (" << b.pixels << " pixels, " << b.samples << " samples blended); "
-                             << got.pixels << " pixels drawn, " << got.agree << " the exact raster's, " << got.boundary
+                             << n.glows << " glows, " << n.pools << " pools; " << texts << " texts, " << circles
+                             << " glows and " << ellipses << " pools in the twin; " << n.front_faces << " + "
+                             << n.terrace_faces << " faces (" << vertical << " two-stop), " << n.tints << " tints, "
+                             << n.front_parts << " + " << n.terrace_parts << " lines, " << n.glyphs << " glyphs ("
+                             << b.pixels << " pixels, " << b.samples << " samples blended); " << got.pixels
+                             << " pixels drawn, " << got.agree << " the exact raster's, " << got.boundary
                              << " within 0.02 px of a shape's boundary, " << got.tied
                              << " where two colours tie in depth, " << got.seam << " on the composite's seam, "
                              << got.wrong << " otherwise; the pass's stage F " << update_ms << " ms");
                 CHECK(n.shops >= wants.shops);
                 CHECK(frame.shops.size() == n.shops);
                 CHECK(frame.glows.size() == n.glows);
+                CHECK(frame.pools.size() == n.pools);
                 CHECK(rule.broken == 0);
                 CHECK(rule.lit_wrong == 0);
                 for (std::size_t k = 0; k < 3; ++k) {
@@ -323,11 +338,18 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                     if (wants.seated.at(k)) CHECK(rule.seated.at(k) > 0);
                 }
                 CHECK(circles == n.glows);
+                CHECK(ellipses == n.pools);
                 if (night) {
                     if (wants.glows) CHECK(n.glows > 0);
                     CHECK(vertical == 0);
+                    // with the daylight each glow over its pool, max(4, 8 f / z) px
+                    CHECK(n.pools == (daylight ? n.glows : 0U));
+                    if (daylight) {
+                        for (const passes::GlowShape& g : frame.glows) CHECK(g.r >= 4.0);
+                    }
                 } else {
                     CHECK(n.glows == 0);
+                    CHECK(n.pools == 0);
                     CHECK(vertical > 0);
                 }
                 CHECK(texts > 0);
@@ -359,6 +381,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                     CHECK(no_terraces.front_faces == n.front_faces);
                     const passes::Shopfronts::Counts no_glows = with(style::camera_part::open_glows);
                     CHECK(no_glows.glows == 0);
+                    CHECK(no_glows.pools == 0);
                     CHECK(no_glows.shops == n.shops);
                     const passes::Shopfronts::Counts facades = with(style::camera_part::facade_detail);
                     CHECK(facades.shops == 0);
@@ -387,6 +410,9 @@ TEST_CASE("shopfronts: a row of shopfronts, their signs and terraces, and at nig
     check_frames(east, "the wall facing east by day", pack, test::sunny(),
                  {.shops = 4, .seated = {true, true, false}, .terraces = {true, false, false}});
     check_frames(east, "the wall facing east on the wet night", pack, wet_night(),
+                 {.shops = 4, .seated = {true, false, false}, .terraces = {true, false, false}, .glows = true});
+    // and with the daylight the glows larger over their pools on the ground
+    check_frames(east, "the wall facing east on the wet night with the daylight", pack, wet_daylight_night(),
                  {.shops = 4, .seated = {true, false, false}, .terraces = {true, false, false}, .glows = true});
     // the row facing south about (-330, 160), from 70 m: by day a restaurant without opening hours with its terrace, at
     // night it without and the two places closed then without theirs

@@ -62,8 +62,9 @@ inline constexpr std::uint32_t wet_set = shaders::THEME_WET_SET;
 inline constexpr std::uint32_t golden = shaders::THEME_GOLDEN;
 inline constexpr std::uint32_t tone = shaders::THEME_TONE;
 inline constexpr std::uint32_t tone_strength = shaders::THEME_TONE_STRENGTH;
+inline constexpr std::uint32_t daylight = shaders::THEME_DAYLIGHT;
 /// Every bit version 1 knows; a block with another is refused.
-inline constexpr std::uint32_t known = 0xFFFU;
+inline constexpr std::uint32_t known = 0x1FFFU;
 } // namespace theme_flag
 
 /// The moment's name (th['name']) as a number (ThemeBlock.MOMENTS); a region's own moments and the live moment's other

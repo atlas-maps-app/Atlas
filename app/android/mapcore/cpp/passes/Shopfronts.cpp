@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <limits>
@@ -367,6 +368,8 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
     const bool fronts = weather && !state.camera.leaves_out(style::camera_part::shopfronts);
     const bool terraces = weather && !state.camera.leaves_out(style::camera_part::terraces);
     const bool glows = night && !state.camera.leaves_out(style::camera_part::open_glows);
+    // `if DAYLIGHT:` the glow larger and its pool under it (RenderOptions.daylight, the theme's flag)
+    const bool daylight = state.theme.has(style::theme_flag::daylight);
     if (!fronts && !terraces && !glows) return out;
     const view::Camera& cam = state.view->camera();
     // far(n['x'], n['z']): the renders' radius cut, as the ranks cut the items, in engine mode about the view's target
@@ -467,17 +470,27 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                 const view::Vec3 k = cam.cam({n.x, 1.5, n.z});
                 if (k.z < 2) continue;
                 const view::Vec2 q = cam.pc(k);
-                out.glows.push_back({.node = p.node,
-                                     .id = p.id,
-                                     .x = q.x,
-                                     .y = q.y,
-                                     .r = pymath::max(3.0, 5 * cam.focal() / k.z),
-                                     .fade = fade});
+                double r = pymath::max(3.0, 5 * cam.focal() / k.z);
+                if (daylight) {
+                    // `<ellipse ... fill="url(#openpool)"/>` of 11 m about its foot on the ground, then the glow larger
+                    const view::Vec3 g0 = cam.cam({n.x, 0.05, n.z});
+                    const view::Vec2 pg = cam.pc(g0);
+                    const std::optional<view::Vec2> qg = cam.proj({n.x, 0.05, n.z + 11});
+                    out.pools.push_back({.node = p.node,
+                                         .cx = pg.x,
+                                         .cy = pg.y,
+                                         .rx = 11 * cam.focal() / g0.z,
+                                         .ry = pymath::max(1.0, std::abs((qg ? qg->y : pg.y) - pg.y)),
+                                         .fade = fade});
+                    r = pymath::max(4.0, 8 * cam.focal() / k.z);
+                }
+                out.glows.push_back({.node = p.node, .id = p.id, .x = q.x, .y = q.y, .r = r, .fade = fade});
             }
         }
     }
     std::ranges::stable_sort(kept, {}, [](const At& a) { return a.shop.node; });
     std::ranges::stable_sort(out.glows, {}, [](const GlowShape& g) { return g.node; });
+    std::ranges::stable_sort(out.pools, {}, [](const PoolShape& g) { return g.node; });
 
     const auto on_water = [&](double x, double z) {
         for (const Water& w : waters) {
@@ -712,6 +725,8 @@ std::span<const sh::ItemRecord> Shopfronts::parts() const noexcept { return part
 
 std::span<const sh::ItemRecord> Shopfronts::glows() const noexcept { return glows_; }
 
+std::span<const sh::ItemRecord> Shopfronts::pools() const noexcept { return pools_; }
+
 gpu::Result<void> Shopfronts::prepare(const frame::PassContext& context) {
     release();
     // none in the owner mode: the likeness harness's owner maps draw no facade details yet
@@ -805,6 +820,10 @@ gpu::Result<void> Shopfronts::prepare(const frame::PassContext& context) {
     ATLAS_GPU_LET(glows,
                   translucent("open glows", "item_draw", *items_module_, "items_sides_vs", "items_radials_fs", false));
     glows_pipeline_ = std::move(glows);
+    // the pools on the ground: under every object, at the pass's ground tail slot's depth
+    ATLAS_GPU_LET(pools,
+                  translucent("open pools", "item_draw", *items_module_, "items_sides_vs", "items_radials_fs", true));
+    pools_pipeline_ = std::move(pools);
     ATLAS_GPU_LET(texts, translucent("shop texts", "text_slug", *text_module_, "wall_text_vs", "wall_text_fs", true));
     texts_ = std::move(texts);
     ATLAS_GPU_LET(texts_fading, translucent("shop texts while fading", "text_slug", *text_module_, "wall_text_vs",
@@ -816,6 +835,7 @@ gpu::Result<void> Shopfronts::prepare(const frame::PassContext& context) {
 void Shopfronts::release() noexcept {
     texts_fading_.clear();
     texts_.clear();
+    pools_pipeline_.clear();
     glows_pipeline_.clear();
     tints_.clear();
     parts_pipeline_.clear();
@@ -855,6 +875,13 @@ void Shopfronts::select(const frame::FrameState& state, frame::Selectors& select
     selectors.leave_out(kinds_.blade, !fronts);
     selectors.leave_out(kinds_.table, !weather || state.camera.leaves_out(style::camera_part::terraces));
     selectors.leave_out(kinds_.glow, !night || state.camera.leaves_out(style::camera_part::open_glows));
+}
+
+std::uint32_t Shopfronts::ground_tail_slots(const frame::FrameState& state) const {
+    // the pools' slot, over every ground's and after the ground's pools: at night with the daylight, the glows drawn
+    const bool pools = state.theme.has(style::theme_flag::night) && state.theme.has(style::theme_flag::daylight) &&
+                       !state.camera.leaves_out(style::camera_part::open_glows);
+    return pools ? 1U : 0U;
 }
 
 gpu::Result<void> Shopfronts::build(scene::TileBuild& b) const {
@@ -946,6 +973,7 @@ void Shopfronts::update(const frame::FrameState& state) {
     faces_.clear();
     parts_.clear();
     glows_.clear();
+    pools_.clear();
     glyphs_.clear();
     fade_words_.clear();
     dithers_ = state.cover != nullptr && state.cover->dithers();
@@ -1101,6 +1129,16 @@ void Shopfronts::update(const frame::FrameState& state) {
                                          st.open_middle_opacity, st.open_outer_opacity, st.open_middle_offset));
         if (dithers_) fade_words_.push_back(g.fade);
     }
+    // with the daylight their pools on the ground: the `openpool` gradient's ellipses at the pass's ground tail slot
+    // (ground_tail_slots), after the ground's pools and under every object
+    const float pool_depth = sh::painter_depth(camera, first_tail_slot());
+    for (const PoolShape& p : frame.pools) {
+        pools_.push_back(sh::item_pool({rec.at(p.cx), rec.at(p.cy)}, rec.at(p.rx), rec.at(p.ry),
+                                       bgr(open_pool_colours[0]), bgr(open_pool_colours[1]), bgr(open_pool_colours[2]),
+                                       open_pool_opacities[0], open_pool_opacities[1], open_pool_opacities[2],
+                                       open_pool_middle, pool_depth));
+        if (dithers_) fade_words_.push_back(p.fade);
+    }
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     const auto records = [](std::size_t n) {
@@ -1108,7 +1146,7 @@ void Shopfronts::update(const frame::FrameState& state) {
     };
     auto faces_made = fit(*device_, faces_buffer_.at(slot), records(faces_.size()));
     auto parts_made = fit(*device_, parts_buffer_.at(slot), records(parts_.size()));
-    auto glows_made = fit(*device_, glows_buffer_.at(slot), records(glows_.size()));
+    auto glows_made = fit(*device_, glows_buffer_.at(slot), records(glows_.size() + pools_.size()));
     auto glyphs_made = fit(*device_, glyphs_buffer_.at(slot),
                            vk::DeviceSize{std::max<std::size_t>(glyphs_.size(), 1)} * sizeof(sl::GlyphDraw));
     auto fades_made = fit(*device_, fades_buffer_.at(slot),
@@ -1119,8 +1157,9 @@ void Shopfronts::update(const frame::FrameState& state) {
                               : !glows_made  ? glows_made.error()
                               : !glyphs_made ? glyphs_made.error()
                                              : fades_made.error();
-        log::error("vk shopfronts: {} shops, {} faces, {} lines, {} glows and {} glyphs: {}", frame.shops.size(),
-                   faces_.size(), parts_.size(), glows_.size(), glyphs_.size(), e.text());
+        log::error("vk shopfronts: {} shops, {} faces, {} lines, {} glows, {} pools and {} glyphs: {}",
+                   frame.shops.size(), faces_.size(), parts_.size(), glows_.size(), pools_.size(), glyphs_.size(),
+                   e.text());
         faces_buffer_.at(slot) = {};
         parts_buffer_.at(slot) = {};
         glows_buffer_.at(slot) = {};
@@ -1139,13 +1178,15 @@ void Shopfronts::update(const frame::FrameState& state) {
             .apply(device_->handle());
     }
     // each list where it has any: an empty vector's data may be null, which memcpy may not take even for no bytes
-    const auto upload = [](gpu::Buffer& b, const void* data, std::size_t bytes) {
-        if (bytes > 0) std::memcpy(b.bytes().data(), data, bytes);
+    const auto upload = [](gpu::Buffer& b, const void* data, std::size_t bytes, std::size_t at = 0) {
+        if (bytes > 0) std::memcpy(b.bytes().data() + at, data, bytes);
         b.flush();
     };
     upload(faces_buffer_.at(slot), faces_.data(), faces_.size() * sizeof(sh::ItemRecord));
     upload(parts_buffer_.at(slot), parts_.data(), parts_.size() * sizeof(sh::ItemRecord));
     upload(glows_buffer_.at(slot), glows_.data(), glows_.size() * sizeof(sh::ItemRecord));
+    upload(glows_buffer_.at(slot), pools_.data(), pools_.size() * sizeof(sh::ItemRecord),
+           glows_.size() * sizeof(sh::ItemRecord));
     upload(glyphs_buffer_.at(slot), glyphs_.data(), glyphs_.size() * sizeof(sl::GlyphDraw));
     upload(fades_buffer_.at(slot), fade_words_.data(), fade_words_.size() * sizeof(std::uint32_t));
     slot_ = slot;
@@ -1154,6 +1195,7 @@ void Shopfronts::update(const frame::FrameState& state) {
     counts_ = {.shops = static_cast<std::uint32_t>(frame.shops.size()),
                .tables = tables,
                .glows = static_cast<std::uint32_t>(glows_.size()),
+               .pools = static_cast<std::uint32_t>(pools_.size()),
                .front_faces = front_faces,
                .terrace_faces = static_cast<std::uint32_t>(terrace_faces.size()),
                .tints = static_cast<std::uint32_t>(tints.size()),
@@ -1168,6 +1210,7 @@ void Shopfronts::record(const frame::Recording& recording, std::uint32_t phase) 
     case texts_phase: record_texts(recording); break;
     case tints_phase: record_tints(recording); break;
     case glows_phase: record_glows(recording); break;
+    case pools_phase: record_pools(recording); break;
     default: break;
     }
 }
@@ -1241,13 +1284,28 @@ void Shopfronts::record_glows(const frame::Recording& recording) {
     recording.counters.draw("open glows", std::uint64_t{counts_.glows} * 2);
 }
 
+void Shopfronts::record_pools(const frame::Recording& recording) {
+    if (pools_pipeline_ == nullptr || counts_.pools == 0) return;
+    const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pools_pipeline_);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_.at(slot_), {});
+    const auto samples = static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples());
+    // the glows' list, past the glows (their fades the same way)
+    const std::uint32_t before =
+        counts_.front_faces + counts_.terrace_faces + counts_.tints + counts_.front_parts + counts_.terrace_parts;
+    cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0,
+                                   hlsl::uint4{samples, 0U, 0U, dithers_ ? before + 1U : 0U});
+    cmd.draw(counts_.pools * sh::ITEM_PART_VERTICES, 1, counts_.glows * sh::ITEM_PART_VERTICES, 0);
+    recording.counters.draw("open pools", std::uint64_t{counts_.pools} * 2);
+}
+
 void Shopfronts::emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const {
     if (phase != draw_phase || !state.view) return;
     const tiles::Style* style =
         state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
     if (style == nullptr) return;
     const ShopFrame frame = shop_shapes(state, index(), kinds_, style->shopfronts, hours_);
-    twin::emit_shops(state, frame, style->shopfronts, out);
+    twin::emit_shops(state, frame, style->shopfronts, first_tail_slot(), out);
 }
 
 } // namespace atlas::passes
