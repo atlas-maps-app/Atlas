@@ -633,7 +633,7 @@ JNIEXPORT jdoubleArray JNICALL Java_app_atlas_mapcorecheck_frame_FrameHost_proje
         const shaders::TilePlace place = v.tile_place(origin, 1.0, 1.0);
         const hlsl::float3 local{static_cast<float>(w.x - origin.x), static_cast<float>(w.y - origin.y),
                                  static_cast<float>(w.z - origin.z)};
-        const hlsl::float3 k = shaders::camera_of(block, shaders::eye_relative(place, local));
+        const hlsl::float3 k = shaders::camera_of(block, shaders::placed(block, place, local));
         if (k.z >= block.frame.w) {
             const hlsl::float2 css = shaders::project_css(block, k);
             out[(4 * i) + 2] = wide(css.x) * in->camera.density;

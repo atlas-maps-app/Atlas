@@ -375,7 +375,7 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
             if (p->kind == tiles::PackKind::window || of_the_world(*p)) continue;
             if (const std::optional<tiles::GridBox> b = box_of(*p)) held.push_back(*b);
         }
-        const Frustum frustum(view.camera(), 40.0, options_.far);
+        const Frustum frustum(view.camera(), 40.0, options_.far, view.drop());
         const tiles::TileKey centre = tiles::tile_of(14, lat, lon);
         // the places within the finest level's reach: an L14 tile is 40,075 km · cos(lat) / 2^14 wide
         const double width = 40'075'016.686 * pymath::cos(pymath::radians(camera.latitude)) / 16384.0;
@@ -493,7 +493,7 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
 
 std::vector<tiles::TileKey> World::want_levels(const view::View& view, const style::CameraState& camera,
                                                const view::GroundFrame& frame) const {
-    const Frustum frustum(view.camera(), 40.0, far_);
+    const Frustum frustum(view.camera(), 40.0, far_, view.drop());
     const std::int32_t lat = tiles::grid_round(camera.latitude);
     const std::int32_t lon = tiles::grid_round(camera.longitude);
     std::vector<tiles::TileKey> keys;
@@ -698,7 +698,7 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
     // each level from its start moved nearer by the governor's bias
-    world_tiles_->update(state.view->camera(), frame, distance, state.number, seconds, governor_.near(1.0));
+    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0));
 }
 
 double World::reach_of(double distance) const noexcept {

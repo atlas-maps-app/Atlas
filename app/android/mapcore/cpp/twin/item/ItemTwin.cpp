@@ -100,8 +100,8 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
     face_records_.assign(shaders::item_job_faces(kind, static_cast<std::uint32_t>(w.extra)), shaders::item_nothing());
     part_records_.assign(shaders::item_part_count(kind), shaders::item_nothing());
     side_records_.assign(shaders::item_side_count(kind), shaders::item_nothing());
-    const hlsl::float3 foot = shaders::item_eye(j.place, w.foot);
-    const hlsl::float3 end = shaders::item_eye(j.place, hlsl::float3{w.end.x, w.foot.y, w.end.y});
+    const hlsl::float3 foot = shaders::item_eye(camera_, j.place, w.foot);
+    const hlsl::float3 end = shaders::item_eye(camera_, j.place, hlsl::float3{w.end.x, w.foot.y, w.end.y});
     switch (kind) {
     case shaders::ITEM_TOWER: tower(j, w, it, foot, owner); break;
     case shaders::ITEM_ROOF_MAST: roof_mast(j, w, it, foot, extra, owner); break;
@@ -437,7 +437,8 @@ void ItemTwin::coaster(const shaders::ItemJob& j, const shaders::ItemWords& w, h
                 std::array<hlsl::uint4, 3> pw{};
                 std::memcpy(pw.data(), heap.data() + at, sizeof pw);
                 const shaders::ItemWords prev = shaders::item_words(pw[0], pw[1], pw[2]);
-                const hlsl::float3 pe = shaders::item_eye(j.place, hlsl::float3{prev.end.x, prev.foot.y, prev.end.y});
+                const hlsl::float3 pe =
+                    shaders::item_eye(c, j.place, hlsl::float3{prev.end.x, prev.foot.y, prev.end.y});
                 const hlsl::float3 k0 = shaders::camera_of(c, pe);
                 const hlsl::float3 k1 = shaders::camera_of(c, hlsl::float3{pe.x, pe.y + prev.extra, pe.z});
                 if (shaders::tree_ahead(c, k0) && shaders::tree_ahead(c, k1)) {

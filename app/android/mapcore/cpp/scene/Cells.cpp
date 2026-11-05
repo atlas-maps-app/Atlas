@@ -45,7 +45,8 @@ Box box_of(const tiles::GridBox& grid, std::int32_t top_cm, const view::GroundFr
             .z1 = frame.z(south, 0)};
 }
 
-Frustum::Frustum(const view::Camera& camera, double margin_px, double far) noexcept : camera_(camera), far_(far) {
+Frustum::Frustum(const view::Camera& camera, double margin_px, double far, double drop) noexcept
+    : camera_(camera), far_(far), drop_(drop) {
     const double f = camera.focal();
     const double m = margin_px;
     normals_[0] = {f, 0, camera.cx() + m};                   // left: x ≥ −m
@@ -56,8 +57,24 @@ Frustum::Frustum(const view::Camera& camera, double margin_px, double far) noexc
     offsets_ = {0, 0, 0, 0, camera.near()};
 }
 
-bool Frustum::sees(const Box& box) const noexcept {
-    const auto k = corners(camera_, box);
+Box Frustum::bent(const Box& box) const noexcept {
+    if (drop_ == 0.0) return box;
+    const view::Vec3& t = camera_.spec().target;
+    // an interval's nearest and farthest distance from t, along one axis
+    const auto near = [](double lo, double hi, double at) { return at < lo ? lo - at : (at > hi ? at - hi : 0.0); };
+    const auto far = [](double lo, double hi, double at) { return std::max(std::abs(lo - at), std::abs(hi - at)); };
+    const double nx = near(box.x0, box.x1, t.x);
+    const double nz = near(box.z0, box.z1, t.z);
+    const double fx = far(box.x0, box.x1, t.x);
+    const double fz = far(box.z0, box.z1, t.z);
+    Box b = box;
+    b.y0 -= drop_ * ((fx * fx) + (fz * fz));
+    b.y1 -= drop_ * ((nx * nx) + (nz * nz));
+    return b;
+}
+
+bool Frustum::sees(const Box& unbent) const noexcept {
+    const auto k = corners(camera_, bent(unbent));
     for (std::size_t p = 0; p < normals_.size(); ++p) {
         const bool outside =
             std::ranges::all_of(k, [&](const view::Vec3& c) { return dot(c, normals_[p]) < offsets_[p]; });
@@ -66,8 +83,8 @@ bool Frustum::sees(const Box& box) const noexcept {
     return !std::ranges::all_of(k, [&](const view::Vec3& c) { return c.z > far_; });
 }
 
-double Frustum::share(const Box& box) const noexcept {
-    const auto k = corners(camera_, box);
+double Frustum::share(const Box& unbent) const noexcept {
+    const auto k = corners(camera_, bent(unbent));
     double x0 = std::numeric_limits<double>::infinity();
     double x1 = -x0;
     double y0 = x0;
@@ -87,7 +104,8 @@ double Frustum::share(const Box& box) const noexcept {
     return w > 0 && h > 0 ? cw * ch / (w * h) : 0.0;
 }
 
-double Frustum::distance(const Box& box) const noexcept {
+double Frustum::distance(const Box& unbent) const noexcept {
+    const Box box = bent(unbent);
     const view::Vec3& e = camera_.eye();
     const double dx = e.x < box.x0 ? box.x0 - e.x : (e.x > box.x1 ? e.x - box.x1 : 0.0);
     const double dy = e.y < box.y0 ? box.y0 - e.y : (e.y > box.y1 ? e.y - box.y1 : 0.0);

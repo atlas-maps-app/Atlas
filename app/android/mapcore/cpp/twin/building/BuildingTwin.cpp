@@ -66,7 +66,7 @@ void project_ring(const shaders::FrameCamera& cam, const shaders::TilePlace& pla
     const bool rest = shaders::camera_rests(cam);
     const auto at = [&](std::size_t i) {
         const hlsl::float3 local = {xyz[3 * i], xyz[(3 * i) + 1], xyz[(3 * i) + 2]};
-        return shaders::camera_of(cam, shaders::eye_relative(place, local));
+        return shaders::camera_of(cam, shaders::placed(cam, place, local));
     };
     const auto put = [&](hlsl::float3 k) {
         hlsl::float2 v = shaders::css_of(cam, k);

@@ -250,7 +250,7 @@ void coaster(FrameCamera c, ItemJob j, ItemWords w, float3 foot, float3 end) {
                 uint prev = item_extra[j.extra];
                 ItemWords pw = item_words(points_heap[prev], points_heap[prev + 1u], points_heap[prev + 2u]);
                 float3 local = {pw.end.x, pw.foot.y, pw.end.y};
-                float3 pe = item_eye(j.place, local);
+                float3 pe = item_eye(c, j.place, local);
                 float3 pt = {pe.x, pe.y + pw.extra, pe.z};
                 ItemSeen q0 = seen(c, pe);
                 ItemSeen q1 = seen(c, pt);
@@ -481,9 +481,9 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         put(item_sides_out, j.sides + i, item_nothing());
     }
     FrameCamera c = frame.camera;
-    float3 foot = item_eye(j.place, w.foot);
+    float3 foot = item_eye(c, j.place, w.foot);
     float3 end_local = {w.end.x, w.foot.y, w.end.y};
-    float3 end = item_eye(j.place, end_local);
+    float3 end = item_eye(c, j.place, end_local);
     if (kind == ITEM_TOWER) {
         tower(c, j, w, foot);
     } else if (kind == ITEM_CRANE) {
@@ -521,7 +521,7 @@ void roof_masts_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     for (uint i = 0u; i < ITEM_ROOF_MAST_FACES; ++i) {
         put(item_faces_out, j.faces + i, item_nothing());
     }
-    roof_mast(frame.camera, j, w, item_eye(j.place, w.foot));
+    roof_mast(frame.camera, j, w, item_eye(frame.camera, j.place, w.foot));
 }
 
 // ---- drawing

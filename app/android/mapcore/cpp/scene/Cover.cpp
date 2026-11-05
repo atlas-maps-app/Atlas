@@ -164,7 +164,7 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         shown_.clear();
         return;
     }
-    const Frustum frustum(view.camera(), in.margin_px, in.far);
+    const Frustum frustum(view.camera(), in.margin_px, in.far, view.drop());
     pack_id_ = in.pack->id;
     walk({.pack = in.pack, .id = pack_id_, .active = true, .tolerance = in.tolerance}, frames, frustum, in,
          std::nullopt, {});

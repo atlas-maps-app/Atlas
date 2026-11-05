@@ -15,7 +15,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
+#include <numbers>
 
 namespace atlas::passes {
 
@@ -86,6 +88,10 @@ std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, boo
         const geometry::Rgba c = geometry::rgba(lawn ? style->area_colour(kind) : style->land_colours[k]);
         out[k + wp::kinds] = (night ? geometry::darken(c, lawn ? 0.18 : 0.2) : c).packed();
     }
+    // the south pole's cap: Antarctica's ice, as the globe's glaciers are drawn
+    if (const std::optional<std::uint16_t> g = style->land_kind("glacier"); g && *g + wp::kinds < wp::size) {
+        out[wp::south_cap] = out[*g + wp::kinds];
+    }
     return out;
 }
 
@@ -112,20 +118,38 @@ void World::update(const frame::FrameState& state) {
     const view::Camera& camera = state.view->camera();
     const view::Vec3& eye = camera.eye();
     const view::GroundFrame& f = world->frame;
+    const scene::WorldBend& bend = world->bend;
+    constexpr double radian = std::numbers::pi / 180.0;
+    const std::array<float, 4> sphere{static_cast<float>(bend.sin_lat), static_cast<float>(bend.cos_lat),
+                                      static_cast<float>(bend.sphere), static_cast<float>(view::earth_radius)};
+    const std::array<float, 4> target{static_cast<float>(bend.target.x - eye.x),
+                                      static_cast<float>(bend.target.y - eye.y),
+                                      static_cast<float>(bend.target.z - eye.z), 0.0F};
     for (const scene::WorldDraw& d : world->draws) {
         const scene::WorldTile& t = *d.tile;
         if (!t.range || (t.triangles == 0 && t.segments == 0)) continue;
         constexpr double grid = 1e-7;
-        const double south = t.box[0] * grid;
-        const double west = t.box[1] * grid;
-        const double north = t.box[2] * grid;
-        const double east = t.box[3] * grid;
-        const double x0 = f.x(north, west);
-        const double z0 = f.z(north, west);
+        // a cap's box is the frame's; a tile's longitudes within 180° of the target's
+        const scene::DegreeBox box = t.cap != 0 ? scene::world_cap_box(t.cap, bend.lon)
+                                                : scene::DegreeBox{.north = t.box[2] * grid,
+                                                                   .south = t.box[0] * grid,
+                                                                   .west = t.box[1] * grid,
+                                                                   .east = t.box[3] * grid};
+        const double shift = t.cap != 0 ? 0.0 : scene::wrap_shift(bend, (box.west + box.east) / 2.0);
+        const double west = box.west + shift;
+        const double east = box.east + shift;
+        const double x0 = f.x(box.north, west);
+        const double z0 = f.z(box.north, west);
         Draw out;
         out.origin = {static_cast<float>(x0 - eye.x), static_cast<float>(-eye.y), static_cast<float>(z0 - eye.z), 0.0F};
-        out.scale = {static_cast<float>((f.x(north, east) - x0) / 65'535.0),
-                     static_cast<float>((f.z(south, west) - z0) / 65'535.0), d.fade, d.fade < 1.0F ? 1.0F : 0.0F};
+        out.scale = {static_cast<float>((f.x(box.north, east) - x0) / 65'535.0),
+                     static_cast<float>((f.z(box.south, west) - z0) / 65'535.0), d.fade, d.fade < 1.0F ? 1.0F : 0.0F};
+        out.globe = {static_cast<float>((box.north - bend.lat) * radian),
+                     static_cast<float>(-(box.north - box.south) * radian / 65'535.0),
+                     static_cast<float>((west - bend.lon) * radian),
+                     static_cast<float>((box.east - box.west) * radian / 65'535.0)};
+        out.sphere = sphere;
+        out.target = target;
         out.fade = d.fade;
         out.level = t.key.z;
         out.at = {t.range.offset / 4U, static_cast<std::uint32_t>(d.cells & 0xFFFFU), 3U * t.triangles,
@@ -204,11 +228,18 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
         g.depth_op = vk::CompareOp::eGreaterOrEqual;
         return g;
     };
-    ATLAS_GPU_LET(fills, frame::make_pipeline(context, desc("world fills", "fill_vs"), frame::Overdraw::opaque));
+    // the fills' back faces culled, so on the bent ground what lies beyond the horizon draws nowhere: a tile's
+    // triangles are counter-clockwise with north up (earcut's winding), and the fading pipeline takes them backwards
+    gpu::GraphicsDesc whole = desc("world fills", "fill_vs");
+    whole.cull = vk::CullModeFlagBits::eBack;
+    whole.front = vk::FrontFace::eCounterClockwise;
+    ATLAS_GPU_LET(fills, frame::make_pipeline(context, whole, frame::Overdraw::opaque));
     fills_ = std::move(fills);
     // a fading tile's: each pixel its topmost fill alone (top first, GREATER), blended over its ancestor's cells
     gpu::GraphicsDesc fading = desc("world fills fading", "fill_vs");
     fading.depth_op = vk::CompareOp::eGreater;
+    fading.cull = vk::CullModeFlagBits::eBack;
+    fading.front = vk::FrontFace::eClockwise;
     ATLAS_GPU_LET(fading_fills, frame::make_pipeline(context, fading, frame::Overdraw::opaque));
     fading_fills_ = std::move(fading_fills);
     ATLAS_GPU_LET(lines, frame::make_pipeline(context, desc("world lines", "line_vs"), frame::Overdraw::opaque));
@@ -252,8 +283,12 @@ void World::record(const frame::Recording& recording, std::uint32_t phase) {
     for (const Draw& d : draws_) {
         const bool fading = d.fade < 1.0F;
         const float depth = fading ? fading_depth(flags, d.lift) : world_depth(flags);
-        const wl::PushConstants pc{
-            .origin = {d.origin[0], d.origin[1], d.origin[2], depth}, .scale = d.scale, .at = d.at};
+        const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
+                                   .scale = d.scale,
+                                   .at = d.at,
+                                   .globe = d.globe,
+                                   .sphere = d.sphere,
+                                   .target = d.target};
         if (d.triangles > 0) {
             bind(fading ? fading_fills_ : fills_);
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);

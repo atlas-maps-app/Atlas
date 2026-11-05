@@ -213,7 +213,7 @@ static const float4 FOLDED = float4(0.0f, 0.0f, 2.0f, 1.0f);
 
 /// The clip position of tile `t`'s local point at painter slot `slot`.
 float4 place(uint t, float3 local, uint slot) {
-    float3 k = camera_of(frame.camera, eye_relative(place_of(t), local));
+    float3 k = camera_of(frame.camera, placed(frame.camera, place_of(t), local));
     float2 css = project_css(frame.camera, k);
     return clip_of(frame.camera, css, k.z, painter_depth(frame.camera, slot));
 }
@@ -294,10 +294,10 @@ float2 least_point(uint tile, float y, float2 w, float2 wm, inout float cover) {
     float2 a = c + along;
     float2 b = c - along;
     TilePlace t = place_of(tile);
-    float3 kw = camera_of(frame.camera, eye_relative(t, float3(w.x, y, w.y)));
-    float3 km = camera_of(frame.camera, eye_relative(t, float3(wm.x, y, wm.y)));
-    float3 ka = camera_of(frame.camera, eye_relative(t, float3(a.x, y, a.y)));
-    float3 kb = camera_of(frame.camera, eye_relative(t, float3(b.x, y, b.y)));
+    float3 kw = camera_of(frame.camera, placed(frame.camera, t, float3(w.x, y, w.y)));
+    float3 km = camera_of(frame.camera, placed(frame.camera, t, float3(wm.x, y, wm.y)));
+    float3 ka = camera_of(frame.camera, placed(frame.camera, t, float3(a.x, y, a.y)));
+    float3 kb = camera_of(frame.camera, placed(frame.camera, t, float3(b.x, y, b.y)));
     if (min(min(kw.z, km.z), min(ka.z, kb.z)) <= frame.camera.frame.w) {
         return w;
     }
@@ -508,10 +508,10 @@ float thin_px(uint tile, float y, float2 w, float2 wm) {
     float2 a = c + along;
     float2 b = c - along;
     TilePlace t = place_of(tile);
-    float3 kw = camera_of(frame.camera, eye_relative(t, float3(w.x, y, w.y)));
-    float3 km = camera_of(frame.camera, eye_relative(t, float3(wm.x, y, wm.y)));
-    float3 ka = camera_of(frame.camera, eye_relative(t, float3(a.x, y, a.y)));
-    float3 kb = camera_of(frame.camera, eye_relative(t, float3(b.x, y, b.y)));
+    float3 kw = camera_of(frame.camera, placed(frame.camera, t, float3(w.x, y, w.y)));
+    float3 km = camera_of(frame.camera, placed(frame.camera, t, float3(wm.x, y, wm.y)));
+    float3 ka = camera_of(frame.camera, placed(frame.camera, t, float3(a.x, y, a.y)));
+    float3 kb = camera_of(frame.camera, placed(frame.camera, t, float3(b.x, y, b.y)));
     if (min(min(kw.z, km.z), min(ka.z, kb.z)) <= frame.camera.frame.w) {
         return LEAST_PX;
     }
@@ -737,13 +737,13 @@ void shadow_box_cs(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
         float2 high = float2(-1.0e30f, -1.0e30f);
         uint points = 0u;
         float2 p0 = shadow_corner(base, tile, c, 0u);
-        float3 k0 = camera_of(frame.camera, eye_relative(at, float3(p0.x, c.y, p0.y)));
+        float3 k0 = camera_of(frame.camera, placed(frame.camera, at, float3(p0.x, c.y, p0.y)));
         float3 a = k0;
         for (uint j = 1u; j <= corners; ++j) {
             float3 b = k0;
             if (j < corners) {
                 float2 p = shadow_corner(base, tile, c, j);
-                b = camera_of(frame.camera, eye_relative(at, float3(p.x, c.y, p.y)));
+                b = camera_of(frame.camera, placed(frame.camera, at, float3(p.x, c.y, p.y)));
             }
             bool ahead = a.z >= near;
             if (ahead) {
@@ -906,7 +906,7 @@ MaskOut shadow_mask_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInst
     }
     ShadowOf c = shadow_of(base, tile, s);
     float2 p = shadow_corner(base, tile, c, id & 0xFFFFu);
-    float3 k = camera_of(frame.camera, eye_relative(place_of(tile), float3(p.x, c.y, p.y)));
+    float3 k = camera_of(frame.camera, placed(frame.camera, place_of(tile), float3(p.x, c.y, p.y)));
     float2 css = project_css(frame.camera, k);
     ShadowGrid g = shadow_grid[0];
     float2 texel = css * g.scale.x - float2(float(g.input.x), float(g.input.y));
@@ -1127,7 +1127,7 @@ float3 run_local(uint first, uint k, float y) {
 
 /// A tile-local point's camera coordinates.
 float3 local_camera(uint tile, float3 p) {
-    return camera_of(frame.camera, eye_relative(place_of(tile), p));
+    return camera_of(frame.camera, placed(frame.camera, place_of(tile), p));
 }
 
 /// A run's point k, projected: its camera coordinates.
