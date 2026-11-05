@@ -114,7 +114,7 @@ jobs:
     # null on a push, which builds
     if: ${{ github.event.inputs.publish == '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       tag: ${{ steps.day.outputs.tag }}
       land: ${{ steps.run.outputs.land }}
@@ -188,8 +188,10 @@ jobs:
           set -euo pipefail
           P="$RUNNER_TEMP/plan"
           mkdir -p "$P" "$RUNNER_TEMP/latest"
-          size() { curl -fsSIL --retry 5 --retry-delay 10 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
-          curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
+          # a file's size by a HEAD request, each try given 30 s (a request to Geofabrik can hang: 5 November's first
+          # planet plan, World run 42100882444, ran out of its job's 30 minutes with no limit on a request)
+          size() { curl -fsSIL --max-time 30 --retry 3 --retry-delay 10 --retry-max-time 150 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
+          curl -fsSL --max-time 120 --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
           NAME=${AREA//\//-}
           if [ "$AREA" = planet ]; then
             # the whole world: OpenStreetMap's planet file, whose -latest goes on to the dated one (planet-YYMMDD.osm.pbf)
@@ -242,10 +244,29 @@ jobs:
               jq -c --arg a "$AREA" '[.features[] | select(.properties.parent == $a)]' "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
             fi
             if [ "$(jq length "$RUNNER_TEMP/children.json")" -gt 0 ]; then
-              # four at a time (the planet's 301 leaves of 4 November took one to four seconds each, one by one)
+              # eight at a time (the planet's 301 leaves of 4 November took one to four seconds each, one by one; on 5
+              # November, from a Mac, eight at a time took 319 s, eight leaves hanging through all their tries and then
+              # answering in 1.4 s one by one, and 69 s a second time), then each leaf whose size did not come asked
+              # again, one at a time
               export -f size
+              t0=$(date +%s)
               jq -r '.[].properties | .id, .urls.pbf' "$RUNNER_TEMP/children.json" |
-                xargs -P 4 -n 2 bash -c 'printf "%s\t%s\n" "$1" "$(size "$2")"' size > "$RUNNER_TEMP/sizes.tsv"
+                xargs -P 8 -n 2 bash -c 'printf "%s\t%s\n" "$1" "$(size "$2")"' size > "$RUNNER_TEMP/sizes.tsv"
+              awk -F '\t' '$2 == 0 { print $1 }' "$RUNNER_TEMP/sizes.tsv" > "$RUNNER_TEMP/again.txt"
+              if [ -s "$RUNNER_TEMP/again.txt" ]; then
+                echo "sizes: $(wc -l < "$RUNNER_TEMP/again.txt") leaves asked again, one at a time"
+                while read -r id; do
+                  u=$(jq -r --arg i "$id" '.[] | select(.properties.id == $i) | .properties.urls.pbf' "$RUNNER_TEMP/children.json")
+                  printf '%s\t%s\n' "$id" "$(size "$u" || true)"
+                done < "$RUNNER_TEMP/again.txt" > "$RUNNER_TEMP/again.tsv"
+                awk -F '\t' 'NR == FNR { again[$1] = $2; next } ($1 in again) { $2 = again[$1] } { print $1 "\t" $2 }' \
+                  "$RUNNER_TEMP/again.tsv" "$RUNNER_TEMP/sizes.tsv" > "$RUNNER_TEMP/sizes.again.tsv"
+                mv "$RUNNER_TEMP/sizes.again.tsv" "$RUNNER_TEMP/sizes.tsv"
+              fi
+              echo "sizes: $(awk -F '\t' '$2 > 0' "$RUNNER_TEMP/sizes.tsv" | wc -l) of $(jq length "$RUNNER_TEMP/children.json") leaves, in $(( $(date +%s) - t0 )) s"
+              # a leaf still without a size is left out of the weights, so its land weighs only what other extracts give it
+              missing=$(awk -F '\t' '$2 == 0 { printf "%s%s", s, $1; s = ", " }' "$RUNNER_TEMP/sizes.tsv")
+              [ -z "$missing" ] || echo "::warning::sizes: no size for $missing, left out of the weights"
               jq --rawfile s "$RUNNER_TEMP/sizes.tsv" '
                 ($s | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $b
                 | {type: "FeatureCollection", features: [.[] | select(($b[.properties.id] // 0) > 0) | .properties.bytes = $b[.properties.id]]}' \
