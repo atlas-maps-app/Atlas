@@ -165,6 +165,16 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() const;
     /// The frame cells' levels' tiles its world draws or keeps in view (scene::World::levels_in_view).
     [[nodiscard]] std::vector<tiles::TileKey> levels_in_view() const;
+    /// The world's cache of remote packs' heads and chunks (ENGINE.md step 6: the world's own LRU), for its world and
+    /// every world made from now on; null: none, so a remote pack opens nowhere.
+    void set_world_cache(std::shared_ptr<tiles::ExpandedCache> cache);
+    /// The world's tiles whose chunks are not on the phone, nearest first (scene::WorldTiles::wants; none before the
+    /// world draws).
+    [[nodiscard]] std::vector<scene::WorldWant> world_wants() const;
+    /// The world's blocks its cover reaches without an open pack, nearest first (scene::WorldTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> world_blocks() const;
+    /// The open pack `id` of its world's store, or null.
+    [[nodiscard]] std::shared_ptr<const tiles::StorePack> world_pack(std::string_view id) const;
     /// The building under the view's device point (`x`, `y`) as the last frame drew it (scene/Pick.hpp: the ray from
     /// the last frame's eye through that point, among the buildings of the packs its resident tiles came from), or
     /// none.
@@ -202,6 +212,7 @@ private:
     unsigned workers_;
     std::function<void()> wake_;
     MapOptions options_;
+    std::shared_ptr<tiles::ExpandedCache> world_cache_; // set_world_cache
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;

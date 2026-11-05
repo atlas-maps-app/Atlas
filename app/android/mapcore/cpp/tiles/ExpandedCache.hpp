@@ -20,6 +20,7 @@
 #include "tiles/Error.hpp"
 #include "tiles/Source.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -87,10 +88,21 @@ public:
     /// Evicts the least recently used entries until the cache holds at most `budget` bytes (the budget stays).
     void evict_to(std::uint64_t budget);
 
+    /// The budget from now on (the world's, which a setting raises), the least recently used evicted down to it.
+    void set_budget(std::uint64_t budget);
+
+    /// Whether the cache holds an entry of `key`: its index alone, the entry not read (a damaged one is a hit here and
+    /// a miss in get).
+    [[nodiscard]] bool holds(const CacheKey& key) const;
+
+    /// How many entries were written since the cache opened: a reader that found an entry missing asks again once it
+    /// changes.
+    [[nodiscard]] std::uint64_t writes() const;
+
     /// The bytes of every entry's file, and how many entries there are.
     [[nodiscard]] std::uint64_t bytes() const;
     [[nodiscard]] std::size_t entries() const;
-    [[nodiscard]] std::uint64_t budget() const noexcept { return budget_; }
+    [[nodiscard]] std::uint64_t budget() const noexcept { return budget_.load(std::memory_order_relaxed); }
     [[nodiscard]] const std::string& directory() const noexcept { return directory_; }
 
     /// Checks an entry file's bytes (header, key and payload) and returns its payload; for the fuzzer and the tests.
@@ -117,12 +129,12 @@ private:
     void evict_locked(std::uint64_t budget, const std::string* keep);
 
     std::string directory_;
-    std::uint64_t budget_;
+    std::atomic<std::uint64_t> budget_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Info> index_; ///< by file name
     std::uint64_t total_ = 0;
     std::uint64_t clock_ = 0;
-    std::uint64_t writes_ = 0;
+    std::atomic<std::uint64_t> writes_{0}; ///< read without the lock (writes)
 };
 
 } // namespace atlas::tiles

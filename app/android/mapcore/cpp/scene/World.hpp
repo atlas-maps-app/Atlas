@@ -93,6 +93,9 @@ struct WorldOptions {
     /// What the residency's workers tell the platform (ENGINE.md gain 8: platform::WorkerSession on Android, their
     /// priority and their hint session), or none: they stay at background priority.
     std::shared_ptr<WorkerHints> hints;
+    /// The style the world's packs are drawn in (tiles::Store::set_world_style: the core's own, load::world_style,
+    /// which MapFrame gives), or none: each pack's own.
+    const tiles::Style* world_style = nullptr;
 };
 
 /// The world.
@@ -191,6 +194,7 @@ public:
     }
     /// The world's tiles beyond the countries' (ENGINE.md step 5), once the store holds a world pack; else null.
     [[nodiscard]] WorldTiles* world_tiles() noexcept { return world_tiles_.get(); }
+    [[nodiscard]] const WorldTiles* world_tiles() const noexcept { return world_tiles_.get(); }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
     [[nodiscard]] std::span<const std::string_view> pass_names() const noexcept override { return pass_names_; }

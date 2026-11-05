@@ -69,6 +69,7 @@
 #include "load/Cut.hpp"
 #include "load/Levels.hpp"
 #include "load/PackHead.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
 #include "load/Scene.hpp"
 #include "load/Tags.hpp"
@@ -322,7 +323,8 @@ private:
 }
 
 /// `check`: the pack at args[2] (or args[4] bytes of it from args[3]) verified and every tile decoded, its head and
-/// tiles printed; whether every tile decoded.
+/// tiles printed; whether every tile decoded. A world pack opens in the core's world style, as the phone's store opens
+/// one (load::world_style).
 [[nodiscard]] std::expected<bool, Failure> check(std::span<char*> args) {
     const std::string path(args[2]);
     std::unique_ptr<tl::MappedSource> source;
@@ -348,7 +350,7 @@ private:
         if (!opened) return std::unexpected(opened.error());
         source = std::move(*opened);
     }
-    auto pack = tl::Pack::open(std::move(source));
+    auto pack = tl::Pack::open(std::move(source), load::world_style());
     if (!pack) return std::unexpected(Failure{.why = std::format("{}: {}", path, tl::describe(pack.error()))});
     const tl::RenderHead* head = pack->head();
     if (head == nullptr) return std::unexpected(Failure{.why = std::format("{} is no render pack", path)});

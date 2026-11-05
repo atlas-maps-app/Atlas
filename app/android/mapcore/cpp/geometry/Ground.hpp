@@ -491,6 +491,29 @@ static_assert(sizeof(LineGpu) == 16);
 inline constexpr std::uint32_t thin_words = 7;
 /// A metre of a thin edge's widths.
 inline constexpr double thin_units = 1024.0;
+/// How many of a tile's thin edges in their order the frame keeps or leaves out together (ThinChunk), and the most
+/// pairs of pieces a chunk names.
+inline constexpr std::uint32_t thin_chunk = 64;
+inline constexpr std::size_t thin_pairs = 4;
+
+/// thin_chunk of a tile's thin edges (the last fewer), whose bounds let the frame leave them out on the CPU where the
+/// vertex stage would fold every one of them (passes/Water.cpp's cull_thin): their first and count; the box over their
+/// ends and the points across the water from them, metres from the tile's origin, as thin_of places them; their pieces'
+/// least and most water level; the least of their widths, as thin_of reads them; and the pairs of their piece and the
+/// other bank's (`pairs` of them, or thin_pairs + 1 where there are more, naming none).
+struct ThinChunk {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    double x0 = 0;
+    double z0 = 0;
+    double x1 = 0;
+    double z1 = 0;
+    double y0 = 0;
+    double y1 = 0;
+    double least = 0;
+    std::uint32_t pairs = 0;
+    std::array<std::array<std::uint32_t, 2>, thin_pairs> pair{};
+};
 
 /// A word range of a heap range: [first, first + count) words, or of records.
 struct Words {
@@ -515,6 +538,8 @@ struct GroundGpu {
     Words fills;    ///< FillGpu records
     Words points;   ///< two words each
     Words lines_at; ///< LineGpu records (the polylines, in the tile's order)
+    /// The thin edges by thin_chunk, for the frame's cull on the CPU (no words of the heaps).
+    std::vector<ThinChunk> thin_chunks;
     /// The shadows (ground heap): their points (x, z as f32 from the tile's origin), their records (the first point,
     /// the count, h as f32, the flags, y as f32: five words) and their triangles over their corners, (shadow << 16) |
     /// corner (a swept hull's count + 2 corners: its points, its two turning points twice).
@@ -562,6 +587,8 @@ struct GroundTile {
     P2 far_corner;
     /// Where its words lie in its heap ranges (the pass's, once packed).
     GroundLayout layout;
+    /// Its thin edges by thin_chunk (GroundGpu::thin_chunks), which the frame culls on the CPU.
+    std::vector<ThinChunk> thin_chunks;
     /// Each polyline's first point's word in the lines range (pack's layout: the polylines' points in order).
     std::vector<std::uint32_t> polyline_words;
     /// The pair polylines' lines' reaches (Polyline::reach).

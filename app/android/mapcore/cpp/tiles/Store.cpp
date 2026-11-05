@@ -114,7 +114,98 @@ Result<std::shared_ptr<const ByteSource>> shared_source(const PackRef& ref) {
     return std::unexpected(error(Fault::missing, Site::file));
 }
 
+/// Whether `pack`'s levels are the world's of `kind` (ENGINE.md step 5): a world pack's L6 to L11, the globe's L0 to
+/// L5, so a country's tile (L12 and finer) is never found in one, nor a world tile in a country's pack. Other kinds
+/// pass.
+[[nodiscard]] Result<void> world_levels(const Pack& pack, PackKind kind) {
+    if (kind != PackKind::world_mid && kind != PackKind::world_base) return {};
+    const RenderHead* head = pack.head();
+    const std::uint8_t lo = kind == PackKind::world_mid ? Store::world_mid_first : 0;
+    const std::uint8_t hi = kind == PackKind::world_mid ? Store::world_mid_last : Store::world_mid_first - 1;
+    if (head == nullptr || head->levels.empty() ||
+        std::ranges::any_of(head->levels, [&](std::uint8_t z) { return z < lo || z > hi; })) {
+        return std::unexpected(error(Fault::bad_value, Site::head, head == nullptr ? 0 : head->levels.size()));
+    }
+    return {};
+}
+
+/// Reads from `ranges` alone: a read one of them holds whole, else absent (Fault::missing).
+[[nodiscard]] Result<void> read_ranges(const std::vector<RemoteState::Range>& ranges, std::uint64_t offset,
+                                       std::span<std::byte> out) {
+    for (const auto& r : ranges) {
+        if (offset >= r.offset && out.size() <= r.bytes.size() && offset - r.offset <= r.bytes.size() - out.size()) {
+            const auto from = r.bytes.begin() + static_cast<std::ptrdiff_t>(offset - r.offset);
+            std::copy(from, from + static_cast<std::ptrdiff_t>(out.size()), out.begin());
+            return {};
+        }
+    }
+    return std::unexpected(error(Fault::missing, Site::file, offset));
+}
+
 } // namespace
+
+void Store::set_cache(std::shared_ptr<ExpandedCache> cache) {
+    const std::scoped_lock lock(cache_mutex_);
+    cache_ = std::move(cache);
+}
+
+std::shared_ptr<ExpandedCache> Store::cache() const {
+    const std::scoped_lock lock(cache_mutex_);
+    return cache_;
+}
+
+RangeSource::Fetch Store::absent() {
+    return [](std::uint64_t offset, std::span<std::byte> /*out*/) -> Result<void> {
+        return std::unexpected(error(Fault::missing, Site::file, offset));
+    };
+}
+
+Result<void> Store::keep_head(ExpandedCache& cache, const PackRef& ref, std::span<const PackBytes> ranges,
+                              const Style* world_style) {
+    auto state = std::make_shared<std::vector<RemoteState::Range>>();
+    for (const PackBytes& r : ranges) {
+        if (r.offset > ref.length || r.bytes.size() > ref.length - r.offset) {
+            return std::unexpected(error(Fault::bad_value, Site::file, r.offset));
+        }
+        state->push_back({r.offset, std::vector<std::byte>(r.bytes.begin(), r.bytes.end())});
+    }
+    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length,
+                                                         [state](std::uint64_t offset, std::span<std::byte> out) {
+                                                             return read_ranges(*state, offset, out);
+                                                         }),
+                           world_style);
+    if (!pack) return std::unexpected(pack.error());
+    if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
+    if (auto levels = world_levels(*pack, ref.kind); !levels) return levels;
+    return cache.put({.kind = CacheKind::pack_head, .source = ref.identity}, encode_ranges(*state));
+}
+
+KeptChunks Store::keep(ExpandedCache& cache, const StorePack& pack, const PackBytes& range, Zstd& zstd) {
+    KeptChunks out;
+    std::vector<std::byte> raw;
+    const std::uint64_t end = range.offset + range.bytes.size();
+    for (const ChunkRef& c : pack.pack.chunks().chunks()) {
+        if (c.offset < range.offset || c.offset > end || c.stored > end - c.offset) continue;
+        const std::span<const std::byte> stored =
+            range.bytes.subspan(static_cast<std::size_t>(c.offset - range.offset), c.stored);
+        raw.resize(c.raw);
+        if (auto done = unpack_chunk(zstd, c, stored, pack.pack.format(), raw); !done) {
+            log::warn("tiles: {}'s chunk of {}/{}/{} is not the one its table names: {}", pack.id, c.tile.z, c.tile.x,
+                      c.tile.y, describe(done.error()));
+            out.refused.push_back(c.tile);
+            continue;
+        }
+        if (auto kept = cache.put({.kind = CacheKind::chunk, .source = c.sha256}, stored); !kept) {
+            // a chunk the cache cannot keep (a full disk) is not asked for again until the next start
+            log::warn("tiles: {}'s chunk of {}/{}/{} was not kept: {}", pack.id, c.tile.z, c.tile.x, c.tile.y,
+                      describe(kept.error()));
+            out.refused.push_back(c.tile);
+            continue;
+        }
+        out.kept.push_back(c.tile);
+    }
+    return out;
+}
 
 std::string Store::cell_id(TileKey cell) { return std::format("cells/{}/{}/{}", cell.z, cell.x, cell.y); }
 
@@ -129,13 +220,14 @@ std::string Store::holder_of(std::string_view id) const {
 Result<Pack> Store::open_remote(const PackRef& ref) {
     auto state = std::make_shared<RemoteState>();
     const CacheKey head_key{.kind = CacheKind::pack_head, .source = ref.identity};
+    const std::shared_ptr<ExpandedCache> cache = this->cache();
     bool cached = false;
-    if (cache_ != nullptr) {
-        if (auto entry = cache_->get(head_key)) {
+    if (cache != nullptr) {
+        if (auto entry = cache->get(head_key)) {
             cached = decode_ranges(entry->payload, ref.length, state->ranges);
             if (!cached) {
                 state->ranges.clear();
-                cache_->remove(head_key);
+                cache->remove(head_key);
             }
         }
     }
@@ -163,10 +255,10 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
         const std::scoped_lock lock(state->mutex);
         state->recording = !cached;
     }
-    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)));
+    auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)), world_style_);
     if (!pack && cached) {
         // a cached head that no longer opens (another pack under the same identity, or damage): fetch it afresh
-        cache_->remove(head_key);
+        cache->remove(head_key);
         return open_remote(ref);
     }
     if (!pack) return std::unexpected(pack.error());
@@ -176,9 +268,9 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
         if (state->recording) payload = encode_ranges(state->ranges);
         state->recording = false;
     }
-    if (cache_ != nullptr && !cached) {
+    if (cache != nullptr && !cached) {
         // a head the cache cannot keep (a full disk) only costs the next start its fetch
-        if (const auto kept = cache_->put(head_key, payload); !kept)
+        if (const auto kept = cache->put(head_key, payload); !kept)
             log::warn("tiles: a remote pack's head was not cached: {}", describe(kept.error()));
     }
     return pack;
@@ -194,29 +286,19 @@ Result<void> Store::add(const PackRef& ref) {
     } else if (names_range(ref)) {
         auto source = open_range(ref);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (ref.fd >= 0) {
         auto source = MappedSource::open(ref.fd, ref.offset, ref.length);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     } else if (!ref.path.empty()) {
         auto source = MappedSource::open(ref.path);
         if (!source) return std::unexpected(source.error());
-        pack = Pack::open(std::move(*source));
+        pack = Pack::open(std::move(*source), world_style_);
     }
     if (!pack) return std::unexpected(pack.error());
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
-    if (ref.kind == PackKind::world_mid || ref.kind == PackKind::world_base) {
-        // The world's levels and the countries' never meet (ENGINE.md step 5): a world pack holds L6 to L11, the globe
-        // L0 to L5, so a country's tile (L12 and finer) is never found in one, nor a world tile in a country's pack.
-        const RenderHead* head = pack->head();
-        const std::uint8_t lo = ref.kind == PackKind::world_mid ? world_mid_first : 0;
-        const std::uint8_t hi = ref.kind == PackKind::world_mid ? world_mid_last : world_mid_first - 1;
-        if (head == nullptr || head->levels.empty() ||
-            std::ranges::any_of(head->levels, [&](std::uint8_t z) { return z < lo || z > hi; })) {
-            return std::unexpected(error(Fault::bad_value, Site::head, head == nullptr ? 0 : head->levels.size()));
-        }
-    }
+    if (auto levels = world_levels(*pack, ref.kind); !levels) return std::unexpected(levels.error());
     insert(std::make_shared<StorePack>(StorePack{
         .id = ref.id, .kind = ref.kind, .identity = ref.identity, .remote = remote, .pack = std::move(*pack)}));
     return {};
@@ -399,19 +481,20 @@ Result<void> Store::load(const StoreHit& hit, Zstd& zstd, std::vector<std::byte>
     std::vector<std::byte> scratch;
     if (!p.remote) return p.pack.unpack(c, zstd, raw, scratch);
     const CacheKey key{.kind = CacheKind::chunk, .source = c.sha256};
-    if (cache_ != nullptr) {
-        if (auto entry = cache_->get(key)) {
+    const std::shared_ptr<ExpandedCache> cache = this->cache();
+    if (cache != nullptr) {
+        if (auto entry = cache->get(key)) {
             raw.resize(c.raw);
             if (unpack_chunk(zstd, c, entry->payload, p.pack.format(), raw)) return {};
-            cache_->remove(key); // a stale or damaged copy: fetch it again
+            cache->remove(key); // a stale or damaged copy: fetch it again
         }
     }
     auto stored = p.pack.stored(c, scratch);
     if (!stored) return std::unexpected(stored.error());
     raw.resize(c.raw);
     if (auto done = unpack_chunk(zstd, c, *stored, p.pack.format(), raw); !done) return done;
-    if (cache_ != nullptr) {
-        if (const auto kept = cache_->put(key, *stored); !kept)
+    if (cache != nullptr) {
+        if (const auto kept = cache->put(key, *stored); !kept)
             log::warn("tiles: a fetched chunk was not cached: {}", describe(kept.error()));
     }
     return {};

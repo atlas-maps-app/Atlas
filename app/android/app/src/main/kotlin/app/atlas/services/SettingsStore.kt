@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import app.atlas.geo.LatLon
@@ -191,6 +192,12 @@ object SettingsKeys {
      * going in alpha 16 stops the zoom at z 17 (the user, 29 October 2026).
      */
     val MAP_PACING = booleanPreferencesKey("map.pacing")
+
+    /**
+     * The world cache's budget in MB (ENGINE.md step 6: the world's packs' heads and chunks the phone keeps, so a place
+     * seen once works offline): 256 when unset, and never less (MapEngine.worldCacheBytes).
+     */
+    val WORLD_CACHE_MB = intPreferencesKey("world.cacheMb")
 
     /**
      * A debug build's switch of the screen's compression (on when unset: the driver's own framebuffer compression, its

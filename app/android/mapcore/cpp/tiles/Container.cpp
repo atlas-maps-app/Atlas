@@ -31,7 +31,7 @@ Result<std::vector<std::byte>> read_section(const ByteSource& source, const Sect
     return std::unexpected(error(Fault::unsupported, site, static_cast<std::uint64_t>(section.method)));
 }
 
-Result<Pack> Pack::open(std::unique_ptr<ByteSource> source) {
+Result<Pack> Pack::open(std::unique_ptr<ByteSource> source, const Style* world_style) {
     Pack p;
     p.source_ = std::move(source);
     const ByteSource& src = *p.source_;
@@ -72,10 +72,14 @@ Result<Pack> Pack::open(std::unique_ptr<ByteSource> source) {
         if (!style_bytes) return std::unexpected(style_bytes.error());
         auto s = read_style(std::move(*style_bytes));
         if (!s) return std::unexpected(s.error());
-        auto typed = Style::of(*s);
-        if (!typed) return std::unexpected(typed.error());
+        if (world_style != nullptr && p.head_->profile == Profile::world_base) {
+            p.style_.emplace(*world_style);
+        } else {
+            auto typed = Style::of(*s);
+            if (!typed) return std::unexpected(typed.error());
+            p.style_.emplace(std::move(*typed));
+        }
         p.style_tables_.emplace(std::move(*s));
-        p.style_.emplace(std::move(*typed));
     }
 
     // The chunk table can be long (a planet's base asset holds about a hundred thousand chunks): no size cap but the

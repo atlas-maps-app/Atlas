@@ -53,6 +53,7 @@ private:
 gpu::Result<std::unique_ptr<World>>
 World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::Pass>> passes, WorldOptions options) {
     std::unique_ptr<World> w(new World(std::move(options))); // NOLINT(cppcoreguidelines-owning-memory)
+    w->store_.set_world_style(w->options_.world_style);
     ATLAS_GPU_LET(heaps, Heaps::create(device, w->options_.heaps));
     w->heaps_ = std::move(heaps);
     w->options_.heaps.total = w->heaps_->budget().total; // within its two buffers' parts

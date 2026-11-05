@@ -47,9 +47,13 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace atlas::scene {
@@ -66,6 +70,26 @@ inline constexpr double world_fade_seconds = 0.18;
 /// The world's finest level, and the levels per tile's side of cells.
 inline constexpr std::uint8_t world_finest = 11;
 inline constexpr std::uint8_t world_cells_per_side = 4;
+
+/// The world's blocks (ENGINE.md step 5, "Packs"): a coarse pack per L3 tile holds its L6 to L8 tiles, a fine pack per
+/// L6 tile its L9 to L11.
+inline constexpr std::uint8_t world_coarse_block = 3;
+inline constexpr std::uint8_t world_fine_block = 6;
+inline constexpr std::uint8_t world_coarse_first = 6;
+inline constexpr std::uint8_t world_fine_first = 9;
+
+/// The block of a world pack by its store id (`world/<z>/<x>/<y>`, tiles::world_pack_id), or nothing for another id.
+[[nodiscard]] std::optional<tiles::TileKey> world_block_of(std::string_view id) noexcept;
+
+/// A world tile wanted whose chunk is not on the phone (ENGINE.md step 6): its remote pack's id and the chunk's range
+/// in the pack, which the app fetches and keeps (tiles::Store::keep).
+struct WorldWant {
+    tiles::TileKey tile;
+    std::string pack;
+    tiles::Sha256Digest identity{}; ///< the pack's (world.idx's SHA-256 of it)
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+};
 
 /// Level `z`'s start: the camera distance from which its tiles are drawn, 18.8 km·2^(11 − z).
 [[nodiscard]] double world_level_start(std::uint8_t z) noexcept;
@@ -150,6 +174,8 @@ struct WorldTile {
     bool pinned = false;     ///< the globe's L0 to L3: never let go of
     bool ever_drawn = false;
     std::int8_t cap = 0; ///< a pole's cap: 1 the north's, -1 the south's (its box the frame's: world_cap_box)
+    /// The pack it was built from: once the store no longer holds it (a new version of the world), the tile is let go.
+    std::shared_ptr<const tiles::StorePack> pack;
 };
 
 /// A pole's cap's box in a frame whose camera's target lies at longitude `lon` (degrees): from world_cap_from to the
@@ -218,6 +244,14 @@ public:
     [[nodiscard]] const WorldFrame* frame() const noexcept { return drawing_ ? &frame_ : nullptr; }
     /// What it holds (render thread).
     [[nodiscard]] WorldStats stats() const;
+    /// The tiles the last update wanted whose chunks are not on the phone, in its order (nearest first), each with its
+    /// pack's range: a remote pack's chunk the cache lacks. Each is wanted again once the cache has changed (any
+    /// thread).
+    [[nodiscard]] std::vector<WorldWant> wants() const;
+    /// The blocks the last update's cover reaches whose world pack is not open (ENGINE.md step 6: the app fetches the
+    /// pack's head where its index has one), nearest first: a coarse block (L3) for its L6 to L8, a fine block (L6) for
+    /// its L9 to L11 (any thread).
+    [[nodiscard]] std::vector<tiles::TileKey> blocks() const;
     /// Waits until the worker has built every tile wanted so far (tests).
     void wait_idle();
 
@@ -232,14 +266,18 @@ private:
 
     WorldTiles(const tiles::Store& store, std::unique_ptr<Heaps> heaps) noexcept;
     void run(const std::stop_token& stop);
-    /// Builds `key` from the store into the heap; null where it cannot (no world tile, no room, a damaged chunk).
-    [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room);
+    /// Builds `key` from the store into the heap; null where it cannot (no world tile, no room, a damaged chunk, or a
+    /// chunk not on the phone, which `absent` then names).
+    [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room,
+                                                   std::optional<WorldWant>& absent);
     /// Gives a resident tile's range back: once the last frame that drew it has finished.
     void let_go(const WorldTile& t);
     /// Lets go of resident tiles not drawn by frame `number`, least lately drawn first, until `need` bytes are free.
     void make_room(vk::DeviceSize need, std::uint64_t number);
-    /// The world's style: the first world pack's.
-    void take_style();
+    /// The world's style: the first world pack's. Returns whether the store's world packs changed.
+    bool take_style();
+    /// Lets go of the resident tiles whose packs the store no longer holds (render thread).
+    void let_go_of_gone();
 
     const tiles::Store& store_;
     std::unique_ptr<Heaps> heaps_;
@@ -249,6 +287,8 @@ private:
     bool drawing_ = false;
     std::shared_ptr<const tiles::StorePack> style_pack_;
     std::vector<std::shared_ptr<const tiles::StorePack>> seen_packs_;
+    std::vector<const tiles::StorePack*> seen_world_; ///< the world packs among seen_packs_
+    std::unordered_set<std::uint64_t> open_blocks_;   ///< their blocks, packed (their ids, tiles::world_pack_id)
     bool pinned_asked_ = false;
 
     mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats
@@ -259,6 +299,14 @@ private:
     std::vector<std::unique_ptr<WorldTile>> built_;
     std::vector<tiles::TileKey> no_room_;
     std::vector<std::uint64_t> failed_keys_;
+    /// A tile built without its chunk on the phone, and the cache's writes as its build began.
+    struct Absent {
+        WorldWant want;
+        std::uint64_t writes = 0;
+    };
+    std::unordered_map<std::uint64_t, Absent> absent_; ///< by packed key
+    std::vector<WorldWant> wants_;
+    std::vector<tiles::TileKey> blocks_;
     std::function<void()> wake_;
     bool drawing_asked_ = false; // the last update drew the world: a tile built asks for a frame
     WorldStats stats_;

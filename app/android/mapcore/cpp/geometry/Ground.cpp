@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <span>
 #include <string>
 
 namespace atlas::geometry {
@@ -925,7 +926,7 @@ std::size_t GroundTile::bytes() const noexcept {
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
            (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
            (lit_lines.capacity() * sizeof(P2)) + (mirror_heads.capacity() * sizeof(MirrorHead)) +
-           (mirror_walls.capacity() * sizeof(MirrorWall));
+           (mirror_walls.capacity() * sizeof(MirrorWall)) + (thin_chunks.capacity() * sizeof(ThinChunk));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {
@@ -1117,6 +1118,50 @@ GroundGpu pack(const GroundTile& g) {
         w.push_back(units(t.ta) | (units(t.tb) << 16U));
         w.push_back(t.fill);
         w.push_back(t.other);
+    }
+    // their bounds by thin_chunk for the frame's cull (ThinChunk), each edge as thin_of places it: its ends, and across
+    // the water from them along the left of its direction by the widths its record holds, at its piece's level as the
+    // piece's record holds it
+    for (std::size_t c = 0; c < thin.size(); c += thin_chunk) {
+        ThinChunk k{.first = static_cast<std::uint32_t>(c),
+                    .count = static_cast<std::uint32_t>(std::min<std::size_t>(thin_chunk, thin.size() - c))};
+        k.x0 = k.z0 = k.y0 = k.least = std::numeric_limits<double>::infinity();
+        k.x1 = k.z1 = k.y1 = -std::numeric_limits<double>::infinity();
+        for (std::size_t i = c; i < c + k.count; ++i) {
+            const ThinEdge& t = thin[i];
+            const auto ax = static_cast<float>(t.a.x - g.origin.x);
+            const auto az = static_cast<float>(t.a.z - g.origin.z);
+            const auto bx = static_cast<float>(t.b.x - g.origin.x);
+            const auto bz = static_cast<float>(t.b.z - g.origin.z);
+            const float wa = static_cast<float>(units(t.ta)) / static_cast<float>(thin_units);
+            const float wb = static_cast<float>(units(t.tb)) / static_cast<float>(thin_units);
+            const float ex = bx - ax;
+            const float ez = bz - az;
+            const float l = std::sqrt((ex * ex) + (ez * ez));
+            const float nx = l > 0.0F ? -ez / l : 0.0F;
+            const float nz = l > 0.0F ? ex / l : 0.0F;
+            for (const std::array<float, 2> p :
+                 {std::array{ax, az}, std::array{bx, bz}, std::array{ax + (nx * wa), az + (nz * wa)},
+                  std::array{bx + (nx * wb), bz + (nz * wb)}}) {
+                k.x0 = pm::min(k.x0, static_cast<double>(p[0]));
+                k.x1 = pm::max(k.x1, static_cast<double>(p[0]));
+                k.z0 = pm::min(k.z0, static_cast<double>(p[1]));
+                k.z1 = pm::max(k.z1, static_cast<double>(p[1]));
+            }
+            const Fill& fill = g.fills[t.fill];
+            const auto y = static_cast<double>(static_cast<float>(fill.kind == FillKind::water ? fill.level : fill.y));
+            k.y0 = pm::min(k.y0, y);
+            k.y1 = pm::max(k.y1, y);
+            k.least = pm::min({k.least, static_cast<double>(wa), static_cast<double>(wb)});
+            const std::array<std::uint32_t, 2> pair{t.fill, t.other};
+            const std::span<const std::array<std::uint32_t, 2>> named(k.pair.data(),
+                                                                      std::min<std::size_t>(k.pairs, thin_pairs));
+            if (k.pairs <= thin_pairs && std::ranges::find(named, pair) == named.end()) {
+                if (k.pairs < thin_pairs) k.pair[k.pairs] = pair;
+                ++k.pairs;
+            }
+        }
+        out.thin_chunks.push_back(k);
     }
     out.fills = {.first = static_cast<std::uint32_t>(w.size()), .count = static_cast<std::uint32_t>(g.fills.size())};
     for (const Fill& fill : g.fills) {
