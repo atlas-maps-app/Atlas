@@ -48,7 +48,7 @@ on:
         required: false
         default: ''
       publish:
-        description: A checked draft world-YYYYMMDD or world-YYYYMMDD-planet to publish instead of building one (world-latest then points at it)
+        description: A checked draft world-YYYYMMDD, world-YYYYMMDD-planet or a re-run's world-YYYYMMDD-planet-N to publish instead of building one (world-latest then points at it)
         required: false
         default: ''
   # A run of the workflow's own branch before it lands, its inputs in .github/world-run.json
@@ -923,7 +923,7 @@ jobs:
       - name: Publish
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-planet)?$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD or world-YYYYMMDD-planet, not $TAG"; exit 1; fi
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-planet(-[0-9]+)?)?$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD, world-YYYYMMDD-planet or world-YYYYMMDD-planet-N, not $TAG"; exit 1; fi
           if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != true ]; then echo "::error::$TAG is not a draft"; exit 1; fi
           R="$RUNNER_TEMP/publish"
           mkdir -p "$R"
@@ -943,9 +943,10 @@ jobs:
             gh release create world-latest --title "World: the latest" --notes-file "$R/notes.md" --latest=false --target "$GITHUB_SHA"
           fi
           bash -c "$UPLOAD" upload world-latest "$R/world.json"
-          # every world but the last two goes; world-test and world-latest stay
+          # every world but the last two goes, by its day and then a planet's re-run by its number (-planet-10 after
+          # -planet-9); world-test, world-latest and every draft stay
           gh release list --limit 200 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName' |
-            { grep -E '^world-[0-9]{8}(-planet)?$' || true; } | LC_ALL=C sort -r | tail -n +3 | while read -r old; do
+            { grep -E '^world-[0-9]{8}(-planet(-[0-9]+)?)?$' || true; } | LC_ALL=C sort -r -V | tail -n +3 | while read -r old; do
             gh release delete "$old" --cleanup-tag --yes
           done
           echo "### $TAG published; world-latest names it" >> "$GITHUB_STEP_SUMMARY"
