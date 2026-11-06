@@ -60,10 +60,14 @@ class MapPartsTest {
         assertTrue(twice.containsAll(dry - weather))
         // all of the buildings are their walls, roofs and edges and every part of their facades
         assertEquals(MapPartGroup.BUILDINGS.listed.toSet() + MapPartGroup.FACADES.parts, MapPartGroup.BUILDINGS.parts)
+        // the shadows, the sun's light and shade among them (the user, 4 November: "Toggle for the sun"), drawn by
+        // default
         assertEquals(
-            setOf(MapPart.BUILDING_SHADOWS, MapPart.SHADOW_BLUR, MapPart.PARK_SHADOWS, MapPart.CLOUD_SHADOWS),
+            setOf(MapPart.BUILDING_SHADOWS, MapPart.SHADOW_BLUR, MapPart.PARK_SHADOWS, MapPart.SUN, MapPart.CLOUD_SHADOWS),
             MapPartGroup.SHADOWS.parts,
         )
+        assertEquals(1L shl CameraWriter.PART_SUN, MapPart.SUN.bit)
+        assertTrue(MapPart.SUN.drawn)
         // a quay wall's faces and a facade's flat detail each their own switch ("Every part gets its own switch")
         assertTrue(MapPartGroup.GROUND.listed.containsAll(setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)))
         assertTrue(MapPartGroup.FACADES.listed.containsAll(setOf(MapPart.SHOP_GLAZING, MapPart.PLINTHS, MapPart.CORNICES)))

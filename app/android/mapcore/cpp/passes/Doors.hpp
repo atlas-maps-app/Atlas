@@ -154,6 +154,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the doors (style::camera_part::doors), their numbers with them.
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The phases: the doors (objects), and their numbers (translucent, before every object's translucent part).

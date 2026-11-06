@@ -80,6 +80,9 @@ struct TreeInput {
     const tiles::RenderHead* head = nullptr;
     const tiles::Style* style = nullptr;
     std::uint16_t kind = 0;
+    /// A frame cell's level's tile, whose records are lean (passes::tree_words): its trees' clumps, which a close tree
+    /// alone reads, are not made (each tree's 36 left empty; its blobs, from their own stream, the same).
+    bool lean = false;
 };
 
 /// The tile's trees.

@@ -478,13 +478,6 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
     out.insert(out.end(), order.begin(), order.end());
 }
 
-std::uint32_t first_region_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 gpu::Result<void> Items::prepare(const frame::PassContext& context) {
     release();
     // none in the owner mode: the likeness harness's owner maps draw no region items yet
@@ -608,8 +601,10 @@ void Items::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("region 
 
 void Items::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves a region's items out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::region_items));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Items::camera_parts() const noexcept { return style::camera_part::region_items; }
 
 gpu::Result<void> Items::build(scene::TileBuild& b) const {
     const geometry::TileRegionItems g =
@@ -660,7 +655,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
             const view::Vec3 p{x, 0.0, z};
             return convert ? view::convert(t.drawn->frame, *state.ground_frame, p) : p;
         };
-        const std::uint32_t first = first_region_item(*t.drawn, kind_);
+        const std::uint32_t first = scene::first_of(*t.drawn, me, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         // coasters.draw's walk along each track (passes/CoasterWalk.hpp): its radius cut at every fourth of its points
         // and its last; the pieces it draws and the posts it puts (a wooden coaster's braced back to the post before)
@@ -823,7 +818,8 @@ void Items::update(const frame::FrameState& state) {
         }
         // while a tile fades, its records' range of the dither (ENGINE.md's standing fades)
         if (dithers_) {
-            const std::uint32_t fade = shaders::fade_word(t.place.offset.w, t.place.scale.w);
+            const std::array<float, 2> range = state.cover->dither(t, me); // the items come back on: their share
+            const std::uint32_t fade = shaders::fade_word(range[0], range[1]);
             fade_words_.insert(fade_words_.end(), nf, fade);
             part_fades.insert(part_fades.end(), np, fade);
             side_fades.insert(side_fades.end(), ns, fade);

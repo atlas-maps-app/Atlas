@@ -258,7 +258,28 @@ TEST_CASE("trees: stage T of every bundled tile") {
             }
             const std::vector<atlas::hlsl::uint4> words = atlas::passes::tree_words(g, 0.0, 0.0, 0.0);
             CHECK(words.size() == g.trees.size() * sh::TREE_VECTORS);
-            CHECK(atlas::passes::tree_words(g, 0.0, 0.0, 0.0, true).size() == g.trees.size() * sh::TREE_LEAN_VECTORS);
+            const std::vector<atlas::hlsl::uint4> lean_words = atlas::passes::tree_words(g, 0.0, 0.0, 0.0, true);
+            CHECK(lean_words.size() == g.trees.size() * sh::TREE_LEAN_VECTORS);
+            // Built lean, as a level's tile is: no clump made, and every word of its lean records and every item the
+            // same, to the bit, as built whole (the blobs draw from a stream of their own).
+            const gm::TileTrees lean =
+                gm::build_trees({.tile = &*tile, .head = head, .style = pack->style(), .kind = 7, .lean = true});
+            REQUIRE(lean.trees.size() == g.trees.size());
+            for (const gm::Tree& t : lean.trees) {
+                CHECK(std::ranges::all_of(t.clumps, [](const gm::TreeClump& c) { return c.br == 0.0; }));
+            }
+            const std::vector<atlas::hlsl::uint4> made_lean = atlas::passes::tree_words(lean, 0.0, 0.0, 0.0, true);
+            CHECK(
+                std::ranges::equal(made_lean, lean_words, [](const atlas::hlsl::uint4& p, const atlas::hlsl::uint4& q) {
+                    return p.x == q.x && p.y == q.y && p.z == q.z && p.w == q.w;
+                }));
+            CHECK(std::ranges::equal(
+                lean.items, g.items, [](const atlas::scene::ItemSpec& p, const atlas::scene::ItemSpec& q) {
+                    return p.x == q.x && p.y == q.y && p.z == q.z && p.offset == q.offset && p.cut_x == q.cut_x &&
+                           p.cut_z == q.cut_z && p.order == q.order && p.kind == q.kind && p.flags == q.flags &&
+                           p.slots == q.slots && p.min_depth == q.min_depth && p.max_depth == q.max_depth &&
+                           p.radius == q.radius && p.cell == q.cell && p.owner == q.owner && p.building == q.building;
+                }));
             most = std::max(most, words.size() * sizeof(atlas::hlsl::uint4));
             trees += g.trees.size();
         }

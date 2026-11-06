@@ -202,6 +202,16 @@ class MineScreenshotTest {
     }
 
     @Test
+    fun layersSun() {
+        // The engine parts' shadows row: the sun's own chip (its light and shade on the faces and crowns) beside the
+        // shadows', dark (drawn, as unset).
+        val noon = java.time.Clock.fixed(java.time.Instant.parse("2026-10-14T11:30:00Z"), java.time.ZoneId.of("Europe/Amsterdam"))
+        show(Dest.Layers, testServices(places = true, clock = noon).apply { keepFixtureForecast() })
+        compose.onNodeWithContentDescription("Sunlight").performScrollTo()
+        capture("mine_layers_sun")
+    }
+
+    @Test
     fun charge() {
         val s = MineFixtures.phoneWithRoadside()
         val model = app.atlas.providers.EvModels.bundled().all.first { it.make == "Tesla" && it.model.contains("Model 3") }

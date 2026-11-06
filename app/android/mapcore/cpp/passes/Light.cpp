@@ -293,6 +293,8 @@ std::uint32_t Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme,
     }
     const std::uint64_t asked_now = asked_items_.empty() ? 0 : asked_revision_;
     Lit& lit = lit_[tile.handle];
+    // a tile's buildings let go of and built again (their part left out and drawn again): none of its areas lit
+    if (!same_owner(lit.of, mine.cpu)) lit = Lit{.of = mine.cpu};
     // the area this slot's frames read, else the other, once it holds the frame's moment and the asked building's
     // revision (the other slot's frame lit it): both slots read it from then on
     for (const std::uint32_t area : {std::uint32_t{lit.read[slot]}, 1U - lit.read[slot]}) {

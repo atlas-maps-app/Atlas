@@ -171,13 +171,6 @@ std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& 
     return out;
 }
 
-std::uint32_t first_thing(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 gpu::Result<void> Things::prepare(const frame::PassContext& context) {
     release();
     // none in the owner mode: the likeness harness's owner maps draw no things yet
@@ -298,8 +291,10 @@ void Things::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("thing"
 
 void Things::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves its street furniture out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::furniture));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Things::camera_parts() const noexcept { return style::camera_part::furniture; }
 
 gpu::Result<void> Things::build(scene::TileBuild& b) const {
     const geometry::TileThings g = geometry::build_things({.tile = &b.tile(), .head = &b.head(), .kind = kind_});
@@ -343,7 +338,7 @@ void Things::drawn(const frame::FrameState& state, std::vector<Drawn>& out) cons
         if (things == nullptr || !mine.ranges[0]) continue;
         // a tile's things once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (!scene::draws_items(tiles, c)) continue;
-        const std::uint32_t first = first_thing(*t.drawn, kind_);
+        const std::uint32_t first = scene::first_of(*t.drawn, me, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         for (std::uint32_t i = 0; i < things->things && first + i < rows.size(); ++i) {
             const std::uint32_t row = rows[first + i];
@@ -425,7 +420,8 @@ void Things::update(const frame::FrameState& state) {
         words_.insert(words_.end(), std::begin(words), std::end(words));
         // while a tile fades, its records' and its glints' range of the dither (ENGINE.md's standing fades)
         if (dithers_) {
-            const std::uint32_t fade = shaders::fade_word(t.place.offset.w, t.place.scale.w);
+            const std::array<float, 2> range = state.cover->dither(t, me); // the things come back on: their share
+            const std::uint32_t fade = shaders::fade_word(range[0], range[1]);
             fade_words_.insert(fade_words_.end(), n, fade);
             side_fades.insert(side_fades.end(), side, fade);
         }

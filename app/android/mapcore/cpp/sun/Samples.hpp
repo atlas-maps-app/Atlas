@@ -25,6 +25,7 @@
 #include "sun/BitTiles.hpp"
 #include "sun/Grid.hpp"
 #include "sun/Shadows.hpp"
+#include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
@@ -34,6 +35,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace atlas::sun {
@@ -227,6 +229,8 @@ struct SunTile {
     std::shared_ptr<const std::vector<QuayPiece>> quays;
     /// Each mirror's first reflection sample (TileCasters::mirrors' order; null: none), which its published bits carry.
     std::shared_ptr<const std::vector<std::uint32_t>> reflections;
+    /// Made whole (make_tile), or its solids alone (solids_tile: a tile of a scene whose bits no one asks for).
+    bool whole = true;
 };
 
 /// The sample points, solids and trees of `tile` at ladder `level` (0 to 13): the rings simplified at it, each
@@ -241,9 +245,67 @@ struct SunTile {
 [[nodiscard]] SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region,
                                 std::uint8_t level, std::span<const Deck> decks, std::uint64_t live = all_cells);
 
+/// make_tile in two parts, so that a scene decodes each of its tiles once: its decks are known only once every tile is
+/// read, and only its quay walls read them. start_tile makes the rest of a tile from its one decode (with
+/// collect_decks), and finish_tile its quay walls once the scene's decks are all known; make_tile is the two in turn.
+struct TileStart {
+    /// Every solid, tree and sample but the quay walls' (the windows' come after those, below).
+    SunTile tile;
+    /// Its windows' samples, which follow the quay walls'.
+    TileSamples windows;
+    /// A quay wall's edge with a wall: its record, its ends and its normal toward the water, its water's level.
+    struct Quay {
+        std::uint32_t record = 0;
+        double ax = 0.0;
+        double az = 0.0;
+        double bx = 0.0;
+        double bz = 0.0;
+        double nx = 0.0;
+        double nz = 0.0;
+        double wy = 0.0;
+    };
+    std::vector<Quay> quays;
+    /// Its cells that the scene takes from it (make_tile's `live`), and per list (Source) whether each record lies in
+    /// them (none where every cell is live).
+    std::uint64_t live = all_cells;
+    std::array<std::vector<std::uint8_t>, 4> kept;
+};
+[[nodiscard]] TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region,
+                                   std::uint8_t level, std::uint64_t live = all_cells);
+[[nodiscard]] SunTile finish_tile(TileStart start, const Region& region, std::span<const Deck> decks);
+
+/// A tile's solids alone at ladder `level`, in `frame`'s metres, as make_tile makes them (those of records outside
+/// `live` left out): a tile of a scene whose bits no one asks for (the halo's around the resident tiles, SunGlobals),
+/// whose solids the grid holds and which needs no samples.
+[[nodiscard]] SunTile solids_tile(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level,
+                                  std::uint64_t live = all_cells);
+
+/// A tile's part of scene_maxh at a ladder level: whether it has a building or part with a height, the first of those
+/// heights (a NaN's bits kept), and the largest of them that are not NaN (`numbers`: there is one).
+struct Tallest {
+    bool any = false;
+    double first = 0.0;
+    bool numbers = false;
+    double most = 0.0;
+};
+/// `tile`'s part of scene_maxh at ladder `level`.
+[[nodiscard]] Tallest tile_tallest(const tiles::Tile& tile, std::uint8_t level);
+/// scene_maxh of tiles whose parts are `tiles`, in the pack's order of its chunks: Python's max from the first height
+/// on, so a scene's tallest is folded from its tiles' kept by their chunks without decoding them again.
+[[nodiscard]] double fold_tallest(std::span<const Tallest> tiles) noexcept;
+/// Each tile's part of scene_maxh by its chunk's SHA-256 (sorted by it): what a pack's tiles gave, which another pack
+/// holding some of the same chunks (a frame cell composed again) takes rather than decoding them.
+using TallestByChunk = std::vector<std::pair<tiles::Sha256Digest, Tallest>>;
+/// scene_maxh of `pack` at ladder `level` over its tiles of zoom `zoom`, each tile whose chunk `before` holds taken
+/// from it and the others decoded (`decoded` counts them); `parts` is every tile's, for the next composition.
+[[nodiscard]] tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level, std::uint8_t zoom,
+                                               const TallestByChunk& before, TallestByChunk& parts,
+                                               std::uint64_t& decoded);
+
 /// The scene's tallest solid at `level`: Python's max of the heights of every building not hidden with a height and
 /// every part with a height in the pack's tiles of zoom `zoom` (its finest level when none), each from its variant at
-/// `level` where it has one. Decodes every tile of that zoom once; 0 for a pack without solids there.
+/// `level` where it has one (fold_tallest of each tile's tile_tallest). Decodes every tile of that zoom once; 0 for a
+/// pack without solids there.
 [[nodiscard]] tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level,
                                                std::optional<std::uint8_t> zoom = std::nullopt);
 

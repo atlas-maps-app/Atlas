@@ -375,22 +375,45 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /**
      * The packs on the phone may have changed (a window taken from its country's tiles or built): the core is handed
      * them again off the main thread, and where they changed the map draws what it can draw now, the transitional rule
-     * asked again. Nothing when the list is the same.
+     * asked again, and the windows' next step is asked at once, at rest too, while the core wants more (a pack came, so
+     * the steps make progress). Where the list is the same, only the next step, once its half second is over.
      */
     private val repack = Runnable {
         val c = core ?: return@Runnable
         if (closed) return@Runnable
         scope.launch {
-            val said = withContext(Dispatchers.Default) { runCatching { c.handPacks() }.getOrDefault("") }
-            if (core !== c || closed || said.isEmpty()) return@launch
-            Log.i(EngineFrames.TAG, "vk packs again: ${said.lines().filter { it.isNotBlank() }.joinToString(", ")}")
+            // what changed, and how many stayed (thousands of windows on a phone after a while), off the main thread
+            val changed = withContext(Dispatchers.Default) {
+                val lines = runCatching { c.handPacks() }.getOrDefault("").lines().filter { it.isNotBlank() }
+                val kept = lines.count { it.endsWith(" kept") }
+                lines.filterNot { it.endsWith(" kept") } + listOfNotNull("$kept kept".takeIf { kept > 0 })
+            }
+            if (core !== c || closed) return@launch
+            if (changed.isEmpty()) {
+                windowsLater()
+                return@launch
+            }
+            Log.i(EngineFrames.TAG, "vk packs again: ${changed.joinToString(", ")}")
             publishCamera(force = true)
+            windowCheckedAt = 0L
             update()
         }
     }
 
     /** When the map last asked the core which windows it wants (SystemClock.uptimeMillis). */
     private var windowCheckedAt = 0L
+
+    /**
+     * The windows' next step, asked once the last one's half second is over, whatever the camera does: the last one
+     * worked on a tile or a window but wrote no pack the core takes (one with nothing to draw, a miss), so there may be
+     * more to do, and at rest no camera asks again (it waited for a touch or the minute's tick). Main thread.
+     */
+    private fun windowsLater() {
+        main.removeCallbacks(windowsAgain)
+        main.postDelayed(windowsAgain, (windowCheckedAt + WINDOWS_CHECK_MS - SystemClock.uptimeMillis()).coerceAtLeast(0L))
+    }
+
+    private val windowsAgain = Runnable { if (!closed) update() }
 
     /**
      * The ground frame gestures and overlays take: the region today's map draws, or, where the core's picture is the
@@ -541,6 +564,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         main.removeCallbacks(published)
         main.removeCallbacks(coreChanged)
         main.removeCallbacks(settle)
+        main.removeCallbacks(windowsAgain)
         core?.let(::closeCore)
         core = null
     }
@@ -1020,13 +1044,20 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 }
             }
             // The windows the core wants (ENGINE.md step 3): the nearest taken from its country's tiles or built in the
-            // background, one at a time, and the core handed it when it is; asked twice a second.
+            // background, one at a time, and the core handed it when it is; asked twice a second, and after a step
+            // that wrote a pack at once ([repack]), after one that worked on a tile and wrote none at its half second's
+            // end ([windowsLater]), until a step finds nothing to do.
             val now = SystemClock.uptimeMillis()
             if (now - windowCheckedAt >= WINDOWS_CHECK_MS) {
                 windowCheckedAt = now
                 MapEngine.windows()?.let { w ->
                     scope.launch(Dispatchers.IO) {
-                        if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
+                        val before = w.worked
+                        if (runCatching { w.step(c.core) }.getOrDefault(false)) {
+                            main.post(repack)
+                        } else if (w.worked != before) {
+                            main.post { if (!closed) windowsLater() }
+                        }
                     }
                 }
                 // the world's packs the view wants (ENGINE.md step 6): a block's head, then its tiles' chunks by ranges

@@ -15,6 +15,14 @@
 // The render thread references only published tiles; a tile it lets go of (release) has its heap ranges retired, freed
 // two frames later after the fences. The render thread never waits on I/O, decoding or the sun.
 //
+// Only the passes a part drawn wants are built (set_left_out: a pass whose parts are all left out, frame::Pass::serves,
+// makes no stage T, heap bytes or items). A resident tile lacking a pass a part come back wants is built again for
+// those passes alone when a request names it (a top-up: the world asks for its tiles drawn and kept under them), and
+// the render thread takes the passes onto it between frames: the tile under the same handle, its other passes' ranges,
+// items and rows as they were, so it is drawn throughout and its fade, its light and its rows carry on. A part left out
+// lets go of the passes it alone wanted in every resident tile (retire_passes: their ranges retired at the frame's
+// fence, their data and items gone), so the heaps hold what is drawn; drawn again, its top-ups build them anew.
+//
 // The workers wait at background priority; while a tile the frame wants in view is queued or under way they run at
 // normal priority, with a hint session of their own told how long each piece of that work takes (ENGINE.md gain 8:
 // WorkerHints, the platform's). Without hints, they stay at background priority (nice 10 on Android).
@@ -99,8 +107,15 @@ struct ResidentTile {
     tiles::Reach reach;
     /// Per pass of the registry: what its builder made.
     std::vector<PassTile> passes;
+    /// The passes built for it, a bit each in the registry's order (bit p is passes[p]'s): those a part drawn wanted as
+    /// it was built (Residency::set_left_out) and those a top-up built since. A pass not built has an empty PassTile
+    /// and no items.
+    std::uint64_t built = 0;
     /// The items its builders added (the residency adds them to the item table as it takes the tile).
     std::vector<ItemSpec> items;
+    /// Per pass of the registry, where its items lie in `items`: the first and how many, each pass's together, in the
+    /// order the passes were built (a top-up's after the rest).
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> item_runs;
     /// Their rows in the item table, once added.
     std::vector<std::uint32_t> rows;
     /// When it was published (seconds, the frame's clock): its fade in.
@@ -109,6 +124,13 @@ struct ResidentTile {
     /// data (PassTile::cpu_bytes); the residency's budget counts it (ResidencyStats::native_bytes).
     std::size_t native_bytes = 0;
 };
+
+/// Where pass `pass`'s items begin among resident tile `tile`'s (an index into `items` and `rows`): its run
+/// (ResidentTile::item_runs, by the pass's place among the world's passes, Pass::index), `items.size()` where it made
+/// none. Each frame's (the trees', things', region items' and doors' passes, for every tile they draw), which once read
+/// the items from the first to find it, past every building's and part's. A tile without runs (one a test makes): its
+/// first item of `kind`.
+[[nodiscard]] std::uint32_t first_of(const ResidentTile& tile, std::size_t pass, std::uint16_t kind) noexcept;
 
 /// The workers a pass may share its own work with (TileBuild::share): the residency's, for the pass's tile.
 class Sharer {
@@ -257,6 +279,10 @@ struct ResidencyStats {
     std::uint64_t cancelled = 0;
     std::uint64_t failed = 0;
     std::uint64_t released = 0;
+    /// tiles built again for the passes a part come back wants (top-ups), taken onto their resident tile
+    std::uint64_t topped = 0;
+    /// resident tiles' passes let go of as their parts were all left out (retire_passes), a pass of a tile each
+    std::uint64_t retired = 0;
     /// tiles whose build failed, not asked again until the heaps have the bytes they asked for free and a piece for the
     /// largest range that found none (failing again on them, until a range has gone back to the heaps too)
     std::size_t waiting = 0;
@@ -293,15 +319,39 @@ public:
     Residency& operator=(Residency&&) = delete;
 
     /// The frame's requests (render thread): what is wanted now replaces what was; a request not begun whose tile is
-    /// no longer wanted is cancelled. Tiles already resident or under way are not asked again.
+    /// no longer wanted is cancelled. Tiles under way are not asked again, nor resident ones but for the passes they
+    /// lack (lacks: a top-up).
     void want(std::span<const Request> requests);
 
-    /// The tiles published since the last call, their items added to `items` (render thread, between frames).
+    /// The parts the frame leaves out (CameraState::parts; render thread, each frame before want): the passes whose
+    /// parts are all left out (frame::Pass::serves) are not built for the tiles begun from then on, and a resident
+    /// tile lacking a pass now wanted is built again for those passes alone where a request names it. Every pass is
+    /// wanted until it is set.
+    void set_left_out(std::uint64_t parts);
+    /// The passes wanted (a bit each in the registry's order), as set_left_out set them last.
+    [[nodiscard]] std::uint64_t wanted() const noexcept { return wanted_.load(std::memory_order_relaxed); }
+    /// Whether resident tile `tile` lacks a pass now wanted (a request naming it is a top-up).
+    [[nodiscard]] bool lacks(const ResidentTile& tile) const noexcept { return (wanted() & ~tile.built) != 0U; }
+    /// Whether pass `p` is among `passes` (a bit each in the registry's order; a pass past the 64th always).
+    [[nodiscard]] static bool among(std::uint64_t passes, std::size_t p) noexcept {
+        return p >= 64 || ((passes >> p) & 1U) != 0U;
+    }
+
+    /// The tiles published since the last call, their items added to `items` (render thread, between frames); a
+    /// top-up's passes taken onto its resident tile, which stays under its handle (the new tile in its place, in
+    /// `taken` too), or let go of where that tile has gone meanwhile or holds them already (the tile as it is now, a
+    /// part left out since having let go of others: retire_passes).
     void take_published(ItemTable& items, std::vector<std::shared_ptr<const ResidentTile>>* taken = nullptr);
 
     /// Lets go of a resident tile: its rows leave `items`, its heap ranges are retired after frame `frame` (render
     /// thread).
     void release(tiles::TileKey key, std::string_view pack, ItemTable& items, std::uint64_t frame);
+    /// Lets go of the passes `passes` (a bit each in the registry's order) of every resident tile that built them (the
+    /// parts they serve all left out: ENGINE.md's parts): their heap ranges retired after frame `frame`, their data
+    /// and items gone (their rows leave `items`), their bits cleared from ResidentTile::built, so that the heaps and
+    /// the cover hold each tile as it is drawn; each tile stays under its handle, its other passes as they were (the
+    /// new tile in its place). Drawn again, a part's top-ups build them anew (lacks). Render thread, between frames.
+    void retire_passes(std::uint64_t passes, ItemTable& items, std::uint64_t frame);
 
     /// The resident tile of `key` in pack `pack` (taken), or null.
     [[nodiscard]] const ResidentTile* find(tiles::TileKey key, std::string_view pack) const noexcept;
@@ -333,6 +383,9 @@ public:
     /// Waits until no request is queued or under way (tests).
     void wait_idle();
     [[nodiscard]] ResidencyStats stats() const;
+    /// Each pass's stage T over the tiles built so far, in the passes' order: its milliseconds and its runs (the
+    /// workers' own times, which order a tile's passes), and before them the tiles' starts (each tile's decoding).
+    [[nodiscard]] std::vector<std::pair<double, std::uint64_t>> pass_times() const;
     /// Stops the workers for good (the world's end: every thread stops before what they share goes).
     void stop();
 
@@ -343,6 +396,7 @@ private:
         std::uint64_t generation = 0;
         bool again = false; // a failed tile tried again: finding no room again, it waits for a range back to the heaps
         HeapRange reserved; // and the piece held for its largest range that found none (none: size 0)
+        std::shared_ptr<const ResidentTile> base; // a top-up's: the resident tile it builds the passes it lacks onto
     };
     /// What a tile's decoding needs while the tile is under way: the decoded tile views both.
     struct Scratch {
@@ -408,6 +462,12 @@ private:
     /// A tile whose last piece is done: its items joined and published, or what its passes made let go of when one
     /// failed, then forgotten as failed.
     void publish(Underway& u);
+    /// Resident tile `base` with top-up `top`'s passes taken onto it, their items given rows in `items` (render
+    /// thread): the tile that takes its place.
+    [[nodiscard]] std::shared_ptr<const ResidentTile> joined(const ResidentTile& base, ResidentTile& top,
+                                                             ItemTable& items);
+    /// The passes that serve a part drawn while `parts` are left out (frame::Pass::serves), a bit each.
+    [[nodiscard]] std::uint64_t wanted_for(std::uint64_t parts) const;
     /// Whether a tile the frame wants in view is queued or under way (under mutex_).
     [[nodiscard]] bool urgent_locked() const noexcept;
     /// Tells the hints whether the frame waits on the workers, when that changed (outside mutex_).
@@ -452,7 +512,14 @@ private:
     std::vector<std::unique_ptr<Scratch>> scratch_;   // decoding's scratch, kept for the next tiles
     std::vector<double> pass_ms_;                     // each pass's time over its runs (the order handed out)
     std::vector<std::uint64_t> pass_runs_;
-    std::vector<std::shared_ptr<ResidentTile>> published_;
+    double start_ms_ = 0.0; // the tiles' starts (their decoding) over the tiles taken
+    std::uint64_t start_runs_ = 0;
+    /// A tile built and not taken yet, and for a top-up the resident tile it was built onto (null: a tile of its own).
+    struct Published {
+        std::shared_ptr<ResidentTile> tile;
+        std::shared_ptr<const ResidentTile> base;
+    };
+    std::vector<Published> published_;
     std::uint64_t generation_ = 0;
     unsigned busy_ = 0;
     std::mutex hint_mutex_; // the hints' changes one at a time; taken before mutex_, never after
@@ -460,7 +527,9 @@ private:
     std::function<void()> published_callback_;
     ResidencyStats stats_;
     std::atomic<std::uint32_t> next_handle_{1};
-    std::atomic<std::size_t> native_{0}; // the resident tiles' native bytes (the render thread changes it)
+    std::atomic<std::size_t> native_{0};   // the resident tiles' native bytes (the render thread changes it)
+    std::atomic<std::uint64_t> wanted_{0}; // the passes a part drawn wants (set_left_out; as for none left out first)
+    std::uint64_t left_out_ = 0;           // the parts set_left_out was told last (the render thread's)
 
     // The render thread's.
     std::vector<std::shared_ptr<const ResidentTile>> resident_;

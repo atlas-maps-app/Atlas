@@ -37,6 +37,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Walls.hpp"
+#include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
@@ -1265,7 +1266,9 @@ public:
         s.renderer->drain();
         s.world->residency().wait_idle();
         const scene::Cover& cover = *s.world->cover();
-        const bool built = n > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
+        // (a part drawn again: its top-ups taken and faded in, Cover::lacking and fading)
+        const bool built = n > 4 && cover.missing() == 0 && !cover.tiles().empty() && cover.lacking() == 0 &&
+                           !cover.fading() &&
                            std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
         // every tile drawn with its own sun bits, their fade over
         const bool lit = std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) {
@@ -2290,6 +2293,65 @@ TEST_CASE(
     std::error_code ignored;
     std::filesystem::remove(materials, ignored);
     std::filesystem::remove(kit, ignored);
+}
+
+TEST_CASE("buildings: left out and drawn again, their pass let go of by every tile and built anew onto each: the "
+          "picture at rest after the same, pixel for pixel (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration config{.config = gpu::FrameConfig::x1,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::direct};
+    style::CameraState cam = home(1080, 2400, 1080.0 / 412.0);
+    cam.flags |= style::camera_flag::rest;
+    auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, bundled_packs(dir), 0x808080);
+    ATLAS_REQUIRE(made.has_value());
+    Scene& s = *made;
+    const auto before = draw(s, cam, sunny());
+    ATLAS_REQUIRE(before.has_value());
+    REQUIRE(s.settled);
+    const std::uint32_t me = s.buildings->index();
+    std::size_t built = 0;
+    std::uint64_t bytes = 0; // the heaps' bytes of their buildings
+    for (const std::shared_ptr<const scene::ResidentTile>& t : s.world->residency().resident()) {
+        if (!scene::Residency::among(t->built, me)) continue;
+        ++built;
+        for (const scene::HeapRange& r : t->passes[me].ranges) bytes += r ? r.size : 0U;
+    }
+    // left out one frame: every resident tile lets go of its buildings
+    (void)parts_frame(s, cam, sunny(), style::camera_part::buildings);
+    for (const std::shared_ptr<const scene::ResidentTile>& t : s.world->residency().resident()) {
+        CHECK_FALSE(scene::Residency::among(t->built, me));
+        CHECK(t->passes[me].cpu == nullptr);
+    }
+    // drawn again: built anew onto each tile drawn (its rows and its light written into its new range), faded in, and
+    // the picture as it was
+    const auto after = draw(s, cam, sunny());
+    ATLAS_REQUIRE(after.has_value());
+    CHECK(s.settled);
+    for (const scene::CoverTile& t : s.world->cover()->tiles()) CHECK(scene::Residency::among(t.drawn->built, me));
+    REQUIRE(after->rgba.size() == before->rgba.size());
+    std::size_t differ = 0;
+    for (std::size_t i = 0; i + 3 < before->rgba.size(); i += 4) {
+        if (!std::equal(before->rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                        before->rgba.begin() + static_cast<std::ptrdiff_t>(i + 4),
+                        after->rgba.begin() + static_cast<std::ptrdiff_t>(i)))
+            ++differ;
+    }
+    CHECK(differ == 0);
+    MESSAGE(std::format("the Westerkerk home: {} tiles let go of their buildings ({:.1f} MB of the heaps), {} drawn "
+                        "again with them, {} pixels of {} other than before",
+                        built, static_cast<double>(bytes) / 1.0e6, s.world->cover()->tiles().size(), differ,
+                        before->rgba.size() / 4));
 }
 
 TEST_CASE("buildings: the building the app asks about drawn plain in its flat colour, hatched before its answer") {

@@ -282,9 +282,27 @@ void World::record(const frame::Recording& recording, std::uint32_t phase) {
         if (bound == nullptr) cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *s.set, {});
         bound = &*p;
     };
+    // every fragment of a draw at the draw's depth exactly: the viewport's depth range is that depth alone. The fills'
+    // z·w / w comes out of the rasteriser a unit or two of the last place either way on a float attachment, and which
+    // way turns with the camera, so a later fill at the same depth fell under an earlier one in shards that changed
+    // from frame to frame (the far shimmer, the audit of 4 November); the frame's viewport (FrameBuilder's) after them
+    const vk::Extent2D extent = recording.frame.output.extent();
+    const auto viewport = [&](float near, float far) {
+        cmd.setViewport(0, vk::Viewport{.x = 0,
+                                        .y = 0,
+                                        .width = static_cast<float>(extent.width),
+                                        .height = static_cast<float>(extent.height),
+                                        .minDepth = near,
+                                        .maxDepth = far});
+    };
+    float at = -1.0F;
     for (const Draw& d : draws_) {
         const bool fading = d.fade < 1.0F;
         const float depth = fading ? fading_depth(flags, d.lift) : world_depth(flags);
+        if (depth != at) {
+            viewport(depth, depth);
+            at = depth;
+        }
         const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
                                    .scale = d.scale,
                                    .at = d.at,
@@ -304,6 +322,7 @@ void World::record(const frame::Recording& recording, std::uint32_t phase) {
             triangles += 2ULL * d.segments;
         }
     }
+    if (at >= 0.0F) viewport(0.0F, 1.0F);
     recording.counters.draw("world", triangles, static_cast<std::uint32_t>(draws_.size()));
 }
 

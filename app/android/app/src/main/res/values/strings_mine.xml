@@ -392,6 +392,7 @@
     <string name="mine_part_building_shadows">Building shadows</string>
     <string name="mine_part_shadow_blur">Soft shadows</string>
     <string name="mine_part_park_shadows">Park shadows</string>
+    <string name="mine_part_sun">Sunlight</string>
     <string name="mine_part_reflections">Reflections</string>
     <string name="mine_part_ripple">Ripple</string>
     <string name="mine_part_glitter">Sun glitter</string>

@@ -6,8 +6,10 @@
 // the bundled packs' candidates at their boards' views, and a pan across the canal ring on which no name changes its
 // way more than once in 5 s. The port's own SVG holds the rule at both home views in :mapcorecheck's TextParityTest.
 #include "base/pymath/PyMath.hpp"
+#include "load/Levels.hpp"
 #include "load/Window.hpp"
 #include "passes/GroundText.hpp"
+#include "scene/Packs.hpp"
 #include "tests/base/require.hpp"
 #include "tests/load/corner.hpp"
 #include "tests/text/text_support.hpp"
@@ -23,12 +25,15 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <initializer_list>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -246,6 +251,135 @@ TEST_CASE("a frame cell's windows are each a source of their own: two windows' c
     kept.set_candidates(by_window->candidates);
     CHECK(kept.candidates().size() == 2);
     CHECK(text::canal_group("grachten") < (std::uint64_t{14} << 48U));
+}
+
+TEST_CASE("a frame cell composed window by window names its canals as composed at once, each window read once; a "
+          "level's tile joining reads nothing, and a window built again is read again alone") {
+    // Three windows of the frame cell L10 526/337, each with its canals and a house, joining one at a time in another
+    // order than the pack's chunks; each composition's names (the pass's own stage T, which needs no device) take the
+    // windows read before from what it kept of the last one (scene::PackBuild::before).
+    test::CornerWindows at;
+    at.corner = tiles::TileKey(14, 526U << 4U, 337U << 4U);
+    const std::array<std::int32_t, 4> box = tiles::tile_box(at.corner);
+    at.lat0 = static_cast<double>(box[2]) / 1e7;
+    at.lon0 = static_cast<double>(box[1]) / 1e7;
+    at.kx = 111320.0 * pymath::cos(pymath::radians(at.lat0));
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "names-by-window";
+    std::filesystem::create_directories(folder);
+    const auto write = [&folder](const std::vector<std::byte>& pack, const std::string& name) {
+        const std::filesystem::path file = folder / name;
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                  static_cast<std::streamsize>(pack.size()));
+        return file.string();
+    };
+    struct Made {
+        tiles::TileKey place;
+        std::vector<std::byte> pack;
+        std::string file;
+    };
+    std::int64_t id = 1;
+    // a window's canals (each a line 200 m long, 150 m apart) and a house
+    const auto window = [&](std::uint32_t dx, std::uint32_t dy, std::initializer_list<const char*> names,
+                            const std::string& suffix) {
+        const tiles::TileKey k(14, at.corner.x + dx, at.corner.y + dy);
+        const double east = (1490.0 * dx) + 300.0;
+        const double south = (-1490.0 * dy) - 300.0;
+        std::string elements;
+        double north = south;
+        for (const char* name : names) {
+            const std::array<std::array<double, 2>, 3> line{
+                {{east - 100, north}, {east, north - 20}, {east + 100, north}}};
+            elements += test::made_way(id, std::format(R"("waterway":"canal","name":"{}")", name), line, at) + ",";
+            north -= 150.0;
+        }
+        elements += test::made_building(id, R"("building":"yes","building:levels":"4")", east + 400, south - 30,
+                                        east + 430, south, at);
+        const std::string json = std::format(R"({{"version":0.6,"elements":[{}]}})", elements);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        ATLAS_REQUIRE_OR_RETURN(Made{}, built.has_value(), built.error().what);
+        std::string file = write(built->pack, std::format("{}-{}{}.atlas", k.x, k.y, suffix));
+        return Made{.place = k, .pack = std::move(built->pack), .file = std::move(file)};
+    };
+    const std::array<Made, 3> made{window(1, 0, {"Eerstegracht", "Tweedegracht"}, ""),
+                                   window(0, 1, {"Derdegracht"}, ""), window(0, 0, {"Vierdegracht"}, "")};
+    for (const Made& m : made) ATLAS_REQUIRE(!m.pack.empty());
+    const auto bits = [](double v) { return std::bit_cast<std::uint64_t>(v); };
+    const auto same = [&bits](const std::vector<CanalCandidate>& a, const std::vector<CanalCandidate>& b) {
+        return std::ranges::equal(a, b, [&bits](const CanalCandidate& x, const CanalCandidate& y) {
+            return x.group == y.group && x.index == y.index && x.name == y.name && bits(x.mid_x) == bits(y.mid_x) &&
+                   bits(x.mid_z) == bits(y.mid_z) && bits(x.prev_x) == bits(y.prev_x) &&
+                   bits(x.prev_z) == bits(y.prev_z) && x.count == y.count && x.ground_key == y.ground_key;
+        });
+    };
+    tiles::Store store;
+    const auto add = [&store](const tiles::TileKey& k, const std::string& file) {
+        return store.add(
+            {.id = std::format("window/{}/{}/{}", k.z, k.x, k.y), .kind = tiles::PackKind::window, .path = file});
+    };
+    const passes::GroundText pass;
+    // the pass's own stage T over the cell's pack as it is now, given what it kept of an earlier composition
+    const auto build = [&](const scene::PassPack* before) {
+        scene::PassPack out;
+        const auto packs = store.packs();
+        ATLAS_REQUIRE_OR_RETURN(out, packs.size() == 1);
+        scene::PackBuild b(store, packs[0], out, 0, before);
+        const auto built = pass.build_pack(b);
+        ATLAS_REQUIRE_OR_RETURN(out, built.has_value(), built.error().text());
+        return out;
+    };
+    // the names it kept, as read at once: to the bit and in order
+    const auto as_at_once = [&](const scene::PassPack& kept) {
+        const auto* names = kept.cpu_as<text::PackCanals>();
+        const auto whole = text::pack_canals(store.packs()[0]->pack, true);
+        ATLAS_REQUIRE_OR_RETURN(false, names != nullptr && whole.has_value());
+        return same(names->candidates, whole->candidates) && bits(names->water_level) == bits(whole->water_level);
+    };
+    scene::PassPack kept;
+    for (const Made& m : made) {
+        ATLAS_REQUIRE(add(m.place, m.file).has_value());
+        const scene::PassPack out = build(kept.cpu ? &kept : nullptr);
+        ATLAS_REQUIRE(out.cpu != nullptr);
+        CHECK(out.cpu_as<text::PackCanals>()->decoded == 1); // the window that joined, alone
+        CHECK(as_at_once(out));
+        kept = out;
+    }
+    CHECK(kept.cpu_as<text::PackCanals>()->candidates.size() == 4);
+    CHECK(kept.cpu_as<text::PackCanals>()->tiles.size() == 3);
+
+    // The cell's levels joining change no tile of the finest level: what was kept stays, nothing read.
+    std::vector<std::span<const std::byte>> windows;
+    windows.reserve(made.size());
+    for (const Made& m : made) windows.emplace_back(m.pack);
+    const auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(!levels->empty());
+    for (const load::BuiltLevel& level : *levels) {
+        const tiles::TileKey k = level.key;
+        ATLAS_REQUIRE(add(k, write(level.pack, std::format("{}-{}-{}.atlas", k.z, k.x, k.y))).has_value());
+        const scene::PassPack out = build(&kept);
+        CHECK(out.cpu == kept.cpu);
+        CHECK(out.cpu_bytes == kept.cpu_bytes);
+        CHECK(as_at_once(out));
+    }
+    CHECK(store.packs()[0]->pack.head()->levels.size() == 1 + levels->size());
+
+    // A window built again (its canal renamed) is read again, the others taken as they were.
+    const Made again = window(0, 1, {"Vijfdegracht"}, "-again");
+    ATLAS_REQUIRE(!again.pack.empty());
+    ATLAS_REQUIRE(add(again.place, again.file).has_value());
+    const scene::PassPack out = build(&kept);
+    const auto* names = out.cpu_as<text::PackCanals>();
+    ATLAS_REQUIRE(names != nullptr);
+    CHECK(names->decoded == 1);
+    CHECK(as_at_once(out));
+    CHECK(std::ranges::count(names->candidates, std::string("Vijfdegracht"), &CanalCandidate::name) == 1);
+    CHECK(std::ranges::count(names->candidates, std::string("Derdegracht"), &CanalCandidate::name) == 0);
+    // read by index (a render pack's reading), the windows' reads are not taken
+    const auto by_index =
+        text::pack_canals(store.packs()[0]->pack, false, std::static_pointer_cast<const text::PackCanals>(out.cpu));
+    ATLAS_REQUIRE(by_index.has_value());
+    CHECK((*by_index)->decoded == 3);
 }
 
 TEST_CASE("the canal ring's own ladder gives the live names' radius at every distance between and beyond its views") {

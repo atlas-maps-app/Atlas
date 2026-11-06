@@ -1107,13 +1107,16 @@ void append(TileSamples& out, const TileSamples& w) {
     return out;
 }
 
-/// Leaves the records outside the cells of `live` to another tile of the scene (make_tile's `live`): their solids out
-/// of the tile's (the others' renumbered, and their samples' skips with them), their samples and their trees' crowns
-/// lit as their faces turn to the sun, with no march.
-void leave_out(const tiles::Tile& tile, std::uint64_t live, SunTile& st) {
-    const std::array<std::vector<std::uint8_t>, 4> kept{
-        live_records(tile.layer(tl::LayerId::building), live), live_records(tile.layer(tl::LayerId::part), live),
-        live_records(tile.layer(tl::LayerId::tree), live), live_records(tile.layer(tl::LayerId::quay), live)};
+/// Whether each record of each list (Source's order) lies in a cell of `live`.
+[[nodiscard]] std::array<std::vector<std::uint8_t>, 4> kept_of(const tiles::Tile& tile, std::uint64_t live) {
+    return {live_records(tile.layer(tl::LayerId::building), live), live_records(tile.layer(tl::LayerId::part), live),
+            live_records(tile.layer(tl::LayerId::tree), live), live_records(tile.layer(tl::LayerId::quay), live)};
+}
+
+/// Leaves the records outside the cells of `live` (`kept`: kept_of's) to another tile of the scene (make_tile's
+/// `live`): their solids out of the tile's (the others' renumbered, and their samples' skips with them), their samples
+/// and their trees' crowns lit as their faces turn to the sun, with no march.
+void leave_out(const std::array<std::vector<std::uint8_t>, 4>& kept, SunTile& st) {
     const auto held = [&kept](Source src, std::uint32_t record) {
         const std::vector<std::uint8_t>& k = kept.at(static_cast<std::size_t>(src));
         return record >= k.size() || k[record] != 0;
@@ -1343,9 +1346,10 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
     return c;
 }
 
-SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region, std::uint8_t level,
-                  std::span<const Deck> decks, std::uint64_t live) {
-    SunTile st;
+TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region, std::uint8_t level,
+                     std::uint64_t live) {
+    TileStart start;
+    SunTile& st = start.tile;
     st.key = {tile.header.level, tile.header.x, tile.header.y};
     st.level = level;
     const tl::Frame& frame = head.frame;
@@ -1356,7 +1360,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     const Variants variants = variants_at(tile, level);
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;
-    TileSamples windows;
+    TileSamples& windows = start.windows;
     std::vector<std::uint32_t> reflections;
     std::uint32_t next_solid = 0;
     const bool lean = tile.header.level < 14; // geometry::Builder's lean: a frame cell's level's tile
@@ -1388,8 +1392,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
         st.samples.crown_r.push_back(st.trees.crown[i] / 2);
     }
     st.samples.crowns_end = st.samples.size();
-    // the quay walls: every water edge with a wall, in pieces outside the bridges' decks
-    std::vector<QuayPiece> pieces;
+    // the quay walls: every water edge with a wall, cut into pieces outside the bridges' decks once they are known
     if (const tl::Layer* quays = tile.layer(tl::LayerId::quay)) {
         for (std::uint32_t i = 0; i < quays->count; ++i) {
             const tl::RingView e = quays->ring(tl::quay::edge, i);
@@ -1406,56 +1409,126 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
                 nz = -nz;
             }
             const double wy = quays->decimal(tl::quay::level, i).value_or(region.water_y);
-            quay_samples(st.samples, region, i, a, b, nx, nz, wy, decks, pieces);
+            start.quays.push_back(
+                {.record = i, .ax = a.x, .az = a.z, .bx = b.x, .bz = b.z, .nx = nx, .nz = nz, .wy = wy});
         }
+    }
+    start.live = live;
+    if (live != all_cells) start.kept = kept_of(tile, live);
+    return start;
+}
+
+SunTile finish_tile(TileStart start, const Region& region, std::span<const Deck> decks) {
+    SunTile st = std::move(start.tile);
+    // the quay walls: every water edge with a wall, in pieces outside the bridges' decks
+    std::vector<QuayPiece> pieces;
+    for (const TileStart::Quay& q : start.quays) {
+        quay_samples(st.samples, region, q.record, V2{q.ax, q.az}, V2{q.bx, q.bz}, q.nx, q.nz, q.wy, decks, pieces);
     }
     if (!pieces.empty()) st.quays = std::make_shared<const std::vector<QuayPiece>>(std::move(pieces));
     st.samples.windows_first = st.samples.size();
-    append(st.samples, windows);
-    if (live != all_cells) leave_out(tile, live, st);
+    append(st.samples, start.windows);
+    if (start.live != all_cells) leave_out(start.kept, st);
     return st;
 }
 
-tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level, std::optional<std::uint8_t> zoom) {
-    const tl::RenderHead* head = pack.head();
-    if (head == nullptr || head->levels.empty()) return 0.0;
-    const std::uint8_t z = zoom.value_or(head->levels.front());
+SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region, std::uint8_t level,
+                  std::span<const Deck> decks, std::uint64_t live) {
+    return finish_tile(start_tile(tile, head, region, level, live), region, decks);
+}
+
+SunTile solids_tile(const tiles::Tile& tile, const tiles::Frame& frame, std::uint8_t level, std::uint64_t live) {
+    SunTile st;
+    st.key = {tile.header.level, tile.header.x, tile.header.y};
+    st.level = level;
+    st.whole = false;
+    st.solids = solids_of(tile, frame, level).solids;
+    if (live != all_cells) leave_out(kept_of(tile, live), st);
+    return st;
+}
+
+Tallest tile_tallest(const tiles::Tile& tile, std::uint8_t level) {
+    Tallest out;
+    std::unordered_map<std::uint64_t, std::uint32_t> variants;
+    const tl::Layer* var = tile.layer(tl::LayerId::variant);
+    if (var != nullptr && level > 0) {
+        for (std::uint32_t i = 0; i < var->count; ++i) {
+            if (var->integer(tl::variant::tolerance, i) != level) continue;
+            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
+            variants[(layer << 56U) | static_cast<std::uint64_t>(var->integer(tl::variant::index, i))] = i;
+        }
+    }
+    for (const auto layer_id : {tl::LayerId::building, tl::LayerId::part}) {
+        const tl::Layer* l = tile.layer(layer_id);
+        if (l == nullptr) continue;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, i));
+            const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
+            const Values v =
+                it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
+            if ((layer_id == tl::LayerId::part || !v.hidden) && v.h != 0.0) {
+                if (!out.any) out.first = v.h;
+                out.any = true;
+                if (!std::isnan(v.h)) {
+                    out.most = out.numbers ? pm::max(out.most, v.h) : v.h;
+                    out.numbers = true;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+double fold_tallest(std::span<const Tallest> tiles) noexcept {
+    // Python's max from the first height on (scene_maxh's fold over every record in the tiles' order): NaN for good
+    // where the first is NaN, else the largest of the numbers, NaN never taking a number's place
+    const auto first = std::ranges::find_if(tiles, &Tallest::any);
+    if (first == tiles.end()) return 0.0;
+    if (std::isnan(first->first)) return first->first;
+    bool any = false;
+    double maxh = 0.0;
+    for (const Tallest& t : tiles) {
+        if (!t.numbers) continue;
+        maxh = any ? pm::max(maxh, t.most) : t.most;
+        any = true;
+    }
+    return maxh;
+}
+
+tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level, std::uint8_t zoom,
+                                 const TallestByChunk& before, TallestByChunk& parts, std::uint64_t& decoded) {
+    parts.clear();
     tl::Zstd zstd;
     tl::TileDecoder decoder;
     std::vector<std::byte> raw;
     std::vector<std::byte> scratch;
     Arena arena(1U << 20U, Growth::grows, "sun maxh");
-    bool any = false;
-    double maxh = 0.0;
-    for (const tl::ChunkRef& c : pack.chunks().level(z)) {
-        arena.reset();
-        auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
-        if (!tile) return std::unexpected(tile.error());
-        std::unordered_map<std::uint64_t, std::uint32_t> variants;
-        const tl::Layer* var = tile->layer(tl::LayerId::variant);
-        if (var != nullptr && level > 0) {
-            for (std::uint32_t i = 0; i < var->count; ++i) {
-                if (var->integer(tl::variant::tolerance, i) != level) continue;
-                const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
-                variants[(layer << 56U) | static_cast<std::uint64_t>(var->integer(tl::variant::index, i))] = i;
-            }
+    const auto by_chunk = [](const auto& a, const auto& b) { return a.first < b.first; };
+    std::vector<Tallest> tallest;
+    for (const tl::ChunkRef& c : pack.chunks().level(zoom)) {
+        const std::pair<tiles::Sha256Digest, Tallest> key{c.sha256, {}};
+        if (const auto it = std::ranges::lower_bound(before, key, by_chunk);
+            it != before.end() && it->first == c.sha256) {
+            tallest.push_back(it->second);
+        } else {
+            arena.reset();
+            auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
+            if (!tile) return std::unexpected(tile.error());
+            tallest.push_back(tile_tallest(*tile, level));
+            ++decoded;
         }
-        for (const auto layer_id : {tl::LayerId::building, tl::LayerId::part}) {
-            const tl::Layer* l = tile->layer(layer_id);
-            if (l == nullptr) continue;
-            for (std::uint32_t i = 0; i < l->count; ++i) {
-                const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, i));
-                const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
-                const Values v =
-                    it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
-                if ((layer_id == tl::LayerId::part || !v.hidden) && v.h != 0.0) {
-                    maxh = any ? pm::max(maxh, v.h) : v.h;
-                    any = true;
-                }
-            }
-        }
+        parts.emplace_back(c.sha256, tallest.back());
     }
-    return maxh;
+    std::ranges::sort(parts, by_chunk);
+    return fold_tallest(tallest);
+}
+
+tiles::Result<double> scene_maxh(const tiles::Pack& pack, std::uint8_t level, std::optional<std::uint8_t> zoom) {
+    const tl::RenderHead* head = pack.head();
+    if (head == nullptr || head->levels.empty()) return 0.0;
+    TallestByChunk parts;
+    std::uint64_t decoded = 0;
+    return scene_maxh(pack, level, zoom.value_or(head->levels.front()), {}, parts, decoded);
 }
 
 } // namespace atlas::sun

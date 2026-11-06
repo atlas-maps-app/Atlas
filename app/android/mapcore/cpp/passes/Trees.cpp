@@ -142,13 +142,6 @@ TreeChoice tree_choice(double depth, double focal, double r, bool weather, bool 
     return c;
 }
 
-std::uint32_t first_tree(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 bool tree_side_right(const shaders::Theme& theme, const view::Camera& camera) noexcept {
     const shaders::double3 l = shaders::theme_sun_vector(theme);
     return (l.x * camera.right().x) + (l.z * camera.right().z) > 0;
@@ -329,15 +322,18 @@ void Trees::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("tree");
 
 void Trees::select(const frame::FrameState& state, frame::Selectors& selectors) {
     // the map leaves its trees out: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::trees));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
 
+std::uint64_t Trees::camera_parts() const noexcept { return style::camera_part::trees; }
+
 gpu::Result<void> Trees::build(scene::TileBuild& b) const {
-    const geometry::TileTrees g =
-        geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_});
-    if (g.trees.empty()) return {};
-    // a frame cell's level's tile (L13, L12, drawn beyond the finest level's reach): lean records, small crowns
+    // a frame cell's level's tile (L13, L12, drawn beyond the finest level's reach): lean records, small crowns, and no
+    // clumps made for them
     const bool lean = b.tile().header.level < 14;
+    const geometry::TileTrees g =
+        geometry::build_trees({.tile = &b.tile(), .head = &b.head(), .style = &b.style(), .kind = kind_, .lean = lean});
+    if (g.trees.empty()) return {};
     const std::vector<hlsl::uint4> words = tree_words(g, b.origin().x, b.origin().y, b.origin().z, lean);
     ATLAS_GPU_LET(
         range, b.allocate(scene::HeapKind::points, static_cast<std::uint32_t>(words.size() * sizeof(hlsl::uint4)), 16));
@@ -378,7 +374,7 @@ void Trees::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
         if (trees == nullptr || !mine.ranges[0]) continue;
         // a tile's trees once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (!scene::draws_items(tiles, c)) continue;
-        const std::uint32_t first = first_tree(*t.drawn, kind_);
+        const std::uint32_t first = scene::first_of(*t.drawn, me, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         for (std::uint32_t i = 0; i < trees->trees && first + i < rows.size(); ++i) {
             const std::uint32_t row = rows[first + i];
@@ -467,7 +463,8 @@ void Trees::update(const frame::FrameState& state) {
         words_.insert(words_.end(), std::begin(words), std::end(words));
         // while a tile fades, its records' and its side's range of the dither (ENGINE.md's standing fades)
         if (dithers_) {
-            const std::uint32_t fade = shaders::fade_word(t.place.offset.w, t.place.scale.w);
+            const std::array<float, 2> range = state.cover->dither(t, me); // the trees come back on: their share
+            const std::uint32_t fade = shaders::fade_word(range[0], range[1]);
             fade_words_.insert(fade_words_.end(), n, fade);
             if (side) side_fades.push_back(fade);
         }

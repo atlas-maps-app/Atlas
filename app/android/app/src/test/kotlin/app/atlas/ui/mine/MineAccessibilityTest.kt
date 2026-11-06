@@ -79,6 +79,8 @@ class MineAccessibilityTest {
         check("Layers", Dest.Layers)
         // the test's display has one mode, 60 Hz: no Fast refresh among the engine parts, as neither vote does anything
         compose.onAllNodesWithContentDescription("Fast refresh").assertCountEquals(0)
+        // the sun's own chip in the shadows' row, pressable and named as the rest
+        compose.onNodeWithContentDescription("Sunlight").assertHasClickAction()
     }
 
     /** On a display with a mode above 60 Hz the engine parts' last row ends with the Fast refresh, named as the rest. */

@@ -35,6 +35,12 @@
 // where that is a level's) in the same light. Its first bits cross-fade from by day (sun::by_day: every sample lit)
 // over a swap's 300 ms from their publication, as a swap does, so its shadows fall in rather than pop; a tile whose
 // first bits came before its first frame shows them at once.
+//
+// The sun works while its part is drawn and a part that reads its bits is (style::camera_part::sun_works: the
+// buildings, the trees, the reflections, the quays): left out, no lane holds a pack, no scene is built, no bucket runs
+// (one under way stops before its next piece, its bits dropped), no texel is written, and every tile is drawn without
+// bits; drawn again, each pack drawn takes a lane as a new one does, its bits made again (a named moment's from the
+// disk cache).
 #pragma once
 
 #include "frame/Globals.hpp"
@@ -92,6 +98,22 @@ struct SunStats {
     /// The last working out of every lane's other packs' tiles (Lane::others), on the render thread: done where a
     /// lane's pack, role, level or resident tiles changed, else nothing a frame.
     double others_ms = 0;
+    /// Every lane's scenes so far: their builds' milliseconds (the builder thread's).
+    double scenes_ms = 0;
+    /// Every lane's scenes kept as built while tiles of their halo came resident at the level they took them at, those
+    /// tiles made whole (they were their solids alone, as no one asked for their bits), and their milliseconds.
+    std::uint64_t wholes = 0;
+    double wholes_ms = 0;
+    /// Every lane's tallest solids worked out (sun::scene_maxh's, a tile's kept by its chunk and level): their
+    /// milliseconds, and the tiles decoded for them.
+    double maxh_ms = 0;
+    std::uint64_t maxh_tiles = 0;
+    /// Every lane's runs so far: their own milliseconds (sun::Worker::run_ms: from a request's taking to its bits'
+    /// publication) and the tiles their buckets computed.
+    double runs_ms = 0;
+    std::uint64_t run_tiles = 0;
+    /// Whether the sun works (the last frame's parts: style::camera_part::sun_works).
+    bool on = true;
 };
 
 /// The world's sun: a provider of set 1's sun_bits.
@@ -244,6 +266,10 @@ private:
         std::vector<Asked> built;
         std::vector<Other> built_others;
         std::string built_pack;
+        /// The scene's decks (every tile's bridges), and its own tiles' chunks (built's order), for its halo's tiles
+        /// to be made whole as they come resident (make_whole).
+        std::vector<sun::Deck> built_decks;
+        std::vector<tiles::Sha256Digest> built_chunks;
     };
 
     /// A lane's pack this frame, and what of it the other lanes' scenes read: its level and resident tiles.
@@ -268,7 +294,15 @@ private:
     /// neighbour (not the coarser one) whose reach comes within the march's reach of a resident tile of lane `k`'s
     /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.
     [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
-    [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
+    /// The scene of `b`, and its decks and own tiles' chunks (Lane::built_decks, built_chunks).
+    [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b, std::vector<sun::Deck>& decks,
+                                                          std::vector<tiles::Sha256Digest>& own);
+    /// `scene`, built for `b`'s tiles as `lane` holds them, with the tiles `b` wants made whole where they are their
+    /// solids alone; null where one of them holds another chunk now (the scene is built anew).
+    [[nodiscard]] std::shared_ptr<const sun::Scene> make_whole(const sun::Scene& scene, const Build& b,
+                                                               const Lane& lane);
+    /// The sun left out (render thread): every lane let go of its pack, scene, bits and requests, its run stopped.
+    void rest();
     [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t zoom,
                                              std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
@@ -301,19 +335,27 @@ private:
     std::atomic<double> released_{-std::numeric_limits<double>::infinity()}; ///< the last hold's end
     std::size_t last_texels_ = 0;
     double others_ms_ = 0;
+    std::atomic<bool> on_{true}; ///< whether the sun works (prepare: the frame's parts)
 
     // The builder thread's wakes (the lanes' requests and results are under mutex_).
     mutable std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
-    /// scene_maxh per pack (the store's own, never its identity: the APK's packs have none), zoom and level.
+    /// scene_maxh per pack (the store's own, never its identity: the APK's packs have none), zoom and level, and each
+    /// of its tiles' part by its chunk (sorted by it): another pack of the same id (a frame cell composed again) reads
+    /// the chunks it shares from these, and decodes only those it does not. One for each id, zoom and level, while the
+    /// store holds a pack of that id.
     struct Tallest {
         std::weak_ptr<const tiles::StorePack> pack;
+        std::string id;
         std::uint8_t zoom = 0;
         std::uint8_t level = 0;
         double h = 0.0;
+        sun::TallestByChunk chunks;
     };
     std::vector<Tallest> maxh_;
+    /// What the sun's rests have made of the builder's work under way (rest: its scene and its asking dropped).
+    std::uint64_t epoch_ = 0;
     SunStats stats_;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops first
 };

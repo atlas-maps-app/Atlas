@@ -131,6 +131,7 @@ class LayoutTest {
         put("CameraWriter.PART_SHOPFRONTS", CameraWriter.PART_SHOPFRONTS)
         put("CameraWriter.PART_TERRACES", CameraWriter.PART_TERRACES)
         put("CameraWriter.PART_OPEN_GLOWS", CameraWriter.PART_OPEN_GLOWS)
+        put("CameraWriter.PART_SUN", CameraWriter.PART_SUN)
         put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)

@@ -1575,4 +1575,90 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
     fs::remove_all(guard, ec);
 }
 
+TEST_CASE("the world's painter's order holds wherever the camera stands: from 45 km pitched 48 degrees, a camera moved "
+          "a centimetre at a time draws the same picture, the water over the land and the lines over the fills") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the world is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-order-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // over the Westerkerk, the polders, the IJ and the railways west and north of it ahead, where the user saw the
+        // far shimmer; the cloud shadows, which drift with the clock, left out
+        style::CameraState cam = camera(52.3735, 4.8755, 22.0, 48.0, 45'000.0);
+        cam.parts = style::camera_part::cloud_shadows;
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const auto faded = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+        while (f != nullptr && f->fading && std::chrono::steady_clock::now() < faded) {
+            (void)session.draw(cam, {});
+            f = map.world()->world_tiles()->frame();
+        }
+        ATLAS_REQUIRE(f != nullptr);
+        CHECK_FALSE(f->fading);
+        ATLAS_REQUIRE(kept->kept != nullptr);
+        // the target a centimetre north a step: an edge moves about a ten-thousandth of a pixel, while the points'
+        // frame metres from the eye move a unit or two of their last place, and with them the rounding of the
+        // fills' z·w / w; drawn twice, the second read
+        const auto picture = [&](int step) {
+            style::CameraState c = cam;
+            c.latitude += static_cast<double>(step) * 0.01 / 111'320.0;
+            (void)session.draw(c, {});
+            (void)session.draw(c, {});
+            auto pixels = kept->kept->read(kept->kept->latest());
+            REQUIRE(pixels.has_value());
+            return *std::move(pixels);
+        };
+        gpu::Pixels last = picture(0);
+        const std::size_t all = std::size_t{last.width} * last.height;
+        std::size_t most = 0;
+        std::string steps;
+        for (int step = 1; step <= 8; ++step) {
+            gpu::Pixels p = picture(step);
+            REQUIRE(p.rgba.size() == last.rgba.size());
+            // the pixels changed from the picture a centimetre back: where an edge passed a pixel's centre, a few
+            // hundred at most; with the fills' depths as the rasteriser rounds them about half the picture
+            std::size_t changed = 0;
+            for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+                for (std::size_t c = 0; c < 3; ++c) {
+                    if (std::abs(int{p.rgba[i + c]} - int{last.rgba[i + c]}) > 8) {
+                        ++changed;
+                        break;
+                    }
+                }
+            }
+            most = std::max(most, changed);
+            steps += std::format(" {}", changed);
+            if (!out.empty()) CHECK(gpu::write_ppm(p, (fs::path(out) / std::format("order_{}.ppm", step)).string()));
+            last = std::move(p);
+        }
+        MESSAGE(std::format("{} draws; pixels changed from the picture a centimetre back:{} of {}", f->draws.size(),
+                            steps, all));
+        CHECK(most * 200 < all);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
 } // namespace atlas
