@@ -821,7 +821,7 @@ jobs:
     # parts on emulators of their own (smoke.sh's ATLAS_PHASES and ATLAS_SCREENS_*): bench, the home and the filters
     # at the debug build's first launch and then the bench APK's truth phase, which tables both; vk, VK facts, VK bench
     # and the crash guard, the frosted pills, the map drawn by the core and the world beyond the countries from the
-    # world-test release (once published), in that order on one emulator (the map's launches find the pipeline cache
+    # release world-latest points at, in that order on one emulator (the map's launches find the pipeline cache
     # warm); and screens-<k>, every third of the other screens from the k-th. A run by hand that names its screens
     # opens them on one emulator, every phase after them. It runs whenever the APKs were built, even when a unit test
     # failed: the device's word is worth having either way.
