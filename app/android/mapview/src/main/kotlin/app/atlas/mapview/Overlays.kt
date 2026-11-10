@@ -59,6 +59,10 @@ data class Marker(
     /** Higher wins when markers collide; losers fold into clusters or hide. */
     val priority: Int = 0,
     val place: Place? = null,
+    /** A place closed, or closed by the time one gets there: drawn sunk into the map ([MarkerPainter.night]). */
+    val faded: Boolean = false,
+    /** Of a kind people come to its category for most (a supermarket among the groceries): a ring round it. */
+    val outlined: Boolean = false,
 )
 
 /** What a [MapLabel] names, which sets its look: the Main board's two map labels. */

@@ -287,8 +287,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var coreLabels = false
     private var spritePainter: LabelPainter? = null
 
-    /** The markers last handed to the core: the list, the density, whether the core draws them. */
-    private class SentMarkers(val markers: List<Marker>, val density: Float, val draws: Boolean)
+    /** The markers last handed to the core: the list, the density, whether the core draws them, by night or day. */
+    private class SentMarkers(val markers: List<Marker>, val density: Float, val draws: Boolean, val night: Boolean)
     private var sentMarkers: SentMarkers? = null
     private var markersRevision = 0L
 
@@ -807,22 +807,23 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * The markers: the core draws them where it draws the map with nothing of today's map over it and nothing on the
      * ground the canvas draws over its picture (a route, an area: the canvas draws those, and the markers over them,
      * until the core draws them), so they move with the map in the same frame; today's map's canvas elsewhere. Handed
-     * over off the main thread when that, the markers or the density change; the canvas lets go of them once the core
-     * has them, so none are missing between.
+     * over off the main thread when that, the markers, the density or the night (a closed place's look, [Marker.faded])
+     * change; the canvas lets go of them once the core has them, so none are missing between.
      */
     private fun sendMarkers(c: CoreMap) {
         val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
         val markers = if (draws) overlays.markers else emptyList()
+        val night = c.night
         val sent = sentMarkers
-        if (sent != null && sent.draws == draws && sent.density == density) {
+        if (sent != null && sent.draws == draws && sent.density == density && sent.night == night) {
             if (sent.markers === markers) return
             // an equal list made anew (a recomposition): kept, so the next frames compare it by identity
             if (sent.markers == markers) {
-                sentMarkers = SentMarkers(markers, density, draws)
+                sentMarkers = SentMarkers(markers, density, draws, night)
                 return
             }
         }
-        sentMarkers = SentMarkers(markers, density, draws)
+        sentMarkers = SentMarkers(markers, density, draws, night)
         if (!draws && coreMarkers) {
             coreMarkers = false
             canvasTick.intValue++
@@ -833,7 +834,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             markerPainter = it
         }
         scope.launch(Dispatchers.Default) {
-            val why = c.markers(markers, painter, revision)
+            val why = c.markers(markers, painter, revision, night)
             if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk markers: $why")
             main.post {
                 if (core !== c || revision != markersRevision) return@post
@@ -1184,6 +1185,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             c?.let(::sendMarkers)
             c?.let(::sendAsked)
             if (!coreLabels) pt.drawLabels(canvas, g, ov)
+            pt.markers.night = night
             if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }

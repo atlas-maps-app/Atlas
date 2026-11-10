@@ -170,6 +170,101 @@ class PlacePackerTest {
     }
 
     @Test
+    fun parksKeepTheirOutlines() {
+        // a square of a park beside the church's, one with a node the extract lacks, and a park relation whose way is cut
+        val extra = listOf(
+            TWay(108, listOf(10, 11, 12, 13, 10), mapOf("leisure" to "park", "name" to "Pleintje")),
+            TWay(109, listOf(40, 41, 998, 43, 40), mapOf("leisure" to "park", "name" to "Afgesneden")),
+            TWay(110, listOf(30, 31, 997, 30)),
+        )
+        val half = TRelation(206, listOf(TMember(PbfRelation.WAY, 110, "outer")), mapOf("type" to "multipolygon", "leisure" to "park", "name" to "Half"))
+        val file = TestPbf(nodes, ways + extra, relations + half).apply { blockSize = 5 }.write(tmp.newFile("parks.osm.pbf"))
+        val (store, stats) = pack(file = file)
+        store.use {
+            // the Vondelpark's two halves make one ring: its four corners, closed
+            val park = store.outline(id(OsmType.RELATION, 200))!!
+            assertEquals(listOf(false), park.inner)
+            val ring = park.rings.single()
+            assertEquals(5, ring.size)
+            assertEquals(ring.first(), ring.last())
+            assertEquals(
+                listOf(LatLon(52.358, 4.86), LatLon(52.358, 4.87), LatLon(52.362, 4.87), LatLon(52.362, 4.86)).map { it.toString() }.toSet(),
+                ring.map { it.toString() }.toSet(),
+            )
+            // some 680 by 445 m
+            assertEquals(680.0 * 445.0, park.areaM2, 680.0 * 445.0 * 0.02)
+            val square = store.outline(id(OsmType.WAY, 108))!!
+            assertEquals(5, square.rings.single().size)
+            // a park whose points the extract does not all hold is kept as a place, without an outline
+            assertNotNull(store.get(id(OsmType.WAY, 109)))
+            assertNull(store.outline(id(OsmType.WAY, 109)))
+            assertNotNull(store.get(id(OsmType.RELATION, 206)))
+            assertNull(store.outline(id(OsmType.RELATION, 206)))
+            // a church, a street and a neighbourhood have none
+            assertNull(store.outline(id(OsmType.WAY, 100)))
+            assertNull(store.outline(id(OsmType.WAY, 101)))
+            assertNull(store.outline(id(OsmType.RELATION, 201)))
+            assertEquals(2, stats.outlines)
+        }
+        // a park outside the clip box is not kept, nor is its outline
+        val (clipped, clippedStats) = pack(PackOptions(threads = 2, clip = BBox(4.88, 52.37, 4.89, 52.38)), file)
+        clipped.use {
+            assertNull(clipped.outline(id(OsmType.RELATION, 200)))
+            assertNotNull(clipped.outline(id(OsmType.WAY, 108)))
+            assertEquals(1, clippedStats.outlines)
+        }
+    }
+
+    @Test
+    fun parksKeepTheirPaths() {
+        // across the Vondelpark: a footway from west to east, a path from south to north with no node in it, a footway whose
+        // third node the extract lacks, and a street; a quiet park on the Jordaan's ring; a reserve some 4 by 3 km with a
+        // track across it
+        val extraNodes = listOf(
+            TNode(62, 52.3600, 4.8550), TNode(63, 52.3600, 4.8650), TNode(64, 52.3600, 4.8750),
+            TNode(65, 52.3560, 4.8620), TNode(66, 52.3640, 4.8620),
+            TNode(70, 52.3000, 4.8000), TNode(71, 52.3000, 4.8600), TNode(72, 52.3300, 4.8600), TNode(73, 52.3300, 4.8000),
+            TNode(74, 52.3150, 4.7900), TNode(75, 52.3150, 4.8700),
+        )
+        val extraWays = listOf(
+            TWay(111, listOf(62, 63, 64), mapOf("highway" to "footway")),
+            TWay(112, listOf(65, 66), mapOf("highway" to "path")),
+            TWay(113, listOf(62, 63, 996, 64), mapOf("highway" to "footway")),
+            TWay(114, listOf(62, 64), mapOf("highway" to "residential")),
+            TWay(115, listOf(40, 41, 42, 43, 40), mapOf("leisure" to "park", "name" to "Stil")),
+            TWay(116, listOf(70, 71, 72, 73, 70), mapOf("leisure" to "nature_reserve", "name" to "Wijd")),
+            TWay(117, listOf(74, 75), mapOf("highway" to "track")),
+        )
+        val file = TestPbf(nodes + extraNodes, ways + extraWays, relations).apply { blockSize = 5 }.write(tmp.newFile("paths.osm.pbf"))
+        val (store, stats) = pack(file = file)
+        store.use {
+            fun line(vararg p: LatLon) = p.toList().toString()
+            val paths = store.outline(id(OsmType.RELATION, 200))!!.paths!!
+            // the footway across with its ends (its middle node lies on the line between them), kept once though it meets
+            // the park in two cells of the grid; the path that crosses it with no node in it; the cut footway up to its cut
+            assertEquals(
+                setOf(
+                    line(LatLon(52.36, 4.855), LatLon(52.36, 4.875)),
+                    line(LatLon(52.356, 4.862), LatLon(52.364, 4.862)),
+                    line(LatLon(52.36, 4.855), LatLon(52.36, 4.865)),
+                ),
+                paths.map { it.toString() }.toSet(),
+            )
+            assertEquals(3, paths.size)
+            // a park with no paths says so; a landscape's are not kept
+            assertEquals(emptyList<List<LatLon>>(), store.outline(id(OsmType.WAY, 115))!!.paths)
+            assertNull(store.outline(id(OsmType.WAY, 116))!!.paths)
+            assertEquals(3, stats.paths)
+        }
+        // the shared streets' footway runs by the church, far from the Vondelpark: its store says the park has none
+        val (plain, plainStats) = pack()
+        plain.use {
+            assertEquals(emptyList<List<LatLon>>(), plain.outline(id(OsmType.RELATION, 200))!!.paths)
+            assertEquals(0, plainStats.paths)
+        }
+    }
+
+    @Test
     fun theStoreAnswersSearches() {
         val (store, _) = pack()
         store.use {

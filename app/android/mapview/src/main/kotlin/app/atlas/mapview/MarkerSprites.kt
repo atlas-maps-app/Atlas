@@ -15,12 +15,13 @@ import kotlin.math.max
  * pixels; once a look (markers that look alike share it), and a named pin's twice, its name right of the pin and left
  * of it (the core picks the side as the painter does, by where the pin stands). A cluster is the core's own bubble with
  * its count over it, the count drawn here by [MarkerPainter.drawCount] centred on a whole pixel, for each count the
- * markers can make (every count up to all of theirs, [MAX_COUNTS] at most) in each ink a cluster writes its count in.
+ * markers can make (every count up to all of theirs, [MAX_COUNTS] at most) in each ink a cluster writes its count in;
+ * a closed place's ([Marker.faded]) as the map's light has it ([MarkerPainter.night]), drawn again when that changes.
  * With them goes what the core places the markers by (MarkerLayout's inputs). Looks and counts are kept for the next
  * hand-over, so only those new to the map are drawn again. One thread at a time.
  */
 internal class MarkerSprites(val painter: MarkerPainter) {
-    private data class Look(val marker: Marker, val left: Boolean)
+    private data class Look(val marker: Marker, val left: Boolean, val night: Boolean)
     private data class Count(val key: Int, val ink: Int)
 
     /** The images drawn, the least recently used first, and their texels. */
@@ -29,8 +30,9 @@ internal class MarkerSprites(val painter: MarkerPainter) {
     private var keptTexels = 0L
     private val box = FloatArray(4)
 
-    /** [markers] as a block for the core. */
-    fun block(markers: List<Marker>): ByteBuffer {
+    /** [markers] as a block for the core, on the night's map where [night]. */
+    fun block(markers: List<Marker>, night: Boolean = false): ByteBuffer {
+        painter.night = night
         // the symbols and brands the looks draw with, loaded first: a look is drawn once, and drawing finds only those
         // loaded already
         val names = HashSet<String>()
@@ -40,24 +42,24 @@ internal class MarkerSprites(val painter: MarkerPainter) {
         val lookList = ArrayList<MarkerBlock.Image>()
         val lookIndex = HashMap<Look, Int>()
         fun lookOf(m: Marker, left: Boolean): Int {
-            val key = Look(m.copy(id = "", at = ORIGIN, priority = 0, place = null), left)
+            val key = Look(m.copy(id = "", at = ORIGIN, priority = 0, place = null), left, night && m.faded)
             return lookIndex.getOrPut(key) {
                 lookList += looks[key] ?: image(key.marker, left).also { keep(looks, key, it) }
                 lookList.size - 1
             }
         }
         val out = markers.map { m ->
-            val colour = m.colour.toInt() or (0xFF shl 24)
+            val own = m.colour.toInt() or (0xFF shl 24)
             val look = if (m.style == MarkerStyle.CLUSTER) MarkerBlock.NO_LOOK else lookOf(m, false)
             val left = if (m.style == MarkerStyle.PIN && m.label != null) lookOf(m, true) else look
             MarkerBlock.Marker(
                 m.at.lat, m.at.lon, m.priority, m.style.ordinal, m.selected, m.value != null, max(1, m.count ?: 1),
-                painter.chipTextWidth(m), painter.nameWidth(m), colour, MarkerPainter.onColour(colour), look, left,
+                painter.chipTextWidth(m), painter.nameWidth(m), MarkerPainter.bodyOf(m, own, night), inkOf(m, night), look, left,
             )
         }
         // the clusters' counts: every count the markers can make, in each ink a dot or a cluster writes it in
         val inks = markers.asSequence().filter { it.style == MarkerStyle.DOT || it.style == MarkerStyle.CLUSTER }
-            .map { MarkerPainter.onColour(it.colour.toInt() or (0xFF shl 24)) }.distinct().toList()
+            .map { inkOf(it, night) }.distinct().toList()
         val total = markers.sumOf { max(1, it.count ?: 1).toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val keys = countKeys(total)
         val countList = ArrayList<MarkerBlock.Count>(inks.size * keys.size)
@@ -69,6 +71,9 @@ internal class MarkerSprites(val painter: MarkerPainter) {
         }
         return MarkerBlock.write(painter.density, lookList, out, countList)
     }
+
+    /** The ink [m]'s count is written in over its bubble, as [MarkerPainter.draw] writes it. */
+    private fun inkOf(m: Marker, night: Boolean): Int = MarkerPainter.inkOf(m, MarkerPainter.onColour(m.colour.toInt() or (0xFF shl 24)), night)
 
     /** [image] kept as [key] in [map]; the least recently used go while the images kept are more than [KEPT_TEXELS]. */
     private fun <K> keep(map: LinkedHashMap<K, MarkerBlock.Image>, key: K, image: MarkerBlock.Image) {

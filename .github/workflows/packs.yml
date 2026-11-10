@@ -60,6 +60,10 @@ env:
     made from them (*.tiles: each map window's render tiles as Atlas's map engine builds them; *.tiles.idx: where each
     window lies in it). Extracts by Geofabrik (https://download.geofabrik.de).
 
+    The place stores also hold house numbers OpenStreetMap lacks, from OpenAddresses (https://openaddresses.io): each
+    keeps its own source's licence (CC0, CC BY, Licence Ouverte and the like), and each store lists its sources with
+    their licences, credits and counts in its metadata (the key "openaddresses").
+
 jobs:
   plan:
     if: ${{ github.event.inputs.renders != 'only' }}
@@ -197,7 +201,8 @@ jobs:
           JAVA_OPTS: -Xmx10g
         run: |
           set -euo pipefail
-          ARGS=(--name "$NAME")
+          # the house numbers OpenStreetMap lacks, from OpenAddresses' public tiles (a fill that fails keeps the pack as it is)
+          ARGS=(--name "$NAME" --addresses "$BBOX")
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
           app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
           df -h "$WORK"

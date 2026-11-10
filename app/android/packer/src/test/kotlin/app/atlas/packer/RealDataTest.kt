@@ -6,6 +6,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.packer.pbf.PbfReader
 import app.atlas.search.MatchKind
+import app.atlas.search.Outlines
 import app.atlas.search.OverpassImport
 import app.atlas.search.PlaceStore
 import app.atlas.search.SearchContext
@@ -209,6 +210,136 @@ class RealDataTest {
             assertTrue(moved <= both.size / 200)
         }
         println("  ($acrossTheAntimeridian Overpass elements across the antimeridian left out)")
+    }
+
+    /**
+     * Monaco's parks keep their outline beside their place, for their page offline: every park, reserve or area protected
+     * for nature that is a closed way of the extract with every point, its area the extract's within a few percent, in a
+     * few bytes a point.
+     */
+    @Test
+    fun monacosParksKeepTheirOutlines() {
+        val points = HashMap<Long, Long>()
+        val rings = HashMap<Long, IntArray>()
+        PbfReader(monaco).read(object : app.atlas.packer.pbf.OsmHandler {
+            override fun node(node: app.atlas.packer.pbf.PbfNode) {
+                points[node.id] = (node.latE7.toLong() shl 32) or (node.lonE7.toLong() and 0xffffffffL)
+            }
+
+            override fun way(way: app.atlas.packer.pbf.PbfWay) {
+                val n = way.refCount
+                if (n < 4 || way.ref(0) != way.ref(n - 1) || !Outlines.keeps(way.tags)) return
+                val ring = IntArray(2 * n)
+                for (i in 0 until n) {
+                    val p = points[way.ref(i)] ?: return
+                    ring[2 * i] = (p shr 32).toInt()
+                    ring[2 * i + 1] = p.toInt()
+                }
+                rings[way.id] = ring
+            }
+        })
+        assertTrue("${rings.size} parks", rings.size >= 10)
+        var raw = 0
+        var kept = 0
+        var worst = 0.0
+        for ((id, ring) in rings) {
+            val o = store.outline(OsmId(OsmType.WAY, id))
+            assertTrue("w$id keeps its outline", o != null)
+            val pts = List(ring.size / 2) { LatLon(ring[2 * it] / 1e7, ring[2 * it + 1] / 1e7) }
+            val area = app.atlas.geo.Shapes.geodesicArea(pts)
+            val off = kotlin.math.abs(o!!.areaM2 - area)
+            assertTrue("w$id: ${o.areaM2} m² for the extract's $area", off <= maxOf(area * 0.05, 50.0))
+            worst = maxOf(worst, off / area)
+            raw += pts.size
+            kept += o.rings.sumOf { it.size }
+        }
+        val conn = androidx.sqlite.driver.bundled.BundledSQLiteDriver().open(java.io.File(dir, "monaco.places.db").absolutePath)
+        val (count, bytes) = try {
+            conn.prepare("SELECT count(*), total(length(rings)) FROM outline").use { st -> st.step(); st.getLong(0) to st.getDouble(1).toLong() }
+        } finally {
+            conn.close()
+        }
+        println(
+            "Monaco: ${pack.stats.outlines} outlines in $bytes bytes; its ${rings.size} park ways keep $kept of their $raw points, " +
+                "their area within ${"%.2f".format(100 * worst)} %",
+        )
+        assertEquals(pack.stats.outlines.toLong(), count)
+        assertTrue(count >= rings.size)
+        assertTrue("$bytes bytes for $count outlines", bytes < 8L * kept + 16L * count)
+    }
+
+    /**
+     * And the paths their plan draws, beside the outline of each park up to 3 km across: every path way of the extract with
+     * a point in a park comes back as a piece of it at least, in a few bytes a point.
+     */
+    @Test
+    fun monacosParksKeepTheirPaths() {
+        val points = HashMap<Long, Long>()
+        val parks = HashMap<Long, IntArray>()
+        val paths = ArrayList<IntArray>()
+        PbfReader(monaco).read(object : app.atlas.packer.pbf.OsmHandler {
+            override fun node(node: app.atlas.packer.pbf.PbfNode) {
+                points[node.id] = (node.latE7.toLong() shl 32) or (node.lonE7.toLong() and 0xffffffffL)
+            }
+
+            override fun way(way: app.atlas.packer.pbf.PbfWay) {
+                val n = way.refCount
+                val park = n >= 4 && way.ref(0) == way.ref(n - 1) && Outlines.keeps(way.tags)
+                val path = way.tags["highway"] in Outlines.PATHS
+                if (!park && !path) return
+                val pts = IntArray(2 * n)
+                for (i in 0 until n) {
+                    val p = points[way.ref(i)] ?: return
+                    pts[2 * i] = (p shr 32).toInt()
+                    pts[2 * i + 1] = p.toInt()
+                }
+                if (park) parks[way.id] = pts
+                if (path) paths += pts
+            }
+        })
+        // the even-odd rule the packer finds a point in an area by
+        fun inside(ring: IntArray, lat: Int, lon: Int): Boolean {
+            var odd = false
+            var j = ring.size / 2 - 1
+            for (i in 0 until ring.size / 2) {
+                val yi = ring[2 * i].toDouble()
+                val yj = ring[2 * j].toDouble()
+                if ((yi > lat) != (yj > lat) && lon < (ring[2 * j + 1] - ring[2 * i + 1]) * (lat - yi) / (yj - yi) + ring[2 * i + 1]) odd = !odd
+                j = i
+            }
+            return odd
+        }
+        var walked = 0
+        var withPaths = 0
+        for ((id, ring) in parks) {
+            val kept = store.outline(OsmId(OsmType.WAY, id))!!.paths
+            if (!Outlines.keepsPathsOf(listOf(ring))) {
+                assertTrue("w$id is a landscape", kept == null)
+                continue
+            }
+            walked++
+            val pieces = kept!!
+            val meeting = paths.count { p -> (0 until p.size / 2).any { k -> inside(ring, p[2 * k], p[2 * k + 1]) } }
+            assertTrue("w$id: ${pieces.size} pieces for the $meeting paths with a point in it", pieces.size >= meeting)
+            assertTrue(pieces.all { it.size >= 2 })
+            if (pieces.isNotEmpty()) withPaths++
+        }
+        assertTrue("$withPaths of $walked parks with paths", withPaths >= 3)
+        // every row the store holds, a park way's or a relation's, against the pack's own count
+        val conn = androidx.sqlite.driver.bundled.BundledSQLiteDriver().open(java.io.File(dir, "monaco.places.db").absolutePath)
+        val keys = ArrayList<Long>()
+        val bytes = try {
+            conn.prepare("SELECT id FROM paths").use { st -> while (st.step()) keys += st.getLong(0) }
+            conn.prepare("SELECT total(length(lines)) FROM paths").use { st -> st.step(); st.getDouble(0).toLong() }
+        } finally {
+            conn.close()
+        }
+        val all = keys.map { k -> store.outline(OsmId(OsmType.entries[(k and 3L).toInt()], k ushr 2))!!.paths!! }
+        val pieces = all.sumOf { it.size }
+        val keptPoints = all.sumOf { a -> a.sumOf { it.size } }
+        println("Monaco: ${keys.size} areas keep $pieces pieces of path ($keptPoints points) in $bytes bytes; $withPaths of its $walked park ways have some")
+        assertEquals(pack.stats.paths, pieces)
+        assertTrue("$bytes bytes for $keptPoints points", bytes < 8L * keptPoints + 8L * keys.size)
     }
 
     /**

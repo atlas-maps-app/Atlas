@@ -170,12 +170,15 @@ object Icons {
 
     private val PREFIXES = arrayOf("maki-", "temaki-", "pinhead-", "ui-")
 
-    /** The full id of a symbol [name], or null when no set has it. */
+    /**
+     * The full id of a symbol [name], or null when no set has it: a board id ("market.deli", which kinds.tsv names) is
+     * one, as a set's is.
+     */
     fun resolveId(name: String): String? {
         val r = ids.getOrPut(name) {
             when {
                 name.isEmpty() -> NONE
-                name.contains('-') && Symbols.has(name) -> name
+                Symbols.isBoard(name) || name.contains('-') && Symbols.has(name) -> name
                 else -> PREFIXES.firstNotNullOfOrNull { p -> (p + name).takeIf { Symbols.has(it) } }
                     ?: PREFIXES.firstNotNullOfOrNull { p -> (p + name.replace('_', '-')).takeIf { Symbols.has(it) } }
                     ?: NONE

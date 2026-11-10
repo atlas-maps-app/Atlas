@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import app.atlas.places.Palette
 import kotlin.math.min
 
 /**
@@ -18,7 +19,11 @@ import kotlin.math.min
  *   (`0 4px 12px rgba(20,22,27,0.25)`);
  * - a chip is the charging point's white 32 px pill: a 24 px disc of its colour with a 13 px symbol, its value 13 px
  *   bold (`0 4px 12px rgba(20,22,27,0.2)`);
- * - a value under a pin is the board's "4′" chip: white at 92 %, radius 10, 12 px semibold.
+ * - a value under a pin is the board's "4′" chip: white at 92 %, radius 10, 12 px semibold;
+ * - a closed place's marker ([Marker.faded]) is sunk into the map: by day all of it half way to white, lighter, its
+ *   shadow half as dark; by [night] its colour its own and its white (ring, symbol, count) half way into the night;
+ * - a place of a kind people come to its category for most ([Marker.outlined], a supermarket among the groceries) has
+ *   a 2 px ring round its white ring, in the ink the map writes its names in: the boards' ink by day, white by night.
  */
 class MarkerPainter(val density: Float) {
     val metrics = MarkerMetrics(density)
@@ -57,6 +62,13 @@ class MarkerPainter(val density: Float) {
     init {
         sans = sans
     }
+
+    /**
+     * Whether the map is the night's: a faded marker keeps its colour there and its white sinks into the night's ground
+     * ([inkOf]), so the open places' white stands out. Lighter there it would be the brightest thing on the map; darker,
+     * its colour would be taken for a darker family's (FamilyColoursTest).
+     */
+    var night = false
 
     /** A CSS `box-shadow` blur of [blur] px as Android's shadow radius (σ = blur / 2; σ = 0.57735 r + 0.5). */
     private fun shadow(blur: Float): Float = ((blur / 2f * density - 0.5f) / 0.57735f).coerceAtLeast(0.1f)
@@ -106,21 +118,49 @@ class MarkerPainter(val density: Float) {
 
     /** Draws marker [m] anchored at ([x], [y]); [cluster] > 0 draws it as a cluster of that many. */
     fun draw(canvas: Canvas, m: Marker, x: Float, y: Float, cluster: Int) {
-        val colour = m.colour.toInt() or (0xFF shl 24)
+        val own = m.colour.toInt() or (0xFF shl 24)
+        val colour = bodyOf(m, own, night)
+        val ink = inkOf(m, onColour(own), night)
+        border.color = inkOf(m, Color.WHITE, night)
         if (cluster > 0) {
-            cluster(canvas, x, y, cluster, colour)
+            cluster(canvas, m, x, y, cluster, colour, ink)
             return
         }
         when (m.style) {
-            MarkerStyle.PIN -> pin(canvas, m, x, y, colour)
-            MarkerStyle.DOT -> dot(canvas, m, x, y, colour)
+            MarkerStyle.PIN -> pin(canvas, m, x, y, colour, ink)
+            MarkerStyle.DOT -> dot(canvas, m, x, y, colour, ink)
             MarkerStyle.BRAND -> brand(canvas, m, x, y, colour)
-            MarkerStyle.CLUSTER -> cluster(canvas, x, y, m.count ?: 1, colour)
-            MarkerStyle.CHIP -> chip(canvas, m, x, y, colour)
+            MarkerStyle.CLUSTER -> cluster(canvas, m, x, y, m.count ?: 1, colour, ink)
+            MarkerStyle.CHIP -> chip(canvas, m, x, y, own, colour)
+        }
+        if (m.outlined) outline(canvas, m, x, y)
+    }
+
+    /**
+     * [m]'s outline ([Marker.outlined]) round the white ring of its pin, dot or sign, round its ring of hours where it
+     * has one; the chosen pin's aside.
+     */
+    private fun outline(canvas: Canvas, m: Marker, x: Float, y: Float) {
+        val o = metrics.outline
+        val past = if (m.ring != null) metrics.ring else 0f
+        stroke.strokeWidth = o
+        stroke.color = inkOf(m, if (night) Color.WHITE else INK, night)
+        when (m.style) {
+            MarkerStyle.PIN -> if (!m.selected) canvas.drawCircle(x, pinCentre(m, y), metrics.pinDiameter(false) / 2 + past + o / 2, stroke)
+            MarkerStyle.DOT -> canvas.drawCircle(x, y, metrics.dotDiameter(m.selected) / 2 + past + o / 2, stroke)
+            MarkerStyle.BRAND -> {
+                val s = metrics.brandSide(m.selected) / 2 + o / 2
+                rect.set(x - s, y - s, x + s, y + s)
+                canvas.drawRoundRect(rect, 10f * density + o / 2, 10f * density + o / 2, stroke)
+            }
+            else -> Unit
         }
     }
 
-    private fun pin(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
+    /** [m]'s shadow, at [alpha] of the ink: a faded marker's half as dark. */
+    private fun shade(m: Marker, alpha: Float): Int = Colours.withAlpha(INK, if (m.faded) alpha * (1f - Palette.CLOSED_FADE) else alpha)
+
+    private fun pin(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int, ink: Int) {
         val mm = metrics
         val d = mm.pinDiameter(m.selected)
         val r = d / 2
@@ -141,13 +181,13 @@ class MarkerPainter(val density: Float) {
             canvas.drawCircle(x, cy, 18f * density, fill)
             symbol(canvas, m.symbol, x, cy, 18f * density, Color.WHITE)
         } else {
-            border.setShadowLayer(shadow(10f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
+            border.setShadowLayer(shadow(10f), 0f, 4f * density, shade(m, 0.25f))
             canvas.drawCircle(x, cy, r, border)
             border.clearShadowLayer()
             fill.color = colour
             canvas.drawCircle(x, cy, r - mm.border, fill)
             m.ring?.let { ring(canvas, x, cy, r + mm.ring * 0.5f, it) }
-            symbol(canvas, m.symbol, x, cy, 14f * density, onColour(colour))
+            symbol(canvas, m.symbol, x, cy, 14f * density, ink)
         }
         // the board's check badge on the chosen pin: 20 px, 2 px white ring, at its top right
         m.badge?.let { badge(canvas, it, x + r * 0.8f, cy - r * 0.6f) }
@@ -161,32 +201,32 @@ class MarkerPainter(val density: Float) {
         }
     }
 
-    private fun dot(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
+    private fun dot(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int, ink: Int) {
         val d = metrics.dotDiameter(m.selected)
         val r = d / 2
-        border.setShadowLayer(shadow(8f), 0f, 3f * density, Colours.withAlpha(INK, 0.25f))
+        border.setShadowLayer(shadow(8f), 0f, 3f * density, shade(m, 0.25f))
         canvas.drawCircle(x, y, r, border)
         border.clearShadowLayer()
         fill.color = colour
         canvas.drawCircle(x, y, r - metrics.border, fill)
         m.ring?.let { ring(canvas, x, y, r + metrics.ring * 0.5f, it) }
-        symbol(canvas, m.symbol, x, y, d * 0.5f, onColour(colour))
+        symbol(canvas, m.symbol, x, y, d * 0.5f, ink)
         m.badge?.let { badge(canvas, it, x + r * 0.75f, y - r * 0.75f) }
     }
 
     private fun brand(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
         val s = metrics.brandSide(m.selected)
         val mark = m.logo?.let { Icons.loadedBrand(it) }
-        val signColour = mark?.colour?.let { it or (0xFF shl 24) }
-        val square = signColour ?: Color.WHITE
+        val own = mark?.colour?.let { it or (0xFF shl 24) }
+        val square = own?.let { bodyOf(m, it, night) } ?: inkOf(m, Color.WHITE, night)
         val glyphColour = when {
-            signColour != null -> mark.textColour?.let { it or (0xFF shl 24) } ?: onColour(signColour)
+            own != null -> inkOf(m, mark.textColour?.let { it or (0xFF shl 24) } ?: onColour(own), night)
             else -> colour
         }
         // the 34 px tile, radius 10, its 2 px white ring inside it (border-box), centred on the shop
         rect.set(x - s / 2, y - s / 2, x + s / 2, y + s / 2)
         val corner = 10f * density
-        border.setShadowLayer(shadow(12f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
+        border.setShadowLayer(shadow(12f), 0f, 4f * density, shade(m, 0.25f))
         canvas.drawRoundRect(rect, corner, corner, border)
         border.clearShadowLayer()
         rect.inset(metrics.border, metrics.border)
@@ -212,15 +252,15 @@ class MarkerPainter(val density: Float) {
         m.badge?.let { badge(canvas, it, x + s / 2 - 2f * density, y - s / 2 + 2f * density) }
     }
 
-    private fun cluster(canvas: Canvas, x: Float, y: Float, count: Int, colour: Int) {
+    private fun cluster(canvas: Canvas, m: Marker, x: Float, y: Float, count: Int, colour: Int, ink: Int) {
         val d = metrics.clusterDiameter(count)
         val r = d / 2
-        border.setShadowLayer(shadow(10f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
+        border.setShadowLayer(shadow(10f), 0f, 4f * density, shade(m, 0.25f))
         canvas.drawCircle(x, y, r, border)
         border.clearShadowLayer()
         fill.color = colour
         canvas.drawCircle(x, y, r - metrics.border, fill)
-        drawCount(canvas, count, x, y, onColour(colour))
+        drawCount(canvas, count, x, y, ink)
     }
 
     /**
@@ -239,7 +279,7 @@ class MarkerPainter(val density: Float) {
         text.textSize = old
     }
 
-    private fun chip(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
+    private fun chip(canvas: Canvas, m: Marker, x: Float, y: Float, own: Int, colour: Int) {
         val mm = metrics
         val label = chipText(m)
         val tw = if (label.isEmpty()) 0f else text.measureText(label)
@@ -247,11 +287,11 @@ class MarkerPainter(val density: Float) {
         val h = mm.chipHeight(m.selected)
         val top = y - h / 2
         val left = x - w / 2
-        val pill = if (m.selected) colour else Color.WHITE
-        val ink = if (m.selected) onColour(colour) else INK
+        val pill = if (m.selected) colour else inkOf(m, Color.WHITE, night)
+        val ink = inkOf(m, if (m.selected) onColour(own) else INK, night)
         rect.set(left, top, left + w, top + h)
         fill.color = pill
-        fill.setShadowLayer(shadow(12f), 0f, 4f * density, Colours.withAlpha(INK, 0.2f))
+        fill.setShadowLayer(shadow(12f), 0f, 4f * density, shade(m, 0.2f))
         canvas.drawRoundRect(rect, h / 2, h / 2, fill)
         fill.clearShadowLayer()
         // the 24 px disc of its colour, 5 px in, with the white symbol
@@ -261,7 +301,7 @@ class MarkerPainter(val density: Float) {
         fill.color = if (m.selected) Colours.mix(colour, Color.WHITE, 0.16f) else colour
         canvas.drawCircle(scx, scy, sd / 2, fill)
         m.ring?.let { ring(canvas, scx, scy, sd / 2 - 1f * density, it, if (m.selected) Colours.withAlpha(Color.WHITE, 0.25f) else 0x22000000) }
-        symbol(canvas, m.symbol, scx, scy, 13f * density, Color.WHITE)
+        symbol(canvas, m.symbol, scx, scy, 13f * density, inkOf(m, Color.WHITE, night))
         if (tw > 0f) {
             text.color = ink
             text.getFontMetrics(metricsBuf)
@@ -334,6 +374,22 @@ class MarkerPainter(val density: Float) {
 
         /** White on dark colours, ink on light ones. */
         fun onColour(c: Int): Int = if (Colours.luma(c) > 186f) INK else Color.WHITE
+
+        /**
+         * The colour [m]'s disc, sign or bubble is drawn in, [c] its own: a faded marker's ([Marker.faded]) by day half way
+         * to white ([Palette.closed]), lighter; by [night] its own, its family's still.
+         */
+        fun bodyOf(m: Marker, c: Int, night: Boolean): Int = if (m.faded && !night) Palette.closed(c) else c
+
+        /**
+         * The colour of what is drawn on and round [m]'s disc (its ring, symbol, count, lettering), [c] its own: a faded
+         * marker's by day as light as its [bodyOf], by [night] half way into the night's ground.
+         */
+        fun inkOf(m: Marker, c: Int, night: Boolean): Int = when {
+            !m.faded -> c
+            night -> Colours.mix(c, MapController.NIGHT_EARTH, Palette.CLOSED_FADE)
+            else -> Palette.closed(c)
+        }
 
         /** A ring's colour by its value: green when there is plenty, amber when it is running low, red at the end. */
         fun ringColour(v: Float): Int = when {

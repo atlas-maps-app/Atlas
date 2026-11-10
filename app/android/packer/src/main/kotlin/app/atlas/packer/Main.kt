@@ -20,9 +20,10 @@ import kotlin.system.exitProcess
 private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap extracts
 
   packer places <in.osm.pbf> <out.db> [--name NAME] [--langs en,nl,de,fr] [--bbox W,S,E,N]
-                [--edit-times] [--threads N] [--no-gzip] [--keep-db] [--no-vacuum]
+                [--edit-times] [--addresses W,S,E,N] [--threads N] [--no-gzip] [--keep-db] [--no-vacuum]
       Builds the place store :search reads, writes <out.db>.gz (unless --no-gzip) and the
-      sidecar <out>.json that `manifest` reads.
+      sidecar <out>.json that `manifest` reads. --addresses fills in, over the network, the house
+      numbers OpenStreetMap lacks in that box from OpenAddresses.
 
   packer manifest <dir> <release-url-base> [--regions regions.json] [--previous packs.json] [--out FILE]
                   [--split-bytes N]
@@ -91,6 +92,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             val options = PackOptions(
                 langs = a.value("--langs")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: PlaceStore.DEFAULT_LANGS,
                 clip = a.value("--bbox")?.let(::parseBox),
+                addresses = a.value("--addresses")?.let(::parseBox),
                 editTimes = a.flag("--edit-times"),
                 threads = a.value("--threads")?.let { it.toIntOrNull()?.takeIf { n -> n in 1..64 } ?: throw UsageException("bad --threads '$it': want 1 to 64") }
                     ?: PbfReader.defaultThreads(),
@@ -102,7 +104,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             a.done()
             val pack = PlacesPackBuilder.build(File(pbf), File(db), options, name, gzip, keep, vacuum) { out("  $it") }
             val s = pack.stats
-            out("${pack.file.name}: ${s.places} places, ${s.addresses} address points, ${s.trees} trees from ${s.nodes} nodes, ${s.ways} ways, ${s.relations} relations in ${s.millis / 1000} s")
+            out("${pack.file.name}: ${s.places} places, ${s.addresses} address points, ${s.trees} trees, ${s.outlines} outlines from ${s.nodes} nodes, ${s.ways} ways, ${s.relations} relations in ${s.millis / 1000} s")
             out("  ${pack.rawBytes shr 20} MiB store, ${pack.file.length() shr 20} MiB file; OSM data of ${s.header.replicationTime ?: "unknown date"}")
             if (s.unlocated > 0 || s.missingNodes > 0) out("  ${s.unlocated} kept elements without a position, ${s.missingNodes} node references outside the extract")
         }
@@ -263,6 +265,6 @@ private class Args(args: List<String>) {
     }
 
     companion object {
-        val VALUED = setOf("--name", "--langs", "--bbox", "--threads", "--regions", "--previous", "--out", "--split-bytes", "--only", "--repo", "--country", "--id")
+        val VALUED = setOf("--name", "--langs", "--bbox", "--addresses", "--threads", "--regions", "--previous", "--out", "--split-bytes", "--only", "--repo", "--country", "--id")
     }
 }
