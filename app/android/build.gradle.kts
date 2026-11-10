@@ -14,3 +14,17 @@ plugins {
 providers.gradleProperty("builder").orNull?.let { builder ->
     allprojects { layout.buildDirectory.set(rootProject.layout.projectDirectory.dir("build-builders/$builder/${project.path.trim(':').replace(':', '-')}")) }
 }
+
+// Every test JVM keeps its temp files in its task's own build folder (build/tmp/<task>/jvm, under build-builders/<name>
+// for a builder), emptied before the task runs and removed after it. Java on macOS ignores TMPDIR, so the tests wrote
+// to /var/folders on the main disk, which is nearly full: Robolectric holds 200-400 MB there while a run lasts, and on
+// 10 November the kit board tests failed there with "No space left on device" (the owner's yes, through the Steward).
+// A task that fails keeps its folder until its next run empties it; rendertiles' -Patlas.testTmp still wins.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        val tmp = temporaryDir.resolve("jvm")
+        systemProperty("java.io.tmpdir", tmp.absolutePath)
+        doFirst { tmp.deleteRecursively(); tmp.mkdirs() }
+        doLast { tmp.deleteRecursively() }
+    }
+}
