@@ -96,10 +96,24 @@ android {
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
+                // MineStateTest holds About & licences (res/raw/mine_licences.json) to the LICENSES.md files it is made
+                // from, so a change to one of them runs the tests again.
+                it.inputs.files(rootProject.fileTree(rootProject.projectDir) { include("*/LICENSES.md", "mapcore/cpp/LICENSES.md", "app/src/main/kotlin/app/atlas/ui/*/LICENSES.md") })
+                    .withPropertyName("licenceFiles").withPathSensitivity(PathSensitivity.RELATIVE)
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("atlas.shots", layout.buildDirectory.dir("outputs/roborazzi").get().asFile.absolutePath)
                 System.getProperty("atlas.online")?.let { v -> it.systemProperty("atlas.online", v) }
+                // A table of kinds' colours to try in place of the app's (-Patlas.kindColours=<file>, places KindColours;
+                // an empty file for none): the screens are drawn with it into outputs/roborazzi-kinds, beside today's.
+                providers.gradleProperty("atlas.kindColours").orNull?.let { path ->
+                    val table = providers.fileContents(rootProject.layout.projectDirectory.file(path)).asText
+                    val dir = layout.buildDirectory.dir("kind-colours")
+                    it.inputs.property("atlas.kindColours", table)
+                    it.classpath += files(dir)
+                    it.systemProperty("atlas.shots", layout.buildDirectory.dir("outputs/roborazzi-kinds").get().asFile.absolutePath)
+                    it.doFirst { dir.get().file("atlas/places/kind_colours_trial.tsv").asFile.apply { parentFile.mkdirs() }.writeText(table.get()) }
+                }
             }
         }
     }

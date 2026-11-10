@@ -16,16 +16,25 @@ They come first: wherever the boards have a symbol for a meaning, Atlas draws it
 The other files under `src/main/resources/atlas/places/` are built by `tools/build_places_data.py` from the pinned
 releases that `tools/fetch_sources.sh` downloads. Each source keeps its licence:
 
+| What | Credit | Licence | Bundled file | Source |
+|---|---|---|---|---|
+| iD Tagging Schema | iD Contributors | ISC License | `presets.json`, `fields.json`, `i18n/*.json`, cuisine names, category names in other languages | [id-tagging-schema](https://github.com/openstreetmap/id-tagging-schema) 7.3.0 |
+| Name Suggestion Index | name-suggestion-index contributors | BSD 3-Clause License | `brands.tsv` (names, Wikidata items, tags, where they trade) | [name-suggestion-index](https://github.com/osmlab/name-suggestion-index) 8.0.20260918 |
+| Simple Icons | Simple Icons contributors | CC0 1.0 | `logos.json` (brand glyphs) and brand colours where no hand-set colour exists | [simple-icons](https://github.com/simple-icons/simple-icons) 16.35.0 |
+| Maki | Mapbox | CC0 1.0 | `symbols.json` `maki-*` (where the boards have no symbol) | [Maki](https://github.com/mapbox/maki) 8.2.0 |
+| Temaki | Bryan Housel and Quincy Morgan | CC0 1.0 | `symbols.json` `temaki-*` (where the boards have no symbol) | [Temaki](https://github.com/rapideditor/temaki) 5.13.0 |
+| Pinhead | Wayside Mapping | CC0 1.0 | `symbols.json` `pinhead-*` (where the boards have no symbol) | [Pinhead](https://github.com/waysidemapping/pinhead) 15.25.0 |
+| Lucide | Lucide Contributors, with portions by Cole Bemis as part of Feather | ISC License | `ui.json` (UI symbols where the boards have none) | [Lucide](https://lucide.dev) 1.56.0 (`lucide-static`), plus Atlas's own drawings in `tools/custom_icons.txt`; the notice is below |
+
+A set the owner imports in the symbol manager (`tools/icon_sets/<prefix>/`) gets its row in the table above (its name, the holder its licence names, the licence, `symbols.json` `<prefix>-*`), and its licence's notice below, from `tools/build_places_data.py`, which writes and takes them out as `symbols.json` carries the set's drawings or not: change the set's `set.json` or `LICENSE`, not these lines.
+
+Atlas's own files beside them, under the repository's MIT licence:
+
+<!-- not on About: Atlas's own work, under the MIT licence the top of About names -->
+
 | Bundled file | Source | Licence |
 |---|---|---|
 | `board_symbols.json` (Atlas's symbols, from the boards) | the Atlas boards, `tools/board_symbols.py` | the repository's MIT licence |
-| `presets.json`, `fields.json`, `i18n/*.json`, cuisine names, category names in other languages | [id-tagging-schema](https://github.com/openstreetmap/id-tagging-schema) 7.3.0 | ISC, Copyright (c) iD Contributors |
-| `brands.tsv` (names, Wikidata items, tags, where they trade) | [name-suggestion-index](https://github.com/osmlab/name-suggestion-index) 8.0.20260918 | BSD 3-Clause, Copyright 2026, name-suggestion-index contributors |
-| `logos.json` (brand glyphs) and brand colours where no hand-set colour exists | [simple-icons](https://github.com/simple-icons/simple-icons) 16.35.0 | CC0 1.0 |
-| `symbols.json` `maki-*` (where the boards have no symbol) | [Maki](https://github.com/mapbox/maki) 8.2.0 | CC0 1.0 |
-| `symbols.json` `temaki-*` (where the boards have no symbol) | [Temaki](https://github.com/rapideditor/temaki) 5.13.0 | CC0 1.0 |
-| `symbols.json` `pinhead-*` (where the boards have no symbol) | [Pinhead](https://github.com/waysidemapping/pinhead) 15.25.0 | CC0 1.0 |
-| `ui.json` (UI symbols where the boards have none) | [Lucide](https://lucide.dev) 1.56.0 (`lucide-static`), plus Atlas's own drawings in `tools/custom_icons.txt` | ISC (see below) |
 | `categories.json`, `cuisine.json`, the hand tables in `tools/` | Atlas, from the prototype (`fetch/categories_ams.py`, `render/poi_style.py`) | the repository's MIT licence |
 
 Public holidays (`Holidays.kt`) are computed from rules written for Atlas; no holiday data is bundled.

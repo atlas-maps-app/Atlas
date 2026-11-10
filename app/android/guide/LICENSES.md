@@ -2,6 +2,10 @@
 
 ## osrm-text-instructions (BSD-2-Clause)
 
+| What | Credit | Licence | Where |
+|---|---|---|---|
+| OSRM Text Instructions | Project OSRM contributors | BSD 2-Clause License | `src/main/resources/app/atlas/guide/osrm/`, `OsrmInstructions.kt` |
+
 - What: the v5 instruction templates of 17 languages (`src/main/resources/app/atlas/guide/osrm/translations/{en,nl,de,fr,es,it,pt-BR,pl,sv,da,no,fi,ru,ja,zh-Hans,tr,uk}.json`) and the grammar rules for Danish, French and Russian (`.../osrm/grammar/{da,fr,ru}.json`). The test fixtures in `src/test/resources/osrm/fixtures-v5.json` are the library's own `test/fixtures/v5`, trimmed to these languages.
 - Where from: https://github.com/Project-OSRM/osrm-text-instructions, master at commit `b4fa9efc0501b931408bdf0d8d2c627e38ea829b` (12 October 2026; package version 0.15.0). The JSON is re-serialised without whitespace; the content is unchanged.
 - `OsrmInstructions.kt` is a Kotlin port of the library's `index.js` (`compile`, `getWayName`, `laneConfig`, `directionFromDegree`, `ordinalize`, `tokenize`, `grammarize`).

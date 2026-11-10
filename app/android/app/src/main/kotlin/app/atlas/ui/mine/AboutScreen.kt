@@ -46,7 +46,10 @@ object Licences {
         LicenceItem(o["module"]!!.jsonPrimitive.content, o["what"]!!.jsonPrimitive.content, o["licence"]!!.jsonPrimitive.content, o["credit"]?.jsonPrimitive?.content)
     }
 
-    /** The sections of the screen: the module a line comes from, grouped for a person. */
+    /**
+     * The sections of the screen: the module a line comes from, grouped for a person. mine_licences.py's section()
+     * mirrors it, to keep a thing two modules list in the first section that shows it.
+     */
     fun section(item: LicenceItem): Int = when {
         item.module == "providers" -> 0
         item.module == "places" -> 1
@@ -116,11 +119,14 @@ private fun LicenceRow(name: String, credit: String?, licence: String) {
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            BText(name, bt(13.5f, 700, 17.5f), INK, lines = 2)
-            if (!credit.isNullOrBlank()) BText(credit, bt(11.5f, 400, 15f), SOFT, lines = 4)
+            // the name and its credit whole, however long: a credit is often a font's copyright notice (Orbitron's runs
+            // to five lines, fdlibm's is its whole licence)
+            BText(name, bt(13.5f, 700, 17.5f), INK, lines = Int.MAX_VALUE)
+            if (!credit.isNullOrBlank()) BText(credit, bt(11.5f, 400, 15f), SOFT, lines = Int.MAX_VALUE)
         }
+        // a licence's name; one longer than the tag's three lines ends in "…"
         Box(Modifier.widthIn(max = 130.dp).bbox(HAIR, cr(8f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
-            BText(licence.take(60), bt(10f, 700, 13f), LABEL, lines = 3)
+            BText(licence, bt(10f, 700, 13f), LABEL, lines = 3)
         }
     }
 }

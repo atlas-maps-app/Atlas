@@ -16,3 +16,6 @@ Data:
   Licence (ODbL 1.0). Screens that show places from it carry the attribution; a store shared outside the app is a
   derived database under the ODbL.
 - Answers from Overpass and Photon are OpenStreetMap data under the same licence (see `providers/LICENSES.md`).
+- House numbers OpenStreetMap lacks, filled in from **OpenAddresses** (`AddressFill`), keep each source's own licence
+  (CC0, CC BY, Licence Ouverte and the like): the store lists its sources with their licences, credits and counts
+  (`PlaceStore.addressSources`, meta key `openaddresses`), and each filled address carries its credit to the place card.

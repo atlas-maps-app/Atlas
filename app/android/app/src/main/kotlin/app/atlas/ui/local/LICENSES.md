@@ -1,6 +1,14 @@
 # What the local package is built from
 
-Code and data that are not this project's own, with their terms.
+Code and data that are not this project's own, with their terms. About & licences lists the two it carries:
+
+| What | Credit | Licence | Where |
+|---|---|---|---|
+| SGP4 and SDP4 | David Vallado | Public domain | `astro/Sgp4.kt`, a Kotlin port of his reference code |
+| Natural Earth | Made with Natural Earth | Public domain | `res/raw/local_globe.json`, the land outlines |
+
+The rest are published methods Atlas's own code implements, sources the credits card of About shows, and the eat
+package's fonts.
 
 ## Code
 

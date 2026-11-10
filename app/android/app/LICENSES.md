@@ -2,11 +2,14 @@
 
 The app's own code is MIT, like the rest of Atlas. It bundles these works by others; each licence is reproduced below.
 
-| What | Where | Licence |
-|---|---|---|
-| Geist (variable font, The Geist Project Authors), from github.com/vercel/geist-font, the boards' sans | `src/main/res/font/geist.ttf` | SIL Open Font License 1.1 |
-| Instrument Serif, regular and italic (The Instrument Serif Project Authors), from github.com/google/fonts `ofl/instrumentserif` | `src/main/res/font/instrument_serif*.ttf` | SIL Open Font License 1.1 |
-| Lucide icons `map`, `corner-up-right`, `book-open`, `calendar-days`, `cloud-*`, `rotate-3d`, `navigation-2`, `crosshair`, `locate-fixed`, `map-pinned`, `waypoints` (path data only), from github.com/lucide-icons/lucide | `src/main/kotlin/app/atlas/ui/kit/AppSymbols.kt` | ISC |
+| Font | Credit | Licence | Where | Source |
+|---|---|---|---|---|
+| Geist | Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font) | SIL Open Font License 1.1 | `src/main/res/font/geist.ttf` | variable font, from github.com/vercel/geist-font: the boards' sans |
+| Instrument Serif | Copyright 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif) | SIL Open Font License 1.1 | `src/main/res/font/instrument_serif*.ttf` | regular and italic, from github.com/google/fonts `ofl/instrumentserif` |
+
+| What | Credit | Licence | Where | Source |
+|---|---|---|---|---|
+| Lucide | Lucide Contributors, with portions by Cole Bemis as part of Feather | ISC License | `src/main/kotlin/app/atlas/ui/kit/AppSymbols.kt` | the path data of the icons `map`, `corner-up-right`, `book-open`, `calendar-days`, `cloud-*`, `rotate-3d`, `navigation-2`, `crosshair`, `locate-fixed`, `map-pinned`, `waypoints`, from github.com/lucide-icons/lucide; the notice is below |
 
 The map symbols, the UI symbol set and brand glyphs come from `:places` (see `places/LICENSES.md`).
 
@@ -293,8 +296,7 @@ the characters the boards and screens set (with fontTools); none of those reserv
 | `be_vietnam_pro_semibold.ttf` | Be Vietnam Pro SemiBold | Copyright 2021 The Be Vietnam Pro Project Authors (https://github.com/bettergui/BeVietnamPro) | SIL Open Font License 1.1 |
 | `noto_serif_ethiopic.ttf` (subset) | Noto Serif Ethiopic | Copyright 2022 The Noto Project Authors (https://github.com/notofonts/ethiopic) | SIL Open Font License 1.1 |
 | `italiana.ttf` | Italiana | Copyright (c) 2011 by Santiago Orozco (hi@typemade.mx) with reserved name Italiana | SIL Open Font License 1.1 |
-| `righteous.ttf` | Righteous | Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic (AOETI) (astigma@astigmatic.com), with Reserved | SIL Open Font License 1.1 |
-| `Font Name "Righteous".ttf` | This Font Software is licensed under the SIL Open Font Licen |  | SIL Open Font License 1.1 |
+| `righteous.ttf` | Righteous | Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic (AOETI) (astigma@astigmatic.com), with Reserved Font Name "Righteous" | SIL Open Font License 1.1 |
 | `im_fell_english.ttf` | IM FELL English | © 2007 Igino Marini (www.iginomarini.com) With Reserved Font Name IM FELL English Roman | SIL Open Font License 1.1 |
 | `im_fell_english_italic.ttf` | IM FELL English | © 2007 Igino Marini (www.iginomarini.com) With Reserved Font Name IM FELL English Italic | SIL Open Font License 1.1 |
 | `noto_serif_jp.ttf` (subset) | Noto Serif JP ExtraLight | (c) 2017-2024 Adobe (http://www.adobe.com/). | SIL Open Font License 1.1 |

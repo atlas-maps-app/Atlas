@@ -11,6 +11,9 @@ import app.atlas.services.Units
 import app.atlas.testing.testServices
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -23,6 +26,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
+import java.security.MessageDigest
 import java.time.Instant
 
 /** What the phone keeps for you and how it moves: the backup file, the kept forecast, and the licence list. */
@@ -252,20 +256,57 @@ class MineStateTest {
 
     // ---- the licence list ----
 
+    private fun licenceList(): String = RuntimeEnvironment.getApplication().resources.openRawResource(app.atlas.R.raw.mine_licences).bufferedReader().use { it.readText() }
+
     @Test
-    fun everyBundledDatasetAndLibraryIsInTheLicenceList() {
-        val ctx = RuntimeEnvironment.getApplication()
-        val text = ctx.resources.openRawResource(app.atlas.R.raw.mine_licences).bufferedReader().use { it.readText() }
-        val items = Licences.parse(text)
+    fun theLicenceListHasItsSymbolSetsFontsCodeAndLibraries() {
+        val items = Licences.parse(licenceList())
         assertTrue("${items.size} items", items.size > 25)
         assertTrue(items.all { it.what.isNotBlank() && it.licence.isNotBlank() })
-        val sections = items.map { Licences.section(it) }.toSet()
-        assertEquals(setOf(0, 1, 2, 3), sections)
-        assertTrue(items.any { it.what.contains("OpenStreetMap", true) || it.licence.contains("ODbL", true) })
+        // the providers' bundled data is in the credits card above the list (Catalogue.BUNDLED), so no card of its own
+        assertEquals(setOf(1, 2, 3), items.map { Licences.section(it) }.toSet())
+        for (name in listOf("Maki", "Geist", "HarfBuzz", "OSRM Text Instructions")) assertTrue(name, items.any { it.what == name })
         assertTrue(items.any { it.module == "libraries" && it.what.contains("OkHttp", true) })
         assertEquals(0, Licences.section(LicenceItem("providers", "x", "y")))
         assertEquals(2, Licences.section(LicenceItem("tiles", "x", "y")))
     }
+
+    @Test
+    fun eachLineOfTheLicenceListIsANameACreditAndALicenceName() {
+        // About lists each thing the app carries once, in a user's words (10 November): no path, file or test fixture,
+        // a licence by its name alone (its notes stay in the LICENSES.md tables), and a thing two files list (Geist,
+        // Lucide, Earcut) on one line.
+        val items = Licences.parse(licenceList())
+        val file = Regex("""[/`]|\.(kt|kts|java|json|tsv|csv|txt|md|html|ttf|otf|svg|png|py|cpp|hpp|h|slang|gz|atlas)\b""")
+        val notes = Regex("""[(;"`©]|\b(see|below|notice|our own)\b""", RegexOption.IGNORE_CASE)
+        val tests = Regex("""\btests?\b""", RegexOption.IGNORE_CASE)
+        for (it in items) {
+            assertFalse("${it.what}: a name, not a path or a file", file.containsMatchIn(it.what))
+            assertFalse("${it.what}: \"${it.licence}\" is to be a licence's name", notes.containsMatchIn(it.licence) || file.containsMatchIn(it.licence))
+            assertFalse("${it.what}: what only the tests read stays off About", tests.containsMatchIn("${it.what} ${it.credit.orEmpty()} ${it.licence}"))
+        }
+        val twice = items.groupBy { it.what }.filterValues { it.size > 1 }.keys
+        assertTrue("listed more than once: $twice", twice.isEmpty())
+    }
+
+    @Test
+    fun theLicenceListIsMadeFromTheLicenceFilesAsTheyAreNow() {
+        // mine_licences.py keeps a hash of each LICENSES.md, whole: a table, a marker that keeps one off About or a
+        // file come or gone since, and About & licences is behind its files (it was 52 lines behind them until 10 November).
+        val made = Json.parseToJsonElement(licenceList()).jsonObject["made_from"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
+        val android = File(System.getProperty("atlas.repo")!!, "app/android")
+        val now = licenceFiles(android).associate { it.relativeTo(android).invariantSeparatorsPath to sha256(it.readText().replace("\r\n", "\n")) }
+        assertTrue(now.keys.toString(), "app/LICENSES.md" in now && "places/LICENSES.md" in now && "mapcore/cpp/LICENSES.md" in now)
+        val behind = (made.keys + now.keys).filter { made[it] != now[it] }.sorted()
+        assertTrue("About & licences is behind ${behind.joinToString()}: run app/src/main/kotlin/app/atlas/ui/mine/art/mine_licences.py", behind.isEmpty())
+    }
+
+    /** The LICENSES.md files mine_licences.py reads: a module's, an app screen package's, and the map core's C++ one. */
+    private fun licenceFiles(android: File): List<File> =
+        (listOf(android, File(android, "app/src/main/kotlin/app/atlas/ui")).flatMap { dir -> dir.listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith(".") } } + File(android, "mapcore/cpp"))
+            .map { File(it, "LICENSES.md") }.filter { it.isFile }
+
+    private fun sha256(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
     @Test
     fun theEvPickerListsRealCarsAndTheChosenOneSurvivesTheBackup() {
