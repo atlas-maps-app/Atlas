@@ -907,6 +907,12 @@ SYMBOLS = {
 }
 
 ALIASES = {
+    # The open sets' ids that kinds wore before the filled set draw ours again, the boards' drawing of the same meaning
+    # (the owner, 10 November: "The simple style of our icons looked good", then "You can go on"). Maki's cart and
+    # bicycle read better than ours and stay theirs (maki-grocery, maki-bicycle). The restaurant's fork and knife is ours
+    # again, the knife and fork the Eat chip draws (the owner, 10 November, the evening: "And I want our knife and fork
+    # back", then "Its still on the category chip"), so every restaurant, cuisine and category on maki-restaurant agrees
+    # with the chip. Maki's open book stays the bookbinder's (maki-library: the library names the boards' place.library).
     'ui-chevron-left': 'ui.back',
     'ui-back': 'ui.back',
     'ui-moon': 'ui.moon',
@@ -986,14 +992,12 @@ ALIASES = {
     'maki-airport': 'mode.fly',
     'ui-mountain': 'cat.nature',
     'ui-bike': 'mode.bike',
-    'maki-bicycle': 'mode.bike',
     'ui-bookmark': 'ui.bookmark',
     'maki-bicycle-share': 'place.bike-dock',
     'ui-map-pin': 'ui.pin',
     'maki-marker': 'ui.pin',
     'ui-map-pinned': 'ui.pin.2',
     'ui-library': 'place.library',
-    'maki-library': 'place.library',
     'ui-plug': 'fact.socket',
     'ui-plug-zap': 'fact.socket',
     'ui-heart': 'ui.heart',
@@ -1003,13 +1007,13 @@ ALIASES = {
     'temaki-tools': 'place.tools',
     'ui-share': 'ui.share',
     'ui-eye': 'ui.eye',
-    'maki-viewpoint': 'ui.eye',
     'ui-sparkles': 'ui.sparkles',
     'ui-plus': 'ui.plus',
     'ui-refresh': 'ui.refresh',
     'ui-toilet': 'need.toilet',
     'maki-toilet': 'need.toilet',
-    'pinhead-taco': 'food.taco',
+    # 'pinhead-taco' stays Pinhead's filled taco: the boards' bare half shell read as a dome at a pin's size (the parent's
+    # verdict, 10 November, the evening)
     'ui-landmark': 'place.landmark',
     'maki-landmark': 'place.landmark',
     'maki-museum': 'place.museum',
@@ -1111,7 +1115,6 @@ ALIASES = {
     'pinhead-ice_cream_on_cone': 'food.ice-cream',
     'ui-settings': 'ui.settings',
     'maki-bank': 'place.bank',
-    'maki-grocery': 'place.supermarket',
     'ui-u-turn': 'nav.turn-back',
     'ui-vibrate': 'ui.vibrate',
     'ui-chevron-down': 'ui.chevron-down',
@@ -1149,5 +1152,238 @@ ALIASES = {
     'pinhead-fish': 'market.fish',
     'pinhead-meat': 'market.butcher',
     'maki-restaurant-seafood': 'market.fish',
+    # the cuisines of step 1b's kinds, on the Street board's dishes as their kinds are (the parent's verdict, 10 November,
+    # the evening): the hot dog, the kebab for kebab, Turkish and every rotisserie cuisine. Chicken and wings keep
+    # Pinhead's filled drumstick, as their kinds do: the boards' line drumstick reads as a magnifier at a pin (the
+    # parent's verdict, 10 November, the night)
+    'pinhead-hot_dog': 'street.hot-dog',
+    'temaki-vertical_rotisserie': 'street.kebab',
+    # the nature reserve's leaf, as the Camp board draws the reserves: it waits with the park page, so the boards'
+    # leaf stays, on the Local screen's nature notes too, till the owner answers about the page
     'pinhead-leaf': 'fact.vegan',
+}
+
+# Faults in the boards' own drawings, mended as Atlas draws them; the boards keep theirs. Each geometry hash has a list
+# of (what the board's SVG says, what Atlas draws instead), applied to the SVG before it is converted. board_symbols.py
+# reports a mend that no longer fits its drawing and leaves the drawing as the board has it. Measured by EmblemShapeTest.
+MENDS = {
+    # need.toilet (the map's toilet: maki-toilet, ui-toilet): each head was drawn as an arc that starts at the head's own
+    # middle, so it stood 1.5 to the left of its body, a ring round a pinhole that touched the shoulders. A solid head
+    # over each body, both at one height, their tops where they were, a neck's gap under them (the owner, 10 November,
+    # of the toilet's people: "Their heads dont sit straight").
+    '41f06eccf1ff': [(
+        '<path d="M7 4.5a1.5 1.5 0 1 0 0 .01M17 4.5a1.5 1.5 0 1 0 0 .01M5 21v-6H4l1.5-7h3L10 15H9v6M15 21v-8h-1V8h6v5h-1v8"></path>',
+        '<circle cx="7" cy="4.05" r="2" fill="currentColor" stroke="none"></circle>'
+        '<circle cx="17" cy="4.05" r="2" fill="currentColor" stroke="none"></circle>'
+        '<path d="M5 21v-6H4l1.5-7h3L10 15H9v6M15 21v-8h-1V8h6v5h-1v8"></path>',
+    )],
+    # need.toilet.2 (the Charge screen's toilet) and need.toilet.3 (the Needs board's): the woman's legs stood a unit to
+    # the right of her dress; under its middle, as on the Toilet board's (need.toilet.5).
+    'e23eb1c9a37b': [('M5.5 8h4l1.5 6.5H9.5V21h-2v-6.5H4z', 'M5.5 8h4l1.5 6.5H8.5V21h-2v-6.5H4z')],
+    '953ba814f89e': [('M5.5 8h4l1.5 7H9.5v6.5h-2V15H4z', 'M5.5 8h4l1.5 7H8.5v6.5h-2V15H4z')],
+    # need.toilet.4 (the Pump screen's toilet): the two figures' hems overlapped, one shape at a pin's size; each moved
+    # 0.75 out, a unit apart, the pair where it was. Each head was a ring round a pinhole 0.2 over its body; a solid
+    # dot of the map toilet's radius, a unit over it.
+    'ac074593ef1e': [(
+        '<circle cx="8" cy="5" r="1.8"></circle><circle cx="16" cy="5" r="1.8"></circle>'
+        '<path d="M6 21v-6H5l1-6h4l1 6h-1v6M14 21v-5h-1.5L14 9h4l1.5 7H18v5"></path>',
+        '<circle cx="7.25" cy="5" r="2" fill="#6B6358" stroke="none"></circle>'
+        '<circle cx="16.75" cy="5" r="2" fill="#6B6358" stroke="none"></circle>'
+        '<path d="M5.25 21v-6H4.25l1-6h4l1 6h-1v6M14.75 21v-5h-1.5L14.75 9h4l1.5 7H18.75v5"></path>',
+    )],
+    # place.dentist (the dentist's tooth, maki-dentist): its sides mirror about x 11 but the dip in its crown sat at 10,
+    # the left lobe running on past the tooth's corner, and the whole tooth stood a unit left of its frame's middle (the
+    # owner, 10 November, of faults like the toilet's heads: "These kinds of defects"). The dip on the tooth's axis, the
+    # two lobes alike, the tooth on the frame's middle: its path is relative after its start, so the start moves it.
+    '54e6ffba84ab': [(
+        'M7 3c-3 0-4 3-3.5 6 .5 3 1.5 5 2 9 .3 2 2.5 2.5 3 0l1-4c.3-1 2.7-1 3 0l1 4c.5 2.5 2.7 2 3 0 .5-4 1.5-6 2-9 '
+        '.5-3-.5-6-3.5-6-2 0-3 1-5 1s-3-1-5-1z',
+        'M8 3.5c-3 0-4 3-3.5 6 .5 3 1.5 5 2 9 .3 2 2.5 2.5 3 0l1-4c.3-1 2.7-1 3 0l1 4c.5 2.5 2.7 2 3 0 .5-4 1.5-6 2-9 '
+        '.5-3-.5-6-3.5-6-2 0-3 1-4 1s-2-1-4-1z',
+    )],
+    # The wheelchair users (fact.wheelchair, which ui-wheelchair aliases, .2, .3, and fact.step-free): each head was a
+    # ring round a pinhole that touched the body, the toilet's fault (the owner, 10 November: "Every symbol that has
+    # defects, looks bad or doesnt really resemble what it is can be re built?"). A solid head of the toilet's radius 2,
+    # its top where the ring's was, the body's top lowered for a neck's gap of a unit.
+    '9d493456329c': [(
+        '<circle cx="10" cy="4.5" r="1.6"></circle><path d="M10 7.5v6h6',
+        '<circle cx="10" cy="4" r="2" fill="currentColor" stroke="none"></circle><path d="M10 8v5.5h6',
+    )],
+    'ec0fb5e27558': [(
+        '<circle cx="11" cy="4" r="1.8"></circle><path d="M11 7v6h6',
+        '<circle cx="11" cy="3.75" r="2" fill="currentColor" stroke="none"></circle><path d="M11 7.75v5.25h6',
+    )],
+    '8e9b7ab99be9': [(
+        '<circle cx="10" cy="4.5" r="1.6"></circle><path d="M10 7.5v6h6',
+        '<circle cx="10" cy="4" r="2" fill="currentColor" stroke="none"></circle><path d="M10 8v5.5h6',
+    )],
+    'e029115462ad': [(
+        '<circle cx="10" cy="4.5" r="1.6"></circle><path d="M10 7.5v6h5',
+        '<circle cx="10" cy="4" r="2" fill="currentColor" stroke="none"></circle><path d="M10 8v5.5h5',
+    )],
+    # Batch 2 of the rebuild (the owner, 10 November: "There are probably more faults with other icons across the app"):
+    # the faults EmblemShapeTest finds at a pin's size, mended where the drawing is otherwise sound.
+    # market.fish (pinhead-fish, ui-fish): the eye, a dot stroked as wide as the outline, came within 0.02 of it, one
+    # shape at a pin's size. A solid eye, a little further in.
+    '74d4bc63c79c': [(
+        '<circle cx="8" cy="11" r="1" fill="currentColor"></circle>',
+        '<circle cx="8.5" cy="11.25" r="1.2" fill="currentColor" stroke="none"></circle>',
+    )],
+    # food.bread (maki-bakery, temaki-bread): the loaf's cuts began 0.11 under its crust; shorter, a unit clear of it.
+    '226cedf1e078': [('M9 9l2 4M13 8v5M17 9l-2 4', 'M9.5 10l1.75 3.5M13 9.5v4M16.5 10l-1.75 3.5')],
+    # place.print: the paper's sides stopped 0.05 short of the printer's top; they meet it.
+    '9cb659a0cae3': [('M7 8V3h10v5', 'M7 9V3h10v6')],
+    # street.taco: the filling's end came 0.16 from the shell; the filling a unit lower (its path is relative after its
+    # start, so the start moves it).
+    '6d4d3acc886b': [('M5 12c1-1', 'M5 13c1-1')],
+    # ui.refresh (ui-refresh): the arrow's head stood 0.1 off its arc; the arc runs on into it.
+    '5656d1e9a766': [('a8 8 0 1 1-2.3-5.6M20', 'a8 8 0 1 1-2.3-5.6L20 8.5M20')],
+    # weather.sunset (ui-sunset): the side rays came 0.13 from the sun; moved out along themselves, a unit clear.
+    '98aa7f07154f': [('M4.8 12.3l1.3 1M19.2 12.3l-1.3 1', 'M3.85 11.55l1.55 1.2M20.15 11.55l-1.55 1.2')],
+    # ui.query (ui-near): the dashed circle's round caps came 0.05 apart, so it ran into a ring; seven short dashes a
+    # unit apart.
+    '508983f9be2f': [('stroke-dasharray="2.2 2"', 'stroke-dasharray="1.1 2.94"')],
+    # weather.sun.4: the slanting rays came 0.06 from the sun; a unit clear of it, as the upright ones are.
+    '82bc7db22688': [(
+        'M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4',
+        'M5.64 5.64l1.41 1.41M16.95 16.95l1.41 1.41M5.64 18.36l1.41-1.41M16.95 7.05l1.41-1.41',
+    )],
+    # fun.mushroom: a spot came 0.1 from the cap's edge; the spots further in.
+    'bb3661a8965d': [('M8 9h.01M13 7h.01M16 10h.01', 'M8 9h.01M12.5 8h.01M15.5 9h.01')],
+    # food.pizza: the slices of salami were rings round pinholes; solid, clear of the slice's edges.
+    '277424f94db0': [(
+        '<circle cx="10" cy="9" r="1.2"></circle><circle cx="14" cy="12.5" r="1.2"></circle>',
+        '<circle cx="9.5" cy="8.75" r="1.5" fill="currentColor" stroke="none"></circle>'
+        '<circle cx="13" cy="11.75" r="1.5" fill="currentColor" stroke="none"></circle>',
+    )],
+    # place.camp (maki-campsite): the tent's pole ran on through its door, leaving two slivers of holes; it ends at
+    # the door's top.
+    'fd59cca247c7': [('M12 4v16', 'M12 4v11')],
+    # food.ramen (maki-restaurant-noodle): the chopsticks' tips met above the rim round a pinhole; they reach the rim.
+    '36fac1f5858e': [('M8 3l2 6M14 3l-2 6', 'M8.5 3l2.5 8M15.5 3l-2.5 8')],
+    # mode.camper: the wheels were rings that the body's line cut into slivers of holes; solid wheels.
+    '1302a2160c29': [(
+        '<circle cx="7" cy="17.5" r="1.8"></circle><circle cx="17" cy="17.5" r="1.8"></circle>',
+        '<circle cx="7" cy="17.5" r="2" fill="currentColor"></circle>'
+        '<circle cx="17" cy="17.5" r="2" fill="currentColor"></circle>',
+    )],
+    # mode.transit: the lamps touched the lines above and below them, slivers of holes in the corners; solid lamps
+    # clear of both.
+    'b235ab101482': [(
+        '<circle cx="8.5" cy="14" r=".8"></circle><circle cx="15.5" cy="14" r=".8"></circle>',
+        '<circle cx="8.5" cy="14" r="1.1" fill="currentColor" stroke="none"></circle>'
+        '<circle cx="15.5" cy="14" r="1.1" fill="currentColor" stroke="none"></circle>',
+    )],
+    # place.car-wash: the wheels were rings round pinholes; solid wheels, in the drawing's own colour.
+    '3d825b49e1ab': [(
+        '<circle cx="8" cy="18.5" r="1.3"></circle><circle cx="16" cy="18.5" r="1.3"></circle>',
+        '<circle cx="8" cy="18.5" r="2.25" fill="#6B6358" stroke="none"></circle>'
+        '<circle cx="16" cy="18.5" r="2.25" fill="#6B6358" stroke="none"></circle>',
+    )],
+    # place.first-aid: the handle stood 2 over the box, a slit of a hole under it; a unit higher.
+    'f7fe90027979': [('M9 6V4h6v2', 'M9 6V3h6v3')],
+    # place.national-park: the mountains in the shield were an outline round a pinhole; filled.
+    '65cbcb738f5f': [(
+        '<path d="M8 15l3-5 2 3 1.5-2L16 15z"></path>',
+        '<path d="M8 15l3-5 2 3 1.5-2L16 15z" fill="currentColor"></path>',
+    )],
+    # shop.cart: the wheels were rings round pinholes; solid wheels, in the drawing's own colour.
+    '9bd5bd5988dd': [(
+        '<circle cx="9" cy="20" r="1.4"></circle><circle cx="17" cy="20" r="1.4"></circle>',
+        '<circle cx="9" cy="20" r="1.9" fill="#243042" stroke="none"></circle>'
+        '<circle cx="17" cy="20" r="1.9" fill="#243042" stroke="none"></circle>',
+    )],
+    # Batch 3 (the owner, 10 November: "doesnt really resemble what it is"): the van and the lorry had no wheels.
+    # mode.van (the moving company; the boards' food trucks and deliveries): solid wheels on its floor, as the camper's.
+    'eb22263125b8': [(
+        '<path d="M13.5 10h4l3 3.5v3h-7"></path>',
+        '<path d="M13.5 10h4l3 3.5v3h-7"></path>'
+        '<circle cx="6.5" cy="17.25" r="2" fill="currentColor" stroke="none"></circle>'
+        '<circle cx="16.5" cy="17.25" r="2" fill="currentColor" stroke="none"></circle>',
+    )],
+    # mode.lorry (the waste transfer station, the Along board's lorries): solid wheels in its own colour, within its low
+    # frame.
+    '607d92987804': [(
+        '<path d="M1 2h13v7H1zM14 4h4l3 3v2h-7"></path>',
+        '<path d="M1 2h13v7H1zM14 4h4l3 3v2h-7"></path>'
+        '<circle cx="4.5" cy="9.75" r="1.75" fill="#1E4E9E" stroke="none"></circle>'
+        '<circle cx="17" cy="9.75" r="1.75" fill="#1E4E9E" stroke="none"></circle>',
+    )],
+    # Step 1b (the parent's verdict, 10 November, the evening: the boards' drawing goes on where a board draws the kind).
+    # fact.smoking.2 (the smoking area, the e-cigarette shop): the cigarette's ember stood a tenth of a unit from its
+    # body, two parts that almost touched; the body half a unit shorter, a clear gap before the ember.
+    '9a0f9d0d42b7': [(
+        '<path d="M3 15h14v3H3zM19 15v3M17 9c0-2 2-2 2-4M21 9c0-2 2-2 2-4"></path>',
+        '<path d="M3 15h13.5v3H3zM19 15v3M17 9c0-2 2-2 2-4M21 9c0-2 2-2 2-4"></path>',
+    )],
+}
+
+# Drawings that sit off their frame's middle, so off the middle of a pin's disc and of a row's tile: each frame moved by
+# (dx, dy) onto its drawing, how far the drawing sat right and down of the middle, by the mean of how far its box and its
+# weight sat off, to a quarter unit; the drawing itself is unchanged and the boards keep theirs. Measured by
+# EmblemShapeTest (every emblem on its frame's middle), from the sweep after the toilet's heads (the owner, 10 November:
+# "These kinds of defects").
+FRAMES = {
+    '438f582e2bcc': (0, 1.5),  # mode.car (maki-car)
+    '6e4816d7f696': (-1, .5),  # mode.truck: left, the cab's weight
+    '607d92987804': (-1.25, .25),  # mode.lorry: its wheels (MENDS) below its line
+    'eb22263125b8': (-.75, .5),  # mode.van: its wheels (MENDS) below, the box's weight left
+    'b696d8f9e722': (0, 2.75),  # nature.peak (maki-mountain): low, a mountain's weight at its foot
+    '66d48e902442': (.25, 1.75),  # place.cafe (maki-cafe): the cup stood low
+    '938d2ac901ef': (-.25, -1.25),  # place.supermarket (maki-grocery): the basket hung high
+    '11af7b2279ae': (0, 1.25),  # place.playground (maki-playground)
+    'a368e0dac942': (0, -1.75),  # place.theatre (maki-theatre): the mask hung high
+    '183a8addb894': (-1, 1.5),  # place.farm: the sheep stood low and left
+    '68e72b43eaef': (1.75, -1.75),  # place.repair: the wrench lay up and right of the middle
+    '8541414691a4': (-1.75, -1.25),  # place.shower (temaki-shower)
+    'aa013c8ce92d': (0, 1.75),  # fact.delivery (ui-package)
+    'b42eb1e45845': (-3, 0),  # ui.speak: the speaker stood in the left half, room for sound waves it does not have
+    '31e87fb12bd8': (-1.5, 0),  # ui.speaking
+    '6e56da3329c8': (-.5, -2),  # ui.ticket: the ticket hung high
+    'c6ba2b646f15': (-3, 0),  # fact.person: the person stood in the left half, 3 units off
+    # every symbol the app draws, not only the kinds' (the owner, 10 November: "There are probably more faults with
+    # other icons across the app"), each moved by the mean of its box's and its weight's offsets, so the two straddle
+    # the middle
+    '1b77bd14341d': (0, 1.25),  # brand.greencart: the cart stood low
+    '6dce01f371a6': (0, 2.5),  # cat.nature (ui-mountain): the mountains stood low
+    '84bcd40c644b': (0, 1),  # drop.battery: the battery stood low
+    'c3ac0a6a6a0d': (0, -2),  # fact.new: the star hung high
+    '553a11cd039e': (0, 2.25),  # kit.slope: the set square stood low
+    'cd0a8f4c1463': (0, 1.5),  # kit.sun-moon: low
+    'da37c023f705': (0, 2.75),  # local.peaks: the peaks stood low
+    '057f3f96b33d': (0, 2),  # place.bridge (maki-bridge): the bridge stood low
+    '1302a2160c29': (-1.25, .5),  # mode.camper: the camper stood left
+    'd9cfe3036e45': (0, 1.5),  # mode.car.3: the car stood low
+    '9d5ac686b5dd': (0, 2.25),  # mode.scooter: the scooter stood low
+    'aed3761230e2': (-2, 0),  # nav.destination: the flag stood left
+    '7e80b01a2607': (0, -2.25),  # nav.north: the arrow hung high
+    '875f655380e0': (2.25, 0),  # nav.turn-back: the turn stood right
+    'e76c349f0546': (0, -2.75),  # place.dry-cleaning: the hanger hung high
+    'cc8d373a4318': (0, 4),  # place.lake: the lake lay low
+    '07cab05ddb58': (0, 2.5),  # place.lawn: the grass stood low
+    '34d1f49b8b26': (0, 1.75),  # place.shoe-repair: the boot stood low
+    '137a91a75058': (0, 2.75),  # place.soup-kitchen: the bowl stood low
+    '37d2471002b0': (0, 2),  # place.tap: the tap and its drop stood low
+    '3f692549482a': (0, 2.25),  # power.hookup: low
+    '9bd5bd5988dd': (0, 1.25),  # shop.cart: the cart stood low
+    '6d4d3acc886b': (0, 2.25),  # street.taco: the taco lay low
+    '24532d44dd66': (0, 2.75),  # place.climbing (temaki-climbing): the rock stood low
+    '9b6e7d016df2': (-1.5, 0),  # ui.flag (ui-flag): the flag stood left
+    'fdf9ffcc2cca': (0, -1.5),  # ui.layers (ui-layers): the layers hung high
+    '2caf98c4b82b': (-1.25, 1.25),  # ui.wrench (ui-wrench): the wrench lay low and left
+    'b3481e193481': (0, 1.75),  # ui.bell: the bell hung low
+    '1598e9ec5db0': (0, 1.25),  # ui.bell.2
+    '2d2c727fce58': (-2, 0),  # ui.flag.2: the flag stood left
+    '81449e2dd242': (0, -1.5),  # ui.layers.2: the layers hung high
+    '49228186ffc5': (0, 1.75),  # ui.subitem: the arrow stood low
+    'a03416088f46': (-1.75, 0),  # ui.volume: the speaker stood left
+    'debe0527734f': (0, -1.5),  # weather.rain.3: the cloud hung high
+    '6a4d64bd55d1': (.5, -1.5),  # weather.wind.2: the wind blew high
+    '1942dc4902ed': (-1.5, 1),  # zoom.galaxy: the spiral lay low and left
+    # step 1b's boards' drawings (the parent's verdict, 10 November, the evening), each by the mean of its box's and its
+    # weight's offsets
+    'f0e4d9d4e40b': (0, -2),  # place.club: the mirror ball hung high, from its string
+    '95f4cd02a853': (0, 2),  # place.treetop: the rope bridge stood low
+    'fbf762908edd': (-.25, 2.5),  # game.ruins: the ruins stood low
+    '9a0f9d0d42b7': (1, 0),  # fact.smoking.2: the cigarette and its smoke stood right (its ember: MENDS)
 }

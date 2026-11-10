@@ -6867,11 +6867,11 @@ julias-60a83c	Julia's		Q123421877	amenity=fast_food	nl		1					cuisine=pasta;take
 juliendorcel-05afc6	Julien d'Orcel		Q62497463	shop=jewelry	fr		1					
 julies-b6c45f	Julie's		Q120020522	shop=bakery	ph		1					old_name=Julie's Bakeshop
 juliusmeinl-d9fed5	Julius Meinl		Q670154	amenity=cafe	ae,at,ba,bg,cz,de,fr,hr,hu,it,md,pl,ro,rs,si,sk,tr,us		18					cuisine=coffee_shop;takeaway=yes
-jumbo-0f6f08	Jumbo		Q1713190	shop=doityourself	ch		1		FFD500	1E1E1E		
-jumbo-1cf55d	Jumbo (Europe)	Jumbo	Q2262314	shop=supermarket	be,nl		2				jumbo supermarkt|jumbo supermarkten	
-jumbo-643931	Jumbo (България)	Jumbo	Q3562323	shop=toys	bg		1		FFD500	1E1E1E		
+jumbo-0f6f08	Jumbo		Q1713190	shop=doityourself	ch		1					
+jumbo-1cf55d	Jumbo (Europe)	Jumbo	Q2262314	shop=supermarket	be,nl		2		FFD500	1E1E1E	jumbo supermarkt|jumbo supermarkten	
+jumbo-643931	Jumbo (България)	Jumbo	Q3562323	shop=toys	bg		1					
 jumbo-99a0d7	Jumbo (Cencosud)	Jumbo	Q6310864	shop=supermarket	ar,cl,co		3					
-jumbo-f2bb45	Jumbo		Q3562323	shop=toys	al,ba,cy,gr,md,me,mk,ro,rs,xk		10		FFD500	1E1E1E		
+jumbo-f2bb45	Jumbo		Q3562323	shop=toys	al,ba,cy,gr,md,me,mk,ro,rs,xk		10					
 jumboking-aba431	Jumbo King		Q6310895	amenity=fast_food	in		1					cuisine=burger;takeaway=yes
 jumpjuice-f334ca	Jump Juice		Q118139675	amenity=fast_food	ie		1				jump juice bar	cuisine=juice;takeaway=yes
 jumpshop-12d6d6	ジャンプショップ		Q11310200	shop=anime	jp		1				ジャンプ	
@@ -9501,7 +9501,7 @@ osm-q140987197	30ML		Q140987197	amenity=cafe			0
 osm-q17125357	Sissy-Boy		Q17125357	shop=clothes			0					
 osm-q1824805	R-NET		Q1824805				0					
 osm-q587270	Warhammer		Q587270	shop=games			0					
-osm-q7554758	Q7554758		Q7554758	tourism=hotel			0					
+osm-q7554758	Soho House		Q7554758	tourism=hotel			0					
 osm-themadrasdiaries	The Madras Diaries			amenity=restaurant			0					
 osm-vlaamschbroodhuis	Vlaamsch Broodhuis			shop=bakery			0					
 osmows-d2abf0	Osmow's		Q115048716	amenity=fast_food	ca,us		2					alt_name=Osmow's Shawarma;cuisine=mediterranean;shawarma;takeaway=yes

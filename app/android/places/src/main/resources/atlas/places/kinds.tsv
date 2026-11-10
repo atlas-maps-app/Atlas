@@ -1,0 +1,878 @@
+# The symbols database: the symbol Atlas draws for each kind of place it lists, a line each, so each can be refined
+# on its own (the owner, 5 November). Symbols.symbolFor and the search's category tree draw from it. A place wears its
+# family's colour (its category's, categories.json); its kind is told by this symbol.
+#
+# kind    an id-tagging-schema preset: every kind Atlas lists has its line, under its family
+# symbol  ours where the kind had one: the boards' drawing or the interface set's (ui-), as the app drew them (the
+#         owner, 10 November: "The simple style of our icons looked good"); else a filled one, Temaki's first
+#         (temaki-), then Maki's or Pinhead's (maki-, pinhead-), else Atlas's own (atlas-); places/tools builds the sets
+# state   blank: not looked at yet · ok: looked at, and right · redo: wants a better one · drawn: the boards' own
+# note    why, for whoever refines it next
+#
+# To refine one: change its symbol, set its state, say why. KindsTest keeps the file whole and true, writes it anew
+# when a kind comes or goes (kept lines as they are) and draws every line in its family's colour, a sheet a family:
+# places/build/tmp/test/kinds.tsv and kinds-<family>.png. A sheet marks ×n on a drawing n kinds of the family share
+# and ≈n on a symbol that reads like n others at a pin's size, of the family or of one whose places stand beside it.
+
+# Eat & drink
+amenity/cafe	maki-cafe	ok	a cup
+amenity/cafe/bubble_tea	temaki-bubble_tea	
+amenity/cafe/coffee_shop	temaki-hot_drink_cup	
+amenity/cafe/teahouse	maki-teahouse	ok	a tea bowl; the cup is the café's
+amenity/fast_food	maki-fast-food	ok	fast food: the burger
+amenity/fast_food/bagel	atlas-bagel_cut_and_filled	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's seeded ring reads as the donut; drawn 10 November as a ring with its hole it read as a tyre, cut and filled as a burger; the owner, 10 November: "Yes, ok"): a bagel cut and filled, its top half lifted open to show the hole (stacked, its halves scored 0.72 with the burger)
+amenity/fast_food/burger	maki-fast-food	ok	the burger
+amenity/fast_food/cafeteria	food.serve	ok	a dish served: self-service, apart from the restaurant's fork and knife
+amenity/fast_food/chicken	pinhead-poultry_drumstick	ok	chicken: Pinhead's filled drumstick; the boards' line drumstick reads as a magnifier at a pin (the parent's verdict, 10 November, the night)
+amenity/fast_food/chinese	maki-restaurant-noodle	ok	the noodle bowl, for the kitchens of East Asia; the cuisine in words
+amenity/fast_food/donut	temaki-donut	
+amenity/fast_food/fish_and_chips	pinhead-fish	ok	a fish
+amenity/fast_food/hot_dog	street.hot-dog	ok	the Street board's hot dog ("Hot dogs") (step 1b: the parent's verdict, 10 November, the evening)
+amenity/fast_food/indian	atlas-chilli	ok	Atlas's own, filled on Temaki's 15 grid: a chilli, India's kitchen and its spices, as the Indian cuisine shows; the boards' spice jar read as a milk carton at a pin's size, and no board draws an Indian chip (the parent's verdict, 10 November, the evening); the steaming bowl read as the noodle bowl, the bottle is the spice shop's
+amenity/fast_food/juice	ui-citrus	ok	a slice of citrus: juice; the cup read as the bubble tea's
+amenity/fast_food/kebab	street.kebab	ok	the Street board's kebab ("Kebab and shawarma"); the Turkish restaurant has it too (step 1b: the parent's verdict, 10 November, the evening)
+amenity/fast_food/mexican	pinhead-taco	ok	Pinhead's taco, the set's own filled drawing (no alias to the boards' half shell, which read as a dome at a pin's size (the parent's verdict, 10 November, the evening)); the late bites' Tacos chip keeps the Street board's shell
+amenity/fast_food/pizza	food.pizza	ok	the boards' slice (Eat, Street: "Pizza slices"), as the pizza cuisine shows; at a counter or a table (step 1b: the parent's verdict, 10 November, the evening)
+amenity/fast_food/sandwich	temaki-sandwich	
+amenity/fast_food/sushi	food.sushi	ok	the boards' sushi (Eat), at a counter or a table (step 1b: the parent's verdict, 10 November, the evening)
+amenity/fast_food/wings	pinhead-poultry_drumstick	ok	chicken, as wings are: Pinhead's filled drumstick, the boards' line drumstick reading as a magnifier at a pin; the burger is fast food's (the parent's verdict, 10 November, the night)
+amenity/food_court	pinhead-market_stall	ok	counters side by side: Pinhead's stall, as the marketplace's; the boards' market reads as the shop's front at a pin (the parent's verdict, 10 November, the night)
+amenity/ice_cream	food.ice-cream	ok	the boards' ice cream (ThemeParkMore: "Ice cream"); frozen yoghurt is one kind of it (step 1b: the parent's verdict, 10 November, the evening)
+amenity/ice_cream/frozen_yogurt	food.ice-cream	ok	the ice cream's; which kind is said in words (step 1b: the parent's verdict, 10 November, the evening)
+amenity/restaurant	maki-restaurant	ok	our knife and fork, the Eat chip's (cat.eat), again (the owner, 10 November, the evening: "And I want our knife and fork back"): a restaurant whose kitchen has no dish of its own here
+amenity/restaurant/american	pinhead-burger	ok	the burger, as at the diner (cuisine.json)
+amenity/restaurant/asian	maki-restaurant-noodle	ok	the noodle bowl, for the kitchens of East Asia; the cuisine in words
+amenity/restaurant/barbecue	place.bbq	ok	a grill; the fork with a sausage read as fork and knife
+amenity/restaurant/chinese	maki-restaurant-noodle	ok	the noodle bowl, for the kitchens of East Asia; the cuisine in words
+amenity/restaurant/french	maki-restaurant	ok	our knife and fork, the restaurant's and the Eat chip's (the owner, 10 November, the evening: "And I want our knife and fork back"): no dish that reads small, the cuisine said in words
+amenity/restaurant/georgian	maki-restaurant	ok	our knife and fork, the restaurant's and the Eat chip's (the owner, 10 November, the evening: "And I want our knife and fork back"): no dish that reads small, the cuisine said in words
+amenity/restaurant/german	pinhead-sausage	ok	a sausage (cuisine.json)
+amenity/restaurant/greek	maki-restaurant	ok	our knife and fork, the restaurant's and the Eat chip's (the owner, 10 November, the evening: "And I want our knife and fork back"): no dish that reads small, the cuisine said in words
+amenity/restaurant/hotpot	temaki-hotpot	
+amenity/restaurant/indian	atlas-chilli	ok	Atlas's own, filled on Temaki's 15 grid: a chilli, India's kitchen and its spices, as the Indian cuisine shows; the boards' spice jar read as a milk carton at a pin's size, and no board draws an Indian chip (the parent's verdict, 10 November, the evening); the steaming bowl read as the noodle bowl, the bottle is the spice shop's
+amenity/restaurant/italian	ui-spaghetti	ok	spaghetti twirled on a fork, as the Italian and pasta cuisines show, redrawn in our style (the owner, 10 November, the evening: "Yes, redraw it"): a smaller, looser twirl on the tines and two strands hanging, since the big spiral read as a snail shell or a lollipop; the slice is the pizzeria's, the knife and fork every restaurant's
+amenity/restaurant/japanese	maki-restaurant-noodle	ok	the noodle bowl; the sushi roll read as a ring, the hand roll is the sushi bar's
+amenity/restaurant/korean	maki-restaurant-noodle	ok	the noodle bowl; the barbecue fork read as fork and knife
+amenity/restaurant/mexican	pinhead-taco	ok	Pinhead's taco, the set's own filled drawing (no alias to the boards' half shell, which read as a dome at a pin's size (the parent's verdict, 10 November, the evening)); the late bites' Tacos chip keeps the Street board's shell
+amenity/restaurant/noodle	maki-restaurant-noodle	ok	noodles
+amenity/restaurant/pizza	food.pizza	ok	the boards' slice (Eat, Street: "Pizza slices"), as the pizza cuisine shows; at a counter or a table (step 1b: the parent's verdict, 10 November, the evening)
+amenity/restaurant/ramen	maki-restaurant-noodle	ok	noodles
+amenity/restaurant/seafood	pinhead-crab	ok	a crab; the fish is fish and chips'
+amenity/restaurant/spanish	maki-restaurant	ok	our knife and fork, the restaurant's and the Eat chip's (the owner, 10 November, the evening: "And I want our knife and fork back"): no dish that reads small, the cuisine said in words
+amenity/restaurant/steakhouse	temaki-meat	
+amenity/restaurant/sushi	food.sushi	ok	the boards' sushi (Eat), at a counter or a table (step 1b: the parent's verdict, 10 November, the evening)
+amenity/restaurant/thai	maki-restaurant-noodle	ok	the noodle bowl (cuisine.json); the spoon told nothing
+amenity/restaurant/turkish	street.kebab	ok	the kebab shop's kebab, as the Turkish cuisine shows (cuisine.json) (step 1b: the parent's verdict, 10 November, the evening)
+amenity/restaurant/ukrainian	maki-restaurant	ok	our knife and fork, the restaurant's and the Eat chip's (the owner, 10 November, the evening: "And I want our knife and fork back"): no dish that reads small, the cuisine said in words
+amenity/restaurant/vietnamese	maki-restaurant-noodle	ok	the noodle bowl, for pho; the cuisine in words
+amenity/bar	maki-bar	ok	a glass: a bar
+amenity/bar/lgbtq	maki-bar	ok	a bar; which kind is said in words
+amenity/biergarten	food.beer	ok	the beer mug, the pub's too: they are kin (step 1b: the parent's verdict, 10 November, the evening)
+amenity/nightclub	place.club	ok	the Fun board's mirror ball ("Clubs and dancing"); the glass is the bar's (step 1b: the parent's verdict, 10 November, the evening)
+amenity/nightclub/lgbtq	place.club	ok	a nightclub, the mirror ball; which kind is said in words (step 1b: the parent's verdict, 10 November, the evening)
+amenity/pub	food.beer	ok	the boards' beer mug (Costs: "Beer"), the biergarten's: pub and biergarten are kin (step 1b: the parent's verdict, 10 November, the evening)
+amenity/pub/irish	food.beer	ok	a pub, the pub's mug; which kind is said in words (step 1b: the parent's verdict, 10 November, the evening)
+amenity/pub/lgbtq	food.beer	ok	a pub, the pub's mug; which kind is said in words (step 1b: the parent's verdict, 10 November, the evening)
+amenity/pub/microbrewery	temaki-storage_fermenter	ok	the brewing tank
+
+# Groceries
+amenity/marketplace	pinhead-market_stall	ok	stalls: Pinhead's stall; the boards' market reads as the shop's front at a pin (the parent's verdict, 10 November, the night)
+shop/alcohol	market.wine	ok	the wine shop's wine: liquor goes with wine (kin) (step 1b: the parent's verdict, 10 November, the evening)
+shop/bakery	maki-bakery	ok	a loaf
+shop/beverages	temaki-bottles	
+shop/butcher	market.butcher	ok	the Market board's butcher, the shop screens' steak (step 1b: the parent's verdict, 10 November, the evening)
+shop/cheese	pinhead-cheese_wedge	ok	a wedge of cheese
+shop/chocolate	ui-chocolate-bar	ok	a bar of chocolate, its squares marked, its foil torn; the wrapped sweet is the confectioner's
+shop/coffee	place.cafe	ok	the café's cup, as the shop screens draw the coffee shop: no board draws a bean, and Temaki's bean read as the nature reserve's leaf (step 1b: the parent's verdict, 10 November, the evening)
+shop/confectionery	food.sweets	ok	the boards' sweets (ThemeParkMore, ZooMore) (step 1b: the parent's verdict, 10 November, the evening)
+shop/convenience	pinhead-shopping_basket	
+shop/dairy	temaki-milk_jug	ok	a milk churn; the wedge is the cheesemonger's
+shop/deli	market.deli	drawn	the deli's dish; the jar read as a gas bottle
+shop/farm	market.farm	ok	the Market board's farm, the shop screens' farm shop: sold at the farm (step 1b: the parent's verdict, 10 November, the evening)
+shop/frozen_food	pinhead-snowflake	
+shop/greengrocer	ui-carrot	ok	a carrot: fruit and vegetables; the trolley is the supermarket's
+shop/health_food	ui-sprout	ok	a sprout: natural food; the leaf is cannabis's
+shop/nuts	temaki-tree_broadleaved	redo	wants a nut; the board's chestnut is coloured, so it does not read
+shop/pasta	pinhead-noodle_bowl_with_steam	redo	a bowl of noodles for now; wants pasta shapes
+shop/pastry	pinhead-croissant	ok	croissants; the loaf is the bakery's
+shop/seafood	market.fish	ok	the Market board's fish, the shop screens' fishmonger's; fish and chips and the fishing spot wear it too (step 1b: the parent's verdict, 10 November, the evening)
+shop/spices	atlas-mortar_and_pestle	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's bottle read as the drinking water's; the owner, 10 November: "Yes, ok"): spices in a mortar, its pestle and peppercorns; the boards' spices are the Indian kitchen's, the capsule the pharmacy's
+shop/supermarket	maki-grocery	ok	Maki's grocery, the set's own filled drawing (the owner, 10 November: "Yes, ok")
+shop/supermarket/organic	maki-grocery	ok	Maki's grocery, the set's own filled drawing (the owner, 10 November: "Yes, ok")
+shop/tea	maki-teahouse	
+shop/water	temaki-water_bottle	
+shop/wine	market.wine	ok	the Market board's wine, the shop screens' drinks glyph (step 1b: the parent's verdict, 10 November, the evening)
+
+# Shops
+shop	maki-shop	ok	a shop
+shop/agrarian	maki-farm	ok	the farm's supplies
+shop/anime	pinhead-crown	redo	a crown says nothing of anime; wants a manga face
+shop/antiques	temaki-furniture	
+shop/appliance	place.fridge	drawn	household appliances: the fridge; the washer read as the video's disc
+shop/baby_goods	pinhead-baby	
+shop/bag	pinhead-suitcase	ok	a case
+shop/bathroom_furnishing	temaki-shower	drawn
+shop/bbq	place.bbq	ok	the Fire board's barbecue (step 1b: the parent's verdict, 10 November, the evening)
+shop/beauty	ui-sparkles	ok	sparkle: treatments for beauty
+shop/beauty/nails	temaki-polished_nail	
+shop/beauty/tanning	temaki-tanning	
+shop/bed	maki-lodging	drawn
+shop/bicycle	maki-bicycle	ok	Maki's bicycle, the set's own filled drawing (the owner, 10 November: "Yes, ok")
+shop/bookmaker	maki-racetrack-horse	ok	a racehorse: bets
+shop/books	place.books	ok	the boards' bookshop (Books, Relax, Stroll: "Ada's Books"): the Stroll badge shows it (step 1b: the parent's verdict, 10 November, the evening)
+shop/brewing_supplies	temaki-storage_fermenter	
+shop/camera	pinhead-camera	ok	a camera
+shop/candles	pinhead-fire	
+shop/cannabis	ui-cannabis	ok	the cannabis leaf, its seven leaflets spread
+shop/car_parts	pinhead-car_battery	
+shop/caravan	temaki-camper_trailer	
+shop/carpet	fact.cobbles	redo	wants a rolled carpet; the laid floor is the flooring shop's (drawn 10 November as a rug with its fringe: read as a microchip)
+shop/catalogue	ui.list	ok	a list to order from
+shop/charity	pinhead-shopping_bag_with_heart	ok	a bag with a heart: given for a cause
+shop/chemist	pinhead-tube_and_toothbrush	
+shop/clothes	maki-clothing-store	ok	a shirt
+shop/clothes/second_hand	fact.second-hand	drawn	passed on: the arrow round; the bag with a heart is the charity shop's
+shop/clothes/suits	atlas-necktie	ok	Atlas's own, filled on Temaki's 15 grid (Maki's shirt is the clothes shop's; a jacket with a tie scored 0.69 to 0.73 with the fabric shop's bolt; the owner, 10 November: "Yes, ok"): a necktie: suits and what is worn with them
+shop/clothes/underwear	temaki-bikini	
+shop/clothes/wedding	temaki-gown	
+shop/clothes/workwear	atlas-high_visibility_vest	ok	Atlas's own, filled on Temaki's 15 grid (Maki's shirt is the clothes shop's; the hard hat read as a dome; the owner, 10 November: "Yes, ok"): a high-visibility vest, its reflective bands: clothes for work
+shop/collector	temaki-stamp	ok	a stamp: things collected
+shop/computer	tech.compute	ok	the Tech board's computer ("COMPUTE"), the internet café's too (step 1b: the parent's verdict, 10 November, the evening)
+shop/copyshop	place.print	ok	a printer
+shop/cosmetics	temaki-lipstick	ok	lipstick
+shop/country_store	pinhead-ranger_hat	
+shop/craft	pinhead-palette	
+shop/curtain	temaki-curtains	
+shop/department_store	ui-shopping-bag	ok	a shopping bag: every kind of goods under one roof
+shop/doityourself	pinhead-step_ladder	ok	a ladder: do it yourself
+shop/doors	maki-entrance	
+shop/e-cigarette	fact.smoking.2	ok	the smoking area's cigarette, kin (step 1b: the parent's verdict, 10 November, the evening)
+shop/electrical	temaki-power	
+shop/electronics	pinhead-plug	
+shop/erotic	maki-heart	ok	a heart: for adults
+shop/erotic/lgbtq	maki-heart	ok	a heart: for adults; which kind is said in words
+shop/esoteric	pinhead-crystal_ball_on_sphere_stand	
+shop/fabric	temaki-cloth	ok	a bolt of cloth
+shop/fashion_accessories	temaki-fashion_accessories	
+shop/fireplace	temaki-fireplace	ok	Temaki's own drawing (Temaki's hearth; the chimney stays the sweep's; the owner, 10 November: "For many of them, temaki looks better")
+shop/fishing	temaki-ice_fishing	
+shop/flooring	fact.cobbles	ok	a laid floor
+shop/florist	temaki-florist	ok	one blossom; Maki's bouquet is busy at a pin's size (filled, Temaki first; the owner, 10 November: "Yes, ok")
+shop/frame	temaki-portrait_framed	
+shop/fuel	temaki-propane_tank	ok	fuel for the home: gas and the like
+shop/funeral_directors	ui-coffin	ok	a coffin; the headstone is the grave's
+shop/furniture	pinhead-couch	
+shop/games	place.games	ok	the Books board's games ("The Meeple Room"); the gambling hall keeps Pinhead's dice (step 1b: the parent's verdict, 10 November, the evening)
+shop/garden_centre	maki-garden-centre	
+shop/gas	temaki-propane_tank	ok	fuel for the home: gas and the like
+shop/general	maki-shop	ok	a shop of everything small: the shop
+shop/gift	place.gift	ok	the boards' gift shop (ThemeParkMore, ZooMore) (step 1b: the parent's verdict, 10 November, the evening)
+shop/gold_buyer	ui-gem	ok	a gem: jewels and gold bought (the open hand said nothing)
+shop/groundskeeping	temaki-lawn	ok	grass kept
+shop/hairdresser	temaki-beauty_salon	ok	comb and scissors
+shop/hairdresser/barber	ui-barber-pole	ok	a barber's pole; the scissors and comb are the hairdresser's
+shop/hairdresser_supply	temaki-hair_care	ok	a hair dryer
+shop/hardware	temaki-tools	ok	a hammer
+shop/hearing_aids	temaki-hearing_aid	
+shop/herbalist	temaki-plant	ok	a herb
+shop/hifi	ears.headphones	drawn	headphones: sound at home; the speaker read as a phone
+shop/honey	pinhead-honeycomb	
+shop/household_linen	atlas-folded_towels	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's bolt is the fabric shop's; a pillow over the linen scored 0.68 with the carpet's roll; the owner, 10 November: "Yes, ok"): folded linen: three towels stacked
+shop/houseware	ui-cooking-pot	ok	a pot: things for the house
+shop/hunting	temaki-bow_and_arrow	
+shop/interior_decoration	maki-home	ok	a home made fine
+shop/jewelry	maki-jewelry-store	
+shop/kiosk	pinhead-newspaper	ok	papers, sweets and smokes from a booth: the newsagent's paper; the stall is the market's
+shop/kitchen	temaki-kitchen_sink	
+shop/leather	temaki-handbag	
+shop/lighting	temaki-desk_lamp	
+shop/locksmith	ui-lock	ok	a padlock; the key is the rental's
+shop/lottery	atlas-lottery_balls	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's dice are games' and gambling's; the owner, 10 November: "Yes, ok"): numbered lottery balls
+shop/mall	temaki-shopping_mall	
+shop/massage	place.massage	ok	the Relax board's massage (step 1b: the parent's verdict, 10 November, the evening)
+shop/medical_supply	maki-doctor	drawn
+shop/military_surplus	temaki-military	
+shop/mobile_phone	maki-mobile-phone	ok	phones and their accessories
+shop/mobile_phone_accessories	maki-mobile-phone	ok	phones and their accessories
+shop/model	temaki-train_kids	ok	a model train; the rocket read as the fireworks'
+shop/money_lender	atlas-coins_with_percent	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's hand with money is the money transfer's, the three balls the pawnbroker's; a per cent on a form is the tax office's, on a tag the variety store's; the owner, 10 November: "Yes, ok"): coins with a per cent: money lent at interest. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our coins are the financial office's
+shop/motorcycle	pinhead-motorcycle	
+shop/motorcycle_repair	temaki-motorcycle_repair	
+shop/music	atlas-record	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's disc read as the letters EC; the owner, 10 November: "Yes, ok"): a record, its label and a groove's shine
+shop/musical_instrument	maki-music	
+shop/newsagent	pinhead-newspaper	
+shop/nutrition_supplements	pinhead-pill	
+shop/optician	maki-optician	
+shop/outdoor	temaki-compass	
+shop/outpost	pinhead-cube	ok	a box: online orders picked up
+shop/paint	pinhead-paint_roller	
+shop/party	temaki-balloon	
+shop/pawnbroker	atlas-coins_with_percent	ok	the money lender's coins with the per cent: kin, money lent on a pledge; nothing new drawn (the parent's verdict, 10 November, the evening)
+shop/perfumery	temaki-perfume	ok	Temaki's own drawing (Temaki's atomiser; the lipstick stays cosmetics'; the owner, 10 November: "For many of them, temaki looks better")
+shop/pet	pinhead-cat_sitting	
+shop/pet_grooming	temaki-pet_grooming	
+shop/photo	ui-image	ok	a picture: prints and photos
+shop/piercing	temaki-tattoo_machine	ok	the tattoo parlour's machine: kin, the body worked on; Maki's bare ring said nothing (the parent's verdict, 10 November, the evening)
+shop/pottery	temaki-vase	
+shop/printer_ink	pinhead-droplet	redo	a drop of ink; wants its own, in our style (decision 13) (the drop reads as water)
+shop/psychic	temaki-psychic	
+shop/pyrotechnics	temaki-rocket_firework	
+shop/radiotechnics	temaki-antenna	ok	an antenna: radio parts
+shop/religion	pinhead-dove	ok	a dove: things of faith
+shop/rental	atlas-key_with_tag	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the key alone is the key cutter's; the owner, 10 November: "Yes, ok"): a key with a tag on its ring: hired; ours, the bare key, is the settings' data key, and the key cutter wears the boards' key (the parent's verdict, 10 November, the evening)
+shop/repair	place.repair	ok	a spanner: things mended
+shop/rice	food.ramen.2	drawn	a bowl and chopsticks: rice; the steaming bowl is the pasta's
+shop/scuba_diving	temaki-scuba_diving	
+shop/second_hand	fact.second-hand	drawn	passed on: the arrow round; the bag with a heart is the charity shop's
+shop/sewing	temaki-needle_and_spool	ok	needle and thread
+shop/shoe_repair	place.shoe-repair	ok	the Errands board's shoe repair, the shoemaker's too (step 1b: the parent's verdict, 10 November, the evening)
+shop/shoes	maki-shoe	
+shop/sports	maki-soccer	
+shop/stationery	pinhead-paperclip	
+shop/storage_rental	temaki-storage_rental	
+shop/swimming_pool	maki-swimming	ok	a pool
+shop/tailor	place.tailor	ok	scissors: cut to measure
+shop/tattoo	temaki-tattoo_machine	
+shop/telecommunication	maki-telephone	
+shop/ticket	pinhead-ticket	ok	a ticket
+shop/tiles	temaki-tiling	ok	tiles
+shop/tobacco	temaki-pipe	
+shop/tool_hire	temaki-tools	ok	our tools, with the hardware shop and the trades, kin; Temaki's toolbox read as the leather shop's handbag at a pin's size, 0.73 (the parent's verdict, 10 November, the evening)
+shop/toys	temaki-spring_rider	ok	a rocking toy; the rocket is the model shop's
+shop/trade	temaki-brick_trowel	ok	a trowel: supplies for the building trades; the laid floor is the flooring shop's
+shop/travel_agency	atlas-plane_on_globe	ok	Atlas's own, filled on Temaki's 15 grid (the suitcase is the bag shop's, Temaki's suitcase the same shape, and the plane the airport's; the owner, 10 November: "Yes, ok"): a plane across the globe, trips sold. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our plane is the airport's
+shop/trophy	pinhead-trophy	
+shop/vacuum_cleaner	temaki-vacuum	
+shop/variety_store	ui-percent	ok	cheap: a variety store
+shop/video	temaki-movie_rental	
+shop/video_games	maki-gaming	ok	a game pad
+shop/watches	maki-watch	
+shop/water_sports	rent.kayak	ok	a kayak
+shop/weapons	temaki-dagger	
+shop/wholesale	maki-warehouse	
+shop/wigs	atlas-wig_on_stand	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's hairdryer is the hairdresser supply's, comb and scissors the hairdresser's; the owner, 10 November: "Yes, ok"): a wig on its stand
+shop/window_blind	temaki-window	
+
+# Stay
+leisure/resort	maki-lodging	drawn
+tourism/alpine_hut	temaki-hut	ok	a hut in the mountains; the cabin is the chalet's
+tourism/apartment	pinhead-lowrise_apartment_building_on_ground	ok	a block of flats
+tourism/chalet	temaki-cabin	ok	a cabin of logs
+tourism/guest_house	place.house	drawn	a house that takes guests
+tourism/hostel	temaki-bunk_beds	ok	bunk beds
+tourism/hotel	maki-lodging	ok	a bed
+tourism/motel	maki-lodging	redo	wants a bed beside a car; the bed alone is the hotel's
+tourism/wilderness_hut	temaki-hut	ok	a hut in the wilds: the alpine hut's; the cabin is the chalet's
+
+# Fuel
+amenity/fuel	maki-fuel	ok	a pump, staffed or not
+amenity/charging_station	pinhead-charging_station	ok	a bolt
+amenity/charging_station/charging_station_bicycle	mode.ebike	ok	an e-bike: the bicycle with a bolt (the car charger is the bolt alone)
+
+# Nature
+tourism/camp_site	maki-campsite	ok	a tent
+tourism/camp_site/backcountry	place.wild-camping	redo	the tent reads as the campground's, its stars lost at a pin's size: wants a tent among trees, away from it all
+tourism/camp_site/group_only	temaki-tents	ok	tents together
+tourism/caravan_site	temaki-camper_trailer	
+boundary/national_park	place.national-park	ok	a shield with a mountain, the boards' national park: a whole landscape kept as one park
+leisure/nature_reserve	pinhead-leaf	ok	a leaf, as the boards draw the reserves: nature kept; the shield is the national park's, trees the park's
+leisure/bird_hide	temaki-binoculars	ok	binoculars: birds watched from a hide, or the view from a stand
+tourism/viewpoint	temaki-viewpoint	ok	Temaki's sight lines from a point; the eye is the eye doctor's, glasses the optometrist's (the parent's verdict, 10 November)
+amenity/bbq	place.bbq	ok	the Fire board's barbecue (step 1b: the parent's verdict, 10 November, the evening)
+leisure/firepit	temaki-campfire	
+leisure/picnic_table	place.picnic	ok	tables out of doors: the boards' picnic table (Parkland, Picnic, Rest) (step 1b: the parent's verdict, 10 November, the evening)
+leisure/picnic_table/chess	pinhead-chess_knight	ok	a chess table: the knight
+tourism/picnic_site	place.picnic	ok	tables out of doors: the boards' picnic table (Parkland, Picnic, Rest) (step 1b: the parent's verdict, 10 November, the evening)
+leisure/common	temaki-pedestrian	
+leisure/dog_park	maki-dog-park	ok	a place for dogs
+leisure/garden	nature.garden	ok	a garden: the Nature board's gardens (step 1b: the parent's verdict, 10 November, the evening)
+leisure/garden/botanical	ui-glasshouse	ok	a glasshouse, a palm house: where plants are grown to be studied
+leisure/garden/community	temaki-garden_bed	ok	a raised bed tended together
+leisure/garden/kitchen	temaki-garden_bed	ok	Temaki's bed of plants, with the community garden's (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our carrot is the greengrocer's
+leisure/garden/residential	nature.garden	ok	a garden; whose is said in words (step 1b: the parent's verdict, 10 November, the evening)
+leisure/park	place.park	ok	the boards' park (Nature, Relax, Rest, Passport: "Linden Park") (step 1b: the parent's verdict, 10 November, the evening)
+natural/bay	ui-waves	ok	a bay: open water; the beach's waves come ashore
+natural/cape	temaki-cape_landform	
+natural/cave_entrance	pinhead-cave	
+natural/glacier	temaki-snow	
+natural/peak	maki-mountain	drawn
+natural/spring	nature.spring.2	ok	the Sources board's spring ("Beech spring"); nature.spring is the bike log's drop (step 1b: the parent's verdict, 10 November, the evening)
+natural/volcano	maki-volcano	
+waterway/waterfall	pinhead-waterfall	
+
+# Fun
+leisure/indoor_play	place.indoor-play	ok	play under a roof
+leisure/playground	maki-playground	ok	a climbing frame
+leisure/playground/indoor	place.indoor-play	ok	play under a roof
+leisure/trampoline_park	temaki-trampoline	ok	a trampoline
+leisure/amusement_arcade	ui-joystick	ok	an arcade's joystick; the slot machine is the adult gaming centre's
+leisure/bowling_alley	temaki-bowling	
+leisure/escape_game	pinhead-puzzle_piece	
+leisure/miniature_golf	pinhead-person_swinging_golf_club_beside_windmill	
+amenity/cinema	maki-cinema	drawn
+tourism/aquarium	maki-aquarium	
+tourism/zoo	temaki-zoo	ok	a giraffe
+tourism/zoo/petting	place.farm	ok	a sheep to stroke
+tourism/zoo/safari	maki-zoo	ok	a lion out on the plain
+tourism/zoo/wildlife	wild.deer	ok	a deer, the Wild board's: a wildlife park or hertenkamp is mostly deer, as the zoo and the safari park show their animals (step 1b: the parent's verdict, 10 November, the evening)
+tourism/theme_park	maki-amusement-park	drawn
+
+# Water
+leisure/swimming_pool	maki-swimming	ok	a pool
+leisure/water_park	pinhead-person_riding_tube_on_water	ok	a rider on a tube: fun in the water; the slide read as the playground's
+leisure/bathing_place	place.lake	ok	open water: the Swim board's lakes and rivers, the place rather than a swimmer (step 1b: the parent's verdict, 10 November, the evening)
+leisure/beach_resort	maki-beach	drawn
+leisure/swimming_area	place.lake	ok	open water: the Swim board's lakes and rivers, the place rather than a swimmer (step 1b: the parent's verdict, 10 November, the evening)
+natural/beach	place.beach	ok	a beach: the Swim board's beaches and sea (step 1b: the parent's verdict, 10 November, the evening)
+amenity/boat_rental	place.kayak	drawn	a boat to take out yourself; the boat with a key read as the boatyard's
+leisure/marina	place.marina	ok	the Sail board's marina, with services or without (step 1b: the parent's verdict, 10 November, the evening)
+leisure/marina_no_facilities	place.marina	ok	the Sail board's marina, with services or without (step 1b: the parent's verdict, 10 November, the evening)
+leisure/slipway	maki-slipway	
+shop/boat	temaki-boat	ok	a boat for sale
+waterway/boatyard	temaki-boat_repair	ok	a boat with a spanner: built and mended; the boat alone is for sale
+waterway/dock	maki-harbor	drawn
+waterway/fuel	maki-fuel	drawn
+waterway/sanitary_dump_station	temaki-waste	
+amenity/public_bath	ui-bath	ok	a bath: a bathhouse; the pool is the swimming pool's
+leisure/sauna	place.sauna	ok	steam over the bench; the sweating face read as a fever
+
+# Culture & sights
+amenity/planetarium	temaki-telescope	ok	a telescope
+shop/art	maki-art-gallery	ok	art on show or for sale: the gallery's frame; which is said in words
+tourism/gallery	maki-art-gallery	ok	a gallery
+tourism/museum	maki-museum	ok	columns; history is one kind of museum
+tourism/museum/history	maki-museum	ok	a museum; which kind is said in words
+amenity/library	place.library	drawn
+amenity/place_of_worship	maki-place-of-worship	ok	a place of worship, faith unsaid: a candle, which no one faith owns
+amenity/place_of_worship/buddhist	maki-religious-buddhist	
+amenity/place_of_worship/christian	maki-religious-christian	
+amenity/place_of_worship/christian/jehovahs_witness	maki-place-of-worship	ok	a Kingdom Hall bears no cross: the plain place of worship
+amenity/place_of_worship/christian/la_luz_del_mundo	maki-place-of-worship	ok	no sign of its own: the plain place of worship
+amenity/place_of_worship/christian/quaker	maki-place-of-worship	ok	a meeting house bears no sign: the plain place of worship; the star read as the star of David
+amenity/place_of_worship/hindu	temaki-hinduism	
+amenity/place_of_worship/jewish	maki-religious-jewish	
+amenity/place_of_worship/multifaith	maki-place-of-worship	ok	every faith: the plain place of worship
+amenity/place_of_worship/muslim	maki-religious-muslim	
+amenity/place_of_worship/shinto	temaki-shinto	
+amenity/place_of_worship/sikh	temaki-sikhism	
+amenity/place_of_worship/taoist	temaki-taoism	
+historic	pinhead-arch	ok	an old arch: anything historic
+historic/building	maki-home	
+historic/castle	pinhead-fort	ok	a castle: walls and towers
+historic/castle/fortress	pinhead-cannon	ok	a fortress: its cannon; the walls read as the castle's
+historic/castle/palace	pinhead-crown	ok	a crown
+historic/castle/stately	pinhead-manor	ok	a great house
+historic/memorial	maki-monument	ok	a memorial or monument: one stone for both
+historic/memorial/blue_plaque-GB-IE	temaki-plaque	ok	a plaque, on a wall or in the pavement
+historic/memorial/plaque	temaki-plaque	ok	a plaque, on a wall or in the pavement
+historic/memorial/stolperstein-EU	temaki-plaque	ok	a plaque, on a wall or in the pavement
+historic/monument	maki-monument	ok	a memorial or monument: one stone for both
+historic/ruins	game.ruins	ok	broken walls: the Games board's open ruins (step 1b: the parent's verdict, 10 November, the evening)
+tourism/artwork	place.art	ok	art: the palette; its kinds have their own
+tourism/artwork/bust	pinhead-bust_on_plinth	
+tourism/artwork/graffiti	maki-paint	ok	paint on a wall
+tourism/artwork/installation	pinhead-cube	ok	a thing set in a space
+tourism/artwork/mural	maki-paint	ok	paint on a wall
+tourism/artwork/sculpture	temaki-sculpture	ok	a sculpture
+tourism/artwork/statue	temaki-statue	
+tourism/attraction	maki-attraction	ok	a sight to see: the camera; the star read as the star of David
+amenity/arts_centre	maki-theatre	ok	an arts centre is mostly a stage: the mask
+amenity/events_venue	pinhead-crowd_of_people	
+amenity/theatre	maki-theatre	ok	the mask
+amenity/theatre/type/amphi	maki-theatre	ok	a stage in the open: the theatre's mask; the bowl of seats read as a mask
+leisure/bandstand	ui-bandstand	ok	a round pavilion, a note on its stage; the notes alone are music taught
+amenity/public_bookcase	reuse.book-box	ok	the Reuse board's book box; the chitalishte keeps Pinhead's (step 1b: the parent's verdict, 10 November, the evening)
+
+# Sport
+leisure/ice_rink	temaki-ice_skating	
+leisure/pitch/skateboard	maki-skateboard	
+leisure/sports_centre/climbing	temaki-abseiling	ok	a climber on a rope
+club/sport	maki-pitch	ok	the ball: sport played here
+leisure/disc_golf_course	temaki-disc_golf_basket	
+leisure/golf_course	temaki-golf_green	ok	a flag on the green: golf; the golfer is mini golf's
+leisure/horse_riding	maki-horse-riding	ok	a rider
+leisure/pitch	maki-pitch	ok	a pitch: the ball, for a sport without its own
+leisure/pitch/american_football	maki-american-football	ok	the oval ball, for every code that plays with it
+leisure/pitch/american_handball	temaki-wall	
+leisure/pitch/archery	pinhead-target_with_archery_arrow_at_bullseye	
+leisure/pitch/athletics/discus_throw	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/hammer_throw	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/high_jump	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/javelin_throw	pinhead-person_running	ok	athletics: the runner; the stands are the stadium's
+leisure/pitch/athletics/long_jump	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/pole_vault	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/shot_put	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/athletics/triple_jump	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/pitch/australian_football	maki-american-football	ok	the oval ball, for every code that plays with it
+leisure/pitch/badminton	atlas-shuttlecock	ok	Atlas's own, filled on Temaki's 15 grid (Maki's racket is tennis's; the owner, 10 November: "Yes, ok"): a shuttlecock
+leisure/pitch/baseball	maki-baseball	ok	bat and ball, for softball too
+leisure/pitch/basketball	maki-basketball	ok	a ball through a ring; netball too
+leisure/pitch/beachvolleyball	maki-volleyball	ok	the ball, on sand or not
+leisure/pitch/biathlon	temaki-cross_country_skiing	ok	a skier; the shooting is said in words
+leisure/pitch/boules	ui-boules	ok	two boules and the little jack
+leisure/pitch/bowls	maki-pitch	redo	wants a bowl rolling to the jack on a green
+leisure/pitch/chess	atlas-player_with_giant_pawn	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's knight is the chess table's; the owner, 10 November: "Yes, ok"): chess on the ground: one moving a pawn as tall as they are
+leisure/pitch/cricket	maki-cricket	
+leisure/pitch/equestrian	maki-horse-riding	ok	a rider
+leisure/pitch/field_hockey	temaki-field_hockey	
+leisure/pitch/four_square	temaki-tiling	
+leisure/pitch/funnel_ball	maki-pitch	ok	a rare playground game: the ball is enough
+leisure/pitch/futsal	maki-soccer	ok	the football, for football too
+leisure/pitch/gaga	maki-pitch	ok	a rare playground game: the ball is enough
+leisure/pitch/handball	maki-pitch	redo	wants a player throwing at a goal
+leisure/pitch/horseshoes	temaki-horseshoes	
+leisure/pitch/netball	maki-basketball	ok	a ball through a ring, as basketball
+leisure/pitch/padel	ui-padel	ok	a padel racket, solid and holed; the strung racket is tennis's
+leisure/pitch/paintball	atlas-paint_splat	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's crosshair is the shooting range's; the owner, 10 November: "Yes, ok"): a splat of paint
+leisure/pitch/pickleball	temaki-pickleball	
+leisure/pitch/rugby_league	maki-american-football	ok	the oval ball, for every code that plays with it
+leisure/pitch/rugby_union	maki-american-football	ok	the oval ball, for every code that plays with it
+leisure/pitch/shooting	pinhead-crosshair	ok	a shooting range, out of doors or in
+leisure/pitch/shuffleboard	temaki-shuffleboard	
+leisure/pitch/soccer	maki-soccer	ok	the football, for futsal too
+leisure/pitch/softball	maki-baseball	ok	bat and ball, for baseball too
+leisure/pitch/table_soccer	temaki-table_soccer	
+leisure/pitch/table_tennis	maki-table-tennis	
+leisure/pitch/tennis	maki-tennis	ok	a racket
+leisure/pitch/tetherball	maki-pitch	ok	a rare playground game: the ball is enough
+leisure/pitch/volleyball	maki-volleyball	ok	the ball, on sand or not
+leisure/sports_centre	maki-pitch	ok	many sports under one roof: the ball
+leisure/sports_centre/climbing_adventure	place.treetop	ok	the Adventure board's treetop trail: a rope bridge between trees (step 1b: the parent's verdict, 10 November, the evening)
+leisure/sports_centre/horse_racing	maki-racetrack-horse	ok	horse racing, at a course or on its track
+leisure/sports_centre/karting	pinhead-flag_checkered	
+leisure/sports_centre/shooting	pinhead-crosshair	ok	a shooting range, out of doors or in
+leisure/sports_centre/swimming	ui-swim-lane	ok	a swimmer in a lane, the floats of its rope beside; the swimmer alone is the bathing place's, the pool's house the swimming pool's
+leisure/sports_hall	maki-pitch	ok	the ball: sport played here
+leisure/track	temaki-racetrack_oval	
+leisure/track/athletics/javelin_throw	pinhead-person_running	ok	athletics: the runner; the stands are the stadium's
+leisure/track/athletics/long_jump	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/track/athletics/pole_vault	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/track/athletics/sprint	pinhead-person_running	ok	athletics: the runner
+leisure/track/athletics/steeplechase	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/track/athletics/triple_jump	pinhead-person_running	ok	athletics: the runner; the event is said in words
+leisure/track/cycling	atlas-racer_on_bicycle	ok	Atlas's own, filled on Temaki's 15 grid (Maki's own reads its disc wheel as a ball, and the set's helmet floated off its rider; the owner, 10 November: "Yes, ok"): a racer crouched on the bicycle, as the athletics tracks wear the runner
+leisure/track/horse_racing	maki-racetrack-horse	ok	horse racing, at a course or on its track
+leisure/track/running	pinhead-person_running	ok	a runner
+leisure/stadium	maki-stadium	ok	the stands with a flag
+leisure/fitness_centre	place.fitness	ok	the boards' dumbbell (Parkland, Picnic: "Fitness station") (step 1b: the parent's verdict, 10 November, the evening)
+leisure/fitness_centre/yoga	place.yoga	ok	a figure sitting cross-legged, its hands on its knees
+leisure/fitness_station	temaki-horizontal_bar	ok	an outdoor gym: the bar stands for all its stations
+leisure/fitness_station/balance_beam	temaki-balance_beam	
+leisure/fitness_station/box	temaki-horizontal_bar	ok	a station of an outdoor gym, said in words
+leisure/fitness_station/horizontal_bar	temaki-horizontal_bar	ok	a station of an outdoor gym, said in words
+leisure/fitness_station/horizontal_ladder	temaki-horizontal_bar	ok	a station of an outdoor gym, said in words
+leisure/fitness_station/hyperextension	temaki-horizontal_bar	ok	a station of an outdoor gym, said in words
+leisure/fitness_station/parallel_bars	temaki-horizontal_bar	ok	a station of an outdoor gym, said in words
+leisure/fitness_station/push-up	temaki-horizontal_bar	ok	a station of an outdoor gym; the bench read as a seat
+leisure/fitness_station/rings	temaki-horizontal_bar	ok	a station of an outdoor gym; the dumbbell is the gym's
+leisure/fitness_station/sign	maki-information	
+leisure/fitness_station/sit-up	temaki-horizontal_bar	ok	a station of an outdoor gym; the dumbbell is the gym's
+leisure/fitness_station/stairs	ui-stairs	ok	steps
+
+# Health
+amenity/clinic	place.first-aid	ok	a case with a cross: a clinic, apart from hospital, pharmacy and doctor
+amenity/clinic/abortion	place.first-aid	ok	a clinic like the others; which kind is said in words
+amenity/clinic/dialysis	pinhead-kidneys	ok	kidneys: dialysis; the nephrologist is a doctor like the others
+amenity/clinic/fertility	place.first-aid	ok	a clinic like the others; which kind is said in words
+amenity/dentist	maki-dentist	ok	a tooth; orthodontics is one kind of it
+amenity/doctors	maki-doctor	ok	a doctor's practice: the stethoscope
+amenity/doctors/allergology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/cardiology	ui.activity	drawn	the heartbeat: a heart doctor; the heart is the defibrillator's
+amenity/doctors/child_psychiatry	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/dermatology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/gastroenterology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/general	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/gynaecology	pinhead-venus	
+amenity/doctors/haematology	maki-doctor	ok	a doctor like the others; the blood drop is blood donation's
+amenity/doctors/internal	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/nephrology	maki-doctor	ok	a doctor like the others; the kidneys are dialysis's
+amenity/doctors/neurology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/neurosurgery	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/oncology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/ophthalmology	pinhead-eye	ok	an eye; glasses are the optometrist's
+amenity/doctors/orthopaedics	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/otolaryngology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/paediatrics	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/pathology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/plastic_surgery	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/proctology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/psychiatrist	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/pulmonology	pinhead-lungs	
+amenity/doctors/radiology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/rheumatology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/surgery	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/trauma	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/doctors/urology	maki-doctor	ok	a doctor like the others; the field is said in words
+amenity/hospital	ui-hospital	ok	a building with a cross; the bare cross is the first aid kit's, the capsule the pharmacy's
+amenity/pharmacy	temaki-pharmacy	ok	Temaki's capsule; the plain cross is first aid's (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our plain cross would stand beside the clinic's and first aid's crosses
+healthcare	place.first-aid	drawn	any place of care: the clinic's case; the heart is the cardiologist's
+healthcare/alternative	atlas-leaf_with_cross	ok	Atlas's own, filled on Temaki's 15 grid (the parent's verdict: neither; the owner, 10 November: "Yes, ok"): natural medicine, a leaf with a cross. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our leaf is the nature reserve's
+healthcare/alternative/acupuncture	atlas-needles_in_a_back	ok	Atlas's own, filled on Temaki's 15 grid (with alternative till now; drawn 10 November as needles in a curve of skin it read as a crown; the owner, 10 November: "Yes, ok"): needles set in the back of one lying for them. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our leaf is the nature reserve's
+healthcare/alternative/ayurveda	temaki-hinduism	ok	om
+healthcare/alternative/chiropractic	atlas-spine	ok	Atlas's own, filled on Temaki's 15 grid (with alternative till now; the owner, 10 November: "Yes, ok"): the spine. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our leaf is the nature reserve's
+healthcare/alternative/homeopathy	atlas-leaf_with_cross	ok	alternative medicine's leaf with a cross, kin; no globules, the owner wants fewer new drawings (the parent's verdict, 10 November, the evening); our leaf is the nature reserve's
+healthcare/alternative/naturopathy	temaki-plant	ok	a plant
+healthcare/alternative/osteopathy	atlas-hands_on_a_back	ok	Atlas's own, filled on Temaki's 15 grid (with alternative till now; drawn 10 November as hands over a body on a table it read as a bed, as mittens on a back as pockets; the owner, 10 November: "Yes, ok"): two hands on a back, Temaki's hand twice. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our leaf is the nature reserve's
+healthcare/alternative/traditional_chinese_medicine	temaki-taoism	ok	yin and yang
+healthcare/audiologist	temaki-ear	
+healthcare/birthing_center	pinhead-baby	ok	a birth; the midwife is at it too
+healthcare/blood_donation	maki-blood-bank	
+healthcare/counselling	pinhead-speech_bubbles	ok	a talk
+healthcare/dentist/orthodontics	maki-dentist	ok	a tooth; a dentist's kind, said in words
+healthcare/hospice	temaki-social_facility	ok	a hand holding a heart: care to the end, not a hospital
+healthcare/laboratory	pinhead-round_bottomed_flask	ok	a lab; sample collection sends to it
+healthcare/midwife	pinhead-baby	ok	a birth; the birthing centre is where
+healthcare/occupational_therapist	temaki-hand	ok	a hand: the skills of every day
+healthcare/optometrist	ui-glasses	ok	glasses; the eye is the eye doctor's
+healthcare/physiotherapist	temaki-physiotherapist	
+healthcare/podiatrist	pinhead-foot	
+healthcare/psychotherapist	pinhead-couch	ok	the couch
+healthcare/rehabilitation	fact.walker	ok	a walker; the stretching pair is the physiotherapist's
+healthcare/sample_collection	pinhead-round_bottomed_flask	ok	samples for the lab
+healthcare/speech_therapist	ui.speaking	ok	a voice; the speech bubbles are counselling's
+emergency/defibrillator	maki-defibrillator	drawn
+
+# Services
+education/college	place.school	ok	higher learning, college or university: the boards' mortarboard (Moving, WifiNets) (step 1b: the parent's verdict, 10 November, the evening)
+education/dancing_school	place.club	ok	dancing, taught or done: the clubs' mirror ball (step 1b: the parent's verdict, 10 November, the evening)
+education/kindergarten	fact.kids	drawn	a child: little ones taught; the slide is the playground's
+education/language_school	fact.language	ok	languages, translated or taught
+education/music_school	maki-music	ok	music taught
+education/school	temaki-school	ok	a school: exercise book and pencil; the mortarboard is higher learning's
+education/university	place.school	ok	higher learning, college or university: the boards' mortarboard (Moving, WifiNets) (step 1b: the parent's verdict, 10 November, the evening)
+amenity/atm	place.atm	ok	the boards' cash machine (ThemeParkMore: "Cash machine") (step 1b: the parent's verdict, 10 November, the evening)
+amenity/bank	maki-bank	ok	a bank
+amenity/bureau_de_change	ui.swap	ok	money changed
+amenity/money_transfer	temaki-money_hand	ok	money handed on
+amenity/parcel_locker	temaki-vending_lockers	
+amenity/post_box	temaki-post_box	
+amenity/post_office	maki-post	ok	an envelope
+shop/dry_cleaning	place.dry-cleaning	ok	the Errands board's dry cleaning (step 1b: the parent's verdict, 10 November, the evening)
+shop/laundry	place.laundry	ok	washing, done for you or by you: the Errands board's laundry (step 1b: the parent's verdict, 10 November, the evening)
+shop/laundry/self_service	place.laundry	ok	washing, done for you or by you: the Errands board's laundry (step 1b: the parent's verdict, 10 November, the evening)
+amenity/toilets	maki-toilet	ok	toilets
+amenity/toilets/disposal/flush	maki-toilet	ok	toilets
+amenity/toilets/disposal/pitlatrine	temaki-latrine	ok	a latrine, dug or portable
+amenity/toilets/portable	temaki-latrine	ok	a latrine, dug or portable
+amenity/recycling/container/electrical_items	temaki-electronic	ok	a plug: electrical things to recycle
+amenity/recycling/container/green_waste	temaki-grass	ok	Temaki's grass: clippings, garden waste; the leaf stays the nature reserve's (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our leaf is the nature reserve's
+amenity/recycling_centre	maki-recycling	ok	recycling, at a centre or a container
+amenity/recycling_container	maki-recycling	ok	recycling, at a centre or a container
+amenity/waste_disposal	temaki-waste	
+amenity/social_facility	temaki-social_facility	ok	a hand holding a heart: care
+amenity/social_facility/ambulatory_care	maki-wheelchair	ok	care by day: ambulatory or day care
+amenity/social_facility/assisted_living	fact.walker	ok	a walker: help to live on one's own
+amenity/social_facility/day_care	maki-wheelchair	ok	care by day: ambulatory or day care
+amenity/social_facility/food_bank	place.food-bank	ok	a box with a heart: food given
+amenity/social_facility/group_home	maki-home	ok	a home shared
+amenity/social_facility/homeless_shelter	need.shelter	ok	a roof against the rain
+amenity/social_facility/nursing_home	place.nursing	ok	a nurse: care for the old
+amenity/shower	temaki-shower	drawn
+amenity/vending_machine	temaki-vending_machine	ok	a vending machine; what it sells is said in words
+amenity/vending_machine/bicycle_tube	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/bottle_return	return.bottles	ok	bottles handed back
+amenity/vending_machine/bread	temaki-vending_bread	ok	a machine reads as any at a pin's size: wants a loaf; the boards' loaf is the bakery's; Temaki's machine kept (the parent's verdict, 10 November: the machine says what is there)
+amenity/vending_machine/cigarettes	temaki-vending_cigarettes	ok	a machine reads as any at a pin's size: wants a packet of cigarettes; the cigarette is the smoking area's; Temaki's machine kept (the parent's verdict, 10 November: the machine says what is there)
+amenity/vending_machine/coffee	food.coffee	drawn	a hot drink: the steaming mug; the cold drinks are Temaki's machine
+amenity/vending_machine/condoms	temaki-vending_love	ok	a machine reads as any at a pin's size: wants a condom's wrapper; Temaki's machine kept (the parent's verdict, 10 November: the machine says what is there)
+amenity/vending_machine/drinks	temaki-vending_cold_drink	ok	Temaki's own drawing (the machine says what is there; a cup alone says a cafe; the owner, 10 November: "For many of them, temaki looks better")
+amenity/vending_machine/eggs	ui-egg	ok	an egg
+amenity/vending_machine/electronics	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/elongated_coin	temaki-vending_flat_coin	ok	Temaki's own drawing (the machine with its coin; the owner, 10 November: "For many of them, temaki looks better")
+amenity/vending_machine/excrement_bags	temaki-vending_pet_waste	
+amenity/vending_machine/feminine_hygiene	temaki-vending_venus	ok	Temaki's own drawing (the machine; the owner, 10 November: "For many of them, temaki looks better")
+amenity/vending_machine/flowers	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/food	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/food/snacks	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/fuel	maki-fuel	ok	a pump, staffed or not
+amenity/vending_machine/ice_cream	food.ice-cream	drawn	a cone
+amenity/vending_machine/ice_cubes	temaki-vending_ice	ok	a machine reads as any at a pin's size: wants ice cubes; the snowflakes are the frozen food shop's and the grit bin's; Temaki's machine kept (the parent's verdict, 10 November: the machine says what is there)
+amenity/vending_machine/newspapers	temaki-vending_newspaper	ok	a machine reads as any at a pin's size: wants a newspaper on its stand; the paper is the newspaper office's; Temaki's machine kept (the parent's verdict, 10 November: the machine says what is there)
+amenity/vending_machine/parking_tickets	atlas-parking_meter	ok	Atlas's own, filled on Temaki's 15 grid (the ticket is the transit tickets'; the owner, 10 November: "Yes, ok"): a parking meter, its P on a post; the P alone is the car park's. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our P is the car park's
+amenity/vending_machine/pizza	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/public_transport_tickets	ui.ticket	drawn	a ticket for the ride
+amenity/vending_machine/stamps	temaki-vending_stamps	ok	Temaki's own drawing (the machine with its stamp; the stamp alone is the collector's; the owner, 10 November: "For many of them, temaki looks better")
+amenity/vending_machine/sweets	temaki-vending_machine	ok	a vending machine with no picture of its own; what it sells is said in words
+amenity/vending_machine/water	temaki-vending_cold_drink	ok	Temaki's own drawing (the machine says what is there; a cup alone says a cafe; the owner, 10 November: "For many of them, temaki looks better")
+office/coworking	pinhead-crowd_of_people	ok	people working side by side
+amenity/drinking_water	maki-drinking-water	ok	water to drink or to draw
+amenity/bench	temaki-bench	drawn
+amenity/clock	temaki-clock	ok	a clock
+amenity/clock/sundial	atlas-sun_with_clock_hands	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the owner, 10 November: "Yes, ok"): the sun tells the time: the sun with a clock's hands; ours, the bare sun, is the weather's clear sky and the dry and UV moments (the parent's verdict, 10 November, the evening)
+amenity/lounger	temaki-lounger	
+amenity/telephone	maki-telephone	
+amenity/waste/dog_excrement	maki-dog-park	ok	a dog: the dogs' bin, like the dog toilet; the paw is the vet's and animal breeding's
+amenity/waste_basket	ui.trash	drawn	a bin; the filled one read as a headstone
+amenity/community_centre	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): people meeting under one roof, a community centre; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+amenity/community_centre/chitalishte_BG	pinhead-open_book_under_roof	ok	a house of reading, as a chitalishte is
+amenity/community_centre/club_home	pinhead-handshake	ok	a club's members
+amenity/community_centre/community_hall	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): two people under one roof, a community centre; which kind is said in words; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+amenity/community_centre/cultural_centre	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): two people under one roof, a community centre; which kind is said in words; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+amenity/community_centre/family_centre	fact.kids.2	ok	children
+amenity/community_centre/lgbtq	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): two people under one roof, a community centre; which kind is said in words; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+amenity/community_centre/parish_hall	place.church	ok	the parish's hall
+amenity/community_centre/village_hall	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): two people under one roof, a community centre; which kind is said in words; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+amenity/community_centre/youth_centre	pinhead-person_running_after_person	ok	young people at play
+craft	temaki-tools	ok	a hammer: any craft
+craft/agricultural_engines	maki-farm	
+craft/basket_maker	pinhead-shopping_basket	ok	a basket
+craft/beekeeper	pinhead-bee	
+craft/blacksmith	temaki-anvil_and_hammer	
+craft/boatbuilder	temaki-boat_repair	
+craft/bookbinder	maki-library	ok	Maki's library, the set's own filled drawing (the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our library is the library's
+craft/brewery	food.beer	ok	beer: the pub's and the biergarten's mug; the still is the distillery's (step 1b: the parent's verdict, 10 November, the evening)
+craft/carpenter	atlas-saw_over_plank	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's hammer reads as any craft's and stays the roofer's for now; the owner, 10 November: "Yes, ok"): a saw over a plank: wood cut to size; the cabinet is the joiner's
+craft/carpet_layer	temaki-tools	redo	wants a roll of carpet
+craft/caterer	temaki-catering	
+craft/chimney_sweeper	temaki-chimney	
+craft/cleaning	temaki-vacuum	
+craft/clockmaker	temaki-clock	
+craft/confectionery	food.sweets	ok	the boards' sweets (ThemeParkMore, ZooMore) (step 1b: the parent's verdict, 10 November, the evening)
+craft/distillery	atlas-pot_still	ok	Atlas's own, filled on Temaki's 15 grid (Pinhead's bottle is the off-licence's; the tank read as a headstone; the owner, 10 November: "Yes, ok"): a pot still, its swan neck down to the condenser's tub; beer is the brewery's
+craft/dressmaker	temaki-dress	
+craft/electrician	temaki-power	
+craft/electronics_repair	atlas-chip_with_spanner	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the plug is the electronics shop's; the owner, 10 November: "Yes, ok"): a chip with a spanner cut out of it: electronics mended. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our spanner is the repair shop's
+craft/floorer	fact.cobbles	ok	a laid floor
+craft/gardener	maki-garden-centre	
+craft/glaziery	temaki-window	ok	glass and windows, one trade
+craft/handicraft	temaki-needle_and_spool	ok	needle and thread: made by hand
+craft/hvac	ui-thermometer	ok	heating and cooling
+craft/insulator	temaki-tools	redo	wants a wall with its layer of insulation
+craft/joiner	temaki-furniture	ok	fitted woodwork: a cabinet; the saw is the carpenter's, the hammer the roofer's
+craft/key_cutter	place.key-cutting	ok	the Errands board's key cutting (step 1b: the parent's verdict, 10 November, the evening)
+craft/metal_construction	temaki-rail_profile	ok	a steel section
+craft/painter	pinhead-paint_roller	
+craft/parquet_layer	fact.cobbles	ok	a laid floor, parquet among them
+craft/photographer	maki-attraction	
+craft/photographic_laboratory	pinhead-film	
+craft/plasterer	temaki-brick_trowel	ok	a trowel
+craft/plumber	temaki-plumber	
+craft/pottery	temaki-vase	ok	a pot
+craft/rigger	temaki-rigging	
+craft/roofer	pinhead-hammer	redo	wants a roof being tiled; the gable alone reads as a house
+craft/saddler	temaki-horseshoes	redo	horse gear for now: wants a saddle that reads (temaki's reads as a bra); wants its own, in our style (decision 13) (wants a saddle that reads (redo))
+craft/sailmaker	temaki-sail	
+craft/sawmill	maki-logging	
+craft/scaffolder	temaki-scaffold	
+craft/sculptor	pinhead-classical_statue	
+craft/shoemaker	place.shoe-repair	ok	the Errands board's shoe repair, the shoemaker's too (step 1b: the parent's verdict, 10 November, the evening)
+craft/signmaker	pinhead-sign	ok	a sign
+craft/stonemason	temaki-sculpture	ok	stone carved: the sculpture; the pick hammer read as the roofer's hammer
+craft/tiler	temaki-tiling	ok	tiles
+craft/tinsmith	temaki-tools	redo	wants a tin can or a watering can
+craft/upholsterer	pinhead-couch	
+craft/watchmaker	maki-watch	
+craft/window_construction	temaki-window	ok	glass and windows, one trade
+craft/winery	maki-alcohol-shop	ok	Maki's bottle and glass: the Market board's wine bottle reads as the bottle return's at a pin, both on Services grey (0.71; step 1b's exception: the parent's verdict, 10 November, the night)
+office	maki-suitcase	ok	an office: the briefcase, for one with no sign of its own
+office/accountant	temaki-accounting	ok	accounts and tax: one desk with the tax adviser
+office/adoption_agency	fact.kids.2	ok	children
+office/advertising_agency	temaki-billboard	ok	a billboard
+office/architect	pinhead-steel_square_and_drafting_compass	
+office/association	atlas-people_under_roof	ok	Atlas's own, filled on Temaki's 15 grid (the crowd is the events venue's and coworking's; Maki's town hall reads as the town hall; the owner, 10 November: "Yes, ok"): members under one roof; ours, the group of people, is the app's group size: the menus' party size and the search's "for how many" (the parent's verdict, 10 November, the evening)
+office/bail_bond_agent-US-PH	maki-bank	redo	wants a bond: a key and a coin; the bank is a bank's
+office/charity	pinhead-shopping_bag_with_heart	ok	a bag with a heart: charity, as its shop shows
+office/company	ui-building	ok	an office block: a company
+office/consulting	pinhead-puzzle_piece	ok	a puzzle piece: problems solved; the speech bubbles are languages'
+office/diplomatic	temaki-embassy	ok	Temaki's own drawing (Temaki's embassy; the owner, 10 November: "For many of them, temaki looks better")
+office/diplomatic/consulate	temaki-embassy	ok	Temaki's own drawing (Temaki's embassy; the owner, 10 November: "For many of them, temaki looks better")
+office/diplomatic/embassy	temaki-embassy	ok	Temaki's own drawing (Temaki's embassy; the owner, 10 November: "For many of them, temaki looks better")
+office/diplomatic/liaison	temaki-embassy	ok	Temaki's own drawing (Temaki's embassy; the owner, 10 November: "For many of them, temaki looks better")
+office/educational_institution	temaki-school	ok	a school's office: the school's notebook
+office/employment_agency	ui-person-briefcase	ok	a person with a briefcase, work found; people alone are the community centre's
+office/energy_supplier	temaki-briefcase_bolt	ok	Temaki's own drawing (Temaki's office: briefcase with a bolt; the pylon reads as the power line; the owner, 10 November: "For many of them, temaki looks better")
+office/engineer	ui-settings	ok	a gear: engineering; the nib is design's
+office/estate_agent	temaki-real_estate_agency	
+office/financial	ui-coins	ok	money
+office/financial_advisor	atlas-coins_and_arrow_up	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the owner, 10 November: "Yes, ok"): money growing: coins stacked and an arrow up; the heart over coins is the foundation's, the banknotes the financial office's; ours, the rising line, is the route screen's climb (the parent's verdict, 10 November, the evening)
+office/forestry	temaki-tree_needleleaved	ok	a conifer: the forest's office
+office/foundation	ui-coins-hand	ok	money given: a foundation; the gift is the give box's
+office/government	temaki-capitol	ok	Temaki's capitol: the seat of government; Pinhead's office flying the flag is one shape with Temaki's embassy, the diplomats', and the hall is the town's (filled, Temaki first; the owner, 10 November: "Yes, ok")
+office/government/prosecutor	pinhead-balance_scales	ok	the scales of the law; the lawyer has them too
+office/government/register_office	ui.clipboard	ok	the register
+office/government/tax	atlas-form_with_percent	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; with a small per cent the form scored 0.73 with the crematorium's stone; the owner, 10 November: "Yes, ok"): a form with a per cent: tax assessed; the calculator is the accountant's and the tax adviser's. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our per cent is the variety store's
+office/graphic_design	pinhead-palette	ok	design: the palette; the pen is the notary's
+office/guide	pinhead-ranger_hat	ok	a guide's hat
+office/insurance	ui-shield	drawn	cover: the shield; the briefcases read alike
+office/it	ui-braces	ok	code
+office/lawyer	pinhead-balance_scales	ok	the scales of the law; the prosecutor has them too
+office/moving_company	mode.van	ok	a van
+office/newspaper	pinhead-newspaper	
+office/ngo	ui-globe	ok	the world
+office/notary	pinhead-pen_nib	ok	a deed signed: the pen; the stamp is the stamp machine's
+office/political_party	ui.speak	redo	a loudspeaker for now; wants a rosette (a flag would read as an embassy)
+office/private_investigator	atlas-hat_and_dark_glasses	ok	Atlas's own, filled on Temaki's 15 grid (the bare lens is the search's, Temaki's binoculars the bird hide's; a footprint under the lens read as an exclamation mark; the owner, 10 November: "Yes, ok"): a hat and dark glasses: someone watching unseen; the police badge is the police's. Kept when the kinds went back to ours, as the place itself reads clearly better (the parent's verdict, 10 November, the evening): the bare lens is the search's
+office/property_management	pinhead-lowrise_apartment_building_on_ground	ok	a block of flats looked after
+office/quango	temaki-capitol	ok	a public body: the government's capitol (filled, Temaki first; the owner, 10 November: "Yes, ok")
+office/religion	pinhead-dove	ok	a dove: a faith's office; the plain place of worship is the monastery's
+office/research	pinhead-round_bottomed_flask	ok	a flask: research
+office/security	temaki-briefcase_shield	ok	Temaki's own drawing (Temaki's office: briefcase with a shield; insurance keeps its shield; the owner, 10 November: "For many of them, temaki looks better")
+office/surveyor	temaki-benchmark_disk	redo	a survey mark for now (the T-shirt was wrong); wants a theodolite
+office/tax_advisor	temaki-accounting	ok	accounts and tax: one desk with the accountant
+office/telecommunication	temaki-antenna	ok	an antenna
+office/therapist	ui-sofa	ok	a couch
+office/translator	atlas-wen_and_a	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the speech bubbles are the language school's, and on two pages the letters scored 0.69 with them; the owner, 10 November: "Yes, ok"): a 文 and an A: texts translated. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our language sign is the language school's
+office/union	temaki-hand	
+office/water_utility	temaki-water_tower	ok	the water company: its tower; the tap read as the plumber's
+amenity/animal_boarding	temaki-dog_shelter	ok	a dog under its roof; the paw stays the vet's and animal breeding's (filled, Temaki first; the owner, 10 November: "Yes, ok")
+amenity/animal_breeding	maki-veterinary	redo	wants a mother animal with her young
+amenity/animal_shelter	pinhead-cat_sitting	ok	a cat waiting for a home
+amenity/baking_oven	food.bread	redo	the bakery's loaf for now (the owner, 10 November: "Or our bread that we also have for needs"); wants its own, neither the loaf nor Temaki's bread (the parent's verdict, 10 November): a loaf in its oven
+amenity/bicycle_repair_station	place.bike-repair	ok	the boards' repair stand (BikeFix, Flat: "Repair station"): the stand is the place itself (step 1b: the parent's verdict, 10 November, the evening)
+amenity/bicycle_wash	temaki-bicycle_wash	
+amenity/binoculars	temaki-binoculars	ok	binoculars: birds watched from a hide, or the view from a stand
+amenity/boat_storage	temaki-boat_dry_dock	
+amenity/car_pooling	temaki-car_pool	ok	a car shared
+amenity/casino	maki-casino	
+amenity/childcare	pinhead-baby	
+amenity/compressed_air	ui.gauge	ok	a pressure gauge
+amenity/conference_centre	atlas-speaker_at_lectern	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the owner, 10 November: "Yes, ok"): a speaker at the lectern; the briefcase is the office's. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our calendar is the exhibition centre's
+amenity/courthouse	pinhead-gavel_with_sound_block	
+amenity/crematorium	temaki-milestone	ok	death and burial: the headstone; a flame would read as the fire station
+amenity/device_charging_station	ui-battery-charging	ok	a battery charging; the phone read as a vending machine
+amenity/dive_centre	temaki-scuba_diving	
+amenity/dog_toilet	maki-dog-park	ok	a place for dogs
+amenity/dojo	pinhead-person_wearing_martial_arts_belt_front_kicking	
+amenity/dressing_room	maki-clothing-store	
+amenity/driver_training	temaki-wheel	ok	a wheel: learning to drive, on a training ground
+amenity/exhibition_centre	ui.calendar.2	drawn	halls for business events: the calendar; the speaker at the lectern is the conference centre's, the briefcase the office's
+amenity/fire_station	maki-fire-station	
+amenity/fountain	temaki-fountain	
+amenity/funeral_hall	temaki-milestone	ok	death and burial: the headstone; which place is said in words
+amenity/gambling	pinhead-dice	ok	dice: games of chance; the coin is the pressed-coin machine's
+amenity/give_box	reuse.give-box	ok	a box to give and take
+amenity/grave_yard	temaki-milestone	ok	death and burial: the headstone; which place is said in words
+amenity/grit_bin	atlas-grit_bin_and_shovel	ok	Atlas's own, filled on Temaki's 15 grid (a snowflake alone is the frozen food shop's; without the shovel the bin scored 0.69 with the first aid kit; the owner, 10 November: "Yes, ok"): a grit bin, a snowflake on it and a shovel leaning on it: grit for ice and snow. Kept when the kinds went back to ours, as the place itself reads clearly better (the parent's verdict, 10 November, the evening): ours was the weather's bare snowflake (weather.snow), which is snow in the forecast and reads as the frozen food shop's
+amenity/hookah_lounge	atlas-water_pipe	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's pipe is the tobacconist's; the owner, 10 November: "Yes, ok"): a water pipe, its bowl, its vase and its hose
+amenity/hunting_stand	temaki-hunting_blind	
+amenity/internet_cafe	tech.compute	ok	the computer shop's computer, kin (Pinhead's laptop beside the board's would be one shape in two styles) (step 1b: the parent's verdict, 10 November, the evening)
+amenity/karaoke_box	maki-karaoke	
+amenity/kitchen	temaki-kitchen_sink	
+amenity/kneipp_water_cure	pinhead-foot	ok	a bare foot: treading cold water (the hospital cross was wrong)
+amenity/lavoir	place.laundry	redo	a public wash place: the laundry's, the Errands board's, for now (step 1b); wants a basin under a roof, washing done by hand (the shirt read as the dressing room's); wants its own, in our style (decision 13) (wants a basin under a roof (redo))
+amenity/letter_box	temaki-letter_box	
+amenity/library_dropoff	place.library.2	drawn	a book handed back; the slot read as the ticket validator's
+amenity/loading_dock	temaki-truck	
+amenity/love_hotel	maki-heart	ok	a heart: for adults
+amenity/luggage_locker	temaki-suitcase_key	ok	Temaki's suitcase and key: the boards' lockers read as a window's panes and a vending machine's front at a pin (the parent's verdict, 10 November, the night)
+amenity/monastery	maki-place-of-worship	drawn
+amenity/mortuary	temaki-milestone	ok	death and burial: the headstone; which place is said in words
+amenity/parking_entrance	maki-entrance-alt1	
+amenity/payment_centre	fact.cash	drawn	bills paid in cash; the receipt read as a vending machine
+amenity/payment_terminal	pinhead-payment_card	ok	Pinhead's filled card with its stripe: the boards' outlined card reads as the ticket machine's ticket at a pin; the fact chip keeps the boards' card (step 1b's exception: the parent's verdict, 10 November, the night)
+amenity/photo_booth	atlas-photo_strip	ok	Atlas's own, filled on Temaki's 15 grid (the camera is the camera shop's and the photographer's; Temaki's portrait reads as a person; the owner, 10 November: "Yes, ok"): a strip of portraits: a picture while you wait. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our picture is the photo shop's
+amenity/police	place.police	ok	the Safe board's police ("Police front desk") (step 1b: the parent's verdict, 10 November, the evening)
+amenity/polling_station	atlas-ballot_box	ok	Atlas's own, filled on Temaki's 15 grid (no set draws it; the bare tick is the interface's; the owner, 10 November: "Yes, ok"): a ballot with a tick going into its box: a vote cast. Kept when the kinds went back to ours, as the place itself reads clearly better (the parent's verdict, 10 November, the evening): the bare tick is the interface's "done"
+amenity/post_depot	ui-package	ok	a delivery round starts here
+amenity/prison	maki-prison	
+amenity/ranger_station	maki-ranger-station	
+amenity/refugee_site	temaki-tents	
+amenity/research_institute	pinhead-round_bottomed_flask	ok	a flask: research
+amenity/sanitary_dump_station	temaki-camper_trailer_dump	
+amenity/shelter	place.shelter.2	ok	a roof to stand under: the boards' rain shelter (ThemeParkMore: "Shelters from the rain"); place.shelter is the Hazards board's public shelter (step 1b: the parent's verdict, 10 November, the evening)
+amenity/shelter/field_shelter	temaki-horse_shelter	ok	Temaki's own drawing (Temaki's horse under its roof; the owner, 10 November: "For many of them, temaki looks better")
+amenity/shelter/gazebo	place.shelter.2	ok	a roof to stand under: the boards' rain shelter (ThemeParkMore: "Shelters from the rain"); place.shelter is the Hazards board's public shelter (step 1b: the parent's verdict, 10 November, the evening)
+amenity/shelter/lean_to	temaki-sleep_shelter	ok	Temaki's own drawing (Temaki's sleeping shelter; the owner, 10 November: "For many of them, temaki looks better")
+amenity/shelter/picnic_shelter	temaki-picnic_shelter	
+amenity/shelter/public_transport	temaki-transit_shelter	
+amenity/shelter/sun_shelter	fact.terrace	ok	shade
+amenity/smoking_area	fact.smoking.2	ok	the boards' smoking area (ThemeParkMore: "Smoking areas") (step 1b: the parent's verdict, 10 November, the evening)
+amenity/social_centre	pinhead-handshake	ok	people meeting: a club or a social centre
+amenity/stripclub	pinhead-cocktail	ok	a glass: a club for adults; the dancer is the dance hall's
+amenity/studio	pinhead-microphone	ok	Pinhead's microphone (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our speaking head is the speech therapist's
+amenity/studio/audio	ui-headphones	ok	sound recorded
+amenity/studio/radio	temaki-radio	ok	Temaki's radio (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our speaking head is the speech therapist's
+amenity/studio/television	pinhead-video_camera_symbol	ok	pictures recorded, for TV or video
+amenity/studio/video	pinhead-video_camera_symbol	ok	pictures recorded, for TV or video
+amenity/swingerclub	maki-heart	ok	a heart: for adults
+amenity/ticket_validator	pinhead-ticket_in_slot	ok	a ticket stamped in its slot
+amenity/townhall	temaki-town_hall	ok	the town's hall
+amenity/townhall/barangay-PH	temaki-town_hall	ok	a town hall; the barangay's is said in words; the capitol is the government's
+amenity/townhall/city	temaki-town_hall	ok	a city's town hall; which is said in words
+amenity/toy_library	temaki-spring_rider	ok	a toy
+amenity/traffic_park	temaki-traffic_signals	ok	traffic lights
+amenity/trolley_bay	pinhead-shopping_cart	
+amenity/vacuum_cleaner	temaki-vacuum_station	
+amenity/vehicle_inspection	atlas-car_with_tick	ok	Atlas's own, filled on Temaki's 15 grid (Maki's car with a spanner is the car repair's; the owner, 10 November: "Yes, ok"): a car with a tick: a car passed. Kept when the kinds went back to ours, as the place itself reads clearly better (the parent's verdict, 10 November, the evening): the bare car says nothing of an inspection
+amenity/veterinary	temaki-veterinary_care	ok	a paw with a cross
+amenity/veterinary_pharmacy	temaki-veterinary_care	ok	a paw with a cross
+amenity/waste_transfer_station	mode.lorry	ok	a lorry: waste loaded on
+amenity/water_point	maki-drinking-water	ok	water to drink or to draw
+amenity/watering_place	atlas-cow_at_trough	ok	Atlas's own, filled on Temaki's 15 grid (the tap is drinking water's; the owner, 10 November: "Yes, ok"): a cow drinking at a trough: water for animals. Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our tap is drinking water's
+amenity/weighbridge	mode.truck	redo	a lorry alone reads as the waste station's and the movers' (the scales read as a box): wants a lorry on a scale
+club	pinhead-handshake	ok	people meeting: a club or a social centre
+club/scout	atlas-fleur_de_lis	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's tent read as a camp's; the owner, 10 November: "Yes, ok"): the scouts' lily, bound by its band
+education/driving_school	temaki-wheel	ok	a wheel: learning to drive
+education/prep_school	temaki-school	ok	lessons outside school: the school's notebook; which is said in words
+emergency/first_aid_kit	atlas-cross_on_square	ok	Atlas's own, filled on Temaki's 15 grid (Temaki's first aid kit read as the offices' briefcases at a pin's size, 0.83 to 0.86; the owner, 10 November: "Yes, ok"): the universal sign, the white cross on a square (ISO 7010). Kept when the kinds went back to ours, as the place itself reads clearly better (the parent's verdict, 10 November, the evening): the bare plus is the interface's "add" (adding a stop, a dish, an hour)
+leisure/adult_gaming_centre	temaki-casino	
+leisure/bleachers	temaki-bleachers	
+leisure/dance	place.club	ok	dancing, taught or done: the clubs' mirror ball (step 1b: the parent's verdict, 10 November, the evening)
+leisure/fishing	pinhead-fish	drawn
+leisure/hackerspace	ui.bulb	ok	a bulb: ideas made
+leisure/hot_tub	maki-hot-spring	
+leisure/outdoor_seating	place.picnic	ok	tables out of doors: the picnic table's, kin (no new parasol: the owner wants fewer new drawings) (step 1b: the parent's verdict, 10 November, the evening)
+leisure/schoolyard	pinhead-person_running_after_person	
+leisure/summer_camp	temaki-campfire	ok	a summer camp: the campfire; the tents are the group campsite's and the refugees', the lily the scouts'
+tourism/camp_pitch	maki-campsite	ok	a tent
+tourism/information	maki-information	ok	the i
+tourism/information/board	temaki-info_board	
+tourism/information/board/welcome_sign	temaki-info_board	ok	a board; the welcome is said in words (the flag is the embassies')
+tourism/information/guidepost	temaki-sign_and_pedestrian	ok	Temaki's sign and walker (filled, Temaki first; the owner, 10 November: "Yes, ok"). Kept when the kinds went back to ours (the owner, 10 November: "You can go on"): our signpost is the route marker's
+tourism/information/map	pinhead-map_outline	
+tourism/information/office	maki-information	ok	the i, staffed
+tourism/information/route_marker	ui-signpost	ok	the way shown: a post or a waymark
+tourism/information/terminal	temaki-app_terminal	
+tourism/information/visitor_centre	wild.visitor-centre	ok	a house of the i: a visitor centre
+tourism/trail_riding_station	maki-horse-riding	ok	a rider
+
+# Getting around
+amenity/motorcycle_parking	temaki-motorcycle_parked	
+amenity/parking	maki-parking	ok	the P
+amenity/parking/multi-storey	temaki-car_structure	ok	a car in a building of floors
+amenity/parking/park_ride	temaki-sign_and_car	ok	park and ride
+amenity/parking/street-side	maki-parking	ok	the car park's P, as the other parking kinds; the boards' kerb bar (park.along-kerb) said nothing at a pin's size (the parent's verdict, 10 November, the evening)
+amenity/parking/underground	ui-parking-underground	ok	a car in an arch under the ground line; the floors are the multi-storey's
+amenity/parking_surface	maki-parking	ok	the P: a car park in the open
+public_transport/platform/bus_point	transit.bus-stop	ok	a stop: the boards' bus stop (ThemeParkMore: "Bus stop") (step 1b: the parent's verdict, 10 November, the night)
+public_transport/platform/bus_tram_point	transit.tram.3	ok	the Main board's tram; transit.tram reads as the bus at a pin's size (step 1b: the parent's verdict, 10 November, the evening)
+public_transport/platform/trolleybus_point	temaki-trolleybus	ok	Temaki's own drawing (the trolleybus itself; the trolleybus station is on the boards' bus; the owner, 10 November: "For many of them, temaki looks better")
+public_transport/station_aerialway	ski.lift	ok	the Ski board's lift ("Lifts open") (step 1b: the parent's verdict, 10 November, the evening)
+public_transport/station_bus	transit.bus	ok	the boards' bus (Route, Trail, Offline) (step 1b: the parent's verdict, 10 November, the night)
+public_transport/station_ferry	temaki-board_ferry	ok	Temaki's: the boards' ferry reads as the route's taxi at a pin, which the taxi stand wears (the parent's verdict, 10 November, the night)
+public_transport/station_light_rail	temaki-board_light_rail	
+public_transport/station_monorail	temaki-board_monorail	
+public_transport/station_subway	temaki-subway	ok	a train in its tunnel: the underground; boarding read as the train station's
+public_transport/station_train	temaki-board_train	ok	Temaki's: the boards' train reads as their bus and their bus stop at a pin, which the bus stations and stops wear (the parent's verdict, 10 November, the night)
+public_transport/station_train_halt	temaki-rail_flag	
+public_transport/station_tram	transit.tram.3	ok	the Main board's tram; transit.tram reads as the bus at a pin's size (step 1b: the parent's verdict, 10 November, the evening)
+public_transport/station_trolleybus	transit.bus	ok	a bus on wires: the bus station's bus; which is said in words (step 1b: the parent's verdict, 10 November, the night)
+public_transport/stop_position_aerialway	ski.lift	ok	the Ski board's lift ("Lifts open") (step 1b: the parent's verdict, 10 November, the evening)
+public_transport/stop_position_bus	transit.bus-stop	ok	a stop: the boards' bus stop (ThemeParkMore: "Bus stop") (step 1b: the parent's verdict, 10 November, the night)
+public_transport/stop_position_ferry	temaki-ferry	ok	a stop: Temaki's ferry; the boards' ferry reads as the route's taxi at a pin, which the taxi stand wears (the parent's verdict, 10 November, the night)
+public_transport/stop_position_light_rail	temaki-light_rail	
+public_transport/stop_position_monorail	temaki-monorail	
+public_transport/stop_position_subway	temaki-subway	
+public_transport/stop_position_train	temaki-train	ok	a stop: Temaki's train; the boards' train reads as their bus and their bus stop at a pin, which the bus stations and stops wear (the parent's verdict, 10 November, the night)
+public_transport/stop_position_tram	transit.tram.3	ok	the Main board's tram; transit.tram reads as the bus at a pin's size (step 1b: the parent's verdict, 10 November, the evening)
+public_transport/stop_position_trolleybus	temaki-trolleybus	ok	Temaki's own drawing (the trolleybus itself; the trolleybus station is on the boards' bus; the owner, 10 November: "For many of them, temaki looks better")
+aeroway/aerodrome	mode.fly	drawn	a plane: where you fly from; the tower is the terminal's
+aeroway/terminal	pinhead-airport_terminal	ok	the terminal: its tower and hall; the plane is the airport's
+landuse/military/airfield	temaki-fighter_jet	ok	Temaki's own drawing (Temaki's jet; the owner, 10 November: "For many of them, temaki looks better")
+amenity/car_wash	place.car-wash	ok	the Pump board's car wash (step 1b: the parent's verdict, 10 November, the evening)
+shop/car	temaki-car_dealer	ok	cars for sale, new or used
+shop/car/second_hand	temaki-car_dealer	ok	cars for sale, new or used
+shop/car_repair	place.repair	drawn	a spanner: cars mended, with the repair shop, kin; Maki's car with a spanner read as the car rental's car with a key at a pin's size, 0.86 (the parent's verdict, 10 November, the evening)
+shop/tyres	temaki-tire	
+amenity/bicycle_parking	park.bike-stands	ok	the Twowheel board's hoop ("Bike stands"); the bare bicycle is the boards' bike, ridden (step 1b: the parent's verdict, 10 November, the evening)
+amenity/bicycle_parking/building	park.bike-garage	ok	the Twowheel board's guarded bike garage (step 1b: the parent's verdict, 10 November, the evening)
+amenity/bicycle_parking/lockers	temaki-bicycle_locker	ok	Temaki's bike locker: the boards' lockers read as parking's P at a pin (the parent's verdict, 10 November, the night)
+amenity/bicycle_parking/shed	park.bike-covered	ok	the Twowheel board's covered stands (step 1b: the parent's verdict, 10 November, the evening)
+amenity/bicycle_rental	place.bike-dock	ok	the boards' bike dock (Rent, Query: "Bikes") (step 1b: the parent's verdict, 10 November, the evening)
+amenity/car_rental	maki-car-rental	
+amenity/car_sharing	temaki-car_pool	ok	a car shared
+amenity/motorcycle_rental	temaki-motorcycle_rental	
+amenity/taxi	mode.taxi	ok	the route's taxi leg, so the map and the route agree (step 1b: the parent's verdict, 10 November, the night)
+amenity/taxi/auto_rickshaw	temaki-golf_cart	redo	a little cart for now; wants a tuk-tuk (the lift was wrong)
+amenity/taxi/cycle_rickshaw	ui-cycle-rickshaw	ok	a passenger's hood behind a bicycle's front (the bus and the cargo bike's box were wrong)
+amenity/taxi/motorcycle_taxi	pinhead-motorcycle	redo	a motorbike for now (the walker and cyclist were wrong); wants one with the taxi sign, apart from motorcycle parking

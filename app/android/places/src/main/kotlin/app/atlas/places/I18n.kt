@@ -21,6 +21,8 @@ internal object I18n {
             val aliases = a.getOrNull(2)?.str?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
             presets[id] = PresetText(a.getOrNull(0)?.str ?: "", terms, aliases)
         }
+        // the kinds of Atlas's own, where id-tagging-schema names none (OwnPresets: a national park)
+        for (line in OwnPresets.lines) line.text[lang]?.let { presets.putIfAbsent(line.id, it) }
         val fields = HashMap<String, FieldText>()
         root["f"]?.obj?.forEach { (id, v) ->
             val a = v.arr ?: return@forEach

@@ -32,7 +32,23 @@ class Preset internal constructor(
 ) {
     val parentId: String? get() = id.substringBeforeLast('/', "").ifEmpty { null }
 
+    /**
+     * The nearest preset it is a narrower kind of, past an id between that is none: flush toilets
+     * ("amenity/toilets/disposal/flush") are toilets, though no "amenity/toilets/disposal" is a kind.
+     */
+    val broader: Preset?
+        get() {
+            var up = parentId
+            while (up != null) {
+                Presets.byId(up)?.let { return it }
+                up = up.substringBeforeLast('/', "").ifEmpty { null }
+            }
+            return null
+        }
+
     fun name(lang: String? = "en"): String = Presets.name(this, lang)
+
+    fun fullName(lang: String? = "en"): String = Presets.fullName(this, lang)
 
     fun terms(lang: String? = "en"): List<String> = I18n.pack(lang).presets[id]?.terms ?: emptyList()
 
@@ -77,12 +93,13 @@ object Presets {
 
     fun byId(id: String): Preset? = byId[id]
 
+    /** id-tagging-schema's presets, then those of Atlas's own for the kinds it keeps none for ([OwnPresets]: a national park). */
     private fun load(): List<Preset> {
         val root = Resources.json("presets.json").obj ?: error("presets.json")
         val names = root["fields"].stringList()
         fun fieldList(e: JsonElement?): List<String> = e?.arr?.mapNotNull { i -> i.num?.toInt()?.let { names.getOrNull(it) } } ?: emptyList()
         val arr = root["presets"]?.arr ?: error("presets.json")
-        return arr.mapNotNull { e ->
+        val bundled = arr.mapNotNull { e ->
             val o = e.obj ?: return@mapNotNull null
             Preset(
                 id = o["id"]?.str ?: return@mapNotNull null,
@@ -98,6 +115,7 @@ object Presets {
                 excludedCountries = o["xc"].stringList().toSet(),
             )
         }
+        return bundled + OwnPresets.presets(bundled.associateBy { it.id })
     }
 
     /**
@@ -151,16 +169,40 @@ object Presets {
         Geometry.RELATION -> null
     }
 
-    /** The preset's name in [lang], else in English, else its last id segment made readable. */
-    fun name(preset: Preset, lang: String? = "en"): String =
-        I18n.presetName(preset.id, lang) ?: preset.id.substringAfterLast('/').replace('_', ' ').replaceFirstChar { it.uppercase() }
+    /**
+     * What the preset's kind is called in [lang]: what it sells where Atlas names it so ([KindNames]: "Clothes"), else
+     * its [fullName].
+     */
+    fun name(preset: Preset, lang: String? = "en"): String = KindNames.of(preset.id, lang) ?: fullName(preset, lang)
 
-    /** The preset whose icon draws [preset]: itself, else the nearest ancestor with an icon. */
-    fun iconOf(preset: Preset): String? {
+    /**
+     * The preset's own name in [lang] ("Clothing Store"), else in English, else its last id segment made readable: the
+     * title of a place with no name of its own, which says what the place is, and a name the search knows the kind by.
+     * Said in Atlas's [plain] words ("Bike Rental").
+     */
+    fun fullName(preset: Preset, lang: String? = "en"): String =
+        I18n.presetName(preset.id, lang)?.let(::plain) ?: preset.id.substringAfterLast('/').replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+    /**
+     * Words of id-tagging-schema's English said as Atlas says them on its own chips ("Bikes", "Bike parking", "Bikes &
+     * taxis"): a bike, where the schema says a bicycle (the owner, 6 November, of "Bicycle Rental" beside "Bike
+     * parking": "Yes, align them"). The paths keep "Cycle", which is what their signs say.
+     */
+    private val PLAIN = listOf(Regex("\\bBicycle(s?)\\b") to "Bike$1")
+
+    /** [name] in Atlas's words ([PLAIN]): "Bicycle Rental" -> "Bike Rental". */
+    fun plain(name: String): String = PLAIN.fold(name) { s, (word, said) -> word.replace(s, said) }
+
+    /**
+     * The icon of [preset] in id-tagging-schema: its own, else its nearest ancestor's. Not what Atlas draws, which is
+     * [Kinds.symbolOf]: this is that table's fallback, and internal so that no screen can draw a kind any other way (the
+     * owner, 9 November: "Why is it inconsistent? Do they not share the same code?").
+     */
+    internal fun iconOf(preset: Preset): String? {
         var p: Preset? = preset
         while (p != null) {
             p.icon?.let { return it }
-            p = p.parentId?.let { byId[it] }
+            p = p.broader
         }
         return null
     }
@@ -179,11 +221,13 @@ object Presets {
             if (!p.searchable || p.id in fallbackIds) continue
             if (p.geometry.none { it == Geometry.POINT || it == Geometry.AREA || it == Geometry.VERTEX }) continue
             val own = pack.presets[p.id]
+            // its own name, as Atlas says it, and what Atlas calls the kind ("Clothing Store", "Clothes": KindNames)
+            fun names(own: String, l: String) = listOfNotNull(own, plain(own), KindNames.searched(p.id, l)).map(Text::fold).distinct().toTypedArray()
             if (own != null && lang != "en") {
-                out += Entry(p, arrayOf(Text.fold(own.name)), own.aliases.map(Text::fold).toTypedArray(), own.terms.map(Text::fold).toTypedArray(), false)
+                out += Entry(p, names(own.name, lang), own.aliases.map(Text::fold).toTypedArray(), own.terms.map(Text::fold).toTypedArray(), false)
             }
             val e = en.presets[p.id] ?: continue
-            out += Entry(p, arrayOf(Text.fold(e.name)), e.aliases.map(Text::fold).toTypedArray(), e.terms.map(Text::fold).toTypedArray(), lang != "en")
+            out += Entry(p, names(e.name, "en"), e.aliases.map(Text::fold).toTypedArray(), e.terms.map(Text::fold).toTypedArray(), lang != "en")
         }
         out
     }

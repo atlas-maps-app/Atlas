@@ -2,6 +2,7 @@ package app.atlas.places
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -30,8 +31,14 @@ class SymbolsTest {
         assertEquals(24f, search.viewBox.width)
         assertTrue(search.paths.all { it.stroke && !it.fill })
         assertEquals(2f, search.strokeWidth)
-        // the boards' own drawings stand in for both
+        // the boards' own drawings stand in for the UI set's and the open sets' ids of the same meaning (the owner, 10
+        // November: "The simple style of our icons looked good"), Maki's fork and knife too: our knife and fork, the Eat
+        // chip's (the owner, 10 November, the evening: "And I want our knife and fork back"); Maki's cart stays Maki's
         assertEquals("place.cafe", Symbols.icon("maki-cafe")!!.id)
+        assertEquals("cat.eat", Symbols.icon("maki-restaurant")!!.id)
+        assertEquals(Symbols.icon("ui-utensils")!!.id, Symbols.icon("maki-restaurant")!!.id)
+        assertEquals("maki-grocery", Symbols.icon("maki-grocery")!!.id)
+        assertEquals("place.park", Symbols.icon("maki-park")!!.id)
         assertEquals("ui.search", Symbols.icon("ui-search")!!.id)
         val logo = Symbols.icon("logo-albertheijn")!!
         assertTrue(logo.paths.all { it.fill })
@@ -77,23 +84,63 @@ class SymbolsTest {
         fun fam(vararg kv: Pair<String, String>) = Symbols.familyOf(mapOf(*kv))
         assertEquals(PlaceFamily.FOOD, fam("amenity" to "cafe"))
         assertEquals(PlaceFamily.GROCERY, fam("shop" to "supermarket"))
-        assertEquals(PlaceFamily.BEAUTY, fam("shop" to "hairdresser"))
+        // a place wears its category's colour: a hairdresser is a shop under the Shops button, not a pink of its own
+        assertEquals(PlaceFamily.SHOP, fam("shop" to "hairdresser"))
         assertEquals(PlaceFamily.SHOP, fam("shop" to "shoes"))
+        assertEquals(PlaceFamily.SHOP, fam("shop" to "optician"))
+        // museums and sights are culture's, pitches and gyms sport's, Fun days out (the owner, 5 November)
         assertEquals(PlaceFamily.CULTURE, fam("tourism" to "museum"))
         assertEquals(PlaceFamily.CULTURE, fam("shop" to "art"))
+        assertEquals(PlaceFamily.CULTURE, fam("historic" to "monument"))
+        assertEquals(PlaceFamily.SPORT, fam("leisure" to "pitch", "sport" to "field_hockey"))
+        assertEquals(PlaceFamily.CULTURE, fam("amenity" to "library"))
         assertEquals(PlaceFamily.STAY, fam("tourism" to "hotel"))
         assertEquals(PlaceFamily.HEALTH, fam("amenity" to "pharmacy"))
         assertEquals(PlaceFamily.HEALTH, fam("healthcare" to "physiotherapist"))
         assertEquals(PlaceFamily.SPORT, fam("leisure" to "fitness_centre"))
+        assertEquals(PlaceFamily.WATER, fam("leisure" to "sauna"))
+        assertEquals(PlaceFamily.WATER, fam("leisure" to "swimming_pool"))
         assertEquals(PlaceFamily.NATURE, fam("leisure" to "park"))
         assertEquals(PlaceFamily.CHARGE, fam("amenity" to "charging_station"))
         assertEquals(PlaceFamily.FUN, fam("leisure" to "playground"))
+        assertEquals(PlaceFamily.FUN, fam("tourism" to "zoo"))
+        // Nature holds what is nature: a bench or a bin is the street's, a bike rack the way's
+        assertEquals(PlaceFamily.NATURE, fam("leisure" to "picnic_table"))
+        assertEquals(PlaceFamily.SERVICE, fam("amenity" to "bench"))
+        assertEquals(PlaceFamily.SERVICE, fam("amenity" to "waste_basket"))
+        assertEquals(PlaceFamily.TRANSPORT, fam("amenity" to "bicycle_parking"))
+        // a gas station is the fuel family's with the chargers ("Gas and charging belongs both into fuel")
+        assertEquals(PlaceFamily.CHARGE, fam("amenity" to "fuel"))
+        assertEquals(PlaceFamily.SERVICE, fam("amenity" to "community_centre"))
         assertEquals(PlaceFamily.WATER, fam("leisure" to "marina"))
         assertEquals(PlaceFamily.TRANSPORT, fam("highway" to "bus_stop"))
         assertEquals(PlaceFamily.SERVICE, fam("office" to "lawyer"))
         assertNull(fam("building" to "yes"))
-        assertEquals(0xFFE07A1F.toInt(), Symbols.colourFor(mapOf("amenity" to "restaurant")))
-        assertEquals(Palette.SERVICE, Symbols.colourFor(mapOf("building" to "yes")))
+        assertEquals(0xFFB8461A.toInt(), Symbols.colourFor(mapOf("amenity" to "restaurant")))
+        assertEquals(0xFF7A2233.toInt(), Symbols.colourFor(mapOf("shop" to "hairdresser")))
+        // what no category takes wears the shelf of everything else on the map, as the search shows it
+        assertEquals(CategoryTree.shelf(CategoryTree.OSM)!!.colour, Symbols.colourFor(mapOf("building" to "yes")))
+        assertEquals(CategoryTree.of(mapOf("natural" to "tree"))!!.colour, Symbols.colourFor(mapOf("natural" to "tree")))
+    }
+
+    @Test
+    fun everyCategoryWearsItsFamilysColour() {
+        for (c in Categories.leaves()) {
+            val family = Symbols.familyOf(c)
+            assertNotNull("${c.id} has no family", family)
+            assertEquals("${c.id} wears a colour of its own", family!!.colour, c.colour)
+        }
+        for (f in PlaceFamily.entries) if (f != PlaceFamily.SERVICE) assertNotEquals("${f.id} has no colour in categories.json", Palette.SERVICE, f.colour)
+    }
+
+    @Test
+    fun aChainIsMarkedByItsLogoOnItsKindsColour() {
+        val ah = mapOf("shop" to "supermarket", "brand" to "Albert Heijn", "brand:wikidata" to "Q1653985", "name" to "Albert Heijn")
+        assertEquals("logo-albertheijn", Symbols.markFor(ah))
+        assertEquals(PlaceFamily.GROCERY.colour, Symbols.colourFor(ah))
+        // a chain without a logo keeps its kind's symbol
+        val plus = mapOf("shop" to "supermarket", "brand" to "PLUS", "name" to "PLUS Van Dijk")
+        assertEquals(Symbols.symbolFor(plus), Symbols.markFor(plus))
     }
 
     @Test

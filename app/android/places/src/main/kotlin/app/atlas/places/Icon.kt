@@ -73,9 +73,10 @@ data class IconText(
 data class IconShadow(val dx: Float, val dy: Float, val blur: Float, val colour: Long)
 
 /**
- * A vector symbol: a board symbol (Atlas's own, taken from the boards), a map symbol (Maki, Temaki, Pinhead), a UI
- * symbol (Lucide style) or a brand glyph. [coloured] icons are drawn in their own colours and never tinted (their
- * paths without a colour still take the tint). [texts] are drawn over the paths, [shadows] under them.
+ * A vector symbol: a board symbol (Atlas's own, taken from the boards), a map symbol (Maki, Temaki, Pinhead, or Atlas's
+ * own filled `atlas-*` for kinds no set draws), a UI symbol (Lucide style) or a brand glyph. [coloured] icons are drawn
+ * in their own colours and never tinted (their paths without a colour still take the tint). [texts] are drawn over the
+ * paths, [shadows] under them.
  */
 data class Icon(
     val id: String,

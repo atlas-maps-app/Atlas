@@ -5,40 +5,70 @@ import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The colour families of places, from the prototype's poi_style.py (food, grocery, shop, beauty, culture, stay,
- * health, service, sport) and the boards' Map home (nature, fun, water, charge, transport). Colours are opaque ARGB.
+ * The colour families of places: the Map home row's eight (food, grocery, shop, stay, charge, nature, fun, water) and
+ * the search's shelves past it (culture and sights, sport, health, service, transport). A place's family is its
+ * category's, the first rule of categories.json it passes, so a place wears one colour wherever Atlas draws it: on the
+ * row, the map's pins, the search's rows and cards, its own page (README decision 12). Which kind it is within its
+ * family its symbol says, never a colour of its own: the prototype's poi_style.py tables, which gave hairdressers pink
+ * under the Shops button, are gone (the owner, 5 November: "What to do with all the different subcolors"). The baked
+ * tiles' 3D awnings (render PoiStyle, mapcore PoiStyle.cpp) still keep them. Fun is days out, and sport a family of
+ * its own (the owner, 5 November: "Are the categories good as they are?").
  */
-enum class PlaceFamily(val colour: Int) {
-    FOOD(0xFFE07A1F.toInt()),
-    GROCERY(0xFF2E9E5B.toInt()),
-    SHOP(0xFF8E5BD0.toInt()),
-    BEAUTY(0xFFD2508F.toInt()),
-    CULTURE(0xFFB8326A.toInt()),
-    STAY(0xFF2E6FD8.toInt()),
-    HEALTH(0xFFD23C3C.toInt()),
-    SERVICE(0xFF5A6478.toInt()),
-    SPORT(0xFF1D8FA0.toInt()),
-    NATURE(0xFF4C8C3A.toInt()),
-    FUN(0xFF7B4FD6.toInt()),
-    WATER(0xFF1E7FB8.toInt()),
-    CHARGE(0xFF1F9D55.toInt()),
-    TRANSPORT(0xFF2E5BFF.toInt()),
+enum class PlaceFamily(val id: String) {
+    FOOD("eat"),
+    GROCERY("groceries"),
+    SHOP("shops"),
+    STAY("stay"),
+    CHARGE("charge"),
+    NATURE("nature"),
+    FUN("fun"),
+    WATER("water"),
+    CULTURE("culture"),
+    SPORT("sport"),
+    HEALTH("health"),
+    SERVICE("service"),
+    TRANSPORT("transport"),
+    ;
+
+    /** Opaque ARGB: categories.json's colour for the family's group on the row, else for its shelf. */
+    val colour: Int get() = (Categories.byId(id)?.takeIf { it.isGroup } ?: Categories.shelf(id))?.colour ?: Palette.SERVICE
 }
 
 /** Named colours outside the families. */
 object Palette {
-    val SERVICE: Int = PlaceFamily.SERVICE.colour
+    /** The services' slate (categories.json's), for a category or family categories.json gives no colour. */
+    val SERVICE: Int = 0xFF5A6478.toInt()
 
-    /** The neutral sign of a chain without a colour of its own (poi_style.py). */
-    val NEUTRAL_SIGN: Int = 0xFF26282C.toInt()
+    /**
+     * The sign of a brand whose own colour is not known, the boards' ink (the Brands board's sign without a logo): never
+     * a colour made up for it, which would tell of a brand what is not so.
+     */
+    val NEUTRAL_SIGN: Int = 0xFF14161B.toInt()
     val WHITE: Int = 0xFFFFFFFF.toInt()
+
+    /**
+     * How far a closed place's mark goes toward the paper or the day's map under it: lighter, so the open places stand
+     * out (the owner, 6 November, of lighter pins that looked closed: "Lighter for closed is a good idea"). Half, the
+     * least at which no family's closed mark is taken for another family's open one, by any eye (FamilyColoursTest).
+     */
+    const val CLOSED_FADE = 0.5f
+
+    /** [argb]'s colour on a closed place, [CLOSED_FADE] of the way to white: the family's still, lighter. */
+    fun closed(argb: Int): Int {
+        fun channel(shift: Int): Int {
+            val c = (argb shr shift) and 0xFF
+            return ((c + (0xFF - c) * CLOSED_FADE) + 0.5f).toInt() shl shift
+        }
+        return (0xFF shl 24) or channel(16) or channel(8) or channel(0)
+    }
 }
 
 /**
  * Every symbol Atlas draws, offline. The boards' own symbols ([BoardSymbols]: `ui.search`, `cat.eat`, `mode.walk`) come
  * first: [icon] returns the board drawing for a board id or for any older id it stands in for. Behind them are the CC0
- * map symbols (`maki-*`, `temaki-*`, `pinhead-*`) for each preset, category and cuisine, the Lucide-style UI set
- * (`ui-*`, stroked), and brand glyphs (`logo-*`, simple-icons). Each set is a bundled file read on first use; icons are
+ * map symbols (`maki-*`, `temaki-*`, `pinhead-*`) for each preset, category and cuisine, Atlas's own filled symbols in
+ * their style for the kinds no set draws (`atlas-*`, places/tools/atlas_icons.txt), the Lucide-style UI set (`ui-*`,
+ * stroked), and brand glyphs (`logo-*`, simple-icons). Each set is a bundled file read on first use; icons are
  * built once and kept.
  */
 object Symbols {
@@ -60,7 +90,10 @@ object Symbols {
      */
     fun icon(id: String): Icon? = BoardSymbols.icon(id) ?: original(id)
 
-    /** The icon [id] from the bundled open sets only (Maki, Temaki, Pinhead, Lucide, simple-icons), never the boards'. */
+    /**
+     * The icon [id] from the bundled sets only (Maki, Temaki, Pinhead, Atlas's own `atlas-*`, Lucide, simple-icons),
+     * never the boards'.
+     */
     fun original(id: String): Icon? {
         icons[id]?.let { return it }
         val e = set(fileFor(id))[id]?.arr ?: return null
@@ -85,30 +118,38 @@ object Symbols {
     fun ids(set: String = "symbols"): Set<String> = if (set == "board") BoardSymbols.ids() else set("$set.json").keys
 
     /**
-     * The map symbol for a feature: its id-tagging-schema preset's icon (or the nearest parent preset's), else its
-     * category's, else a generic one for its main key, else a plain marker.
+     * The map symbol for a feature: its kind's from the symbols database ([Kinds], its id-tagging-schema preset's icon
+     * or the nearest parent preset's until refined), else its category's, else a generic one for its main key, else a
+     * plain marker.
      */
     fun symbolFor(tags: Map<String, String>, geometry: Geometry = Geometry.POINT): String {
-        Presets.match(tags, geometry)?.let { p -> Presets.iconOf(p)?.let { if (has(it)) return it } }
+        Presets.match(tags, geometry)?.let { p -> Kinds.symbolOf(p)?.let { return it } }
         Categories.of(tags)?.let { if (has(it.symbol)) return it.symbol }
         for ((key, symbol) in KEY_SYMBOLS) if (key in tags && has(symbol)) return symbol
         return MARKER
     }
 
-    /** The place's colour family, by its tags (poi_style.py's tables), else by its category. */
-    fun familyOf(tags: Map<String, String>): PlaceFamily? {
-        tags["amenity"]?.let { AMENITY[it] }?.let { return it }
-        tags["shop"]?.let { return SHOP[it] ?: PlaceFamily.SHOP }
-        tags["tourism"]?.let { TOURISM[it] }?.let { return it }
-        tags["leisure"]?.let { LEISURE[it] }?.let { return it }
-        if ("office" in tags) return PlaceFamily.SERVICE
-        if (!tags["healthcare"].isNullOrEmpty()) return PlaceFamily.HEALTH
-        val c = Categories.of(tags) ?: return null
-        return FAMILIES[c.parentId ?: c.family]
-    }
+    /**
+     * What a place's mark shows on its family's colour, on a pin, a row's disc, a card's badge or its page: its brand's
+     * logo when the brand has one, so a chain is known at a glance, else its kind's symbol. The brand's own colours stay
+     * on its sign (the owner, 5 November: "think about how should brands be featured everywhere").
+     */
+    fun markFor(tags: Map<String, String>, geometry: Geometry = Geometry.POINT, country: String? = null): String =
+        Brands.forTags(tags, country)?.logoSlug?.let { "logo-$it" }?.takeIf { has(it) } ?: symbolFor(tags, geometry)
 
-    /** The place's colour (opaque ARGB): its family's, else the neutral service grey. */
-    fun colourFor(tags: Map<String, String>): Int = familyOf(tags)?.colour ?: Palette.SERVICE
+    /** The place's colour family: its category's, or null for what Atlas does not list. */
+    fun familyOf(tags: Map<String, String>): PlaceFamily? = Categories.of(tags)?.let(::familyOf)
+
+    /** The family of category [c]: its group's on the Map home's row, else its shelf's. */
+    fun familyOf(c: Category): PlaceFamily? = FAMILIES[c.parentId ?: c.family]
+
+    /**
+     * The place's colour (opaque ARGB): its category's, which is its family's; for what no category takes (a tree, a
+     * building), the colour of the search's shelf of everything else on the map, as the search draws it there.
+     */
+    fun colourFor(tags: Map<String, String>): Int = Categories.of(tags)?.colour ?: other
+
+    private val other: Int by lazy { Categories.shelf(CategoryTree.OSM)?.colour ?: Palette.SERVICE }
 
     /** The plain marker, when nothing better fits. */
     const val MARKER = "maki-marker"
@@ -121,39 +162,5 @@ object Symbols {
         "tourism" to "maki-attraction", "leisure" to "maki-park", "amenity" to MARKER,
     )
 
-    private val FAMILIES = mapOf(
-        "eat" to PlaceFamily.FOOD, "groceries" to PlaceFamily.GROCERY, "shops" to PlaceFamily.SHOP, "stay" to PlaceFamily.STAY,
-        "charge" to PlaceFamily.CHARGE, "nature" to PlaceFamily.NATURE, "fun" to PlaceFamily.FUN, "water" to PlaceFamily.WATER,
-        "culture" to PlaceFamily.CULTURE, "health" to PlaceFamily.HEALTH, "service" to PlaceFamily.SERVICE,
-        "sport" to PlaceFamily.SPORT, "transport" to PlaceFamily.TRANSPORT,
-    )
-
-    private fun table(family: PlaceFamily, values: String) = values.split(' ').associateWith { family }
-
-    private val AMENITY: Map<String, PlaceFamily> =
-        table(PlaceFamily.FOOD, "restaurant cafe pub bar fast_food ice_cream nightclub biergarten food_court") +
-            table(PlaceFamily.HEALTH, "pharmacy doctors dentist hospital clinic") +
-            table(PlaceFamily.CULTURE, "theatre arts_centre art_gallery events_venue public_bookcase library concert_hall") +
-            table(PlaceFamily.SERVICE, "atm bank post_box post_office bicycle_rental") +
-            table(PlaceFamily.CHARGE, "charging_station")
-
-    private val SHOP: Map<String, PlaceFamily> =
-        table(PlaceFamily.CULTURE, "art") +
-            table(PlaceFamily.SERVICE, "ticket copyshop tailor rental vacant laundry dry_cleaning") +
-            table(PlaceFamily.HEALTH, "optician chemist medical_supply hearing_aids") +
-            table(PlaceFamily.BEAUTY, "hairdresser beauty cosmetics massage tattoo perfumery") +
-            table(
-                PlaceFamily.GROCERY,
-                "supermarket convenience bakery pastry confectionery cheese alcohol wine tea butcher greengrocer deli " +
-                    "seafood coffee chocolate health_food organic farm frozen_food dairy spices nuts pasta food beverages water",
-            )
-
-    private val TOURISM: Map<String, PlaceFamily> =
-        table(PlaceFamily.STAY, "hotel guest_house apartment hostel motel chalet") +
-            table(PlaceFamily.CULTURE, "museum gallery attraction artwork")
-
-    private val LEISURE: Map<String, PlaceFamily> =
-        table(PlaceFamily.SPORT, "fitness_centre sports_centre pitch stadium track sports_hall swimming_pool ice_rink golf_course horse_riding") +
-            table(PlaceFamily.NATURE, "park garden nature_reserve") +
-            table(PlaceFamily.WATER, "marina slipway beach_resort")
+    private val FAMILIES = PlaceFamily.entries.associateBy { it.id }
 }

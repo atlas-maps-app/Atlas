@@ -1,0 +1,175 @@
+# What a kind is called wherever Atlas names it: what it sells, short ("Clothes", not "Clothing Store"). The owner,
+# 6 November, of the shops' chips: "instead of clothing store and gift shop only show Clothes, Gifts?", then "Yes and
+# apply that everywhere?". Presets.name reads it first, so the chips, the rows, a place's page and the search's
+# suggestions all say it. id-tagging-schema's own name (Presets.fullName) still names a place that has no name of its
+# own ("Gift Shop": a title says what the place is), and the search still knows the kind by it.
+#
+# kind         an id-tagging-schema preset
+# en nl de fr  its name in each of the app's languages; - keeps id-tagging-schema's in that one
+#
+# A kind whose own name already says it in a word (Bakery, Butcher, Florist, Drugstore) or that sells no one thing (a
+# department store, a convenience store, a garden center) has no line. KindNamesTest keeps the file true: every kind
+# Atlas knows, every language filled, and no name that is still a shop's ("…winkel", "…geschäft", "Magasin de …").
+
+# Eat & drink
+amenity/ice_cream	Ice Cream	IJs	Eis	Glaces
+amenity/ice_cream/frozen_yogurt	Frozen Yogurt	Frozen yoghurt	-	Yaourt glacé
+shop/ice_cream	Ice Cream	IJs	Eis	Glaces
+
+# Groceries
+shop/alcohol	Liquor	Sterke drank	Spirituosen	Alcools
+shop/beverages	Beverages	Dranken	Getränke	Boissons
+shop/cheese	Cheese	Kaas	Käse	Fromages
+shop/chocolate	Chocolate	Chocolade	Schokolade	Chocolat
+shop/coffee	Coffee Beans	Koffiebonen	Kaffeebohnen	Cafés en grains
+shop/confectionery	Candy	Snoep	Süßwaren	Bonbons
+shop/dairy	Dairy	Zuivel	Milchprodukte	Produits laitiers
+shop/frozen_food	Frozen Food	Diepvries	Tiefkühlkost	Surgelés
+shop/health_food	Health Food	Natuurvoeding	Naturkost	Produits bio
+shop/honey	Honey	Honing	Honig	Miel
+shop/nutrition_supplements	Supplements	Supplementen	Nahrungsergänzung	Compléments alimentaires
+shop/nuts	Nuts	Noten	Nüsse	Noix
+shop/pasta	Pasta	Pasta	Nudeln	Pâtes
+shop/pastry	Pastries	Gebak	Kuchen	Pâtisseries
+shop/rice	Rice	Rijst	Reis	Riz
+shop/seafood	Fish	Vis	Fisch	Poissons
+shop/spices	Spices	Specerijen	Gewürze	Épices
+shop/tea	Tea	Thee	Tee	Thés
+shop/water	Drinking Water	Drinkwater	Trinkwasser	Eau potable
+shop/wine	Wine	Wijn	Wein	Vins
+
+# Shops: what one wears
+shop/bag	Bags & Luggage	Tassen & koffers	Taschen & Koffer	Sacs & bagages
+shop/clothes	Clothes	Kleding	Kleidung	Vêtements
+shop/clothes/second_hand	Second-Hand Clothes	Tweedehands kleding	Second-Hand-Kleidung	Vêtements d'occasion
+shop/clothes/suits	Suits	Pakken	Anzüge	Costumes
+shop/clothes/underwear	Underwear	Ondergoed	Unterwäsche	Sous-vêtements
+shop/clothes/wedding	Wedding Clothes	Trouwkleding	Hochzeitsmode	Tenues de mariage
+shop/clothes/workwear	Workwear	Werkkleding	Berufskleidung	Vêtements de travail
+shop/fashion	Fashion	Mode	Mode	Mode
+shop/fashion_accessories	Accessories	Accessoires	Accessoires	Accessoires
+shop/jewelry	Jewelry	Sieraden	Schmuck	Bijoux
+shop/leather	Leather Goods	Lederwaren	Lederwaren	Maroquinerie
+shop/shoes	Shoes	Schoenen	Schuhe	Chaussures
+shop/watches	Watches	Horloges	Uhren	Montres
+shop/wigs	Wigs	Pruiken	Perücken	Perruques
+
+# Shops: care and pleasures
+shop/beauty	Beauty	-	-	-
+shop/cannabis	Cannabis	Cannabis	Cannabis	Cannabis
+shop/cosmetics	Cosmetics	Cosmetica	Kosmetik	Cosmétiques
+shop/e-cigarette	E-Cigarettes	E-sigaretten	E-Zigaretten	Cigarettes électroniques
+shop/erotic	Erotica	-	Erotik	-
+shop/erotic/lgbtq	LGBTQ+ Erotica	-	LGBTQ+ Erotik	-
+shop/hairdresser_supply	Hair Supplies	Kappersbenodigdheden	Friseurbedarf	Matériel de coiffure
+shop/hearing_aids	Hearing Aids	Hoortoestellen	Hörgeräte	Aides auditives
+shop/massage	Massage	Massage	-	-
+shop/medical_supply	Medical Supplies	Medische hulpmiddelen	-	Matériel médical
+shop/perfumery	Perfume	Parfum	-	-
+shop/tobacco	Tobacco	Tabak	Tabak	Tabac
+
+# Shops: the home
+shop/appliance	Appliances	Huishoudapparaten	Haushaltsgeräte	Électroménager
+shop/bathroom_furnishing	Bathrooms	Badkamers	Badeinrichtung	Salles de bain
+shop/bbq	Barbecues	Barbecues	Grills	Barbecues
+shop/bed	Beds & Mattresses	Bedden & matrassen	Betten & Matratzen	Literie
+shop/candles	Candles	Kaarsen	Kerzen	Bougies
+shop/carpet	Carpets	Tapijt	Teppiche	Tapis
+shop/curtain	Curtains	Gordijnen	Vorhänge	Rideaux
+shop/doors	Doors	Deuren	Türen	Portes
+shop/fireplace	Fireplaces	Haarden	Kamine	Cheminées
+shop/flooring	Flooring	Vloeren	Bodenbeläge	Revêtements de sol
+shop/furniture	Furniture	Meubels	Möbel	Meubles
+shop/household_linen	Household Linen	Huishoudtextiel	Haushaltswäsche	Linge de maison
+shop/houseware	Houseware	Huishoudartikelen	Haushaltswaren	Articles ménagers
+shop/interior_decoration	Interior Decor	Woondecoratie	Wohndeko	Décoration
+shop/kitchen	Kitchens	Keukens	Küchen	Cuisines
+shop/lighting	Lighting	Verlichting	Leuchten	Luminaires
+shop/pottery	Pottery	Aardewerk	Keramik	Poterie
+shop/tiles	Tiles	Tegels	Fliesen	Carrelage
+shop/vacuum_cleaner	Vacuum Cleaners	Stofzuigers	Staubsauger	Aspirateurs
+shop/window_blind	Blinds	Zonwering	Jalousien	Stores
+
+# Shops: making and mending
+shop/agrarian	Farm Supplies	Landbouwbenodigdheden	Agrarbedarf	Fournitures agricoles
+shop/doityourself	DIY	Doe-het-zelf	Heimwerken	Bricolage
+shop/electrical	Electrical Supplies	Elektra	Elektrobedarf	Matériel électrique
+shop/fuel	Fuel	Brandstof	Brennstoff	Carburant
+shop/gas	Bottled Gas	Gasflessen	Gasflaschen	Bouteilles de gaz
+shop/groundskeeping	Garden Equipment	Tuingereedschap	Gartengeräte	Matériel de jardin
+shop/hardware	Hardware	IJzerwaren	Eisenwaren	-
+shop/paint	Paint	Verf	Farben	Peinture
+shop/swimming_pool	Pool Supplies	Zwembadartikelen	Poolbedarf	Matériel de piscine
+
+# Shops: electronics
+shop/camera	Cameras	Camera's	Kameras	Appareils photo
+shop/computer	Computers	Computers	Computer	Informatique
+shop/electronics	Electronics	Elektronica	Elektronik	Électronique
+shop/hifi	Hi-Fi	Hifi	HiFi	Hi-fi
+shop/mobile_phone	Phones	Telefoons	Handys	Téléphones
+shop/mobile_phone_accessories	Phone Accessories	Telefoonaccessoires	Handyzubehör	Accessoires téléphone
+shop/printer_ink	Printer Ink	Printerinkt	Druckertinte	Encre d'imprimante
+shop/radiotechnics	Electronic Parts	Elektronische onderdelen	Elektronikbauteile	Composants électroniques
+shop/telecommunication	Telecom	Telecom	Telekommunikation	Télécoms
+shop/video_games	Video Games	Games	Videospiele	Jeux vidéo
+
+# Shops: pastimes and gifts
+shop/anime	Anime & Manga	Anime & manga	Anime & Manga	Manga & anime
+shop/antiques	Antiques	Antiek	Antiquitäten	Antiquités
+shop/art	Art	Kunst	Kunst	Art
+shop/baby_goods	Baby Goods	Babyartikelen	Babybedarf	Puériculture
+shop/books	Books	Boeken	Bücher	Livres
+shop/brewing_supplies	Brewing Supplies	Brouwbenodigdheden	Brauzubehör	Matériel de brassage
+shop/collector	Collectibles	Verzamelobjecten	Sammlerstücke	Objets de collection
+shop/craft	Arts & Crafts	Kunstbenodigdheden	Künstlerbedarf	Loisirs créatifs
+shop/esoteric	Esoterica	Esoterie	Esoterik	-
+shop/fabric	Fabrics	Stoffen	Stoffe	Tissus
+shop/fishing	Fishing Gear	Hengelsport	Angelbedarf	Pêche
+shop/frame	Picture Frames	Lijsten	Bilderrahmen	Encadrement
+shop/games	Board Games	Bordspellen	Brettspiele	Jeux de société
+shop/gift	Gifts	Cadeaus	Geschenke	Cadeaux
+shop/hobby	Hobby Supplies	Hobby	Bastelbedarf	Loisirs
+shop/hunting	Hunting Gear	Jachtartikelen	Jagdbedarf	Chasse
+shop/lottery	Lottery	-	Lotto	-
+shop/military_surplus	Army Surplus	-	-	-
+shop/model	Models	Modelbouw	Modellbau	Modélisme
+shop/music	Music	Muziek	Musik	Musique
+shop/musical_instrument	Instruments	Muziekinstrumenten	Musikinstrumente	Instruments de musique
+shop/outdoor	Outdoor Gear	Buitensport	Outdoor	Plein air
+shop/party	Party Supplies	Feestartikelen	Partybedarf	Articles de fête
+shop/pet	Pet Supplies	Dierenbenodigdheden	Tierbedarf	-
+shop/photo	Photo	Foto	Foto	Photo
+shop/pyrotechnics	Fireworks	Vuurwerk	Feuerwerk	Feux d'artifice
+shop/religion	Religious Goods	Religieuze artikelen	Devotionalien	Articles religieux
+shop/scuba_diving	Diving Gear	Duiksport	Tauchbedarf	Plongée
+shop/second_hand	Second-Hand	Tweedehands	Second-Hand	Occasion
+shop/sewing	Sewing Supplies	Fournituren	Nähzubehör	-
+shop/sports	Sporting Goods	Sportartikelen	Sportartikel	Articles de sport
+shop/stationery	Stationery	Kantoorartikelen	Schreibwaren	-
+shop/ticket	Tickets	Tickets	Tickets	Billets
+shop/toys	Toys	Speelgoed	Spielwaren	Jouets
+shop/trophy	Trophies	Trofeeën	Trophäen	Trophées
+shop/water_sports	Water Sports	Watersport	Wassersport	Sports nautiques
+shop/weapons	Weapons	Wapens	Waffen	Armes
+
+# Vehicles
+shop/bicycle	Bikes	Fietsen	Fahrräder	Vélos
+shop/boat	Boats	Boten	Boote	Bateaux
+shop/car	Cars	Auto's	Autos	Voitures
+shop/car/second_hand	Used Cars	Tweedehands auto's	Gebrauchtwagen	Voitures d'occasion
+shop/car_parts	Car Parts	Auto-onderdelen	Autoteile	Pièces auto
+shop/caravan	RVs	Caravans	Wohnwagen	Camping-cars
+shop/motorcycle	Motorcycles	Motoren	Motorräder	Motos
+shop/tyres	Tires	Banden	Reifen	Pneus
+
+# Services
+craft/electronics_repair	Electronics Repair	Elektronicareparatie	Elektronikreparatur	Réparation électronique
+shop/car_repair	Car Repair	-	-	Réparation auto
+shop/copyshop	Copy & Print	-	Kopien	-
+shop/motorcycle_repair	Motorcycle Repair	-	-	-
+shop/rental	Rentals	Verhuur	-	Location
+shop/repair	Repairs	Reparaties	Reparaturen	Réparations
+shop/shoe_repair	Shoe Repair	Schoenreparatie	-	-
+# Health
+# id-tagging-schema calls a pharmacy a "Pharmacy Counter" in English alone (Benu on the Brands board, 6 November)
+amenity/pharmacy	Pharmacy	-	-	-
