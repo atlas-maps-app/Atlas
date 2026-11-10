@@ -45,7 +45,8 @@ Box box_of(const tiles::GridBox& grid, std::int32_t top_cm, const view::GroundFr
             .z1 = frame.z(south, 0)};
 }
 
-Frustum::Frustum(const view::Camera& camera, double margin_px, double far) noexcept : camera_(camera), far_(far) {
+Frustum::Frustum(const view::Camera& camera, double margin_px, double far, double drop) noexcept
+    : camera_(camera), far_(far), drop_(drop) {
     const double f = camera.focal();
     const double m = margin_px;
     normals_[0] = {f, 0, camera.cx() + m};                   // left: x ≥ −m
@@ -56,8 +57,24 @@ Frustum::Frustum(const view::Camera& camera, double margin_px, double far) noexc
     offsets_ = {0, 0, 0, 0, camera.near()};
 }
 
+Box Frustum::bent(const Box& box) const noexcept {
+    if (drop_ == 0.0) return box;
+    const view::Vec3& t = camera_.spec().target;
+    // an interval's nearest and farthest distance from t, along one axis
+    const auto near = [](double lo, double hi, double at) { return at < lo ? lo - at : (at > hi ? at - hi : 0.0); };
+    const auto far = [](double lo, double hi, double at) { return std::max(std::abs(lo - at), std::abs(hi - at)); };
+    const double nx = near(box.x0, box.x1, t.x);
+    const double nz = near(box.z0, box.z1, t.z);
+    const double fx = far(box.x0, box.x1, t.x);
+    const double fz = far(box.z0, box.z1, t.z);
+    Box b = box;
+    b.y0 -= drop_ * ((fx * fx) + (fz * fz));
+    b.y1 -= drop_ * ((nx * nx) + (nz * nz));
+    return b;
+}
+
 bool Frustum::sees(const Box& box) const noexcept {
-    const auto k = corners(camera_, box);
+    const auto k = corners(camera_, bent(box));
     for (std::size_t p = 0; p < normals_.size(); ++p) {
         const bool outside =
             std::ranges::all_of(k, [&](const view::Vec3& c) { return dot(c, normals_[p]) < offsets_[p]; });
@@ -67,7 +84,7 @@ bool Frustum::sees(const Box& box) const noexcept {
 }
 
 double Frustum::share(const Box& box) const noexcept {
-    const auto k = corners(camera_, box);
+    const auto k = corners(camera_, bent(box));
     double x0 = std::numeric_limits<double>::infinity();
     double x1 = -x0;
     double y0 = x0;
@@ -88,10 +105,11 @@ double Frustum::share(const Box& box) const noexcept {
 }
 
 double Frustum::distance(const Box& box) const noexcept {
+    const Box b = bent(box);
     const view::Vec3& e = camera_.eye();
-    const double dx = e.x < box.x0 ? box.x0 - e.x : (e.x > box.x1 ? e.x - box.x1 : 0.0);
-    const double dy = e.y < box.y0 ? box.y0 - e.y : (e.y > box.y1 ? e.y - box.y1 : 0.0);
-    const double dz = e.z < box.z0 ? box.z0 - e.z : (e.z > box.z1 ? e.z - box.z1 : 0.0);
+    const double dx = e.x < b.x0 ? b.x0 - e.x : (e.x > b.x1 ? e.x - b.x1 : 0.0);
+    const double dy = e.y < b.y0 ? b.y0 - e.y : (e.y > b.y1 ? e.y - b.y1 : 0.0);
+    const double dz = e.z < b.z0 ? b.z0 - e.z : (e.z > b.z1 ? e.z - b.z1 : 0.0);
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
@@ -128,6 +146,34 @@ std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t
     std::uint64_t bits = 0;
     for (std::uint32_t r = 0; r < k; ++r) {
         for (std::uint32_t c = 0; c < k; ++c) bits |= std::uint64_t{1} << ((cy + r) * n + cx + c);
+    }
+    return bits;
+}
+
+std::uint64_t cells_overlapping(std::uint8_t per_side, const std::array<std::int32_t, 4>& tile,
+                                const std::array<std::int32_t, 4>& part) noexcept {
+    const std::int64_t n = per_side;
+    if (n == 0 || n > 8) return 0;
+    // two levels' edges on the grid (tile_box's, the cells' ceilings) part by a unit or two where they agree
+    constexpr std::int64_t rounding = 16;
+    const std::int64_t south = tile[0];
+    const std::int64_t west = tile[1];
+    const std::int64_t north = tile[2];
+    const std::int64_t east = tile[3];
+    // WorldGeometry.cellBoxes: row r's north edge north − ⌈r · (north − south) / n⌉, column k's west edge
+    // west + ⌈k · (east − west) / n⌉
+    const auto row = [&](std::int64_t r) { return north - pymath::floor_div((r * (north - south)) + n - 1, n); };
+    const auto column = [&](std::int64_t k) { return west + pymath::floor_div((k * (east - west)) + n - 1, n); };
+    std::uint64_t bits = 0;
+    for (std::int64_t r = 0; r < n; ++r) {
+        if (std::min<std::int64_t>(row(r), part[2]) - std::max<std::int64_t>(row(r + 1), part[0]) <= rounding) continue;
+        for (std::int64_t k = 0; k < n; ++k) {
+            if (std::min<std::int64_t>(column(k + 1), part[3]) - std::max<std::int64_t>(column(k), part[1]) <=
+                rounding) {
+                continue;
+            }
+            bits |= std::uint64_t{1} << static_cast<std::uint32_t>((r * n) + k);
+        }
     }
     return bits;
 }

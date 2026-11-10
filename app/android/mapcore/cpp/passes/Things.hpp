@@ -75,9 +75,6 @@ struct ThingChoice {
 [[nodiscard]] std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style,
                                                         const style::PaletteBlock* palette = nullptr);
 
-/// The first of a tile's items that are things.
-[[nodiscard]] std::uint32_t first_thing(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// The street furniture's pass.
 class Things final : public frame::Pass {
 public:
@@ -92,6 +89,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the street furniture (style::camera_part::furniture).
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
     /// emit's elements, keeping the records the GPU writes for them in its order into `records` and the translucent
     /// ones (the nearest first: the GPU's list holds them the other way round) into `sides` (the tests').
@@ -150,17 +149,22 @@ private:
     std::array<gpu::Buffer, 2> records_;
     std::array<gpu::Buffer, 2> sides_;
     std::array<gpu::Buffer, 2> fills_; ///< the fills' list: the quads' records (ENGINE.md gain 18)
+    /// While a tile fades, each record's standing fade, then each glint's (ENGINE.md's standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline draw_{nullptr};
-    vk::raii::Pipeline fill_{nullptr}; ///< the quads alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_{nullptr};        ///< the quads alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_fading_{nullptr}; ///< the same while a tile fades (trees_fills_fading_fs)
     vk::raii::Pipeline side_{nullptr};
 
     // the render thread's, per frame
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> fill_words_;
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
 };
 

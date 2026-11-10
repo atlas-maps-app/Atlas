@@ -3,6 +3,7 @@
 
 #include "base/arena.hpp"
 #include "base/log.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "base/trace.hpp"
 #include "gpu/Frames.hpp"
 #include "tiles/Grid.hpp"
@@ -13,10 +14,12 @@
 #include <mapbox/earcut.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <format>
 #include <map>
+#include <numbers>
 #include <string_view>
 #include <utility>
 
@@ -34,7 +37,17 @@ namespace {
 constexpr double l11_start = 18'800.0;
 /// The far plane at world_from, and the sphere's radius (ENGINE.md step 5, "the bend").
 constexpr double far_at_from = 30'000.0;
-constexpr double earth_radius = 6'371'000.0;
+constexpr double earth_radius = view::earth_radius;
+/// How far a chord of L11's may sag from the bent ground, metres: half its pixel at its start (6 m at 18.8 km).
+constexpr double bend_tolerance = 3.0;
+/// The most times stage T halves an edge (an L0 triangle across an ocean, 20,000 km, halves 6 times).
+constexpr int split_depth = 16;
+/// The frame's metres a degree spans (view/Ladder.hpp's frame: kx at the equator, kz).
+constexpr double metres_per_degree_x = 111'320.0;
+constexpr double metres_per_degree_z = 110'540.0;
+/// A pole's cap's grid: quads along a parallel and down a meridian.
+constexpr std::uint32_t cap_columns = 128;
+constexpr std::uint32_t cap_rows = 16;
 /// The globe's levels kept resident from the first frame on (ENGINE.md step 5: its L0 to L3).
 constexpr std::uint8_t pinned_last = 3;
 /// The share of the heap the resident tiles may hold before the least lately drawn go.
@@ -71,7 +84,10 @@ constexpr double rail_width = 3.0;
 class GeometryWriter {
 public:
     GeometryWriter(const tl::TileHeader& header, const tl::Style* style) noexcept
-        : south_(header.south), west_(header.west), north_(header.north), east_(header.east), style_(style) {}
+        : south_(header.south), west_(header.west), north_(header.north), east_(header.east), style_(style) {
+        const double limit = world_split_length(header.level);
+        limit_squared_ = limit * limit;
+    }
 
     /// A ring of the tile, filled in `palette`, in cell `cell`.
     void fill(const tl::RingView& ring, std::uint8_t palette, std::uint32_t cell) {
@@ -84,12 +100,10 @@ public:
                                    static_cast<double>(std::int64_t{ring.lat[i]} - south_)});
         }
         indices_ = mapbox::earcut<std::uint32_t>(polygon_);
+        const std::uint32_t look = std::uint32_t{palette} | (cell << 8U);
+        const auto at = [&ring](std::uint32_t v) { return Point{.lat = ring.lat[v], .lon = ring.lon[v]}; };
         for (std::size_t t = 0; t + 2 < indices_.size(); t += 3) {
-            for (std::size_t k = 0; k < 3; ++k) {
-                const std::uint32_t v = indices_[t + k];
-                vertices_.push_back(quantised(ring.lat[v], ring.lon[v]));
-            }
-            triangles_.push_back(std::uint32_t{palette} | (cell << 8U));
+            triangle(at(indices_[t]), at(indices_[t + 1]), at(indices_[t + 2]), look, split_depth);
         }
     }
 
@@ -100,9 +114,8 @@ public:
         const auto dm = static_cast<std::uint32_t>(std::clamp(std::lround(width * 10.0), 1L, 65'535L));
         const std::uint32_t look = std::uint32_t{palette} | (cell << 8U) | (dm << 16U);
         for (std::size_t i = 0; i + 1 < n; ++i) {
-            segments_.push_back(quantised(line.lat[i], line.lon[i]));
-            segments_.push_back(quantised(line.lat[i + 1], line.lon[i + 1]));
-            segments_.push_back(look);
+            segment({.lat = line.lat[i], .lon = line.lon[i]}, {.lat = line.lat[i + 1], .lon = line.lon[i + 1]}, look,
+                    split_depth);
         }
     }
 
@@ -126,6 +139,99 @@ public:
     }
 
 private:
+    /// A point of the grid (1e-7°).
+    struct Point {
+        std::int32_t lat = 0;
+        std::int32_t lon = 0;
+    };
+
+    /// The square of an edge's length on the ground (frame metres at its middle's latitude): the same for both its
+    /// ends' orders, so the two triangles that share an edge, in this tile or the next of its level, cut it alike.
+    [[nodiscard]] static double length_squared(Point a, Point b) noexcept {
+        const double lat = (static_cast<double>(a.lat) + static_cast<double>(b.lat)) * 0.5e-7;
+        const double dx = static_cast<double>(std::int64_t{b.lon} - a.lon) * 1e-7 * metres_per_degree_x *
+                          pymath::cos(lat * (std::numbers::pi / 180.0));
+        const double dz = static_cast<double>(std::int64_t{b.lat} - a.lat) * 1e-7 * metres_per_degree_z;
+        return (dx * dx) + (dz * dz);
+    }
+
+    [[nodiscard]] bool too_long(Point a, Point b) const noexcept { return length_squared(a, b) > limit_squared_; }
+
+    /// An edge's middle on the grid (rounded down, whichever end comes first).
+    [[nodiscard]] static Point middle(Point a, Point b) noexcept {
+        return {.lat = static_cast<std::int32_t>((std::int64_t{a.lat} + b.lat) >> 1),
+                .lon = static_cast<std::int32_t>((std::int64_t{a.lon} + b.lon) >> 1)};
+    }
+
+    /// A triangle, cut while an edge is longer than the level keeps: at the middles of its long edges, into four, three
+    /// or two triangles of its winding (a quad left by two cuts by its shorter diagonal).
+    void triangle(Point a, Point b, Point c, std::uint32_t look, int depth) {
+        const bool ab = depth > 0 && too_long(a, b);
+        const bool bc = depth > 0 && too_long(b, c);
+        const bool ca = depth > 0 && too_long(c, a);
+        const int d = depth - 1;
+        if (ab && bc && ca) {
+            const Point mab = middle(a, b);
+            const Point mbc = middle(b, c);
+            const Point mca = middle(c, a);
+            triangle(a, mab, mca, look, d);
+            triangle(mab, b, mbc, look, d);
+            triangle(mca, mbc, c, look, d);
+            triangle(mab, mbc, mca, look, d);
+        } else if (ab && bc) {
+            two(a, b, c, look, d);
+        } else if (bc && ca) {
+            two(b, c, a, look, d);
+        } else if (ca && ab) {
+            two(c, a, b, look, d);
+        } else if (ab) {
+            const Point m = middle(a, b);
+            triangle(a, m, c, look, d);
+            triangle(m, b, c, look, d);
+        } else if (bc) {
+            const Point m = middle(b, c);
+            triangle(b, m, a, look, d);
+            triangle(m, c, a, look, d);
+        } else if (ca) {
+            const Point m = middle(c, a);
+            triangle(c, m, b, look, d);
+            triangle(m, a, b, look, d);
+        } else {
+            vertices_.push_back(quantised(a.lat, a.lon));
+            vertices_.push_back(quantised(b.lat, b.lon));
+            vertices_.push_back(quantised(c.lat, c.lon));
+            triangles_.push_back(look);
+        }
+    }
+
+    /// A triangle whose edges p–q and q–r are cut: the corner at q, then the quad p, m(pq), m(qr), r by its shorter
+    /// diagonal.
+    void two(Point p, Point q, Point r, std::uint32_t look, int depth) {
+        const Point m0 = middle(p, q);
+        const Point m1 = middle(q, r);
+        triangle(m0, q, m1, look, depth);
+        if (length_squared(p, m1) <= length_squared(m0, r)) {
+            triangle(p, m0, m1, look, depth);
+            triangle(p, m1, r, look, depth);
+        } else {
+            triangle(p, m0, r, look, depth);
+            triangle(m0, m1, r, look, depth);
+        }
+    }
+
+    /// A line's segment, halved while it is longer than the level keeps.
+    void segment(Point a, Point b, std::uint32_t look, int depth) {
+        if (depth > 0 && too_long(a, b)) {
+            const Point m = middle(a, b);
+            segment(a, m, look, depth - 1);
+            segment(m, b, look, depth - 1);
+            return;
+        }
+        segments_.push_back(quantised(a.lat, a.lon));
+        segments_.push_back(quantised(b.lat, b.lon));
+        segments_.push_back(look);
+    }
+
     /// A point's fractions of the tile's box, u east from the west edge and v south from the north edge, 0 to 65,535.
     [[nodiscard]] std::uint32_t quantised(std::int32_t lat, std::int32_t lon) const noexcept {
         const auto frac = [](std::int64_t d, std::int64_t span) {
@@ -143,12 +249,22 @@ private:
     std::int32_t north_;
     std::int32_t east_;
     const tl::Style* style_;
+    double limit_squared_ = 0;
     std::vector<std::vector<std::array<double, 2>>> polygon_;
     std::vector<std::uint32_t> indices_;
     std::vector<std::uint32_t> vertices_;
     std::vector<std::uint32_t> triangles_;
     std::vector<std::uint32_t> segments_;
 };
+
+/// The eye's height over the sphere its target's ground bends to; over the flat ground where nothing bends.
+[[nodiscard]] double eye_height(const WorldBend& b) noexcept {
+    if (!(b.drop > 0.0)) return b.eye.y;
+    const double dx = b.eye.x - b.target.x;
+    const double dy = (b.eye.y - b.target.y) + earth_radius;
+    const double dz = b.eye.z - b.target.z;
+    return std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) - earth_radius;
+}
 
 /// Each feature of `layer` with its cell, in the layer's order (cell by cell).
 template <class F>
@@ -160,7 +276,60 @@ void each_row(const tl::Layer& layer, std::uint32_t cells, const F& f) {
 
 } // namespace
 
+std::optional<tl::TileKey> world_block_of(std::string_view id) noexcept {
+    constexpr std::string_view prefix = "world/";
+    if (!id.starts_with(prefix)) return std::nullopt;
+    id.remove_prefix(prefix.size());
+    std::array<std::uint32_t, 3> v{};
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const auto [end, ec] = std::from_chars(id.data(), id.data() + id.size(), v.at(i));
+        if (ec != std::errc{}) return std::nullopt;
+        id.remove_prefix(static_cast<std::size_t>(end - id.data()));
+        if (i + 1 < v.size()) {
+            if (!id.starts_with('/')) return std::nullopt;
+            id.remove_prefix(1);
+        }
+    }
+    if (!id.empty() || v[0] > world_finest) return std::nullopt;
+    return tl::TileKey(static_cast<std::uint8_t>(v[0]), v[1], v[2]);
+}
+
 double world_level_start(std::uint8_t z) noexcept { return std::ldexp(l11_start, int{world_finest} - int{z}); }
+
+double world_split_length(std::uint8_t z) noexcept {
+    return std::sqrt(8.0 * earth_radius * std::ldexp(bend_tolerance, int{world_finest} - int{z}));
+}
+
+DegreeBox world_cap_box(std::int8_t cap, double lon) noexcept {
+    return {.north = cap > 0 ? 90.0 : -world_cap_from,
+            .south = cap > 0 ? world_cap_from : -90.0,
+            .west = lon - 180.0,
+            .east = lon + 180.0};
+}
+
+WorldGeometry world_cap_geometry(std::uint8_t palette) {
+    // the corners' words: u east from the west edge, v south from the north edge
+    const auto word = [](std::uint32_t i, std::uint32_t j) {
+        const std::uint32_t u = ((i * 65'535U) + (cap_columns / 2)) / cap_columns;
+        const std::uint32_t v = ((j * 65'535U) + (cap_rows / 2)) / cap_rows;
+        return u | (v << 16U);
+    };
+    WorldGeometry g;
+    g.triangles = 2 * cap_columns * cap_rows;
+    g.words.reserve(std::size_t{4} * g.triangles);
+    for (std::uint32_t j = 0; j < cap_rows; ++j) {
+        for (std::uint32_t i = 0; i < cap_columns; ++i) {
+            const std::uint32_t nw = word(i, j);
+            const std::uint32_t ne = word(i + 1, j);
+            const std::uint32_t sw = word(i, j + 1);
+            const std::uint32_t se = word(i + 1, j + 1);
+            // counter-clockwise with north up, as earcut leaves the tiles' triangles
+            g.words.insert(g.words.end(), {nw, sw, se, nw, se, ne});
+        }
+    }
+    g.words.insert(g.words.end(), g.triangles, std::uint32_t{palette});
+    return g;
+}
 
 double world_far(double distance, double height) noexcept {
     const double k = distance / world_from;
@@ -169,7 +338,8 @@ double world_far(double distance, double height) noexcept {
 }
 
 std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFrame& frame,
-                                  const std::function<bool(const tl::TileKey&)>& held, double reach) {
+                                  const std::function<bool(const tl::TileKey&)>& held, const WorldBend& bend,
+                                  double reach) {
     std::vector<WorldLeaf> out;
     struct Node {
         tl::TileKey key;
@@ -180,8 +350,9 @@ std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFram
     while (!stack.empty()) {
         Node n = stack.back();
         stack.pop_back();
-        const Box box = box_of(grid_of(n.key), 0, frame);
-        if (!frustum.sees(box)) continue;
+        const DegreeBox degrees = degrees_of(grid_of(n.key));
+        const Box box = world_box(bend, frame, degrees);
+        if (!frustum.sees(box) || !before_horizon(bend, degrees)) continue;
         if (held(n.key)) {
             n.holder = n.key;
             n.held = true;
@@ -295,6 +466,24 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
     const vk::DeviceSize bytes = std::max<vk::DeviceSize>(budget & ~vk::DeviceSize{15}, 1U << 20U);
     ATLAS_GPU_LET(heaps, Heaps::create(device, HeapBudget{.initial = bytes, .total = bytes, .binding = 0}));
     std::unique_ptr<WorldTiles> w(new WorldTiles(store, std::move(heaps))); // NOLINT(cppcoreguidelines-owning-memory)
+    // the poles' caps, in the heap for good from the first frame on
+    for (std::size_t c = 0; c < w->caps_.size(); ++c) {
+        const WorldGeometry g = world_cap_geometry(c == 0 ? world_palette::water : world_palette::south_cap);
+        const auto cap_bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
+        const auto range = w->heaps_->allocate(HeapKind::ground, cap_bytes, 16, HeapEnd::low);
+        if (!range) {
+            log::warn("vk world: no room for the poles' caps");
+            break;
+        }
+        w->heaps_->write(*range, std::as_bytes(std::span(g.words)));
+        auto cap = std::make_unique<WorldTile>();
+        cap->range = *range;
+        cap->triangles = g.triangles;
+        cap->pinned = true;
+        cap->cap = c == 0 ? std::int8_t{1} : std::int8_t{-1};
+        w->caps_.at(c) = std::move(cap);
+    }
+    w->heaps_->flush();
     w->worker_ = std::jthread([raw = w.get()](const std::stop_token& stop) { raw->run(stop); });
     return w;
 }
@@ -329,9 +518,19 @@ void WorldTiles::wait_idle() {
     idle_cv_.wait(lock, [this] { return queue_.empty() && building_ == ~std::uint64_t{0}; });
 }
 
-void WorldTiles::take_style() {
+std::vector<WorldWant> WorldTiles::wants() const {
+    const std::scoped_lock lock(mutex_);
+    return wants_;
+}
+
+std::vector<tl::TileKey> WorldTiles::blocks() const {
+    const std::scoped_lock lock(mutex_);
+    return blocks_;
+}
+
+bool WorldTiles::take_style() {
     const std::vector<std::shared_ptr<const tl::StorePack>> open = store_.packs();
-    if (open == seen_packs_) return;
+    if (open == seen_packs_) return false;
     seen_packs_ = open;
     style_pack_.reset();
     for (const std::shared_ptr<const tl::StorePack>& p : open) {
@@ -339,6 +538,29 @@ void WorldTiles::take_style() {
             style_pack_ = p;
             break;
         }
+    }
+    std::vector<const tl::StorePack*> world;
+    for (const std::shared_ptr<const tl::StorePack>& p : open) {
+        if (is_world(*p)) world.push_back(p.get());
+    }
+    if (world == seen_world_) return false;
+    seen_world_ = std::move(world);
+    open_blocks_.clear();
+    for (const tl::StorePack* p : seen_world_) {
+        if (const auto block = world_block_of(p->id)) open_blocks_.insert(block->packed());
+    }
+    return true;
+}
+
+void WorldTiles::let_go_of_gone() {
+    for (auto it = resident_.begin(); it != resident_.end();) {
+        const WorldTile& t = *it->second;
+        if (t.pack == nullptr || std::ranges::find(seen_world_, t.pack.get()) != seen_world_.end()) {
+            ++it;
+            continue;
+        }
+        let_go(t);
+        it = resident_.erase(it);
     }
 }
 
@@ -358,11 +580,15 @@ void WorldTiles::run(const std::stop_token& stop) {
             building_ = key.packed();
         }
         const auto started = std::chrono::steady_clock::now();
+        // the cache's writes as the build begins: a chunk kept meanwhile makes the tile's absence stale at once
+        const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
+        const std::uint64_t writes = cache != nullptr ? cache->writes() : 0;
         bool no_room = false;
+        std::optional<WorldWant> absent;
         std::unique_ptr<WorldTile> tile;
         {
             const trace::Section traced("atlas world tile");
-            tile = build(key, scratch, no_room);
+            tile = build(key, scratch, no_room, absent);
         }
         std::function<void()> wake;
         {
@@ -373,6 +599,9 @@ void WorldTiles::run(const std::stop_token& stop) {
                 built_.push_back(std::move(tile));
             } else if (no_room) {
                 no_room_.push_back(key);
+            } else if (absent) {
+                // its chunk not on the phone yet: wanted from the app, and built once the cache has changed
+                absent_.insert_or_assign(key.packed(), Absent{.want = std::move(*absent), .writes = writes});
             } else {
                 ++stats_.failed;
                 failed_keys_.push_back(key.packed());
@@ -387,12 +616,21 @@ void WorldTiles::run(const std::stop_token& stop) {
     }
 }
 
-std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room) {
+std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room,
+                                             std::optional<WorldWant>& absent) {
     const std::optional<tl::StoreHit> hit = world_hit(store_, key);
     if (!hit) return nullptr;
     scratch.arena.reset();
     const auto tile = store_.decode(*hit, scratch.zstd, scratch.decoder, scratch.arena, scratch.raw);
     if (!tile) {
+        if (hit->pack->remote && tile.error().fault == tl::Fault::missing && tile.error().site == tl::Site::file) {
+            absent = WorldWant{.tile = key,
+                               .pack = hit->pack->id,
+                               .identity = hit->pack->identity,
+                               .offset = hit->chunk->offset,
+                               .length = hit->chunk->stored};
+            return nullptr;
+        }
         log::warn("vk world: tile {}/{}/{}: {}", key.z, key.x, key.y, tl::describe(tile.error()));
         return nullptr;
     }
@@ -404,6 +642,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     const WorldGeometry g = build_world_geometry(*tile, style_pack ? style_pack->pack.style() : nullptr);
     auto out = std::make_unique<WorldTile>();
     out->key = key;
+    out->pack = hit->pack;
     out->box = {tile->header.south, tile->header.west, tile->header.north, tile->header.east};
     out->triangles = g.triangles;
     out->segments = g.segments;
@@ -447,11 +686,13 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
     }
 }
 
-void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& frame, double distance,
-                        std::uint64_t number, double seconds, double reach) {
+void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
+                        double seconds, double reach) {
+    const view::Camera& camera = view.camera();
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
-    take_style();
+    const bool world_changed = take_style();
+    const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
     // what the worker built since the last frame, and what found no room
     std::vector<tl::TileKey> again;
     {
@@ -463,13 +704,34 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         }
         built_.clear();
         again.swap(no_room_);
+        if (world_changed) {
+            // other world packs (a new version of the world, a block's head come): what failed or was absent is tried
+            // again from them, and the globe's levels are asked for again where its pack changed
+            failed_keys_.clear();
+            absent_.clear();
+        }
+        if (cache != nullptr) {
+            // chunks kept since a tile's build began: it is built again (from the cache where it now holds its chunk)
+            const std::uint64_t writes = cache->writes();
+            std::erase_if(absent_, [writes](const auto& a) { return a.second.writes != writes; });
+        }
+    }
+    if (world_changed) {
+        let_go_of_gone();
+        if (std::ranges::none_of(resident_, [](const auto& r) { return r.second->pinned; })) pinned_asked_ = false;
     }
     drawing_ = false;
     frame_.draws.clear();
     frame_.wanted = 0;
     frame_.fading = false;
     frame_.bare = 0;
-    if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) return;
+    frame_.bend = world_bend(view, frame);
+    if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) {
+        const std::scoped_lock lock(mutex_);
+        wants_.clear();
+        blocks_.clear();
+        return;
+    }
     // The globe's coarse levels, kept resident from the first frame on: every tile the store holds there.
     std::vector<tl::TileKey> wanted;
     if (!pinned_asked_) {
@@ -483,9 +745,11 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             }
         }
     }
+    std::vector<tl::TileKey> blocks;
     if (distance > world_from) {
         drawing_ = true;
-        const double far = world_far(distance, camera.eye().y);
+        const WorldBend& bend = frame_.bend;
+        const double far = world_far(distance, eye_height(bend));
         const Frustum frustum(camera, 40.0, far);
         std::unordered_map<std::uint64_t, bool> held_cache;
         const auto held = [&](const tl::TileKey& key) {
@@ -493,7 +757,32 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             if (fresh) it->second = world_hit(store_, key).has_value();
             return it->second;
         };
-        const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held, reach);
+        const std::vector<WorldLeaf> leaves = walk_world(frustum, frame, held, bend, reach);
+        // the poles' caps first, under every tile, where the view sees them
+        for (const std::unique_ptr<WorldTile>& cap : caps_) {
+            if (!cap) continue;
+            const DegreeBox box = world_cap_box(cap->cap, bend.lon);
+            if (!frustum.sees(world_box(bend, frame, box)) || !before_horizon(bend, box)) continue;
+            cap->drawn = number;
+            cap->ever_drawn = true;
+            frame_.draws.push_back({.tile = cap.get(), .cells = 1, .fade = 1.0F});
+        }
+        // the blocks the cover reaches whose world pack is not open, nearest first: the app fetches their heads
+        std::vector<std::pair<double, tl::TileKey>> reached;
+        const auto reach_block = [&](const WorldLeaf& leaf, std::uint8_t level) {
+            const auto up = static_cast<std::uint32_t>(leaf.key.z - level);
+            const tl::TileKey b(level, leaf.key.x >> up, leaf.key.y >> up);
+            if (!open_blocks_.contains(b.packed())) reached.emplace_back(leaf.distance, b);
+        };
+        for (const WorldLeaf& leaf : leaves) {
+            if (leaf.key.z >= world_coarse_first) reach_block(leaf, world_coarse_block);
+            if (leaf.key.z >= world_fine_first) reach_block(leaf, world_fine_block);
+        }
+        std::ranges::stable_sort(reached, [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& [d, b] : reached) {
+            if (std::ranges::none_of(blocks, [&b](const tl::TileKey& k) { return k.packed() == b.packed(); }))
+                blocks.push_back(b);
+        }
         std::map<std::uint64_t, std::uint64_t> cells; // by packed key: coarse to fine, then by column and row
         std::vector<std::pair<double, tl::TileKey>> asked;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
@@ -513,6 +802,11 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
             }
             return nullptr;
         };
+        // where the ground bends, the floor: each leaf drawn finer than it has its resident ancestor there (or the
+        // nearest coarser) drawn under it, so where tiles of two levels meet their sub-pixel cracks show its ground;
+        // a leaf drawn at it or coarser has its drawer's parent level's under it (where L2 tiles meet L3's, from
+        // 9,600 km out, their seam has an L2 tile under it, whose edge is its L2 neighbour's)
+        const bool floored = bend.drop > 0.0;
         for (const WorldLeaf& leaf : leaves) {
             const tl::TileKey& h = leaf.holder;
             WorldTile* drawer = nullptr;
@@ -527,10 +821,17 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
                 ++frame_.bare;
                 continue;
             }
-            // and while the drawer fades in, the nearest resident ancestor under it, down to one faded in or the globe
+            // and while the drawer fades in, the nearest resident ancestor under it, down to one faded in or the globe;
+            // each an ancestor's cells over the leaf by their boxes, its rows being of equal latitude, not Mercator's
+            const std::array<std::int32_t, 4> leaf_box = tl::tile_box(leaf.key);
             for (WorldTile* t = drawer; t != nullptr; t = fade_of(*t) < 1.0 ? ancestor(t->key, t->key.z) : nullptr) {
-                const auto gap = static_cast<std::uint32_t>(leaf.key.z - t->key.z);
-                cells[t->key.packed()] |= cells_over(world_cells_per_side, gap, leaf.key.x, leaf.key.y);
+                cells[t->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+            }
+            if (floored && drawer->key.z > 0) {
+                const int level = std::min<int>(world_floor, drawer->key.z - 1);
+                if (const WorldTile* f = ancestor(leaf.key, level + 1); f != nullptr) {
+                    cells[f->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(f->key), leaf_box);
+                }
             }
         }
         for (const auto& [k, bits] : cells) {
@@ -577,12 +878,22 @@ void WorldTiles::update(const view::Camera& camera, const view::GroundFrame& fra
         for (const tl::TileKey& k : wanted) {
             const std::uint64_t p = k.packed();
             if (resident_.contains(p) || p == building_ || std::ranges::find(failed_keys_, p) != failed_keys_.end() ||
+                absent_.contains(p) ||
                 std::ranges::any_of(queue_, [p](const tl::TileKey& q) { return q.packed() == p; })) {
                 continue;
             }
             queue_.push_back(k);
         }
         queued = !queue_.empty();
+        // what is wanted of the app: the chunks absent, in the frame's order, and the blocks reached without a pack
+        wants_.clear();
+        std::unordered_set<std::uint64_t> listed;
+        for (const tl::TileKey& k : wanted) {
+            const auto it = absent_.find(k.packed());
+            if (it != absent_.end() && !resident_.contains(k.packed()) && listed.insert(k.packed()).second)
+                wants_.push_back(it->second.want);
+        }
+        blocks_ = std::move(blocks);
     }
     if (queued) wake_worker_.notify_one();
     frame_.buffer = heaps_->buffers().low;

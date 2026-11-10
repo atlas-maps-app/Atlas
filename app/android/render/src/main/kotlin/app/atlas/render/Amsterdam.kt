@@ -254,8 +254,11 @@ object Amsterdam {
     /** `['Mo', …][datetime.date(*date).weekday()]`. */
     private fun dayOf(date: Any?): String { val t = ints(date); return WEEK[LocalDate.of(t[0], t[1], t[2]).dayOfWeek.value - 1] }
 
+    /** `open_at(oh, day, th['hhmm'], date=th['date'])`: open, closed, or null where it cannot say. */
+    private fun openAt(oh: String, th: Map<String, Any?>): Boolean? = Real.openAt(oh, dayOf(th["date"]), ints(th["hhmm"]), ints(th["date"]))
+
     /** `open_at(oh, day, th['hhmm'], date=th['date']) is True`. */
-    private fun openNow(oh: String, th: Map<String, Any?>): Boolean = Real.openAt(oh, dayOf(th["date"]), ints(th["hhmm"]), ints(th["date"])) == true
+    private fun openNow(oh: String, th: Map<String, Any?>): Boolean = openAt(oh, th) == true
 
     /** `re.match(r'\s*(\d{4})', s)` read as an int, or null. */
     private fun leadingYear(s: String): Int? {
@@ -2838,8 +2841,11 @@ object Amsterdam {
                 V3(qx + ux * w / 2 + nrm[0] * off, y1, qz + uz * w / 2 + nrm[2] * off), V3(qx - ux * w / 2 + nrm[0] * off, y1, qz - uz * w / 2 + nrm[2] * off),
             )
             if (biz) {
-                val oh = t["opening_hours"] as String?; val isOpen = !oh.isNullOrEmpty() && openNow(oh, th)
-                val items = shopfront(cam, th, S, t, st!!, qx, qz, ux, uz, nrm, isOpen, depth, d0)
+                val oh = t["opening_hours"] as String?; val now = if (!oh.isNullOrEmpty()) openAt(oh, th) else null; val isOpen = now == true
+                // the user (4 November): a terrace only while its place is open, taken in while it is closed, and by day
+                // alone where its hours are unknown (none mapped, or none open_at can read)
+                val terrace = now == true || (now == null && !night)
+                val items = shopfront(cam, th, S, t, st!!, qx, qz, ux, uz, nrm, isOpen, depth, d0, terrace)
                 if (cam.tape != null) {
                     for (it in items) { // the board at the building's depth; the blade and the tables at their own points
                         val sn = it.note ?: ItemNote("shopfront", n, nx, nz, nx, nz, ce.x, sy, ce.y, -0.03)
@@ -2890,11 +2896,12 @@ object Amsterdam {
     // render/amsterdam.py:1800 shopfront
     /**
      * A mapped shop, café or hotel, seen from the street: glazing, an awning in its category colour, a sign with its
-     * brand (brand=*) or its kind, and a terrace where outdoor_seating says so. Shapes are generic; what and where come from tags.
+     * brand (brand=*) or its kind, and a terrace where outdoor_seating says so and [terrace] sets it out (its opening
+     * hours). Shapes are generic; what and where come from tags.
      */
     fun shopfront(
         cam: Camera, th: Dict, S: Dict, t: Map<String, Any?>, st: PoiStyle.Style, qx: Double, qz: Double, ux: Double, uz: Double, nrm: V3, isOpen: Boolean,
-        depth: Double, d0: Double,
+        depth: Double, d0: Double, terrace: Boolean = true,
     ): List<Item> {
         val night = th["night"] == true; val out = ArrayList<Item>(); val s = cam.focal / pmax(d0, 1.0)
         fun p3(u: Double, y: Double, off: Double) = V3(qx + ux * u + nrm[0] * off, y, qz + uz * u + nrm[2] * off)
@@ -2967,7 +2974,7 @@ object Amsterdam {
             out.add(noted(Item(cb[2], "svg", bsv), cam, "blade", null, Double.NaN, Double.NaN, bp.x, bp.y, bp.z))
         }
         // a terrace: outdoor_seating=yes puts tables and chairs on the pavement, and a parasol by day
-        if (t["outdoor_seating"] in OUTDOOR_SEATING && st.cat == "food") {
+        if (terrace && t["outdoor_seating"] in OUTDOOR_SEATING && st.cat == "food") {
             for ((k, spot) in listOf(-1.1 to 2.0, 1.1 to 2.0, 0.0 to 3.4).withIndex()) {
                 val (du, off) = spot
                 val x = qx + ux * du + nrm[0] * off; val z = qz + uz * du + nrm[2] * off

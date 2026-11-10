@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -52,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import app.atlas.ui.kit.cssLinear
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Sun
@@ -71,6 +73,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.services.SettingsKeys
+import app.atlas.services.screenEffectsOn
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
@@ -101,9 +104,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val saved by settings.flow(SettingsKeys.MAP_LAYERS).collectAsStateWithLifecycle(null)
     val threeD by settings.flow(SettingsKeys.MAP_3D, true).collectAsStateWithLifecycle(true)
-    val haze by settings.flow(SettingsKeys.MAP_HAZE, false).collectAsStateWithLifecycle(false)
-    val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
-    val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
+    val effects by settings.screenEffects.collectAsStateWithLifecycle(screenEffectsOn(emptyPreferences()))
+    val (haze, vignette, grain) = effects
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
     val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
     val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
@@ -112,6 +114,9 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val compression by settings.flow(SettingsKeys.MAP_COMPRESSION, true).collectAsStateWithLifecycle(true)
+    val fastRefresh by settings.fastRefresh.collectAsStateWithLifecycle(true)
+    val view = LocalView.current
+    val fastDisplay = remember(view) { MapEngine.fastRefreshSwitch(view.display) }
     val timings by settings.flow(SettingsKeys.MAP_TIMINGS, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
@@ -202,9 +207,12 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                         partsOff, pacing, timings,
                         // only where the driver obeys its off: elsewhere the screen's compression is the driver's alone
                         compression = compression.takeIf { MapEngine.compressionSwitch },
+                        // only where the display has a mode above 60 Hz: elsewhere neither vote does anything
+                        fastRefresh = fastRefresh.takeIf { fastDisplay },
                         onPacing = { on -> scope.launch { settings.set(SettingsKeys.MAP_PACING, on) } },
                         onTimings = { on -> scope.launch { settings.set(SettingsKeys.MAP_TIMINGS, on) } },
                         onCompression = { on -> scope.launch { settings.set(SettingsKeys.MAP_COMPRESSION, on) } },
+                        onFastRefresh = { on -> scope.launch { settings.set(SettingsKeys.MAP_FAST_REFRESH, on) } },
                     ) { off ->
                         scope.launch { settings.set(SettingsKeys.MAP_PARTS_OFF, off.map { it.name }.toSet()) }
                     }
@@ -301,9 +309,11 @@ private fun ScreenChips(
  * phone what the part costs. A row a group: its own chip first, which turns all of its parts off while any is drawn and
  * on again when none is (dark when all are drawn, grey when some), then the parts listed under it. The map's own layers
  * (the trees, the soft shadows) leave theirs out too. Last, the frame pacing (dark when on, off by default): each frame
- * presented at a timeline its work can make, as alpha 15 drew; the frame timings; and the screen's [compression] (dark
- * when on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
- * images are made without the driver's framebuffer compression.
+ * presented at a timeline its work can make, as alpha 15 drew; the frame timings; the screen's [compression] (dark when
+ * on, as the driver has it by default; null where the driver cannot turn it off, and no chip): off, the swapchain's
+ * images are made without the driver's framebuffer compression; and the [fastRefresh] (dark when on, as by default;
+ * null where the display has no mode above 60 Hz, and no chip): off, the map's window says its frames come at 60 a
+ * second throughout, as alphas up to 27 said, where it says 120 while the map moves.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -312,9 +322,11 @@ private fun PartChips(
     pacing: Boolean,
     timings: Boolean,
     compression: Boolean?,
+    fastRefresh: Boolean?,
     onPacing: (Boolean) -> Unit,
     onTimings: (Boolean) -> Unit,
     onCompression: (Boolean) -> Unit,
+    onFastRefresh: (Boolean) -> Unit,
     onChange: (Set<MapPart>) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -345,6 +357,7 @@ private fun PartChips(
                 Triple(stringResource(R.string.mine_part_pacing), pacing, onPacing),
                 Triple(stringResource(R.string.mine_part_timings), timings, onTimings),
                 compression?.let { Triple(stringResource(R.string.mine_part_compression), it, onCompression) },
+                fastRefresh?.let { Triple(stringResource(R.string.mine_part_fast_refresh), it, onFastRefresh) },
             )) {
                 TextPill(
                     label, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
@@ -382,6 +395,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.BUILDING_SHADOWS -> R.string.mine_part_building_shadows
     MapPart.SHADOW_BLUR -> R.string.mine_part_shadow_blur
     MapPart.PARK_SHADOWS -> R.string.mine_part_park_shadows
+    MapPart.SUN -> R.string.mine_part_sun
     MapPart.CLOUD_SHADOWS -> R.string.mine_layers_cloud_shadows
     MapPart.REFLECTIONS -> R.string.mine_part_reflections
     MapPart.RIPPLE -> R.string.mine_part_ripple
@@ -394,6 +408,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.LAMP_POOLS -> R.string.mine_part_lamp_pools
     MapPart.LAMP_HALOS -> R.string.mine_part_lamp_halos
     MapPart.LAMP_STREAKS -> R.string.mine_part_lamp_streaks
+    MapPart.OPEN_GLOWS -> R.string.mine_part_open_glows
     MapPart.RAIN -> R.string.mine_part_rain
     MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
     MapPart.WALLS -> R.string.mine_part_walls
@@ -412,6 +427,8 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.KIT_DETAILS -> R.string.mine_part_kit_details
     MapPart.DOORS -> R.string.mine_part_doors
     MapPart.HOUSE_NUMBERS -> R.string.mine_part_house_numbers
+    MapPart.SHOPFRONTS -> R.string.mine_part_shopfronts
+    MapPart.TERRACES -> R.string.mine_part_terraces
     MapPart.TREES -> R.string.mine_part_trees
     MapPart.LEAF_FILTERS -> R.string.mine_part_leaf_filters
     MapPart.FURNITURE -> R.string.mine_part_furniture

@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "30",
+  "version": "31",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -521,6 +521,31 @@
           "board grey": "e70358f817fc29b2df9108519e45286544b11b6893a3934083b087ba76821958",
           "board wet": "c2892995ae0c871e8ae8c491b7473f74edf33c53b4bcf0cb43977eac2c9a21b9",
           "board night": "601109c7515f483c991cd95d1ca5604e515368f3ae48b64e4e5e6bf024da242a"
+        }
+      }
+    },
+    "31": {
+      "note": "Step 4, the facades and the night (shopfronts): the shopfronts, their signs and terraces, and at night the open places' glows and the shop floors' glazing, lit while one of its building's places is open (open_here). The night's frames (home wet and night, board wet and night) gain the open places' glows, home wet its shop floors' glazing too; the day's are version 30's (no shopfront lies within 230 m of these views). With the shopfronts, the terraces and the open places' glows left out (camera parts 52 to 54), and at night the shop glazing (29), every frame of lavapipe-macos is version 30's.",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "55aa904de52edecc7980df355354545cada71cbfb3cb6428840e3a31490774a7",
+          "home grey": "e5fa6428c105286e492b30291312d40f11733dae1ea12d6e3685e7d2f8cce6e7",
+          "home wet": "86b9b4ca6faa940565ac0b3348d269c2cdcff2252f5fd4b0c5e44333951afa85",
+          "home night": "e304e1d5fbf03eed6769c1c76ef225c55e616581a3ae462aae25853ec58cf6e1",
+          "board sunny": "8e0e759605d191918c6e49c0cd4da58366ec2e452a2629b6f17d7a3ad085f4cc",
+          "board grey": "221fcc44ed5d9fe17fc375a62c79786ef8beb7982ff5f958bc3537dc75ca881d",
+          "board wet": "0ad8f76a88136079ba87cd4a4c8d94b291cc7c28769fdb1d711c940c22d7a7c0",
+          "board night": "1f9f20be30544358c4ecb15dd1a1a58d7c291480a3f0f453e27b16486893e0a9"
+        },
+        "lavapipe-x86_64": {
+          "home sunny": "045f9ecacaebb9efe17bdaee70e9a8ca8fb285e413d307764ae158e6e7c400c9",
+          "home grey": "096921f095a60f570ce4b1fdfce999da15ed40c96380194000a7c3c9bc3fda39",
+          "home wet": "0c56e3f05cad9cdd569c823d944a5f588a42361ceaab917764f79bfcf2b1a618",
+          "home night": "48d46bfddb610d075ee4780a070a48b3a77ab9a08b26c2de95859fd1c591d2fd",
+          "board sunny": "e6b9646e2cf9c4640e9aaa77a9e4752002da35b9e178c02933cc2af912c361e1",
+          "board grey": "e70358f817fc29b2df9108519e45286544b11b6893a3934083b087ba76821958",
+          "board wet": "864c25fcbe30722e96240a92100d2e89c629a9232a750551ec6ab91e66cdc635",
+          "board night": "895282b4a546351da9b01d7c0ef486fc7e7deafed0c6a38fe3d700105f1ca0bd"
         }
       }
     }

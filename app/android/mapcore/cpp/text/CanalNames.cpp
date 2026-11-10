@@ -8,6 +8,8 @@
 #include "tiles/layers/Labels.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <unordered_set>
 #include <utility>
 
@@ -35,6 +37,27 @@ namespace {
 }
 
 [[nodiscard]] bool drawn_at_all(const CanalView& view) noexcept { return !view.night && view.pitch > 20; }
+
+/// The same value to the bit.
+[[nodiscard]] bool same_bits(double a, double b) noexcept {
+    return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+
+/// The same frame to the bit (a frame cell's windows all hold one: tiles::Store).
+[[nodiscard]] bool same_frame(const tiles::Frame& a, const tiles::Frame& b) noexcept {
+    return std::bit_cast<std::array<std::uint64_t, 4>>(a) == std::bit_cast<std::array<std::uint64_t, 4>>(b);
+}
+
+/// The same canal names' look to the bit.
+[[nodiscard]] bool same_look(const tiles::CanalNamesStyle& a, const tiles::CanalNamesStyle& b) noexcept {
+    return a.fill == b.fill && same_bits(a.opacity, b.opacity) && a.weight == b.weight && same_bits(a.size, b.size) &&
+           same_bits(a.spacing, b.spacing);
+}
+
+/// A tile read before as the same tile with the same bytes.
+[[nodiscard]] bool read_as(const tiles::ChunkRef& c, const CanalRead& read) noexcept {
+    return c.tile == read.tile && c.sha256 == read.sha256;
+}
 
 [[nodiscard]] float ramp(double t) noexcept {
     const double f = t / CanalNames::fade_seconds;
@@ -68,36 +91,79 @@ std::uint64_t canal_group(std::string_view pack) noexcept {
 }
 
 tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack, bool windows) {
-    PackCanals out;
+    auto made = pack_canals(pack, windows, nullptr);
+    if (!made) return std::unexpected(made.error());
+    return **made;
+}
+
+tiles::Result<std::shared_ptr<const PackCanals>> pack_canals(const tiles::Pack& pack, bool windows,
+                                                             const std::shared_ptr<const PackCanals>& before) {
+    auto out = std::make_shared<PackCanals>();
+    out->windows = windows;
     const tiles::RenderHead* head = pack.head();
     if (head == nullptr || head->levels.empty()) return out;
     if (const tiles::Style* style = pack.style()) {
-        out.water_level = style->water_y;
-        out.look = style->canal_names;
+        out->water_level = style->water_y;
+        out->look = style->canal_names;
+    }
+    out->frame = head->frame;
+    const std::uint8_t finest = head->levels.front();
+    if (tiles::Store::derived(finest)) return out; // a frame cell's coarse and far tiles keep no labels
+    std::vector<const tiles::ChunkRef*> chunks;
+    for (const tiles::ChunkRef& c : pack.chunks().chunks()) {
+        if (c.tile.z == finest) chunks.push_back(&c);
+    }
+    // An earlier composition's tiles, read in the same frame and as the same source (a window's labels are a source of
+    // their own), are what these would read: every one as it was, in the same order, with the style's names the
+    // same, and the names are the earlier ones themselves (a level's tile joined, or nothing of the names changed).
+    const bool earlier = before != nullptr && before->windows == windows && same_frame(before->frame, head->frame);
+    if (earlier && same_bits(before->water_level, out->water_level) && same_look(before->look, out->look) &&
+        std::ranges::equal(
+            chunks, before->tiles,
+            [](const tiles::ChunkRef* c, const std::shared_ptr<const CanalRead>& t) { return read_as(*c, *t); })) {
+        return before;
     }
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;
     std::vector<std::byte> raw;
     std::vector<std::byte> scratch;
-    const std::uint8_t finest = head->levels.front();
-    if (tiles::Store::derived(finest)) return out; // a frame cell's coarse and far tiles keep no labels
-    for (const tiles::ChunkRef& c : pack.chunks().chunks()) {
-        if (c.tile.z != finest) continue;
-        Arena arena(std::size_t{1} << 20U, Growth::grows, "canal names");
-        auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
-        if (!tile) return std::unexpected(tile.error());
-        if (const tiles::Layer* labels = tile->layer(tiles::LayerId::label)) {
-            const std::size_t from = out.candidates.size();
-            canal_candidates(*labels, head->frame, out.candidates);
-            if (windows) {
-                for (std::size_t i = from; i < out.candidates.size(); ++i) out.candidates[i].group = c.tile.packed();
+    out->tiles.reserve(chunks.size());
+    for (const tiles::ChunkRef* c : chunks) {
+        if (earlier) {
+            const auto was = std::ranges::find_if(
+                before->tiles, [c](const std::shared_ptr<const CanalRead>& t) { return read_as(*c, *t); });
+            if (was != before->tiles.end()) {
+                out->tiles.push_back(*was);
+                continue;
             }
         }
+        Arena arena(std::size_t{1} << 20U, Growth::grows, "canal names");
+        auto tile = pack.decode(*c, zstd, decoder, arena, raw, scratch);
+        if (!tile) return std::unexpected(tile.error());
+        auto read = std::make_shared<CanalRead>();
+        read->tile = c->tile;
+        read->sha256 = c->sha256;
+        if (const tiles::Layer* labels = tile->layer(tiles::LayerId::label)) {
+            canal_candidates(*labels, head->frame, read->read);
+            if (windows) {
+                for (CanalCandidate& k : read->read) k.group = c->tile.packed();
+            }
+        }
+        ++out->decoded;
+        out->tiles.push_back(std::move(read));
+    }
+    // Every tile's candidates in the pack's chunk order, then sorted by source order, each once: as if each were read
+    // here.
+    std::size_t count = 0;
+    for (const std::shared_ptr<const CanalRead>& t : out->tiles) count += t->read.size();
+    out->candidates.reserve(count);
+    for (const std::shared_ptr<const CanalRead>& t : out->tiles) {
+        out->candidates.insert(out->candidates.end(), t->read.begin(), t->read.end());
     }
     const auto key = [](const CanalCandidate& k) { return std::pair{k.group, k.index}; };
-    std::ranges::sort(out.candidates, {}, key);
-    const auto [first, last] = std::ranges::unique(out.candidates, {}, key);
-    out.candidates.erase(first, last);
+    std::ranges::sort(out->candidates, {}, key);
+    const auto [first, last] = std::ranges::unique(out->candidates, {}, key);
+    out->candidates.erase(first, last);
     return out;
 }
 

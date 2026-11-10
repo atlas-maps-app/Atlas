@@ -10,6 +10,12 @@
 //     (relief.py: the width's pixels at its distance, no nearer than 600 m, between 0.5 and 7 px), with square caps;
 //     a line under a device pixel is drawn a pixel wide, as faint as it is thin.
 //
+// Beyond a camera 18 km from its target the ground bends (ENGINE.md step 5, "The bend"; view/Bend.hpp): each point
+// drops by w₁·|Δ|²/2R, as every pass's do (shared/camera.slang's bent), and from 150 km on blends by w₂ (push.sphere.z)
+// to its place on the sphere tangent to the ground at the camera's target (shared/sphere.slang), so that from 600 km
+// the world is the sphere. The fills' back faces are culled (passes/World.cpp's pipelines), and a line's segment is
+// dropped where either end faces away from the eye, beyond the horizon.
+//
 // Every draw writes the world's depth (push.origin.w: between the sky's painter slots and the ground's first), with
 // GREATER_OR_EQUAL, so a later draw of the world lies over an earlier one, the countries' ground over all of it and
 // the sky, drawn after, nowhere over it. A tile fading in (push.scale.z under 1) is drawn over its ancestors' cells at
@@ -18,6 +24,7 @@
 // and its lines at that alpha. Its colours are the palette's (set 2, binding 1), the moment's theme and the
 // world's style as passes/World.cpp writes them, as 8-bit RGBA (r in the low byte), premultiplied by the line's alpha.
 #include "shared/frame.slang"
+#include "shared/sphere.slang"
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
 [[vk::binding(0, 2)]] StructuredBuffer<uint> world_words;
@@ -29,6 +36,11 @@ struct WorldPush {
                    // it fades (its triangles top first), else 0
     uint4 at;      // x: the tile's first word; y: the cells drawn (bit r * 4 + c); z: its triangles' words (3T); w: its
                    // segments' (4T)
+    float4 globe;  // x: the tile's north edge less the target's latitude, y: the radians of latitude a unit of v spans
+                   // (south: negative); z: its west edge less the target's longitude (within ±π), w: the radians of
+                   // longitude a unit of u spans
+    float4 sphere; // x, y: the sine and cosine of the target's latitude; z: w₂ (0: flat and dropped); w: the radius
+    float4 target; // xyz: the camera's target from the eye (frame metres), where the sphere touches the ground
 };
 
 [[vk::push_constant]] ConstantBuffer<WorldPush> push;
@@ -48,11 +60,38 @@ bool drawn(uint cell) {
     return cell < 32u && (push.at.y & (1u << cell)) != 0u;
 }
 
-/// A vertex word's point from the eye (frame metres).
-float3 point_of(uint w) {
-    float3 p = {push.origin.x + float(w & 0xFFFFu) * push.scale.x, push.origin.y,
-                push.origin.z + float(w >> 16u) * push.scale.y};
-    return p;
+/// A vertex word's point on the bent ground, from the eye (frame metres), and the ground's normal there (not of unit
+/// length: the dropped ground's gradient blended to the sphere's by w₂).
+struct Ground {
+    float3 p;
+    float3 n;
+};
+
+Ground ground_of(uint w) {
+    FrameCamera c = frame.camera;
+    float u = float(w & 0xFFFFu);
+    float v = float(w >> 16u);
+    float3 flat = {push.origin.x + u * push.scale.x, push.origin.y, push.origin.z + v * push.scale.y};
+    float slope = 2.0f * c.device.w;
+    Ground g;
+    g.p = bent(c, flat);
+    g.n = float3(slope * (flat.x - asfloat(c.flags.z)), 1.0f, slope * (flat.z - asfloat(c.flags.w)));
+    float w2 = push.sphere.z;
+    if (w2 > 0.0f) {
+        float r = push.sphere.w;
+        float3 o = on_sphere(push.globe.x + v * push.globe.y, push.globe.z + u * push.globe.w, push.sphere.x,
+                             push.sphere.y, r);
+        float3 s = push.target.xyz + o;
+        float3 n = {o.x / r, (o.y + r) / r, o.z / r};
+        g.p = g.p + (s - g.p) * w2;
+        g.n = g.n + (n - g.n) * w2;
+    }
+    return g;
+}
+
+/// Whether the ground at g faces the eye: in front of the horizon.
+bool faces_eye(Ground g) {
+    return dot(g.n, g.p) < 0.0f;
 }
 
 /// The clip position of camera coordinates k, the perspective divide left to the rasteriser (k.z may be behind the
@@ -82,7 +121,7 @@ WorldOut fill_vs(uint vertex : SV_VulkanVertexID) {
         o.position = nowhere;
         return o;
     }
-    float3 k = camera_of(frame.camera, point_of(world_words[push.at.x + v]));
+    float3 k = camera_of(frame.camera, ground_of(world_words[push.at.x + v]).p);
     o.position = clip_of_camera(frame.camera, k, push.origin.w);
     return o;
 }
@@ -106,10 +145,12 @@ WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstan
         o.position = nowhere;
         return o;
     }
-    float3 k0 = camera_of(c, point_of(world_words[base]));
-    float3 k1 = camera_of(c, point_of(world_words[base + 1u]));
+    Ground g0 = ground_of(world_words[base]);
+    Ground g1 = ground_of(world_words[base + 1u]);
+    float3 k0 = camera_of(c, g0.p);
+    float3 k1 = camera_of(c, g1.p);
     float near = c.frame.w;
-    if (k0.z < near && k1.z < near) {
+    if ((k0.z < near && k1.z < near) || !faces_eye(g0) || !faces_eye(g1)) {
         o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
         o.position = nowhere;
         return o;

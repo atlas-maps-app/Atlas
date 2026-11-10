@@ -159,7 +159,7 @@ TEST_CASE("the engine camera projects as render/city.py's Camera, and its device
         if (p.x < -412 || p.x > 824 || p.y < -916 || p.y > 1832) continue;
         const hlsl::float3 local = {static_cast<float>(w.x + 400), static_cast<float>(w.y),
                                     static_cast<float>(w.z + 400)};
-        const hlsl::float3 k = shaders::camera_of(b, shaders::eye_relative(place, local));
+        const hlsl::float3 k = shaders::camera_of(b, shaders::placed(b, place, local));
         if (k.z < 1.0F) continue;
         const hlsl::float2 s = shaders::css_of(b, k);
         worst =

@@ -175,6 +175,108 @@ TEST_CASE("ground: the water's pieces turn as wound turns them, and their fans c
     CHECK(std::abs((sum / 2) - geo::signed_area(c)) < 1e-12);
 }
 
+TEST_CASE(
+    "ground: the water's thin edges measure its width across each edge to the other bank's piece, leaving out the "
+    "tile's sides, wide water and far banks that bend or change pieces unless halved") {
+    const geo::P2 lo{.x = 0, .z = 0};
+    const geo::P2 hi{.x = 1000, .z = 1000};
+    // the rings, turned as the stage turns them, one after another in the points
+    std::vector<geo::P2> points;
+    std::vector<geo::ThinRing> rings;
+    const auto add = [&](std::vector<geo::P2> ring, bool hole) {
+        geo::orient_water(ring, hole);
+        rings.push_back({.first = static_cast<std::uint32_t>(points.size()),
+                         .count = static_cast<std::uint32_t>(ring.size()),
+                         .fill = static_cast<std::uint32_t>(rings.size())});
+        points.insert(points.end(), ring.begin(), ring.end());
+    };
+    // the stretches of fill f's edge from a to b (either way round)
+    const auto of = [](const std::vector<geo::ThinEdge>& thin, std::uint32_t f, geo::P2 a, geo::P2 b) {
+        std::vector<geo::ThinEdge> out;
+        const auto on = [&](const geo::P2& p) {
+            const double ex = b.x - a.x;
+            const double ez = b.z - a.z;
+            const double u = (((p.x - a.x) * ex) + ((p.z - a.z) * ez)) / ((ex * ex) + (ez * ez));
+            return std::abs(((p.x - a.x) * ez) - ((p.z - a.z) * ex)) < 1e-9 && u > -1e-9 && u < 1 + 1e-9;
+        };
+        for (const geo::ThinEdge& t : thin) {
+            if (t.fill == f && on(t.a) && on(t.b)) out.push_back(t);
+        }
+        return out;
+    };
+    // a ditch 6 m wide and 200 m long: its long banks 6 m across each, its ends (200 m along it) none
+    add({{100, 100}, {106, 100}, {106, 300}, {100, 300}}, false);
+    // a lake 100 m square: none
+    add({{300, 100}, {400, 100}, {400, 200}, {300, 200}}, false);
+    // a ditch cut at the box's west side: its piece's edge along the side none, its banks 8 m across
+    add({{0, 400}, {150, 400}, {150, 408}, {0, 408}}, false);
+    // a channel 6 m wide round an island: the ring's four edges and the island's, 6 m across each
+    add({{500, 500}, {600, 500}, {600, 600}, {500, 600}}, false);
+    add({{506, 506}, {594, 506}, {594, 594}, {506, 594}}, true);
+    // a canal whose far bank steps from 6 m to 12 m halfway along its near bank: that bank halved into two stretches
+    add({{100, 700}, {140, 700}, {140, 712}, {120, 712}, {120, 706}, {100, 706}}, false);
+    // a wedge 4 m wide at one end and 12 m at the other along 100 m: kept whole, its widths at its ends' tenths
+    add({{700, 100}, {800, 100}, {800, 112}, {700, 104}}, false);
+    // a basin 12 m wide with an island along half its south bank: that bank halved where its other bank changes
+    // pieces, the half facing the island 6 m across to it, the other 12 m across to the basin's north bank
+    add({{300, 800}, {340, 800}, {340, 812}, {300, 812}}, false);
+    add({{321, 806}, {339, 806}, {339, 810}, {321, 810}}, true);
+    const std::vector<geo::ThinEdge> thin = geo::thin_edges(points, rings, lo, hi);
+    for (const geo::ThinEdge& t : thin) {
+        CAPTURE(t.fill);
+        CHECK(t.ta > 0.0);
+        CHECK(t.ta <= geo::thin_most);
+        CHECK(t.tb > 0.0);
+        CHECK(t.tb <= geo::thin_most);
+    }
+    const auto widths = [](const std::vector<geo::ThinEdge>& e, double ta, double tb) {
+        return e.size() == 1 && std::abs(e[0].ta - ta) < 1e-9 && std::abs(e[0].tb - tb) < 1e-9;
+    };
+    // the other bank's piece: the edge's own but across an island, each the other's
+    for (const geo::ThinEdge& t : thin) {
+        CAPTURE(t.fill);
+        if (t.fill == 3 || t.fill == 4) CHECK(t.other == 7 - t.fill);
+        if (t.fill == 8) CHECK(t.other == 7);
+        if (t.fill < 3 || t.fill == 5 || t.fill == 6) CHECK(t.other == t.fill);
+    }
+    CHECK(widths(of(thin, 0, {.x = 100, .z = 100}, {.x = 100, .z = 300}), 6.0, 6.0));
+    CHECK(widths(of(thin, 0, {.x = 106, .z = 100}, {.x = 106, .z = 300}), 6.0, 6.0));
+    CHECK(of(thin, 0, {.x = 100, .z = 100}, {.x = 106, .z = 100}).empty());
+    CHECK(of(thin, 0, {.x = 100, .z = 300}, {.x = 106, .z = 300}).empty());
+    CHECK(std::ranges::count(thin, 1U, &geo::ThinEdge::fill) == 0);
+    CHECK(of(thin, 2, {.x = 0, .z = 400}, {.x = 0, .z = 408}).empty());
+    CHECK(widths(of(thin, 2, {.x = 0, .z = 400}, {.x = 150, .z = 400}), 8.0, 8.0));
+    CHECK(widths(of(thin, 2, {.x = 0, .z = 408}, {.x = 150, .z = 408}), 8.0, 8.0));
+    CHECK(std::ranges::count(thin, 3U, &geo::ThinEdge::fill) == 4);
+    CHECK(std::ranges::count(thin, 4U, &geo::ThinEdge::fill) == 4);
+    for (const geo::ThinEdge& t : thin) {
+        if (t.fill == 3 || t.fill == 4) CHECK(widths({t}, 6.0, 6.0));
+    }
+    // the stepped canal's near bank: [100, 120] 6 m across, [120, 140] 12 m
+    std::vector<geo::ThinEdge> stepped = of(thin, 5, {.x = 100, .z = 700}, {.x = 140, .z = 700});
+    ATLAS_REQUIRE(stepped.size() == 2);
+    std::ranges::sort(stepped, {}, [](const geo::ThinEdge& t) { return t.a.x + t.b.x; });
+    CHECK(std::abs(stepped[0].a.x + stepped[0].b.x - 220) < 1e-9);
+    CHECK(std::abs(stepped[1].a.x + stepped[1].b.x - 260) < 1e-9);
+    CHECK(widths({stepped[0]}, 6.0, 6.0));
+    CHECK(widths({stepped[1]}, 12.0, 12.0));
+    // the basin's south bank: [300, 320] 12 m across to its north bank, [320, 340] 6 m to the island
+    std::vector<geo::ThinEdge> basin = of(thin, 7, {.x = 300, .z = 800}, {.x = 340, .z = 800});
+    ATLAS_REQUIRE(basin.size() == 2);
+    std::ranges::sort(basin, {}, [](const geo::ThinEdge& t) { return t.a.x + t.b.x; });
+    CHECK(std::abs(basin[0].a.x + basin[0].b.x - 620) < 1e-9);
+    CHECK(widths({basin[0]}, 12.0, 12.0));
+    CHECK(basin[0].other == 7);
+    CHECK(widths({basin[1]}, 6.0, 6.0));
+    CHECK(basin[1].other == 8);
+    // the wedge's straight bank: from 4.8 m a tenth along it to 11.2 m at nine tenths (its turn from the west end)
+    const std::vector<geo::ThinEdge> wedge = of(thin, 6, {.x = 700, .z = 100}, {.x = 800, .z = 100});
+    ATLAS_REQUIRE(wedge.size() == 1);
+    const bool west = wedge[0].a.x < wedge[0].b.x;
+    CHECK(std::abs((west ? wedge[0].ta : wedge[0].tb) - 4.8) < 1e-9);
+    CHECK(std::abs((west ? wedge[0].tb : wedge[0].ta) - 11.2) < 1e-9);
+}
+
 TEST_CASE("ground: every tile of the bundled packs builds and packs, its triangles covering its rings") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {

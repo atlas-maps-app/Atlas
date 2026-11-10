@@ -76,6 +76,7 @@ import app.atlas.render.live.Moment
 import app.atlas.render.live.RegionFrame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -90,7 +91,8 @@ import kotlin.math.roundToInt
 /**
  * VK bench (plan-vector K1, A0; `atlas.screen=vkbench`, or the debug and bench builds' "VK bench" shortcut): the
  * stand-in, a city-sized frame drawn through the real Vulkan core, and the app's own map over the packs it lists (the
- * canal ring CI puts on the device), measured on the phone's GPU. In order, at the frame's 8 bits a channel:
+ * canal ring CI puts on the device, else the phone's own), measured on the phone's GPU. In order, at the frame's 8 bits a
+ * channel:
  *  1. every frame configuration (A, B, C, and 1x for MSAA's own cost) by both forms (the composite, and one subpass with
  *     the effects per fragment), both routes (dynamic rendering with local reads, a render pass with two subpasses)
  *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°;
@@ -405,7 +407,7 @@ private fun Modifier.frostedFromBackdrop(leftPx: Float, topPx: Float): Modifier 
 /**
  * The core's camera source while the bench runs (on the render thread, allocating nothing): the scripted path's camera
  * at each vsync, over the stand-in or, in the map stage, about the app's map's view ([mapView]) with the pack the app
- * would draw there ([packs]' choice, as MapController names it); and the pills as the chrome's keep-out shapes
+ * would name there ([packs]' PackList.named, as MapController names it); and the pills as the chrome's keep-out shapes
  * ([shapes], as Compose placed them; frosted by the core on the SurfaceView). It counts the frames presented and how
  * many of them were complete pictures (the map's: every tile its cover wants drawn).
  */
@@ -455,7 +457,7 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
         if (map != null) VkBench.mapCameraAt(path, map, t, periodSeconds, cam) else VkBench.cameraAt(path, view, t, periodSeconds, cam)
         state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
         if (map != null) {
-            val pack = packs?.choose(cam.latitude, cam.longitude)
+            val pack = packs?.named(cam.latitude, cam.longitude)
             CameraWriter.pack(out, pack?.number ?: 0L, pack?.profile ?: 0)
         }
         // The pills as Compose last placed them (none while they are off), carried on to this vsync while they move.
@@ -543,6 +545,15 @@ internal class WindowMetrics {
         val intervals = DoubleArray(maxOf(0, times.size - 1)) { (times[it + 1] - times[it]) / 1e6 }
         Triple(intervals, gpus.toDoubleArray(), lateFrames)
     }
+}
+
+/** A records' comparison at one of the map's views ([BenchRun]'s measureRecords). */
+private sealed interface RecordsCompared {
+    /** Each side's summary, with its GPU's time before, in and after the main pass ([VkBench.gpuParts]). */
+    class Sides(val on: Pair<VkBench.Summary, String>, val off: Pair<VkBench.Summary, String>) : RecordsCompared
+
+    /** None: why the map's frames draw no records either way ([MapCore.shapeRecords]' answer). */
+    class Not(val why: String) : RecordsCompared
 }
 
 /** The bench's steps, run in order by [execute]. */
@@ -923,7 +934,12 @@ private class BenchRun(
      * run waits for its complete picture while the map makes progress toward it ([VkBench.PictureWait]): the first, at
      * the home just after the map was turned on, is the map's first picture, its tiles built from the packs. Each path's
      * line ends with how many of its frames were complete pictures and the triangle governor's bias ([VkBench.governor]).
-     * The map goes off after (the next step's bench call takes the window back).
+     * Where the canal ring is not listed (an alpha on a phone: nothing in /data/local/tmp/atlas), the same views and paths
+     * are drawn over the phone's own packs ([VkBench.installedViews]), so a phone measures the governor's bias and
+     * world72's p95 over its own tiles, each line naming the pack it is drawn over so that none is taken for CI's canal
+     * ring's. At the views that keep the most walls, the compared path ([VkBench.MapView.compared]) is drawn on with the
+     * kept walls' shape records on and off in turn, a line each ([compareRecords]); on CI's bench at the first of them
+     * alone ([VkBench.recordsCompared]). The map goes off after (the next step's bench call takes the window back).
      */
     private suspend fun mapStage() {
         val surface = switchHost(VkHost.SURFACE, "the map")
@@ -934,20 +950,22 @@ private class BenchRun(
         val packs = MapEngine.packs()
         withContext(Dispatchers.IO) { runCatching { packs.load() } }
         // the canal ring, which CI puts on the device (MapEngine.benchPacks: no APK carries a map), draws the Westerkerk
-        // home too: the app's home, in the living map's frame (HomeView.westerkerk)
+        // home too: the app's home, in the living map's frame (HomeView.westerkerk); without it, the phone's own packs
         val canal = packs.packs.firstOrNull { it.id == VkBench.BOARD_PACK }
-        val views = VkBench.mapViews(canal?.let { RegionFrame.living() }, canal?.frame, canal?.views?.get(VkBench.BOARD_VIEW))
+        val views = if (canal != null) VkBench.mapViews(RegionFrame.living(), canal.frame, canal.views[VkBench.BOARD_VIEW]) else VkBench.installedViews(packs)
         if (views.isEmpty()) {
-            emit("vkbench map: unavailable (no canal ring on the device: CI puts it in /data/local/tmp/atlas)")
+            emit("vkbench map: unavailable (no pack on the device: neither the canal ring CI puts in /data/local/tmp/atlas nor the phone's own)")
             return
         }
+        if (canal == null) emit(VkBench.installedLine(packs, views))
+        val zone = (canal ?: packs.named(views[0].latitude, views[0].longitude))?.zone ?: ZoneId.of("Europe/Amsterdam")
         awaitApp("the map", VkHost.SURFACE)
         val moment = "sunny"
         val (said, lit) = withContext(Dispatchers.Default) {
             val opened = core.packs(packs.refs())
             val theme = ThemeBlock.allocate()
             val lit = runCatching {
-                CoreMoment.write(theme, Moment.Named(moment), canal?.zone ?: ZoneId.of("Europe/Amsterdam"), MapEngine.options.daylight)
+                CoreMoment.write(theme, Moment.Named(moment), zone, MapEngine.options.daylight)
                 core.moment(theme)
             }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
             opened to lit
@@ -968,7 +986,7 @@ private class BenchRun(
             for ((i, view) in views.withIndex()) {
                 emit(awaitPicture(view, first = i == 0))
                 for (path in view.paths) {
-                    val label = "map ${view.label} ${path.label}"
+                    val label = VkBench.mapLabel(view, path)
                     val presented = source.presentedCount
                     val complete = source.completeCount
                     val s = measure(label, path, VkBench.View.BOARD, plan.pathSeconds, VkHost.SURFACE, map = view)
@@ -977,6 +995,7 @@ private class BenchRun(
                     val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}" +
                         if (governor.isEmpty()) "" else " $governor"
                     emit(VkBench.line(label, s, graphicsMb(), nativeMb(), extra))
+                    if (path == view.compared && VkBench.recordsCompared(view, views, plan)) compareRecords(view, path)
                 }
             }
         } finally {
@@ -994,7 +1013,7 @@ private class BenchRun(
      * keeps in flight, so none drawn before (the last view's, the stand-in's) is taken for it.
      */
     private suspend fun awaitPicture(view: VkBench.MapView, first: Boolean): String {
-        awaitApp("the map's ${view.label}", VkHost.SURFACE)
+        awaitApp("the map's ${view.where}", VkHost.SURFACE)
         val base = source.presentedCount
         val from = System.nanoTime()
         source.mapView = view
@@ -1019,10 +1038,10 @@ private class BenchRun(
                 wait.cameBack(System.nanoTime())
             }
             if (source.completeIndex > base + VkBench.IN_FLIGHT) {
-                return VkBench.mapPictureLine(view.label, (source.completeAtNs - from - (awayNs - away)) / 1e9, first, wait.said())
+                return VkBench.mapPictureLine(view.where, (source.completeAtNs - from - (awayNs - away)) / 1e9, first, wait.said())
             }
             val stalled = wait.stall(now, drawing) ?: continue
-            return VkBench.mapPictureLine(view.label, (System.nanoTime() - from - (awayNs - away)) / 1e9, first, wait.said(), stalled)
+            return VkBench.mapPictureLine(view.where, (System.nanoTime() - from - (awayNs - away)) / 1e9, first, wait.said(), stalled)
         }
     }
 
@@ -1205,6 +1224,135 @@ private class BenchRun(
             fragments.sumOf { it.fragmentsK.toLong() }, fragments.size, source.widthPx.toLong() * source.heightPx,
             frames.lastOrNull()?.draws ?: 0, frames.lastOrNull()?.trianglesK ?: 0, targetMs,
         )
+    }
+
+    /**
+     * [path] about the map's [view], just measured, drawn on with the kept walls' and near cells' shape records on and
+     * off in turn ([measureRecords]; ENGINE.md gain 1b), a line for each side ([VkBench.recordsLabel]), so that the
+     * user's phone measures what deciding each kept wall once saves where the most walls are kept; or why the records
+     * cannot be compared there ([MapCore.shapeRecords]). Cut short by the app's going to the background, it is drawn
+     * again once, as [measure] measures a path again. The two lines have the memory of one reading after both sides
+     * (the records' buffers are kept either way), which takes 2 to 3 s on CI's emulator.
+     */
+    private suspend fun compareRecords(view: VkBench.MapView, path: VkBench.Path) {
+        val step = "map ${view.label} ${path.label} records"
+        awaitApp(step, VkHost.SURFACE)
+        val stopsBefore = stops
+        var compared = measureRecords(view, path, plan.pathSeconds, warm = false)
+        // (cut short, whatever it answered: a window made again has no frame drawn, which the warm-up draws)
+        if (stops != stopsBefore) {
+            emit(VkBench.cutShort(step))
+            awaitApp(step, VkHost.SURFACE)
+            hostSwitch(VkHost.SURFACE)
+            compared = measureRecords(view, path, plan.pathSeconds, warm = true)
+        }
+        when (compared) {
+            is RecordsCompared.Not -> emit(VkBench.recordsSkipped(view, path, compared.why))
+            is RecordsCompared.Sides -> {
+                val graphics = graphicsMb()
+                val native = nativeMb()
+                for ((on, side) in listOf(true to compared.on, false to compared.off)) {
+                    emit(VkBench.line(VkBench.recordsLabel(view, path, on), side.first, graphics, native, side.second))
+                }
+            }
+        }
+    }
+
+    /**
+     * [path] about the map's [view] drawn on for [seconds] (after half a second of warm-up where [warm], else on from the
+     * path just measured there) in [VkBench.recordsSlices]' slices, the kept walls' shape records on or off in each
+     * ([VkBench.recordsOn]: on in the last, and on again should the comparison end early): the frames of the slices with
+     * the records on, and of those with them off, each summarised ([sliceSummary]) with its GPU's time before, in and
+     * after the main pass, none of the frames begun while the records were being set; or none, should the first slice's
+     * setting say the frames draw no records either way. The setting waits for the frame the render thread is on, within
+     * the slice it begins.
+     */
+    private suspend fun measureRecords(
+        view: VkBench.MapView, path: VkBench.Path, seconds: Double, warm: Boolean,
+    ): RecordsCompared {
+        measureStartNs = System.nanoTime()
+        source.mapView = view
+        source.path = path
+        source.view = VkBench.View.BOARD
+        source.periodSeconds = seconds
+        if (warm) source.startNs = System.nanoTime()
+        source.running = true
+        if (!paused) core.requestFrame()
+        if (warm) delay(500)
+        drain()
+        val from = System.nanoTime()
+        val got = ArrayList<FrameRecords.Record>()
+        val n = VkBench.recordsSlices(seconds)
+        val slices = ArrayList<VkBench.RecordsSlice>(n)
+        var records = true // as the frames were last asked to draw (the map's own: on)
+        try {
+            for (i in 0 until n) {
+                val on = VkBench.recordsOn(i, n)
+                slices.lastOrNull()?.untilNs = System.nanoTime()
+                records = on
+                val why = withContext(Dispatchers.Default) { core.shapeRecords(on) }
+                if (why.isNotEmpty()) return RecordsCompared.Not(why)
+                slices += VkBench.RecordsSlice(on, System.nanoTime())
+                val endAt = from + (seconds * 1e9 * (i + 1) / n).toLong()
+                while (System.nanoTime() < endAt) {
+                    delay(100)
+                    got += drain().filter { it.startNs >= from }
+                    if (!paused) core.requestFrame() // in the background nothing is drawn (pause)
+                }
+            }
+            slices.last().untilNs = System.nanoTime()
+        } finally {
+            // the records on again where the comparison ended with them off (cut off: it ends on them otherwise)
+            if (!records) withContext(NonCancellable + Dispatchers.Default) { core.shapeRecords(true) }
+        }
+        delay(250) // the last records' presentation times
+        got += drain().filter { it.startNs >= from }
+        // each frame's slice by when it began; a record's GPU times (and fragments) are an earlier frame's (gpuFrame)
+        val frames = got.filter { !it.skipped }
+        val sliceOf = HashMap<Long, VkBench.RecordsSlice>()
+        for (f in frames) VkBench.recordsSlice(slices, f.startNs)?.let { sliceOf[f.frame] = it }
+        val sides = listOf(true, false).map { on ->
+            val own = slices.filter { it.on == on }.map { s -> frames.filter { sliceOf[it.frame] === s }.sortedBy { it.frame } }
+            sliceSummary(own, frames.filter { it.gpuValid && sliceOf[it.gpuFrame]?.on == on })
+        }
+        return RecordsCompared.Sides(sides[0], sides[1])
+    }
+
+    /**
+     * One side of a records' comparison: the frames of its [slices] (each in order) summarised as [measureOnce]
+     * summarises a run's, the presented intervals taken within each slice (the display's own times where a slice has two
+     * frames presented, else the vsyncs'), the GPU's times those of the records in [gpu] (each an earlier frame's, of
+     * these slices); and the GPU's time before, in and after the main pass ([VkBench.gpuParts]).
+     */
+    private fun sliceSummary(slices: List<List<FrameRecords.Record>>, gpu: List<FrameRecords.Record>): Pair<VkBench.Summary, String> {
+        val frames = slices.flatten()
+        val display = slices.any { slice -> slice.count { it.presented } >= 2 }
+        val intervals = slices.flatMap { slice ->
+            if (display) {
+                val shown = slice.filter { it.presented }
+                List(maxOf(0, shown.size - 1)) { (shown[it + 1].presentedNs - shown[it].presentedNs) / 1e6 }
+            } else {
+                List(maxOf(0, slice.size - 1)) { (slice[it + 1].vsyncNs - slice[it].vsyncNs) / 1e6 }
+            }
+        }.toDoubleArray()
+        val gpuMs = gpu.map { it.gpuMs.toDouble() }.toDoubleArray()
+        val cpu = frames.map { it.cpuMs }.toDoubleArray()
+        val record = frames.map { it.recordMs.toDouble() }.toDoubleArray()
+        val prepare = frames.map { it.prepareMs.toDouble() }.toDoubleArray()
+        val fragments = gpu.filter { it.fragmentsK > 0 }
+        val last = frames.maxByOrNull { it.frame }
+        val summary = VkBench.summarise(
+            intervals, intervals.size, if (display) "display-timing" else "vsync",
+            gpuMs, gpuMs.size, cpu, record, prepare, cpu.size, DoubleArray(0), 0,
+            fragments.sumOf { it.fragmentsK.toLong() }, fragments.size, source.widthPx.toLong() * source.heightPx,
+            last?.draws ?: 0, last?.trianglesK ?: 0, targetMs,
+        )
+        val parts = VkBench.gpuParts(
+            gpu.map { it.gpuOffscreenMs.toDouble() }.toDoubleArray(),
+            gpu.map { it.gpuMainMs.toDouble() }.toDoubleArray(),
+            gpu.map { it.gpuAfterMs.toDouble() }.toDoubleArray(),
+        )
+        return summary to parts
     }
 
     private fun drain(): List<FrameRecords.Record> {

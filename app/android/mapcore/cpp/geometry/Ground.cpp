@@ -8,6 +8,7 @@
 #include "geometry/Items.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Water.hpp"
+#include "style/Palette.hpp"
 #include "sun/Hulls.hpp"
 #include "sun/Samples.hpp"
 #include "tiles/Checksums.hpp"
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <span>
 #include <string>
 
 namespace atlas::geometry {
@@ -924,7 +926,7 @@ std::size_t GroundTile::bytes() const noexcept {
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
            (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
            (lit_lines.capacity() * sizeof(P2)) + (mirror_heads.capacity() * sizeof(MirrorHead)) +
-           (mirror_walls.capacity() * sizeof(MirrorWall));
+           (mirror_walls.capacity() * sizeof(MirrorWall)) + (thin_chunks.capacity() * sizeof(ThinChunk));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {
@@ -1095,6 +1097,72 @@ GroundGpu pack(const GroundTile& g) {
     out.below = put(below);
     out.canopy = put(canopy);
     out.fans = put(fans);
+    // the water's thin edges (ground.slang's thin_of)
+    std::vector<ThinRing> rings;
+    for (std::uint32_t f = 0; f < g.fills.size(); ++f) {
+        const Fill& fill = g.fills[f];
+        if (fill.kind == FillKind::water) rings.push_back({.first = fill.first, .count = fill.count, .fill = f});
+    }
+    const std::vector<ThinEdge> thin = thin_edges(
+        g.points, rings, {.x = pm::min(g.origin.x, g.far_corner.x), .z = pm::min(g.origin.z, g.far_corner.z)},
+        {.x = pm::max(g.origin.x, g.far_corner.x), .z = pm::max(g.origin.z, g.far_corner.z)});
+    out.thin = {.first = static_cast<std::uint32_t>(w.size()), .count = static_cast<std::uint32_t>(thin.size())};
+    const auto units = [](double t) {
+        return static_cast<std::uint32_t>(pm::min(std::round(t * thin_units), 65535.0));
+    };
+    for (const ThinEdge& t : thin) {
+        w.push_back(bits(static_cast<float>(t.a.x - g.origin.x)));
+        w.push_back(bits(static_cast<float>(t.a.z - g.origin.z)));
+        w.push_back(bits(static_cast<float>(t.b.x - g.origin.x)));
+        w.push_back(bits(static_cast<float>(t.b.z - g.origin.z)));
+        w.push_back(units(t.ta) | (units(t.tb) << 16U));
+        w.push_back(t.fill);
+        w.push_back(t.other);
+    }
+    // their bounds by thin_chunk for the frame's cull (ThinChunk), each edge as thin_of places it: its ends, and across
+    // the water from them along the left of its direction by the widths its record holds, at its piece's level as the
+    // piece's record holds it
+    for (std::size_t c = 0; c < thin.size(); c += thin_chunk) {
+        ThinChunk k{.first = static_cast<std::uint32_t>(c),
+                    .count = static_cast<std::uint32_t>(std::min<std::size_t>(thin_chunk, thin.size() - c))};
+        k.x0 = k.z0 = k.y0 = k.least = std::numeric_limits<double>::infinity();
+        k.x1 = k.z1 = k.y1 = -std::numeric_limits<double>::infinity();
+        for (std::size_t i = c; i < c + k.count; ++i) {
+            const ThinEdge& t = thin[i];
+            const auto ax = static_cast<float>(t.a.x - g.origin.x);
+            const auto az = static_cast<float>(t.a.z - g.origin.z);
+            const auto bx = static_cast<float>(t.b.x - g.origin.x);
+            const auto bz = static_cast<float>(t.b.z - g.origin.z);
+            const float wa = static_cast<float>(units(t.ta)) / static_cast<float>(thin_units);
+            const float wb = static_cast<float>(units(t.tb)) / static_cast<float>(thin_units);
+            const float ex = bx - ax;
+            const float ez = bz - az;
+            const float l = std::sqrt((ex * ex) + (ez * ez));
+            const float nx = l > 0.0F ? -ez / l : 0.0F;
+            const float nz = l > 0.0F ? ex / l : 0.0F;
+            for (const std::array<float, 2> p :
+                 {std::array{ax, az}, std::array{bx, bz}, std::array{ax + (nx * wa), az + (nz * wa)},
+                  std::array{bx + (nx * wb), bz + (nz * wb)}}) {
+                k.x0 = pm::min(k.x0, static_cast<double>(p[0]));
+                k.x1 = pm::max(k.x1, static_cast<double>(p[0]));
+                k.z0 = pm::min(k.z0, static_cast<double>(p[1]));
+                k.z1 = pm::max(k.z1, static_cast<double>(p[1]));
+            }
+            const Fill& fill = g.fills[t.fill];
+            const auto y = static_cast<double>(static_cast<float>(fill.kind == FillKind::water ? fill.level : fill.y));
+            k.y0 = pm::min(k.y0, y);
+            k.y1 = pm::max(k.y1, y);
+            k.least = pm::min({k.least, static_cast<double>(wa), static_cast<double>(wb)});
+            const std::array<std::uint32_t, 2> pair{t.fill, t.other};
+            const std::span<const std::array<std::uint32_t, 2>> named(k.pair.data(),
+                                                                      std::min<std::size_t>(k.pairs, thin_pairs));
+            if (k.pairs <= thin_pairs && std::ranges::find(named, pair) == named.end()) {
+                if (k.pairs < thin_pairs) k.pair[k.pairs] = pair;
+                ++k.pairs;
+            }
+        }
+        out.thin_chunks.push_back(k);
+    }
     out.fills = {.first = static_cast<std::uint32_t>(w.size()), .count = static_cast<std::uint32_t>(g.fills.size())};
     for (const Fill& fill : g.fills) {
         // a water piece's record holds its water level (water_vs draws it at the street or there)
@@ -1291,6 +1359,7 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
                         std::uint8_t level, P2 origin) {
     GroundTile out;
     out.origin = origin;
+    out.far_corner = {.x = head.frame.x(tile.header.east), .z = head.frame.z(tile.header.north)};
     Builder(tile, head, style, level, out).build();
     // the boxes of the lines draw_over's radius cut samples
     for (Fill& f : out.fills) {
@@ -1299,13 +1368,19 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
     for (Stroke& s : out.strokes) {
         if (s.line_count > 0) s.near = near_box(std::span<const P2>(out.points).subspan(s.line, s.line_count));
     }
-    // each cell's box over its fills, at their heights, and their widest margin
-    for (const Fill& f : out.fills) {
-        if (f.kind == FillKind::water || f.cell >= max_cells || f.count == 0) continue;
-        CellBox& c = out.cells[f.cell];
+    // each cell's box over its fills, at their heights, and their widest and narrowest margins; and its core's, over
+    // those no wider than core_side
+    const auto grow = [](CellBox& c, const Fill& f) {
         if (c.empty()) {
-            c = {.x0 = f.x0, .x1 = f.x1, .z0 = f.z0, .z1 = f.z1, .y0 = f.y, .y1 = f.y, .margin = f.margin};
-            continue;
+            c = {.x0 = f.x0,
+                 .x1 = f.x1,
+                 .z0 = f.z0,
+                 .z1 = f.z1,
+                 .y0 = f.y,
+                 .y1 = f.y,
+                 .margin = f.margin,
+                 .least = f.margin};
+            return;
         }
         c.x0 = pm::min(c.x0, f.x0);
         c.x1 = pm::max(c.x1, f.x1);
@@ -1314,6 +1389,13 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         c.y0 = pm::min(c.y0, f.y);
         c.y1 = pm::max(c.y1, f.y);
         c.margin = pm::max(c.margin, f.margin);
+        c.least = pm::min(c.least, f.margin);
+    };
+    for (Fill& f : out.fills) {
+        if (f.kind == FillKind::water || f.cell >= max_cells || f.count == 0) continue;
+        grow(out.cells[f.cell], f);
+        f.core = f.x1 - f.x0 <= core_side && f.z1 - f.z0 <= core_side;
+        if (f.core) grow(out.cores[f.cell], f);
     }
     // the shadows' casters: the solids and trees the sun's march reads at this level
     auto casters = std::make_shared<sun::TileCasters>(sun::solids_of(tile, head, level));
@@ -1350,6 +1432,45 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         b = {pm::min(b[0], sh.at.x), pm::max(b[1], sh.at.x), pm::min(b[2], sh.at.z), pm::max(b[3], sh.at.z)};
     }
     park_shadows(tile, head, out);
+    return out;
+}
+
+std::vector<GroundSlot> ground_slots(const tiles::Style& style, bool night) {
+    namespace slot = style::palette_slot;
+    // each slot's own colour in the style
+    const auto own = [&style](std::size_t code) -> std::uint32_t {
+        switch (code) {
+        case slot::paper: return style::paper_own;
+        case slot::woods: return style::woods_own;
+        case slot::lawn: return style.area_colour("park");
+        case slot::squares: return style.area_colour("square");
+        case slot::parking: return style.area_colour("parking");
+        case slot::playground: return style.area_colour("playground");
+        case slot::memorial: return style.area_colour("memorial");
+        case slot::bridge_deck: return style.area_colour("bridge");
+        case slot::asphalt: return style.surface("asphalt").value_or(0U);
+        case slot::paving_stones: return style.surface("paving_stones").value_or(0U);
+        case slot::setts: return style.surface("sett").value_or(0U);
+        case slot::concrete_paving: return style.surface("concrete").value_or(0U);
+        case slot::brick_paving: return style.surface("bricks").value_or(0U);
+        case slot::boardwalk: return style.surface("wood").value_or(0U);
+        default: return 0U;
+        }
+    };
+    std::vector<GroundSlot> out;
+    const auto of = [&](std::optional<std::size_t> code, tiles::StyleRgb c) {
+        if (code) out.push_back({.code = *code, .own = own(*code), .colour = c});
+    };
+    for (const auto& [kind, c] : style.areas) of(style::area_slot(kind), c);
+    of(slot::squares, style.area_other);
+    for (const auto& [name, c] : style.surfaces) of(style::surface_slot(name), c);
+    for (std::size_t k = 0; k < style.land_kinds.size() && k < style.land_colours.size(); ++k) {
+        of(style::land_slot(style.land_kinds[k]), style.land_colours[k]);
+    }
+    out.push_back({.code = slot::asphalt,
+                   .own = own(slot::asphalt),
+                   .colour = night ? style.asphalt.night : style.asphalt.day,
+                   .darkens = false});
     return out;
 }
 

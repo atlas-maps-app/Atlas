@@ -93,6 +93,9 @@ struct WorldOptions {
     /// What the residency's workers tell the platform (ENGINE.md gain 8: platform::WorkerSession on Android, their
     /// priority and their hint session), or none: they stay at background priority.
     std::shared_ptr<WorkerHints> hints;
+    /// The style the world's packs are drawn in (tiles::Store::set_world_style: the core's own, load::world_style,
+    /// which MapFrame gives), or none: each pack's own.
+    const tiles::Style* world_style = nullptr;
 };
 
 /// The world.
@@ -191,6 +194,7 @@ public:
     }
     /// The world's tiles beyond the countries' (ENGINE.md step 5), once the store holds a world pack; else null.
     [[nodiscard]] WorldTiles* world_tiles() noexcept { return world_tiles_.get(); }
+    [[nodiscard]] const WorldTiles* world_tiles() const noexcept { return world_tiles_.get(); }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
     [[nodiscard]] std::span<const std::string_view> pass_names() const noexcept override { return pass_names_; }
@@ -225,6 +229,14 @@ public:
     [[nodiscard]] const view::Frames& frames() const noexcept { return frames_; }
     /// The resident tiles and the heaps' use, for the `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
     [[nodiscard]] std::string tiles_line() const;
+    /// The item rows of resident tiles masked again since the world was made: the coarser pack's and the former coarser
+    /// pack's, where the coarser pack or the mask changed. A change of the frame drawn (a frame cell crossed) rewrites
+    /// no row: the places of the frames move (place_of).
+    [[nodiscard]] std::uint64_t items_masked_again() const noexcept { return masked_again_; }
+    /// Every resident tile's items placed as a change of the frame drawn placed them before the places (tests): each
+    /// point converted into the frame drawn (view::convert) and the row's place the frame drawn's own, the picture
+    /// the places are held to. Until the frame drawn changes.
+    void place_items_in_frame();
     /// The triangle governor (ENGINE.md step 5), as the next frame takes it; the bias this frame was planned at, the
     /// triangles it planned at it (the cover's tiles' and the world's: govern), and the highest bias any frame had.
     [[nodiscard]] const Governor& governor() const noexcept { return governor_; }
@@ -256,20 +268,23 @@ private:
     [[nodiscard]] std::vector<tiles::TileKey> want_levels(const view::View& view, const style::CameraState& camera,
                                                           const view::GroundFrame& frame) const;
     /// Room for the tiles the frame asks for, where tiles that only stand in hold it (ENGINE.md one pack per country,
-    /// step 7: the heaps full of windows zooming out, of levels zooming in). In the order
-    /// the residency builds them, each is asked for while the heaps' free bytes hold what the cover expects of it and
-    /// of those before it (a resident one, nothing more); once one does not fit, or waits for a range to go back to the
-    /// heaps (Residency::Wait::stuck: their bytes free hold no piece for it), the coarsest of those left that is not
-    /// resident takes the room first (zooming out, a frame cell's L12, which then stands in at sixteen places): the
-    /// tiles of the places in view that nothing draws, stands in or would go (the cover's spare), then, while the room
-    /// coming is short of it (the heaps' free and retiring bytes, and the stand-ins that go once the tiles asked for
-    /// before it come; for a tile that waits for a range, those alone but the free), stand-ins one by one, those whose
-    /// places keep a backup first, then those at its own places, the fewest holes first. It is asked for once the room
-    /// is there, the rest held back until then (Request::held). Where what can go is short of it, of the stand-ins only
+    /// step 7: the heaps full of windows zooming out, of levels zooming in): the first `own` of asked_, the cover's
+    /// requests, then the top-ups of the tiles a place in view plans or keeps (ENGINE.md's parts). In the order the
+    /// residency builds them, the top-ups after all of the cover's, each is asked for while the heaps' free bytes hold
+    /// what the cover expects of it and of those before it (a resident one, nothing more, but a top-up that found no
+    /// room the bytes it asked for); once one does not fit, or waits for a range to go back to the heaps
+    /// (Residency::Wait::stuck: their bytes free hold no piece for it), the coarsest of those left that is not resident
+    /// takes the room first (zooming out, a frame cell's L12, which then stands in at sixteen places): the tiles of the
+    /// places in view that nothing draws, stands in or would go (the cover's spare), then, while the room coming is
+    /// short of it (the heaps' free and retiring bytes, and the stand-ins that go once the tiles asked for before it
+    /// come; for a tile that waits for a range, those alone but the free), stand-ins one by one, those whose places
+    /// keep a backup first, then those at its own places, the fewest holes first. It is asked for once the room is
+    /// there, the rest held back until then (Request::held). Where what can go is short of it, of the stand-ins only
     /// those at its places that keep a backup go, and the tiles asked for before it come first where their coming lets
-    /// another go, else every tile is asked for as before. What goes is let go of as the next frame begins (going_),
-    /// before its covers.
-    void make_room();
+    /// another go, else every tile is asked for as before. For a top-up (the one the room goes to resident) only what
+    /// nothing draws goes, the spare tiles and those that make it a piece, no stand-in. What goes is let go of as the
+    /// next frame begins (going_), before its covers.
+    void make_room(std::size_t own);
     /// make_room's piece of `bytes` for a tile whose largest range (of kind `kind`) finds none though the heaps hold
     /// its bytes free: whether the tiles going already, those nothing draws, keeps or asks for, and `stand_ins` (those
     /// whose places all keep another resident level) can make one where a range of its kind may lie, joined to the
@@ -277,9 +292,11 @@ private:
     /// where they cannot.
     [[nodiscard]] bool piece_for(std::uint32_t bytes, HeapKind kind,
                                  std::span<const std::pair<tiles::TileKey, std::string_view>> stand_ins);
-    /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
-    /// coarser pack's inside the mask.
-    void place_items(const ResidentTile& tile);
+    /// A resident tile's items masked where they are the coarser pack's inside the mask (their points stay in their
+    /// pack frame's metres, which the frame's place maps into the frame drawn).
+    void mask_items(const ResidentTile& tile);
+    /// The place in the item table of the frame `frame`, made as its first tile is taken.
+    [[nodiscard]] std::uint32_t place_of(const view::GroundFrame& frame);
     /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
     void take_packs();
     /// The neighbours' stage T, as built so far (neighbour_packs).
@@ -343,10 +360,13 @@ private:
     std::vector<std::pair<tiles::TileKey, std::string>> going_;
     std::size_t ahead_ = 0; ///< under wanted_mutex_
     double wanted_at_ = -1.0;
-    /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
+    /// What the items' places and masks were last made for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;
     std::optional<tiles::GridBox> placed_mask_;
+    /// The frames the tiles taken came in, each with its place in the item table (its map into the frame drawn).
+    std::vector<std::pair<view::GroundFrame, std::uint32_t>> places_;
+    std::uint64_t masked_again_ = 0;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;

@@ -14,6 +14,7 @@
 
 #include "load/Amsterdam.hpp"
 #include "load/Tradition.hpp"
+#include "tiles/Style.hpp"
 #include "tiles/Values.hpp"
 
 #include <cstddef>
@@ -70,5 +71,16 @@ struct StyleFacts {
 /// The `style` section's bytes before compression (rendertiles' Style.of), or nothing when the style file does not
 /// read.
 [[nodiscard]] std::optional<std::vector<std::byte>> style_section(const StyleFacts& facts);
+
+/// The `style` section the core draws every world pack in (ENGINE.md step 5: the world's style in one place): the style
+/// file's tables, amsterdam.py's palette and module values at UTC and the living map's empty scene, the bytes the
+/// packer's WorldPack.style writes into each world pack from the same style file. Nothing when the style file does not
+/// read.
+[[nodiscard]] std::optional<std::vector<std::byte>> world_style_section();
+
+/// world_style_section's values, typed (tiles::Pack::open): a world pack built before a change to the style file is
+/// drawn in the style the core has now, and one whose style lacks a value the core reads is not refused. Made once;
+/// null when the style file does not read.
+[[nodiscard]] const tiles::Style* world_style();
 
 } // namespace atlas::load

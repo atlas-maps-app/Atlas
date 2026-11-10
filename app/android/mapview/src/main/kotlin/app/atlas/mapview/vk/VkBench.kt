@@ -1,5 +1,6 @@
 package app.atlas.mapview.vk
 
+import app.atlas.geo.LatLon
 import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.RegionFrame
 import kotlin.math.PI
@@ -86,7 +87,10 @@ object VkBench {
 
     /**
      * A view of the app's map that VK bench draws (ENGINE.md step 2: VK bench runs the real paths), and the paths it
-     * measures there, drawn around it: its target, bearing, map pitch (degrees from straight down) and distance.
+     * measures there, drawn around it: its target, bearing, map pitch (degrees from straight down) and distance; [over],
+     * the phone's own pack it is drawn over where CI's canal ring is not listed ([installedViews]), null over the canal
+     * ring; [compared], the path drawn on once measured, its frames with the kept walls' shape records on and off in
+     * turn ([recordsOn], ENGINE.md gain 1b), at the views that keep the most walls.
      */
     class MapView(
         val label: String,
@@ -96,7 +100,12 @@ object VkBench {
         val pitch: Double,
         val distance: Double,
         val paths: List<Path>,
-    )
+        val over: String? = null,
+        val compared: Path? = null,
+    ) {
+        /** How its lines name it: its label, and the pack it is drawn over where that is the phone's own. */
+        val where: String get() = if (over == null) label else "$label over $over"
+    }
 
     /** How far out the map's pinch goes, metres: 8 km (the core's cover reaches 9, PackList.CORE_REACH). */
     const val MAP_FAR = 8000.0
@@ -233,6 +242,14 @@ object VkBench {
     const val BOARD_VIEW = "home"
 
     /**
+     * The Main board's view as the canal ring's manifest gives it (`config.views.home`, in its region's frame about
+     * [BOARD_ORIGIN]): where the map stage stands its board views over a phone's own packs, the canal ring not listed
+     * ([installedViews]).
+     */
+    val BOARD_ORIGIN = LatLon(52.372, 4.891)
+    val BOARD_CAMERA = PackList.ViewCamera(-177.0, -521.0, 52.0, 44.0, 2300.0, 440.0)
+
+    /**
      * The app's map's views over the canal ring CI puts on the device, in the order measured: the Westerkerk home in the
      * living map's frame [living] (the engine's references' home: 10 m west and 30 m north of the Westerkerk, bearing 52°,
      * map pitch 52°, 430 m), still, turning, panning and pinched out to [MAP_FAR] and back; then the Main board, the canal
@@ -240,19 +257,134 @@ object VkBench {
      * 70°, turning, and the governor's view of it ([GOVERNOR_DISTANCE] at [GOVERNOR_PITCH]), turning. A pack missing
      * leaves its views out.
      */
-    fun mapViews(living: RegionFrame?, region: RegionFrame?, board: PackList.ViewCamera?): List<MapView> = buildList {
-        if (living != null) {
-            add(MapView("home", living.lat(-10.0, -30.0), living.lon(-10.0, -30.0), 52.0, 52.0, 430.0, listOf(Path.STILL, Path.ORBIT, Path.PAN, Path.PINCH)))
+    fun mapViews(living: RegionFrame?, region: RegionFrame?, board: PackList.ViewCamera?): List<MapView> =
+        views(living?.let { homeOf(it) }, if (region != null && board != null) LatLon(region.lat(board.x, board.z), region.lon(board.x, board.z)) else null, board)
+
+    /** The home's target in the living map's frame [living]: 10 m west and 30 m north of the Westerkerk. */
+    private fun homeOf(living: RegionFrame) = LatLon(living.lat(-10.0, -30.0), living.lon(-10.0, -30.0))
+
+    /**
+     * [mapViews]' views: the home's about [home], and the board's three about [board] by [camera]'s yaw, pitch and
+     * distance. The records are compared ([MapView.compared]) on the home's pinch, out to [MAP_FAR], and on pitch70's
+     * turn, the horizon in view: the paths that keep the most walls (the governor's 12.1 M triangles planned at 4.4 km
+     * of the pinch and at 70° turning, scene/Governor.hpp); on CI's bench at the home's pinch alone ([recordsCompared]).
+     */
+    private fun views(home: LatLon?, board: LatLon?, camera: PackList.ViewCamera?): List<MapView> = buildList {
+        if (home != null) {
+            add(MapView("home", home.lat, home.lon, 52.0, 52.0, 430.0, listOf(Path.STILL, Path.ORBIT, Path.PAN, Path.PINCH), compared = Path.PINCH))
         }
-        if (region != null && board != null) {
-            val lat = region.lat(board.x, board.z)
-            val lon = region.lon(board.x, board.z)
-            val bearing = LiveCamera.bearing(board.yaw)
-            add(MapView("board", lat, lon, bearing, 90.0 - board.pitch, board.distance, listOf(Path.ORBIT)))
-            add(MapView("pitch70", lat, lon, bearing, 70.0, board.distance, listOf(Path.ORBIT)))
-            add(MapView("world72", lat, lon, bearing, GOVERNOR_PITCH, GOVERNOR_DISTANCE, listOf(Path.ORBIT)))
+        if (board != null && camera != null) {
+            val bearing = LiveCamera.bearing(camera.yaw)
+            add(MapView("board", board.lat, board.lon, bearing, 90.0 - camera.pitch, camera.distance, listOf(Path.ORBIT)))
+            add(MapView("pitch70", board.lat, board.lon, bearing, 70.0, camera.distance, listOf(Path.ORBIT), compared = Path.ORBIT))
+            add(MapView("world72", board.lat, board.lon, bearing, GOVERNOR_PITCH, GOVERNOR_DISTANCE, listOf(Path.ORBIT)))
         }
     }
+
+    /**
+     * The map's views over a phone's own packs [packs], where CI's canal ring is not listed (an alpha's phone has nothing
+     * in /data/local/tmp/atlas; the engine agent's word of 3 November, so that a phone measures the governor's bias and
+     * world72's p95 over its own tiles): [mapViews]' views and paths at the same targets, the Westerkerk home and the Main
+     * board ([BOARD_CAMERA]), where a pack of the phone's holds the home's target; else all about the middle of the place
+     * window with the most place windows within a tile of it (the first listed on a tie), or of the first pack listed
+     * where none is a place's. Each is drawn over the pack the app names at its target ([MapView.over]: PackList.named),
+     * in that pack's frame. None where the phone lists no pack.
+     */
+    fun installedViews(packs: PackList): List<MapView> {
+        val list = packs.packs
+        if (list.isEmpty()) return emptyList()
+        val home = homeOf(RegionFrame.living())
+        val views = if (packs.choose(home.lat, home.lon) != null) {
+            val region = RegionFrame.region(BOARD_ORIGIN)
+            views(home, LatLon(region.lat(BOARD_CAMERA.x, BOARD_CAMERA.z), region.lon(BOARD_CAMERA.x, BOARD_CAMERA.z)), BOARD_CAMERA)
+        } else {
+            val places = list.filter { it.level == Windows.WINDOW_LEVEL }
+            val place = (places.maxByOrNull { p -> places.count { q -> neighbours(p.id, q.id) } } ?: list.first()).box.center
+            views(place, place, BOARD_CAMERA)
+        }
+        return views.map { v ->
+            MapView(v.label, v.latitude, v.longitude, v.bearing, v.pitch, v.distance, v.paths, packs.named(v.latitude, v.longitude)?.id, v.compared)
+        }
+    }
+
+    /** Whether windows [a] and [b] (ids `window/<z>/<x>/<y>`) are of one level and within a tile of each other. */
+    private fun neighbours(a: String, b: String): Boolean {
+        val p = a.split('/').mapNotNull { it.toIntOrNull() }
+        val q = b.split('/').mapNotNull { it.toIntOrNull() }
+        return p.size == 3 && q.size == 3 && p[0] == q[0] && abs(p[1] - q[1]) <= 1 && abs(p[2] - q[2]) <= 1
+    }
+
+    /**
+     * The map stage's line where CI's canal ring is not listed: what it draws over instead, [installedViews]' [views] over
+     * the phone's own [packs], at the canal ring's targets where a pack holds the home's, else about the pack the first view
+     * is drawn over.
+     */
+    fun installedLine(packs: PackList, views: List<MapView>): String {
+        val home = homeOf(RegionFrame.living())
+        val at = if (packs.choose(home.lat, home.lon) != null) "at the canal ring's targets" else "about ${views.firstOrNull()?.over ?: "no pack"}"
+        return "vkbench map: no canal ring (CI puts it in /data/local/tmp/atlas), so over the phone's own ${packs.packs.size} packs, $at"
+    }
+
+    /** A path's label in the map stage: `map <view> <path>`, and the pack drawn over where it is the phone's own ([MapView.over]). */
+    fun mapLabel(view: MapView, path: Path): String = "map ${view.label} ${path.label}" + (view.over?.let { " over $it" } ?: "")
+
+    /**
+     * How long a slice of a records' comparison runs, seconds ([MapView.compared]): the compared path drawn on with the
+     * kept walls' and near cells' shape records on in some slices and off in others, two by two ([recordsOn]), so that
+     * the phone's heat and throttling, and the path's own views, meet both alike.
+     */
+    const val RECORDS_SLICE_SECONDS = 0.5
+
+    /** The slices of a records' comparison of [seconds]: an even number of about [RECORDS_SLICE_SECONDS] each, at least two. */
+    fun recordsSlices(seconds: Double): Int = max(2, 2 * (seconds / (2 * RECORDS_SLICE_SECONDS)).toInt())
+
+    /**
+     * Whether slice [i] of a records' comparison of [n] slices draws from the records: counted from the last, which has
+     * them on (the comparison leaves them as the map has them, with no wait for the render thread after it), on, off,
+     * off, on, on, off, off, on, …; from the first alike where [n] is a multiple of four (the quick and full benches' 12
+     * and 60), off then on in CI's two.
+     */
+    fun recordsOn(i: Int, n: Int): Boolean = (n - i) / 2 % 2 == 0
+
+    /**
+     * Whether the records are compared at [view] ([MapView.compared]) in a bench of [length] whose map stage draws
+     * [views]: at each view with a compared path on the full and quick benches, and at the first alone on CI's (the
+     * home's pinch over the canal ring), where each setting waits for the frame in flight, a far frame takes about 2 s
+     * on the emulator, and a comparison adds 2 to 5 s.
+     */
+    fun recordsCompared(view: MapView, views: List<MapView>, length: Length): Boolean =
+        view.compared != null && (length != Length.CI || view == views.firstOrNull { it.compared != null })
+
+    /**
+     * A slice of a records' comparison: the records [on] or off from [fromNs] (once the core had them so) until [untilNs]
+     * (when the next slice's were asked for), on the frames' clock.
+     */
+    class RecordsSlice(val on: Boolean, val fromNs: Long) {
+        var untilNs = Long.MAX_VALUE
+    }
+
+    /** The slice of [slices] a frame begun at [startNs] was drawn in; null for one begun while the records were being set. */
+    fun recordsSlice(slices: List<RecordsSlice>, startNs: Long): RecordsSlice? = slices.firstOrNull { startNs > it.fromNs && startNs < it.untilNs }
+
+    /**
+     * A records' comparison's label: `map <view> <path> records on|off`, and the pack drawn over where it is the phone's
+     * own ([MapView.over]).
+     */
+    fun recordsLabel(view: MapView, path: Path, on: Boolean): String =
+        "map ${view.label} ${path.label} records ${if (on) "on" else "off"}" + (view.over?.let { " over $it" } ?: "")
+
+    /**
+     * A records' comparison side's GPU time, the medians of its frames' time [before] the main pass (its compute stages
+     * and offscreen passes, where the records are decided), [main] in it (where their points are placed) and [after]
+     * it: `gpu before the main pass <ms> ms, in it <ms>, after it <ms>`.
+     */
+    fun gpuParts(before: DoubleArray, main: DoubleArray, after: DoubleArray): String =
+        "gpu before the main pass ${ms(percentile(before, before.size, 50.0))} ms, in it ${ms(percentile(main, main.size, 50.0))}, " +
+            "after it ${ms(percentile(after, after.size, 50.0))}"
+
+    /** The line where the records cannot be compared at [view]: why ([app.atlas.mapcore.MapCore.shapeRecords]' answer). */
+    fun recordsSkipped(view: MapView, path: Path, why: String): String =
+        "vkbench map ${view.label} ${path.label} records" + (view.over?.let { " over $it" } ?: "") + ": not compared ($why)"
 
     /**
      * The triangle governor's words in the core's stats ([app.atlas.mapcore.MapCore.stats]: `World::tiles_line`'s

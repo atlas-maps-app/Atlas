@@ -279,10 +279,16 @@ jobs:
       - name: LLVM ${{ env.LLVM }} (clang, libc++, lld, llvm-symbolizer) from apt.llvm.org
         run: |
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          curl -fsSL --retry 20 --retry-delay 30 --retry-all-errors https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
           echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-$LLVM main" |
             sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
-          sudo apt-get update -q
+          # apt.llvm.org's name may not resolve on a runner for a while (3 November 2026, from about 14:07 UTC): the key's
+          # fetch and the update are tried again every 30 s for 10 minutes, until its clang is there
+          for try in $(seq 20); do
+            sudo apt-get update -q && apt-cache show "clang-$LLVM" > /dev/null 2>&1 && break
+            echo "::warning::apt.llvm.org's clang-$LLVM is not there (try $try of 20); again in 30 s"
+            sleep 30
+          done
           # llvm-N carries llvm-symbolizer-N, which the sanitizers' runtimes call to put names and lines in a report.
           # ccache keeps the compiled units between runs (its step below); GNU time measures each test entry.
           sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
@@ -987,10 +993,17 @@ jobs:
           tar -xzf "$file" && export PATH="$PWD/${file%.tar.gz}/bin:$PATH"
           { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$(pin ndk.version)" > /dev/null
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          curl -fsSL --retry 20 --retry-delay 30 --retry-all-errors https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
           echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" |
             sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
-          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-21 libc++-21-dev libc++abi-21-dev ninja-build
+          # apt.llvm.org's name may not resolve on a runner for a while (3 November 2026, from about 14:07 UTC): the key's
+          # fetch and the update are tried again every 30 s for 10 minutes, until its clang is there
+          for try in $(seq 20); do
+            sudo apt-get update -q && apt-cache show "clang-21" > /dev/null 2>&1 && break
+            echo "::warning::apt.llvm.org's clang-21 is not there (try $try of 20); again in 30 s"
+            sleep 30
+          done
+          sudo apt-get install -y -q --no-install-recommends clang-21 libc++-21-dev libc++abi-21-dev ninja-build
           probe=$RUNNER_TEMP/mods
           app/android/mapcore/cpp/tools/mods/probe.sh cmake "$probe" "$ANDROID_HOME/ndk/$(pin ndk.version)" \
             -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_CXX_FLAGS=-stdlib=libc++

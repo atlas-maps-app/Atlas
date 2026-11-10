@@ -41,6 +41,9 @@ public:
         std::array<float, 4> origin{};
         std::array<float, 4> scale{};
         std::array<std::uint32_t, 4> at{};
+        std::array<float, 4> globe{};  ///< world.slang's push: the tile's edges less the target's, the radians a unit
+        std::array<float, 4> sphere{}; ///< spans; the target's latitude, w₂ and the radius; the target from the eye
+        std::array<float, 4> target{};
         std::uint32_t triangles = 0;
         std::uint32_t segments = 0;
         float fade = 1.0F;      ///< under 1 while the tile fades in (scene::WorldDraw::fade)

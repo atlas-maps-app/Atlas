@@ -56,9 +56,6 @@ struct TreeTile {
 [[nodiscard]] std::vector<hlsl::uint4> tree_words(const geometry::TileTrees& trees, double origin_x, double origin_y,
                                                   double origin_z, bool lean = false);
 
-/// The first of a tile's items that are trees (the pass's items are consecutive, in its builder's order).
-[[nodiscard]] std::uint32_t first_tree(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// What the render thread decides for a drawn tree from its item's depth `depth` (as the ranks have it), the camera's
 /// focal length and its crown radius `r`, in double as the port compares: its job's flags (tree.slangh's TREE_JOB_,
 /// nb in bits 8 to 15) and widths: a small crown's radius in w0; the trunk's half widths at its foot and top; the
@@ -102,6 +99,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the trees (style::camera_part::trees), their leaf filters with them.
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
     /// emit's elements, keeping the records the GPU writes for them in its order into `records` and the sunlit sides
     /// (the nearest first: the GPU's list holds them the other way round) into `sides` (the tests').
@@ -168,17 +167,22 @@ private:
     std::array<gpu::Buffer, 2> records_;
     std::array<gpu::Buffer, 2> sides_;
     std::array<gpu::Buffer, 2> fills_; ///< the fills' list: the trunks' records (ENGINE.md gain 18)
+    /// While a tile fades, each record's standing fade, then each side's (ENGINE.md's standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline draw_{nullptr};
-    vk::raii::Pipeline fill_{nullptr}; ///< the trunks alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_{nullptr};        ///< the trunks alone at true depth with float depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fill_fading_{nullptr}; ///< the same while a tile fades (trees_fills_fading_fs)
     vk::raii::Pipeline side_{nullptr};
 
     // the render thread's, per frame
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> fill_words_;
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
 };
 

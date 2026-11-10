@@ -189,14 +189,6 @@ struct Plane {
     return o;
 }
 
-/// The first of a tile's items that are doors.
-[[nodiscard]] std::uint32_t first_door(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 /// A colour of the style (0xRRGGBB) as the shaders take it, 0xBBGGRR.
 [[nodiscard]] std::uint32_t bgr(std::uint32_t rgb) noexcept {
     return ((rgb >> 16U) & 0xFFU) | (rgb & 0xFF00U) | ((rgb & 0xFFU) << 16U);
@@ -238,7 +230,7 @@ void order_overlaps(std::vector<DoorShape>& doors) {
         for (std::size_t j = i + 1; j < n; ++j) {
             const DoorShape& a = doors[i];
             const DoorShape& b = doors[j];
-            if (a.building != b.building || a.ux != b.ux || a.uz != b.uz) continue;
+            if (a.building != b.building || a.ux != b.ux || a.uz != b.uz || a.fade != b.fade) continue;
             const std::array<double, 4>& p = boxes[i];
             const std::array<double, 4>& q = boxes[j];
             if (p[0] > q[2] + 1 || q[0] > p[2] + 1 || p[1] > q[3] + 1 || q[1] > p[3] + 1) continue;
@@ -287,11 +279,15 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         std::uint32_t row = 0;
         double d0 = 0;
         view::Vec3 nrm;
+        std::uint32_t fade = 0; // while a tile fades, its entry's range of the dither
     };
     std::vector<At> kept;
     const std::span<const std::uint32_t> table = state.ranks->table();
-    const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    // the tiles drawn and those kept under ones fading in (ENGINE.md's standing fades)
+    const std::span<const scene::CoverTile> tiles = state.cover->upright();
+    const bool dithers = state.cover->dithers();
     const std::span<const std::uint16_t> flags = state.items->flags();
+    const std::span<const std::uint8_t> cells = state.items->cell();
     const view::Vec3 eye = cam.eye();
     for (std::size_t c = 0; c < tiles.size(); ++c) {
         const scene::CoverTile& t = tiles[c];
@@ -299,9 +295,10 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         const auto* doors = t.drawn->passes[pass].cpu_as<DoorTile>();
         if (doors == nullptr || doors->doors.empty()) continue;
         // a tile's doors once, though it draws for several tiles (a stand-in ancestor, its cells over each)
-        bool seen = false;
-        for (std::size_t e = 0; e < c && !seen; ++e) seen = tiles[e].drawn == t.drawn;
-        if (seen) continue;
+        if (!scene::draws_items(tiles, c)) continue;
+        // (the doors come back on fading in on the tile: their share of its range, scene::Cover::dither)
+        const std::array<float, 2> range = state.cover->dither(t, pass);
+        const std::uint32_t fade = dithers ? sh::fade_word(range[0], range[1]) : 0U;
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
         // none of its nodes 2 to 75 m deep: the depth is linear, so its box's corners bound it
         double least = 1e300;
@@ -317,7 +314,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
             most = std::max(most, d);
         }
         if (least > 75 + 1 || most < 2 - 1) continue;
-        const std::uint32_t first = first_door(*t.drawn, kind);
+        const std::uint32_t first = scene::first_of(*t.drawn, pass, kind);
         for (std::size_t i = 0; i < doors->doors.size() && first + i < t.drawn->rows.size(); ++i) {
             const std::uint32_t row = t.drawn->rows[first + i];
             // a coarser pack's door within the active pack's box is the active pack's to draw (none); and a door the
@@ -325,6 +322,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
             // door of its spot, whose item is its own (its building's, by the same wall), so the doors cost what is
             // drawn
             if (row >= flags.size() || (flags[row] & scene::item_flag::masked) != 0) continue;
+            if (!scene::draws_item(t, cells, row)) continue;
             if (row >= table.size() || table[row] == sh::RANK_NONE) continue;
             const geometry::Door d =
                 convert ? placed(doors->doors[i], t.drawn->frame, *state.ground_frame) : doors->doors[i];
@@ -333,7 +331,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
             if (d0 < 2 || d0 > 75) continue;
             const view::Vec3 nrm = vnorm({d.uz, 0.0, -d.ux});
             if (vdot(nrm, vsub(eye, {d.qx, 1.2, d.qz})) <= 0) continue; // that wall faces away
-            kept.push_back({.door = d, .row = row, .d0 = d0, .nrm = nrm});
+            kept.push_back({.door = d, .row = row, .d0 = d0, .nrm = nrm, .fade = fade});
         }
     }
     std::ranges::stable_sort(kept, {}, [](const At& a) { return a.door.node; });
@@ -350,14 +348,15 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         Plane plane; // the door's, 0.06 m off its wall
     };
     std::vector<Spot> spots;
-    std::map<std::tuple<std::int64_t, std::int64_t, std::int64_t>, std::size_t> keys;
+    // (and a spot a range of the dither while a tile fades: the fading tile's doors and the doors kept under it apart)
+    std::map<std::tuple<std::int64_t, std::int64_t, std::int64_t, std::uint32_t>, std::size_t> keys;
     const std::span<const double> depth = state.ranks->depth();
     for (const At& a : kept) {
         const geometry::Door& d = a.door;
         const view::Vec3 nrm = a.nrm;
         const double d0 = a.d0;
         if (a.row >= table.size()) continue;
-        const auto key = std::tuple{d.building, pymath::round(d.qx), pymath::round(d.qz)};
+        const auto key = std::tuple{d.building, pymath::round(d.qx), pymath::round(d.qz), a.fade};
         if (const auto it = keys.find(key); it != keys.end()) {
             if (d.number) spots[it->second].numbers.insert(*d.number);
             continue;
@@ -372,6 +371,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         s.shape.building = d.building;
         s.shape.ux = d.ux;
         s.shape.uz = d.uz;
+        s.shape.fade = a.fade;
         s.shape.colour = style.doors.at(static_cast<std::size_t>(pymath::mod(d.id, std::int64_t{5})));
         s.shape.door = face(cam, quad(d, nrm, 1.15, 0.0, 2.45, door_off));
         s.shape.stoop = face(cam, quad(d, nrm, 1.5, 0.0, 0.32, stoop_off));
@@ -549,7 +549,9 @@ gpu::Result<void> Doors::prepare(const frame::PassContext& context) {
         gpu::Binding{.slot = sl::glyph_draws.binding, .type = storage, .stages = Stage::eVertex | Stage::eFragment},
         gpu::Binding{.slot = sl::coverage_tables.binding, .type = storage, .stages = Stage::eFragment},
         gpu::Binding{.slot = 4, .type = storage, .stages = Stage::eVertex},
-        gpu::Binding{.slot = 6, .type = storage, .stages = Stage::eVertex}};
+        gpu::Binding{.slot = 6, .type = storage, .stages = Stage::eVertex},
+        // the records' standing fades while a tile fades (draw.slang's binding 9)
+        gpu::Binding{.slot = 9, .type = storage, .stages = Stage::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -595,6 +597,9 @@ gpu::Result<void> Doors::prepare(const frame::PassContext& context) {
     };
     ATLAS_GPU_LET(fills, opaque("door fills", "items_faces_vs", "items_fills_fs"));
     fills_ = std::move(fills);
+    // and while a tile fades, on the samples its standing fade keeps (ENGINE.md's standing fades)
+    ATLAS_GPU_LET(fills_fading, opaque("door fills while fading", "items_faces_vs", "items_fills_fading_fs"));
+    fills_fading_ = std::move(fills_fading);
     ATLAS_GPU_LET(faces, opaque("door faces", "items_faces_vs", "items_faces_fs"));
     faces_pipeline_ = std::move(faces);
     ATLAS_GPU_LET(parts, opaque("door outlines", "items_parts_vs", "items_parts_fs"));
@@ -614,13 +619,19 @@ gpu::Result<void> Doors::prepare(const frame::PassContext& context) {
     if (numbers.target.colour_count == 2) numbers.blends[1] = gpu::Blend::untouched();
     ATLAS_GPU_LET(numbers_pipeline, frame::make_pipeline(context, numbers, frame::Overdraw::translucent));
     numbers_ = std::move(numbers_pipeline);
+    numbers.label.name = "door numbers while fading";
+    numbers.fragment = "wall_text_fading_fs";
+    ATLAS_GPU_LET(numbers_fading, frame::make_pipeline(context, numbers, frame::Overdraw::translucent));
+    numbers_fading_ = std::move(numbers_fading);
     return {};
 }
 
 void Doors::release() noexcept {
+    numbers_fading_.clear();
     numbers_.clear();
     parts_pipeline_.clear();
     faces_pipeline_.clear();
+    fills_fading_.clear();
     fills_.clear();
     layout_.clear();
     for (vk::raii::DescriptorSet& s : sets_) s.clear();
@@ -631,6 +642,7 @@ void Doors::release() noexcept {
     faces_buffer_ = {};
     parts_buffer_ = {};
     glyphs_buffer_ = {};
+    fades_buffer_ = {};
     tables_ = {};
     counts_ = {};
 }
@@ -641,8 +653,10 @@ void Doors::select(const frame::FrameState& state, frame::Selectors& selectors) 
     const std::array<double, 2> details{frame::Selectors::never, frame::Selectors::never};
     selectors.set_details(kind_, details);
     // the doors left out of the map: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::doors));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Doors::camera_parts() const noexcept { return style::camera_part::doors; }
 
 gpu::Result<void> Doors::build(scene::TileBuild& b) const {
     geometry::TileDoors g = geometry::build_doors({.tile = &b.tile(), .head = &b.head(), .kind = kind_});
@@ -688,6 +702,8 @@ void Doors::update(const frame::FrameState& state) {
     faces_.clear();
     parts_.clear();
     glyphs_.clear();
+    fade_words_.clear();
+    dithers_ = state.cover != nullptr && state.cover->dithers();
     if (fills_ == nullptr || !state.view || state.camera.leaves_out(style::camera_part::doors)) return;
     const bool numbers = !state.camera.leaves_out(style::camera_part::house_numbers);
     const tiles::Style* style =
@@ -699,8 +715,16 @@ void Doors::update(const frame::FrameState& state) {
     std::ranges::stable_sort(doors, std::ranges::greater{}, [](const DoorShape& d) { return sh::rank_slot(d.rank); });
     const bool night = state.theme.has(style::theme_flag::night);
     const sh::FrameCamera& camera = state.block.camera;
+    std::vector<std::uint32_t> part_fades; // while a tile fades, the outlines' standing fades
     for (const DoorShape& d : doors) {
+        const std::size_t faces = faces_.size();
+        const std::size_t parts = parts_.size();
         door_records(d, camera, style->doors, night, faces_, parts_);
+        // while a tile fades, its records' range of the dither (ENGINE.md's standing fades; its glyphs' in info.w)
+        if (dithers_) {
+            fade_words_.insert(fade_words_.end(), faces_.size() - faces, d.fade);
+            part_fades.insert(part_fades.end(), parts_.size() - parts, d.fade);
+        }
         if (!d.plate || !numbers) continue;
         const text::TextRun run = door_number_run(d, style->doors, night, state.rest);
         const Shaped& s = shaped(run);
@@ -720,9 +744,10 @@ void Doors::update(const frame::FrameState& state) {
                                .bands = {at.scale_x, at.scale_y, at.offset_x, at.offset_y},
                                .location = {at.band_x, at.band_y, at.vbands - 1, at.hbands - 1},
                                .colour = {g.colour[0], g.colour[1], g.colour[2], g.colour[3]},
-                               .info = {table, slot, depth, 0}});
+                               .info = {table, slot, depth, d.fade}});
         }
     }
+    fade_words_.insert(fade_words_.end(), part_fades.begin(), part_fades.end());
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     const auto records = [](std::size_t n) {
@@ -732,21 +757,28 @@ void Doors::update(const frame::FrameState& state) {
     auto parts_made = fit(*device_, parts_buffer_.at(slot), records(parts_.size()));
     auto glyphs_made = fit(*device_, glyphs_buffer_.at(slot),
                            vk::DeviceSize{std::max<std::size_t>(glyphs_.size(), 1)} * sizeof(sl::GlyphDraw));
-    if (!faces_made || !parts_made || !glyphs_made) {
-        const gpu::Error& e = !faces_made ? faces_made.error() : !parts_made ? parts_made.error() : glyphs_made.error();
+    auto fades_made = fit(*device_, fades_buffer_.at(slot),
+                          vk::DeviceSize{std::max<std::size_t>(fade_words_.size(), 1)} * sizeof(std::uint32_t));
+    if (!faces_made || !parts_made || !glyphs_made || !fades_made) {
+        const gpu::Error& e = !faces_made    ? faces_made.error()
+                              : !parts_made  ? parts_made.error()
+                              : !glyphs_made ? glyphs_made.error()
+                                             : fades_made.error();
         log::error("vk doors: {} doors, {} faces, {} outlines and {} glyphs: {}", doors.size(), faces_.size(),
                    parts_.size(), glyphs_.size(), e.text());
         faces_buffer_.at(slot) = {};
         parts_buffer_.at(slot) = {};
         glyphs_buffer_.at(slot) = {};
+        fades_buffer_.at(slot) = {};
         return;
     }
-    if (*faces_made || *parts_made || *glyphs_made) {
+    if (*faces_made || *parts_made || *glyphs_made || *fades_made) {
         gpu::SetWriter(*sets_.at(slot))
             .buffer(sl::glyph_draws.binding, vk::DescriptorType::eStorageBuffer, glyphs_buffer_.at(slot).handle())
             .buffer(sl::coverage_tables.binding, vk::DescriptorType::eStorageBuffer, tables_.handle())
             .buffer(4, vk::DescriptorType::eStorageBuffer, faces_buffer_.at(slot).handle())
             .buffer(6, vk::DescriptorType::eStorageBuffer, parts_buffer_.at(slot).handle())
+            .buffer(9, vk::DescriptorType::eStorageBuffer, fades_buffer_.at(slot).handle())
             .apply(device_->handle());
     }
     // each list where it has any: an empty vector's data may be null, which memcpy may not take even for no bytes
@@ -762,6 +794,11 @@ void Doors::update(const frame::FrameState& state) {
         std::memcpy(glyphs_buffer_.at(slot).bytes().data(), glyphs_.data(), glyphs_.size() * sizeof(sl::GlyphDraw));
     }
     glyphs_buffer_.at(slot).flush();
+    if (!fade_words_.empty()) {
+        std::memcpy(fades_buffer_.at(slot).bytes().data(), fade_words_.data(),
+                    fade_words_.size() * sizeof(std::uint32_t));
+    }
+    fades_buffer_.at(slot).flush();
     slot_ = slot;
     counts_ = {.doors = static_cast<std::uint32_t>(doors.size()),
                .faces = static_cast<std::uint32_t>(faces_.size()),
@@ -782,21 +819,22 @@ void Doors::record_draw(const frame::Recording& recording) {
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_.at(slot_), {});
     const auto samples = static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples());
-    const hlsl::uint4 push{samples, 0U, 0U, 0U};
+    // (w: while a tile fades, the list's first fade: the faces' the first, the outlines' after the faces')
+    const std::uint32_t faded = dithers_ ? 1U : 0U;
+    const hlsl::uint4 push{samples, 0U, 0U, faded};
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     if (counts_.faces > 0) {
         const std::uint32_t vertices = counts_.faces * sh::ITEM_FACE_VERTICES;
         if ((recording.state.block.camera.flags.x & sh::CAMERA_PAINTER) == 0U) {
             // at true depth the fans first, alone and plain (ENGINE.md gain 18), then the plates' edges alone
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, 0U});
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fills_);
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, faded});
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, dithers_ ? *fills_fading_ : *fills_);
             cmd.draw(vertices, 1, 0, 0);
             recording.counters.draw("door fills", std::uint64_t{counts_.faces} * 3);
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 2U, 0U, 0U});
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 2U, 0U, faded});
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
             recording.counters.draw("door faces", std::uint64_t{counts_.faces} * 10);
-            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
         } else {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
@@ -804,6 +842,8 @@ void Doors::record_draw(const frame::Recording& recording) {
         }
     }
     if (counts_.parts > 0) {
+        cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0,
+                                       hlsl::uint4{samples, 0U, 0U, dithers_ ? counts_.faces + 1U : 0U});
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *parts_pipeline_);
         cmd.draw(counts_.parts * sh::ITEM_PART_VERTICES, 1, 0, 0);
         recording.counters.draw("door outlines", std::uint64_t{counts_.parts} * 2);
@@ -813,7 +853,7 @@ void Doors::record_draw(const frame::Recording& recording) {
 void Doors::record_numbers(const frame::Recording& recording) {
     if (numbers_ == nullptr || counts_.glyphs == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *numbers_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, dithers_ ? *numbers_fading_ : *numbers_);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_.at(slot_), {});
     cmd.draw(6, counts_.glyphs, 0, 0);
     recording.counters.draw("door numbers", 2ULL * counts_.glyphs, counts_.glyphs);

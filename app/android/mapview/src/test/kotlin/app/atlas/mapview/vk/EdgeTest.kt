@@ -8,6 +8,7 @@ import app.atlas.mapview.MapEngine
 import app.atlas.mapview.vk.Transition.Path
 import app.atlas.tiles.WorldIndex
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -137,20 +138,32 @@ class EdgeTest {
 
     @Test
     fun withTheWorldOnThePhoneTheCoreDrawsEveryCameraBeyondTheLevelsReach() {
-        // the world's folder as `packer world` and `packer globe` write it: one fine pack, a range of its part, and the
-        // globe (ENGINE.md step 5)
+        // the world's folder as WorldFetch keeps it: the index (one fine pack) and the globe (ENGINE.md step 6); the pack
+        // is listed once its head is in the world's cache, as a remote pack of its SHA-256 and length
         val world = File(dir, "world").apply { mkdirs() }
-        val fine = WorldIndex.Entry(6, 33, 21, 9, 11, 0, 20, 80, 1, IntArray(4), ByteArray(WorldIndex.HASH_BYTES))
+        val sha = ByteArray(WorldIndex.HASH_BYTES) { it.toByte() }
+        val fine = WorldIndex.Entry(6, 33, 21, 9, 11, 0, 20, 80, 1, IntArray(4), sha)
         File(world, "world.idx").outputStream().use { WorldIndex(Instant.EPOCH, listOf(WorldIndex.Part("world-mid.000", 100)), listOf(fine)).write(it) }
-        File(world, "world-mid.000").writeBytes(ByteArray(100))
         File(world, PackList.WORLD_GLOBE).writeBytes(ByteArray(10))
-        val list = PackList(windows = { windows }, world = { world }).also { it.load() }
+        var held = false
+        val asked = ArrayList<ByteArray>()
+        val list = PackList(windows = { windows }, world = { world }, worldHeld = { ids -> asked += ids; BooleanArray(ids.size) { held } })
+        list.load()
+        // the globe alone while the pack's head is not on the phone
+        assertEquals(listOf("world-globe 4"), list.worldRefs.map { "${it.id} ${it.kind}" })
+        assertArrayEquals(sha, asked.single())
+        held = true
+        val revision = list.revision
+        list.load()
+        assertTrue(list.revision > revision)
         assertTrue(list.hasWorld)
         assertEquals(
-            listOf("world/6/33/21 3 20 80", "world-globe 4"),
+            listOf("world/6/33/21 3 0 80", "world-globe 4"),
             list.worldRefs.map { r -> if (r.kind == MapCore.PackRef.WORLD_MID) "${r.id} ${r.kind} ${r.offset} ${r.length}" else "${r.id} ${r.kind}" },
         )
-        assertEquals(File(world, "world-mid.000").path, list.refs().first { it.id == "world/6/33/21" }.path)
+        val ref = list.refs().first { it.id == "world/6/33/21" }
+        assertEquals("", ref.path)
+        assertArrayEquals(sha, ref.identity)
         // beyond the levels' reach the core draws every camera, in a country or not, over land or the open sea
         assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
         assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 40.0, -30.0, 1_000_000.0))
@@ -160,8 +173,15 @@ class EdgeTest {
         assertNull(list.named(50.6292, 3.0573))
         assertTrue(list.worldDraws(PackList.LEVELS_REACH + 1))
         assertFalse(list.worldDraws(PackList.LEVELS_REACH))
-        // a part shorter than its pack's range leaves the pack out; without the globe, the world is gone
-        File(world, "world-mid.000").writeBytes(ByteArray(90))
+        // a new version's index names the pack by another SHA-256: listed anew once that head is on the phone
+        val again = WorldIndex.Entry(6, 33, 21, 9, 11, 0, 20, 80, 1, IntArray(4), ByteArray(WorldIndex.HASH_BYTES) { 7 })
+        File(world, "world.idx").outputStream().use { WorldIndex(Instant.EPOCH, listOf(WorldIndex.Part("world-mid.000", 100)), listOf(again)).write(it) }
+        val before = list.revision
+        list.load()
+        assertTrue(list.revision > before)
+        assertArrayEquals(again.sha256, list.refs().first { it.id == "world/6/33/21" }.identity)
+        // with no head in the cache and without the globe, the world is gone
+        held = false
         File(world, PackList.WORLD_GLOBE).delete()
         list.load()
         assertFalse(list.hasWorld)

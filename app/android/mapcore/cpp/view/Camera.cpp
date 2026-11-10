@@ -62,7 +62,7 @@ double Camera::horizon_y() const noexcept {
 }
 
 std::optional<Vec2> View::device_proj(Vec3 p) const noexcept {
-    const std::optional<Vec2> s = camera_.proj(p);
+    const std::optional<Vec2> s = camera_.proj(bent(p));
     if (!s) return std::nullopt;
     return device_point(*s);
 }
@@ -86,10 +86,16 @@ shaders::FrameCamera View::block(bool rest, bool engine, std::uint64_t frame) co
     b.frame = {f32(c.width()), f32(c.height()), f32(device_.density), f32(c.near())};
     const double w = device_.width_px > 0 ? static_cast<double>(device_.width_px) : 1.0;
     const double h = device_.height_px > 0 ? static_cast<double>(device_.height_px) : 1.0;
-    b.device = {f32(2.0 / w), f32(2.0 / h), f32(1.0 / device_.density), 0.0F};
+    b.device = {f32(2.0 / w), f32(2.0 / h), f32(1.0 / device_.density), f32(drop_)};
     b.turn = turn_of(device_.quarter_turns);
     b.flags = {(rest ? shaders::CAMERA_REST : 0U) | (engine ? shaders::CAMERA_ENGINE_MODE : 0U),
                static_cast<std::uint32_t>(frame & 0xFFFF'FFFFU), 0U, 0U};
+    // the bend's target from the eye, where the ground bends (0 bits up to 18 km, so the block is as before)
+    if (drop_ != 0.0) {
+        const Vec3& t = c.spec().target;
+        b.flags.z = hlsl::asuint(f32(t.x - c.eye().x));
+        b.flags.w = hlsl::asuint(f32(t.z - c.eye().z));
+    }
     return b;
 }
 

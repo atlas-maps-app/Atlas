@@ -23,10 +23,12 @@ struct FrameCamera {
     float4 forward; // xyz: f, the view direction; w: the focal length (CSS px per unit of tangent)
     float4 frame;   // x: the engine frame's width W, y: its height H (CSS px); z: the density (device px per CSS px);
                     // w: the near plane (metres, the engine's 0.6)
-    float4 device;  // x: 2 / the view's width in device px, y: 2 / its height; z: the density's reciprocal; w: 0
+    float4 device;  // x: 2 / the view's width in device px, y: 2 / its height; z: the density's reciprocal; w: the
+                    // bend's drop, w₁/2R (bent below: 0 up to a camera 18 km from its target)
     float4 turn;    // the output's pre-rotation of the view's normalised coordinates: x' = (x, y)·(turn.x, turn.y),
                     // y' = (x, y)·(turn.z, turn.w); the identity on a surface that needs none
-    uint4 flags;    // x: the CAMERA_ bits; y: the frame's number (low 32 bits); z, w: 0
+    uint4 flags;    // x: the CAMERA_ bits; y: the frame's number (low 32 bits); z, w: the camera's target from the eye,
+                    // its x and z (frame metres, as float bits; 0 where nothing bends)
 };
 
 /// The camera rests: the vertex stage snaps every point to the SVG's print precision (D4, "Snapping at rest").
@@ -43,14 +45,32 @@ static const uint CAMERA_PAINTER = 8u;
 /// The scale is the frame's metres per tile metre along x (the ratio of the two frames' kx; 1 in the tile's own frame)
 /// while the frame changes it blends (CP/view/Frames.cpp); z and y keep the metre.
 struct TilePlace {
-    float4 offset; // xyz: the tile's south-west corner at street level minus the eye, frame metres; w: 0
-    float4 scale;  // x: metres of the frame per metre of the tile along x; y, z: 1; w: the tile's fade (0 to 1)
+    float4 offset; // xyz: the tile's south-west corner at street level minus the eye, frame metres; w: where the
+                   // range of the dither's levels that what stands up of it keeps starts (shared/fade.slang): 0 but
+                   // for a tile kept under one fading in (scene/Cover.hpp's upright)
+    float4 scale;  // x: metres of the frame per metre of the tile along x; y, z: 1; w: the tile's fade (0 to 1), where
+                   // that range ends
 };
 
 /// The eye-relative point of a tile-local point.
 inline float3 eye_relative(TilePlace t, float3 local) {
     float3 p = {local.x * t.scale.x + t.offset.x, local.y + t.offset.y, local.z + t.offset.z};
     return p;
+}
+
+/// The bend (view/Bend.hpp, ENGINE.md step 5): an eye-relative point on or over the ground dropped by w₁·|Δ|²/2R, Δ its
+/// offset from the camera's target along the ground. Up to a camera 18 km from its target the drop is 0, and the point
+/// comes back bit for bit.
+inline float3 bent(FrameCamera c, float3 p) {
+    float dx = p.x - asfloat(c.flags.z);
+    float dz = p.z - asfloat(c.flags.w);
+    float3 q = {p.x, p.y - c.device.w * (dx * dx + dz * dz), p.z};
+    return q;
+}
+
+/// The eye-relative point of a tile-local point on the bent ground: eye_relative, then the bend.
+inline float3 placed(FrameCamera c, TilePlace t, float3 local) {
+    return bent(c, eye_relative(t, local));
 }
 
 /// Camera coordinates (right, up, forward) of an eye-relative point: the port's cam, vdot summed left to right.

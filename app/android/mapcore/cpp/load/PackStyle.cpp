@@ -279,4 +279,29 @@ std::optional<std::vector<std::byte>> style_section(const StyleFacts& facts) {
     return out.bytes();
 }
 
+std::optional<std::vector<std::byte>> world_style_section() {
+    return style_section({.palette = amsterdam_palette(), .state = {.tz_h = 0}});
+}
+
+const tl::Style* world_style() {
+    // the tables stay with the style for the process, as a pack's do with its own
+    struct Made {
+        std::optional<tl::StyleTables> tables;
+        std::optional<tl::Style> style;
+
+        Made() {
+            auto bytes = world_style_section();
+            if (!bytes) return;
+            auto read = tl::read_style(std::move(*bytes));
+            if (!read) return;
+            auto typed = tl::Style::of(*read);
+            if (!typed) return;
+            tables.emplace(std::move(*read));
+            style.emplace(std::move(*typed));
+        }
+    };
+    static const Made made;
+    return made.style ? &*made.style : nullptr;
+}
+
 } // namespace atlas::load

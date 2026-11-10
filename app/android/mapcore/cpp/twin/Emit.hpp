@@ -19,7 +19,7 @@ public:
 
     /// The camera coordinates (right, up, forward) of a tile-local point in the tile placed at `place`.
     [[nodiscard]] hlsl::float3 camera_of(const shaders::TilePlace& place, hlsl::float3 local) const noexcept {
-        return shaders::camera_of(camera_, shaders::eye_relative(place, local));
+        return shaders::camera_of(camera_, shaders::placed(camera_, place, local));
     }
     /// Whether camera coordinates lie at or beyond the near plane (the vertex stage's clip distance is not negative).
     [[nodiscard]] bool ahead(hlsl::float3 k) const noexcept { return shaders::near_distance(camera_, k) >= 0.0F; }

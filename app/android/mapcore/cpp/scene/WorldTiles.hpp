@@ -21,6 +21,16 @@
 // rivers, the roads by class, the railways, the big roads and the runways. Vertices are the tile's 16-bit fractions of
 // its box (at most 1/65,535 of a tile: 0.014 dp at a level's start), placed in the frame by the world pass.
 //
+// Beyond a camera 18 km from its target the ground bends (ENGINE.md step 5, "The bend"; scene/WorldBend.hpp): the walk
+// takes each tile's box on the bent ground and, once the world is the sphere, passes over a tile wholly behind the
+// horizon. Stage T cuts each triangle and segment longer than its level keeps (a chord of it sags from the bent
+// ground by half a pixel at the level's start: 12 km at L11), so every level's tiles are as round as their pixels,
+// and the world pass draws each tile's coarse ancestor at L3 (the floor, always resident; an L3 tile's or a coarser
+// one's at its parent's level) under it, so the sub-pixel cracks where tiles of two levels meet show the ground's
+// colours. An ancestor's cells over a tile are taken by their boxes (Cells.hpp's cells_overlapping), as the packer cuts
+// its rows of equal latitude. The poles' caps beyond Mercator's 85.05° are two
+// grids of their own, from 84° (under the tiles' last degree): the sea in the north, Antarctica's land in the south.
+//
 // Thread-safe as the world uses it: update and frame on the render thread; the worker its own.
 #pragma once
 
@@ -28,6 +38,7 @@
 #include "gpu/Device.hpp"
 #include "scene/Cells.hpp"
 #include "scene/Heaps.hpp"
+#include "scene/WorldBend.hpp"
 #include "tiles/Store.hpp"
 
 #include <array>
@@ -36,9 +47,13 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace atlas::scene {
@@ -56,6 +71,26 @@ inline constexpr double world_fade_seconds = 0.18;
 inline constexpr std::uint8_t world_finest = 11;
 inline constexpr std::uint8_t world_cells_per_side = 4;
 
+/// The world's blocks (ENGINE.md step 5, "Packs"): a coarse pack per L3 tile holds its L6 to L8 tiles, a fine pack per
+/// L6 tile its L9 to L11.
+inline constexpr std::uint8_t world_coarse_block = 3;
+inline constexpr std::uint8_t world_fine_block = 6;
+inline constexpr std::uint8_t world_coarse_first = 6;
+inline constexpr std::uint8_t world_fine_first = 9;
+
+/// The block of a world pack by its store id (`world/<z>/<x>/<y>`, tiles::world_pack_id), or nothing for another id.
+[[nodiscard]] std::optional<tiles::TileKey> world_block_of(std::string_view id) noexcept;
+
+/// A world tile wanted whose chunk is not on the phone (ENGINE.md step 6): its remote pack's id and the chunk's range
+/// in the pack, which the app fetches and keeps (tiles::Store::keep).
+struct WorldWant {
+    tiles::TileKey tile;
+    std::string pack;
+    tiles::Sha256Digest identity{}; ///< the pack's (world.idx's SHA-256 of it)
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+};
+
 /// Level `z`'s start: the camera distance from which its tiles are drawn, 18.8 km·2^(11 − z).
 [[nodiscard]] double world_level_start(std::uint8_t z) noexcept;
 
@@ -72,11 +107,23 @@ struct WorldLeaf {
 };
 
 /// The cover's walk (the file's head): every tile it ends at, in the walk's order; `held` says whether the store holds
-/// a world tile. Ends at none without a held ancestor. Each level starts at `reach` times its start (the triangle
-/// governor's 2^−bias, scene/Governor.hpp; 1 at bias 0).
+/// a world tile. Ends at none without a held ancestor. Each tile's box is its ground's on `bend`'s bent ground
+/// (world_box), and a tile behind the horizon is passed over. Each level starts at `reach` times its start (the
+/// triangle governor's 2^−bias, scene/Governor.hpp; 1 at bias 0).
 [[nodiscard]] std::vector<WorldLeaf> walk_world(const Frustum& frustum, const view::GroundFrame& frame,
                                                 const std::function<bool(const tiles::TileKey&)>& held,
-                                                double reach = 1.0);
+                                                const WorldBend& bend, double reach = 1.0);
+
+/// The longest edge stage T leaves a level-`z` tile's triangles and segments: a chord that long sags from the bent
+/// ground by the square of its length over 8R, half a pixel at the level's start (3 m at L11, twice as much a level
+/// coarser).
+[[nodiscard]] double world_split_length(std::uint8_t z) noexcept;
+
+/// The floor's level: each tile drawn finer has its ancestor there drawn under it (the globe's resident L3).
+inline constexpr std::uint8_t world_floor = 3;
+
+/// The latitude from which the poles' caps are drawn (under the tiles' last degree before Mercator's 85.05°).
+inline constexpr double world_cap_from = 84.0;
 
 /// The colours a world tile's primitives name: the world pass's palette, from the moment's theme and the world's
 /// style (passes/World.cpp).
@@ -87,8 +134,10 @@ inline constexpr std::uint8_t road = 2;    ///< the roads: the theme's road
 inline constexpr std::uint8_t rail = 3;    ///< the railways: the style's rails
 inline constexpr std::uint8_t asphalt = 4; ///< the big roads: the style's asphalt
 inline constexpr std::uint8_t runway = 5;  ///< the runways: the style's runway pavement
-inline constexpr std::uint8_t kinds = 6;   ///< the land cover: kinds + its LAND kind (the style's land table)
-inline constexpr std::uint32_t size = 64;  ///< the palette's entries
+inline constexpr std::uint8_t south_cap =
+    6;                                    ///< the south pole's cap: Antarctica's ice, the style's glacier (else land)
+inline constexpr std::uint8_t kinds = 7;  ///< the land cover: kinds + its LAND kind (the style's land table)
+inline constexpr std::uint32_t size = 64; ///< the palette's entries
 } // namespace world_palette
 
 /// A world tile's geometry as the heap holds it: its fills' vertex words (three a triangle: its box's fractions, u in
@@ -105,8 +154,13 @@ struct WorldGeometry {
 /// road and 2 for another road, as LW's defaults.
 [[nodiscard]] double terrain_line_width(std::string_view hw, bool big) noexcept;
 
-/// Stage T of a world tile: its geometry, its land cover coloured by `style`'s LAND kinds (none: as the land).
+/// Stage T of a world tile: its geometry, its land cover coloured by `style`'s LAND kinds (none: as the land), each
+/// triangle and segment cut to its level's world_split_length.
 [[nodiscard]] WorldGeometry build_world_geometry(const tiles::Tile& tile, const tiles::Style* style);
+
+/// A pole's cap: a grid of 128 by 16 quads over its box, two triangles each in the tiles' winding, in palette entry
+/// `palette` and cell 0.
+[[nodiscard]] WorldGeometry world_cap_geometry(std::uint8_t palette);
 
 /// A resident world tile.
 struct WorldTile {
@@ -119,7 +173,14 @@ struct WorldTile {
     double shown = -1;       ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
     bool pinned = false;     ///< the globe's L0 to L3: never let go of
     bool ever_drawn = false;
+    std::int8_t cap = 0; ///< a pole's cap: 1 the north's, -1 the south's (its box the frame's: world_cap_box)
+    /// The pack it was built from: once the store no longer holds it (a new version of the world), the tile is let go.
+    std::shared_ptr<const tiles::StorePack> pack;
 };
+
+/// A pole's cap's box in a frame whose camera's target lies at longitude `lon` (degrees): from world_cap_from to the
+/// pole, 180° either side of the target.
+[[nodiscard]] DegreeBox world_cap_box(std::int8_t cap, double lon) noexcept;
 
 /// A tile a frame draws, its cells (bit r · 4 + c, rows from the north) and how far it has faded in (1: done; under
 /// 1 the tile is drawn over its nearest resident ancestor's cells, which the frame draws first).
@@ -135,6 +196,8 @@ struct WorldFrame {
     vk::Buffer buffer;
     vk::DeviceSize buffer_bytes = 0;
     view::GroundFrame frame;
+    /// The frame's bend: the world pass places each tile on its ground.
+    WorldBend bend;
     /// The world's style (its packs'), for the palette; null where the packs carry none.
     const tiles::Style* style = nullptr;
     /// The tiles the cover wants that are not resident yet: 0 once every tile in view draws itself.
@@ -170,17 +233,25 @@ public:
     /// Called on the worker as each tile is built (the frame loop's frame request).
     void set_wake(std::function<void()> wake);
 
-    /// Frame `number`'s world at `seconds` (the frame's clock): its cover for `camera` (in `frame`'s metres)
-    /// `distance` metres from its target, each level from `reach` times its start (walk_world), the tiles it draws and
-    /// those it wants, the tiles built since the last frame taken in and room made. Nothing is drawn up to world_from,
-    /// or without a world pack in the store. Render thread.
-    void update(const view::Camera& camera, const view::GroundFrame& frame, double distance, std::uint64_t number,
+    /// Frame `number`'s world at `seconds` (the frame's clock): its cover for `view`'s camera (in `frame`'s metres)
+    /// `distance` metres from its target, on its bent ground, each level from `reach` times its start (walk_world),
+    /// the tiles it draws and those it wants, the tiles built since the last frame taken in and room made. Nothing is
+    /// drawn up to world_from, or without a world pack in the store. Render thread.
+    void update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
                 double seconds, double reach = 1.0);
 
     /// The last update's frame, or null where it draws nothing.
     [[nodiscard]] const WorldFrame* frame() const noexcept { return drawing_ ? &frame_ : nullptr; }
     /// What it holds (render thread).
     [[nodiscard]] WorldStats stats() const;
+    /// The tiles the last update wanted whose chunks are not on the phone, in its order (nearest first), each with its
+    /// pack's range: a remote pack's chunk the cache lacks. Each is wanted again once the cache has changed (any
+    /// thread).
+    [[nodiscard]] std::vector<WorldWant> wants() const;
+    /// The blocks the last update's cover reaches whose world pack is not open (ENGINE.md step 6: the app fetches the
+    /// pack's head where its index has one), nearest first: a coarse block (L3) for its L6 to L8, a fine block (L6) for
+    /// its L9 to L11 (any thread).
+    [[nodiscard]] std::vector<tiles::TileKey> blocks() const;
     /// Waits until the worker has built every tile wanted so far (tests).
     void wait_idle();
 
@@ -195,22 +266,29 @@ private:
 
     WorldTiles(const tiles::Store& store, std::unique_ptr<Heaps> heaps) noexcept;
     void run(const std::stop_token& stop);
-    /// Builds `key` from the store into the heap; null where it cannot (no world tile, no room, a damaged chunk).
-    [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room);
+    /// Builds `key` from the store into the heap; null where it cannot (no world tile, no room, a damaged chunk, or a
+    /// chunk not on the phone, which `absent` then names).
+    [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room,
+                                                   std::optional<WorldWant>& absent);
     /// Gives a resident tile's range back: once the last frame that drew it has finished.
     void let_go(const WorldTile& t);
     /// Lets go of resident tiles not drawn by frame `number`, least lately drawn first, until `need` bytes are free.
     void make_room(vk::DeviceSize need, std::uint64_t number);
-    /// The world's style: the first world pack's.
-    void take_style();
+    /// The world's style: the first world pack's. Returns whether the store's world packs changed.
+    bool take_style();
+    /// Lets go of the resident tiles whose packs the store no longer holds (render thread).
+    void let_go_of_gone();
 
     const tiles::Store& store_;
     std::unique_ptr<Heaps> heaps_;
     std::unordered_map<std::uint64_t, std::unique_ptr<WorldTile>> resident_; // by packed key
+    std::array<std::unique_ptr<WorldTile>, 2> caps_; // the north's and the south's, built with the heap
     WorldFrame frame_;
     bool drawing_ = false;
     std::shared_ptr<const tiles::StorePack> style_pack_;
     std::vector<std::shared_ptr<const tiles::StorePack>> seen_packs_;
+    std::vector<const tiles::StorePack*> seen_world_; ///< the world packs among seen_packs_
+    std::unordered_set<std::uint64_t> open_blocks_;   ///< their blocks, packed (their ids, tiles::world_pack_id)
     bool pinned_asked_ = false;
 
     mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats
@@ -221,6 +299,14 @@ private:
     std::vector<std::unique_ptr<WorldTile>> built_;
     std::vector<tiles::TileKey> no_room_;
     std::vector<std::uint64_t> failed_keys_;
+    /// A tile built without its chunk on the phone, and the cache's writes as its build began.
+    struct Absent {
+        WorldWant want;
+        std::uint64_t writes = 0;
+    };
+    std::unordered_map<std::uint64_t, Absent> absent_; ///< by packed key
+    std::vector<WorldWant> wants_;
+    std::vector<tiles::TileKey> blocks_;
     std::function<void()> wake_;
     bool drawing_asked_ = false; // the last update drew the world: a tile built asks for a frame
     WorldStats stats_;

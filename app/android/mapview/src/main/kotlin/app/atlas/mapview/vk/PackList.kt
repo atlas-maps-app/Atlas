@@ -41,10 +41,13 @@ class PackList(
      */
     private val bench: () -> List<File> = { emptyList() },
     /**
-     * The world's folder on the phone (ENGINE.md step 5: world.idx, the parts it names and world-globe.atlas), or null
-     * for none: its packs are listed to the core as ranges of their parts and the globe, drawn beyond 18 km.
+     * The world's folder on the phone (ENGINE.md step 6: world.idx and world-globe.atlas), or null for none: the globe is
+     * listed to the core, and each pack of the index whose head is in the world's cache ([worldHeld]) as a remote pack,
+     * drawn beyond 18 km.
      */
     private val world: () -> File? = { null },
+    /** Whether the world's cache holds each pack's head, by their SHA-256s (MapCore.worldHeld); none by default. */
+    private val worldHeld: (List<ByteArray>) -> BooleanArray = { BooleanArray(it.size) },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -128,13 +131,36 @@ class PackList(
     @Synchronized
     private fun numberOf(id: String): Long = numbers.getOrPut(id) { numbers.size + 1L }
 
-    /** Reads the packs again (off the main thread: every pack's manifest is read). Returns the list. */
+    /** A file's head as [load] read it (null where it is no pack the list takes), and the file's time and size then. */
+    private class Read(val time: Long, val size: Long, val head: Head?)
+
+    /**
+     * The heads [load] read, by their files' paths: a file of the same time and size is not read again. Each window that
+     * lands lists the folder again, which holds thousands of windows after a while (and those of earlier versions, read
+     * to be left out), and every manifest was opened and parsed again each time. The core, too, opens a file anew only
+     * where its time or size changed ([refs]).
+     */
+    private val heads = HashMap<String, Read>()
+
+    /** [file]'s head, read where its time or size changed since [load] last read it; its path noted in [seen]. */
+    private fun headOf(file: File, seen: MutableSet<String>): Read {
+        val path = file.path
+        seen += path
+        val time = file.lastModified()
+        val size = file.length()
+        heads[path]?.takeIf { it.time == time && it.size == size }?.let { return it }
+        return Read(time, size, runCatching { file.inputStream().use { readHead(it) } }.getOrNull()).also { heads[path] = it }
+    }
+
+    /** Reads the packs again (off the main thread: a pack's manifest is read where its file is new or changed). Returns the list. */
     @Synchronized
     fun load(): List<Pack> {
         val out = ArrayList<Pack>()
+        val seen = HashSet<String>()
         for (file in runCatching { bench() }.getOrDefault(emptyList())) {
-            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: continue
-            out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file)
+            val read = headOf(file, seen)
+            val head = read.head ?: continue
+            out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file, read)
         }
         // the windows on the phone: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
@@ -144,13 +170,17 @@ class PackList(
         val version = windowVersion()
         windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
             val w = Windows.windowOf(file) ?: return@forEach
-            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: return@forEach
+            val read = headOf(file, seen)
+            val head = read.head ?: return@forEach
             if (head.chunks == 0 || (version != null && head.version != version)) return@forEach
-            out += packOf(w.id, MapCore.PackRef.WINDOW, head, file)
+            out += packOf(w.id, MapCore.PackRef.WINDOW, head, file, read)
         }
+        // a file gone (evicted, or listed no longer) is forgotten: one written there again is read
+        heads.keys.retainAll(seen)
         val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
+        val worldKey = { r: MapCore.PackRef -> listOf(r.id, r.path, r.offset, r.length, r.identity?.contentHashCode()) }
         if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
-            worldOut.map { listOf(it.id, it.path, it.offset, it.length) } != worldRefs.map { listOf(it.id, it.path, it.offset, it.length) }
+            worldOut.map(worldKey) != worldRefs.map(worldKey)
         ) {
             packs = out
             worldRefs = worldOut
@@ -161,19 +191,19 @@ class PackList(
     }
 
     /**
-     * The world in [dir]: each pack of its world.idx a range of its part (one shorter than its range is left out), and
-     * the globe beside it by its file's time and size.
+     * The world in [dir]: each pack of its world.idx whose head the world's cache holds, as a remote pack by its SHA-256
+     * and length (its chunks loaded from the cache as they come), and the globe beside it by its file's time and size.
      */
     private fun worldOf(dir: File): List<MapCore.PackRef> {
         val out = ArrayList<MapCore.PackRef>()
         val idx = File(dir, "world.idx")
         if (idx.isFile) {
             val index = WorldIndex.read(idx.readBytes())
-            for (e in index.entries) {
-                val part = File(dir, index.parts[e.part].name)
-                if (part.length() < e.offset + e.length) continue
+            val held = worldHeld(index.entries.map { it.sha256 })
+            for ((i, e) in index.entries.withIndex()) {
+                if (i >= held.size || !held[i]) continue
                 val id = "world/${e.z}/${e.x}/${e.y}"
-                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.WORLD_MID, path = part.path, offset = e.offset, length = e.length)
+                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.WORLD_MID, length = e.length, identity = e.sha256)
             }
         }
         val globe = File(dir, WORLD_GLOBE)
@@ -183,13 +213,13 @@ class PackList(
         return out
     }
 
-    private fun packOf(id: String, kind: Int, h: Head, file: File): Pack {
+    private fun packOf(id: String, kind: Int, h: Head, file: File, read: Read): Pack {
         val profile = profileOf(h.profile)
         return Pack(
             id, numberOf(id), kind, h.box, profile,
             if (profile == CameraWriter.PROFILE_LIVING) RegionFrame.living() else RegionFrame.region(h.origin),
             runCatching { ZoneId.of(h.zone ?: AMSTERDAM) }.getOrDefault(ZoneId.of(AMSTERDAM)),
-            h.views, file,
+            h.views, file, read.time, read.size,
         )
     }
 

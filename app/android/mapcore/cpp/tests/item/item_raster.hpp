@@ -216,6 +216,8 @@ struct Raster {
         double y1 = -1e300;
         float gx0 = sh::item_point(r, 0).x;
         float gx1 = gx0;
+        float gy0 = sh::item_point(r, 0).y;
+        float gy1 = gy0;
         for (std::uint32_t i = 0; i < count; ++i) {
             const hlsl::float2 p = sh::item_point(r, i);
             x0 = std::min(x0, static_cast<double>(p.x));
@@ -224,6 +226,8 @@ struct Raster {
             y1 = std::max(y1, static_cast<double>(p.y));
             gx0 = std::min(gx0, p.x);
             gx1 = std::max(gx1, p.x);
+            gy0 = std::min(gy0, p.y);
+            gy1 = std::max(gy1, p.y);
         }
         for (std::uint32_t t = 0; t + 2 < count; ++t) {
             std::array<std::array<double, 3>, 3> v{};
@@ -239,14 +243,19 @@ struct Raster {
         const float half = f(r.a.w);
         const double grow = stroked ? static_cast<double>(half) + 1.0 : 0.0;
         const bool gradient = (r.a.x & sh::ITEM_GRADIENT) != 0U;
+        const bool vertical = (r.a.x & sh::ITEM_VERTICAL) != 0U;
         each(x0 - grow, y0 - grow, x1 + grow, y1 + grow, [&](std::size_t k, hlsl::float2 s, hlsl::float2 centre) {
             hlsl::float3 rgb = sh::tree_rgb(r.a.y);
-            if (gradient) {
+            if (vertical) {
+                // two stops down its box (a shopfront's glass by day)
+                const hlsl::float2 c = sh::css_of_output(cam, centre);
+                rgb = sh::item_vertical_at(sh::tree_rgb(r.a.y), sh::tree_rgb(r.e.w), gy0, gy1, c.y);
+            } else if (gradient) {
                 const hlsl::float2 c = sh::css_of_output(cam, centre);
                 rgb = sh::item_gradient_at(sh::tree_rgb(r.a.y), sh::tree_rgb(r.a.w), sh::tree_rgb(r.e.w),
                                            (r.a.x & sh::ITEM_HIGH) != 0U, gx0, gx1, c.x);
             }
-            const std::uint32_t key = gradient ? 0x1000'0000U ^ r.a.y : r.a.y;
+            const std::uint32_t key = vertical ? 0x2000'0000U ^ r.a.y : gradient ? 0x1000'0000U ^ r.a.y : r.a.y;
             // the fan: inside a triangle by its edges
             bool inside = false;
             double boundary = 1e300;
@@ -375,6 +384,140 @@ struct Raster {
         });
     }
     return out;
+}
+
+/// Translucent faces (a shopfront's awning's stripes, its spill at night) blended over raster `r` in their order: each
+/// sample inside its fan whose depth passes (GREATER, writing none) at its opacity (a.z), a level a blend.
+inline void blend_faces(Raster& r, std::span<const sh::ItemRecord> faces, const sh::FrameBlock& block) {
+    const sh::FrameCamera& cam = block.camera;
+    const std::size_t n = r.samples.size();
+    const auto density = static_cast<double>(cam.frame.z);
+    const double tol = 0.02 / density;
+    for (const sh::ItemRecord& rec : faces) {
+        if ((rec.a.x & sh::ITEM_RECORD_KIND) != sh::ITEM_FACE) continue;
+        const std::uint32_t count = sh::item_count(rec);
+        std::vector<Tri> fan;
+        double x0 = 1e300;
+        double y0 = 1e300;
+        double x1 = -1e300;
+        double y1 = -1e300;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const hlsl::float2 p = sh::item_point(rec, i);
+            x0 = std::min(x0, static_cast<double>(p.x));
+            y0 = std::min(y0, static_cast<double>(p.y));
+            x1 = std::max(x1, static_cast<double>(p.x));
+            y1 = std::max(y1, static_cast<double>(p.y));
+        }
+        for (std::uint32_t t = 0; t + 2 < count; ++t) {
+            std::array<std::array<double, 3>, 3> v{};
+            const std::array<std::uint32_t, 3> at{0U, t + 1, t + 2};
+            for (std::size_t i = 0; i < 3; ++i) {
+                const hlsl::float2 p = sh::item_point(rec, at[i]);
+                v[i] = {static_cast<double>(p.x), static_cast<double>(p.y),
+                        static_cast<double>(sh::item_corner_depth(rec, at[i]))};
+            }
+            fan.push_back(Tri{v});
+        }
+        const hlsl::float3 c = sh::tree_rgb(rec.a.y);
+        const auto alpha = std::bit_cast<float>(rec.a.z);
+        const auto px0 = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(x0 * density)) - 1);
+        const auto py0 = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(y0 * density)) - 1);
+        const auto px1 = std::min<std::int64_t>(r.w - 1, static_cast<std::int64_t>(std::ceil(x1 * density)) + 1);
+        const auto py1 = std::min<std::int64_t>(r.h - 1, static_cast<std::int64_t>(std::ceil(y1 * density)) + 1);
+        for (std::int64_t y = py0; y <= py1; ++y) {
+            for (std::int64_t x = px0; x <= px1; ++x) {
+                for (std::size_t q = 0; q < n; ++q) {
+                    const hlsl::float2 dev{static_cast<float>(x) + r.samples[q].x,
+                                           static_cast<float>(y) + r.samples[q].y};
+                    const hlsl::float2 s = sh::css_of_output(cam, dev);
+                    const std::size_t k = (((static_cast<std::size_t>(y) * r.w) + static_cast<std::size_t>(x)) * n) + q;
+                    bool inside = false;
+                    double boundary = 1e300;
+                    double depth = 0;
+                    for (const Tri& t : fan) {
+                        const InTri in = in_tri(t, static_cast<double>(s.x), static_cast<double>(s.y));
+                        boundary = std::min(boundary, in.edge);
+                        if (!inside && in.least >= 0) {
+                            inside = true;
+                            depth = in.depth;
+                        }
+                    }
+                    if (boundary <= tol) r.edge[k] = 1;
+                    if (!inside || (r.covered[k] != 0 && !(depth > r.depth[k]))) continue;
+                    const hlsl::float3 under = r.colour[k];
+                    const hlsl::float3 over = (c * alpha) + (under * (1.0F - alpha));
+                    r.colour[k] = {std::round(over.x * 255.0F) / 255.0F, std::round(over.y * 255.0F) / 255.0F,
+                                   std::round(over.z * 255.0F) / 255.0F};
+                    ++r.blended[k];
+                    if (r.covered[k] == 0) r.covered[k] = 2;
+                }
+            }
+        }
+    }
+}
+
+/// Radial records (ITEM_RADIAL) blended over raster `r` in their order at their gradient at the pixel's centre, a level
+/// a blend: an open place's glow at night on each sample its circle covers, the depth test off; its pool on the ground
+/// with the daylight (its ry in e.z) on each sample of its ellipse's box whose depth passes (GREATER, writing none),
+/// the gradient's circle stretched to the box (nothing beyond the ellipse, where it reaches its last stop's 0).
+inline void blend_radials(Raster& r, std::span<const sh::ItemRecord> radials, const sh::FrameBlock& block) {
+    const sh::FrameCamera& cam = block.camera;
+    const std::size_t n = r.samples.size();
+    const auto density = static_cast<double>(cam.frame.z);
+    const double tol = 0.02 / density;
+    const auto f = [](std::uint32_t v) { return std::bit_cast<float>(v); };
+    for (const sh::ItemRecord& rec : radials) {
+        if ((rec.a.x & sh::ITEM_RECORD_KIND) != sh::ITEM_RADIAL) continue;
+        const hlsl::float2 a = sh::item_point(rec, 0);
+        const float radius = f(rec.a.w);
+        const float ry = f(rec.e.z);
+        const bool pool = ry > 0.0F;
+        const auto depth = static_cast<double>(f(rec.d.z));
+        const double e = static_cast<double>(radius) + 1.0;
+        const double ey = static_cast<double>(pool ? ry : radius) + 1.0;
+        const auto px0 = std::max<std::int64_t>(
+            0, static_cast<std::int64_t>(std::floor((static_cast<double>(a.x) - e) * density)) - 1);
+        const auto py0 = std::max<std::int64_t>(
+            0, static_cast<std::int64_t>(std::floor((static_cast<double>(a.y) - ey) * density)) - 1);
+        const auto px1 = std::min<std::int64_t>(
+            r.w - 1, static_cast<std::int64_t>(std::ceil((static_cast<double>(a.x) + e) * density)) + 1);
+        const auto py1 = std::min<std::int64_t>(
+            r.h - 1, static_cast<std::int64_t>(std::ceil((static_cast<double>(a.y) + ey) * density)) + 1);
+        for (std::int64_t y = py0; y <= py1; ++y) {
+            for (std::int64_t x = px0; x <= px1; ++x) {
+                const hlsl::float2 centre =
+                    sh::css_of_output(cam, hlsl::float2{static_cast<float>(x) + 0.5F, static_cast<float>(y) + 0.5F});
+                const float dx = pool ? (centre.x - a.x) / radius : centre.x - a.x;
+                const float dy = pool ? (centre.y - a.y) / ry : centre.y - a.y;
+                const float t = pool ? std::sqrt((dx * dx) + (dy * dy)) : std::sqrt((dx * dx) + (dy * dy)) / radius;
+                const hlsl::float4 g =
+                    sh::item_radial_at(sh::tree_rgb(rec.a.y), sh::tree_rgb(rec.c.x), sh::tree_rgb(rec.c.y), f(rec.c.z),
+                                       f(rec.c.w), f(rec.e.x), f(rec.e.y), t);
+                if (pool && !(g.w > 0.0F)) continue;
+                for (std::size_t q = 0; q < n; ++q) {
+                    const hlsl::float2 dev{static_cast<float>(x) + r.samples[q].x,
+                                           static_cast<float>(y) + r.samples[q].y};
+                    const hlsl::float2 s = sh::css_of_output(cam, dev);
+                    const std::size_t k = (((static_cast<std::size_t>(y) * r.w) + static_cast<std::size_t>(x)) * n) + q;
+                    if (pool) {
+                        if (r.covered[k] != 0 && !(depth > r.depth[k])) continue;
+                    } else {
+                        const double d = pymath::hypot(static_cast<double>(s.x) - static_cast<double>(a.x),
+                                                       static_cast<double>(s.y) - static_cast<double>(a.y));
+                        if (std::abs(d - static_cast<double>(radius)) <= tol) r.edge[k] = 1;
+                        if (!sh::tree_circle_covers(s, a, radius)) continue;
+                    }
+                    const hlsl::float3 under = r.colour[k];
+                    const hlsl::float3 c{g.x, g.y, g.z};
+                    const hlsl::float3 over = (c * g.w) + (under * (1.0F - g.w));
+                    r.colour[k] = {std::round(over.x * 255.0F) / 255.0F, std::round(over.y * 255.0F) / 255.0F,
+                                   std::round(over.z * 255.0F) / 255.0F};
+                    ++r.blended[k];
+                    if (r.covered[k] == 0) r.covered[k] = 2;
+                }
+            }
+        }
+    }
 }
 
 /// The GPU's frame `got` against raster `r` (raster's, maybe blended over since).

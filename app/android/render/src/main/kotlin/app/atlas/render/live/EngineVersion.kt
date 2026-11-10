@@ -24,7 +24,7 @@ object EngineVersion {
     val OUTPUTS: Map<String, String> = linkedMapOf(
         "westerkerk-sunny" to "0da67374591c9b70f97937c601cb7217",
         "westerkerk-grey" to "8f012acd29fc1820929ce57735d2a2f1",
-        "westerkerk-wet" to "f78a8ba17ff9fd7b2459ff60d18417b7",
+        "westerkerk-wet" to "3821c05a7b1870455debc69ee9f2b6a0",
         "westerkerk-night" to "be235ad49cc3f2edfbdbf7a2827c8736",
         "grachten_home-sunny" to "fa485d91d43514edec3c7d241864f4c7",
         "sangimignano_close-wet" to "66ba418212f0e8852c1202519915618f",

@@ -419,7 +419,10 @@ TEST_CASE("load: a level's sun samples are its lean walls', the places another t
     CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, none, 0, 1.0F) == 1.0F); // no bits: by day
     CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, none, 1, 1.0F) == 0.0F); // its bit: in the shade
     CHECK(sh::building_sun_amount(sh::BUILDING_FACE_LEVEL, 3, lit, 1, 1.0F) == 1.0F);
-    CHECK(sh::building_sun_amount(0, 3, none, 0, 1.0F) == 0.0F); // a window's face before its bits
+    CHECK(sh::building_sun_amount(0, 3, none, 0, 1.0F) == 1.0F); // a window's face before its bits: by day too
+    CHECK(sh::building_sun_amount(0, 3, none, 1, 1.0F) == 0.0F);
+    CHECK(sh::building_sun_amount(0, sh::BUILDING_NO_SAMPLE, none, 0, 1.0F) == 0.0F); // no sample: unlit either way
+    CHECK(sh::building_sun_amount(0, sh::BUILDING_NO_SAMPLE, lit, 1, 1.0F) == 0.0F);
 
     // The L13 taking the east place alone (the west one drawn from its window): the east house its one solid, every
     // sample of the west place's buildings unmarched, the east house's marched leaving its own solid.

@@ -375,6 +375,7 @@
     <string name="mine_part_timings">Beeldtijden</string>
     <string name="mine_part_pacing">Beeldritme</string>
     <string name="mine_part_compression">Compressie</string>
+    <string name="mine_part_fast_refresh">Snel verversen</string>
     <string name="mine_layers_cloud_shadows">Wolkschaduwen</string>
     <string name="mine_layers_water_light">Waterlicht</string>
     <string name="mine_layers_facades">Geveldetails</string>
@@ -398,6 +399,7 @@
     <string name="mine_part_building_shadows">Gebouwschaduwen</string>
     <string name="mine_part_shadow_blur">Zachte schaduwen</string>
     <string name="mine_part_park_shadows">Parkschaduwen</string>
+    <string name="mine_part_sun">Zonlicht</string>
     <string name="mine_part_reflections">Weerspiegelingen</string>
     <string name="mine_part_ripple">Rimpeling</string>
     <string name="mine_part_glitter">Zonneglinstering</string>
@@ -409,6 +411,7 @@
     <string name="mine_part_lamp_pools">Lichtplassen</string>
     <string name="mine_part_lamp_halos">Lampenhalo\'s</string>
     <string name="mine_part_lamp_streaks">Lampenstrepen</string>
+    <string name="mine_part_open_glows">Gloed van open zaken</string>
     <string name="mine_part_rain">Regen</string>
     <string name="mine_part_golden_wash">Gouden licht</string>
     <string name="mine_part_walls">Muren</string>
@@ -427,6 +430,8 @@
     <string name="mine_part_kit_details">Traditiedetails</string>
     <string name="mine_part_doors">Deuren</string>
     <string name="mine_part_house_numbers">Huisnummers</string>
+    <string name="mine_part_shopfronts">Winkelpuien</string>
+    <string name="mine_part_terraces">Terrassen</string>
     <string name="mine_part_trees">Bomen</string>
     <string name="mine_part_leaf_filters">Bladfilters</string>
     <string name="mine_part_furniture">Straatmeubilair</string>

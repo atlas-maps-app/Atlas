@@ -14,9 +14,11 @@
 #include "base/build_info.hpp"
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
+#include "frame/Cadence.hpp"
 #include "frame/CompositeCheck.hpp"
 #include "frame/Due.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Motion.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
@@ -28,6 +30,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
 #include "labels/Sprites.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Window.hpp"
 #include "markers/Markers.hpp"
 #include "osm/Diff.hpp"
@@ -41,7 +44,9 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "tiles/ExpandedCache.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/WorldIndex.hpp"
 
 #if defined(__ANDROID__)
 #include "platform/android/Android.hpp"
@@ -55,8 +60,10 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -163,10 +170,30 @@ public:
     [[nodiscard]] gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& instance) override {
         return gpu::make_android_surface(instance, window_.get());
     }
-    bool set_frame_rate(float fps) override { return window_.set_frame_rate(fps); }
+    bool set_frame_rate(float fps, bool fixed_source) override { return window_.set_frame_rate(fps, fixed_source); }
 
 private:
     platform::Window window_;
+};
+
+/// The threads the map's frame runs on as the ground last told them (frame/RenderThreads.hpp), for the render thread's
+/// hint session to take in once the frame is out (render thread only).
+class TookThreads final : public frame::RenderThreads {
+public:
+    void took(std::span<const std::int32_t> tids) override {
+        tids_.assign(tids.begin(), tids.end());
+        fresh_ = true;
+    }
+    /// The threads told since the last call, or none.
+    [[nodiscard]] std::optional<std::span<const std::int32_t>> take() noexcept {
+        if (!fresh_) return std::nullopt;
+        fresh_ = false;
+        return std::span<const std::int32_t>(tids_);
+    }
+
+private:
+    std::vector<std::int32_t> tids_;
+    bool fresh_ = false;
 };
 #endif
 
@@ -202,7 +229,8 @@ public:
         core->map_ = std::make_unique<frame::MapFrame>(
             map_workers(), [self] { self->wake(); },
             frame::MapOptions{.cache_dir = options.cache_dir,
-                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); }});
+                              .worker_hints = [] { return std::make_shared<platform::WorkerSession>(); },
+                              .render_threads = core->took_threads_});
 #else
         (void)env;
         core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr,
@@ -288,6 +316,46 @@ public:
         });
     }
 
+    /// The world's cache of remote packs' heads and chunks (ENGINE.md step 6) for the map from now on.
+    void world_cache(std::shared_ptr<tiles::ExpandedCache> cache) {
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            world_cache_ = cache;
+        }
+        on_session([this, &cache] {
+            map_->set_world_cache(cache);
+            ask_frame();
+        });
+    }
+
+    /// The world's tiles the map wants whose chunks are not on the phone, nearest first (scene::WorldTiles::wants).
+    [[nodiscard]] std::vector<scene::WorldWant> world_wants() {
+        return on_session([this] { return map_->world_wants(); });
+    }
+
+    /// The world's blocks the map's cover reaches without an open pack, nearest first (scene::WorldTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> world_blocks() {
+        return on_session([this] { return map_->world_blocks(); });
+    }
+
+    /// A range of the world pack `id`'s bytes the app fetched, its whole chunks checked and kept in the world's cache
+    /// (tiles::Store::keep) on the caller's thread; the next frame builds the tiles kept. Nothing where the map's world
+    /// holds no such pack of that identity (another version's) or has no cache.
+    [[nodiscard]] std::optional<tiles::KeptChunks>
+    world_keep(const std::string& id, const tiles::Sha256Digest& identity, const tiles::PackBytes& range) {
+        std::shared_ptr<tiles::ExpandedCache> cache;
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            cache = world_cache_;
+        }
+        const std::shared_ptr<const tiles::StorePack> pack = on_session([this, &id] { return map_->world_pack(id); });
+        if (cache == nullptr || pack == nullptr || !pack->remote || pack->identity != identity) return std::nullopt;
+        thread_local tiles::Zstd zstd;
+        tiles::KeptChunks kept = tiles::Store::keep(*cache, *pack, range, zstd);
+        if (!kept.kept.empty()) on_session([this] { ask_frame(); });
+        return kept;
+    }
+
     /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() {
         return on_session([this] { return map_->wanted_windows(); });
@@ -349,6 +417,12 @@ public:
         });
     }
 
+    /// The kept walls' and near cells' shape records for the map from now on, on (the default) or off (VK bench's
+    /// comparison of the two): "" where its buildings draw from them, else why they cannot or not yet.
+    [[nodiscard]] std::string shape_records(bool on) {
+        return on_session([this, on] { return map_->set_shape_records(on); });
+    }
+
     /// The app's labels for the map from now on (null: none).
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
@@ -384,6 +458,11 @@ public:
     /// The building under the view's device point (x, y) as the map's last frame drew it, or none (no map).
     [[nodiscard]] std::optional<scene::Picked> pick(double x, double y) {
         return on_session([this, x, y] { return map_->pick(x, y); });
+    }
+
+    /// What the view's device point (x, y) shows of the ground as the map's last frame drew it, or none (no map).
+    [[nodiscard]] std::optional<scene::PickedGround> pick_ground(double x, double y) {
+        return on_session([this, x, y] { return map_->pick_ground(x, y); });
     }
 
     /// VK facts' twin check over the bundled Westerkerk (frame/TwinCheck.hpp) on the session's device, a world and a
@@ -451,6 +530,14 @@ public:
     /// Whether the driver lets an app make the swapchain's images without its compression: the switch's off acts only
     /// there. Any thread: read as the core starts (a device made again after a loss is the same driver's).
     [[nodiscard]] bool compression_switch() const noexcept { return compression_switch_; }
+
+    /// The Map look's Fast refresh: on (until it is set), the window's frames are said to come at 120 a second while
+    /// the map moves and at 60 at rest, with fixed-source compatibility; off, at 60 with default compatibility
+    /// throughout, the vote of alphas up to 27 (Session::set_fast_refresh, ENGINE.md gain 11). Said again at once on
+    /// the render thread; the swapchain is untouched, and no frame is asked for.
+    void fast_refresh(bool on) {
+        on_session([this, on] { session_->set_fast_refresh(on); });
+    }
 
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
@@ -573,8 +660,10 @@ private:
     /// The app's map (K11): the session draws it while map_on_ (the session's thread alone reads the flag).
     std::unique_ptr<frame::MapFrame> map_;
     bool map_on_ = false;
-    std::atomic<bool> pacing_{false}; // set_pacing
-    bool compression_switch_ = false; // set as the core starts, read only after
+    std::mutex world_cache_mutex_;
+    std::shared_ptr<tiles::ExpandedCache> world_cache_; // world_cache, under world_cache_mutex_
+    std::atomic<bool> pacing_{false};                   // set_pacing
+    bool compression_switch_ = false;                   // set as the core starts, read only after
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
@@ -623,6 +712,13 @@ private:
         requested_ = false;
         pacer_.rest();
         session_->rest();
+        // The window's frames come at 60 a second again once the map has been still for a second since it moved
+        // (frame/Motion.hpp): the render thread's timer says so then, unless the map moves again first.
+        if (motion_.rested(platform::now_ns())) {
+            loop_->set_timer(motion_.drop_ns(), [this] {
+                if (!closing_.load() && motion_.drop()) session_->set_moving(false);
+            });
+        }
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
@@ -634,17 +730,14 @@ private:
             session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
             return;
         }
-        // The display's period, from the vsyncs themselves; at most 60 frames a second (D5.8): every vsync at 60 Hz,
-        // every second one at 120 Hz, at 90 Hz every vsync unless the phone runs warm.
-        if (last_vsync_ns_ != 0) {
-            const std::int64_t d = v.frame_ns - last_vsync_ns_;
-            if (d > 4'000'000 && d < 50'000'000) period_ns_ = period_ns_ == 0 ? d : (period_ns_ * 7 + d) / 8;
-        }
-        last_vsync_ns_ = v.frame_ns;
-        const bool every_second =
-            period_ns_ != 0 && (period_ns_ < 10'000'000 || (period_ns_ < 14'000'000 && thermal_.headroom(0) > 0.6F));
-        const std::int64_t min_gap = every_second ? 2 * period_ns_ - 2'000'000 : 0;
-        if (drawn_vsync_ns_ != 0 && v.frame_ns - drawn_vsync_ns_ < min_gap) {
+        // The display's period, from the vsync's frame timelines; at most 60 frames a second (D5.8,
+        // frame/Cadence.hpp): every vsync at 60 Hz, every second one at 120 Hz, at 90 Hz every vsync where the phone is
+        // cool and 60 a second by phase where it runs warm (one vsync and two in turn), every second one there from a
+        // GPU figure of 16 ms or more until one under 14 ms.
+        cadence_.at_vsync(v.frame_ns, std::span(v.presents.data(), v.timelines));
+        const frame::Cadence::Step step =
+            cadence_.step([this, &v] { return warmth_.warm(v.frame_ns, [this] { return thermal_.headroom(0); }); });
+        if (!cadence_.due(v.frame_ns, step)) {
             ask_vsync();
             return;
         }
@@ -673,14 +766,27 @@ private:
             rest();
             return;
         }
-        drawn_vsync_ns_ = v.frame_ns;
+        cadence_.drew(v.frame_ns, step);
+        // ADPF's target follows the frames' interval: 11.1 ms at 90 Hz where every vsync draws (the phone cool, the GPU
+        // light), 16.7 ms elsewhere (two periods at 120 Hz; at 90 Hz by the phase and behind a heavy GPU alike), told
+        // only when it changes.
+        hint_.target(cadence_.target_ns(step));
         // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
         // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
         // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
         // responsive", and more frames despite more stutter is better there. A debug build's switch paces again
         // (set_pacing): the zoom that stops at z 17 came with alpha 16, which took the pacing out.
-        const std::int64_t cadence = period_ns_ == 0 ? 0 : (every_second ? 2 * period_ns_ : period_ns_);
+        const std::int64_t cadence = cadence_.cadence_ns(step);
         draw(*camera, v, pacing_.load(std::memory_order_relaxed) ? present_of(v, cadence) : 0);
+        // The map moves from its second new camera since the loop last rested: the window's frames are said to come at
+        // 120 a second until it has rested a second (frame/Motion.hpp), so that the display stays at 120 Hz where it
+        // has it, through a fling's tail and the camera's animations as under the finger, and pan, lift and pan again
+        // does not switch it at each rest (ENGINE.md gain 11); a drop to 60 to come is off. Said once the frame is out,
+        // so that no frame waits for it; one camera alone, or a tile or a fade at rest, moves nothing.
+        if (motion_.drew(more == JNI_TRUE)) {
+            loop_->cancel_timer();
+            session_->set_moving(true);
+        }
         ask_vsync();
     }
 
@@ -691,8 +797,8 @@ private:
         std::array<frame::Timeline, platform::max_timelines> t{};
         for (std::uint32_t i = 0; i < v.timelines; ++i)
             t.at(i) = {.present_ns = v.presents.at(i), .deadline_ns = v.deadlines.at(i)};
-        const std::size_t pick =
-            pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(), cadence_ns, period_ns_);
+        const std::size_t pick = pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(),
+                                               cadence_ns, cadence_.period_ns());
         return t.at(pick).present_ns;
     }
 
@@ -714,11 +820,24 @@ private:
         if (!d.drawn) return;
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
-        hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
-        // The pacer's work, for the debug switch's pacing: the frame's CPU time and its GPU time, where the GPU's clock
-        // measured it (an earlier frame's, read back after its fence: the percentile does not mind).
+        // ADPF hears the render thread's own work: the frame's time less its waits for the slot's previous frame (the
+        // GPU) and the swapchain's image (the display), as Android's own render thread leaves out its dequeue. With
+        // them in, a frame the GPU or the display held told ADPF the CPU missed its 16.7 ms, and its clocks rose for
+        // nothing (the stutter review, 3 November). The GPU's time as before: an earlier frame's.
+        hint_.report(r.start_ns, (r.end_ns - r.start_ns) - d.wait_ns,
+                     static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // The ground's helpers, as its team is made (once the frame is out, so that no frame waits for the call): the
+        // run the render thread waits for them in is in its own time above, so the boost that time asks for reaches
+        // them too (API 34).
+        if (const auto tids = took_threads_->take()) hint_.threads(*tids);
+        // The pacer's work, for the debug switch's pacing: the frame's CPU time, its waits included (they hold its
+        // image back as its work does), and its GPU time, where the GPU's clock measured it (an earlier frame's, read
+        // back after its fence: the percentile does not mind). The cadence takes the same figure for its step at 90 Hz
+        // (the GPU heavy from 16 ms until under 14).
         if ((r.flags & standin::frame_flag::gpu) != 0) {
-            pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+            const auto gpu_ns = static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6);
+            cadence_.gpu_took(gpu_ns);
+            pacer_.add_work((r.end_ns - r.start_ns) + gpu_ns);
         }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
@@ -738,6 +857,7 @@ private:
     JavaVM* vm_ = nullptr;
     JNIEnv* render_env_ = nullptr;
     platform::HintSession hint_;
+    std::shared_ptr<TookThreads> took_threads_ = std::make_shared<TookThreads>(); // the map's frame's threads
     platform::Thermal thermal_;
     frame::Pacer pacer_; // the presentation each frame asks for under the debug switch's pacing (set_pacing)
     jobject source_ = nullptr;
@@ -753,9 +873,9 @@ private:
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
     bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
     std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
-    std::int64_t last_vsync_ns_ = 0;
-    std::int64_t drawn_vsync_ns_ = 0;
-    std::int64_t period_ns_ = 0;
+    frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
+    frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
+    frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
@@ -862,6 +982,10 @@ void native_set_compression(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jbool
     if (Core* core = core_of(handle); core != nullptr) core->compression(on == JNI_TRUE);
 }
 
+void native_set_fast_refresh(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    if (Core* core = core_of(handle); core != nullptr) core->fast_refresh(on == JNI_TRUE);
+}
+
 jboolean native_compression_switch(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
     const Core* core = core_of(handle);
     return core != nullptr && core->compression_switch() ? JNI_TRUE : JNI_FALSE;
@@ -950,18 +1074,22 @@ jstring native_map(JNIEnv* env, jclass /*cls*/, jlong handle, jint mode) {
 
 /// The packs the app lists for the map, one per index of the arrays: its id, its number (the camera state's pack_id),
 /// its kind (tiles::PackKind), and a file's path, or an open descriptor's range (an APK asset; the core keeps a
-/// duplicate of the descriptor, the caller closes its own). A line per pack: opened, listed, kept, or why not.
+/// duplicate of the descriptor, the caller closes its own), or a remote world pack's SHA-256 in `identities` (null for
+/// every other pack; ENGINE.md step 6), its length its size: opened from its head in the world's cache, each chunk
+/// loaded from there (tiles::Store::absent). A line per pack: opened, listed, kept, or why not.
 jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids, jlongArray numbers, jintArray kinds,
-                     jobjectArray paths, jintArray fds, jlongArray offsets, jlongArray lengths) {
+                     jobjectArray paths, jintArray fds, jlongArray offsets, jlongArray lengths,
+                     jobjectArray identities) {
     Core* core = core_of(handle);
     if (core == nullptr) return java(env, "no core");
     if (ids == nullptr || numbers == nullptr || kinds == nullptr || paths == nullptr || fds == nullptr ||
-        offsets == nullptr || lengths == nullptr) {
+        offsets == nullptr || lengths == nullptr || identities == nullptr) {
         return java(env, "packs: an array is missing");
     }
     const jsize n = env->GetArrayLength(ids);
     if (env->GetArrayLength(numbers) != n || env->GetArrayLength(kinds) != n || env->GetArrayLength(paths) != n ||
-        env->GetArrayLength(fds) != n || env->GetArrayLength(offsets) != n || env->GetArrayLength(lengths) != n) {
+        env->GetArrayLength(fds) != n || env->GetArrayLength(offsets) != n || env->GetArrayLength(lengths) != n ||
+        env->GetArrayLength(identities) != n) {
         return java(env, "packs: the arrays differ in length");
     }
     std::vector<jlong> number(static_cast<std::size_t>(n));
@@ -991,6 +1119,22 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.ref.kind = static_cast<tiles::PackKind>(kind[at]);
         p.ref.offset = static_cast<std::uint64_t>(offset[at]);
         p.ref.length = static_cast<std::uint64_t>(length[at]);
+        if (auto* identity = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(identities, i));
+            identity != nullptr) {
+            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base;
+            const bool sized = env->GetArrayLength(identity) == static_cast<jsize>(p.ref.identity.size());
+            if (sized) {
+                env->GetByteArrayRegion(identity, 0, static_cast<jsize>(p.ref.identity.size()),
+                                        reinterpret_cast<jbyte*>( // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                                            p.ref.identity.data()));
+            }
+            env->DeleteLocalRef(identity);
+            if (!world || !sized || !p.ref.path.empty() || fd[at] >= 0 || length[at] <= 0) {
+                refused += std::format("{}: not a remote world pack the map can list\n", p.ref.id);
+                continue;
+            }
+            p.ref.fetch = tiles::Store::absent();
+        }
         // The map's own descriptor, closed when the pack goes (frame/MapFrame.hpp).
         if (fd[at] >= 0) p.ref.fd = ::fcntl(fd[at], F_DUPFD_CLOEXEC, 0);
         packs.push_back(std::move(p));
@@ -1031,6 +1175,182 @@ jlongArray native_wanted_levels(JNIEnv* env, jclass /*cls*/, jlong handle) {
 jlongArray native_levels_in_view(JNIEnv* env, jclass /*cls*/, jlong handle) {
     Core* core = core_of(handle);
     return packed_keys(env, core != nullptr ? core->levels_in_view() : std::vector<tiles::TileKey>{});
+}
+
+/// The world's cache in folder `dir` (ENGINE.md step 6: the world's own LRU of its remote packs' heads and chunks),
+/// within `budget` bytes from now on: one a folder for the process, which every map and the app's checks share, opened
+/// at its first use (its entries listed and checked, so off the main thread).
+std::shared_ptr<tiles::ExpandedCache> world_cache_in(const std::string& dir, std::uint64_t budget, std::string& why) {
+    static std::mutex mutex;
+    static std::map<std::string, std::shared_ptr<tiles::ExpandedCache>> caches;
+    const std::scoped_lock lock(mutex);
+    if (const auto it = caches.find(dir); it != caches.end()) {
+        if (it->second->budget() != budget) it->second->set_budget(budget);
+        return it->second;
+    }
+    auto opened = tiles::ExpandedCache::open(dir, budget);
+    if (!opened) {
+        why = std::format("the world's cache in {}: {}", dir, tiles::describe(opened.error()));
+        return nullptr;
+    }
+    std::shared_ptr<tiles::ExpandedCache> cache(std::move(*opened));
+    caches.emplace(dir, cache);
+    return cache;
+}
+
+/// The map's world keeps its remote packs' heads and chunks in the world's cache in `dir` within `budget` bytes
+/// (world_cache_in); "" or why not.
+jstring native_world_cache(JNIEnv* env, jclass /*cls*/, jlong handle, jstring dir, jlong budget) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
+    std::string why;
+    auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    core->world_cache(std::move(cache));
+    return java(env, "");
+}
+
+/// Whether the world's cache in `dir` holds each pack's head, `identities` their SHA-256s end to end (32 bytes each);
+/// null where the cache does not open.
+jbooleanArray native_world_held(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jbyteArray identities) {
+    if (identities == nullptr || budget <= 0) return nullptr;
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) {
+        log::warn("vk world: {}", why);
+        return nullptr;
+    }
+    const jsize bytes = env->GetArrayLength(identities);
+    const jsize n = bytes / static_cast<jsize>(sizeof(tiles::Sha256Digest));
+    std::vector<jbyte> all(static_cast<std::size_t>(bytes));
+    env->GetByteArrayRegion(identities, 0, bytes, all.data());
+    std::vector<jboolean> held(static_cast<std::size_t>(n));
+    for (jsize i = 0; i < n; ++i) {
+        tiles::CacheKey key{.kind = tiles::CacheKind::pack_head};
+        std::memcpy(key.source.data(), all.data() + (static_cast<std::size_t>(i) * key.source.size()),
+                    key.source.size());
+        held[static_cast<std::size_t>(i)] = cache->holds(key) ? JNI_TRUE : JNI_FALSE;
+    }
+    jbooleanArray out = env->NewBooleanArray(n);
+    if (out != nullptr && n > 0) env->SetBooleanArrayRegion(out, 0, n, held.data());
+    return out;
+}
+
+/// A world pack's head the app fetched into the world's cache in `dir` (tiles::Store::keep_head): the pack of `kind`
+/// (tiles::PackKind) and `length` bytes whose SHA-256 is `identity`, its bytes but its chunks as ranges, each from its
+/// offset in `offsets`. "" or why it was not kept.
+jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jint kind, jlong length,
+                          jbyteArray identity, jlongArray offsets, jobjectArray ranges) {
+    if (identity == nullptr || offsets == nullptr || ranges == nullptr || budget <= 0 || length <= 0) {
+        return java(env, "a world pack's head: an argument is missing");
+    }
+    if (kind != static_cast<jint>(tiles::PackKind::world_mid) &&
+        kind != static_cast<jint>(tiles::PackKind::world_base)) {
+        return java(env, std::format("a world pack's head: not a world pack's kind ({})", kind));
+    }
+    tiles::PackRef ref{.kind = static_cast<tiles::PackKind>(kind), .length = static_cast<std::uint64_t>(length)};
+    if (env->GetArrayLength(identity) != static_cast<jsize>(ref.identity.size())) {
+        return java(env, "a world pack's head: its identity is not a SHA-256");
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(ref.identity.size()),
+        reinterpret_cast<jbyte*>(ref.identity.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const jsize n = env->GetArrayLength(offsets);
+    if (env->GetArrayLength(ranges) != n) return java(env, "a world pack's head: the arrays differ in length");
+    std::vector<jlong> offset(static_cast<std::size_t>(n));
+    env->GetLongArrayRegion(offsets, 0, n, offset.data());
+    std::vector<std::vector<std::byte>> bytes(static_cast<std::size_t>(n));
+    std::vector<tiles::PackBytes> parts;
+    for (jsize i = 0; i < n; ++i) {
+        auto* array = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(ranges, i));
+        if (array == nullptr || offset[static_cast<std::size_t>(i)] < 0)
+            return java(env, "a world pack's head: a range is missing");
+        auto& b = bytes[static_cast<std::size_t>(i)];
+        b.resize(static_cast<std::size_t>(env->GetArrayLength(array)));
+        env->GetByteArrayRegion(
+            array, 0, static_cast<jsize>(b.size()),
+            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+        env->DeleteLocalRef(array);
+        parts.push_back({.offset = static_cast<std::uint64_t>(offset[static_cast<std::size_t>(i)]), .bytes = b});
+    }
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    // as the map's store opens the pack: a world pack in the core's world style (ENGINE.md step 5)
+    const auto kept = tiles::Store::keep_head(*cache, ref, parts, load::world_style());
+    return java(env, kept ? std::string() : std::format("a world pack's head: {}", tiles::describe(kept.error())));
+}
+
+/// Empties the world's cache in `dir` of every head and chunk (a new version of the world drops the old one's:
+/// ENGINE.md step 6), its budget `budget` from now on; "" or why not.
+jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget) {
+    if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) return java(env, why);
+    cache->evict_to(0);
+    return java(env, "");
+}
+
+/// The world's tiles the map wants whose chunks are not on the phone, nearest first: eight longs each, its pack's block
+/// and its tile (packed), the chunk's offset in the pack and its length, then the pack's SHA-256 as four big-endian
+/// longs.
+jlongArray native_world_wants(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<scene::WorldWant> wants = core != nullptr ? core->world_wants() : std::vector<scene::WorldWant>{};
+    std::vector<jlong> out;
+    out.reserve(wants.size() * 8);
+    for (const scene::WorldWant& w : wants) {
+        const std::optional<tiles::TileKey> block = scene::world_block_of(w.pack);
+        if (!block) continue;
+        out.push_back(static_cast<jlong>(block->packed()));
+        out.push_back(static_cast<jlong>(w.tile.packed()));
+        out.push_back(static_cast<jlong>(w.offset));
+        out.push_back(static_cast<jlong>(w.length));
+        for (std::size_t i = 0; i < w.identity.size(); i += 8) {
+            std::uint64_t v = 0;
+            for (std::size_t j = 0; j < 8; ++j) v = (v << 8U) | std::to_integer<std::uint64_t>(w.identity.at(i + j));
+            out.push_back(static_cast<jlong>(v));
+        }
+    }
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr && !out.empty()) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The world's blocks the map's cover reaches without an open pack, nearest first, their keys packed.
+jlongArray native_world_blocks(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->world_blocks() : std::vector<tiles::TileKey>{});
+}
+
+/// A range of the bytes of the world pack of `block` (packed) and `identity` (its SHA-256) from `offset` the app
+/// fetched: its whole chunks checked and kept in the map's world cache. The number of chunks kept, then the refused
+/// ones' tiles (packed); null where the map's world holds no such pack or no cache.
+jlongArray native_world_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jlong block, jbyteArray identity, jlong offset,
+                             jbyteArray bytes) {
+    Core* core = core_of(handle);
+    tiles::Sha256Digest sha{};
+    if (core == nullptr || bytes == nullptr || identity == nullptr || offset < 0 ||
+        env->GetArrayLength(identity) != static_cast<jsize>(sha.size())) {
+        return nullptr;
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(sha.size()),
+        reinterpret_cast<jbyte*>(sha.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const tiles::TileKey key = tiles::TileKey::unpack(static_cast<std::uint64_t>(block));
+    const std::string id = tiles::world_pack_id({.z = key.z, .x = key.x, .y = key.y});
+    std::vector<std::byte> b(static_cast<std::size_t>(env->GetArrayLength(bytes)));
+    env->GetByteArrayRegion(bytes, 0, static_cast<jsize>(b.size()),
+                            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const auto kept = core->world_keep(id, sha, {.offset = static_cast<std::uint64_t>(offset), .bytes = b});
+    if (!kept) return nullptr;
+    std::vector<jlong> out{static_cast<jlong>(kept->kept.size())};
+    for (const tiles::TileKey& t : kept->refused) out.push_back(static_cast<jlong>(t.packed()));
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
 }
 
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
@@ -1210,6 +1530,15 @@ void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze,
     if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
 }
 
+/// The kept walls' and near cells' shape records for the map from now on, `on` (the default) or off, each kept wall
+/// then decided at each point (frame/MapFrame.hpp's set_shape_records, for VK bench): "" where its buildings draw from
+/// them, else why they cannot or not yet.
+jstring native_shape_records(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    return java(env, core->shape_records(on == JNI_TRUE));
+}
+
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
 /// read_label_block: each label at its own size and at the band's top), at `revision`, drawn no smaller than `least` of
 /// their own size; an empty block takes them away.
@@ -1308,6 +1637,27 @@ jstring native_pick(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat 
     return java(env, std::format("{} {} {} {:.7f} {:.7f} {} {} {}", picked->relation ? "relation" : "way", picked->id,
                                  picked->part, picked->latitude, picked->longitude, picked->roof ? "roof" : "wall",
                                  picked->slot, picked->rgb));
+}
+
+/// What the view's device point (`x`, `y`) shows of the ground as the map's last frame drew it (frame/MapFrame.hpp's
+/// pick_ground): "<plate|fill|water|quay> <slot> <latitude> <longitude>", what the ray met, the slot of the user's
+/// palette that paints it (0: none does) and where; "" where it met none.
+jstring native_pick_ground(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat y) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "");
+    const auto picked = core->pick_ground(static_cast<double>(x), static_cast<double>(y));
+    if (!picked) return java(env, "");
+    const auto what = [](scene::PickedGround::What w) -> std::string_view {
+        switch (w) {
+        case scene::PickedGround::What::plate: return "plate";
+        case scene::PickedGround::What::fill: return "fill";
+        case scene::PickedGround::What::water: return "water";
+        case scene::PickedGround::What::quay: return "quay";
+        }
+        return "fill";
+    };
+    return java(
+        env, std::format("{} {} {:.7f} {:.7f}", what(picked->what), picked->slot, picked->latitude, picked->longitude));
 }
 
 template <class F>
@@ -1448,8 +1798,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 53>& methods() {
-    static const std::array<JNINativeMethod, 53> table{{
+const std::array<JNINativeMethod, 63>& methods() {
+    static const std::array<JNINativeMethod, 63> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1472,6 +1822,7 @@ const std::array<JNINativeMethod, 53>& methods() {
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
         method("setCompression", "(JZ)V", fn(&native_set_compression)),
         method("compressionSwitch", "(J)Z", fn(&native_compression_switch)),
+        method("setFastRefresh", "(JZ)V", fn(&native_set_fast_refresh)),
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),
@@ -1498,15 +1849,17 @@ const std::array<JNINativeMethod, 53>& methods() {
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
         // The app's map (K11).
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
-        method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
+        method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J[[B)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
+        method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
         method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
+        method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
@@ -1515,6 +1868,13 @@ const std::array<JNINativeMethod, 53>& methods() {
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
         method("wantedLevels", "(J)[J", fn(&native_wanted_levels)),
         method("levelsInView", "(J)[J", fn(&native_levels_in_view)),
+        method("worldCache", "(JLjava/lang/String;J)Ljava/lang/String;", fn(&native_world_cache)),
+        method("worldHeld", "(Ljava/lang/String;J[B)[Z", fn(&native_world_held)),
+        method("worldHead", "(Ljava/lang/String;JIJ[B[J[[B)Ljava/lang/String;", fn(&native_world_head)),
+        method("worldDrop", "(Ljava/lang/String;J)Ljava/lang/String;", fn(&native_world_drop)),
+        method("worldWants", "(J)[J", fn(&native_world_wants)),
+        method("worldBlocks", "(J)[J", fn(&native_world_blocks)),
+        method("worldKeep", "(JJ[BJ[B)[J", fn(&native_world_keep)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
         method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",

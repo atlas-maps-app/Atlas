@@ -29,9 +29,11 @@
 
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
+#include "frame/RenderThreads.hpp"
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
+#include "scene/Pick.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/BitTiles.hpp"
@@ -89,6 +91,12 @@ inline constexpr std::uint32_t water_count = 0x07;
 inline constexpr std::uint32_t shadows = 0x08;
 inline constexpr std::uint32_t canopy = 0x10;
 inline constexpr std::uint32_t water_w0 = 0x40;
+/// The app's map's thin water (passes/Water.cpp): where its pieces lie narrower than 1.5 px, their count cleared for
+/// the band (the shadows' bit, from the opaque ground to the water's end: their union comes after it), and the band's
+/// samples drawn (the walls' material lines' bit, building/windows.slangh's BUILDING_MATERIAL_STENCIL, from the band
+/// to the water's end: the lines take it in their phase at order 999, after it), both cleared with the clip.
+inline constexpr std::uint32_t water_thin = shadows;
+inline constexpr std::uint32_t water_band = 0x20;
 } // namespace ground_stencil
 
 /// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
@@ -106,6 +114,9 @@ inline constexpr std::uint32_t near_clip = 32;  ///< stroke_vs: fixed widths fro
 /// fill_vs: the streets' own draw (the app's map): each off a bridge as wide as its way, the stencil keeping it off the
 /// water; without it, under `wide`, such a street is left to that draw
 inline constexpr std::uint32_t streets = 64;
+/// street_vs and fill_fading_vs: a street narrower on the screen than 1.5 device px drawn 1.5 px wide at the share of
+/// them it covers (ground.slang's least_point; the app's map, with `wide`)
+inline constexpr std::uint32_t least = 128;
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -143,12 +154,44 @@ struct TileDecisions {
     bool used = false;
 };
 
+/// A drawn tile's fill as the frame's loops over every fill read it, a few bytes where a geometry::Fill takes some two
+/// hundred: its order, the fill it goes with (no_fill: none), its group, kind and cell, whether it has points, whether
+/// it stands for a line (draw_over's radius cut samples it) and whether it lies in its cell's core (Fill::core).
+struct HotFill {
+    std::uint32_t order = 0;
+    std::uint32_t with = 0;
+    std::uint16_t group = 0;
+    geometry::FillKind kind = geometry::FillKind::area;
+    std::uint8_t cell = 0;
+    bool points = false;
+    bool line = false;
+    bool core = false;
+};
+inline constexpr std::uint32_t no_fill = 0xFFFF'FFFFU;
+
+/// A drawn tile's stroke as lay_out reads it: its order and group.
+struct HotStroke {
+    std::uint32_t order = 0;
+    std::uint16_t group = 0;
+};
+
+/// A drawn tile's fills and strokes as the frame's loops read them (HotFill, HotStroke), made once while its ground
+/// lives (`held`, so that `ground` names that build); the last frame that drew it.
+struct TileHot {
+    const geometry::GroundTile* ground = nullptr;
+    std::weak_ptr<const void> held;
+    std::vector<HotFill> fills;
+    std::vector<HotStroke> strokes;
+    std::uint64_t drawn = 0;
+};
+
 /// One tile the frame draws the ground of: its resident tile, its ground (stage T's, PassTile::cpu) and heap ranges,
 /// its visible cells, its place relative to the eye, its decisions and where they lie in the frame's.
 struct DrawnTile {
     const scene::ResidentTile* tile = nullptr;
     const scene::PassTile* pass = nullptr;
     const geometry::GroundTile* ground = nullptr;
+    const TileHot* hot = nullptr; ///< its fills and strokes as the loops read them
     std::uint64_t cells = 0;
     shaders::TilePlace place{};
     const TileDecisions* decided = nullptr;
@@ -295,19 +338,46 @@ struct ReflectionsKept {
         std::uint64_t order = 0;
         std::uint32_t index = 0;
     };
-    /// A drawn tile's own: its ground (held while it is drawn); its mirror heads, trees, street lamps and lit roads
-    /// each by its scene's order, a tie in the tile's own (made with it, so the lists across the drawn tiles are
-    /// merged as the tiles drawn change, not sorted again); each mirror head's place in `mirrors`; each wall's colour
-    /// lit and unlit (0xRRGGBB, made in the moment's generation `made`, 0: not yet); whether each of its lit roads'
-    /// points lies within 12 m of a quay edge; each tree's five circles' fifteen draws from random.Random(its id) (its
-    /// first in `draws`, -1: not drawn yet); its water rings by bands (made the first night it is drawn).
+    /// A group of a drawn tile's mirror heads (those whose centres lie in one of its 16 × 16 squares): the box over
+    /// theirs as mirror_box widens them, so that a frame tests the group before its heads.
+    struct Group {
+        double x0 = 0;
+        double x1 = 0;
+        double z0 = 0;
+        double z1 = 0;
+        double y0 = 0;
+        double y1 = 0;
+    };
+    /// Which of a drawn tile's trees (lit roads' points) lie near one of a tile's quay edges (near_water reads every
+    /// drawn tile's edges, each in its own tile's metres, so it reads another tile's too): that tile's serial, and the
+    /// trees' (points') indices.
+    struct Near {
+        std::uint64_t serial = 0;
+        std::vector<std::uint32_t> at;
+    };
+    /// A drawn tile's own: its ground (held while it is drawn, else watched while it is kept for a few lays, `laid`
+    /// the last it was drawn in); its mirror heads, trees, street lamps and lit roads each by its scene's order, a tie
+    /// in the tile's own (made with it, so the lists across the drawn tiles are merged as the tiles drawn change, not
+    /// sorted again); each mirror head's place in `mirrors`, and its group; each wall's colour lit and unlit (0xRRGGBB,
+    /// made in the moment's generation `made`, 0: not yet); whether each of its lit roads' points lies within 12 m of
+    /// a quay edge; each tree's five circles' fifteen draws from random.Random(its id) (its first in `draws`, -1: not
+    /// drawn yet); its water rings by bands (made the first night it is drawn). Its quay edges filed by near_water's
+    /// cells (sorted keys, each one's first in `edge_list` and the next one's after it), their box and its trees' and
+    /// lit points' boxes (x0, x1, z0, z1; empty while x1 < x0); which of its trees and points lie near each drawn
+    /// tile's edges (its own among them), made as the two are first drawn together.
     struct Tile {
         std::shared_ptr<const void> ground;
+        std::weak_ptr<const void> watched;
+        const void* key = nullptr;
+        std::uint64_t serial = 0;
+        std::uint64_t laid = 0;
         std::vector<Ordered> mirrors_by_order;
         std::vector<Ordered> trees_by_order;
         std::vector<Ordered> lamps_by_order;
         std::vector<Ordered> roads_by_order;
         std::vector<std::uint32_t> places;
+        std::vector<Group> groups;
+        std::vector<std::uint16_t> group_of;
         std::vector<std::uint32_t> lit;
         std::vector<std::uint32_t> unlit;
         std::vector<std::uint32_t> made;
@@ -318,7 +388,26 @@ struct ReflectionsKept {
         std::vector<WaterRing> rings;
         std::vector<std::uint32_t> band_at;
         std::vector<std::uint32_t> sides;
+        std::vector<std::uint64_t> edge_keys;
+        std::vector<std::uint32_t> edge_first;
+        std::vector<std::uint32_t> edge_list;
+        std::array<double, 4> edge_box{0, -1, 0, 0};
+        std::array<double, 4> tree_box{0, -1, 0, 0};
+        std::array<double, 4> road_box{0, -1, 0, 0};
+        std::vector<Near> near_trees;
+        std::vector<Near> near_roads;
         bool used = false;
+    };
+    /// A run of a frame's elements before the sort, all of one depth (a mirror's walls, its gables, its window rows, a
+    /// tree): that depth, its first element's place in the renders' list (its mirror's place in `mirrors`, then its
+    /// own among its mirror's elements), and its elements [first, first + count) of the frame's, in their places'
+    /// order. No other element's place lies between two of a run's, so the runs sorted far to near, a tie by place,
+    /// give the renders' order.
+    struct Run {
+        double depth = 0;
+        std::uint64_t place = 0;
+        std::uint32_t first = 0;
+        std::uint32_t count = 0;
     };
     /// The drawn tiles' grounds the lists were laid for, in the frame's order, those kept under tiles fading in (which
     /// come last) left off and null for one before a tile drawn.
@@ -330,10 +419,43 @@ struct ReflectionsKept {
     std::vector<Ref> trees;   ///< S['trees'] in its source order, those within 9 m of a quay edge
     std::vector<Ref> lamps;   ///< S['nodes']'s street lamps in their order
     std::vector<Ref> roads;   ///< S['roads']'s lit roads in their order
+    bool roads_near = false;  ///< the drawn tiles' road_near made for this lay (the first night frame after it)
+    std::uint64_t lays = 0;
+    std::uint64_t serials = 0;
     /// The moment the walls' colours are made in (its theme block, its sun, night and overcast, as bytes), and its
     /// generation.
     std::vector<std::uint8_t> moment;
     std::uint32_t generation = 0;
+    /// A thread's scratch for the tiles' mirrors it takes (decide_reflections, on the ground's team): a mirror's
+    /// gables and its window rows' faces, each footprint point's screen points (made_for: the mirror they were made
+    /// for, counted in `mirror_count`), the clipped points of a face, each group's place against the frame.
+    struct Taker {
+        std::vector<Reflection> gables;
+        std::vector<ReflectionFace> rows_faces;
+        std::vector<view::Vec2> base_at;
+        std::vector<view::Vec2> top_at;
+        std::vector<std::uint64_t> made_for;
+        std::uint64_t mirror_count = 0;
+        std::vector<view::Vec3> cs;
+        std::vector<std::uint8_t> group_box;
+    };
+    /// A drawn tile's mirrors' elements at the frame, their runs and their faces, each first in its own tile's lists
+    /// (merged in the frame's order).
+    struct Mirrored {
+        std::vector<Reflection> elements;
+        std::vector<Run> runs;
+        std::vector<ReflectionFace> faces;
+    };
+    /// A frame's scratch, kept for its room: its elements and their runs before the sort, each drawn tile's mirrors'
+    /// (in the frame's order) and the order the team takes the tiles in, each taker's own.
+    std::vector<Reflection> elements;
+    std::vector<Run> runs;
+    std::vector<Mirrored> mirrored;
+    std::vector<std::uint32_t> order;
+    std::vector<Taker> takers;
+    std::vector<std::uint8_t> flags;
+    std::vector<Ordered> near_by_order;
+    std::vector<std::vector<Ordered>> near_lists;
 };
 
 /// A circle of a tree's reflection, CSS px (as the SVG prints them at rest).
@@ -398,6 +520,35 @@ namespace drawn_bit {
 inline constexpr std::uint8_t street = 1;
 inline constexpr std::uint8_t level = 2;
 } // namespace drawn_bit
+
+/// The frame's camera as Ground::cull_thin tests the app's map's thin edges with it (passes/Water.cpp), in
+/// eye-relative metres: the planes through the eye of the view's sides 2 CSS px out (css_of's x within [-2, width + 2],
+/// y within [-2, height + 2], for the snap at rest and the vertex stage's float), its forward axis and the near plane,
+/// and the device px a unit of tangent spans.
+struct ThinView {
+    std::array<std::array<double, 3>, 4> sides{};
+    std::array<double, 3> forward{};
+    double near = 0;
+    double px = 0;
+
+    explicit ThinView(const shaders::FrameCamera& c);
+};
+
+/// Whether thin_of folds every thin edge of chunk `k` at tile place `p`, drawn at heights y0 to y1 (its pieces'
+/// levels, or the street), or draws it wholly off the screen: its box before the near plane, where thin_px is
+/// LEAST_PX at both ends of each edge; or, where the box lies within 60 degrees of the view's axis (its least depth at
+/// least half its farthest point's distance, so that the vertex stage's float keeps thin_px within 5 % and the snap at
+/// rest moves no corner across a side), its water at least LEAST_PX wide on the screen at both ends of each edge, or
+/// the box, with the bands' reach beyond their water, wholly in front of the eye and off the screen. thin_px's width at
+/// an end w with the point wm across the water from it is at least px · W · H · min(1, sx) / D² device px for the
+/// water's width W, the eye's height H over it, the tile's x scale sx and the farther D of w and wm from the eye: the
+/// eye and the line along the edge through their middle (thin_px's direction on the screen) span a plane from which
+/// the rays to w and wm lie at angles whose sines are at least W · H · min(1, sx) / (2 · D²), and on the screen a
+/// point lies at least focal times that sine from the line in which the plane cuts it, w and wm on either side. A band
+/// drawn wider than its water reaches LEAST_PX / 2 over its width's share of a px beyond its middle: at most
+/// 0.75 · max(1, sx) metres over that bound a metre.
+[[nodiscard]] bool thin_folded(const geometry::ThinChunk& k, const shaders::TilePlace& p, const ThinView& v, double y0,
+                               double y1);
 
 /// One element of the coaster tracks' shadows (draw_over's, in coasters.draw's order), each its own path: a post's,
 /// from its foot along the ground (its track's point `first`), or a run of its track's points' shadows ahead of the
@@ -466,6 +617,14 @@ struct GroundFrame {
     std::vector<std::uint8_t> stroke_drawn; ///< per stroke of the drawn tiles (DrawnTile::strokes)
     std::vector<double> stroke_width;       ///< per stroke: its width this frame, CSS px (as printed at rest)
     std::vector<std::uint8_t> shadow_drawn; ///< per shadow of the drawn tiles (DrawnTile::shadows): drawn
+    /// The app's map's thin edges the vertex stage may draw this frame (Ground::cull_thin), by drawn tile in `tiles`'
+    /// order: runs of a tile's edges (its place in `tiles`, the first edge among its own and their count).
+    struct ThinRun {
+        std::uint32_t tile = 0;
+        std::uint32_t first = 0;
+        std::uint32_t count = 0;
+    };
+    std::vector<ThinRun> thin_runs;
     /// Whether the drawn tiles come from more than one scene with a window among them (a window beside another pack's
     /// tiles, or two windows: a frame cell's pack holds a scene a window): the ground is then ordered by its elements
     /// across them (geometry::OrderKey), each drawn fill and stroke at its rank among its group's, as one scene holding
@@ -568,6 +727,12 @@ struct ProjectedPoly {
 [[nodiscard]] ProjectedPoly project_poly(const view::Camera& cam, std::span<const geometry::P2> pts, double y,
                                          double margin, std::vector<view::Vec3>& cs, std::vector<view::Vec2>& sp);
 
+/// project_poly's scratch, one for each thread that decides tiles (Ground::decide_tile).
+struct PolyScratch {
+    std::vector<view::Vec3> cs;
+    std::vector<view::Vec2> sp;
+};
+
 /// The twin's Camera.poly: a tile-local ring at height y as the vertex stage projects it (twin::Projector: the float
 /// camera, snapped at rest), clipped at the near plane in its camera coordinates as Camera.poly clips. Appends its CSS
 /// points to `out`; returns how many.
@@ -657,8 +822,8 @@ struct QuayColours {
 [[nodiscard]] double printed(double v, int decimals);
 
 /// What a box says of Camera.poly's margin test: it surely drops what lies in it, it cannot tell, or (a cell's) what
-/// lies in it surely projects into the frame.
-enum class Box : std::uint8_t { outside, unknown, inside };
+/// lies in it surely projects into the frame, or within the narrowest margin of its fills (so it drops none).
+enum class Box : std::uint8_t { outside, unknown, inside, within };
 [[nodiscard]] Box box_test(const view::Camera& cam, const geometry::Fill& f, double y, double margin);
 /// draw_over's near(pts) in engine mode: the line's samples' box (`near`, geometry::near_box) wholly within the radius
 /// or wholly beyond it, else near_radius over its samples.
@@ -747,6 +912,17 @@ inline constexpr std::uint32_t palette_pairs = 256;
 /// The pair a colour word's search starts at (ground.slang's repainted).
 [[nodiscard]] constexpr std::uint32_t palette_hash(std::uint32_t c) noexcept { return (c * 2654435761U) >> 24U; }
 
+/// The slot of `palette` (null: today's) that paints a fill of `paint` by day or at `night` as the frame draws it: a
+/// theme colour's as the theme carries it (mapview's PaletteTheme: the bare ground the paper's by day, the lawns' with
+/// `grass` on, the night ground's at night; a road without a mapped surface the street's; the flat water the water's,
+/// the night water's at night), and a colour of `style` (null: none) by its day colour, as ground_palette moves it: of
+/// the slots it goes with (geometry::ground_slots, in their order) the first the palette changes, else the first; 0
+/// where it goes with none.
+[[nodiscard]] std::size_t ground_slot_of(const geometry::Paint& paint, const tiles::Style* style,
+                                         const style::PaletteBlock* palette, bool night, bool grass);
+
+class Team;
+
 class Ground final : public frame::Pass {
 public:
     Ground();
@@ -773,14 +949,30 @@ public:
     /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
     /// full mode; else its union is black at .55, as a frame without filters draws it.
     [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
-    /// What the last select cost, milliseconds of the render thread's CPU time.
+    /// What the last select cost, milliseconds of CPU time: the render thread's and the team's helpers' over the
+    /// tiles they took (what it costs on one core).
     [[nodiscard]] double select_ms() const noexcept { return select_ms_; }
+    /// The last frame's words for the GPU and its ripple's layer, hashed (FNV-1a), the tiles' heap offsets left out
+    /// (they lie where each build's tiles landed): the pinch audit's ATLAS_PINCH_HASH holds two builds' frames to the
+    /// same words by it. 0 before a frame's words.
+    [[nodiscard]] std::uint64_t words_hash() const noexcept;
     /// The absolute painter slot of a group's element this frame (from update on).
     [[nodiscard]] std::uint32_t slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept;
     /// The order a drawn tile's fill `i` (stroke `i`) takes in its group this frame: its scene's, or where the frame
     /// draws tiles of more than one scene, its rank across them (GroundFrame::mixed).
     [[nodiscard]] std::uint32_t fill_order(const DrawnTile& t, std::uint32_t i) const noexcept;
     [[nodiscard]] std::uint32_t stroke_order(const DrawnTile& t, std::uint32_t i) const noexcept;
+
+    /// What a tap at the view's device point (`x`, `y`, device px) meets on the ground as the last frame drew it, from
+    /// that frame's decisions (passes/GroundPick.cpp), along the ray from the eye (scene::ray_of): a quay's face it
+    /// meets, drawn after the rest, else what the frame drew last (the painter's slot) of the plate, the water and the
+    /// drawn fills (the canopy's among them) whose rings hold the ray's point at their heights, each tile's in its own
+    /// frame; the app's map's streets as wide as their ways, off the water but on a bridge. The lines, the shadows and
+    /// the night's light are not met: each lies on a fill. The water with weather is named by its gradient's end nearer
+    /// the tap's row (Water, sky above its middle, Water, deep below), whose colours its surface is drawn in, the
+    /// water's own only its tint. None where the ray does not fall to the ground or meets nothing drawn. `state` is
+    /// that frame's.
+    [[nodiscard]] std::optional<scene::PickedGround> pick(const frame::FrameState& state, double x, double y) const;
 
     /// The tests' look at the soft shadows: from the next prepare on, their grid and blurred mask lie in memory the
     /// CPU reads, and each frame copies the resolved mask there too (SoftShadows::mask_copy).
@@ -792,6 +984,10 @@ public:
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
+    /// The tests' look without the fills of some kinds (bit k: geometry::FillKind k): from the next frame on their
+    /// fills are not drawn, every other decision as it was (a kind's share of a picture,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_FILLS_OFF).
+    void leave_out_fills(std::uint32_t kinds) noexcept { left_out_fills_ = kinds; }
     /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
     /// the shadows do).
     void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
@@ -811,15 +1007,37 @@ public:
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
     /// The tests' look at the water: from the next frame on, no glints (K17's rect after the tint).
     void draw_wind_glints(bool draw) noexcept { no_wind_glints_ = !draw; }
+    /// The tests' look at the team: from the next frame on, the tiles and their mirrors decided on `helpers` threads
+    /// beside the caller's (0: the caller's alone), so that a test holds the team's decisions to one thread's; the
+    /// platform is told of the new team's threads at its first use, as of the first team's.
+    void decide_on(unsigned helpers);
     /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
     /// frame copies its resolved layer there too (RippleLayer::layer_copy).
     void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
     /// The tests' switch: the ripple's stages apart, even where the fused stages could take them (on by default).
     void fuse_ripple(bool fuse) noexcept { fuse_ripple_ = fuse; }
+    /// The tests' switch: the ripple made again every frame, its last result never standing (as before its key took
+    /// what it reads alone: the base a measure holds the kept results to, tests/frame/pinch_audit_vk_test.cpp's
+    /// ATLAS_PINCH_RIPPLE).
+    void make_ripple_always(bool always) noexcept { ripple_always_ = always; }
+    /// The tests' switch: the app's map's streets narrower on the screen than 1.5 device px drawn 1.5 px wide at their
+    /// share of them (ground.slang's least_point), else at their own width (on by default; the far flicker's measure,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST).
+    void draw_least_width(bool draw) noexcept { least_width_ = draw; }
+    /// The tests' switch: the app's map's water narrower on the screen than 1.5 device px drawn as a band 1.5 px wide
+    /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
+    /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
+    void draw_thin_water(bool draw) noexcept { thin_water_ = draw; }
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
     [[nodiscard]] bool drew_ripple() const noexcept { return drew_ripple_; }
+    /// The tests' look at the ripple's kept result: how many results it has made (its layer drawn and its stages run)
+    /// since the pass was made; a frame whose ripple is the last one's makes none.
+    [[nodiscard]] std::uint64_t ripple_makes() const noexcept { return ripple_made_; }
+    /// And how many frames' keys took the reflections' records (the camera held still or at rest; a moving frame's key
+    /// is its view's alone).
+    [[nodiscard]] std::uint64_t ripple_keyed() const noexcept { return ripple_keyed_; }
     /// The tests' look at the lit streets' glow: from the next prepare on, its buffers lie in memory the CPU reads, and
     /// each frame copies its layers there too (GlowLayer::glow_copy, core_copy).
     void keep_glow(bool keep) noexcept { keep_glow_ = keep; }
@@ -879,9 +1097,18 @@ private:
     /// draw_over's runway_ends' designations at the drawn runways' ends, laid on the ground for the ground's text pass
     /// (FrameState::ground_runs) at their slots.
     void lay_designators(const frame::FrameState& state) const;
-    /// The frame's decisions; false when they are the last frame's (kept at rest), so the slots stay as laid out.
+    /// The frame's decisions; false when they are the last frame's (kept at rest) and the quays' faces as many, so the
+    /// slots stay as laid out.
     [[nodiscard]] bool decide(const frame::FrameState& state);
-    void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);
+    /// Tile `t`'s decisions at its camera into `d`, with taker `s`'s scratch: each tile's its own, so the tiles of a
+    /// frame are decided on the team's threads at once (decide_tiles).
+    void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d, PolyScratch& s) const;
+    /// The tiles of `tiles` decided on the team's threads and the caller's, the largest first, each into its own
+    /// decisions (the second of its pair).
+    void decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles);
+    /// The threads the tiles' work is shared with (team_), made as the render thread first needs them; the platform
+    /// told of them at their first use (FrameState::render_threads), once a team.
+    [[nodiscard]] Team& team();
     void lay_out();
     /// Where the drawn tiles come from more than one scene, a window among them (GroundFrame::mixed), every fill and
     /// stroke of them ranked in its group by its element across them (geometry::OrderKey, then its pack, then its
@@ -897,7 +1124,13 @@ private:
     [[nodiscard]] gpu::Result<void> make_shadow_pipelines(const frame::PassContext& context, Pipelines& p) const;
     void write_words(const frame::FrameState& state);
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
+    /// The fills above the water (`above`: in the app's map but its streets) or the land, top first at their painter
+    /// depth, of the tiles not fading in.
     void record_fills(const frame::Recording& r, bool above);
+    /// The app's map's streets, after the land and the water: each over what lies under it at its coverage
+    /// (ground.slang's colour_over_fs, 1 but where the least width draws a street narrower than 1.5 device px), so
+    /// first those off a bridge where the stencil holds no water at the street, then those on a bridge over the water.
+    void record_streets(const frame::Recording& r);
     /// The fills of the tiles fading in (ENGINE.md's fades), coarse to fine, after the opaque phase's: each sample
     /// takes its tile's topmost fill alone at the tile's fade over what lies under it, written at that fill's depth.
     void record_fading_fills(const frame::Recording& r);
@@ -912,7 +1145,8 @@ private:
     // Roads.cpp: the fills' and the plate's twin
     void emit_fills(const frame::FrameState& state, twin::Stream& out, std::int32_t mat, std::int32_t above) const;
     // Water.cpp
-    [[nodiscard]] WaterPiece view_water(const view::Camera& cam, const geometry::GroundTile& g, std::uint32_t i);
+    [[nodiscard]] WaterPiece view_water(const view::Camera& cam, const geometry::GroundTile& g, std::uint32_t i,
+                                        PolyScratch& s) const;
     void decide_water(const view::Camera& cam);
     /// The drawn water pieces' fans at the water's slot with `flags`, counted by the bound pipeline.
     void water_fans(const frame::Recording& r, std::uint32_t flags) const;
@@ -920,11 +1154,35 @@ private:
     void water_screen(const frame::Recording& r, const vk::raii::Pipeline& pipeline, std::array<float, 4> rows,
                       std::array<std::uint32_t, 4> colour) const;
     /// The water's rings at the street counted in the stencil (with weather, w0's bit set where the count is not zero),
-    /// before the fills above the water, so that the app's map's streets keep off it (record_fills).
+    /// before the fills above the water, so that the app's map's streets keep off it (record_streets).
     void record_water_count(const frame::Recording& r);
+    /// The water's surface: with weather wgrad where its rings at their level count, without th['water'] where the
+    /// count is not zero, the count kept for the app's map's streets (record_streets); in the app's map, where its thin
+    /// edges lie narrower than 1.5 px, the count left to their band first (record_water_thin).
     void record_water_opaque(const frame::Recording& r);
+    /// The app's map's thin edges (under its switch, draw_thin_water) that the vertex stage may draw this frame
+    /// (GroundFrame::thin_runs), by thin_chunk: a chunk left out where thin_of surely folds every edge of it, wider
+    /// than 1.5 px at both ends, off the screen with its bands, before the near plane, or on pieces the frame does not
+    /// draw; runs of the rest, two runs fewer than 128 edges apart joined and at most 4 a tile (the nearest joined).
+    void cull_thin(const frame::FrameState& state);
+    /// Whether the frame draws any of the water's thin edges (cull_thin's runs).
+    [[nodiscard]] bool thin_water() const noexcept;
+    /// The drawn tiles' thin edges by the bound pipeline (thin_vs, thin_band_vs), a draw a run of a tile's
+    /// (cull_thin), with the draw's flags, rows and colours (each tile's first record's word in mode's third).
+    void thin_draws(const frame::Recording& r, std::uint32_t flags, std::array<float, 4> rows,
+                    std::array<std::uint32_t, 4> colour) const;
+    /// Where the water's thin edges lie narrower than 1.5 px, on water counted once: the thin bit set and the count
+    /// cleared, so the surface leaves it to their band (record_water_band); `flags` the count's (its level's or the
+    /// street's).
+    void record_water_thin(const frame::Recording& r, std::uint32_t flags);
+    /// The water's thin edges' band, after the land and the plate, before the app's map's streets: along the water's
+    /// middle at least 1.5 px wide at the share of them it covers, in the surface's colour with its tint, at the
+    /// water's depth, each sample once by its stencil bit, which record_water_end clears with the clip.
+    void record_water_band(const frame::Recording& r);
     void record_water_tint(const frame::Recording& r);
-    void record_water_end(const frame::Recording& r);
+    /// The water's clip cleared from the stencil: with weather (`weather`) after the water's elements, without after
+    /// the app's map's streets, for which the water's plain draw keeps its count.
+    void record_water_end(const frame::Recording& r, bool weather);
     void emit_water(const frame::FrameState& state, twin::Stream& out) const;
     // Sky.cpp
     void decide_sky(const view::Camera& cam, const frame::FrameState& state);
@@ -952,6 +1210,10 @@ private:
     /// water_layer's quay walls at the frame: each piece facing the camera within the radius cut, its wall lit by its
     /// sample, its bands, its waterline and its coping, as face() keeps them (frame_.quays).
     void decide_quays(const frame::FrameState& state);
+    /// What the quays' faces' colours are made of at the frame: the moment's light (its theme block and the sun's
+    /// direction) and the palette's quay walls.
+    using QuaysMoment = std::array<std::uint8_t, sizeof(shaders::Theme) + (3 * sizeof(double)) + sizeof(std::uint32_t)>;
+    [[nodiscard]] QuaysMoment quays_moment(const frame::FrameState& state) const;
     void emit_quays(const frame::FrameState& state, twin::Stream& out) const;
     /// The quay walls' faces' records into the frame's words (each band of a bands' path its own), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
@@ -979,8 +1241,15 @@ private:
     /// Whether this frame draws the reflections rippled: some are drawn, the fields are bound in full mode
     /// (FRAME_FIELDS), the ripple is wanted, and prepare made its objects.
     [[nodiscard]] bool rippled(const frame::FrameState& state) const noexcept;
-    /// The displacement's 256 offsets at the frame (fx::ripple_displacement through an exact fma) into its words.
+    /// The displacement's 256 offsets at the frame (fx::ripple_displacement through an exact fma) into its words, and
+    /// the leaf filter's, the water's map and the stages' plan; then whether the last result stands (key_ripple).
     void write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    /// What the stages cover (ripple_plan_), the result's region spread by `moved` (the displacement's reach), into
+    /// the words: the plan, their last.
+    void plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved);
+    /// Whether this frame's ripple is made again (ripple_stale_): what the result is made of, in the words written,
+    /// against the last frame's (ripple_key_).
+    void key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state);
     /// Before the main pass: the reflections into the layer, then the filter's stages over it.
     void record_ripple_layer(const frame::Recording& r);
     /// The rippled reflections composited inside the water's clip at the group's opacity.
@@ -1054,7 +1323,8 @@ private:
         std::uint32_t index = 0;
     };
     /// The ranks across scenes of a drawn tile's fills and strokes, by its handle (rank_across_scenes), and its
-    /// elements' places in their order (by group, then key, then order), made once while its ground lives.
+    /// elements' places in their order (by group, then key, then order), made once while its ground lives; its pack's
+    /// ordinal in the last ranking, and whether its elements lie in `rank_order_`.
     struct TileRanks {
         std::uint32_t handle = 0;
         const geometry::GroundTile* ground = nullptr;
@@ -1063,14 +1333,32 @@ private:
         std::vector<std::uint32_t> fills;
         std::vector<std::uint32_t> strokes;
         std::uint64_t ranked = 0; ///< the last ranking it took part in (`rankings_`)
+        std::uint32_t pack = 0;
+        bool ordered = false;
     };
-    std::vector<TileRanks> ranks_;
+    /// An element in the last ranking's order: its tile's ranks, and its place among their places.
+    struct RankAt {
+        TileRanks* ranks = nullptr;
+        std::uint32_t at = 0;
+    };
+    std::vector<std::unique_ptr<TileRanks>> ranks_;
+    /// The drawn tiles' fills and strokes as the frame's loops read them, each made as its tile lands and kept a few
+    /// frames after it was last drawn (a pinch draws a tile again within a few), and the frames decided.
+    std::vector<std::unique_ptr<TileHot>> hots_;
+    std::uint64_t hot_frames_ = 0;
+    /// The last ranking's elements in their order across the drawn tiles (by group, key, pack and order), each tile's
+    /// once: a ranking keeps it for the tiles still drawn and merges the new ones' into it, and its ranks follow from
+    /// it, whatever the order among elements that compare alike (they take one rank).
+    std::vector<RankAt> rank_order_;
     std::uint64_t rankings_ = 0;
     std::vector<std::uint32_t> ranked_handles_; ///< the drawn tiles ranks_ was made for, sorted
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
     bool only_setts_ = false;
+    std::uint32_t left_out_fills_ = 0;
+    bool least_width_ = true;
+    bool thin_water_ = true;
     bool no_quays_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
@@ -1082,6 +1370,7 @@ private:
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
+    bool ripple_always_ = false;
     bool drew_ripple_ = false;
     bool keep_glow_ = false;
     bool drew_glow_ = false;
@@ -1090,12 +1379,15 @@ private:
     std::vector<std::uint32_t> glow_key_;
     bool glow_stale_ = true;
     GlowPlan glow_plan_;
-    /// What the last ripple's result was made of (write_ripple), and whether this frame's differs; what its stages
-    /// cover this frame.
+    /// What the last ripple's result was made of (key_ripple: the view's alone while the camera moves), and whether
+    /// this frame's differs; what its stages cover this frame; the results made, and the keys that took the records.
     std::vector<std::uint32_t> ripple_key_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
+    std::uint64_t ripple_made_ = 0;
+    std::uint64_t ripple_keyed_ = 0;
     double select_ms_ = 0;
+    double helped_ms_ = 0; ///< the team's helpers' CPU time over the select under way
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
     DecisionKey key_;
@@ -1104,6 +1396,9 @@ private:
     /// come with them).
     std::vector<std::pair<const void*, std::uint64_t>> last_tiles_;
     std::vector<const void*> last_suns_;
+    /// The moment the quays' faces were decided in (decide_quays): a frame at rest decides them again where it moved,
+    /// so that the user's quay walls, or the moment's next step, show without the camera moving.
+    QuaysMoment quays_made_{};
     /// The reflections' work that does not move with the camera (Reflections.cpp).
     ReflectionsKept reflections_kept_;
     std::unique_ptr<Pipelines> pipelines_;
@@ -1116,6 +1411,12 @@ private:
     // scratch, reused frame to frame
     std::vector<view::Vec3> cam_;
     std::vector<view::Vec2> sp_;
+    /// The threads the tiles are decided on beside the render thread, made from it as it first decides, and each
+    /// taker's scratch.
+    std::unique_ptr<Team> team_;
+    std::vector<PolyScratch> poly_;
+    frame::RenderThreads* render_threads_ = nullptr; ///< the frame's (FrameState::render_threads), as it selects
+    bool told_ = false;                              ///< the platform was told of team_'s threads
 };
 
 /// The ground's GPU objects: its module, its pipeline layout (the frame's sets, then its own), its descriptor sets and
@@ -1137,7 +1438,10 @@ struct Ground::Pipelines {
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
-    vk::raii::Pipeline fill_streets{nullptr}; ///< the app's map's streets: where the stencil holds no water
+    /// The app's map's streets over what lies under them (record_streets): off a bridge where the stencil holds no
+    /// water, and on a bridge over it.
+    vk::raii::Pipeline fill_streets{nullptr};
+    vk::raii::Pipeline fill_bridges{nullptr};
     vk::raii::Pipeline fill_fading{nullptr};
     vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
     vk::raii::Pipeline plate{nullptr};
@@ -1153,6 +1457,9 @@ struct Ground::Pipelines {
     vk::raii::Pipeline water_flat{nullptr};
     vk::raii::Pipeline water_tint{nullptr};
     vk::raii::Pipeline water_end{nullptr};
+    /// The app's map's thin water (record_water_thin, record_water_band).
+    vk::raii::Pipeline water_thin{nullptr};
+    vk::raii::Pipeline water_band{nullptr};
     // Sky.cpp
     vk::raii::Pipeline sky{nullptr};
     vk::raii::Pipeline sun_glow{nullptr};

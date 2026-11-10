@@ -3,6 +3,8 @@ package app.atlas.mapview
 import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
+import android.view.Display
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -202,6 +204,30 @@ object MapEngine {
     val compressionSwitch: Boolean get() = (core as? CoreState.Ready)?.core?.compressionSwitch == true
 
     /**
+     * The Map look's Fast refresh, on when unset: the window's frames said to come at 120 a second while the map moves
+     * and at 60 at rest, both with fixed-source compatibility, so that the display runs fast while the map moves and
+     * keeps the platform's touch boost (ENGINE.md gain 11); off, at 60 with default compatibility throughout, the vote
+     * of alphas up to 27, so that a rate switch's step in brightness can be told from the driver's flicker (the user, 3
+     * November: "Give it a toggle?"). Handed to the core as it starts ([startCore]) and by [fastRefresh].
+     */
+    @Volatile
+    var fastRefreshOn: Boolean = true
+        private set
+
+    /** Sets [fastRefreshOn] and hands it to the running core, whose window is told again at once (off the main thread). */
+    fun fastRefresh(on: Boolean) {
+        fastRefreshOn = on
+        (core as? CoreState.Ready)?.core?.setFastRefresh(on)
+    }
+
+    /**
+     * Whether the Fast refresh changes anything on [display]: a mode above 60 Hz there, on Android 11 or later, where a
+     * window can say its frames' rate (ANativeWindow_setFrameRate). Elsewhere neither vote does anything.
+     */
+    fun fastRefreshSwitch(display: Display?): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && display?.supportedModes?.any { it.refreshRate > 61f } == true
+
+    /**
      * The user's strength of TONE (the Map look's Tone: 0 off, 1 the renders', up to 2): the core lights by it from the
      * next moment it is handed (CoreMap.moment), today's map from its next frame ([options]); [tone] sets it.
      */
@@ -300,10 +326,13 @@ object MapEngine {
             // The core's text, once, before the maps draw with it: the canal names and the runways' designators are
             // drawn from these fonts. Until 27 October only VK facts loaded them, so the app's map drew none.
             if (made != null && assets != null) runCatching { TextRounding.install(assets) }
-            // The screen's compression before the first window's swapchain is made, and again should the switch have
-            // moved before the core was ready to take it.
+            // The screen's compression before the first window's swapchain is made, and the Fast refresh before the
+            // first window is told its frames' rate, each again should its switch have moved before the core was ready
+            // to take it.
             val handed = compressed
+            val fast = fastRefreshOn
             made?.setCompression(handed)
+            made?.setFastRefresh(fast)
             core = when {
                 made != null -> CoreState.Ready(made)
                 // No core's library in this process at all (the JVM's tests): today's map alone, as without a start.
@@ -311,6 +340,7 @@ object MapEngine {
                 else -> CoreState.Off(MapCore.lastError())
             }
             if (made != null && compressed != handed) made.setCompression(compressed)
+            if (made != null && fastRefreshOn != fast) made.setFastRefresh(fastRefreshOn)
         }, "atlas-core-start").apply { isDaemon = true }.start()
     }
 
@@ -327,6 +357,7 @@ object MapEngine {
         packList ?: PackList(
             windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
             world = { worldDir() },
+            worldHeld = { ids -> worldCacheDir()?.let { MapCore.worldHeld(it.path, worldCacheBytes, ids) } ?: BooleanArray(ids.size) },
         )
             .also { packList = it }
     }
@@ -401,17 +432,26 @@ object MapEngine {
     /** Where the windows the phone took or built are kept: [keptDir]'s `windows/`; null where nothing is kept. */
     fun windowsDir(): File? = keptDir?.let { File(it, "windows") }
 
-    /** Where the world is kept (ENGINE.md step 5: world.idx, its parts and the globe): [keptDir]'s `world/`. */
+    /** Where the world is kept (ENGINE.md step 6: world.json, world.idx and the globe): [keptDir]'s `world/`. */
     fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
+    /** The world's own cache of its packs' heads and chunks (ENGINE.md step 6, the core's LRU): [worldDir]'s `cache/`. */
+    fun worldCacheDir(): File? = worldDir()?.let { File(it, "cache") }
+
+    /** The world cache's budget in bytes (ENGINE.md step 6: 256 MB, which a setting raises); the app sets it. */
+    @Volatile
+    var worldCacheBytes: Long = WORLD_CACHE_BYTES
+
+    /** 256 MB: the world cache's budget unless the user raised it. */
+    const val WORLD_CACHE_BYTES = 256L shl 20
+
     /**
-     * Told of the place a map's camera looks at from beyond the countries' reach ([PackList.LEVELS_REACH]), as it moves
-     * there: the app fetches the world's packs of a block a view first enters (ENGINE.md step 5, world-test's fetch:
-     * app.atlas.tiles.WorldFetch) and calls [invalidate] once they are on the phone. Called on the main thread with
-     * each camera there: it must return at once. Nothing by default.
+     * The world's packs by ranges as the maps' views want them (ENGINE.md step 6), once the app has its world's files
+     * ([WorldReads]: each map asks it for a step twice a second, as for its windows); null before, and in CI's runs but
+     * their world phase.
      */
     @Volatile
-    var worldPlace: (lat: Double, lon: Double) -> Unit = { _, _ -> }
+    var worldReads: app.atlas.mapview.vk.WorldReads? = null
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null

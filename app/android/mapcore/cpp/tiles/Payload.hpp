@@ -24,6 +24,7 @@
 #include "tiles/Schema.hpp"
 #include "tiles/Values.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -138,6 +139,13 @@ public:
     /// The features of cell `c`.
     [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> cell(std::size_t c) const noexcept {
         return {cell_first[c], cell_first[c + 1]};
+    }
+    /// The cell holding feature `i` (the last whose first feature is at most `i`); 0 where the layer has no cells.
+    [[nodiscard]] std::uint8_t cell_of(std::uint32_t i) const noexcept {
+        if (cell_first.size() < 2) return 0;
+        const auto after = std::upper_bound(cell_first.begin(), cell_first.end() - 1, i);
+        const std::ptrdiff_t c = (after - cell_first.begin()) - 1;
+        return static_cast<std::uint8_t>(c < 0 ? 0 : c);
     }
 };
 

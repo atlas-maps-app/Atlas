@@ -79,7 +79,7 @@ TileDoors build_doors(const DoorInput& in) {
              .offset = -0.03,
              .cut_x = d.x,
              .cut_z = d.z,
-             .order = scene::order_of(facades_list, d.node),
+             .order = scene::order_of(facades_list, doors_after | d.node),
              .kind = in.kind,
              .flags = scene::item_flag::radius,
              .slots = {door_slots, door_slots, door_slots, door_slots},
@@ -87,6 +87,7 @@ TileDoors build_doors(const DoorInput& in) {
              .max_depth = door_depth, // its node (the cut point) beyond the pass's reach: no rank
              .radius = static_cast<float>(reach),
              .tile = 0,
+             .cell = buildings->cell_of(at->second), // its building's, whose walls it stands on
              .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(d.id)),
              .building = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(d.building))});
         out.doors.push_back(d);

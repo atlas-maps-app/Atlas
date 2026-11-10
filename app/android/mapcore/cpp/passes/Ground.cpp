@@ -10,6 +10,7 @@
 #include "gen/layouts.hpp"
 #include "gen/spirv/ground/ground.hpp"
 #include "gpu/Descriptors.hpp"
+#include "passes/Team.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
@@ -27,6 +28,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <thread>
 #include <tuple>
 
 namespace atlas::passes {
@@ -183,6 +185,11 @@ Box cell_test(const view::Camera& cam, const geo::CellBox& c) {
         return Box::outside;
     }
     if (min_x > eps && max_x < cam.width() - eps && min_y > eps && max_y < cam.height() - eps) return Box::inside;
+    // within the narrowest margin, each fill's box projects there too, so box_test drops none (its own slack is far
+    // more than the projections' rounding)
+    if (min_x >= -c.least && max_x <= cam.width() + c.least && min_y >= -c.least && max_y <= cam.height() + c.least) {
+        return Box::within;
+    }
     return Box::unknown;
 }
 
@@ -410,6 +417,7 @@ void Ground::rank_across_scenes() {
     f.mixed = windows > 0 && (packs.size() > 1 || windows > 1);
     if (!f.mixed) {
         ranks_.clear();
+        rank_order_.clear();
         ranked_handles_.clear();
         pack_ordinals_.clear();
         return;
@@ -425,6 +433,9 @@ void Ground::rank_across_scenes() {
         handles.push_back(t.tile->handle);
     }
     std::ranges::sort(handles);
+    const auto ranks_of = [&](std::uint32_t handle) {
+        return std::ranges::find_if(ranks_, [&](const std::unique_ptr<TileRanks>& r) { return r->handle == handle; });
+    };
     if (handles != ranked_handles_) {
         // every element of the drawn tiles, drawn or not, so the ranks hold while the same tiles are drawn
         ranked_handles_ = handles;
@@ -433,19 +444,25 @@ void Ground::rank_across_scenes() {
             const auto it = std::ranges::find(f.tiles, handle, [](const DrawnTile& t) { return t.tile->handle; });
             return it == f.tiles.end() ? nullptr : &*it;
         };
+        // the last order keeps the elements of the tiles still drawn, their builds the same
+        for (const std::unique_ptr<TileRanks>& r : ranks_) {
+            const DrawnTile* t = drawn_as(r->handle);
+            r->ordered = r->ordered && t != nullptr && r->ground == t->ground && !r->held.expired();
+        }
+        std::erase_if(rank_order_, [](const RankAt& a) { return !a.ranks->ordered; });
         // what no longer names its build goes (its ground gone, or its handle another tile's now), and what no
         // ranking of the last few took part in
-        std::erase_if(ranks_, [&](const TileRanks& r) {
-            const DrawnTile* t = drawn_as(r.handle);
-            if (t != nullptr) return r.ground != t->ground || r.held.expired();
-            return r.held.expired() || r.ranked + 8 < rankings_;
+        std::erase_if(ranks_, [&](const std::unique_ptr<TileRanks>& r) {
+            const DrawnTile* t = drawn_as(r->handle);
+            if (t != nullptr) return r->ground != t->ground || r->held.expired();
+            return r->held.expired() || r->ranked + 8 < rankings_;
         });
         // each drawn tile's elements in their order, once: its fills (the water aside) and strokes by group, then
         // key, then order (a tile's pack is one)
         for (const DrawnTile& t : f.tiles) {
-            if (std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle) != ranks_.end()) continue;
+            if (ranks_of(t.tile->handle) != ranks_.end()) continue;
             const geo::GroundTile& g = *t.ground;
-            TileRanks& r = ranks_.emplace_back();
+            TileRanks& r = *ranks_.emplace_back(std::make_unique<TileRanks>());
             r.handle = t.tile->handle;
             r.ground = t.ground;
             r.held = t.pass->cpu;
@@ -467,49 +484,74 @@ void Ground::rank_across_scenes() {
                 return a.order < b.order;
             });
         }
-        std::vector<TileRanks*> lists;
-        lists.reserve(f.tiles.size());
-        for (const DrawnTile& t : f.tiles) {
-            TileRanks& r = *std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle);
+        // the drawn tiles at their packs' ordinals (a pack's place among the drawn ones', which keeps the last order
+        // as packs come and go), and those whose elements are to be merged into the order, each once
+        std::vector<TileRanks*> added;
+        for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
+            TileRanks& r = **ranks_of(f.tiles[ti].tile->handle);
             r.ranked = rankings_;
-            lists.push_back(&r);
+            r.pack = pack_ordinals_[ti];
+            if (!r.ordered && std::ranges::find(added, &r) == added.end()) added.push_back(&r);
         }
-        // The drawn tiles' orders merged into the frame's, by group, key, pack and order (a tournament of the tiles'
-        // next elements, the losers kept at its inner nodes and the winner at 0; a tile at its end loses to every
-        // other), and one rank per element of a group: its fills and strokes (a rail's ballast and rails) share it.
-        const auto k = static_cast<std::uint32_t>(lists.size());
-        std::vector<std::size_t> at(k, 0);
-        const auto ahead = [&](std::uint32_t s, std::uint32_t u) {
-            const std::vector<RankPlace>& ps = lists[s]->places;
-            const std::vector<RankPlace>& pu = lists[u]->places;
-            if (at[u] == pu.size()) return at[s] != ps.size();
-            if (at[s] == ps.size()) return false;
-            const RankPlace& a = ps[at[s]];
-            const RankPlace& b = pu[at[u]];
-            if (a.group != b.group) return a.group < b.group;
-            if (a.key != b.key) return a.key < b.key;
-            if (pack_ordinals_[s] != pack_ordinals_[u]) return pack_ordinals_[s] < pack_ordinals_[u];
-            return a.order < b.order;
-        };
-        std::vector<std::uint32_t> losers(k, 0);
-        const auto play = [&](const auto& self, std::uint32_t node) -> std::uint32_t {
-            if (node >= k) return node - k; // a leaf: its tile
-            const std::uint32_t l = self(self, 2 * node);
-            const std::uint32_t r = self(self, (2 * node) + 1);
-            if (ahead(r, l)) {
-                losers[node] = l;
-                return r;
+        // The new tiles' elements merged into the kept order by group, key, pack and order (a tournament of the
+        // order's and the new tiles' next elements, the losers kept at its inner nodes and the winner at 0; one at its
+        // end loses to every other).
+        if (!added.empty()) {
+            const auto k = static_cast<std::uint32_t>(added.size() + 1);
+            std::vector<std::size_t> at(k, 0);
+            const auto size_of = [&](std::uint32_t s) {
+                return s == 0 ? rank_order_.size() : added[s - 1]->places.size();
+            };
+            const auto next = [&](std::uint32_t s) {
+                return s == 0 ? rank_order_[at[0]]
+                              : RankAt{.ranks = added[s - 1], .at = static_cast<std::uint32_t>(at[s])};
+            };
+            const auto ahead = [&](std::uint32_t s, std::uint32_t u) {
+                if (at[u] == size_of(u)) return at[s] != size_of(s);
+                if (at[s] == size_of(s)) return false;
+                const RankAt x = next(s);
+                const RankAt y = next(u);
+                const RankPlace& a = x.ranks->places[x.at];
+                const RankPlace& b = y.ranks->places[y.at];
+                if (a.group != b.group) return a.group < b.group;
+                if (a.key != b.key) return a.key < b.key;
+                if (x.ranks->pack != y.ranks->pack) return x.ranks->pack < y.ranks->pack;
+                return a.order < b.order;
+            };
+            std::vector<std::uint32_t> losers(k, 0);
+            const auto play = [&](const auto& self, std::uint32_t node) -> std::uint32_t {
+                if (node >= k) return node - k; // a leaf: its source
+                const std::uint32_t l = self(self, 2 * node);
+                const std::uint32_t r = self(self, (2 * node) + 1);
+                if (ahead(r, l)) {
+                    losers[node] = l;
+                    return r;
+                }
+                losers[node] = r;
+                return l;
+            };
+            std::size_t total = rank_order_.size();
+            for (const TileRanks* r : added) total += r->places.size();
+            std::vector<RankAt> order;
+            order.reserve(total);
+            std::uint32_t win = play(play, 1);
+            while (at[win] < size_of(win)) {
+                order.push_back(next(win));
+                ++at[win];
+                for (std::uint32_t node = (win + k) / 2; node >= 1; node /= 2) {
+                    if (ahead(losers[node], win)) std::swap(losers[node], win);
+                }
             }
-            losers[node] = r;
-            return l;
-        };
-        std::uint32_t win = k > 1 ? play(play, 1) : 0;
+            rank_order_ = std::move(order);
+            for (TileRanks* r : added) r->ordered = true;
+        }
+        // one rank per element of a group: its fills and strokes (a rail's ballast and rails) share it
         const RankPlace* before = nullptr;
         std::uint32_t before_pack = 0;
         std::uint32_t rank = 0;
-        while (k > 0 && at[win] < lists[win]->places.size()) {
-            const RankPlace& e = lists[win]->places[at[win]];
-            const std::uint32_t pack = pack_ordinals_[win];
+        for (const RankAt& a : rank_order_) {
+            const RankPlace& e = a.ranks->places[a.at];
+            const std::uint32_t pack = a.ranks->pack;
             if (before != nullptr) {
                 if (before->group != e.group) {
                     rank = 0;
@@ -519,22 +561,17 @@ void Ground::rank_across_scenes() {
             }
             before = &e;
             before_pack = pack;
-            TileRanks& r = *lists[win];
-            (e.stroke ? r.strokes : r.fills)[e.index] = rank;
-            ++at[win];
-            for (std::uint32_t node = (win + k) / 2; node >= 1; node /= 2) {
-                if (ahead(losers[node], win)) std::swap(losers[node], win);
-            }
+            (e.stroke ? a.ranks->strokes : a.ranks->fills)[e.index] = rank;
         }
     }
     // each drawn tile's ranks where its fills and strokes lie in the frame's arrays
     f.fill_rank.assign(f.drawn.size(), 0);
     f.stroke_rank.assign(f.stroke_drawn.size(), 0);
     for (const DrawnTile& t : f.tiles) {
-        const auto r = std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle);
+        const auto r = ranks_of(t.tile->handle);
         if (r == ranks_.end()) continue;
-        std::ranges::copy(r->fills, f.fill_rank.begin() + t.decisions);
-        std::ranges::copy(r->strokes, f.stroke_rank.begin() + t.strokes);
+        std::ranges::copy((*r)->fills, f.fill_rank.begin() + t.decisions);
+        std::ranges::copy((*r)->strokes, f.stroke_rank.begin() + t.strokes);
     }
 }
 
@@ -549,7 +586,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
         geo::build_ground(b.tile(), b.head(), b.style(), b.level(), {.x = b.origin().x, .z = b.origin().z}));
     // the reflections' mirrors whatever the camera, here rather than on the render thread
     prepare_reflections(*ground);
-    const geo::GroundGpu gpu = geo::pack(*ground);
+    geo::GroundGpu gpu = geo::pack(*ground);
     // fill_vs's wide_point finds a vertex's triangle by its word's place past the range's first, mod 3
     ATLAS_ASSERT(gpu.vertices.first == 0 && gpu.above.first % 3 == 0 && gpu.streets.first % 3 == 0 &&
                  gpu.below.first % 3 == 0);
@@ -565,6 +602,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
                       .below = gpu.below,
                       .canopy = gpu.canopy,
                       .fans = gpu.fans,
+                      .thin = gpu.thin,
                       .fills = gpu.fills,
                       .points = gpu.points,
                       .lines_at = gpu.lines_at,
@@ -572,6 +610,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
                       .shadows = gpu.shadows,
                       .shadow_draw = gpu.shadow_draw,
                       .woods_draw = gpu.woods_draw};
+    ground->thin_chunks = std::move(gpu.thin_chunks);
     // the shadows' points are the GPU's now (the twin draws the port's own hulls from the casters)
     ground->shadow_points = {};
     // every range first, then the writes (Heaps' writer holds a lock)
@@ -590,13 +629,14 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     b.out().ranges[0] = ground_range;
     b.out().ranges[1] = lines_range;
     // the governor's count: its fills, the canopy, the water's fans and the shadows' triangles (three index words
-    // each), and its lines' segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
+    // each), the water's thin edges' (two in each of their two draws: passes/Water.cpp's thin water) and its lines'
+    // segments, a polyline's between its points (two triangles each: passes/Lines.cpp)
     const std::uint64_t points = gpu.points.count;
     const std::uint64_t segments = points > ground->polylines.size() ? points - ground->polylines.size() : 0;
     b.out().triangles = ((std::uint64_t{gpu.above.count} + gpu.below.count + gpu.canopy.count + gpu.fans.count +
                           gpu.shadow_draw.count + gpu.woods_draw.count) /
                          3) +
-                        (2 * segments);
+                        (4 * std::uint64_t{gpu.thin.count}) + (2 * segments);
     const std::size_t bytes = ground->bytes();
     b.keep(std::shared_ptr<const geo::GroundTile>(std::move(ground)), bytes);
     return {};
@@ -604,9 +644,11 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
 
 void Ground::select(const frame::FrameState& state, frame::Selectors& selectors) {
     (void)selectors;
+    render_threads_ = state.render_threads;
     const double started = thread_ms();
+    helped_ms_ = 0;
     if (decide(state)) lay_out();
-    select_ms_ = thread_ms() - started;
+    select_ms_ = thread_ms() - started + helped_ms_;
 }
 
 std::uint32_t Ground::ground_slots(const frame::FrameState& state) const {
@@ -769,6 +811,36 @@ bool Ground::decide(const frame::FrameState& state) {
         spec.target = view::convert(*state.ground_frame, t.tile->frame, spec.target);
         t.cam = f.cams.emplace_back(t.tile->frame, std::make_shared<const view::Camera>(spec)).second.get();
     }
+    // each drawn tile's fills and strokes as the loops read them, made as it lands
+    ++hot_frames_;
+    for (DrawnTile& t : f.tiles) {
+        TileHot* hot = nullptr;
+        for (const std::unique_ptr<TileHot>& h : hots_) {
+            if (h->ground == t.ground && !h->held.expired()) hot = h.get();
+        }
+        if (hot == nullptr) {
+            hot = hots_.emplace_back(std::make_unique<TileHot>()).get();
+            hot->ground = t.ground;
+            hot->held = t.pass->cpu;
+            hot->fills.reserve(t.ground->fills.size());
+            for (const geo::Fill& e : t.ground->fills) {
+                hot->fills.push_back({.order = e.order,
+                                      .with = e.with.value_or(no_fill),
+                                      .group = e.group,
+                                      .kind = e.kind,
+                                      .cell = e.cell,
+                                      .points = e.count > 0,
+                                      .line = e.line_count > 0,
+                                      .core = e.core});
+            }
+            hot->strokes.reserve(t.ground->strokes.size());
+            for (const geo::Stroke& e : t.ground->strokes) hot->strokes.push_back({.order = e.order, .group = e.group});
+        }
+        hot->drawn = hot_frames_;
+        t.hot = hot;
+    }
+    std::erase_if(hots_,
+                  [&](const std::unique_ptr<TileHot>& h) { return h->held.expired() || h->drawn + 8 < hot_frames_; });
     std::uint32_t fills = 0;
     std::uint32_t strokes = 0;
     std::uint32_t shadows = 0;
@@ -807,10 +879,15 @@ bool Ground::decide(const frame::FrameState& state) {
         last_suns_.push_back(sun_of(t));
     }
     if (same) {
-        // the same camera over the same tiles: every decision and slot as the last frame's
+        // the same camera over the same tiles: every decision and slot as the last frame's, but the quays' faces where
+        // what their colours are made of moved (the palette's quay walls, the moment's light), decided again and laid
+        // out again where they are not as many
         for (DrawnTile& t : f.tiles) t.decided = find(t);
         f.kept = true;
-        return false;
+        if (quays_moment(state) == quays_made_) return false;
+        const std::size_t faces = f.quays.size();
+        decide_quays(state);
+        return f.quays.size() != faces;
     }
     // the kept decisions this frame uses, then the others decided (into what is not kept)
     for (const std::unique_ptr<TileDecisions>& d : decisions_) {
@@ -828,6 +905,7 @@ bool Ground::decide(const frame::FrameState& state) {
         }
     }
     std::size_t spare = 0;
+    std::vector<std::pair<const DrawnTile*, TileDecisions*>> deciding;
     for (DrawnTile* t : missing) {
         while (spare < decisions_.size() && decisions_[spare]->used) ++spare;
         if (spare == decisions_.size()) decisions_.push_back(std::make_unique<TileDecisions>());
@@ -835,9 +913,10 @@ bool Ground::decide(const frame::FrameState& state) {
         d.used = true;
         d.ground = f.exact ? t->pass->cpu : nullptr;
         d.cells = t->cells;
-        decide_tile(*t->cam, *t, d);
         t->decided = &d;
+        deciding.emplace_back(t, &d);
     }
+    decide_tiles(deciding);
     // what no drawn tile uses lets its ground go
     for (const std::unique_ptr<TileDecisions>& d : decisions_) {
         if (!d->used) d->ground.reset();
@@ -875,12 +954,13 @@ bool Ground::decide(const frame::FrameState& state) {
     for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
         const DrawnTile& t = f.tiles[ti];
         const geo::GroundTile& g = *t.ground;
-        for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
+        const std::span<const HotFill> hot(t.hot->fills);
+        for (std::uint32_t i = 0; i < hot.size(); ++i) {
             if ((f.drawn[t.decisions + i] & drawn_bit::street) == 0) continue;
-            const geo::Fill& fill = g.fills[i];
+            const HotFill& fill = hot[i];
             if (fill.kind == geo::FillKind::land) {
                 const std::uint32_t k = fill.group - geo::group::land;
-                const RingPlace place = f.mixed ? RingPlace{fill.key, pack_ordinals_[ti], fill.order}
+                const RingPlace place = f.mixed ? RingPlace{g.fills[i].key, pack_ordinals_[ti], fill.order}
                                                 : RingPlace{geo::OrderKey{}, 0U, fill.order};
                 if (!seen[k] || place < first_ring[k]) {
                     first_ring[k] = place;
@@ -933,52 +1013,109 @@ bool Ground::decide(const frame::FrameState& state) {
             }
         }
     }
+    if (left_out_fills_ != 0U) {
+        // the tests' look without some kinds of fill: theirs not drawn
+        for (const DrawnTile& t : f.tiles) {
+            const std::span<const HotFill> hot(t.hot->fills);
+            for (std::uint32_t i = 0; i < hot.size(); ++i) {
+                if (((left_out_fills_ >> static_cast<std::uint32_t>(hot[i].kind)) & 1U) != 0U)
+                    f.drawn[t.decisions + i] = 0;
+            }
+        }
+    }
     return true;
 }
 
-void Ground::decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) {
+Team& Ground::team() {
+    if (team_ == nullptr) {
+        // beside the render thread (this one: the helpers take its priority), three at most
+        team_ = std::make_unique<Team>(std::clamp(std::thread::hardware_concurrency(), 1U, 4U) - 1);
+        poly_.resize(team_->takers());
+        told_ = false;
+    }
+    // the render thread's hint session takes the helpers in, as their first work comes
+    if (!told_ && render_threads_ != nullptr) {
+        render_threads_->took(team_->threads());
+        told_ = true;
+    }
+    return *team_;
+}
+
+void Ground::decide_on(unsigned helpers) {
+    team_ = std::make_unique<Team>(helpers);
+    poly_.resize(team_->takers());
+    told_ = false;
+}
+
+void Ground::decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles) {
+    Team& team = this->team();
+    // the largest first, so that the last ones taken are short
+    std::vector<std::pair<const DrawnTile*, TileDecisions*>> order(tiles.begin(), tiles.end());
+    const auto size = [](const std::pair<const DrawnTile*, TileDecisions*>& p) {
+        const geo::GroundTile& g = *p.first->ground;
+        return g.fills.size() + g.strokes.size();
+    };
+    std::ranges::stable_sort(order, [&](const auto& a, const auto& b) { return size(a) > size(b); });
+    helped_ms_ += team.run(order.size(), [&](std::size_t i, unsigned taker) {
+        const DrawnTile& t = *order[i].first;
+        decide_tile(*t.cam, t, *order[i].second, poly_[taker]);
+    });
+}
+
+void Ground::decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d, PolyScratch& s) const {
     const GroundFrame& f = frame_;
     const geo::GroundTile& g = *t.ground;
     d.drawn.assign(g.fills.size(), 0);
     d.water.clear();
-    // the visible cells first, whole: a cell beyond the margin drops its fills, a cell inside the frame keeps them
-    // from the margin test (the area test still decides each at rest)
+    // the visible cells first, whole: a cell beyond the margin drops its fills, a cell inside the frame or within its
+    // fills' margins keeps them from the margin test (the area test still decides each at rest); where a cell is
+    // neither, its core inside or within keeps the fills in it from the test likewise (a core beyond the margin drops
+    // none: its test leaves no room for the rounding of each fill's own)
     std::array<Box, geo::max_cells> cells{};
+    std::array<Box, geo::max_cells> cores{};
     for (std::size_t c = 0; c < geo::max_cells; ++c) {
         cells[c] = ((t.cells >> c) & 1U) != 0 ? cell_test(cam, g.cells[c]) : Box::outside;
+        const Box core = cells[c] == Box::unknown ? cell_test(cam, g.cores[c]) : cells[c];
+        cores[c] = cells[c] == Box::unknown && core == Box::outside ? Box::unknown : core;
     }
-    for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
-        const geo::Fill& fill = g.fills[i];
-        if (fill.kind == geo::FillKind::water) {
+    const std::span<const HotFill> hot(t.hot->fills);
+    for (std::uint32_t i = 0; i < hot.size(); ++i) {
+        const HotFill& h = hot[i];
+        if (h.kind == geo::FillKind::water) {
             if (f.out(style::camera_part::water)) continue; // the map leaves the water out
             // every piece of a ring counts for its ring, in a visible cell or not (the port decides the ring whole)
-            if (fill.hole && !f.weather) continue; // without weather the islands are not drawn
-            d.water.push_back(view_water(cam, g, i));
+            if (g.fills[i].hole && !f.weather) continue; // without weather the islands are not drawn
+            d.water.push_back(view_water(cam, g, i, s));
             continue;
         }
         // the canopy, and every other fill (the ground's own), unless the map leaves them out
-        const bool canopy = fill.kind == geo::FillKind::canopy;
+        const bool canopy = h.kind == geo::FillKind::canopy;
         if (f.out(canopy ? style::camera_part::canopy : style::camera_part::ground)) continue;
-        const Box cell = fill.cell < geo::max_cells ? cells[fill.cell] : Box::outside;
+        const Box cell = h.cell < geo::max_cells ? cells[h.cell] : Box::outside;
         if (cell == Box::outside) continue; // (and a cell the cover does not show)
         if (canopy && f.night) continue;    // the canopy by day only
         // draw_over's radius cut, in engine mode
-        if (f.engine && fill.line_count > 0 &&
-            !near_line(f, std::span(g.points).subspan(fill.line, fill.line_count), fill.near)) {
-            continue;
+        if (f.engine && h.line) {
+            const geo::Fill& fill = g.fills[i];
+            if (!near_line(f, std::span(g.points).subspan(fill.line, fill.line_count), fill.near)) continue;
         }
         bool drawn = false;
-        if (cell != Box::inside && box_test(cam, fill, fill.y, fill.margin) == Box::outside) {
+        // what the margin test is known to say of it: its cell's, else its core's (a fill without points lies in
+        // neither's box)
+        const Box known = cell == Box::unknown && h.core ? cores[h.cell] : cell;
+        const bool tested = known == Box::unknown || (known == Box::within && !h.points);
+        if (tested && box_test(cam, g.fills[i], g.fills[i].y, g.fills[i].margin) == Box::outside) {
             drawn = false;
         } else if (!f.exact) {
             drawn = true; // moving: what the box keeps is drawn
         } else {
+            const geo::Fill& fill = g.fills[i];
             const ProjectedPoly p =
-                project_poly(cam, std::span(g.points).subspan(fill.first, fill.count), fill.y, fill.margin, cam_, sp_);
+                project_poly(cam, std::span(g.points).subspan(fill.first, fill.count), fill.y, fill.margin, s.cs, s.sp);
             drawn = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > fill.min_area;
         }
         // a runway's threshold bars only with its pavement (the fill they belong to comes before them)
-        if (drawn && fill.with && (d.drawn[*fill.with] & drawn_bit::street) == 0) drawn = false;
+        if (drawn && h.with != no_fill && (d.drawn[h.with] & drawn_bit::street) == 0) drawn = false;
         if (drawn) d.drawn[i] = drawn_bit::street;
     }
     decide_strokes(cam, t, d);
@@ -1007,16 +1144,17 @@ void Ground::lay_out() {
         hi[g] = std::max(hi[g], order);
     };
     for (const DrawnTile& t : f.tiles) {
-        const geo::GroundTile& g = *t.ground;
-        for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
+        const std::span<const HotFill> fills(t.hot->fills);
+        for (std::uint32_t i = 0; i < fills.size(); ++i) {
             if ((f.drawn[t.decisions + i] & drawn_bit::street) == 0) continue;
-            const geo::Fill& fill = g.fills[i];
+            const HotFill& fill = fills[i];
             if (fill.kind == geo::FillKind::water) continue;
-            use(fill.group, fill_order(t, i));
+            use(fill.group, f.mixed ? f.fill_rank[t.decisions + i] : fill.order);
         }
-        for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
+        const std::span<const HotStroke> strokes(t.hot->strokes);
+        for (std::uint32_t i = 0; i < strokes.size(); ++i) {
             if (f.stroke_drawn[t.strokes + i] == 0) continue;
-            use(g.strokes[i].group, stroke_order(t, i));
+            use(strokes[i].group, f.mixed ? f.stroke_rank[t.strokes + i] : strokes[i].order);
         }
     }
     // draw_over's park shadows: the woods' union first, then each track's shadows' paths
@@ -1232,24 +1370,33 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     opaque_depth(fill);
     ATLAS_GPU_LET(f, frame::make_pipeline(context, fill, frame::Overdraw::opaque));
     p.fill = std::move(f);
-    // the app's map's streets: where the stencil holds no water at the street (its count, or with weather w0's bit:
-    // record_water_count draws it first)
-    gpu::GraphicsDesc streets = fill;
+    // the app's map's streets, after the land and the water (record_streets): over what lies under them at their
+    // coverage, top first at their painter depth (the fills over them drawn already, those under them deeper); on a
+    // bridge over the water, off a bridge where the stencil holds no water at the street (its count, or with weather
+    // w0's bit: record_water_count draws it first, and the water's plain draw keeps the count for them; or the thin
+    // water's bit, where its count was left to the band)
+    gpu::GraphicsDesc bridges = ground_desc(context, p, "ground bridges", "street_vs", "colour_over_fs");
+    scene_blend(bridges, gpu::Blend::over());
+    opaque_depth(bridges);
+    ATLAS_GPU_LET(fb, frame::make_pipeline(context, bridges, frame::Overdraw::translucent));
+    p.fill_bridges = std::move(fb);
+    gpu::GraphicsDesc streets = bridges;
     streets.label.name = "ground streets";
     streets.stencil_test = true;
     streets.stencil = {.failOp = vk::StencilOp::eKeep,
                        .passOp = vk::StencilOp::eKeep,
                        .depthFailOp = vk::StencilOp::eKeep,
                        .compareOp = vk::CompareOp::eEqual,
-                       .compareMask = ground_stencil::water_count | ground_stencil::water_w0,
+                       .compareMask =
+                           ground_stencil::water_count | ground_stencil::water_w0 | ground_stencil::water_thin,
                        .writeMask = 0,
                        .reference = 0};
-    ATLAS_GPU_LET(fs, frame::make_pipeline(context, streets, frame::Overdraw::opaque));
+    ATLAS_GPU_LET(fs, frame::make_pipeline(context, streets, frame::Overdraw::translucent));
     p.fill_streets = std::move(fs);
     // a tile's fills while it fades in (ENGINE.md's fades), over what lies under it, top first: each sample takes the
     // tile's topmost fill alone, at or above what is there (its ancestor's fill of the same place has its slot), at
     // the tile's fade, and keeps its depth for what is drawn over it
-    gpu::GraphicsDesc fading = ground_desc(context, p, "ground fading fills", "fill_fading_vs", "colour_fading_fs");
+    gpu::GraphicsDesc fading = ground_desc(context, p, "ground fading fills", "fill_fading_vs", "colour_over_fs");
     scene_blend(fading, gpu::Blend::over());
     fading.depth_test = true;
     fading.depth_write = true;
@@ -1257,8 +1404,8 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     ATLAS_GPU_LET(ff, frame::make_pipeline(context, fading, frame::Overdraw::translucent));
     p.fill_fading = std::move(ff);
     // and in the app's map its streets off a bridge, kept off the water as at rest where the stencil still says where
-    // it is: with weather w0's bit stands through the opaque phase, while without weather the water's plain draw has
-    // cleared the count, so there a fading street's edge may lie over the water until its fade ends
+    // it is: with weather w0's bit stands through the opaque phase, while without weather the water's count is cleared
+    // after the streets' draws, so there a fading street's edge may lie over the water until its fade ends
     gpu::GraphicsDesc fading_streets = fading;
     fading_streets.label.name = "ground fading streets";
     fading_streets.stencil_test = true;
@@ -1440,11 +1587,40 @@ void Ground::write_words(const frame::FrameState& state) {
     w.ready = true;
 }
 
+std::uint64_t Ground::words_hash() const noexcept {
+    if (words_ == nullptr || !words_->ready) return 0;
+    const Words& w = *words_;
+    std::uint64_t h = 0xCBF2'9CE4'8422'2325ULL;
+    const auto put = [&h](std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) {
+            h ^= (v >> (8 * i)) & 0xFFU;
+            h *= 0x100'0000'01B3ULL;
+        }
+    };
+    const std::size_t table = frame_.tiles.size() * tile_words;
+    for (std::size_t i = 0; i < w.w.size(); ++i) {
+        // a tile's fills' and lines' heap offsets: its entry's words 8 and 11; a line's run (8 words, its tile the
+        // first) names its points at its tile's lines' offset in its second, taken as their place in that range
+        const std::size_t at = i - w.tiles;
+        const bool heap = i >= w.tiles && at < table && (at % tile_words == 8 || at % tile_words == 11);
+        std::uint32_t v = heap ? 0U : w.w[i];
+        if (i >= w.runs && i < w.instances[0] && (i - w.runs) % 8 == 1 && w.w[i - 1] < frame_.tiles.size()) {
+            v -= w.w[w.tiles + (std::size_t{w.w[i - 1]} * tile_words) + 11];
+        }
+        put(v);
+    }
+    const PixelBox& l = ripple_plan_.layer;
+    for (const std::int32_t v : {l.x0, l.y0, l.x1, l.y1}) put(static_cast<std::uint32_t>(v));
+    return h;
+}
+
 void Ground::update(const frame::FrameState& state) {
+    frame_.thin_runs.clear();
     if (!frame_.valid) return;
     lay_designators(state);
     if (pipelines_ == nullptr || words_ == nullptr) return;
     write_words(state);
+    cull_thin(state);
 }
 
 void Ground::lay_designators(const frame::FrameState& state) const {
@@ -1510,13 +1686,17 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     switch (phase) {
     case phase_opaque:
         // top first: the quay walls (the tail's, over the shadows), what lies above the water, the water, the land, the
-        // plate, the sky; the water's count before what lies above it, which the app's map's streets keep off
+        // plate, then the app's map's thin water's band and streets over what lies under them, and the sky; the
+        // water's count before what lies above it, which the app's map's streets keep off
         record_quays(r);
         record_water_count(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, false);
         record_plate(r);
+        record_water_band(r);
+        if (!frame_.out(style::camera_part::ground)) record_streets(r);
+        record_water_end(r, false);
         if (!only_setts_ && !frame_.out(style::camera_part::sky)) {
             record_sky(r);
             record_sky_layer(r);
@@ -1530,7 +1710,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_water_rings: record_rings(r); break;
     case phase_water_tint: record_water_tint(r); break;
     case phase_water_glints: record_wind_glints(r); break;
-    case phase_water_end: record_water_end(r); break;
+    case phase_water_end: record_water_end(r, true); break;
     case phase_over:
     case phase_marks: record_lines(r, phase); break;
     case phase_shadows: record_shadows(r); break;
@@ -1548,24 +1728,53 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
     static_assert(geo::group::road == 8 && geo::group::over == 24 && geo::group::over + 1 == 25 &&
                   geo::group::over + 2 == 26 && geo::aero_sub::pavement == 0);
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-    // the app's map: the streets off a bridge by themselves, after the rest (each fill's painter depth orders them); a
-    // tile fading in after the opaque phase (record_fading_fills)
-    for (const bool streets : {false, true}) {
-        if (streets && (!above || !frame_.grounded)) break;
+    // the app's map's streets by their own draws after the land (record_streets); a tile fading in after the opaque
+    // phase (record_fading_fills)
+    bool bound = false;
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const DrawnTile& t = frame_.tiles[i];
+        const geo::GroundLayout& l = t.ground->layout;
+        const geo::Words w = above ? l.above : l.below;
+        if (w.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
+        if (!bound) {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->fill);
+            push(r, frame_.grounded ? ground_flag::wide : 0U, 0);
+            bound = true;
+        }
+        const auto draw = [&](std::uint32_t first, std::uint32_t count) {
+            if (count == 0) return;
+            cmd.draw(count, 1, (t.pass->ranges[0].offset / 4) + first, static_cast<std::uint32_t>(i));
+            r.counters.draw(above ? "ground above" : "ground land", count / 3);
+        };
+        if (above && frame_.grounded) {
+            const std::uint32_t after = l.streets.first + l.streets.count;
+            draw(w.first, l.streets.first - w.first);
+            draw(after, w.first + w.count - after);
+        } else {
+            draw(w.first, w.count);
+        }
+    }
+}
+
+void Ground::record_streets(const frame::Recording& r) {
+    if (!frame_.grounded) return;
+    const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+    const std::uint32_t least = least_width_ ? ground_flag::least : 0U;
+    // off a bridge, where the stencil holds no water at the street; then on a bridge, over the water
+    for (const bool off : {true, false}) {
         bool bound = false;
         for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
             const DrawnTile& t = frame_.tiles[i];
-            const geo::Words draw =
-                streets ? t.ground->layout.streets : (above ? t.ground->layout.above : t.ground->layout.below);
-            if (draw.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
+            const geo::Words w = t.ground->layout.streets;
+            if (w.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
             if (!bound) {
                 cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                                 streets ? *pipelines_->fill_streets : *pipelines_->fill);
-                push(r, (frame_.grounded ? ground_flag::wide : 0U) | (streets ? ground_flag::streets : 0U), 0);
+                                 off ? *pipelines_->fill_streets : *pipelines_->fill_bridges);
+                push(r, ground_flag::wide | least | (off ? ground_flag::streets : 0U), 0);
                 bound = true;
             }
-            cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
-            r.counters.draw(streets ? "ground streets" : (above ? "ground above" : "ground land"), draw.count / 3);
+            cmd.draw(w.count, 1, (t.pass->ranges[0].offset / 4) + w.first, static_cast<std::uint32_t>(i));
+            r.counters.draw(off ? "ground streets" : "ground bridges", w.count / 3);
         }
     }
 }
@@ -1584,8 +1793,8 @@ void Ground::record_fading_fills(const frame::Recording& r) {
     });
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     // the big roads' asphalt as wide as at rest, and in the app's map the streets off a bridge by their own draw
-    // (record_fills), here in their place among the tile's fills, top first
-    const std::uint32_t wide = frame_.grounded ? ground_flag::wide : 0U;
+    // (record_streets), here in their place among the tile's fills, top first, a thin one drawn as wide as there
+    const std::uint32_t wide = frame_.grounded ? ground_flag::wide | (least_width_ ? ground_flag::least : 0U) : 0U;
     const auto bind = [&](bool streets) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
                          streets ? *pipelines_->fill_fading_streets : *pipelines_->fill_fading);
@@ -1702,53 +1911,22 @@ std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style
             }
         }
     };
-    // a colour of the style and its move with its slot, by day, or at night as the fills darken it (lawns and areas
-    // .18, the rest .2)
-    const auto add = [&](std::optional<std::size_t> code, std::uint32_t own, tiles::StyleRgb c) {
-        if (!code) return;
-        const std::uint32_t to = style::paint(palette, *code, own, c);
-        if (to == c) return;
+    // each colour of the style a slot moves, with its move, by day, or at night as the fills darken it (lawns and
+    // areas .18, the rest .2); the big roads' asphalt by day or at night as the style has it
+    for (const geo::GroundSlot& s : geo::ground_slots(style, night)) {
+        if (!s.darkens) {
+            const std::uint32_t moved = style::paint(palette, s.code, s.own, s.colour);
+            if (s.own != 0U && moved != s.colour) put(geo::rgba(s.colour), geo::rgba(moved));
+            continue;
+        }
+        const std::uint32_t to = style::paint(palette, s.code, s.own, s.colour);
+        if (to == s.colour) continue;
         if (!night) {
-            put(geo::rgba(c), geo::rgba(to));
-            return;
+            put(geo::rgba(s.colour), geo::rgba(to));
+            continue;
         }
-        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(c), k), geo::darken(geo::rgba(to), k));
-    };
-    // each slot's own colour in the style
-    namespace slot = style::palette_slot;
-    const auto own = [&style](std::size_t code) -> std::uint32_t {
-        switch (code) {
-        case slot::paper: return style::paper_own;
-        case slot::woods: return style::woods_own;
-        case slot::lawn: return style.area_colour("park");
-        case slot::squares: return style.area_colour("square");
-        case slot::parking: return style.area_colour("parking");
-        case slot::playground: return style.area_colour("playground");
-        case slot::memorial: return style.area_colour("memorial");
-        case slot::bridge_deck: return style.area_colour("bridge");
-        case slot::asphalt: return style.surface("asphalt").value_or(0U);
-        case slot::paving_stones: return style.surface("paving_stones").value_or(0U);
-        case slot::setts: return style.surface("sett").value_or(0U);
-        case slot::concrete_paving: return style.surface("concrete").value_or(0U);
-        case slot::brick_paving: return style.surface("bricks").value_or(0U);
-        case slot::boardwalk: return style.surface("wood").value_or(0U);
-        default: return 0U;
-        }
-    };
-    const auto of = [&](std::optional<std::size_t> code, tiles::StyleRgb c) {
-        if (code) add(code, own(*code), c);
-    };
-    for (const auto& [kind, c] : style.areas) of(style::area_slot(kind), c);
-    of(slot::squares, style.area_other);
-    for (const auto& [name, c] : style.surfaces) of(style::surface_slot(name), c);
-    for (std::size_t k = 0; k < style.land_kinds.size() && k < style.land_colours.size(); ++k) {
-        of(style::land_slot(style.land_kinds[k]), style.land_colours[k]);
+        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(s.colour), k), geo::darken(geo::rgba(to), k));
     }
-    // the big roads' asphalt, by day or at night as the style has it
-    const std::uint32_t asphalt = own(slot::asphalt);
-    const tiles::StyleRgb big = night ? style.asphalt.night : style.asphalt.day;
-    const std::uint32_t moved = style::paint(palette, slot::asphalt, asphalt, big);
-    if (asphalt != 0U && moved != big) put(geo::rgba(big), geo::rgba(moved));
     return table;
 }
 

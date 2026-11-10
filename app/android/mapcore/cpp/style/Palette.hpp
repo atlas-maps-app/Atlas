@@ -42,7 +42,11 @@ inline constexpr std::size_t parking = 5;
 inline constexpr std::size_t playground = 6;
 inline constexpr std::size_t memorial = 7;
 inline constexpr std::size_t bridge_deck = 8;
+inline constexpr std::size_t water = 16; // the theme's water (mapview's PaletteTheme), which the ground's pick names
+inline constexpr std::size_t water_sky = 17;  // the theme's water_top: the water's gradient with weather, its top
+inline constexpr std::size_t water_deep = 18; // the theme's water_bot: its bottom
 inline constexpr std::size_t quay_walls = 19;
+inline constexpr std::size_t street = 32; // the theme's road, a road's without a mapped surface (the pick names it)
 inline constexpr std::size_t asphalt = 33;
 inline constexpr std::size_t paving_stones = 34;
 inline constexpr std::size_t setts = 35;
@@ -58,6 +62,8 @@ inline constexpr std::size_t lamp_posts = 116;
 inline constexpr std::size_t bollards = 117;
 inline constexpr std::size_t turbines = 118;
 inline constexpr std::size_t pylons = 119;
+inline constexpr std::size_t night_ground = 128; // the theme's ground at night (PaletteTheme), which the pick names
+inline constexpr std::size_t night_water = 129;  // the theme's water at night
 } // namespace palette_slot
 
 /// The woods' own colour (the Woods slot's today): the canopy's matrix's .16 .24 .12 in linear light as sRGB, which

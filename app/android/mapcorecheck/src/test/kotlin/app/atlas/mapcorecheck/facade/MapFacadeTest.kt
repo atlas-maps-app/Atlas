@@ -51,7 +51,7 @@ class MapFacadeTest {
 
     private fun packs(handle: Long, tiles: File, vararg ids: String): String = Native.packs(
         handle, arrayOf(*ids), LongArray(ids.size) { it + 1L }, IntArray(ids.size), Array(ids.size) { File(tiles, "${ids[it]}.atlas").path },
-        IntArray(ids.size) { -1 }, LongArray(ids.size), LongArray(ids.size),
+        IntArray(ids.size) { -1 }, LongArray(ids.size), LongArray(ids.size), arrayOfNulls(ids.size),
     )
 
     @Test
@@ -67,20 +67,21 @@ class MapFacadeTest {
             try {
                 // Before the map is made the packs are listed; once it is, they open in its world.
                 assertEquals("amsterdam listed\n", packs(handle, tiles, "amsterdam"))
+                assertEquals("no map", Native.shapeRecords(handle, true)) // VK bench's switch: no frames to draw yet
                 assertEquals("", Native.map(handle, 1))
                 assertEquals("amsterdam kept\ngrachten opened\n", packs(handle, tiles, "amsterdam", "grachten"))
                 assertEquals("amsterdam kept\ngrachten kept\n", packs(handle, tiles, "amsterdam", "grachten"))
                 // A file that is no pack: refused, saying why; a number of 0 or a kind past the known ones: not listed.
                 val junk = dir.resolve("junk.atlas").apply { writeText("not a pack") }
-                val said = Native.packs(handle, arrayOf("junk"), longArrayOf(3), intArrayOf(1), arrayOf(junk.path), intArrayOf(-1), longArrayOf(0), longArrayOf(0))
+                val said = Native.packs(handle, arrayOf("junk"), longArrayOf(3), intArrayOf(1), arrayOf(junk.path), intArrayOf(-1), longArrayOf(0), longArrayOf(0), arrayOfNulls(1))
                 assertTrue(said, said.startsWith("junk: "))
                 assertEquals(
                     "bad: not a pack the map can list\n",
-                    Native.packs(handle, arrayOf("bad"), longArrayOf(0), intArrayOf(0), arrayOf(junk.path), intArrayOf(-1), longArrayOf(0), longArrayOf(0)),
+                    Native.packs(handle, arrayOf("bad"), longArrayOf(0), intArrayOf(0), arrayOf(junk.path), intArrayOf(-1), longArrayOf(0), longArrayOf(0), arrayOfNulls(1)),
                 )
                 assertEquals(
                     "packs: the arrays differ in length",
-                    Native.packs(handle, arrayOf("a", "b"), longArrayOf(1), intArrayOf(0, 0), arrayOf("", ""), intArrayOf(-1, -1), longArrayOf(0, 0), longArrayOf(0, 0)),
+                    Native.packs(handle, arrayOf("a", "b"), longArrayOf(1), intArrayOf(0, 0), arrayOf("", ""), intArrayOf(-1, -1), longArrayOf(0, 0), longArrayOf(0, 0), arrayOfNulls(2)),
                 )
 
                 // The moment: the port's sunny theme as the app writes it; a block of another version is refused.
@@ -186,6 +187,12 @@ class MapFacadeTest {
                 Native.screen(handle, false, false, false)
                 Native.screen(handle, true, true, true)
 
+                // The kept walls' shape records off, then on again (VK bench's comparison): taken, but what the device
+                // makes is known only once a frame is drawn, which hosts have no window for (map_frame_vk_test holds the
+                // frames drawn either way).
+                assertEquals("no frame drawn yet (the passes not prepared)", Native.shapeRecords(handle, false))
+                assertEquals("no frame drawn yet (the passes not prepared)", Native.shapeRecords(handle, true))
+
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))
                 assertEquals("no map mode 7", Native.map(handle, 7))
@@ -237,7 +244,7 @@ class MapFacadeTest {
             assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
             try {
                 assertEquals("", Native.map(handle, 1))
-                val said = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), LongArray(1), LongArray(1))
+                val said = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), LongArray(1), LongArray(1), arrayOfNulls(1))
                 assertEquals("$id opened\n", said)
                 // no frame drawn yet: no window wanted, none in view, no level's tile wanted or drawn
                 assertEquals(0, Native.wantedWindows(handle).size)
@@ -309,7 +316,7 @@ class MapFacadeTest {
             assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
             try {
                 assertEquals("", Native.map(handle, 1))
-                fun hand() = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), longArrayOf(file.lastModified()), longArrayOf(file.length()))
+                fun hand() = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), longArrayOf(file.lastModified()), longArrayOf(file.length()), arrayOfNulls(1))
                 assertEquals("$id opened\n", hand())
                 assertEquals("$id kept\n", hand())
                 assertEquals("", Native.buildWindow(14, x, y, out.path, file.path))

@@ -105,12 +105,16 @@ struct DoorShape {
     /// Its place, in painter's order, among the doors of its wall it overlaps (the port draws the later over the
     /// earlier): its parts lead four steps more for each one before it, and their plates share one depth.
     std::uint32_t order = 0;
+    /// While a tile fades, the standing fade of the cover's entry it is drawn for (shaders::fade_word; ENGINE.md's
+    /// standing fades), 0 at rest: a door both a tile fading in and the tile kept under it hold is two, one a range.
+    std::uint32_t fade = 0;
 };
 
 /// The doors the frame draws (door_shapes' order: each spot's first address's in S['nodes']), as facade_details decides
-/// them: the doors of the cover's tiles that pass `pass` keeps (its PassTile in each), whose items are of kind `kind`,
-/// at the frame's camera and moment, the door's colours from `style`. Doors whose items the ranks do not draw (beyond
-/// the frame) take their spot all the same and are left out.
+/// them: the doors of the cover's tiles (Cover::upright: of a tile kept under one fading in, those in its cells there)
+/// that pass `pass` keeps (its PassTile in each), whose items are of kind `kind`, at the frame's camera and moment, the
+/// door's colours from `style`. Doors whose items the ranks do not draw (beyond the frame) take their spot all the same
+/// and are left out.
 [[nodiscard]] std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t pass, std::uint16_t kind,
                                                  const tiles::DoorsStyle& style);
 
@@ -150,6 +154,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves the doors (style::camera_part::doors), their numbers with them.
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The phases: the doors (objects), and their numbers (translucent, before every object's translucent part).
@@ -200,17 +206,23 @@ private:
     std::array<gpu::Buffer, 2> faces_buffer_;
     std::array<gpu::Buffer, 2> parts_buffer_;
     std::array<gpu::Buffer, 2> glyphs_buffer_;
+    /// While a tile fades, each face's standing fade, then each outline's (ENGINE.md's standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_buffer_;
     gpu::Buffer tables_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::Pipeline fills_{nullptr};
+    vk::raii::Pipeline fills_fading_{nullptr}; ///< the same while a tile fades (items_fills_fading_fs)
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline parts_pipeline_{nullptr};
     vk::raii::Pipeline numbers_{nullptr};
+    vk::raii::Pipeline numbers_fading_{nullptr}; ///< the same while a tile fades (wall_text_fading_fs)
 
     // the render thread's, per frame
     std::vector<shaders::ItemRecord> faces_;
     std::vector<shaders::ItemRecord> parts_;
     std::vector<layouts::text_slug::GlyphDraw> glyphs_;
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::vector<text::GlyphInstance> laid_;
     std::unordered_map<std::string, Shaped> shaped_;
     std::uint32_t slot_ = 0;

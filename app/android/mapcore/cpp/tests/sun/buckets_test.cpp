@@ -1,9 +1,9 @@
 // The sun worker (sun/Buckets.hpp, sun/BitTiles.hpp): buckets from the theme block, a bucket's run on several threads
 // giving one thread's bits, each tile handed on once when its last piece is done, windows tested only where asked;
 // the worker publishing the latest request, a run's tiles together at one time with one wake of the frame loop, a
-// named moment's tiles kept on disk and read back; the bits a frame draws, fading 300 ms over a swap. The host-tsan
-// build runs these with ThreadSanitizer; the disk cache's files go to the build folder's scratch (ATLAS_TEST_SCRATCH)
-// and are removed.
+// named moment's tiles kept on disk and read back; the bits a frame draws, fading 300 ms over a swap; a run stopped
+// and a worker cancelled (the sun left out), nothing of their bits published. The host-tsan build runs these with
+// ThreadSanitizer; the disk cache's files go to the build folder's scratch (ATLAS_TEST_SCRATCH) and are removed.
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "style/Theme.hpp"
@@ -21,6 +21,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -240,6 +242,15 @@ TEST_CASE("sun: the bits a frame draws: the first at once, a swap fading over 30
     const auto w = tiles.texels(k, 20.0, texels);
     ATLAS_REQUIRE(w.has_value());
     CHECK(texels == std::vector<std::uint32_t>{0b0110U, 0b1010U}); // R the new bits, G the old
+    // a tile drawn before its first bits takes them from by day: every sample lit in G, its bits in R
+    const TileBits day = by_day(b);
+    CHECK(day.count == b.count);
+    CHECK(day.words == std::vector<std::uint64_t>{~std::uint64_t{0}});
+    texels.clear();
+    texels_of(
+        {.now = std::make_shared<const TileBits>(b), .before = std::make_shared<const TileBits>(day), .weight = 0},
+        texels);
+    CHECK(texels == std::vector<std::uint32_t>{0b0110U, 0xFFFF'FFFFU});
     tiles.forget(k);
     CHECK(tiles.size() == 0);
 }
@@ -346,4 +357,96 @@ TEST_CASE("sun: a run's tiles are published together, at one time, and tell the 
         CHECK(at->weight == 0.0);
         CHECK(half->weight == doctest::Approx(0.5));
     }
+}
+
+TEST_CASE("sun: a run stops before its next piece once told, and a cancelled worker publishes nothing of its run, its "
+          "next request running as before; cleared, no tile has bits (the sun left out: ENGINE.md's parts)") {
+    const auto scene = drawn_scene(4, 3000); // each tile's samples one piece (under 4,096)
+    const Bucket b = bucket_of(sun_vector(120.0, 33.0), false);
+    std::vector<TileJob> jobs;
+    jobs.reserve(4);
+    for (std::uint32_t t = 0; t < 4; ++t) jobs.push_back({t, true});
+    std::atomic<bool> stop{true};
+    std::atomic<int> handed{0};
+    const auto count = [&handed](std::uint32_t, const TileBits&) { handed.fetch_add(1); };
+    run(*scene, b, jobs, 2, count, &stop); // told before it begins: nothing handed on
+    CHECK(handed.load() == 0);
+    stop = false;
+    run(
+        *scene, b, jobs, 1,
+        [&](std::uint32_t, const TileBits&) {
+            handed.fetch_add(1);
+            stop = true; // told as its first tile is done, on the one thread: no piece more
+        },
+        &stop);
+    CHECK(handed.load() == 1);
+
+    BitTiles bits;
+    std::atomic<int> told{0};
+    bits.on_publish([&told] { told.fetch_add(1); });
+    std::atomic<int> ticks{0};
+    const auto clock = [&ticks] { return 100.0 + ticks.fetch_add(1); };
+    Worker w(bits, 3, nullptr, clock);
+    for (int k = 0; k < 8; ++k) {
+        // cancelled before it is taken, as it runs, or after it is done: once cancel returns, nothing more comes
+        w.request(scene, bucket_of(sun_vector(120.0 + k, 33.0), false), jobs);
+        if (k % 2 == 1) std::this_thread::yield();
+        w.cancel();
+        const int at_cancel = told.load();
+        w.wait_idle();
+        CHECK(told.load() == at_cancel);
+        bits.clear();
+        CHECK(bits.size() == 0);
+    }
+    const Bucket after = bucket_of(sun_vector(130.0, 33.0), false);
+    const int before = told.load();
+    w.request(scene, after, jobs);
+    w.wait_idle();
+    CHECK(told.load() == before + 1);
+    CHECK(bits.size() == 4);
+    for (std::uint32_t t = 0; t < 4; ++t) {
+        const auto v = bits.view(scene->tiles()[t].key, 1e9);
+        ATLAS_REQUIRE(v.has_value());
+        CHECK(v->now->bucket == after.key);
+    }
+    CHECK(w.run_tiles() >= 4);
+    CHECK(w.run_ms() > 0.0);
+    bits.clear();
+    CHECK(bits.size() == 0);
+    CHECK_FALSE(bits.view(scene->tiles()[0].key, 1e9).has_value());
+
+    // A run cancelled as it runs, its first tile done (a named moment's: each tile kept on disk as it is done, so the
+    // test sees the run under way): it stops before its next piece, and nothing of what it made is published.
+    const std::string dir = (std::filesystem::path(ATLAS_TEST_SCRATCH) / "sun-cancel").string();
+    std::filesystem::remove_all(dir);
+    {
+        DiskCache cache(dir, std::uint64_t{256} << 20U);
+        const auto long_scene = drawn_scene(160, 3000); // a piece a tile, one after another on the one thread
+        std::vector<TileJob> all;
+        all.reserve(160);
+        for (std::uint32_t t = 0; t < 160; ++t) all.push_back({t, true});
+        BitTiles kept;
+        std::atomic<int> published{0};
+        kept.on_publish([&published] { published.fetch_add(1); });
+        Worker one(kept, 1, &cache, clock);
+        const auto files = [&dir] {
+            std::error_code ec;
+            std::size_t n = 0;
+            for (auto it = std::filesystem::directory_iterator(dir, ec);
+                 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                ++n;
+            }
+            return n;
+        };
+        one.request(long_scene, bucket_of(sun_vector(140.0, 33.0), true), all);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (files() == 0 && std::chrono::steady_clock::now() < until) std::this_thread::yield();
+        REQUIRE(files() > 0);
+        one.cancel();
+        one.wait_idle();
+        CHECK(published.load() == 0);
+        CHECK(kept.size() == 0);
+        CHECK(files() < all.size()); // stopped before its end
+    }
+    std::filesystem::remove_all(dir);
 }

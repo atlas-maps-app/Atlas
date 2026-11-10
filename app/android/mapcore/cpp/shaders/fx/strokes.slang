@@ -28,6 +28,7 @@
 #endif
 
 #include "fx/mat.slang"
+#include "shared/fade.slang"
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
@@ -44,7 +45,8 @@ struct StrokeVertex {
     float4 position : SV_Position;
     /// The segment's ends in output px (SV_Position's frame): a.xy, b.xy.
     [[vk::location(0)]] nointerpolation float4 ends : STROKE_ENDS;
-    /// x: half the stroke's width, output px; y, z, w: 0.
+    /// x: half the stroke's width, output px; y: its tile's standing fade, which the fading fragment stages keep (its
+    /// fade_word shifted down by FADE_SHIFT, a whole number a float holds exactly; 0 every sample, as at rest); z, w: 0.
     [[vk::location(1)]] nointerpolation float4 style : STROKE_STYLE;
     /// Its colour: sRGB, 0 to 1 at 8-bit levels, unpremultiplied; alpha its opacity.
     [[vk::location(2)]] nointerpolation float4 colour : STROKE_COLOUR;
@@ -230,29 +232,63 @@ struct StrokeOut {
 };
 
 /// Over a sample without the objects bit: the stroke alone over the ground, thinned by `mat`.
-[shader("fragment")]
-StrokeOut strokes_ground_fs(StrokeVertex v) {
-    StrokeOut o;
+float4 stroke_ground_colour(StrokeVertex v) {
     float a = stroke_coverage(v);
     if (mat_grain_on(frame) && a > 0.0f) {
         float3 c = {v.colour.r, v.colour.g, v.colour.b};
-        o.colour = stroke_alone(c, a, mat_grey(fx_pixel(frame.camera, v.position.xy)));
-    } else {
-        float4 plain = {v.colour.r * a, v.colour.g * a, v.colour.b * a, a};
-        o.colour = plain;
+        return stroke_alone(c, a, mat_grey(fx_pixel(frame.camera, v.position.xy)));
     }
-    return o;
+    float4 plain = {v.colour.r * a, v.colour.g * a, v.colour.b * a, a};
+    return plain;
 }
 
 /// Over a sample with the objects bit: the stroke on the group's own paint, in `mat`'s colour.
-[shader("fragment")]
-StrokeOut strokes_objects_fs(StrokeVertex v) {
-    StrokeOut o;
+float4 stroke_objects_colour(StrokeVertex v) {
     float a = stroke_coverage(v);
     float3 c = {v.colour.r, v.colour.g, v.colour.b};
     float3 m = mat_colour(frame.camera, c, v.position.xy, mat_grain_on(frame));
     float4 over = {m.r * a, m.g * a, m.b * a, a};
-    o.colour = over;
+    return over;
+}
+
+[shader("fragment")]
+StrokeOut strokes_ground_fs(StrokeVertex v) {
+    StrokeOut o;
+    o.colour = stroke_ground_colour(v);
+    return o;
+}
+
+[shader("fragment")]
+StrokeOut strokes_objects_fs(StrokeVertex v) {
+    StrokeOut o;
+    o.colour = stroke_objects_colour(v);
+    return o;
+}
+
+/// The two while a tile fades (ObjectStrokes' fading pipelines, Cover::dithers): on the samples the stroke's tile's
+/// standing fade keeps.
+struct StrokeFadingOut {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+    uint coverage : SV_Coverage;
+};
+
+uint stroke_fade_mask(StrokeVertex v) {
+    return fade_mask(int2(v.position.xy), frame.info.w, lane_fade(v.style.y));
+}
+
+[shader("fragment")]
+StrokeFadingOut strokes_ground_fading_fs(StrokeVertex v) {
+    StrokeFadingOut o;
+    o.colour = stroke_ground_colour(v);
+    o.coverage = stroke_fade_mask(v);
+    return o;
+}
+
+[shader("fragment")]
+StrokeFadingOut strokes_objects_fading_fs(StrokeVertex v) {
+    StrokeFadingOut o;
+    o.colour = stroke_objects_colour(v);
+    o.coverage = stroke_fade_mask(v);
     return o;
 }
 

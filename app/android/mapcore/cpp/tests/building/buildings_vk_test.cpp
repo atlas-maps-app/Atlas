@@ -24,7 +24,9 @@
 // moment, lit ahead on the pass's own thread (ENGINE.md gain 5), is held frame by frame to the frames drawn from
 // scratch at each moment: every frame one moment whole, the new one from the frame that takes it on, in both frame
 // slots, its light copied in and none of it lit on the render thread. With the user's palette's guesses off, a guessed
-// roof's shape is drawn as the plain box in its place, held to the twin alike. The validation layer stays silent.
+// roof's shape is drawn as the plain box in its place, held to the twin alike. At night the shop floors' glazing is
+// lit where one of its building's places is open and dark where none is (the Westerkerk home at 21:30), held to the
+// twin alike. The validation layer stays silent.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -35,6 +37,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Walls.hpp"
+#include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
@@ -57,8 +60,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -69,6 +74,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1232,7 +1238,10 @@ public:
     WithPalette& operator=(WithPalette&&) = delete;
 };
 
-/// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
+/// Draws `cam` until the world has built every tile the cover wants and their fades are over, then until the sun has
+/// settled: its workers idle, nothing published since the frame before and no tile's bits cross-fading. The sun's
+/// fades run on its own steady clock, not on the frames' seconds (SunGlobals::now), so a frame drawn while one runs
+/// differs from its still redraw (draw_still), which shows that fade further on. The last frame's pixels.
 [[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
     s.builder->set_inputs({.camera = cam,
                            .theme = th,
@@ -1257,7 +1266,9 @@ public:
         s.renderer->drain();
         s.world->residency().wait_idle();
         const scene::Cover& cover = *s.world->cover();
-        const bool built = n > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
+        // (a part drawn again: its top-ups taken and faded in, Cover::lacking and fading)
+        const bool built = n > 4 && cover.missing() == 0 && !cover.tiles().empty() && cover.lacking() == 0 &&
+                           !cover.fading() &&
                            std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
         // every tile drawn with its own sun bits, their fade over
         const bool lit = std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) {
@@ -1283,20 +1294,42 @@ public:
         }
         if (built && s.world->sun() != nullptr) s.world->sun()->wait_idle();
     }
-    // one more, with every tile taken and settled
-    s.now += 0.25;
-    s.builder->set_inputs({.camera = cam,
-                           .theme = th,
-                           .seconds = s.now,
-                           .mode = frame::Mode::structural,
-                           .scene = s.world.get(),
-                           .palette = frame_palette});
-    auto report = s.renderer->draw(0);
-    if (!report) {
-        FAIL("a frame failed: " << report.error().text());
-        return std::nullopt;
+    // one more, with every tile taken and settled, and more until the sun has settled: bits the last frames asked for
+    // (a halo tile come resident asks again) or a tile's first bits after a frame that drew it by day fade in over
+    // sun::fade_seconds of its clock
+    scene::SunGlobals* sun = s.world->sun();
+    const auto sun_work = [sun] {
+        const scene::SunStats st = sun != nullptr ? sun->stats() : scene::SunStats{};
+        return std::array<std::uint64_t, 4>{st.scenes, st.failed, st.runs, st.cached};
+    };
+    for (int n = 0;; ++n) {
+        const std::array<std::uint64_t, 4> before = sun_work();
+        s.now += 0.25;
+        s.builder->set_inputs({.camera = cam,
+                               .theme = th,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get(),
+                               .palette = frame_palette});
+        auto report = s.renderer->draw(0);
+        if (!report) {
+            FAIL("a frame failed: " << report.error().text());
+            return std::nullopt;
+        }
+        s.renderer->drain();
+        if (sun == nullptr) break;
+        sun->wait_idle();
+        if (!sun->fading() && sun_work() == before) break;
+        if (n == 40) {
+            MESSAGE("the sun not settled after 40 more frames");
+            s.settled = false;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the fades' clock is the sun's own
     }
-    s.renderer->drain();
+    s.lit = std::ranges::all_of(s.world->cover()->tiles(), [](const scene::CoverTile& t) {
+        return t.sun_base != scene::no_sun && t.sun.has_value() && t.sun_weight >= 1.0F;
+    });
     auto pixels = s.output->read(s.output->latest());
     if (!pixels) {
         FAIL("the frame could not be read: " << pixels.error().text());
@@ -1337,6 +1370,29 @@ public:
         FAIL("no frame showed the moment");
         return std::nullopt;
     }
+    auto pixels = s.output->read(s.output->latest());
+    if (!pixels) {
+        FAIL("the frame could not be read: " << pixels.error().text());
+        return std::nullopt;
+    }
+    return std::move(*pixels);
+}
+
+/// Draws `cam` at moment `th` once more, its inputs the last frame's (no time passes); its pixels.
+[[nodiscard]] std::optional<gpu::Pixels> draw_still(Scene& s, const style::CameraState& cam,
+                                                    const style::ThemeBlock& th) {
+    s.builder->set_inputs({.camera = cam,
+                           .theme = th,
+                           .seconds = s.now,
+                           .mode = frame::Mode::structural,
+                           .scene = s.world.get(),
+                           .palette = frame_palette});
+    auto report = s.renderer->draw(0);
+    if (!report) {
+        FAIL("a frame failed: " << report.error().text());
+        return std::nullopt;
+    }
+    s.renderer->drain();
     auto pixels = s.output->read(s.output->latest());
     if (!pixels) {
         FAIL("the frame could not be read: " << pixels.error().text());
@@ -1616,15 +1672,23 @@ bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-vari
 /// The windows' decide stages a frame runs (passes::Buildings::WindowStage's order).
 using Stages = std::array<bool, passes::Buildings::window_stages>;
 
+/// The least shop glazings a frame draws lit at night (one of their building's places open) and dark.
+struct Glazings {
+    std::size_t open = 0;
+    std::size_t closed = 0;
+};
+
 /// Draws `cam` in X1 and C, at rest and moving, at moment `th` over `packs`, and holds every pixel to the exact raster
 /// of the pass's twin; the twin emits at least `least` elements. With `then`, the first frame's moment changes to it
 /// (the CPU's light lights every drawn tile again) and that frame is held to the twin too. With `painter`, under the
 /// painter switch: the renders' order, held to the twin's painter order. The frame lays at least `least_kit` records of
 /// a kit's walls' lines and eaves' shadows. Each windows' decide stage runs where the frame has its part, over the
-/// walls that have it; with `stages`, the frame runs those alone.
+/// walls that have it; with `stages`, the frame runs those alone. With `glazings`, the twin draws at least so many
+/// shop glazings lit and dark at night (the GPU's, pixel for pixel).
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
                   const style::ThemeBlock& th, std::size_t least, const style::ThemeBlock* then = nullptr,
-                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr) {
+                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr,
+                  const Glazings* glazings = nullptr) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -1701,7 +1765,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             const passes::Buildings::KeptCounts kept = s.buildings->kept_counts();
             MESSAGE(name << ": kept walls " << kept.kept[0] << " of " << kept.submitted[0] << ", near cells "
                          << kept.kept[1] << " of " << kept.submitted[1] << ", roofs " << kept.kept[2] << " of "
-                         << kept.submitted[2] << " triangles");
+                         << kept.submitted[2] << " triangles; drawn from shape records " << kept.shaped[0] << ", "
+                         << kept.shaped[1] << " and " << kept.shaped[2] << ", " << kept.shape_bytes
+                         << " bytes of records (their buffers " << kept.shape_memory << ")");
             const passes::Buildings::WindowCounts windows = s.buildings->window_counts();
             MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
@@ -1710,6 +1776,28 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << windows.roof_lines << " roof lines; a kit's walls' " << windows.kit_lines << " lines and "
                          << windows.kit_shadows << " eaves' shadows");
             CHECK(windows.kit_lines + windows.kit_shadows >= least_kit);
+            // the shop floors' glazing the twin draws (its shop windows' glass): at night lit while one of its
+            // building's places is open, else dark
+            const passes::ShopGlass paints = passes::shop_glass_of(s.builder->state());
+            const auto is = [](hlsl::float3 a, hlsl::float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; };
+            std::size_t open = 0;
+            std::size_t closed = 0;
+            std::size_t glazed = 0;
+            for (const twin::ElementDepth& e : s.buildings->depths()) {
+                for (const twin::WindowsDepth& wd : e.windows) {
+                    if (!wd.shop) continue;
+                    ++glazed;
+                    open += is(wd.glass.top, shaders::building_rgb(paints.open)) ? 1 : 0;
+                    closed += is(wd.glass.top, shaders::building_rgb(paints.closed)) ? 1 : 0;
+                }
+            }
+            MESSAGE(name << ": " << glazed << " shop glazings, " << open << " lit as open and " << closed
+                         << " dark as closed");
+            if (glazings != nullptr) {
+                CHECK(open >= glazings->open);
+                CHECK(closed >= glazings->closed);
+                CHECK(open + closed == glazed);
+            }
             // each decide stage dispatched where it has walls (its lanes), and those its part's alone: the windows'
             // where the frame decides windows, the churches' where church windows, the material faces' where their
             // records; none past the frame's facade walls
@@ -1758,6 +1846,59 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             CHECK(static_cast<double>(r.boundary) <= 0.01 * static_cast<double>(r.pixels));
             CHECK(static_cast<double>(r.tie) <= 0.01 * static_cast<double>(r.pixels));
             CHECK(r.sliver <= 4 * (r.slivers + r.ngons) + 4); // a few pixels each at most
+            // the same pixels however the kept walls and near cells are decided (passes/Kept.cpp): each at each point,
+            // each once into its shape record, and the two in one list (its first chunk from records), the frame's
+            // inputs as they were; the roofs at each point
+            constexpr std::uint32_t every = std::numeric_limits<std::uint32_t>::max();
+            for (const std::uint32_t most : {0U, 1U, every}) {
+                s.buildings->most_shape_chunks(most);
+                const auto still = draw_still(s, c, th);
+                ATLAS_REQUIRE(still.has_value());
+                const passes::Buildings::KeptCounts k = s.buildings->kept_counts();
+                std::size_t differ = 0;
+                for (std::size_t i = 0; i + 4 <= still->rgba.size() && i + 4 <= pixels->rgba.size(); i += 4) {
+                    differ += std::equal(still->rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                                         still->rgba.begin() + static_cast<std::ptrdiff_t>(i + 4),
+                                         pixels->rgba.begin() + static_cast<std::ptrdiff_t>(i))
+                                  ? 0
+                                  : 1;
+                }
+                MESSAGE(name << ", at most " << (most == every ? std::string("every") : std::to_string(most))
+                             << " chunk of records a list: drawn from them " << k.shaped[0] << ", " << k.shaped[1]
+                             << " and " << k.shaped[2] << " triangles; " << differ << " pixels differ");
+                CHECK_MESSAGE(*still == *pixels, name << ", at most " << most << " chunks of records a list");
+                CHECK(k.kept == kept.kept);
+                for (std::size_t l = 0; l < 2; ++l) {
+                    CAPTURE(l);
+                    const std::uint64_t chunk = std::uint64_t{passes::Buildings::edged_chunk} * 14;
+                    if (most == 0) CHECK(k.shaped.at(l) == 0);
+                    if (most == 1) CHECK(k.shaped.at(l) <= std::min(chunk, k.kept.at(l)));
+                    if (most == every) CHECK(k.shaped.at(l) == k.kept.at(l));
+                }
+                CHECK(k.shaped[2] == 0);
+            }
+            // and while a tile fades (ENGINE.md's standing fades): every kept job's tile on the dither's levels from a
+            // quarter to three quarters, the records' pipeline while fading (walls_shape_fading_vs) taking its tile's
+            // fade through the place its record stands for as each decided at each point takes its job's
+            s.buildings->fade_every(std::array<float, 2>{0.25F, 0.75F});
+            std::optional<gpu::Pixels> fading;
+            for (const std::uint32_t most : {0U, every}) {
+                s.buildings->most_shape_chunks(most);
+                const auto still = draw_still(s, c, th);
+                ATLAS_REQUIRE(still.has_value());
+                const passes::Buildings::KeptCounts k = s.buildings->kept_counts();
+                CHECK(k.kept == kept.kept);
+                if (!fading) {
+                    // each at each point: the walls dithered
+                    if (kept.kept[0] + kept.kept[1] > 0) CHECK(*still != *pixels);
+                    fading = *still;
+                    continue;
+                }
+                if (most == every) CHECK(k.shaped[0] + k.shaped[1] == k.kept[0] + k.kept[1]);
+                CHECK_MESSAGE(*still == *fading, name << ", fading, every chunk from records");
+            }
+            s.buildings->fade_every(std::nullopt);
+            s.buildings->most_shape_chunks(std::nullopt);
             for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
             if (const std::string out = environment("ATLAS_BUILDINGS_PPM"); !out.empty()) {
                 CHECK(gpu::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
@@ -2154,6 +2295,65 @@ TEST_CASE(
     std::filesystem::remove(kit, ignored);
 }
 
+TEST_CASE("buildings: left out and drawn again, their pass let go of by every tile and built anew onto each: the "
+          "picture at rest after the same, pixel for pixel (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration config{.config = gpu::FrameConfig::x1,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::direct};
+    style::CameraState cam = home(1080, 2400, 1080.0 / 412.0);
+    cam.flags |= style::camera_flag::rest;
+    auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, bundled_packs(dir), 0x808080);
+    ATLAS_REQUIRE(made.has_value());
+    Scene& s = *made;
+    const auto before = draw(s, cam, sunny());
+    ATLAS_REQUIRE(before.has_value());
+    REQUIRE(s.settled);
+    const std::uint32_t me = s.buildings->index();
+    std::size_t built = 0;
+    std::uint64_t bytes = 0; // the heaps' bytes of their buildings
+    for (const std::shared_ptr<const scene::ResidentTile>& t : s.world->residency().resident()) {
+        if (!scene::Residency::among(t->built, me)) continue;
+        ++built;
+        for (const scene::HeapRange& r : t->passes[me].ranges) bytes += r ? r.size : 0U;
+    }
+    // left out one frame: every resident tile lets go of its buildings
+    (void)parts_frame(s, cam, sunny(), style::camera_part::buildings);
+    for (const std::shared_ptr<const scene::ResidentTile>& t : s.world->residency().resident()) {
+        CHECK_FALSE(scene::Residency::among(t->built, me));
+        CHECK(t->passes[me].cpu == nullptr);
+    }
+    // drawn again: built anew onto each tile drawn (its rows and its light written into its new range), faded in, and
+    // the picture as it was
+    const auto after = draw(s, cam, sunny());
+    ATLAS_REQUIRE(after.has_value());
+    CHECK(s.settled);
+    for (const scene::CoverTile& t : s.world->cover()->tiles()) CHECK(scene::Residency::among(t.drawn->built, me));
+    REQUIRE(after->rgba.size() == before->rgba.size());
+    std::size_t differ = 0;
+    for (std::size_t i = 0; i + 3 < before->rgba.size(); i += 4) {
+        if (!std::equal(before->rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                        before->rgba.begin() + static_cast<std::ptrdiff_t>(i + 4),
+                        after->rgba.begin() + static_cast<std::ptrdiff_t>(i)))
+            ++differ;
+    }
+    CHECK(differ == 0);
+    MESSAGE(std::format("the Westerkerk home: {} tiles let go of their buildings ({:.1f} MB of the heaps), {} drawn "
+                        "again with them, {} pixels of {} other than before",
+                        built, static_cast<double>(bytes) / 1.0e6, s.world->cover()->tiles().size(), differ,
+                        before->rgba.size() / 4));
+}
+
 TEST_CASE("buildings: the building the app asks about drawn plain in its flat colour, hatched before its answer") {
     // the synthetic tile's building under the view's middle asked about (FillIn's question, frame/Asked.hpp; picked as
     // a long press picks it, scene/Pick.hpp), with its parts (the flat house's raised part is keyed by it): before the
@@ -2295,6 +2495,25 @@ TEST_CASE("buildings: the Westerkerk home drawn on the host's Vulkan, pixel for 
         return;
     }
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home", bundled_packs(dir), sunny(), 1000);
+}
+
+TEST_CASE(
+    "buildings: the Westerkerk home at night drawn on the host's Vulkan, the shop floors' glazing lit where one of "
+    "their places is open and dark where none is, pixel for pixel the exact shapes of its twin") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    // Thursday 1 October 2026 at 21:30 (amsterdam.py's open_here): the cafés and bars open, the shops closed (of the
+    // 318 glazings in the view, 17 lit and 301 dark)
+    style::ThemeBlock night = sunny();
+    night.flags |= style::theme_flag::night;
+    night.hour = 21;
+    night.minute = 30;
+    const Glazings both{.open = 12, .closed = 250};
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home at night", bundled_packs(dir), night, 1000, nullptr, false, 0,
+                 nullptr, &both);
 }
 
 TEST_CASE("buildings: the Main board drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {

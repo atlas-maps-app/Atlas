@@ -18,6 +18,7 @@
 #include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
 
+#include <atomic>
 #include <bit>
 #include <condition_variable>
 #include <cstdint>
@@ -65,8 +66,11 @@ public:
     /// The grid over every tile's solids, in the tiles' order; `scene_maxh` is the scene's tallest solid
     /// (Samples.hpp's scene_maxh). `chunks` are the tiles' chunk hashes (for the disk cache; empty: none kept).
     Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::Sha256Digest> chunks = {});
+    /// `from` with its tiles as `tiles`: the same tiles with the same solids, some made whole that were their solids
+    /// alone (a tile of the halo come resident: SunGlobals). Its grid is `from`'s, shared, and so are its chunks.
+    Scene(const Scene& from, std::vector<SunTile> tiles);
 
-    [[nodiscard]] const Grid& grid() const noexcept { return grid_; }
+    [[nodiscard]] const Grid& grid() const noexcept { return *grid_; }
     [[nodiscard]] std::span<const SunTile> tiles() const noexcept { return tiles_; }
     /// Where tile `t`'s solids begin in the grid.
     [[nodiscard]] PrismId base(std::size_t t) const noexcept { return base_[t]; }
@@ -84,7 +88,7 @@ private:
     std::vector<SunTile> tiles_;
     std::vector<PrismId> base_;
     std::vector<tiles::Sha256Digest> chunks_;
-    Grid grid_;
+    std::shared_ptr<const Grid> grid_;
 };
 
 /// The tiles a sun scene holds for `resident` tiles of `pack`: every chunk of their level whose reach comes within
@@ -119,8 +123,9 @@ struct TileJob {
 
 /// A bucket over `jobs`, in their order, on `threads` threads (the caller among them): pieces of up to 4,096 samples
 /// taken in turn, each tile's bits handed to `done` (on whichever thread completed it) as soon as all its pieces are.
+/// Once `stop` (null: never) is set, no piece begins: the tiles not done by then are never handed on.
 void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
-         const std::function<void(std::uint32_t tile, TileBits bits)>& done);
+         const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop = nullptr);
 
 /// Named moments' buckets kept per tile on disk (`<dir>/<key>.sun`, the key a hash of the chunk's SHA-256, the level,
 /// the samples' format and the sun's bits), at most `budget` bytes, the oldest dropped first.
@@ -200,10 +205,17 @@ public:
 
     /// Waits until every request made so far is done.
     void wait_idle();
+    /// Drops the request not yet begun and stops the run under way before its next piece, its bits never published
+    /// (the sun left out: ENGINE.md's parts); a request after it runs as before.
+    void cancel();
 
     /// Requests run so far, and tiles taken from the disk cache.
     [[nodiscard]] std::uint64_t runs() const;
     [[nodiscard]] std::uint64_t cached() const;
+    /// The runs' own time so far, milliseconds of the wall clock from a request's taking to its bits' publication
+    /// (the disk cache's loads among it; its helpers' time is within it), and the tiles their buckets computed.
+    [[nodiscard]] double run_ms() const;
+    [[nodiscard]] std::uint64_t run_tiles() const;
 
 private:
     struct Request {
@@ -224,8 +236,11 @@ private:
     std::condition_variable idle_;
     std::optional<Request> next_;
     bool busy_ = false;
+    std::atomic<bool> cancelled_{false}; ///< the run under way stops (cancel; cleared as a request is taken)
     std::uint64_t runs_ = 0;
     std::uint64_t cached_ = 0;
+    double run_ms_ = 0;
+    std::uint64_t run_tiles_ = 0;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops before they go
 };
 

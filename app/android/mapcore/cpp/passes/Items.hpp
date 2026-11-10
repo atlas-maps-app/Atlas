@@ -91,9 +91,6 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out);
 
-/// The first of a tile's items that are region items.
-[[nodiscard]] std::uint32_t first_region_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
-
 /// The region items' pass.
 class Items final : public frame::Pass {
 public:
@@ -108,6 +105,8 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// Its stage T serves a region's items (style::camera_part::region_items).
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
     /// emit's elements, keeping the records the GPU writes for them in its lists' order: the faces, the opaque parts
     /// and the translucent ones (the jobs' blocks far to near, each in its own order) (the tests').
@@ -176,12 +175,16 @@ private:
     std::array<gpu::Buffer, 2> faces_;
     std::array<gpu::Buffer, 2> parts_;
     std::array<gpu::Buffer, 2> sides_;
+    /// While a tile fades, each face's standing fade, then each opaque part's and each translucent one's (ENGINE.md's
+    /// standing fades; bound always)
+    std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline roof_masts_{nullptr}; ///< roof_masts_cs, over the roof masts' jobs
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
+    vk::raii::Pipeline fills_fading_{nullptr};   ///< the same while a tile fades (items_fills_fading_fs)
     vk::raii::Pipeline parts_pipeline_{nullptr};
     vk::raii::Pipeline sides_pipeline_{nullptr};
 
@@ -190,6 +193,8 @@ private:
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> extra_words_;
     std::vector<std::uint32_t> mast_words_; ///< the roof masts' jobs, before they join words_ as its last
+    std::vector<std::uint32_t> fade_words_;
+    bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
 };
 

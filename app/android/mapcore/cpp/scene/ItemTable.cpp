@@ -25,6 +25,8 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
         tile_.push_back(0);
         owner_.push_back(0);
         building_.push_back(0);
+        cell_.push_back(0);
+        place_.push_back(0);
         slots_.resize(slots_.size() + bands, 0);
         alive_.push_back(0);
     }
@@ -43,6 +45,8 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
     tile_[row] = item.tile;
     owner_[row] = item.owner;
     building_[row] = item.building;
+    cell_[row] = item.cell;
+    place_[row] = 0;
     for (std::size_t b = 0; b < bands; ++b) slots_[row * bands + b] = item.slots[b];
     alive_[row] = 1;
     ++live_;
@@ -67,12 +71,26 @@ void ItemTable::update(std::uint32_t row, const ItemSpec& item) noexcept {
     tile_[row] = item.tile;
     owner_[row] = item.owner;
     building_[row] = item.building;
+    cell_[row] = item.cell;
     for (std::size_t b = 0; b < bands; ++b) slots_[row * bands + b] = item.slots[b];
 }
 
 void ItemTable::set_flag(std::uint32_t row, std::uint16_t flag, bool on) noexcept {
     if (!alive(row)) return;
     flags_[row] = static_cast<std::uint16_t>(on ? (flags_[row] | flag) : (flags_[row] & ~flag));
+}
+
+std::uint32_t ItemTable::add_place(const ItemPlace& place) {
+    places_.push_back(place);
+    return static_cast<std::uint32_t>(places_.size() - 1);
+}
+
+void ItemTable::move_place(std::uint32_t place, const ItemPlace& to) noexcept {
+    if (place != 0 && place < places_.size()) places_[place] = to;
+}
+
+void ItemTable::set_place(std::uint32_t row, std::uint32_t place) noexcept {
+    if (alive(row) && place < places_.size()) place_[row] = place;
 }
 
 void ItemTable::remove(std::uint32_t row) noexcept {
@@ -110,6 +128,8 @@ void ItemTable::clear() noexcept {
     tile_.clear();
     owner_.clear();
     building_.clear();
+    cell_.clear();
+    place_.clear();
     slots_.clear();
     alive_.clear();
     free_.clear();

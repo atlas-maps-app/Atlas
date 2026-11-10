@@ -14,6 +14,7 @@ import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
 import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.GroundPick
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
@@ -141,11 +142,21 @@ internal class CoreMap(
         return on
     }
 
-    /** Hands the core the packs as listed now, if they changed since the last time (off the main thread). */
+    /**
+     * Hands the core the packs as listed now, if they changed since the last time (off the main thread). The world's
+     * remote packs open from their heads in the world's cache, so the core is told of it first: a pack it cannot open
+     * is not handed again until the list changes.
+     */
     fun handPacks(): String {
         packs.load()
         if (packs.revision == packsRevision) return ""
         packsRevision = packs.revision
+        if (packs.worldRefs.any { it.identity != null }) {
+            MapEngine.worldCacheDir()?.let { dir ->
+                val why = core.worldCache(dir.path, MapEngine.worldCacheBytes)
+                if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk world: the world's cache not opened: $why")
+            }
+        }
         return core.packs(packs.refs())
     }
 
@@ -249,6 +260,12 @@ internal class CoreMap(
      * map). Off the main thread: it waits for the render thread.
      */
     fun pick(x: Float, y: Float): MapPick? = MapPick.parse(core.pick(x, y))
+
+    /**
+     * What the view's device point ([x], [y]) shows of the ground as the core's last frame drew it, or null (nothing
+     * drawn there, or no map); a building before it is [pick]'s. Off the main thread: it waits for the render thread.
+     */
+    fun pickGround(x: Float, y: Float): GroundPick? = GroundPick.parse(core.pickGround(x, y))
 
     private val askLock = Any()
     private var askedRevision = 0L

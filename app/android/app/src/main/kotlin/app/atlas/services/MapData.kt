@@ -1,5 +1,6 @@
 package app.atlas.services
 
+import androidx.datastore.preferences.core.emptyPreferences
 import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
@@ -12,6 +13,7 @@ import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
 import app.atlas.mapview.palette.Palette
 import app.atlas.mapview.palette.PaletteCode
+import app.atlas.mapview.vk.WorldReads
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
 import app.atlas.providers.SwitchedOffException
@@ -31,7 +33,6 @@ import app.atlas.tiles.WorldFetch
 import app.atlas.ui.mine.offline.RegionFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -240,22 +241,20 @@ class MapData(private val services: Services) {
             }
         }
         MapEngine.windowsAllowed = { !services.ciRun }
-        // the world beyond the countries' reach (ENGINE.md step 5): world.idx and the globe at the first start, then the
-        // part holding a place's packs as a view beyond 18 km first enters its block (world-test's, whole files until
-        // step 6), each moved into the kept folder's world/ once checked, and the maps handed their packs again
-        MapEngine.worldDir()?.let { wireWorld(WorldFetch(it, client = services.http.client)) }
+        // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
+        // index and the globe of its release at the first start and each new version (a new one drops the old one and
+        // the world's cache), then each pack's head and its tiles' chunks by ranges as the maps' views want them
+        MapEngine.worldDir()?.let { wireWorld(it) }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): those OpenStreetMap
         // took; one still waiting shows as waiting (EditMarkers)
         MapEngine.windowEdits = {
             services.edits.mapped.map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
         }
-        // the screen's haze, vignette and grain as the Look settings have them (off when unset), handed to the maps as they
-        // change
+        // the screen's haze, vignette and grain as the Look settings have them (on when unset: screenEffectsOn), handed
+        // to the maps before the settings are read, so the first frame draws the defaults, and again as they change
+        screenEffectsOn(emptyPreferences()).let { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         services.scope.launch {
-            services.settings.data
-                .map { Triple(it[SettingsKeys.MAP_HAZE] ?: false, it[SettingsKeys.MAP_VIGNETTE] ?: false, it[SettingsKeys.MAP_GRAIN] ?: false) }
-                .distinctUntilChanged()
-                .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
+            services.settings.screenEffects.collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
         // the Map look's Tone, as the user set it (on at the renders' 1 when unset; off is 0)
         services.scope.launch {
@@ -279,9 +278,13 @@ class MapData(private val services: Services) {
         services.scope.launch {
             services.settings.flow(SettingsKeys.MAP_COMPRESSION, true).collect { on -> MapEngine.compression(on) }
         }
+        // the Map look's Fast refresh, as the Look settings have it (on when unset)
+        services.scope.launch {
+            services.settings.fastRefresh.collect { on -> MapEngine.fastRefresh(on) }
+        }
         // the core's parts a debug build's Look settings switch, every layer and effect, so the map's panel shows their
-        // cost: every part but the roofs' edges and the plinths when unset (MapParts.byDefault); set before the settings
-        // are read, so the first frame draws what the defaults say
+        // cost: every part but the plinths, the quays and the water's light but its reflections when unset
+        // (MapParts.byDefault); set before the settings are read, so the first frame draws what the defaults say
         MapEngine.leaveOut(MapParts.byDefault)
         services.scope.launch {
             services.settings.partsOff.collect { off -> MapEngine.leaveOut(off) }
@@ -290,16 +293,29 @@ class MapData(private val services: Services) {
 
     /**
      * The world's fetch, once a launch of the map allows it (Services.worldFetch: not CI's runs but its world phase):
-     * the first start's index and globe as soon as the phone is online, then each place a map looks at from beyond
-     * 18 km, the latest only while a part comes; what failed is tried again soon, at rest too (WorldFetch.follow).
-     * `vk world` lines say what came (CI's world phase reads them).
+     * world.json, the index and the globe as soon as the phone is online and again each day (WorldFetch.follow), and
+     * the packs' heads and chunks as the maps' views want them (MapEngine.worldReads, a step a map asks for twice a
+     * second). The world's cache within the budget the user set (256 MB when unset). `vk world` lines say what came
+     * (CI's world phase reads them).
      */
-    private fun wireWorld(world: WorldFetch) {
-        val place = MutableStateFlow<WorldFetch.Place?>(null)
-        MapEngine.worldPlace = { lat, lon -> place.value = WorldFetch.Place(lat, lon) }
+    private fun wireWorld(dir: File) {
+        services.scope.launch {
+            services.settings.flow(SettingsKeys.WORLD_CACHE_MB).collect { mb ->
+                MapEngine.worldCacheBytes = maxOf(MapEngine.WORLD_CACHE_BYTES, (mb ?: 0).toLong() shl 20)
+            }
+        }
+        val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk world: $line") }
+        val world = WorldFetch(dir, client = services.http.client, drop = {
+            MapEngine.worldCacheDir()?.let { cache ->
+                val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
+                said(if (why.isEmpty()) "the old version's heads and chunks dropped" else "the old version's heads and chunks not dropped: $why")
+            }
+        })
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
-            world.follow(place, services.connectivity.online, said = { android.util.Log.i("AtlasMap", "vk world: $it") }, landed = MapEngine::invalidate)
+            val cache = MapEngine.worldCacheDir() ?: return@launch
+            MapEngine.worldReads = WorldReads(world, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
+            world.follow(services.connectivity.online, said = said, landed = MapEngine::invalidate)
         }
     }
 

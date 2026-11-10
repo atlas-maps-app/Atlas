@@ -11,12 +11,18 @@
 // ground leaves a piece of a cell bare or crosses a cell's edge is caught. With ATLAS_WORLD_DIR naming the packer's
 // output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
 // and bytes printed, a line a level: `world level <z> ...`.
+#include "base/pymath/PyMath.hpp"
 #include "passes/World.hpp"
+#include "scene/Cells.hpp"
 #include "scene/WorldTiles.hpp"
 #include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
+#include "tests/tiles/world_support.hpp"
+#include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
+#include "tiles/ExpandedCache.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/WorldIndex.hpp"
@@ -39,6 +45,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -49,11 +56,12 @@
 namespace {
 
 using namespace atlas::tiles;
-using atlas::test::ChunkBytes;
+using atlas::test::cell_box;
 using atlas::test::ColumnBytes;
-using atlas::test::LayerBytes;
 using atlas::test::Ring;
 using atlas::test::TileBytes;
+using atlas::test::world_pack;
+using atlas::test::world_tile;
 namespace col = atlas::test::columns;
 namespace fs = std::filesystem;
 
@@ -123,22 +131,6 @@ std::vector<std::byte> world_index_bytes(const WorldIndex& index) {
         s.raw(e.sha256);
     }
     return s.bytes;
-}
-
-/// Cell `c`'s box of a tile with `header`: [south, west, north, east], cells counted row by row from the north-west,
-/// each edge the first grid integer at or past its share of the tile (WorldGeometry.cellBoxes), so that every point of
-/// a cell is the cell rendertiles' Cells.cellOf gives it.
-std::array<std::int32_t, 4> cell_box(const TileHeader& header, std::uint32_t c) {
-    const std::int64_t n = header.cells_per_side;
-    const std::int64_t west = header.west;
-    const std::int64_t width = std::int64_t{header.east} - west;
-    const std::int64_t north = header.north;
-    const std::int64_t height = north - header.south;
-    const auto column = [&](std::int64_t k) { return static_cast<std::int32_t>(west + ((k * width) + n - 1) / n); };
-    const auto row = [&](std::int64_t k) { return static_cast<std::int32_t>(north - ((k * height) + n - 1) / n); };
-    const std::int64_t r = c / n;
-    const std::int64_t k = c % n;
-    return {row(r + 1), column(k), row(r), column(k + 1)};
 }
 
 /// Twice the signed area of `ring` (closed, its first vertex not repeated), on the grid, counter-clockwise positive,
@@ -365,101 +357,6 @@ std::map<std::uint8_t, LevelCount> check_world(const std::string& dir) {
     return counts;
 }
 
-/// A world tile as the packer cuts one: cell `c` land west of `(c % 3) / 2` of its width and sea east of it (all sea,
-/// half and half, all land), a road across the first cell's land, a place in it.
-TileBytes world_tile(std::uint8_t z, std::uint32_t x, std::uint32_t y) {
-    TileBytes t;
-    t.level = z;
-    t.n = 4;
-    t.x = x;
-    t.y = y;
-    TileHeader header;
-    header.cells_per_side = t.n;
-    const auto tb = t.grid_box();
-    header.south = tb[0];
-    header.west = tb[1];
-    header.north = tb[2];
-    header.east = tb[3];
-    LayerBytes ground{.id = static_cast<std::uint8_t>(LayerId::ground)};
-    LayerBytes water{.id = static_cast<std::uint8_t>(LayerId::water)};
-    std::vector<Ring> land;
-    std::vector<Ring> sea;
-    for (std::uint32_t c = 0; c < 16; ++c) {
-        const auto b = cell_box(header, c);
-        t.cell_boxes[c] = {b, 0};
-        const std::int32_t m = b[1] + static_cast<std::int32_t>((std::int64_t{b[3]} - b[1]) * (c % 3) / 2);
-        if (m > b[1]) {
-            land.push_back({.lat = {b[0], b[0], b[2], b[2]}, .lon = {b[1], m, m, b[1]}, .keep = {}});
-            ground.cells.push_back(c);
-        }
-        if (m < b[3]) {
-            sea.push_back({.lat = {b[0], b[0], b[2], b[2]}, .lon = {m, b[3], b[3], m}, .keep = {}});
-            water.cells.push_back(c);
-        }
-    }
-    atlas::test::Sink source;
-    for (std::size_t i = 0; i < land.size(); ++i) source.u8(ground::source_land_base);
-    atlas::test::Sink kind;
-    for (std::size_t i = 0; i < land.size(); ++i) kind.varu(t.string("land") + 1U);
-    atlas::test::Sink indexes;
-    for (std::size_t i = 0; i < land.size(); ++i) indexes.varz(i == 0 ? 0 : 1);
-    ground.columns = {{"source", Codec::u8, source.bytes},
-                      {"index", Codec::delta, indexes.bytes},
-                      {"ring", Codec::geom, col::geom(land)},
-                      {"kind", Codec::str, kind.bytes}};
-    atlas::test::Sink sea_indexes;
-    atlas::test::Sink flags;
-    for (std::size_t i = 0; i < sea.size(); ++i) {
-        sea_indexes.varz(i == 0 ? 0 : 1);
-        flags.u8(2);
-    }
-    water.columns = {{"index", Codec::delta, sea_indexes.bytes},
-                     {"ring", Codec::geom, col::geom(sea)},
-                     {"shore", Codec::boolean, flags.bytes},
-                     {"tidal", Codec::boolean, flags.bytes}};
-    // a road and a place in cell 1 (half land)
-    const auto b1 = cell_box(header, 1);
-    LayerBytes road{.id = static_cast<std::uint8_t>(LayerId::road)};
-    road.cells = {1};
-    road.columns = {{"index", Codec::delta, col::delta({0})},
-                    {"line", Codec::geom, col::geom({{.lat = {b1[0], b1[2]}, .lon = {b1[1], b1[1] + 10}, .keep = {}}})},
-                    {"hw", Codec::str, col::str(t, {"secondary"})}};
-    LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
-    label.cells = {1};
-    label.columns = {{"source", Codec::u8, col::u8({label::source_place})},
-                     {"index", Codec::delta, col::delta({0})},
-                     {"name", Codec::str, col::str(t, {"Westzaan"})},
-                     {"pos", Codec::point, col::point({{b1[0] + 5, b1[1] + 5}})},
-                     {"prev", Codec::point, col::point({{b1[0] + 5, b1[1] + 5}})},
-                     {"count", Codec::varu, col::varu({1})},
-                     {"kind", Codec::str, col::str(t, {"village"})}};
-    t.layers = {ground, water, road, label};
-    return t;
-}
-
-/// `tile` encoded as a chunk.
-ChunkBytes chunk_of(TileBytes& tile) {
-    ChunkBytes c;
-    c.tile = {tile.level, tile.x, tile.y};
-    c.raw = tile.encode();
-    for (const auto& l : tile.layers) c.count += static_cast<std::uint32_t>(l.cells.size());
-    c.reach = tile.reach();
-    return c;
-}
-
-/// A world pack of `tiles` for `levels` (fine to coarse), as WorldPack.write lays one out: its chunks a level at a
-/// time, in the levels' order.
-std::vector<std::byte> world_pack(std::vector<TileBytes> tiles, std::span<const std::uint8_t> levels) {
-    std::ranges::stable_sort(tiles, {},
-                             [&](const TileBytes& t) { return std::ranges::find(levels, t.level) - levels.begin(); });
-    std::vector<ChunkBytes> chunks;
-    chunks.reserve(tiles.size());
-    for (TileBytes& t : tiles) chunks.push_back(chunk_of(t));
-    atlas::test::PackOptions options;
-    options.head = atlas::test::head_bytes(levels, Profile::world_base);
-    return atlas::test::pack_bytes(chunks, levels, format_render, options);
-}
-
 /// Decodes `tile`'s bytes and measures its cover.
 Cover cover_of_bytes(TileBytes& tile) {
     atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
@@ -588,6 +485,96 @@ TEST_CASE("tiles: a world's index, its packs as ranges of their parts and the gl
     }
 }
 
+TEST_CASE("tiles: a world pack the app brings by ranges opens from its head in the cache, and a chunk loads once "
+          "it is kept there, checked against its SHA-256") {
+    TempDir dir;
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    const auto bytes = world_pack({world_tile(9, 262, 168), world_tile(10, 525, 336), world_tile(11, 1050, 673)}, fine);
+    auto cache = ExpandedCache::open(dir.path() + "/cache", std::uint64_t{1} << 22U);
+    ATLAS_REQUIRE(cache);
+    const PackRef ref{.id = "world/6/32/21",
+                      .kind = PackKind::world_mid,
+                      .length = bytes.size(),
+                      .fetch = Store::absent(),
+                      .identity = Sha256::of(bytes)};
+    // its head as the app fetches it (WorldFetch.head): its bytes before its chunks and after them
+    auto whole = Pack::open(std::make_unique<MemorySource>(std::span<const std::byte>(bytes)));
+    ATLAS_REQUIRE(whole);
+    const Section* section = find_section(whole->sections(), "chunks");
+    ATLAS_REQUIRE(section != nullptr);
+    const std::uint64_t start = section->offset;
+    const std::uint64_t end = section->offset + section->stored;
+    ATLAS_REQUIRE(end < bytes.size()); // rhead and style follow the chunks
+    const std::span<const std::byte> all(bytes);
+    const std::array<PackBytes, 2> head = {
+        {{.offset = 0, .bytes = all.first(start)}, {.offset = end, .bytes = all.subspan(end)}}};
+    Zstd zstd;
+    std::vector<std::byte> raw;
+
+    // nothing in the cache: the pack does not open, nothing is fetched (the app brings the bytes)
+    {
+        Store store(cache->get());
+        const auto added = store.add(ref);
+        ATLAS_REQUIRE(!added);
+        CHECK(added.error().fault == Fault::missing);
+    }
+    // a head missing what follows the chunks, ranges past the pack, the globe's kind (L0 to L5): refused, none kept
+    CHECK(!Store::keep_head(**cache, ref, std::span(head).first(1)));
+    const std::array<PackBytes, 1> past = {{{.offset = end + 1, .bytes = all.subspan(end)}}};
+    CHECK(!Store::keep_head(**cache, ref, past));
+    PackRef globe = ref;
+    globe.kind = PackKind::world_base;
+    CHECK(!Store::keep_head(**cache, globe, head));
+    CHECK((*cache)->entries() == 0);
+    // the head kept: the pack opens from it, its tiles found, their chunks absent until kept
+    ATLAS_REQUIRE(Store::keep_head(**cache, ref, head));
+    CHECK((*cache)->entries() == 1);
+    Store store(cache->get());
+    ATLAS_REQUIRE(store.add(ref));
+    const auto pack = store.packs().front();
+    CHECK(pack->remote);
+    for (const TileKey t : {TileKey(11, 1050, 673), TileKey(10, 525, 336), TileKey(9, 262, 168)}) {
+        const auto hit = store.find(t);
+        ATLAS_REQUIRE(hit.size() == 1);
+        const auto absent = store.load(hit[0], zstd, raw);
+        ATLAS_REQUIRE(!absent);
+        CHECK(absent.error().fault == Fault::missing);
+        CHECK(absent.error().site == Site::file);
+    }
+    // a range of the first two chunks whole and the third's first bytes: the two kept, the third neither
+    const auto table = pack->pack.chunks().chunks();
+    std::vector<ChunkRef> refs(table.begin(), table.end());
+    std::ranges::sort(refs, {}, &ChunkRef::offset);
+    ATLAS_REQUIRE(refs.size() == 3);
+    const ChunkRef& third = refs[2];
+    const std::uint64_t from = refs[0].offset;
+    const auto two =
+        Store::keep(**cache, *pack, {.offset = from, .bytes = all.subspan(from, third.offset + 1 - from)}, zstd);
+    CHECK(two.kept.size() == 2);
+    CHECK(two.refused.empty());
+    CHECK((*cache)->entries() == 3);
+    ATLAS_REQUIRE(store.load(store.find(refs[0].tile)[0], zstd, raw));
+    ATLAS_REQUIRE(store.load(store.find(refs[1].tile)[0], zstd, raw));
+    CHECK(!store.load(store.find(third.tile)[0], zstd, raw));
+    // the third's bytes damaged: refused, not kept; whole, kept
+    std::vector<std::byte> damaged(all.begin() + static_cast<std::ptrdiff_t>(third.offset),
+                                   all.begin() + static_cast<std::ptrdiff_t>(third.offset + third.stored));
+    damaged[damaged.size() / 2] ^= std::byte{0x40};
+    const auto bad = Store::keep(**cache, *pack, {.offset = third.offset, .bytes = damaged}, zstd);
+    CHECK(bad.kept.empty());
+    ATLAS_REQUIRE(bad.refused.size() == 1);
+    CHECK(bad.refused[0] == third.tile);
+    CHECK((*cache)->entries() == 3);
+    const auto good =
+        Store::keep(**cache, *pack, {.offset = third.offset, .bytes = all.subspan(third.offset, third.stored)}, zstd);
+    CHECK(good.kept.size() == 1);
+    ATLAS_REQUIRE(store.load(store.find(third.tile)[0], zstd, raw));
+    // a later start opens it from the cache alone, every chunk there
+    Store again(cache->get());
+    ATLAS_REQUIRE(again.add(ref));
+    for (const ChunkRef& c : refs) ATLAS_REQUIRE(again.load(again.find(c.tile)[0], zstd, raw));
+}
+
 TEST_CASE("tiles: the world's cover check finds a cell's ground short of its area and a piece across its edge") {
     TileBytes whole = world_tile(9, 262, 168);
     const Cover good = cover_of_bytes(whole);
@@ -641,6 +628,120 @@ TEST_CASE("tiles: the world's cover check finds a cell's ground short of its are
     const Cover crossing = cover_of_bytes(across);
     CHECK(crossing.worst == 0);
     CHECK(crossing.outside == 1);
+}
+
+/// A pack of one L6 world tile, its head of `profile`, its style `style`'s bytes.
+std::vector<std::byte> styled_pack(std::vector<std::byte> style, Profile profile) {
+    constexpr std::array<std::uint8_t, 1> levels = {6};
+    TileBytes tile = world_tile(6, 32, 21);
+    const std::vector<atlas::test::ChunkBytes> chunks = {atlas::test::chunk_of(tile)};
+    atlas::test::PackOptions options;
+    options.head = atlas::test::head_bytes(levels, profile);
+    options.style = std::move(style);
+    return atlas::test::pack_bytes(chunks, levels, format_render, options);
+}
+
+TEST_CASE("tiles: a world pack is drawn in the world's style where one is given, whatever its own style lacks") {
+    // the world's style (the core's own, load::world_style: ENGINE.md step 5's style in one place), here the test
+    // style's, and a world pack built before the style file had its shopfronts (as world-test's of 1 November, which
+    // the core of 4 November refused: "style windows.shop_glass_open: missing")
+    auto tables = read_style(atlas::test::style_bytes());
+    ATLAS_REQUIRE(tables, describe(tables.error()));
+    const auto world = Style::of(*tables);
+    ATLAS_REQUIRE(world, describe(world.error()));
+    REQUIRE(world->shopfronts.glass_open != 0);
+    std::vector<atlas::test::values::Field> lacking = atlas::test::style_tables();
+    CHECK(std::erase_if(lacking, [](const atlas::test::values::Field& t) { return t.first == "shopfronts"; }) == 1);
+    const std::vector<std::byte> old_style = atlas::test::style_bytes(lacking);
+    const std::vector<std::byte> old = styled_pack(old_style, Profile::world_base);
+
+    SUBCASE("in its own style it is refused, the table it lacks its error") {
+        auto pack = Pack::open(std::make_unique<MemorySource>(old));
+        ATLAS_REQUIRE(!pack);
+        CHECK(pack.error().fault == Fault::missing);
+        CHECK(pack.error().site == Site::style);
+    }
+    SUBCASE("in the world's it opens, its tables its own and its values the world's") {
+        auto pack = Pack::open(std::make_unique<MemorySource>(old), &*world);
+        ATLAS_REQUIRE(pack, describe(pack.error()));
+        ATLAS_REQUIRE(pack->style() != nullptr && pack->style_tables() != nullptr);
+        CHECK(pack->style()->shopfronts.glass_open == world->shopfronts.glass_open);
+        CHECK(pack->style()->windows.shop_glass_open == world->windows.shop_glass_open);
+        CHECK(!pack->style_tables()->table("shopfronts"));
+        CHECK(pack->verify());
+    }
+    SUBCASE("a pack of another profile keeps its own style, and so is refused") {
+        for (const Profile profile : {Profile::living, Profile::region}) {
+            CAPTURE(static_cast<int>(profile));
+            auto pack = Pack::open(std::make_unique<MemorySource>(styled_pack(old_style, profile)), &*world);
+            ATLAS_REQUIRE(!pack);
+            CHECK(pack.error().site == Site::style);
+        }
+    }
+    SUBCASE("a world pack's style is still read: one of another payload version is refused") {
+        std::vector<std::byte> other = atlas::test::style_bytes();
+        other.at(4) ^= std::byte{0x80}; // the payload version's low byte, after the magic
+        auto pack = Pack::open(std::make_unique<MemorySource>(styled_pack(other, Profile::world_base)), &*world);
+        ATLAS_REQUIRE(!pack);
+        CHECK(pack.error().fault == Fault::bad_version);
+    }
+    SUBCASE("the store opens the world's packs in its world style, from a file and by ranges alike") {
+        TempDir dir;
+        write_file(dir.path() + "/old.atlas", old);
+        Store own;
+        CHECK(!own.add({.id = "old", .kind = PackKind::world_mid, .path = dir.path() + "/old.atlas"}));
+        Store store;
+        store.set_world_style(&*world);
+        auto added = store.add({.id = "old", .kind = PackKind::world_mid, .path = dir.path() + "/old.atlas"});
+        ATLAS_REQUIRE(added, describe(added.error()));
+        const auto fetch = [&old](std::uint64_t offset, std::span<std::byte> out) -> Result<void> {
+            if (offset > old.size() || out.size() > old.size() - offset)
+                return std::unexpected(error(Fault::io, Site::file));
+            std::copy_n(old.begin() + static_cast<std::ptrdiff_t>(offset), out.size(), out.begin());
+            return {};
+        };
+        auto fetched = store.add({.id = "fetched", .kind = PackKind::world_mid, .length = old.size(), .fetch = fetch});
+        ATLAS_REQUIRE(fetched, describe(fetched.error()));
+        const auto packs = store.packs();
+        ATLAS_REQUIRE(packs.size() == 2);
+        for (const auto& p : packs) {
+            CAPTURE(p->id);
+            ATLAS_REQUIRE(p->pack.style() != nullptr);
+            CHECK(p->pack.style()->shopfronts.glass_open == world->shopfronts.glass_open);
+        }
+    }
+    SUBCASE("the head the app brings is kept in the world's style, as the store opens the pack, and not in its own") {
+        TempDir dir;
+        auto cache = ExpandedCache::open(dir.path() + "/cache", std::uint64_t{1} << 22U);
+        ATLAS_REQUIRE(cache);
+        const PackRef ref{.id = "world/6/32/21",
+                          .kind = PackKind::world_mid,
+                          .length = old.size(),
+                          .fetch = Store::absent(),
+                          .identity = Sha256::of(old)};
+        auto whole = Pack::open(std::make_unique<MemorySource>(std::span<const std::byte>(old)), &*world);
+        ATLAS_REQUIRE(whole, describe(whole.error()));
+        const Section* section = find_section(whole->sections(), "chunks");
+        ATLAS_REQUIRE(section != nullptr);
+        const std::uint64_t end = section->offset + section->stored;
+        ATLAS_REQUIRE(end < old.size()); // rhead and style follow the chunks
+        const std::span<const std::byte> all(old);
+        const std::array<PackBytes, 2> head = {
+            {{.offset = 0, .bytes = all.first(section->offset)}, {.offset = end, .bytes = all.subspan(end)}}};
+        CHECK(!Store::keep_head(**cache, ref, head));
+        CHECK((*cache)->entries() == 0);
+        ATLAS_REQUIRE(Store::keep_head(**cache, ref, head, &*world));
+        CHECK((*cache)->entries() == 1);
+        Store store(cache->get());
+        store.set_world_style(&*world);
+        auto added = store.add(ref);
+        ATLAS_REQUIRE(added, describe(added.error()));
+        const auto packs = store.packs();
+        ATLAS_REQUIRE(packs.size() == 1);
+        CHECK(packs.front()->remote);
+        ATLAS_REQUIRE(packs.front()->pack.style() != nullptr);
+        CHECK(packs.front()->pack.style()->shopfronts.glass_open == world->shopfronts.glass_open);
+    }
 }
 
 TEST_CASE("tiles: the packer's world packs and globe, when ATLAS_WORLD_DIR names them") {
@@ -701,6 +802,129 @@ TEST_CASE("scene: a world tile's geometry lies the land under everything, then t
     CHECK(atlas::scene::world_level_start(6) == 18'800.0 * 32);
     CHECK(atlas::scene::world_far(18'000.0, 1'000.0) == doctest::Approx(30'000.0));
     CHECK(atlas::scene::world_far(1e6, 1e6) == doctest::Approx(std::sqrt((2.0 * 6'371'000.0 * 1e6) + 1e12)));
+}
+
+TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
+          "the tile's winding, and the poles' caps are grids of it") {
+    // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km
+    TileBytes tile = world_tile(5, 16, 10);
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const atlas::scene::WorldGeometry g = atlas::scene::build_world_geometry(*decoded, nullptr);
+    const double limit = atlas::scene::world_split_length(5);
+    CHECK(limit == doctest::Approx(std::sqrt(8.0 * 6'371'000.0 * 3.0 * 64.0)));
+    const auto& h = decoded->header;
+    const double south = h.south * 1e-7;
+    const double west = h.west * 1e-7;
+    const double north = h.north * 1e-7;
+    const double east = h.east * 1e-7;
+    const auto lat_of = [&](std::uint32_t w) { return north - ((north - south) * (w >> 16U) / 65'535.0); };
+    const auto lon_of = [&](std::uint32_t w) { return west + ((east - west) * (w & 0xFFFFU) / 65'535.0); };
+    const auto length = [&](std::uint32_t a, std::uint32_t b) {
+        const double lat = (lat_of(a) + lat_of(b)) / 2.0;
+        const double dx = (lon_of(b) - lon_of(a)) * 111'320.0 * atlas::pymath::cos(lat * std::numbers::pi / 180.0);
+        const double dz = (lat_of(b) - lat_of(a)) * 110'540.0;
+        return atlas::pymath::hypot(dx, dz);
+    };
+    // twice the signed area in (u, −v): positive counter-clockwise with north up
+    const auto area = [](std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+        const auto u = [](std::uint32_t w) { return static_cast<double>(w & 0xFFFFU); };
+        const auto n = [](std::uint32_t w) { return -static_cast<double>(w >> 16U); };
+        return ((u(b) - u(a)) * (n(c) - n(a))) - ((u(c) - u(a)) * (n(b) - n(a)));
+    };
+    REQUIRE(g.triangles > 32);
+    double longest = 0;
+    double total = 0;
+    std::size_t backwards = 0;
+    for (std::size_t t = 0; t < g.triangles; ++t) {
+        const std::uint32_t a = g.words[3 * t];
+        const std::uint32_t b = g.words[(3 * t) + 1];
+        const std::uint32_t c = g.words[(3 * t) + 2];
+        longest = std::max({longest, length(a, b), length(b, c), length(c, a)});
+        const double twice = area(a, b, c);
+        if (twice < 0) ++backwards;
+        total += twice / 2.0;
+    }
+    MESSAGE(std::format("{} triangles, the longest edge {:.0f} m of {:.0f}", g.triangles, longest, limit));
+    CHECK(longest <= limit * 1.001);
+    CHECK(longest > limit / 2.0);
+    CHECK(backwards == 0);
+    // the land and the sea cover the tile once: its box's area, within the fractions' rounding
+    CHECK(total == doctest::Approx(65'535.0 * 65'535.0).epsilon(1e-3));
+    for (std::size_t s = 0; s < g.segments; ++s) {
+        const std::size_t at = (4 * std::size_t{g.triangles}) + (3 * s);
+        CHECK(length(g.words[at], g.words[at + 1]) <= limit * 1.001);
+    }
+    // the caps: 128 by 16 quads, every triangle of the tiles' winding, in its palette entry and cell 0
+    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::south_cap);
+    CHECK(cap.triangles == 4096U);
+    CHECK(cap.segments == 0U);
+    REQUIRE(cap.words.size() == 4U * 4096U);
+    double cap_total = 0;
+    std::size_t cap_backwards = 0;
+    std::size_t cap_looks = 0;
+    for (std::size_t t = 0; t < cap.triangles; ++t) {
+        const double twice = area(cap.words[3 * t], cap.words[(3 * t) + 1], cap.words[(3 * t) + 2]);
+        if (!(twice > 0)) ++cap_backwards;
+        cap_total += twice / 2.0;
+        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::south_cap) ++cap_looks;
+    }
+    CHECK(cap_backwards == 0);
+    CHECK(cap_looks == cap.triangles);
+    CHECK(cap_total == doctest::Approx(65'535.0 * 65'535.0));
+    // a cap's box follows the target's longitude
+    const atlas::scene::DegreeBox north_cap = atlas::scene::world_cap_box(1, 30.0);
+    CHECK(north_cap.north == 90.0);
+    CHECK(north_cap.south == atlas::scene::world_cap_from);
+    CHECK(north_cap.west == -150.0);
+    CHECK(north_cap.east == 210.0);
+    CHECK(atlas::scene::world_cap_box(-1, 0.0).south == -90.0);
+}
+
+TEST_CASE("scene: a world tile's cells over a descendant are the packer's, rows of equal latitude, not Mercator's") {
+    using atlas::scene::cells_overlapping;
+    using atlas::scene::world_cells_per_side;
+    const auto box = [](std::uint8_t z, std::uint32_t x, std::uint32_t y) {
+        return atlas::tiles::tile_box(atlas::tiles::TileKey(z, x, y));
+    };
+    // the globe's 3/4/2, 40.98° to 66.51° N and 0° to 45° E: its rows of cells end at 60.13°, 53.75° and 47.36° N
+    const std::array<std::int32_t, 4> l3 = box(3, 4, 2);
+    CHECK(cells_overlapping(world_cells_per_side, l3, l3) == 0xFFFFU);
+    // 6/32/20, 52.52° to 55.78° N and 0° to 5.6° E, lies under the first column's second and third rows; by its key
+    // it lies under the third alone, and the drawing ended at 53.75° N (the sweep's hole of 5 November)
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 32, 20)) == ((1U << 4U) | (1U << 8U)));
+    CHECK(atlas::scene::cells_over(world_cells_per_side, 3, 32, 20) == (1U << 8U));
+    // 6/32/21 (48.92° to 52.52° N) lies under the third row alone, and 6/33/20, whose east edge is the first column's,
+    // under the first column alone
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 32, 21)) == (1U << 8U));
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 33, 20)) == ((1U << 4U) | (1U << 8U)));
+    // a child: its two columns, and the rows of the other half it reaches (4/8/5's 55.78° N, over the second row)
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(4, 8, 4)) == 0x0033U);
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(4, 8, 5)) == 0x3330U);
+    // and every point of a descendant lies in one of the cells over it (tiles::cell_of, the packer's Cells.cellOf):
+    // 3/4/2's L6 tiles and 9/263/168's L11 (Amsterdam's, whose rows part from Mercator's by 3.7 m), at their corners,
+    // 32 units in, and middles
+    for (const auto& [ancestor, gap] :
+         {std::pair{atlas::tiles::TileKey(3, 4, 2), 3U}, std::pair{atlas::tiles::TileKey(9, 263, 168), 2U}}) {
+        const std::array<std::int32_t, 4> a = atlas::tiles::tile_box(ancestor);
+        const std::uint32_t side = 1U << gap;
+        for (std::uint32_t y = 0; y < side; ++y) {
+            for (std::uint32_t x = 0; x < side; ++x) {
+                const atlas::tiles::TileKey k(static_cast<std::uint8_t>(ancestor.z + gap), (ancestor.x << gap) + x,
+                                              (ancestor.y << gap) + y);
+                const std::array<std::int32_t, 4> b = atlas::tiles::tile_box(k);
+                const std::uint64_t over = cells_overlapping(world_cells_per_side, a, b);
+                for (const std::int32_t lat : {b[0] + 32, (b[0] / 2) + (b[2] / 2), b[2] - 32}) {
+                    for (const std::int32_t lon : {b[1] + 32, (b[1] / 2) + (b[3] / 2), b[3] - 32}) {
+                        CHECK(((over >> atlas::tiles::cell_of(ancestor, lat, lon)) & 1U) == 1U);
+                    }
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE("passes: the world's palette is the theme's land, water and roads, and its land where the style has none") {

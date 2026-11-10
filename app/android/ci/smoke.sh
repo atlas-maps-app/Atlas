@@ -42,7 +42,8 @@
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
 #
 # Fails (exit 1) on a crash (a native one symbolised with ndk-stack from the APK's own unstripped libraries), "a frame
-# failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a `vk guard` line outside the planted-crash case (a marker the guard
+# failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a log a check reads not had
+# whole ("DUMP FAILED"), a `vk guard` line outside the planted-crash case (a marker the guard
 # discarded because its process was stopped, not crashed, `vk guard: … not counted`, is reported, not failed), a guest
 # without a Vulkan device, a VK bench that does not finish within 900 s, exceeds configuration C's graphics ceiling,
 # lacks a line for a path of the map or the triangle governor's bias 0 on one (world72's bias, whatever it is), loses its
@@ -58,8 +59,8 @@
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
 # frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
-# switch without its lines, no honest state under atlas.vk.off, or (once world-test is published) a world that does not
-# come or draw whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
+# switch without its lines, no honest state under atlas.vk.off, or a world that does not come from world-latest or draw
+# whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -70,7 +71,7 @@
 # draw: the canal ring, android.yml's apk job's :app:benchTiles, as no APK carries a map).
 # A run in parts, each on an emulator of its own (android.yml's emulator jobs): ATLAS_PHASES, the phases this part runs,
 # of "screens vk pills map world truth" (the default, all of them: the debug loop over the screens; VK facts, bench and
-# the crash guard; the frosted pills; the map drawn by the core; the world beyond the countries from world-test; the
+# the crash guard; the frosted pills; the map drawn by the core; the world beyond the countries from world-latest; the
 # truth phase, which ATLAS_BENCH=0 skips too);
 # ATLAS_SCREENS_SKIP, screens another part opens; ATLAS_SCREENS_PART=<k>/<n>, every n-th of the screens left from the
 # k-th, in the app's order. The part writes the app's whole list (screens-all.txt), its own screens (screens.txt) and
@@ -117,6 +118,53 @@ if [ -n "$LIMIT" ]; then
   trap 'kill $WATCHDOG 2>/dev/null' EXIT
 fi
 
+# The device dropping off for a moment. On 4 November the emulator's device went offline for a few seconds in the vk
+# part of two runs (41746278806 and 41752266121): the commands of those seconds failed at once ("adb: device offline")
+# and the run went on without them, so the map's phase failed on lines the app was never launched to log, or read a log
+# the drop cut short. adb refuses a command for a device not there before the command reaches it, so such a command is
+# run again once the device is back (`adb reconnect offline`, then up to 120 s for it, where `timeout` is there), which
+# runs it once; the job's log says so. A device still not there fails the command as before (and the watchdog ends the
+# run after 5 minutes). The watchdog's own calls and `$LIMIT adb` run adb itself.
+exec 3>&2
+adb() {
+  local err rc gone
+  err=$(mktemp)
+  command adb "$@" 2> "$err"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q -E "^(adb|error): (device offline|no devices/emulators found|device '.*' not found|device still connecting)\$" "$err"; then
+    gone=$SECONDS
+    command adb reconnect offline > /dev/null 2>&1
+    if { if [ -n "$LIMIT" ]; then timeout 120 adb wait-for-device 2> /dev/null; else command adb wait-for-device; fi; }; then
+      echo "::warning::smoke.sh: adb $* met '$(tail -n 1 "$err")': the device was back $((SECONDS - gone)) s later, and the command ran then" >&3
+      command adb "$@" 2> "$err"; rc=$?
+    else
+      echo "::warning::smoke.sh: adb $* met '$(tail -n 1 "$err")', and the device was not back in $((SECONDS - gone)) s" >&3
+    fi
+  fi
+  cat "$err" >&2; rm -f "$err"
+  return $rc
+}
+
+# The device's log (`logcat -d` with the arguments $@), whole: on the device the dump ends with a line of its own once
+# logcat is done, so one the device's dropping off cut short (run 41752266121's map-transition.txt came empty) is told
+# from a whole one and taken again. One not had whole in three tries fails the run ("DUMP FAILED", at the end: this runs
+# in the checks' pipelines), since a check of a log cut short could pass for want of the lines it looks for.
+logcat_dump() {
+  local file try
+  file=$(mktemp)
+  for try in 1 2 3; do
+    adb shell "logcat -d $* && echo atlas-dump-end" | tr -d '\r' > "$file"
+    if [ "$(tail -n 1 "$file")" = atlas-dump-end ]; then
+      sed '$d' "$file"; rm -f "$file"; return 0
+    fi
+    echo "::warning::smoke.sh: logcat -d $* came cut short (try $try of 3)" >&3
+    sleep 2
+  done
+  rm -f "$file"
+  echo "DUMP FAILED: logcat -d $* not had whole in 3 tries" >&3
+  echo "logcat -d $*" >> "$OUT/.dumps-failed"
+  return 1
+}
+
 # --- helpers ---------------------------------------------------------------------------------------------------------
 
 # Installs APK $1 over what is there, or, signed with another key, in its place.
@@ -131,9 +179,9 @@ fresh_state() {
 }
 
 # The AtlasMap lines logged since marker $1 (threadtime format: date, time, pid, tid, level, tag, message).
-since_marker() { adb logcat -d -v threadtime -s AtlasMap:I | tr -d '\r' | sed -n "/run-marker $1\$/,\$p"; }
+since_marker() { logcat_dump -v threadtime -s AtlasMap:I | sed -n "/run-marker $1\$/,\$p"; }
 # every tag since the marker (the system's ANR lines are not under AtlasMap)
-since_marker_all() { adb logcat -d -v threadtime | tr -d '\r' | sed -n "/run-marker $1\$/,\$p"; }
+since_marker_all() { logcat_dump -v threadtime | sed -n "/run-marker $1\$/,\$p"; }
 
 # How many finished frames (or the last filter probe) are logged since marker $1: today's map's, or the core's first.
 frames_since() { since_marker "$1" | grep -c -e "drawn in" -e "filter probe sblur" -e "vk first frame"; }
@@ -259,8 +307,8 @@ measure() {
   elif grep -q "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt"; then
     echo "vk guard on $s ($run): $(grep -m1 -o 'vk guard: .*' "$OUT/$s.$run.atlasmap.txt")"
   fi
-  if adb logcat -d -b crash | grep -q "$PKG"; then
-    echo "CRASH on $s ($run)"; adb logcat -d -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
+  if logcat_dump -b crash | grep -q "$PKG"; then
+    echo "CRASH on $s ($run)"; logcat_dump -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
     native_trace "$OUT/$s.$run.crash.txt" "$OUT/$s.$run.native.txt"
     adb logcat -c
   fi
@@ -393,8 +441,8 @@ vk_launch() {
 
 # The crash buffer after a run: a crash fails (and is symbolised), unless $2 says it was planted.
 vk_crashes() {
-  if adb logcat -d -b crash | grep -q "$PKG"; then
-    adb logcat -d -b crash > "$OUT/$1.crash.txt"
+  if logcat_dump -b crash | grep -q "$PKG"; then
+    logcat_dump -b crash > "$OUT/$1.crash.txt"
     if [ "${2:-}" = planted ]; then
       echo "planted crash ($1): $(grep -m1 -o 'Abort message: .*' "$OUT/$1.crash.txt" || echo 'the process died')"
     else
@@ -910,37 +958,42 @@ if has_phase map; then
   adb logcat -d > "$OUT/logcat.map.txt"
 fi
 
-# --- the world beyond the countries (ENGINE.md step 5) -----------------------------------------------------------------
+# --- the world beyond the countries (ENGINE.md steps 5 and 6) --------------------------------------------------------
 
-# The world as a phone takes it from the world-test release, as the map's phase takes the Netherlands' tiles from
-# packs-latest: the app's data cleared and the home opened on the Westerkerk (atlas.ci: the canal ring put on the device)
-# with the world's fetch on (atlas.ci.world: CI's other runs ask no server for it, as they build no windows), and the
-# world script (atlas.vk.script world) out to 25 km pitched 60° (the canal ring's tiles beside the world) and to 100 km
-# pitched 30°. world.idx and the globe must come at the first start (`vk world: world.idx (<n> packs) and
-# world-globe.atlas on the phone`), the Westerkerk's block's parts as the view first enters it (`vk world: parts …`),
-# and each view's picture be final with the core's last rest there saying the world drew it (`vk tiles … world <n>
-# drawn finest <z> wanted 0 bare 0`: every tile it wants resident, no cell without one; at 100 km a level of the
-# block's packs, 6 or finer, where the globe holds L0 to L3), with no crash or ANR. While world-test is not published
-# (the user's yes) the phase says so and draws nothing: the app's fetch then finds no release and asks again every ten
-# minutes. The lines go to world.txt, the screens to world-25km.png and world-100km.png.
-WORLD_TEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-test
+# The world as a phone takes it from the release world-latest points at, as the map's phase takes the Netherlands' tiles
+# from packs-latest: the app's data cleared and the home opened on the Westerkerk (atlas.ci: the canal ring put on the
+# device) with the world's fetch on (atlas.ci.world: CI's other runs ask no server for it, as they build no windows),
+# and the world script (atlas.vk.script world) out to 25 km pitched 60° (the canal ring's tiles beside the world) and
+# to 100 km pitched 30°. world.json's release, its world.idx and its globe must come at the first start (`vk world:
+# world.idx (<n> packs) and world-globe.atlas of <release> on the phone`, the release world-latest's world.json names),
+# the heads of the packs the views reach (`vk world: the head of world/<z>/<x>/<y> …`) and the chunks of the tiles they
+# want by ranges (`vk world: <n> chunks (<k> kB) in <m> ranges on the phone`, n at least 1), and each view's picture be
+# final with the core's last rest there saying the world drew it (`vk tiles … world <n> drawn finest <z> wanted 0 bare
+# 0`: every tile it wants resident, no cell without one; at 100 km a level of the block's packs, 6 or finer, where the
+# globe holds L0 to L3), with no crash or ANR. The lines go to world.txt, the screens to world-25km.png and
+# world-100km.png.
+WORLD_LATEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-latest
 world_phase() {
-  local code km next line rest at drawn finest wanted bare
-  code=$(curl -s -r 0-0 -L -o /dev/null -w '%{http_code}' "$WORLD_TEST/world.idx")
-  if [ "$code" != 200 ] && [ "$code" != 206 ]; then
-    echo "WARNING: world: world-test is not published (HTTP $code for its world.idx): no world to draw yet"
+  local release km next line rest at drawn finest wanted bare chunks n k r
+  release=$(curl -sfL --retry 5 --retry-all-errors --max-time 60 "$WORLD_LATEST/world.json" |
+    python3 -I -c 'import json, sys; print(json.load(sys.stdin)["release"])' 2>/dev/null)
+  if [ -z "$release" ]; then
+    echo "WORLD FAILED: world-latest's world.json did not come or names no release"; FAIL=1
     return
   fi
+  echo "world: world-latest is $release"
   fresh_state
   vk_launch world --es atlas.screen home --ez atlas.ci true --ez atlas.ci.world true --ez atlas.vk.ci true --es atlas.vk.script world
   if wait_line world 300 "vk world: world.idx"; then
-    echo "world: $(since_marker world | grep -m1 -o 'vk world: world.idx.*' | sed 's/^vk world: //')"
+    line=$(since_marker world | grep -m1 -o 'vk world: world.idx.*')
+    echo "world: ${line#vk world: }"
+    [[ $line == *" of $release on the phone" ]] || { echo "WORLD FAILED: the phone took another release than world-latest's $release"; FAIL=1; }
   else
     echo "WORLD FAILED: world.idx and the globe were not on the phone within 300 s"; FAIL=1
   fi
   for km in 25 100; do
     if [ "$km" = 25 ]; then next="world out to 100 km"; else next="back"; fi
-    # the script waits up to 300 s for the packs, then 300 s for the picture, and holds it 15 s
+    # the script waits up to 300 s for the packs' heads, then 300 s for the picture, and holds it 15 s
     if ! wait_line world 700 "vk script: world at $km km "; then
       echo "WORLD FAILED: the world script did not reach its view at $km km"; FAIL=1; break
     fi
@@ -964,11 +1017,20 @@ world_phase() {
   done
   wait_line world 300 "vk script done" || { echo "WORLD FAILED: the world script did not finish"; FAIL=1; }
   since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|transition)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
-  if grep -q '^vk world: parts ' "$OUT/world.txt"; then
-    echo "world: $(grep -m1 '^vk world: parts ' "$OUT/world.txt" | sed 's/^vk world: //')"
+  if grep -q '^vk world: the head of world/.* on the phone$' "$OUT/world.txt"; then
+    echo "world: $(grep -c '^vk world: the head of world/.* on the phone$' "$OUT/world.txt") packs' heads, the first $(grep -m1 '^vk world: the head of ' "$OUT/world.txt" | sed 's/^vk world: the head of //')"
   else
-    echo "WORLD FAILED: no part of the Westerkerk's block came (no 'vk world: parts' line)"; FAIL=1
+    echo "WORLD FAILED: no pack's head came (no 'vk world: the head of …' line)"; FAIL=1
   fi
+  chunks=$(sed -n 's/^vk world: \([0-9]*\) chunks (\([0-9]*\) kB) in \([0-9]*\) ranges on the phone$/\1 \2 \3/p' "$OUT/world.txt" |
+    awk '{ n += $1; k += $2; r += $3 } END { if (NR) printf "%d %d %d", n, k, r }')
+  read -r n k r <<< "${chunks:-0 0 0}"
+  if [ "$n" -gt 0 ]; then
+    echo "world: $n chunks ($k kB) in $r ranges"
+  else
+    echo "WORLD FAILED: no tile's chunk came (no 'vk world: <n> chunks … on the phone' line with n above 0)"; FAIL=1
+  fi
+  grep '^vk world: .*not \(fetched\|kept\|opened\)\|^vk world: .* refused' "$OUT/world.txt" | head -5 | sed 's/^/world: /'
   vk_crashes world; vk_anr world
   adb shell am force-stop $PKG
 }
@@ -1108,5 +1170,9 @@ else
   grep -v -x truth "$OUT/phases.txt" > "$OUT/phases.new"; mv "$OUT/phases.new" "$OUT/phases.txt"
   RUNS="debug-first"
   for s in home filters; do [ -f "$OUT/$s.debug-first.atlasmap.txt" ] && compose "$s"; done
+fi
+if [ -s "$OUT/.dumps-failed" ]; then
+  echo "DUMP FAILED: $(wc -l < "$OUT/.dumps-failed") dumps of the device's log were not had whole:"; sort "$OUT/.dumps-failed" | uniq -c
+  FAIL=1
 fi
 exit $FAIL

@@ -224,6 +224,8 @@ struct Fill {
     /// tile names none).
     std::uint32_t ring = 0;
     bool hole = false;
+    /// Whether its ring's box lies in its cell's core (GroundTile::cores): no wider than core_side either way.
+    bool core = false;
     double level = 0;
     /// Its index in the tile's GPU feature table (its visibility bit).
     std::uint32_t gpu = 0;
@@ -254,8 +256,8 @@ enum class StrokeKind : std::uint8_t {
     park,    ///< draw_over: a national park's edge (line_d(ring, 0.15)), 2.2 dashed 7 on 5 off at .85, no radius cut
 };
 
-/// A tile cell's box over its fills (metres, at their heights) and the widest of their margins: the frame tests a
-/// whole cell before its fills (passes/Ground.cpp).
+/// A tile cell's box over its fills (metres, at their heights) and the widest and the narrowest of their margins: the
+/// frame tests a whole cell before its fills (passes/Ground.cpp).
 struct CellBox {
     double x0 = 0;
     double x1 = -1; ///< empty while x1 < x0
@@ -264,11 +266,16 @@ struct CellBox {
     double y0 = 0;
     double y1 = 0;
     double margin = 0;
+    double least = 0;
     [[nodiscard]] bool empty() const noexcept { return x1 < x0; }
 };
 
 /// The cells a tile has at most (scene/Cells.hpp: 8 × 8).
 inline constexpr std::size_t max_cells = 64;
+
+/// The widest a fill's box is in its cell's core (GroundTile::cores), metres either way: a few large rings (a polder's,
+/// a lake's shore, a long road) stretch a cell's box kilometres past its own, the core's the rest of its fills'.
+inline constexpr double core_side = 500;
 
 /// One stroked element (one SVG path) of a tile: its polylines, painted alike.
 struct Stroke {
@@ -478,6 +485,36 @@ struct LineGpu {
 };
 static_assert(sizeof(LineGpu) == 16);
 
+/// The words of a thin edge's GPU record (GroundGpu::thin, ground.slang's thin_of): its ends (x, z as f32 from the
+/// tile's origin), its widths at them (each in thin_units a metre, 16 bits, the first's low), its piece's fill and its
+/// other bank's.
+inline constexpr std::uint32_t thin_words = 7;
+/// A metre of a thin edge's widths.
+inline constexpr double thin_units = 1024.0;
+/// How many of a tile's thin edges in their order the frame keeps or leaves out together (ThinChunk), and the most
+/// pairs of pieces a chunk names.
+inline constexpr std::uint32_t thin_chunk = 64;
+inline constexpr std::size_t thin_pairs = 4;
+
+/// thin_chunk of a tile's thin edges (the last fewer), whose bounds let the frame leave them out on the CPU where the
+/// vertex stage would fold every one of them (passes/Water.cpp's cull_thin): their first and count; the box over their
+/// ends and the points across the water from them, metres from the tile's origin, as thin_of places them; their pieces'
+/// least and most water level; the least of their widths, as thin_of reads them; and the pairs of their piece and the
+/// other bank's (`pairs` of them, or thin_pairs + 1 where there are more, naming none).
+struct ThinChunk {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    double x0 = 0;
+    double z0 = 0;
+    double x1 = 0;
+    double z1 = 0;
+    double y0 = 0;
+    double y1 = 0;
+    double least = 0;
+    std::uint32_t pairs = 0;
+    std::array<std::array<std::uint32_t, 2>, thin_pairs> pair{};
+};
+
 /// A word range of a heap range: [first, first + count) words, or of records.
 struct Words {
     std::uint32_t first = 0;
@@ -492,14 +529,17 @@ struct GroundGpu {
     Words vertices; ///< three words each
     Words above;    ///< the opaque fills above the water (draw_over's, the roads, the areas), top first: indices
     /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
-    /// app's map draws again by themselves (passes/Ground.cpp's record_fills).
+    /// app's map draws by themselves after the land, `above` without them (passes/Ground.cpp's record_streets).
     Words streets;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
+    Words thin;     ///< the water's thin edges (thin_edges), thin_words words each
     Words fills;    ///< FillGpu records
     Words points;   ///< two words each
     Words lines_at; ///< LineGpu records (the polylines, in the tile's order)
+    /// The thin edges by thin_chunk, for the frame's cull on the CPU (no words of the heaps).
+    std::vector<ThinChunk> thin_chunks;
     /// The shadows (ground heap): their points (x, z as f32 from the tile's origin), their records (the first point,
     /// the count, h as f32, the flags, y as f32: five words) and their triangles over their corners, (shadow << 16) |
     /// corner (a swept hull's count + 2 corners: its points, its two turning points twice).
@@ -524,6 +564,7 @@ struct GroundLayout {
     Words below;
     Words canopy;
     Words fans;
+    Words thin;
     Words fills;
     Words points;
     Words lines_at;
@@ -542,8 +583,12 @@ struct GroundTile {
     std::vector<Polyline> polylines;
     /// The tile's south-west corner at street level in the pack's frame (its GPU positions are relative to it).
     P2 origin;
+    /// Its north-east corner: with `origin` its box, along whose sides the water's pieces are cut (thin_edges).
+    P2 far_corner;
     /// Where its words lie in its heap ranges (the pass's, once packed).
     GroundLayout layout;
+    /// Its thin edges by thin_chunk (GroundGpu::thin_chunks), which the frame culls on the CPU.
+    std::vector<ThinChunk> thin_chunks;
     /// Each polyline's first point's word in the lines range (pack's layout: the polylines' points in order).
     std::vector<std::uint32_t> polyline_words;
     /// The pair polylines' lines' reaches (Polyline::reach).
@@ -595,8 +640,11 @@ struct GroundTile {
     [[nodiscard]] std::uint32_t woods_first() const noexcept {
         return static_cast<std::uint32_t>(shadows.size() - woods.size());
     }
-    /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole).
+    /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole), and its core: the
+    /// same over those of them no wider than core_side (Fill::core), for the frame to test where the whole cell's box
+    /// reaches past the frame's margin.
     std::array<CellBox, max_cells> cells{};
+    std::array<CellBox, max_cells> cores{};
     /// Bytes it holds (the tile's native bytes).
     [[nodiscard]] std::size_t bytes() const noexcept;
 };
@@ -621,7 +669,7 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out);
 [[nodiscard]] tiles::Result<std::uint64_t> ground_check(const tiles::Pack& pack);
 
 /// The host build's hash of the ground's check.
-inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
+inline constexpr std::uint64_t ground_check_expected = 0xC804'5FA0'8E1B'C9BBULL;
 
 /// `ground <hash> ok`, or `ground <hash> FAIL expected <hash>`, or `ground unavailable: <why>`, for the bundled pack in
 /// `pack`.
@@ -635,5 +683,20 @@ inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
 /// corner at street level (the residency's).
 [[nodiscard]] GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style,
                                       std::uint8_t level, P2 origin);
+
+/// A colour of a style the ground paints that a slot of the user's palette moves (style/Palette.hpp's codes), and the
+/// slot's own colour in the style, which the palette's colour of it is a move from.
+struct GroundSlot {
+    std::size_t code = 0;
+    std::uint32_t own = 0;
+    tiles::StyleRgb colour = 0;
+    /// Whether the fills darken it at night (the big roads' asphalt has a night colour of its own).
+    bool darkens = true;
+};
+
+/// The colours of `style` the ground paints that slots of the palette move, by day or at night, in the order of the
+/// fills' palette (passes::ground_palette): the areas' by kind, the squares' other, the mapped surfaces', the land
+/// kinds', then the big roads' asphalt. Where two share a colour, the first moves it.
+[[nodiscard]] std::vector<GroundSlot> ground_slots(const tiles::Style& style, bool night);
 
 } // namespace atlas::geometry

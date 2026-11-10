@@ -46,20 +46,60 @@ PackStage::~PackStage() = default; // the thread stops first (the last member)
 
 void PackStage::stop() { thread_ = {}; }
 
-void PackStage::want(const std::shared_ptr<const tiles::StorePack>& pack) {
+namespace {
+
+/// What `from` holds of each pass, in `to`: where `to` has nothing of it, or always (`newer`: `from` was built after).
+void take_before(std::vector<PassPack>& to, std::span<const PassPack> from, bool newer) {
+    if (to.size() < from.size()) to.resize(from.size());
+    for (std::size_t p = 0; p < from.size(); ++p) {
+        if (from[p].cpu && (newer || !to[p].cpu)) to[p] = from[p];
+    }
+}
+
+} // namespace
+
+void PackStage::want(const std::shared_ptr<const tiles::StorePack>& pack, std::uint64_t passes,
+                     const std::shared_ptr<const ResidentPack>& before) {
     if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr) return;
     {
         const std::scoped_lock lock(mutex_);
         // The same pack by ownership, never by address: a pack let go of and another opened where it was are two.
-        auto same = [&pack](const std::weak_ptr<const tiles::StorePack>& k) {
-            return !k.owner_before(pack) && !pack.owner_before(k);
+        auto same_as = [](const std::shared_ptr<const tiles::StorePack>& p) {
+            return [&p](const Known& k) { return !k.pack.owner_before(p) && !p.owner_before(k.pack); };
         };
-        if (std::ranges::any_of(known_, same)) return;
-        std::erase_if(known_, [](const std::weak_ptr<const tiles::StorePack>& k) { return k.expired(); });
-        known_.emplace_back(pack);
-        queue_.push_back(pack);
+        std::uint64_t lacks = passes;
+        Job job{.pack = pack, .passes = 0, .before = {}};
+        if (const auto known = std::ranges::find_if(known_, same_as(pack)); known != known_.end()) {
+            lacks = passes & ~known->passes;
+            if (lacks == 0U) return;
+            known->passes |= lacks;
+        } else {
+            std::erase_if(known_, [](const Known& k) { return k.pack.expired(); });
+            known_.push_back({.pack = pack, .passes = passes});
+            if (before && before->source != pack) take_before(job.before, before->passes, false);
+            // A newer composition of the id of one waiting (a frame cell's, as its windows and levels' tiles join it):
+            // the store holds the newer alone, so the one waiting is not built, and what it would have taken again is
+            // the newer's to take where it has nothing of a pass.
+            for (auto it = queue_.begin(); it != queue_.end();) {
+                if (it->pack->id != pack->id || it->pack == pack) {
+                    ++it;
+                    continue;
+                }
+                take_before(job.before, it->before, false);
+                std::erase_if(known_, same_as(it->pack));
+                ++dropped_;
+                it = queue_.erase(it);
+            }
+        }
+        job.passes = lacks;
+        queue_.push_back(std::move(job));
     }
     wake_.notify_one();
+}
+
+std::uint64_t PackStage::dropped() const {
+    const std::scoped_lock lock(mutex_);
+    return dropped_;
 }
 
 void PackStage::take(std::vector<std::shared_ptr<const ResidentPack>>& out) {
@@ -87,34 +127,49 @@ void PackStage::work(const std::stop_token& stop) {
     (void)setpriority(PRIO_PROCESS, 0, 10);
 #endif
     for (;;) {
-        std::shared_ptr<const tiles::StorePack> pack;
+        Job job;
         {
             std::unique_lock lock(mutex_);
             if (!wake_.wait(lock, stop, [this] { return !queue_.empty(); })) return;
-            pack = queue_.front();
+            job = std::move(queue_.front());
             queue_.erase(queue_.begin());
             busy_ = true;
         }
+        const std::shared_ptr<const tiles::StorePack>& pack = job.pack;
         const auto started = std::chrono::steady_clock::now();
         auto built = std::make_shared<ResidentPack>();
         built->id = pack->id;
         built->source = pack;
         built->passes.resize(passes_.size());
         for (std::uint32_t p = 0; p < passes_.size(); ++p) {
-            PackBuild b(store_, pack, built->passes[p], p);
+            // a pass whose parts are all left out: nothing (Residency::among: a pass past the 64th always)
+            if (p < 64 && (job.passes & (std::uint64_t{1} << p)) == 0U) continue;
+            built->built |= p < 64 ? std::uint64_t{1} << p : 0U;
+            const PassPack* before = p < job.before.size() && job.before[p].cpu ? &job.before[p] : nullptr;
+            PackBuild b(store_, pack, built->passes[p], p, before);
             if (auto made = passes_[p]->build_pack(b); !made) {
                 log::warn("vk packs: {}: the {} pass: {}", pack->id, passes_[p]->name(), made.error().text());
                 built->passes[p] = {};
             }
         }
         built->build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        // what a pack's own stage T cost (the canal ring's names decode every window of its cell), and of which passes
+        log::info("vk packs: {} built in {:.1f} ms, passes {:#x}", pack->id, built->build_ms, built->built);
         std::function<void()> published;
         {
             const std::scoped_lock lock(mutex_);
+            // a newer composition of its id waiting takes again what this one built (an earlier build's it had before)
+            for (Job& waiting : queue_) {
+                if (waiting.pack->id == pack->id && waiting.pack != pack)
+                    take_before(waiting.before, built->passes, true);
+            }
             published_.push_back(std::move(built));
             published = published_callback_;
         }
         if (published) published();
+        // The job goes before the stage is idle, and with it what it was handed of the composition before: kept to the
+        // loop's next turn, a composition the World let go of outlived wait_idle (packs_vk_test's pack added again).
+        job = {};
         {
             const std::scoped_lock lock(mutex_);
             busy_ = false;

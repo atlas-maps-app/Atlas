@@ -19,6 +19,7 @@
 #include "osm/Overpass.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
+#include "sun/BitTiles.hpp"
 #include "sun/Samples.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -26,6 +27,7 @@
 #include "tests/load/query.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/TileBox.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
@@ -40,17 +42,21 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 using namespace atlas;
@@ -68,10 +74,15 @@ struct FirstVertices {
 };
 
 /// A pass whose stage T writes each tile's key and cell counts into the points heap, adds an item per building and
-/// keeps the buildings' first vertices on the CPU (PassTile::cpu).
+/// keeps the buildings' first vertices on the CPU (PassTile::cpu); it serves every part, or `parts` alone
+/// (frame::Pass::camera_parts: built only while one of them is drawn).
 class BuildProbe final : public frame::Pass {
 public:
-    [[nodiscard]] std::string_view name() const noexcept override { return "build probe"; }
+    BuildProbe() = default;
+    explicit BuildProbe(std::uint64_t parts, std::string_view name, std::uint16_t kind = 0) noexcept
+        : parts_(parts), name_(name), kind_(kind) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return name_; }
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override { return parts_; }
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return {}; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
         (void)c;
@@ -83,6 +94,8 @@ public:
         (void)phase;
     }
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& b) const override {
+        entered.fetch_add(1);
+        while (held.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1)); // a test holds it under way
         const tiles::Tile& t = b.tile();
         const auto cells = static_cast<std::uint32_t>(t.cells.size());
         ATLAS_GPU_LET(range, b.allocate(scene::HeapKind::points, 16 + 4 * cells, 16));
@@ -115,7 +128,7 @@ public:
                      .cut_x = x,
                      .cut_z = z,
                      .order = scene::order_of(0, static_cast<std::uint64_t>(layer->integer(tiles::building::index, i))),
-                     .kind = 0,
+                     .kind = kind_,
                      .flags = scene::item_flag::radius,
                      .slots = {8, 4, 2, 1},
                      .min_depth = 2.0F,
@@ -129,6 +142,27 @@ public:
         return {};
     }
     mutable std::atomic<int> built{0};
+    /// Builds begun, and while set each waits before it builds (a top-up kept under way).
+    mutable std::atomic<int> entered{0};
+    std::atomic<bool> held{false};
+
+private:
+    std::uint64_t parts_ = ~std::uint64_t{0};
+    std::string_view name_ = "build probe";
+    std::uint16_t kind_ = 0;
+};
+
+/// Lets a probe's builds go on when it goes (a failed check must not leave the world's workers waiting).
+struct Release {
+    Release(const Release&) = delete;
+    Release& operator=(const Release&) = delete;
+    Release(Release&&) = delete;
+    Release& operator=(Release&&) = delete;
+    explicit Release(BuildProbe& probe) noexcept : probe_(probe) {}
+    ~Release() { probe_.held.store(false); }
+
+private:
+    BuildProbe& probe_;
 };
 
 /// The Westerkerk home (amsterdam.py's main camera): 10 m west and 30 m north of the Westerkerk, yaw 52°, 38° down,
@@ -153,6 +187,52 @@ public:
     return c;
 }
 
+/// The tiles world `w`'s cover draws as themselves (a stand-in ancestor has no bits of its own) without their sun bits,
+/// on the CPU or in the frame's buffer, as "z/x/y" each.
+[[nodiscard]] std::vector<std::string> drawn_without_bits(scene::World& w) {
+    std::vector<std::string> out;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue;
+        if (!t.sun || t.sun_base == scene::no_sun) out.push_back(std::format("{}/{}/{}", t.key.z, t.key.x, t.key.y));
+    }
+    return out;
+}
+
+/// A pass of the camera parts `parts` whose stage T places `count` ranges of the heaps' points on each tile, of
+/// `bytes[z - 12]` bytes each at zoom z (12 to 14): the heaps' room a test sizes.
+class RoomProbe final : public frame::Pass {
+public:
+    RoomProbe(std::uint64_t parts, std::string_view name, std::uint32_t count,
+              std::array<std::uint32_t, 3> bytes) noexcept
+        : parts_(parts), name_(name), count_(count), bytes_(bytes) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return name_; }
+    [[nodiscard]] std::uint64_t camera_parts() const noexcept override { return parts_; }
+    [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return {}; }
+    [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
+        (void)c;
+        return {};
+    }
+    void release() noexcept override {}
+    void record(const frame::Recording& r, std::uint32_t phase) override {
+        (void)r;
+        (void)phase;
+    }
+    [[nodiscard]] gpu::Result<void> build(scene::TileBuild& b) const override {
+        const std::uint32_t z = std::clamp<std::uint32_t>(b.tile().header.level, 12, 14);
+        for (std::uint32_t k = 0; k < count_; ++k) {
+            ATLAS_GPU_LET(range, b.allocate(scene::HeapKind::points, bytes_.at(z - 12), 16));
+            b.out().ranges.at(k) = range;
+        }
+        b.out().cell_first.assign(b.tile().cells.size() + 1, 0);
+        return {};
+    }
+
+private:
+    std::uint64_t parts_;
+    std::string_view name_;
+    std::uint32_t count_;
+    std::array<std::uint32_t, 3> bytes_;
+};
 } // namespace
 
 TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range's bytes, and free after the frames") {
@@ -737,9 +817,55 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     MESSAGE(w.residency().resident().size() << " resident tiles hold " << native << " native bytes");
 
     // The sun: its scene the resident tiles and their halo, its bits published, every drawn tile's texels in the frame
-    // slot's half of its buffer, as BitTiles gives them.
+    // slot's half of its buffer, as BitTiles gives them. The tiles were drawn before their first bits, by day, so the
+    // bits fade in from by day over 300 ms from their publication: at the time they came (the clock has stood still
+    // since), every sample lit in G, the bits in R, at weight 0.
     REQUIRE(w.sun() != nullptr);
     w.sun()->wait_idle();
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    // a tile's texels in the frame slot's half: its bits at weight 0 from by day
+    const auto from_day = [&w](const scene::CoverTile& t) {
+        std::vector<std::uint32_t> want;
+        sun::texels_of({.now = t.sun->now,
+                        .before = std::make_shared<const sun::TileBits>(sun::by_day(*t.sun->now)),
+                        .weight = 0.0},
+                       want);
+        const std::span<const std::byte> bytes = w.sun()->buffer().bytes();
+        return bytes.size() >= (std::size_t{t.sun_base} * 8) + (want.size() * 4) &&
+               std::memcmp(bytes.data() + (std::size_t{t.sun_base} * 8), want.data(), want.size() * 4) == 0;
+    };
+    std::size_t first_light = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z || !t.sun || t.sun_weight >= 1.0F) continue;
+        CHECK(t.sun_weight == 0.0F);
+        REQUIRE(t.sun_base != scene::no_sun);
+        CHECK(from_day(t));
+        ++first_light;
+    }
+    CHECK(first_light > 0);
+    // Bits lost mid-fade (the sun off, or held) and back a second on fade in anew from their return, drawn by day
+    // meanwhile: at weight 0 again, not whole at once as the fade they cut short would have them.
+    w.sun()->hold(true);
+    ATLAS_REQUIRE((*builder)->derive(61, 1, nullptr));
+    w.update((*builder)->state());
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z == t.key.z) CHECK_FALSE(t.sun.has_value());
+    }
+    now += 1.0;
+    w.sun()->hold(false);
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    std::size_t again = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue;
+        REQUIRE(t.sun.has_value());
+        CHECK(t.sun_weight == 0.0F);
+        REQUIRE(t.sun_base != scene::no_sun);
+        CHECK(from_day(t));
+        ++again;
+    }
+    CHECK(again >= first_light);
     now += 1.0; // past every fade
     ATLAS_REQUIRE((*builder)->derive(61, 1, nullptr));
     w.update((*builder)->state());
@@ -769,7 +895,8 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(lit_tiles > 0);
     MESSAGE("the sun: " << sun_stats.scenes << " scene(s) of " << sun_stats.tiles << " tiles (" << sun_stats.resident
                         << " resident) in " << sun_stats.scene_ms << " ms, " << sun_stats.runs << " run(s), "
-                        << w.sun()->stats().texels << " texels this frame for " << lit_tiles << " drawn tiles");
+                        << w.sun()->stats().texels << " texels this frame for " << lit_tiles << " drawn tiles, "
+                        << first_light << " of them faded in from by day, " << again << " again after a hold");
     // Later frames: the fade completes, nothing more is asked for the same view.
     for (std::uint64_t n = 41; n <= 60; ++n) {
         now = static_cast<double>(n) * 0.016;
@@ -801,6 +928,128 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(w.residency().resident().empty());
     CHECK(w.residency().stats().native_bytes == 0);
     CHECK(one_kept.expired());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a tile of the sun's halo that comes resident gets its bits, though the sun's scene keeps its tiles") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(path)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk: the sun's halo is not checked over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = path.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+
+    // The Westerkerk's tile and the one north of it, of the pack's three (the third west of the Westerkerk's), whose
+    // features reach within a few hundred metres of the Westerkerk, so each lies in the halo of every other.
+    const tiles::TileKey alone{14, 8414, 5384};
+    const tiles::TileKey beside{14, 8414, 5383};
+    auto pack = test::open_pack(path.string());
+    ATLAS_REQUIRE(pack.has_value(), tiles::describe(pack.error()));
+    const std::size_t tiles_of_pack = pack->chunks().chunks().size();
+    REQUIRE(pack->chunks().find(alone) != nullptr);
+    REQUIRE(pack->chunks().find(beside) != nullptr);
+    // straight down from 300 m, the ground in view a few hundred metres across, at 4.888° E: 620 m south of the two
+    // tiles' edge, the Westerkerk's tile alone in view, then on the edge, the two of them
+    const double edge = 1e-7 * tiles::row_edge(beside.z, beside.y + 1);
+    const auto above = [](double latitude, double longitude) {
+        style::CameraState c = home();
+        c.latitude = latitude;
+        c.longitude = longitude;
+        c.bearing = 0.0;
+        c.pitch = 0.0;
+        c.distance = 300.0;
+        return c;
+    };
+    std::uint64_t n = 0;
+    const auto settle = [&](const style::CameraState& camera) {
+        (*builder)->set_inputs({.camera = camera, .scene = &w});
+        for (int i = 0; i < 20; ++i) {
+            now = static_cast<double>(++n) * 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            if (w.sun() != nullptr) w.sun()->wait_idle();
+        }
+        // the frame after the sun went idle takes what it published
+        now = static_cast<double>(++n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    const auto drawn = [&w](const tiles::TileKey& key) {
+        return std::ranges::any_of(w.cover()->tiles(), [&](const scene::CoverTile& t) { return t.drawn->key == key; });
+    };
+    const auto resident = [&w] {
+        std::vector<tiles::TileKey> out;
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) out.push_back(t->key);
+        return out;
+    };
+
+    // The Westerkerk's tile alone, resident with its bits; the others in its halo, its scene's tiles, but no bits made
+    // for them, as none is resident.
+    settle(above(edge - (620.0 / 110540.0), 4.888));
+    REQUIRE(w.sun() != nullptr);
+    REQUIRE(drawn(alone));
+    CHECK_FALSE(drawn(beside));
+    const std::vector<tiles::TileKey> first = resident();
+    CHECK(std::ranges::find(first, beside) == first.end());
+    CHECK(w.residency().sun_tiles("amsterdam").size() == tiles_of_pack);
+    CHECK(w.sun()->bits().view(alone, now).has_value());
+    CHECK_FALSE(w.sun()->bits().view(beside, now).has_value());
+    const scene::SunStats asked = w.sun()->stats();
+    CHECK(asked.tiles == tiles_of_pack);
+
+    // Then the edge it shares with the tile north of it: that tile resident at the level its halo took it at, so the
+    // sun's scene keeps its tiles (not built again), and its bits made all the same, as for every tile drawn.
+    settle(above(edge, 4.888));
+    REQUIRE(drawn(alone));
+    REQUIRE(drawn(beside));
+    const std::vector<tiles::TileKey> second = resident();
+    CHECK(std::ranges::find(second, beside) != second.end());
+    const scene::SunStats again = w.sun()->stats();
+    CHECK(again.scenes == asked.scenes);
+    CHECK(again.runs > asked.runs);
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
+        CHECK_MESSAGE(t.sun.has_value(), std::format("{}/{}/{} drawn without its sun bits after the sun went idle",
+                                                     t.key.z, t.key.x, t.key.y));
+    }
+    // The tile made whole as it came resident (its solids alone while it was the halo's) has the bits a scene built
+    // with it resident from the start gives it, to the bit, and so has the other: the sun left out and drawn again
+    // builds that scene.
+    CHECK(again.wholes == asked.wholes + 1);
+    const auto words = [&w, &now](const tiles::TileKey& k) {
+        const auto v = w.sun()->bits().view(k, now.load());
+        return v ? v->now->words : std::vector<std::uint64_t>{};
+    };
+    const std::vector<std::uint64_t> made_whole = words(beside);
+    const std::vector<std::uint64_t> alone_bits = words(alone);
+    REQUIRE(!made_whole.empty());
+    REQUIRE(!alone_bits.empty());
+    style::CameraState out = above(edge, 4.888);
+    out.parts = style::camera_part::sun;
+    settle(out);
+    CHECK_FALSE(w.sun()->bits().view(beside, now).has_value());
+    settle(above(edge, 4.888));
+    CHECK(w.sun()->stats().scenes > again.scenes);
+    CHECK(words(beside) == made_whole);
+    CHECK(words(alone) == alone_bits);
+    MESSAGE(std::format("the sun's scene {} tiles, built {} time(s), {} then {} run(s); {} then {} resident",
+                        again.tiles, again.scenes, asked.runs, again.runs, first.size(), second.size()));
     (void)session->take_messages();
 }
 
@@ -952,9 +1201,12 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     }
     CHECK(active_tiles > 0);
     CHECK(coarser_tiles > 0);
-    // The canal ring's items: in the frame drawn (the Westerkerk's), masked where their reference point is inside.
+    // The canal ring's items: their points their tiles' own, their place mapping them into the frame drawn (the
+    // Westerkerk's) as view::convert does, to rounding; masked where their reference point is inside.
     const view::GroundFrame drawn = w.frames().current().value_or(view::GroundFrame{});
     const tiles::Frame& cf = w.coarser()->pack.head()->frame;
+    const std::span<const scene::ItemPlace> places = w.items()->places();
+    const std::span<const std::uint32_t> place = w.items()->place();
     std::size_t masked = 0;
     std::size_t shown = 0;
     std::size_t converted = 0;
@@ -963,9 +1215,13 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
             const scene::ItemSpec& spec = t->items[i];
             const std::uint32_t row = t->rows[i];
             const bool is_masked = (w.items()->flags()[row] & scene::item_flag::masked) != 0;
+            const scene::ItemPlace& at = places[place[row]];
+            CHECK(w.items()->x()[row] == spec.x);
+            CHECK(w.items()->z()[row] == spec.z);
             if (t->pack == "amsterdam") {
                 CHECK_FALSE(is_masked);
-                CHECK(w.items()->x()[row] == spec.x);
+                CHECK(at.x(spec.x) == spec.x); // the frame drawn's place moves nothing
+                CHECK(at.z(spec.z) == spec.z);
                 continue;
             }
             const bool inside = spec.cut_x >= cf.x(mask.west) && spec.cut_x <= cf.x(mask.east) &&
@@ -973,9 +1229,9 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
             CHECK(is_masked == inside);
             (inside ? masked : shown) += 1;
             const view::Vec3 p = view::convert(t->frame, drawn, {spec.x, spec.y, spec.z});
-            CHECK(w.items()->x()[row] == p.x);
-            CHECK(w.items()->z()[row] == p.z);
-            converted += (w.items()->x()[row] != spec.x) ? 1U : 0U;
+            CHECK(std::abs(at.x(spec.x) - p.x) < 1e-6);
+            CHECK(std::abs(at.z(spec.z) - p.z) < 1e-6);
+            converted += (at.x(spec.x) != spec.x) ? 1U : 0U;
         }
     }
     CHECK(masked > 0);
@@ -1026,6 +1282,911 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
         if (w.items()->alive(row)) CHECK((w.items()->flags()[row] & scene::item_flag::masked) == 0);
     }
     (void)session->take_messages();
+}
+
+TEST_CASE("a pass whose parts are all left out builds nothing of a tile, and is built onto the resident tiles drawn as "
+          "one comes back, each drawn throughout under its handle (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the parts' stage T is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in (every part: always built) and the trees' (built only while the trees are drawn)
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto owned = std::make_unique<BuildProbe>(style::camera_part::trees, "tree probe");
+    const BuildProbe* trees = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(),
+                             {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    style::CameraState c = home();
+    c.parts = style::camera_part::trees;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    std::uint64_t n = 0;
+    const auto frame = [&] {
+        ++n;
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    for (int k = 0; k < 40 && w.cover()->tiles().empty(); ++k) {
+        frame();
+        w.residency().wait_idle();
+    }
+    for (int k = 0; k < 20; ++k) { // nothing more asked
+        frame();
+        w.residency().wait_idle();
+    }
+    now = now + 1.0; // past every fade
+    frame();
+    ATLAS_REQUIRE(!w.cover()->tiles().empty(), "the Westerkerk home drew no tile");
+    CHECK(w.cover()->missing() == 0);
+
+    // The trees left out: their pass ran for no tile, holds no range, data or item of any; the ground's did for each.
+    const auto runs = [&w](std::size_t pass) { return w.residency().pass_times().at(pass + 1).second; };
+    CHECK(runs(0) > 0);
+    CHECK(runs(1) == 0);
+    CHECK(trees->built.load() == 0);
+    CHECK(w.residency().wanted() == 1U);
+    std::size_t ground_items = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        CHECK(scene::Residency::among(t->built, 0));
+        CHECK_FALSE(scene::Residency::among(t->built, 1));
+        CHECK(std::ranges::none_of(t->passes[1].ranges, [](const scene::HeapRange& r) { return r.size > 0; }));
+        CHECK(t->passes[1].cpu == nullptr);
+        REQUIRE(t->item_runs.size() == 2);
+        CHECK(t->item_runs[1].second == 0U);
+        CHECK(t->items.size() == t->item_runs[0].second);
+        ground_items += t->items.size();
+    }
+    CHECK(ground_items > 0);
+    CHECK(w.items()->live() == ground_items);
+    // what the cover draws: each tile's key, handle and ground range
+    struct Drawn {
+        std::uint64_t key = 0;
+        std::uint32_t handle = 0;
+        scene::HeapRange ground;
+    };
+    std::vector<Drawn> drawn;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        drawn.push_back(
+            {.key = t.drawn->key.packed(), .handle = t.drawn->handle, .ground = t.drawn->passes[0].ranges[0]});
+    }
+    const std::size_t resident = w.residency().resident().size();
+
+    // The trees back: each tile drawn is built for them alone, onto it, and every frame meanwhile draws each tile it
+    // drew, under its handle, whole (its fade over), its ground's range the same, none missing. Each tile's trees fade
+    // in on it from nothing from the first frame that draws them, over the tile's fade time, never at once: none of
+    // them at that frame, never more than their fade since, all of them at its end; the tile's own range of the dither
+    // and its ground's as they were (ENGINE.md's parts).
+    constexpr double fade_seconds = 0.18; // the world's tiles' (CoverInputs::fade_seconds)
+    struct Back {
+        int frames = 0;        // until no tile drawn lacks them nor fades them in
+        int first = 0;         // the frame that first drew a tile's trees
+        std::size_t faded = 0; // tiles drawn whose trees faded in from nothing to all of their range
+        float first_most = 0;  // the most of a tile's range its trees took at their first frame
+        std::size_t ahead = 0; // draws of a tile's trees at more than their fade since their first frame
+    };
+    const auto back_on = [&] {
+        Back out;
+        c.parts = 0;
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        std::unordered_map<std::uint32_t, double> first; // by handle: when its trees were first drawn
+        std::unordered_map<std::uint32_t, float> last;   // and how much of its range they took the frame before
+        bool busy = true;
+        for (int k = 0; k < 80 && busy; ++k) {
+            frame();
+            ++out.frames;
+            const double t = now.load();
+            CHECK(w.cover()->missing() == 0);
+            bool topped = false;
+            for (const Drawn& d : drawn) {
+                const auto it = std::ranges::find_if(w.cover()->tiles(), [&d](const scene::CoverTile& e) {
+                    return e.drawn->key.packed() == d.key && e.drawn->handle == d.handle;
+                });
+                if (it == w.cover()->tiles().end()) {
+                    FAIL("a tile drawn before left the frame while its trees were built");
+                    continue;
+                }
+                CHECK(it->fade == 1.0F);
+                CHECK(it->drawn->passes[0].ranges[0].offset == d.ground.offset);
+                CHECK(it->drawn->passes[0].ranges[0].size == d.ground.size);
+                CHECK(it->place.offset.w == 0.0F);
+                CHECK(it->place.scale.w == 1.0F);
+                CHECK(w.cover()->dither(*it, 0) == std::array{0.0F, 1.0F});
+                if (!scene::Residency::among(it->drawn->built, 1)) continue; // its top-up not taken yet
+                topped = topped || it->topped != 0U;
+                const std::array<float, 2> range = w.cover()->dither(*it, 1);
+                CHECK(range[0] == 0.0F);
+                const auto [at, came] = first.try_emplace(d.handle, t);
+                if (came) {
+                    if (out.first == 0) out.first = out.frames;
+                    out.first_most = std::max(out.first_most, range[1]);
+                    CHECK(range[1] == 0.0F); // none of them at their first frame
+                    CHECK(((it->topped >> 1U) & 1U) != 0U);
+                } else {
+                    CHECK(range[1] >= last[d.handle]); // never back
+                }
+                const auto most = static_cast<float>((t - at->second) / fade_seconds) + 1e-5F;
+                if (range[1] > most) ++out.ahead;
+                CHECK(range[1] <= most);
+                if (range[1] == 1.0F && last[d.handle] < 1.0F && !came) ++out.faded;
+                last[d.handle] = range[1];
+            }
+            if (topped) {
+                CHECK(w.cover()->dithers());
+                CHECK(w.cover()->fading());
+            }
+            w.residency().wait_idle();
+            busy = std::ranges::any_of(w.cover()->tiles(), [&w](const scene::CoverTile& e) {
+                return w.residency().lacks(*e.drawn) || e.topped != 0U;
+            });
+        }
+        CHECK_FALSE(busy);
+        CHECK(out.faded == drawn.size());
+        CHECK(out.ahead == 0U);
+        CHECK_FALSE(w.cover()->dithers());
+        CHECK_FALSE(w.cover()->fading());
+        return out;
+    };
+    const Back once = back_on();
+    CHECK(w.residency().wanted() == 3U);
+    CHECK(trees->built.load() > 0);
+    CHECK(runs(1) == static_cast<std::uint64_t>(trees->built.load()));
+    CHECK(w.residency().stats().topped == static_cast<std::uint64_t>(trees->built.load()));
+    CHECK(w.residency().resident().size() == resident);
+    std::size_t tree_items = 0; // the tiles drawn's
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        const scene::ResidentTile& r = *t.drawn;
+        CHECK(scene::Residency::among(r.built, 1));
+        CHECK(r.passes[1].ranges[0].size > 0);
+        REQUIRE(r.item_runs.size() == 2);
+        // the trees' items after the ground's, as many as the ground's (the probe adds one per building), each with a
+        // row of its own, of the tile's handle, in the frame drawn as the ground's are
+        const auto [first, count] = r.item_runs[1];
+        CHECK(first == r.item_runs[0].second);
+        CHECK(count == r.item_runs[0].second);
+        // a pass's first row from its run, never the first item of its kind (both probes' items are of kind 0): each
+        // frame's finders, which read every item from the first to find it before
+        CHECK(scene::first_of(r, 1, 0) == first);
+        CHECK(scene::first_of(r, 0, 0) == 0U);
+        REQUIRE(r.rows.size() == r.items.size());
+        for (std::uint32_t i = first; i < first + count; ++i) {
+            CHECK(w.items()->alive(r.rows[i]));
+            CHECK(w.items()->tile()[r.rows[i]] == r.handle);
+            CHECK(w.items()->x()[r.rows[i]] == w.items()->x()[r.rows[i - first]]);
+        }
+        tree_items += count;
+    }
+    // every resident tile's (those around the view the frame asks for were built for the trees too)
+    std::size_t resident_tree_items = 0;
+    std::size_t native = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        resident_tree_items += t->item_runs.size() == 2 ? t->item_runs[1].second : 0U;
+        native += t->native_bytes;
+    }
+    CHECK(tree_items > 0);
+    CHECK(w.items()->live() == ground_items + resident_tree_items);
+    CHECK(w.residency().stats().native_bytes == native);
+    MESSAGE(drawn.size() << " tiles drawn, " << resident << " resident: with the trees left out none of their stage T, "
+                         << "then " << trees->built.load() << " built onto the tiles with " << tree_items
+                         << " items, the tiles drawn throughout; the first drawn at frame " << once.first << " of "
+                         << once.frames << ", each at 0 of its range, faded in over " << fade_seconds << " s");
+
+    // Left out again: every resident tile lets go of its trees at that frame's fence (their ranges back to the heaps
+    // once the frame is done, their data and items gone, their bit cleared), each under its handle, its ground as it
+    // was; nothing more built.
+    const int built = trees->built.load();
+    std::size_t with_trees = 0;
+    std::uint64_t tree_bytes = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        if (!scene::Residency::among(t->built, 1)) continue;
+        ++with_trees;
+        for (const scene::HeapRange& r : t->passes[1].ranges) tree_bytes += r ? r.size : 0U;
+    }
+    const std::uint64_t retired_before = w.residency().stats().retired;
+    c.parts = style::camera_part::trees;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    frame();
+    const std::uint64_t off_frame = n;
+    CHECK(w.residency().stats().retired - retired_before == with_trees);
+    std::size_t ground_now = 0;
+    native = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        CHECK_FALSE(scene::Residency::among(t->built, 1));
+        CHECK(std::ranges::none_of(t->passes[1].ranges, [](const scene::HeapRange& r) { return r.size > 0; }));
+        CHECK(t->passes[1].cpu == nullptr);
+        REQUIRE(t->item_runs.size() == 2);
+        CHECK(t->item_runs[1].second == 0U);
+        CHECK(t->item_runs[0].first == 0U);
+        CHECK(t->items.size() == t->item_runs[0].second);
+        REQUIRE(t->rows.size() == t->items.size());
+        for (const std::uint32_t row : t->rows) {
+            CHECK(w.items()->alive(row));
+            CHECK(w.items()->tile()[row] == t->handle);
+        }
+        ground_now += t->items.size();
+        native += t->native_bytes;
+    }
+    CHECK(ground_now == ground_items);
+    CHECK(w.items()->live() == ground_now);
+    CHECK(w.residency().stats().native_bytes == native);
+    for (const Drawn& d : drawn) {
+        const scene::ResidentTile* r = nullptr;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (t.drawn->key.packed() == d.key) r = t.drawn;
+        }
+        REQUIRE(r != nullptr);
+        CHECK(r->handle == d.handle);
+        CHECK(r->passes[0].ranges[0].offset == d.ground.offset);
+    }
+    // the ranges held until that frame is done (the last that may draw them), then free
+    REQUIRE(w.heaps() != nullptr);
+    w.heaps()->collect(off_frame - 1);
+    const scene::HeapStats held = w.heaps()->stats();
+    CHECK(held.retired_bytes >= tree_bytes);
+    w.heaps()->collect(off_frame);
+    const scene::HeapStats freed = w.heaps()->stats();
+    CHECK(held.total_used() - freed.total_used() == tree_bytes);
+    for (int k = 0; k < 5; ++k) {
+        frame();
+        w.residency().wait_idle();
+    }
+    CHECK(trees->built.load() == built);
+    CHECK(w.items()->live() == ground_items);
+    MESSAGE(with_trees << " resident tiles let go of their trees, " << tree_bytes << " heap bytes, at frame "
+                       << off_frame << "'s fence");
+
+    // Back again: built anew onto each tile drawn, which fade in from nothing as the first time.
+    const Back again = back_on();
+    CHECK(trees->built.load() > built);
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        CHECK(scene::Residency::among(t.drawn->built, 1));
+        CHECK(t.drawn->passes[1].ranges[0].size > 0);
+    }
+    MESSAGE("built again onto " << trees->built.load() - built << " tiles; the first drawn at frame " << again.first
+                                << " of " << again.frames);
+    (void)session->take_messages();
+}
+
+TEST_CASE("a part left out while another's top-ups are under way: they are taken onto the tiles as they are now, "
+          "and the passes after those let go of keep their items (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the parts' top-ups are not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in (always built), the trees' and the furniture's, each pass's items of a kind of its own
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto owned_trees = std::make_unique<BuildProbe>(style::camera_part::trees, "tree probe", std::uint16_t{1});
+    auto owned_things = std::make_unique<BuildProbe>(style::camera_part::furniture, "thing probe", std::uint16_t{2});
+    BuildProbe& trees = *owned_trees;
+    const BuildProbe& things = *owned_things;
+    passes.push_back(std::move(owned_trees));
+    passes.push_back(std::move(owned_things));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(),
+                             {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const Release release(trees); // after the world, so its builds go on before the world stops its workers
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    style::CameraState c = home();
+    std::uint64_t n = 0;
+    const auto frame = [&](std::uint64_t parts) {
+        c.parts = parts;
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        ++n;
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    // (twenty frames at least: nothing more asked after them)
+    const auto settle = [&](std::uint64_t parts) {
+        for (int k = 0; k < 80; ++k) {
+            frame(parts);
+            w.residency().wait_idle();
+            if (k >= 20 && !w.cover()->tiles().empty() && w.cover()->missing() == 0 && w.cover()->lacking() == 0 &&
+                !w.cover()->fading())
+                break;
+        }
+        ATLAS_REQUIRE(!w.cover()->tiles().empty(), "the Westerkerk home drew no tile");
+        CHECK(w.cover()->lacking() == 0);
+    };
+    // each pass's run of items: all of its kind, as many as the ground's (each probe adds one per building)
+    const auto runs_hold = [&w](const scene::ResidentTile& r, std::uint64_t built) {
+        REQUIRE(r.item_runs.size() == 3);
+        std::size_t items = 0;
+        for (std::size_t p = 0; p < 3; ++p) {
+            const auto [first, count] = r.item_runs[p];
+            if (!scene::Residency::among(built, p)) {
+                CHECK(count == 0U);
+                continue;
+            }
+            CHECK(count == r.item_runs[0].second);
+            CHECK(scene::first_of(r, p, static_cast<std::uint16_t>(p)) == (count > 0 ? first : r.items.size()));
+            for (std::uint32_t i = first; i < first + count && i < r.items.size(); ++i) {
+                CHECK(r.items[i].kind == p);
+                CHECK(w.items()->kind()[r.rows[i]] == p);
+            }
+            items += count;
+        }
+        CHECK(r.items.size() == items);
+    };
+
+    // The trees left out: the ground and the furniture built, their runs one after the other.
+    settle(style::camera_part::trees);
+    for (const scene::CoverTile& t : w.cover()->tiles()) runs_hold(*t.drawn, 5U);
+    const std::size_t drawn = w.cover()->tiles().size();
+
+    // The trees drawn: their top-ups begun and held under way; meanwhile the furniture left out, its passes let go of
+    // (each tile in its place anew). Let go, the top-ups are taken onto the tiles as they are then, every one: none is
+    // thrown away and built again.
+    trees.held = true;
+    const int entered = trees.entered.load();
+    const std::uint64_t topped = w.residency().stats().topped;
+    frame(0);
+    for (int k = 0; k < 5000 && trees.entered.load() == entered; ++k) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(trees.entered.load() > entered);
+    frame(style::camera_part::furniture);
+    for (const scene::CoverTile& t : w.cover()->tiles()) runs_hold(*t.drawn, 1U);
+    trees.held = false;
+    settle(style::camera_part::furniture);
+    const int trees_built = trees.built.load();
+    CHECK(trees_built > 0);
+    CHECK(w.residency().stats().topped - topped == static_cast<std::uint64_t>(trees_built));
+    for (const scene::CoverTile& t : w.cover()->tiles()) runs_hold(*t.drawn, 3U);
+
+    // The furniture back (built onto them after the trees), then the trees left out: the furniture's items move up
+    // where the trees' were, its run with them.
+    settle(0);
+    CHECK(things.built.load() > 0);
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        runs_hold(*t.drawn, 7U);
+        CHECK(t.drawn->item_runs[2].first == 2 * t.drawn->item_runs[0].second); // after the trees' this time
+    }
+    frame(style::camera_part::trees);
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        runs_hold(*t.drawn, 5U);
+        CHECK(t.drawn->item_runs[2].first == t.drawn->item_runs[0].second);
+    }
+    MESSAGE(drawn << " tiles drawn: " << trees_built << " trees' top-ups, " << trees.entered.load() - entered
+                  << " begun, every one taken onto its tile though the furniture was let go of meanwhile");
+    (void)session->take_messages();
+}
+
+TEST_CASE("the cover reckons each tile with every pass, whatever the parts drawn: with a pass left out and its tiles "
+          "built without it, the plan takes the room they take with it; a pass never built, none (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the cover's sizes are not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in and the trees', each a tile's 16 bytes and 4 a cell (the trees' half of every tile's)
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    passes.push_back(std::make_unique<BuildProbe>(style::camera_part::trees, "tree probe"));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    // a tile not drawn for half a second goes, whatever the heaps hold
+    auto world = scene::World::create(
+        *session->device, (*builder)->passes(),
+        {.workers = 3, .forget_seconds = 0.5, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    std::uint64_t n = 0;
+    const auto frames = [&](const style::CameraState& camera, int count) {
+        (*builder)->set_inputs({.camera = camera, .scene = &w});
+        for (int k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.05;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+        }
+    };
+    // the heaps' bytes the resident tiles hold
+    const auto held = [&w] {
+        std::uint64_t bytes = 0;
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            for (const scene::PassTile& p : t->passes) {
+                for (const scene::HeapRange& r : p.ranges) bytes += r.size;
+            }
+        }
+        return bytes;
+    };
+    // Every part drawn: the plan of the Westerkerk's home, its tiles built with both passes.
+    style::CameraState c = home();
+    frames(c, 30);
+    ATLAS_REQUIRE(!w.cover()->tiles().empty());
+    CHECK(w.cover()->missing() == 0);
+    const std::uint64_t every = w.cover()->planned();
+    const std::uint64_t whole = held();
+    // Away from the pack until every tile has gone, then back with the trees left out: the same places, their tiles
+    // built without the trees' pass, holding half the bytes; the plan reckons each as with it.
+    style::CameraState away = c;
+    away.longitude += 0.045;
+    frames(away, 30);
+    CHECK(w.residency().resident().empty());
+    c.parts = style::camera_part::trees;
+    frames(c, 30);
+    ATLAS_REQUIRE(!w.cover()->tiles().empty());
+    CHECK(w.cover()->missing() == 0);
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        CHECK_FALSE(scene::Residency::among(t->built, 1));
+    }
+    const std::uint64_t left_out = w.cover()->planned();
+    const std::uint64_t half = held();
+    MESSAGE("the plan: " << every << " bytes with every part (the tiles holding " << whole << "), " << left_out
+                         << " with the trees left out (the tiles holding " << half << ")");
+    // the trees' pass about half of every tile's bytes here; the plan's tiles reckoned at their own ground's bytes and
+    // the trees' share of their chunks' raw bytes, learnt from the tiles built with them (each its own spread)
+    CHECK(every > 0);
+    CHECK(half * 4 < whole * 3);
+    CHECK(left_out * 4 >= every * 3);
+    CHECK(left_out * 4 <= every * 5);
+
+    // A world begun with the trees left out knows nothing of their pass: it plans the tiles as built, the ground's
+    // bytes, never the first guess for a whole tile (16 bytes a raw byte, which would plan coarser tiles with a part
+    // left out than with it drawn); with the trees drawn its plan takes them once their top-ups are resident.
+    std::vector<std::unique_ptr<frame::Pass>> fresh_passes;
+    fresh_passes.push_back(std::make_unique<BuildProbe>());
+    fresh_passes.push_back(std::make_unique<BuildProbe>(style::camera_part::trees, "tree probe"));
+    auto fresh_builder = frame::FrameBuilder::create(*session->device, *cache, std::move(fresh_passes));
+    ATLAS_REQUIRE(fresh_builder.has_value(), fresh_builder.error().text());
+    auto fresh_world = scene::World::create(
+        *session->device, (*fresh_builder)->passes(),
+        {.workers = 3, .forget_seconds = 0.5, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(fresh_world.has_value(), fresh_world.error().text());
+    scene::World& f = **fresh_world;
+    auto fresh_added =
+        f.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(fresh_added.has_value(), tiles::describe(fresh_added.error()));
+    const auto fresh_frames = [&](const style::CameraState& camera, int count) {
+        (*fresh_builder)->set_inputs({.camera = camera, .scene = &f});
+        for (int k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.05;
+            ATLAS_REQUIRE((*fresh_builder)->derive(n, 0, nullptr));
+            f.update((*fresh_builder)->state());
+            f.residency().wait_idle();
+        }
+    };
+    fresh_frames(c, 30); // c leaves the trees out
+    ATLAS_REQUIRE(!f.cover()->tiles().empty());
+    CHECK(f.cover()->missing() == 0);
+    const std::uint64_t unknown = f.cover()->planned();
+    style::CameraState drawn = c;
+    drawn.parts = 0;
+    fresh_frames(drawn, 30);
+    const std::uint64_t learnt = f.cover()->planned();
+    MESSAGE("begun with the trees left out: " << unknown << " bytes planned, " << learnt << " once they are drawn");
+    CHECK(unknown * 4 >= half * 3);
+    CHECK(unknown * 4 <= half * 5);
+    CHECK(learnt * 4 >= every * 3);
+    CHECK(learnt * 4 <= every * 5);
+    (void)session->take_messages();
+}
+
+TEST_CASE("an item kind whose parts are all left out is not placed: its items go with its passes, and come back placed "
+          "under the mask drawn in the frame that takes their top-ups") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    const std::filesystem::path canals = std::filesystem::path(dir) / "grachten.atlas";
+    if (dir.empty() || !std::filesystem::exists(canals)) {
+        MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the items' placing by parts is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    passes.push_back(std::make_unique<BuildProbe>(style::camera_part::trees, "tree probe"));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(),
+                             {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [id, path] : {std::pair{"amsterdam", westerkerk}, std::pair{"grachten", canals}}) {
+        auto added = w.store().add({.id = id, .kind = tiles::PackKind::bundled, .path = path.string()});
+        ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    }
+    // the canal ring around the Westerkerk (scene_vk_test's coarser pack), every part drawn: both probes' items
+    w.set_active("amsterdam");
+    w.set_coarser("grachten");
+    style::CameraState c = home();
+    c.distance = 1600.0;
+    c.flags = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    std::uint64_t n = 0;
+    const auto frame = [&] {
+        ++n;
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    for (int k = 0; k < 60; ++k) {
+        frame();
+        w.residency().wait_idle();
+    }
+    ATLAS_REQUIRE(w.coarser() != nullptr);
+    ATLAS_REQUIRE(w.mask().has_value());
+    const tiles::GridBox mask = *w.mask();
+    const tiles::Frame& cf = w.coarser()->pack.head()->frame;
+    const auto inside = [&cf](const scene::ItemSpec& s, const tiles::GridBox& m) {
+        return s.cut_x >= cf.x(m.west) && s.cut_x <= cf.x(m.east) && s.cut_z >= cf.z(m.north) &&
+               s.cut_z <= cf.z(m.south);
+    };
+    // each canal ring item's mask, of the probes' passes (0 the ground's stand-in, 1 the trees')
+    const auto each = [&w](const auto& f) {
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            if (t->pack != "grachten") continue;
+            REQUIRE(t->item_runs.size() == 2);
+            for (std::size_t p = 0; p < 2; ++p) {
+                const auto [first, count] = t->item_runs[p];
+                for (std::uint32_t i = first; i < first + count; ++i) {
+                    f(p, t->items[i], (w.items()->flags()[t->rows[i]] & scene::item_flag::masked) != 0);
+                }
+            }
+        }
+    };
+    std::array<std::size_t, 2> masked{};
+    each([&](std::size_t p, const scene::ItemSpec& s, bool m) {
+        CHECK(m == inside(s, mask));
+        if (m) ++masked.at(p);
+    });
+    CHECK(masked[0] > 0);
+    CHECK(masked[1] > 0);
+    // The trees left out, then a mask that holds none of the canal ring: the ground's stand-in's items placed again,
+    // none masked; the trees' let go of with their pass (ENGINE.md's parts), none left to place.
+    c.parts = style::camera_part::trees;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    frame();
+    const tiles::GridBox none{.south = mask.south, .west = mask.west, .north = mask.south, .east = mask.west};
+    w.set_coarser("grachten", none);
+    frame();
+    ATLAS_REQUIRE(w.mask() == none);
+    std::array<std::size_t, 2> left{};
+    std::array<std::size_t, 2> waiting{};
+    each([&](std::size_t p, const scene::ItemSpec& s, bool m) {
+        CHECK(m == inside(s, none));
+        ++left.at(p);
+        if (m) ++waiting.at(p);
+    });
+    CHECK(left[0] > 0);
+    CHECK(waiting[0] == 0);
+    CHECK(left[1] == 0);
+    // The mask as it was, the trees still left out: the ground's stand-in's items masked again, as they lie.
+    w.set_coarser("grachten", mask);
+    frame();
+    ATLAS_REQUIRE(w.mask() == mask);
+    // The trees back: built onto the canal ring's tiles drawn (their top-ups), their items placed in the frame that
+    // takes them, under the mask drawn: after every frame each item there is masked as it lies (a top-up's items not
+    // placed would keep their builder's flags, none masked).
+    c.parts = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    std::array<std::size_t, 2> back{};
+    std::array<std::size_t, 2> back_masked{};
+    int frames = 0;
+    for (int k = 0; k < 60; ++k) {
+        frame();
+        ++frames;
+        back = {};
+        back_masked = {};
+        each([&](std::size_t p, const scene::ItemSpec& s, bool m) {
+            CHECK(m == inside(s, mask));
+            ++back.at(p);
+            if (m) ++back_masked.at(p);
+        });
+        w.residency().wait_idle();
+        if (k >= 2 && back[1] > 0 && w.cover()->lacking() == 0) break;
+    }
+    CHECK(back[1] > 0);
+    CHECK(back_masked[1] > 0);
+    MESSAGE(masked[0] << " and " << masked[1] << " of the canal ring's items of the two passes masked; with the trees "
+                      << "left out, " << left[1] << " of theirs left; back, " << back[1] << " built onto its tiles in "
+                      << frames << " frames, " << back_masked[1] << " of them masked in the frame that took them");
+    (void)session->take_messages();
+}
+
+TEST_CASE("the sun left out, or every part that reads its bits: no scene, no bucket, every tile drawn without bits; "
+          "drawn again, its scenes and runs come again") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's switch is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    REQUIRE(w.sun() != nullptr);
+    style::CameraState c = home();
+    std::uint64_t n = 0;
+    const auto settle = [&](const style::CameraState& at, int frames) {
+        (*builder)->set_inputs({.camera = at, .scene = &w});
+        for (int k = 0; k < frames; ++k) {
+            ++n;
+            now = static_cast<double>(n) * 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.sun()->wait_idle();
+        }
+        now = now + 1.0; // past every fade
+        ++n;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    const auto lit = [&w] {
+        return std::ranges::count_if(w.cover()->tiles(), [](const scene::CoverTile& t) {
+            return t.drawn->key.z == t.key.z && t.sun && t.sun_base != scene::no_sun;
+        });
+    };
+    settle(c, 40);
+    const scene::SunStats on = w.sun()->stats();
+    CHECK(on.on);
+    CHECK(on.scenes >= 1);
+    CHECK(on.runs >= 1);
+    CHECK(on.runs_ms > 0.0);
+    CHECK(on.scenes_ms > 0.0);
+    CHECK(on.run_tiles >= 1);
+    CHECK(lit() > 0);
+    CHECK(w.tiles_line().find(" sun on scenes ") != std::string::npos);
+    // Left out, the sun itself, then every part that reads its bits, the camera moving between (a scene and a bucket
+    // the sun on would ask for): no lane works, no texel is written, every tile drawn without bits, none kept.
+    style::CameraState moved = c;
+    moved.latitude += 0.002;
+    moved.bearing += 20.0;
+    for (const std::uint64_t off : {style::camera_part::sun, style::camera_part::sun_readers}) {
+        CAPTURE(off);
+        style::CameraState there = c;
+        there.parts = off;
+        settle(there, 3);
+        there = moved;
+        there.parts = off;
+        settle(there, 10);
+        const scene::SunStats s = w.sun()->stats();
+        CHECK_FALSE(s.on);
+        CHECK(s.scenes == on.scenes);
+        CHECK(s.runs == on.runs);
+        CHECK(s.texels == 0U);
+        CHECK(w.sun()->bits().size() == 0U);
+        CHECK_FALSE(w.sun()->fading());
+        CHECK_FALSE(w.cover()->tiles().empty());
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            CHECK_FALSE(t.sun.has_value());
+            CHECK(t.sun_base == scene::no_sun);
+        }
+        CHECK(w.tiles_line().find(" sun off scenes ") != std::string::npos);
+    }
+    // Drawn again, the camera held where it was left out: its scenes made again and their buckets run, and once the
+    // sun is idle every tile drawn at its finest zoom lit, though the scenes' tiles and the tiles resident are those
+    // of before (the rest let go of every lane's pack and bucket, so each lane asks again as a new one does).
+    settle(moved, 40);
+    const scene::SunStats back = w.sun()->stats();
+    CHECK(back.on);
+    CHECK(back.scenes > on.scenes);
+    CHECK(back.runs > on.runs);
+    CHECK(lit() > 0);
+    const std::vector<std::string> unlit = drawn_without_bits(w);
+    CHECK_MESSAGE(unlit.empty(), std::format("{} tile(s) drawn without their sun bits after the sun went idle, the "
+                                             "first {}",
+                                             unlit.size(), unlit.empty() ? std::string() : unlit.front()));
+    MESSAGE("the sun: " << on.scenes << " scene(s) in " << on.scenes_ms << " ms and " << on.runs << " run(s) of "
+                        << on.run_tiles << " tiles in " << on.runs_ms << " ms; none while left out; then "
+                        << back.scenes << " and " << back.runs << " with it drawn again; " << w.tiles_line());
+    (void)session->take_messages();
+}
+
+namespace {
+
+/// Whether the world session's by-day path is merged in (standcheck, which lands before this: sun::by_day, and
+/// FirstLight in SunGlobals::prepare): a tile without bits drawn by day, its faces as they face the sun and its crowns
+/// lit, and its first bits faded in from by day. Without it a tile without bits draws its faces in the shade and its
+/// first bits show at once, and the sun's return below is not checked.
+template <class Bits>
+concept ByDayPath = requires(const Bits& b) { by_day(b); };
+
+} // namespace
+
+TEST_CASE("the sun left out and drawn again: every tile drawn without bits, by day, while it is out; as it comes "
+          "back, its first bits faded in from by day, no sample's light falling faster than a fade's, though it was "
+          "left out again mid-fade (ENGINE.md's parts)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if constexpr (!ByDayPath<sun::TileBits>) {
+        MESSAGE("the by-day path (standcheck) is not merged in: the sun's return is not checked here");
+    } else if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's return is not checked here");
+    } else {
+        auto session = test::open_session();
+        if (!session) return;
+        auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+        ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE(world.has_value(), world.error().text());
+        scene::World& w = **world;
+        auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+        ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+        REQUIRE(w.sun() != nullptr);
+        std::uint64_t n = 0;
+        // a frame 50 ms after the last, so that a fade's 300 ms take six, the workers and the sun waited for after it
+        const auto frame = [&](const style::CameraState& at) {
+            (*builder)->set_inputs({.camera = at, .scene = &w});
+            ++n;
+            now = now.load() + 0.05;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.sun()->wait_idle();
+        };
+        // Each drawn tile's samples' light this frame, as the faces' and crowns' shaders take it from its texels: the
+        // new bit and the old at its fade's weight (sun::lit_amount); a tile without bits by day (an empty list: every
+        // sample lit).
+        using Lights = std::map<std::uint64_t, std::vector<double>>;
+        const auto lights = [&w] {
+            Lights out;
+            const std::span<const std::byte> bytes = w.sun()->buffer().bytes();
+            for (const scene::CoverTile& t : w.cover()->tiles()) {
+                if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor's: not its own bits
+                std::vector<double>& l = out[t.drawn->key.packed()];
+                if (!t.sun || t.sun_base == scene::no_sun) continue;
+                const std::uint32_t count = t.sun->now->count;
+                REQUIRE(bytes.size() >= (std::size_t{t.sun_base} + ((count + 31) / 32)) * 8);
+                l.resize(count);
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    std::array<std::uint32_t, 2> texel{};
+                    std::memcpy(texel.data(), bytes.data() + ((std::size_t{t.sun_base} + (i / 32)) * 8), sizeof texel);
+                    const bool lit_now = ((texel[0] >> (i % 32)) & 1U) != 0U;
+                    const bool lit_before = ((texel[1] >> (i % 32)) & 1U) != 0U;
+                    l[i] = sun::lit_amount(lit_before, lit_now, static_cast<double>(t.sun_weight));
+                }
+            }
+            return out;
+        };
+        const auto lit = [&w] {
+            return std::ranges::count_if(w.cover()->tiles(), [](const scene::CoverTile& t) {
+                return t.drawn->key.z == t.key.z && t.sun && t.sun_base != scene::no_sun;
+            });
+        };
+        const auto fading = [&w] {
+            return std::ranges::any_of(w.cover()->tiles(), [](const scene::CoverTile& t) {
+                return t.drawn->key.z == t.key.z && t.sun && t.sun_weight < 1.0F;
+            });
+        };
+        const auto settled = [&] { return lit() > 0 && !w.sun()->fading() && !fading(); };
+        // From frame to frame no sample's light falls by more than a fade's step (50 ms of its 300): a face going into
+        // the shade fades into it. Its light may rise at once (the sun left out: every tile by day).
+        const double step = 0.05 / sun::fade_seconds;
+        std::size_t fell = 0; // samples whose light went below half over the frames checked
+        double most = 0;      // the most a sample's light fell in a frame
+        const auto check = [&](const Lights& before, const Lights& after) {
+            for (const auto& [key, l] : after) {
+                const auto was = before.find(key);
+                if (was == before.end()) continue; // a tile new to the frame: the cover's own fade
+                const std::vector<double>& b = was->second;
+                for (std::size_t i = 0; i < std::max(l.size(), b.size()); ++i) {
+                    const double from = i < b.size() ? b[i] : 1.0;
+                    const double to = i < l.size() ? l[i] : 1.0;
+                    most = std::max(most, from - to);
+                    if (from - to > step + 1e-3) {
+                        FAIL_CHECK("tile " << key << "'s sample " << i << " fell from " << from << " to " << to);
+                        return;
+                    }
+                    if (from >= 0.5 && to < 0.5) ++fell;
+                }
+            }
+        };
+        const auto drawn_again = [&] {
+            Lights last = lights();
+            int frames = 0;
+            for (; frames < 200 && (frames <= 0 || !settled()); ++frames) {
+                frame(home());
+                const Lights l = lights();
+                check(last, l);
+                last = l;
+            }
+            CHECK(settled());
+            // the camera held all along: once the sun is idle and its fades are over, every tile drawn has its bits,
+            // not only some, though the scenes' tiles and the tiles resident are those of before (only the rest's
+            // letting go of every lane's pack and bucket asks for them again)
+            const std::vector<std::string> unlit = drawn_without_bits(w);
+            CHECK_MESSAGE(unlit.empty(), std::format("{} tile(s) drawn without their sun bits after the sun went "
+                                                     "idle, the first {}",
+                                                     unlit.size(), unlit.empty() ? std::string() : unlit.front()));
+            return frames;
+        };
+        for (int k = 0; k < 200 && (k <= 10 || !settled()); ++k) frame(home());
+        REQUIRE(settled());
+        // Left out: every tile without bits, so by day, at once.
+        style::CameraState off = home();
+        off.parts = style::camera_part::sun;
+        for (int k = 0; k < 3; ++k) frame(off);
+        CHECK_FALSE(w.cover()->tiles().empty());
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            CHECK_FALSE(t.sun.has_value());
+            CHECK(t.sun_base == scene::no_sun);
+        }
+        // Drawn again: its bits made anew (the rest dropped every tile's, BitTiles::clear, with the time of its first
+        // bits), so they cross-fade from by day from their publication, no face shaded at once.
+        const int frames = drawn_again();
+        const std::size_t fell_back = fell;
+        CHECK(fell_back > 0); // shadows fell, faded in
+        // Left out again mid-fade, then drawn again: the fade from by day begins again, never the bits at once.
+        for (int k = 0; k < 3; ++k) frame(off);
+        Lights last = lights();
+        for (int k = 0; k < 200 && !fading(); ++k) {
+            frame(home());
+            const Lights l = lights();
+            check(last, l);
+            last = l;
+        }
+        CHECK(fading());
+        for (int k = 0; k < 2; ++k) frame(off);
+        drawn_again();
+        CHECK(fell > fell_back);
+        MESSAGE("the sun drawn again: its bits in " << frames << " frames, " << fell_back << " samples into the shade, "
+                                                    << "at most " << most << " of their light a frame (a fade's step "
+                                                    << step << "); " << w.tiles_line());
+        (void)session->take_messages();
+    }
 }
 
 TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has no tile, with their own sun") {
@@ -2722,4 +3883,591 @@ TEST_CASE("a pass's providers come with the world, made with the world's resourc
     }
     const auto messages = session->take_messages();
     CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+}
+
+TEST_CASE(
+    "a top-up that finds no room, of a tile the cover asks for, is made room for: the spare tiles go (ENGINE.md's "
+    "parts)") {
+    // Two windows either side of an L13's edge, P east and Q west, each with a house beside the edge, under one L12,
+    // the trees' pass left out, P's window not listed yet (its place drawn by its L13): seen from 7 km over the edge
+    // (each place at its L13, the L12 kept under them), then from 300 m (Q drawn, its L13 spare). The heaps then hold
+    // 1 KB free; P's window comes, and the trees with it: P's place asks for P, and for the L12 as its ancestor while
+    // P comes, resident and lacking the trees. P (1.5 KB, reckoned 0.5 KB while no tile's trees are known) finds no
+    // room, nor does the L12's top-up (4 KB). With 4 KB more free, P fits and the L12's top-up after it does not, so
+    // room is made for it: the spare L13 goes. Reckoned as needing none, nothing went: its range fits the free piece,
+    // so it is not stuck, which makes room whatever it needs. (Q's top-up, of a tile its place plans, counts too,
+    // after the cover's requests, and the L13's, a stand-in's, does not: the next two cases.)
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-top-up-room";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey around = tiles::tile_of(14, 523'000'000, 47'500'000);
+    // P the west child of its L13, Q beside it the east child of the L13 west of it, under the same L12
+    const tiles::TileKey p(14, (around.x & ~3U) | 2U, around.y);
+    const tiles::TileKey q(14, p.x - 1, p.y);
+    const tiles::TileKey p13(13, p.x >> 1U, p.y >> 1U);
+    const tiles::TileKey q13(13, q.x >> 1U, q.y >> 1U);
+    const tiles::TileKey l12(12, p.x >> 2U, p.y >> 2U);
+    ATLAS_REQUIRE(p13 != q13 && l12 == tiles::TileKey(12, q.x >> 2U, q.y >> 2U));
+    const std::array<std::int32_t, 4> box = tiles::tile_box(p);
+    const double lat = (box[0] + box[2]) / 2e7;
+    const double edge = box[1] / 1e7; // P's west edge, Q's east
+    const double dlat = 40.0 / 110540.0;
+    const double metre = 1.0 / (111320.0 * pymath::cos(pymath::radians(lat))); // a metre east, in degrees
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    for (const auto& [place, west] : {std::pair{q, edge - (50 * metre)}, {p, edge + (10 * metre)}}) {
+        std::string geometry;
+        for (const auto& [a, o] :
+             {std::pair{0.0, 0.0}, {0.0, 40 * metre}, {dlat, 40 * metre}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, west + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":7,"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            geometry);
+        auto built =
+            load::build_window(std::as_bytes(std::span(json.data(), json.size())), place, load::place_of(place));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", place.x, place.y), std::move(built->pack));
+    }
+    const std::array<std::span<const std::byte>, 2> windows{std::span<const std::byte>(packs[0].second),
+                                                            std::span<const std::byte>(packs[1].second)};
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 3); // the two L13 tiles and their L12
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in on every tile, 8 KB on an L13; the trees', two ranges of 4 KB on a level's tile, of 512
+    // bytes on a window
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<RoomProbe>(~std::uint64_t{0}, "ground probe", 1,
+                                                 std::array<std::uint32_t, 3>{256, 8192, 512}));
+    passes.push_back(std::make_unique<RoomProbe>(style::camera_part::trees, "tree probe", 2,
+                                                 std::array<std::uint32_t, 3>{4096, 4096, 512}));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    // heaps of 32 KB, and no tile let go of for being idle: the room is make_room's to make
+    constexpr std::uint64_t total = 32768;
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1,
+                                       .idle_seconds = 1e6,
+                                       .forget_seconds = 1e6,
+                                       .heaps = {.initial = total, .total = total},
+                                       .sun = {.enabled = false},
+                                       .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const auto add = [&](const std::pair<std::string, std::vector<std::byte>>& pack) {
+        std::string file = pack.first;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.second.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.second.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + pack.first, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    };
+    add(packs[0]); // Q's window, and the levels; P's comes later
+    for (std::size_t i = 2; i < packs.size(); ++i) add(packs[i]);
+    style::CameraState c = home();
+    c.latitude = lat + (dlat / 2);
+    c.longitude = edge;
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.parts = style::camera_part::trees;
+    std::uint64_t n = 0;
+    // each frame's retired ranges freed after it, as the heaps' globals do as a frame is recorded
+    const auto frames = [&](std::uint64_t count) {
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.heaps()->bound(n);
+            w.heaps()->collect(n);
+        }
+    };
+    const auto resident = [&w](const tiles::TileKey& k) -> std::shared_ptr<const scene::ResidentTile> {
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            if (t->key == k) return t;
+        }
+        return nullptr;
+    };
+    // what the residency holds and the cover asks for, said where a step fails
+    const auto said = [&]() {
+        std::string s = "resident";
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            s += std::format(" {}/{}/{}:{}", t->key.z, t->key.x, t->key.y, t->built);
+        }
+        s += "; asked";
+        for (const auto& r : w.cover()->requests()) s += std::format(" {}/{}/{}", r.key.z, r.key.x, r.key.y);
+        s += "; spare";
+        for (const auto& t : w.cover()->spare()) s += std::format(" {}/{}/{}", t.key.z, t.key.x, t.key.y);
+        return std::format("{}; free {}; {}", s, w.heaps()->free_bytes(), w.tiles_line());
+    };
+    c.distance = 7000.0;
+    frames(2);
+    w.set_active(std::format("window/14/{}/{}", q.x, q.y));
+    frames(40);
+    ATLAS_REQUIRE(resident(p13) != nullptr && resident(q13) != nullptr, "both L13 drawn from 7 km: " + said());
+    ATLAS_REQUIRE(resident(l12) != nullptr, "the L12 kept under them: " + said());
+    c.distance = 300.0;
+    frames(40);
+    ATLAS_REQUIRE(resident(q) != nullptr, "Q drawn from 300 m: " + said());
+    ATLAS_REQUIRE(std::ranges::any_of(w.cover()->spare(), [&](const auto& s) { return s.key == q13; }),
+                  "Q's L13 spare under it: " + said());
+    // 1 KB free in one piece, and 4 KB the test lets go of later
+    const std::uint64_t free = w.heaps()->free_bytes();
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == free);
+    ATLAS_REQUIRE(free > 5120);
+    auto blocker = w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(free - 5120));
+    ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
+    auto back = w.heaps()->allocate(scene::HeapKind::points, 4096);
+    ATLAS_REQUIRE(back.has_value(), back.error().text());
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == 1024);
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == 1024);
+    // P's window and the trees come: P and the L12's top-up find no room (Q's top-up takes the 1 KB).
+    add(packs[1]);
+    c.parts = 0;
+    const std::uint64_t failed = w.residency().stats().failed;
+    frames(1);
+    ATLAS_REQUIRE(resident(p) == nullptr, "P found no room: " + said());
+    CHECK_MESSAGE(w.residency().stats().failed >= failed + 2, said());
+    CHECK((resident(l12)->built & 0b10U) == 0U);
+    // 4 KB back: P fits, the L12's top-up after it does not, and the spare L13 goes for it.
+    w.heaps()->retire(*back, 0);
+    w.heaps()->collect(0);
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == 4096, said());
+    frames(6);
+    CHECK_MESSAGE(resident(q13) == nullptr, "no room was made for the L12's top-up: " << said());
+    CHECK_MESSAGE(resident(p) != nullptr, said());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a top-up that finds no room, of a tile drawn, is made room for: the spare tiles go and it is built "
+          "(ENGINE.md's parts)") {
+    // A window of cell 525/336 and its levels (an L13 and an L12 tile), the trees' pass left out: seen from 7 km (its
+    // place at L13), then from 300 m (at L14, its L12 kept under it, its L13 spare). The heaps then hold 6 KB free in
+    // one piece, and the trees come back: their top-up of the window, two ranges of 4 KB, finds no room after its
+    // first. Its 8 KB do not fit, so room is made for it: the spare L13 goes (8 KB), and the top-up is built. Until 5
+    // November no room was made: make_room counted the cover's requests alone, and the cover asks for no tile it
+    // draws, so the top-up waited for the idle tiles to go (2 s after their last frame once the heaps are three
+    // quarters full, 30 s else; here none goes for being idle, so it waited for good); reckoned as needing none,
+    // likewise.
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-top-up-drawn";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey place = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey coarse(13, place.x >> 1U, place.y >> 1U);
+    const std::array<std::int32_t, 4> box = tiles::tile_box(place);
+    const double lat = (box[0] + box[2]) / 2e7;
+    const double lon = (box[1] + box[3]) / 2e7;
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    {
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":7,"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            geometry);
+        auto built =
+            load::build_window(std::as_bytes(std::span(json.data(), json.size())), place, load::place_of(place));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", place.x, place.y), std::move(built->pack));
+    }
+    const std::array<std::span<const std::byte>, 1> windows{std::span<const std::byte>(packs[0].second)};
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 2); // its L13 and L12 tiles
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in on every tile, 8 KB on an L13; the trees', two ranges of 4 KB
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<RoomProbe>(~std::uint64_t{0}, "ground probe", 1,
+                                                 std::array<std::uint32_t, 3>{256, 8192, 512}));
+    passes.push_back(std::make_unique<RoomProbe>(style::camera_part::trees, "tree probe", 2,
+                                                 std::array<std::uint32_t, 3>{4096, 4096, 4096}));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    // heaps of 32 KB, and no tile let go of for being idle: the room is make_room's to make
+    constexpr std::uint64_t total = 32768;
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1,
+                                       .idle_seconds = 1e6,
+                                       .forget_seconds = 1e6,
+                                       .heaps = {.initial = total, .total = total},
+                                       .sun = {.enabled = false},
+                                       .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, pack] : packs) {
+        std::string file = name;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    style::CameraState c = home();
+    c.latitude = lat;
+    c.longitude = lon;
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.parts = style::camera_part::trees;
+    std::uint64_t n = 0;
+    // each frame's retired ranges freed after it, as the heaps' globals do as a frame is recorded
+    const auto frames = [&](std::uint64_t count) {
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.heaps()->bound(n);
+            w.heaps()->collect(n);
+        }
+    };
+    const auto resident = [&w](const tiles::TileKey& k) -> std::shared_ptr<const scene::ResidentTile> {
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            if (t->key == k) return t;
+        }
+        return nullptr;
+    };
+    c.distance = 7000.0;
+    frames(2);
+    w.set_active(std::format("window/14/{}/{}", place.x, place.y));
+    frames(40);
+    ATLAS_REQUIRE(resident(coarse) != nullptr, "the place's L13 drawn from 7 km");
+    c.distance = 300.0;
+    frames(40);
+    ATLAS_REQUIRE(resident(place) != nullptr, "the window drawn from 300 m");
+    ATLAS_REQUIRE(std::ranges::any_of(w.cover()->spare(), [&](const auto& s) { return s.key == coarse; }),
+                  "the L13 spare under the window");
+    CHECK((resident(place)->built & 0b10U) == 0U);
+    // 6 KB free in one piece
+    const std::uint64_t free = w.heaps()->free_bytes();
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == free);
+    ATLAS_REQUIRE(free > 6144);
+    auto blocker = w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(free - 6144));
+    ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == 6144);
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == 6144);
+    // The trees back: their top-up of the window finds no room, then room is made for it.
+    c.parts = 0;
+    const std::uint64_t failed = w.residency().stats().failed;
+    bool built = false;
+    for (int k = 0; k < 60 && !built; ++k) {
+        frames(1);
+        built = resident(place) != nullptr && (resident(place)->built & 0b10U) != 0U;
+    }
+    CHECK(w.residency().stats().failed > failed); // it found no room first
+    CHECK_MESSAGE(built, "the window's trees' top-up waited for room that was never made: " << w.tiles_line());
+    CHECK(resident(coarse) == nullptr); // the spare L13 went for it
+    CHECK(resident(place) != nullptr);
+    (void)session->take_messages();
+}
+
+TEST_CASE("a top-up of a stand-in that finds no piece makes no room: the stand-in stays drawn, and the frame's own "
+          "tiles are asked for meanwhile (ENGINE.md's parts)") {
+    // A window P and its levels (an L13 and an L12 tile), the trees' pass left out, seen from 7 km: P's place drawn by
+    // its L13, the L12 kept under it as the place's coarsest level. The heaps then hold 1 KB free, and 10.5 KB that the
+    // test lets go of later in three pieces of 3.5 KB apart. The trees come back: the L13 lacks them and finds no room
+    // (its two ranges of 4 KB, no piece), the L12, kept but not asked for while the L13 is drawn, lacks them too. With
+    // the 10.5 KB back, from 300 m: P's place asks for P (5.2 KB reckoned, its chunk's raw bytes at the levels' share,
+    // the trees' none yet; 1.5 KB built) and for the L12 as its ancestor, resident and lacking the trees (two ranges of
+    // 1 KB), while its L13 stands in for P, drawn and lacking them too. P and the L12's top-up fit, and the L13's finds
+    // no piece, the largest free being 3.5 KB. A stand-in's top-up is moot once the tiles of its places come, so it is
+    // not one of the frame's own requests and makes no room: the L13 stays drawn while it waits, nothing is held, P and
+    // the L12's trees come, and the L13 is not let go of. Counted, in the residency's order (a draft of 5 November), it
+    // held back every request after it (its stand-in's bytes reckoned as coming, as the L13 goes once P comes), the
+    // L12's top-up among them, until P came.
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-top-up-stand-in";
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    const tiles::TileKey p = tiles::tile_of(14, 523'000'000, 47'500'000);
+    const tiles::TileKey p13(13, p.x >> 1U, p.y >> 1U);
+    const tiles::TileKey l12(12, p.x >> 2U, p.y >> 2U);
+    const std::array<std::int32_t, 4> box = tiles::tile_box(p);
+    const double lat = (box[0] + box[2]) / 2e7;
+    const double lon = (box[1] + box[3]) / 2e7;
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+    {
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry +=
+                std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", lat + a, lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":7,"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            geometry);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), p, load::place_of(p));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        packs.emplace_back(std::format("14/{}/{}", p.x, p.y), std::move(built->pack));
+    }
+    const std::array<std::span<const std::byte>, 1> windows{std::span<const std::byte>(packs[0].second)};
+    auto levels = load::build_levels(windows);
+    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
+    ATLAS_REQUIRE(levels->size() == 2); // its L13 and L12 tiles
+    for (load::BuiltLevel& l : *levels) {
+        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // the ground's stand-in on every tile, 8 KB on an L13; the trees', two ranges of 1 KB on an L12, of 4 KB on an
+    // L13 and of 512 bytes on a window
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<RoomProbe>(~std::uint64_t{0}, "ground probe", 1,
+                                                 std::array<std::uint32_t, 3>{256, 8192, 512}));
+    passes.push_back(std::make_unique<RoomProbe>(style::camera_part::trees, "tree probe", 2,
+                                                 std::array<std::uint32_t, 3>{1024, 4096, 512}));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    // heaps of 32 KB, and no tile let go of for being idle: the room is make_room's to make
+    constexpr std::uint64_t total = 32768;
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 1,
+                                       .idle_seconds = 1e6,
+                                       .forget_seconds = 1e6,
+                                       .heaps = {.initial = total, .total = total},
+                                       .sun = {.enabled = false},
+                                       .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [name, pack] : packs) {
+        std::string file = name;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.size()));
+        o.close();
+        const auto joined =
+            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    style::CameraState c = home();
+    c.latitude = lat;
+    c.longitude = lon;
+    c.bearing = 0.0;
+    c.pitch = 0.0;
+    c.parts = style::camera_part::trees;
+    std::uint64_t n = 0;
+    // each frame's retired ranges freed after it, as the heaps' globals do as a frame is recorded
+    const auto frames = [&](std::uint64_t count) {
+        (*builder)->set_inputs({.camera = c, .scene = &w});
+        for (std::uint64_t k = 0; k < count; ++k) {
+            ++n;
+            now = now.load() + 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            w.heaps()->bound(n);
+            w.heaps()->collect(n);
+        }
+    };
+    const auto resident = [&w](const tiles::TileKey& k) -> std::shared_ptr<const scene::ResidentTile> {
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            if (t->key == k) return t;
+        }
+        return nullptr;
+    };
+    // what the residency holds and the cover asks for, said where a step fails
+    const auto said = [&]() {
+        std::string s = "resident";
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            s += std::format(" {}/{}/{}:{}", t->key.z, t->key.x, t->key.y, t->built);
+        }
+        s += "; asked";
+        for (const auto& r : w.cover()->requests()) s += std::format(" {}/{}/{}", r.key.z, r.key.x, r.key.y);
+        s += "; standing";
+        for (const auto& t : w.cover()->stand_ins()) s += std::format(" {}/{}/{}", t.key.z, t.key.x, t.key.y);
+        return std::format("{}; free {} largest {}; {}", s, w.heaps()->free_bytes(),
+                           w.heaps()->largest_free(scene::HeapKind::points), w.tiles_line());
+    };
+    c.distance = 7000.0;
+    frames(2);
+    w.set_active(std::format("window/14/{}/{}", p.x, p.y));
+    frames(40);
+    ATLAS_REQUIRE(resident(p13) != nullptr && resident(l12) != nullptr, "P's L13 drawn from 7 km: " + said());
+    ATLAS_REQUIRE(resident(p) == nullptr, "P's place at its L13 from 7 km: " + said());
+    // 1 KB free in one piece, and three pieces of 3.5 KB apart that the test lets go of later
+    const std::uint64_t free = w.heaps()->free_bytes();
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == free);
+    constexpr std::uint32_t back_bytes = 3584;
+    constexpr std::uint64_t kept_free = 1024;
+    constexpr std::uint64_t backs_apart = std::uint64_t{3} * (back_bytes + 512); // the pieces, each with 512 B after it
+    ATLAS_REQUIRE(free > backs_apart + kept_free);
+    auto blocker =
+        w.heaps()->allocate(scene::HeapKind::points, static_cast<std::uint32_t>(free - backs_apart - kept_free));
+    ATLAS_REQUIRE(blocker.has_value(), blocker.error().text());
+    std::vector<scene::HeapRange> backs;
+    for (int k = 0; k < 3; ++k) {
+        auto back = w.heaps()->allocate(scene::HeapKind::points, back_bytes);
+        ATLAS_REQUIRE(back.has_value(), back.error().text());
+        backs.push_back(*back);
+        const auto apart = w.heaps()->allocate(scene::HeapKind::points, 512); // kept: the pieces stay apart
+        ATLAS_REQUIRE(apart.has_value(), apart.error().text());
+    }
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == kept_free);
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) == kept_free);
+    // The trees back from 7 km: the L13 drawn at its place finds no room for them (the L12 under it, kept, is not
+    // asked for while the L13 is drawn).
+    c.parts = 0;
+    const std::uint64_t failed = w.residency().stats().failed;
+    frames(1);
+    CHECK_MESSAGE(w.residency().stats().failed >= failed + 1, said());
+    ATLAS_REQUIRE(resident(p13) != nullptr && resident(l12) != nullptr, "both still drawn: " + said());
+    CHECK((resident(p13)->built & 0b10U) == 0U);
+    CHECK((resident(l12)->built & 0b10U) == 0U);
+    // 10.5 KB back in three pieces, and from 300 m: P and the L12's top-up fit, and the L13's waits for a piece.
+    for (const scene::HeapRange& r : backs) w.heaps()->retire(r, 0);
+    w.heaps()->collect(0);
+    ATLAS_REQUIRE(w.heaps()->free_bytes() == (std::uint64_t{3} * back_bytes) + kept_free, said());
+    ATLAS_REQUIRE(w.heaps()->largest_free(scene::HeapKind::points) < 4096, said());
+    c.distance = 300.0;
+    frames(1);
+    ATLAS_REQUIRE(resident(p) == nullptr, "P built, taken the next frame: " + said());
+    ATLAS_REQUIRE(std::ranges::any_of(w.cover()->stand_ins(), [&](const auto& s) { return s.key == p13; }),
+                  "P's L13 stands in for it: " + said());
+    const auto drawn = [&w](const tiles::TileKey& k) {
+        return std::ranges::any_of(w.cover()->tiles(), [&k](const scene::CoverTile& t) { return t.key == k; });
+    };
+    CHECK_MESSAGE(drawn(p13), "P's L13 not drawn while its top-up waits: " << said());
+    // nothing held while the L13's top-up waits: P, the L12's top-up and the L13's asked for
+    for (const scene::Request& r : w.asked()) {
+        CHECK_MESSAGE(!r.held, std::format("{}/{}/{} held: ", r.key.z, r.key.x, r.key.y) << said());
+    }
+    frames(1); // P and the L12's trees taken, as built the frame before
+    CHECK_MESSAGE(resident(p) != nullptr, said());
+    CHECK_MESSAGE((resident(l12) != nullptr && (resident(l12)->built & 0b10U) != 0U),
+                  "the L12's top-up held back behind the L13's: " << said());
+    frames(4);
+    CHECK_MESSAGE(resident(p13) != nullptr, "P's L13 went to make room for a top-up: " << said());
+    (void)session->take_messages();
+}
+
+TEST_CASE("the sun left out while a run is under way: once it is out, no bits of that run come, though the run would "
+          "have ended since (ENGINE.md's parts)") {
+    // A named moment's run on one thread, its tiles kept on disk as each is done, so the test sees it under way (as
+    // buckets_test's cancelled run does): the sun is left out then, and none of the run's bits come after, though its
+    // worker would have ended it. Without the rest stopping the run (sun::Worker::cancel), they came as it ended, into
+    // the bits of a sun left out.
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's rest under a run is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    const std::filesystem::path disk = std::filesystem::path(ATLAS_TEST_SCRATCH) / "sun-rest-under-way";
+    std::error_code ignored;
+    std::filesystem::remove_all(disk, ignored);
+    std::atomic<double> now{0};
+    auto world = scene::World::create(
+        *session->device, (*builder)->passes(),
+        {.workers = 3, .sun = {.threads = 1, .cache_dir = disk.string()}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    const auto files = [&disk] {
+        std::error_code ec;
+        std::size_t count = 0;
+        for (auto it = std::filesystem::directory_iterator(disk, ec);
+             !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+            ++count;
+        }
+        return count;
+    };
+    style::CameraState c = home();
+    std::uint64_t n = 0;
+    const auto frame = [&](const style::ThemeBlock& theme) {
+        (*builder)->set_inputs({.camera = c, .theme = theme, .scene = &w});
+        ++n;
+        now = now.load() + 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+    };
+    // Each try a named moment of its own (a low sun: long marches), until the sun is left out with a run under way:
+    // a tile of it done and kept, none published, and its other tiles not done once it is out.
+    c.distance = 1500.0; // the pack's three tiles in view: a run of several tiles
+    bool caught = false;
+    for (int attempt = 0; attempt < 6 && !caught; ++attempt) {
+        style::ThemeBlock theme = sun_at(200.0 + (7.0 * attempt), 9.0);
+        theme.moment = style::MomentName::sunny;
+        c.parts = 0;
+        const std::size_t kept = files();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        while (files() == kept && w.sun()->bits().size() == 0 && std::chrono::steady_clock::now() < until) {
+            frame(theme);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const std::size_t asked = w.sun()->stats().resident; // the run's tiles
+        const bool under_way = files() > kept && w.sun()->bits().size() == 0;
+        c.parts = style::camera_part::sun;
+        frame(theme);
+        w.sun()->wait_idle();
+        if (!under_way) continue; // ended before it was seen under way: tried again, the sun left out between
+        const std::size_t done = files() - kept;
+        caught = done < asked; // its other tiles not done
+        for (int k = 0; k < 4; ++k) frame(theme);
+        w.sun()->wait_idle();
+        CHECK_MESSAGE(w.sun()->bits().size() == 0,
+                      "bits of the run under way came after the sun was left out (try " << attempt << ")");
+        CHECK(drawn_without_bits(w).size() ==
+              static_cast<std::size_t>(std::ranges::count_if(
+                  w.cover()->tiles(), [](const scene::CoverTile& t) { return t.drawn->key.z == t.key.z; })));
+        // drawn again, its runs come as before
+        c.parts = 0;
+        for (int k = 0; k < 4; ++k) frame(theme);
+        w.sun()->wait_idle();
+        frame(theme);
+        CHECK(w.sun()->bits().size() > 0);
+        MESSAGE("try " << attempt << ": " << done << " of the run's " << asked
+                       << " tiles done as the sun was left out");
+    }
+    CHECK_MESSAGE(caught, "no run was seen under way as the sun was left out");
+    std::filesystem::remove_all(disk, ignored);
+    (void)session->take_messages();
 }

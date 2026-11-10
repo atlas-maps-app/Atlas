@@ -1768,8 +1768,11 @@ def facade_details(S, cam, th, far):
             return [(qx - ux * w / 2 + nrm[0] * off, y0, qz - uz * w / 2 + nrm[2] * off), (qx + ux * w / 2 + nrm[0] * off, y0, qz + uz * w / 2 + nrm[2] * off),
                     (qx + ux * w / 2 + nrm[0] * off, y1, qz + uz * w / 2 + nrm[2] * off), (qx - ux * w / 2 + nrm[0] * off, y1, qz - uz * w / 2 + nrm[2] * off)]
         if biz:
-            oh = t.get('opening_hours'); is_open = bool(oh) and open_at(oh, day, th['hhmm'], date=th['date']) is True
-            items_ = shopfront(cam, th, S, t, st, qx, qz, ux, uz, nrm, is_open, depth, d0)
+            oh = t.get('opening_hours'); now = open_at(oh, day, th['hhmm'], date=th['date']) if oh else None; is_open = now is True
+            # the user (4 November): a terrace only while its place is open, taken in while it is closed, and by day alone
+            # where its hours are unknown (none mapped, or none open_at can read)
+            terrace = now is True or (now is None and not night)
+            items_ = shopfront(cam, th, S, t, st, qx, qz, ux, uz, nrm, is_open, depth, d0, terrace)
             if items_:
                 out.extend(items_)
                 th['_shops'] = th.get('_shops', 0) + 1; th['_open'] = th.get('_open', 0) + (1 if is_open else 0)
@@ -1797,9 +1800,10 @@ def facade_details(S, cam, th, far):
         if sv: out.append((depth, 'svg', sv)); th['_doors'] = th.get('_doors', 0) + 1
     return out
 
-def shopfront(cam, th, S, t, st, qx, qz, ux, uz, nrm, is_open, depth, d0):
+def shopfront(cam, th, S, t, st, qx, qz, ux, uz, nrm, is_open, depth, d0, terrace=True):
     """A mapped shop, café or hotel, seen from the street: glazing, an awning in its category colour, a sign with its
-    brand (brand=*) or its kind, and a terrace where outdoor_seating says so. Shapes are generic; what and where come from tags."""
+    brand (brand=*) or its kind, and a terrace where outdoor_seating says so and `terrace` sets it out (its opening
+    hours). Shapes are generic; what and where come from tags."""
     night = th['night']; out = []; s = cam.focal / max(d0, 1)
     def P3(u, y, off): return (qx + ux * u + nrm[0] * off, y, qz + uz * u + nrm[2] * off)
     def quad(u0, u1, y0, y1, off): return [P3(u0, y0, off), P3(u1, y0, off), P3(u1, y1, off), P3(u0, y1, off)]
@@ -1860,7 +1864,7 @@ def shopfront(cam, th, S, t, st, qx, qz, ux, uz, nrm, is_open, depth, d0):
                     bsv += '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Geist, Helvetica, sans-serif" font-weight="800" font-size="%.1f" fill="%s">%s</text>' % (pc[0], pc[1] + fs * 0.35, fs, fg, txt.replace('&', '&amp;'))
         out.append((cb[2], 'svg', bsv))
     # a terrace: outdoor_seating=yes puts tables and chairs on the pavement, and a parasol by day
-    if t.get('outdoor_seating') in ('yes', 'sidewalk', 'pedestrian_zone', 'limited') and st['cat'] == 'food':
+    if terrace and t.get('outdoor_seating') in ('yes', 'sidewalk', 'pedestrian_zone', 'limited') and st['cat'] == 'food':
         for k, (du, off) in enumerate([(-1.1, 2.0), (1.1, 2.0), (0.0, 3.4)]):
             x, z = qx + ux * du + nrm[0] * off, qz + uz * du + nrm[2] * off
             if on_water(S, x, z): continue

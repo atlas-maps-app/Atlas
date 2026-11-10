@@ -1,9 +1,14 @@
 package app.atlas.ui.mine
 
+import android.view.Display
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
 import app.atlas.Services
 import app.atlas.nav.AtlasRoot
 import app.atlas.nav.BackStackNavigator
@@ -19,6 +24,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowDisplayManager
 import java.time.Duration
 
 /**
@@ -69,7 +75,21 @@ class MineAccessibilityTest {
     @Test fun newPhone() = check("New phone", Dest.NewPhone)
     @Test fun watch() = check("Watch", Dest.Watch)
     @Test fun weather() = check("Weather", Dest.Weather())
-    @Test fun layers() = check("Layers", Dest.Layers)
+    @Test fun layers() {
+        check("Layers", Dest.Layers)
+        // the test's display has one mode, 60 Hz: no Fast refresh among the engine parts, as neither vote does anything
+        compose.onAllNodesWithContentDescription("Fast refresh").assertCountEquals(0)
+        // the sun's own chip in the shadows' row, pressable and named as the rest
+        compose.onNodeWithContentDescription("Sunlight").assertHasClickAction()
+    }
+
+    /** On a display with a mode above 60 Hz the engine parts' last row ends with the Fast refresh, named as the rest. */
+    @Test fun layersFastRefresh() {
+        val mode = { id: Int, hz: Float -> ShadowDisplayManager.ModeBuilder.modeBuilder(id).setWidth(824).setHeight(1830).setRefreshRate(hz).build() }
+        ShadowDisplayManager.setSupportedModes(Display.DEFAULT_DISPLAY, mode(0, 60f), mode(1, 120f)) // 0: the mode it runs
+        check("Layers (120 Hz)", Dest.Layers)
+        compose.onNodeWithContentDescription("Fast refresh").assertHasClickAction()
+    }
     @Test fun mapLook() = check("Map look", Dest.MapLook(), MineFixtures.withPalettes(phone(), drawn = false))
     @Test fun colourMap() = check("Colour the map", Dest.ColourMap, MineFixtures.withPalettes(phone(), drawn = true))
 

@@ -7,7 +7,7 @@
 // frame for each picture the workers finish (a run of the sun's bits wakes it once), a pan ending in the rest picture;
 // the map off and on again; VK bench taking the window and giving it back; and after the close, no marker of the crash
 // guard on disk. And the windows alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with
-// its own sun.
+// its own sun, and a cell crossed placing no item again, its picture that of every item placed in the new frame.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -17,7 +17,10 @@
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "passes/Labels.hpp"
+#include "passes/Walls.hpp"
 #include "scene/Cover.hpp"
+#include "scene/Heaps.hpp"
+#include "scene/ItemTable.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
@@ -28,13 +31,16 @@
 #include "tests/load/corner.hpp"
 #include "text/Fonts.hpp"
 #include "view/Camera.hpp"
+#include "view/Frames.hpp"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -266,6 +272,19 @@ bool draw_until_still(standin::Session& session, frame::MapFrame& map, const sty
 /// The theme the last frame drew with.
 [[nodiscard]] std::uint32_t drawn_flags(const frame::MapFrame& map) { return map.builder()->state().theme.flags; }
 
+/// What the map's last frame kept of the buildings' triangles and drew from shape records (passes/Kept.cpp's counts),
+/// once the GPU is done with it; none without a frame builder or a buildings pass.
+[[nodiscard]] passes::Buildings::KeptCounts kept_counts(const frame::MapFrame& map, const gpu::Device& device) {
+    device.wait_idle();
+    const frame::FrameBuilder* b = map.builder();
+    if (b == nullptr) return {};
+    for (const std::unique_ptr<frame::Pass>& p : b->passes()) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
+        if (p->name() == "buildings") return static_cast<const passes::Buildings&>(*p).kept_counts();
+    }
+    return {};
+}
+
 } // namespace
 
 TEST_CASE("the theme takes the profile's rules: TONE off for the living map, on for every other profile") {
@@ -304,6 +323,50 @@ TEST_CASE("the app's map lists its packs before its world: listed, kept, dropped
     CHECK_FALSE(map.ready());
     CHECK_FALSE(map.complete());
     CHECK(map.drawn_pack().empty());
+}
+
+TEST_CASE("the app's map matches thousands of windows listed again by their ids: each kept once, in the listing's "
+          "order, one new, one gone and one written again listed anew") {
+    // A phone's folder after a long while holds thousands of windows, and each one landing lists them all again
+    // (MapController's repack): matched by id, the listing is as before, kept, listed and dropped alike.
+    const auto window = [](int i, std::uint64_t time) {
+        frame::MapPack p;
+        p.number = static_cast<std::uint64_t>(i) + 1U;
+        p.ref.id = std::format("window/14/{}/{}", 8400 + (i % 100), 5300 + (i / 100));
+        p.ref.kind = tiles::PackKind::window;
+        p.ref.path = "/nowhere/" + p.ref.id + ".atlas";
+        p.ref.offset = time; // the file's time and size, as the app lists a window
+        p.ref.length = 1000U + static_cast<std::uint64_t>(i);
+        return p;
+    };
+    constexpr int n = 5000;
+    frame::MapFrame map(2, nullptr);
+    std::vector<frame::MapPack> first;
+    std::string listed;
+    for (int i = 0; i < n; ++i) {
+        first.push_back(window(i, 1));
+        listed += first.back().ref.id + " listed\n";
+    }
+    // the same window twice, the same bytes: listed twice, then kept twice
+    first.push_back(window(7, 1));
+    listed += first.back().ref.id + " listed\n";
+    CHECK(map.set_packs(std::move(first)) == listed);
+    // backwards, after a new one, without window 3, and window 5 written again (another time)
+    std::vector<frame::MapPack> again{window(n, 1)};
+    std::string said = again.back().ref.id + " listed\n";
+    for (int i = n - 1; i >= 0; --i) {
+        if (i == 3) continue;
+        again.push_back(window(i, i == 5 ? 2U : 1U));
+        said += again.back().ref.id + (i == 5 ? " listed\n" : " kept\n");
+    }
+    again.push_back(window(7, 1));
+    said += again.back().ref.id + " kept\n";
+    std::vector<frame::MapPack> same = again;
+    CHECK(map.set_packs(std::move(again)) == said);
+    // the same listing once more: every pack kept, the twice listed one twice
+    std::string kept;
+    for (const frame::MapPack& p : same) kept += p.ref.id + " kept\n";
+    CHECK(map.set_packs(std::move(same)) == kept);
 }
 
 TEST_CASE("the app's map draws through the session: the pack the camera names, complete pictures, rest, a device's "
@@ -347,7 +410,12 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         CHECK(map.drawn_pack() == "amsterdam");
         CHECK((drawn_flags(map) & flag::tone) != 0);
         CHECK(wakes.load() > 0);
-        CHECK_FALSE(map.animating()); // the picture is final: nothing more at this camera
+        // the picture is final once its tiles' first sun bits have faded in from by day (300 ms from their
+        // publication, which may come after the complete picture): nothing more at this camera
+        for (int i = 0; i < 120 && map.animating(); ++i) {
+            if (session.draw(home(1), {}).stale) session.remake();
+        }
+        CHECK_FALSE(map.animating());
         // The world holds K17a's noise fields, kept under the app's cache once made for the frame's size.
         {
             const std::span<frame::GlobalProvider* const> globals = map.world()->globals();
@@ -431,6 +499,66 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
     }
     // The session's close let go of the map's world and frame behind the close stage: nothing on disk.
     CHECK(marked(dir).empty());
+    CHECK_FALSE(fs::exists(dir / "guard"));
+}
+
+TEST_CASE("VK bench's switch of the kept walls' shape records: taken before the map is made and before its first "
+          "frame, which say why there is no answer yet; then on lavapipe the same walls kept, none drawn from records "
+          "off and the walls' first chunks on, and the next frame builder made takes it") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("records");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+        standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+        CHECK(map.set_shape_records(false) == "no map");
+        CHECK(session.map(&map).empty());
+        CHECK(map.set_shape_records(false) == "no frame drawn yet (the passes not prepared)");
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        map.set_theme(sunny());
+        // A few frames more at the Westerkerk home, each frame slot's last frame known, then the last one's counts.
+        const auto drawn = [&] {
+            for (int i = 0; i < 3; ++i) CHECK(session.draw(home(1), {}).drawn);
+            return kept_counts(map, *started->device);
+        };
+        // Off from before the first frame: walls kept, none drawn from records.
+        CHECK(draw_until_complete(session, map, home(1)) > 0);
+        const passes::Buildings::KeptCounts off = drawn();
+        CHECK(off.kept[0] > 0);
+        CHECK(off.shaped == std::array<std::uint64_t, 3>{});
+        CHECK(off.shape_bytes == 0);
+        // On (lavapipe makes the records' pipelines): the same walls kept, theirs drawn from records, the roofs' not.
+        CHECK(map.set_shape_records(true).empty());
+        const passes::Buildings::KeptCounts on = drawn();
+        CHECK(on.kept == off.kept);
+        CHECK(on.shaped[0] > 0);
+        CHECK(on.shaped[2] == 0);
+        CHECK(on.shape_bytes > 0);
+        // Off again, then the map off and on: its new frame builder takes the switch as it is.
+        CHECK(map.set_shape_records(false).empty());
+        CHECK(session.map(nullptr).empty());
+        CHECK(session.map(&map).empty());
+        CHECK(map.set_shape_records(false) == "no frame drawn yet (the passes not prepared)");
+        CHECK(draw_until_complete(session, map, home(1)) > 0);
+        const passes::Buildings::KeptCounts again = drawn();
+        CHECK(again.kept[0] > 0);
+        CHECK(again.shape_bytes == 0);
+        CHECK(map.set_shape_records(true).empty());
+        CHECK(drawn().shape_bytes > 0);
+        MESSAGE(std::format("walls kept {} of {} triangles, {} drawn from records ({:.2f} MiB of them)", on.kept[0],
+                            on.submitted[0], on.shaped[0], static_cast<double>(on.shape_bytes) / (1 << 20)));
+        session.close();
+    }
     CHECK_FALSE(fs::exists(dir / "guard"));
 }
 
@@ -557,10 +685,21 @@ struct Part {
     std::uint64_t changes = 0;
 };
 
-/// A part's work in the last frame: its own kinds' draws and dispatches, its shared kinds' triangles and dispatches,
+/// The kinds a stage that keeps its result runs only where what the result is made of changed since the frame before
+/// (the ripple's layer and fused stages, the lit glow's layers and boxes): a frame may make its result anew for the
+/// frame before's sake, an input that changed at rest (on a slow machine a tile's sun bits that came meanwhile, say),
+/// and the next frame keep it.
+constexpr std::array<std::string_view, 5> made_anew{"ripple layer", "ripple fused", "lit glow layer", "lit glow box",
+                                                    "lit cores layer"};
+
+/// A part's work in the last frame: its own kinds' draws and dispatches (and of them, those of the kinds made anew),
+/// its shared kinds' triangles and dispatches but those of the kinds made anew, which a frame makes or keeps as their
+/// inputs changed whatever the part (at the golden moment, where no streaks are drawn, the water's streaks once showed
+/// 27,638 such triangles with everything on, the ripple's layer made anew in that frame, and 1 with their switch),
 /// whether its step ran or its mode bit is clear.
 struct Work {
     std::uint64_t own = 0;
+    std::uint64_t anew = 0;
     std::uint64_t shared = 0;
     bool step = false;
     [[nodiscard]] bool any() const noexcept { return own > 0 || shared > 0 || step; }
@@ -570,8 +709,13 @@ struct Work {
     Work w;
     for (const frame::PassCounters& c : b.counters()) {
         for (const frame::KindCount& k : c.kinds()) {
-            if (std::ranges::find(p.own, k.kind) != p.own.end()) w.own += k.count.draws + k.count.dispatches;
-            if (std::ranges::find(p.shared, k.kind) != p.shared.end())
+            if (std::ranges::find(p.own, k.kind) != p.own.end()) {
+                w.own += k.count.draws + k.count.dispatches;
+                if (std::ranges::find(made_anew, k.kind) != made_anew.end())
+                    w.anew += k.count.draws + k.count.dispatches;
+            }
+            if (std::ranges::find(p.shared, k.kind) != p.shared.end() &&
+                std::ranges::find(made_anew, k.kind) == made_anew.end())
                 w.shared += k.count.triangles + k.count.dispatches;
         }
     }
@@ -584,7 +728,9 @@ struct Work {
 /// The parts the map's switches leave out, as the frame's counters name their work.
 const std::vector<Part>& every_part() {
     static const std::vector<Part> parts{
-        {.name = "land and roads", .bit = part::ground, .own = {"ground above", "ground land", "ground plate"}},
+        {.name = "land and roads",
+         .bit = part::ground,
+         .own = {"ground above", "ground land", "ground plate", "ground streets", "ground bridges"}},
         {.name = "water", .bit = part::water, .own = {"ground water"}},
         {.name = "canopy", .bit = part::canopy, .own = {"ground canopy"}},
         // (a big road's lines go with its asphalt)
@@ -657,7 +803,7 @@ const std::vector<Part>& every_part() {
         {.name = "windows", .bit = part::windows, .own = {"windows"}, .shared = {"window frames", "window glass"}},
         {.name = "window depth", .bit = part::window_depth, .own = {"window parts"}, .needs = part::windows},
         // (the flat detail's stage and draws run while any of its parts is drawn: each told by its mode bit)
-        {.name = "shopfronts",
+        {.name = "shop windows",
          .bit = part::shop_glazing,
          .shared = {"window facades", "window frames", "window glass"},
          .mode_bit = shaders::FRAME_NO_GLAZING},
@@ -680,6 +826,11 @@ const std::vector<Part>& every_part() {
          .own = {"door faces", "door fills", "door outlines", "door numbers"},
          .changes = part::house_numbers},
         {.name = "house numbers", .bit = part::house_numbers, .own = {"door numbers"}, .needs = part::doors},
+        {.name = "shopfronts",
+         .bit = part::shopfronts,
+         .own = {"shop fills", "shop lines", "shop texts", "shop tints"}},
+        {.name = "terraces", .bit = part::terraces, .own = {"terrace fills", "terrace lines"}},
+        {.name = "open places' glow", .bit = part::open_glows, .own = {"open glows"}},
         {.name = "trees", .bit = part::trees, .own = {"trees", "tree fills", "tree sides"}},
         {.name = "leaf filters", .bit = part::leaf_filters, .mode_bit = shaders::FRAME_NO_CROWNS, .needs = part::trees},
         // (its translucent records the lamps' halos and wet streaks at night)
@@ -1034,6 +1185,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         {.name = "the canal ring's Main board",
          .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2),
          .theme = sunny()},
+        // a wall of shops facing east from 70 m (shopfronts_vk_test.cpp's): their fronts and a café's terrace
+        {.name = "the wall of shops facing east",
+         .camera =
+             camera_at(52.3746 - (297.49641 / 110540.0), 4.8840 + (425.44906 / kx), 269.23868878579214, 60.0, 70.0),
+         .theme = sunny()},
     };
     const std::vector<Part>& parts = every_part();
     std::vector<bool> drawn(parts.size(), false); // drawn by default in some scene
@@ -1073,15 +1229,24 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         on.reserve(parts.size());
         for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));
         // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
-        // again (a stage that keeps its result while its inputs stand changes the counts from one frame to another,
-        // but not between these two), and the tiles each of the two drew (the cover may take one in or let one go at
-        // rest, a frame's fills and lines more or fewer)
+        // again (a stage that keeps its result while its inputs stand makes it anew where they changed since the frame
+        // before, which the two need not share: its work made anew is left out of their likeness), and the tiles each
+        // of the two drew (the cover may take one in or let one go at rest, a frame's fills and lines more or fewer);
+        // then its own once the picture is complete again: a part whose passes the tiles let go of (ENGINE.md's parts:
+        // the buildings, trees, things, region items, doors and names on the ground) is drawn once their top-ups are
+        // taken and faded in, none of it in the frame right after
         std::vector<std::vector<Work>> with_off(parts.size());
         std::vector<std::vector<Work>> again(parts.size());
+        std::vector<Work> back(parts.size());
         std::vector<bool> same_tiles(parts.size(), false);
+        std::vector<int> rebuilt(parts.size(), 0);     // the frames to the picture complete again (0: complete at once)
+        std::vector<double> let_go(parts.size(), 0.0); // the heaps' MB the switch's frame retired (its passes')
         for (std::size_t i = 0; i < parts.size(); ++i) {
             if ((parts[i].bit & scene.base) != 0U || !on[i].any()) continue;
+            const std::uint64_t retired = map.world()->heaps()->stats().retired_bytes;
             CHECK(draw(scene, parts[i].bit));
+            const std::uint64_t now_retired = map.world()->heaps()->stats().retired_bytes;
+            let_go[i] = now_retired > retired ? static_cast<double>(now_retired - retired) / 1.0e6 : 0.0;
             with_off[i].reserve(parts.size());
             for (const Part& q : parts) with_off[i].push_back(work_of(*map.builder(), q));
             const std::vector<std::uint64_t> tiles = drawn_tiles(map);
@@ -1089,6 +1254,13 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             again[i].reserve(parts.size());
             for (const Part& q : parts) again[i].push_back(work_of(*map.builder(), q));
             same_tiles[i] = tiles == drawn_tiles(map);
+            if (!map.complete()) {
+                style::CameraState drawn_again = scene.camera;
+                drawn_again.parts = scene.base;
+                rebuilt[i] = draw_until_complete(session, map, drawn_again);
+                CHECK(rebuilt[i] > 0);
+            }
+            back[i] = work_of(*map.builder(), parts[i]);
         }
         // drawn here: work of its own, its step, or less of what it shares once it is left out
         const auto present = [&](std::size_t i) {
@@ -1107,7 +1279,7 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
             CHECK(off.own == 0U);
             CHECK(off.step == false);
             CHECK(off.shared <= on[i].shared);
-            CHECK(again[i][i].any());
+            CHECK(back[i].any());
             // every other part drawn here drawn as with it (its own draws and dispatches, its step), but those drawn
             // with it
             for (std::size_t j = 0; j < parts.size(); ++j) {
@@ -1116,12 +1288,19 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
                 const std::string_view other = q.name;
                 CAPTURE(other);
                 CHECK(with_off[i][j].any());
-                if (same_tiles[i] && (q.changes & p.bit) == 0U) CHECK(with_off[i][j].own == again[i][j].own);
+                if (same_tiles[i] && (q.changes & p.bit) == 0U) {
+                    CHECK(with_off[i][j].own - with_off[i][j].anew == again[i][j].own - again[i][j].anew);
+                }
                 CHECK(with_off[i][j].step == again[i][j].step);
             }
             if (!same_tiles[i]) ++cover_moved;
-            lines += std::format("\n  {}: {} draws and dispatches, {} shared{}; with its switch {}, {}", p.name,
-                                 on[i].own, on[i].shared, on[i].step ? ", its step" : "", off.own, off.shared);
+            lines +=
+                std::format("\n  {}: {} draws and dispatches, {} shared{}; with its switch {}, {}{}", p.name, on[i].own,
+                            on[i].shared, on[i].step ? ", its step" : "", off.own, off.shared,
+                            rebuilt[i] > 0 ? std::format("; its passes let go of ({:.1f} MB of the heaps), back the "
+                                                         "frame after with {} and complete {} frames on",
+                                                         let_go[i], again[i][i].own, rebuilt[i])
+                                           : std::string());
         }
         MESSAGE(std::format("{} ({} of its switches' two frames drew other tiles):{}", scene.name, cover_moved, lines));
     }
@@ -1177,7 +1356,9 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     // every building left out: their items take no rank (the frame's ranks hold no building), and come back
     CHECK(draw(doors, part::buildings));
     const std::size_t ranked_without = map.builder()->state().ranks->order().size();
+    // (drawn again once their top-ups are taken: the buildings were let go of with their part)
     CHECK(draw(doors, 0));
+    CHECK(draw_until_complete(session, map, doors.camera) > 0);
     const std::size_t ranked_with = map.builder()->state().ranks->order().size();
     CHECK(ranked_without < ranked_with);
     MESSAGE(
@@ -1393,6 +1574,133 @@ TEST_CASE("the app's map draws every cell in view: at a corner where four frame 
     CHECK(map.drawn_pack() == made->cells.back());
     MESSAGE(w.cover()->tiles().size() << " tiles drawn from " << drawn.size() << " cells, " << lit
                                       << " with their sun; " << map.tiles_line());
+    session.close();
+}
+
+TEST_CASE("the app's map crossing a frame cell places no item again: each frame's place moves, from the crossing's "
+          "frame on, and the picture is the one of every item placed in the new frame, to the pixel") {
+    // The corner's windows (tests/load/corner.hpp) listed as the case above lists them, the camera 1.6 km from a target
+    // a metre inside the south-east one, then a metre inside the south-west one, each named: the frame drawn becomes
+    // the south-west cell's (a frame cell crossed), where every resident tile's items were placed again, each row
+    // rewritten. Their rows keep their tiles' points, none masked again (scene/World.hpp: items_masked_again, no window
+    // being a coarser pack's), and the places of the frames move, each from the crossing's own frame on its frame's map
+    // into the new frame drawn. Once still there, the picture is the one drawn after every item is placed in the frame
+    // drawn as a crossing placed them before (World::place_items_in_frame), to the pixel: the clouds' shadows and the
+    // screen's grain off, so that nothing moves with the clock (two pictures at rest are the same, and so is a third).
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("crossing");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    const auto made = test::corner_windows(dir / "windows");
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    std::vector<frame::MapPack> packs;
+    std::string listed;
+    for (const auto& [id, file] : made->windows) {
+        frame::MapPack p;
+        p.number = packs.size() + 1;
+        p.ref.id = id;
+        p.ref.kind = tiles::PackKind::window;
+        p.ref.path = file.string();
+        packs.push_back(std::move(p));
+        listed += id + " listed\n";
+    }
+    CHECK(map.set_packs(std::move(packs)) == listed);
+    map.set_screen(false, false, false);
+    CHECK(session.map(&map).empty());
+    auto output = std::make_unique<KeptWindow>();
+    KeptWindow* kept = output.get();
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::move(output), size, why), why);
+    map.set_theme(sunny());
+    // a metre inside window `window` (0 north-west, 1 north-east, 2 south-west, 3 south-east), naming it
+    const auto inside = [&](std::size_t window) {
+        style::CameraState c = home(window + 1);
+        const std::array<double, 2> p = made->at(window % 2 == 1 ? 1.0 : -1.0, window >= 2 ? -1.0 : 1.0);
+        c.latitude = p[0];
+        c.longitude = p[1];
+        c.distance = 1600.0;
+        c.parts |= style::camera_part::cloud_shadows;
+        return c;
+    };
+    const style::CameraState east = inside(3);
+    ATLAS_REQUIRE(draw_until_complete(session, map, east) > 0, "the south-east window never completed");
+    ATLAS_REQUIRE(draw_until_still(session, map, east), "the south-east window never came to rest");
+    CHECK(map.drawn_pack() == made->cells[3]);
+    scene::World& w = *map.world();
+    const scene::ItemTable& items = *w.items();
+    const std::optional<view::GroundFrame> before = w.frames().current();
+    const std::uint64_t masked = w.items_masked_again();
+    // Every resident tile's rows at their tile's points, carried into the frame drawn by its frame's place (as
+    // view::convert carries them, to rounding); how many a place other than the frame drawn's carries.
+    const auto carried = [&]() -> std::size_t {
+        const std::optional<view::GroundFrame>& drawn = w.frames().current();
+        if (!drawn) return 0;
+        std::size_t out = 0;
+        std::size_t wrong = 0;
+        for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+            for (std::size_t i = 0; i < t->rows.size() && i < t->items.size(); ++i) {
+                const scene::ItemSpec& spec = t->items[i];
+                const std::uint32_t row = t->rows[i];
+                if (!items.alive(row)) continue;
+                const scene::ItemPlace& at = items.places()[items.place()[row]];
+                const view::Vec3 p = view::convert(t->frame, *drawn, {spec.x, spec.y, spec.z});
+                const view::Vec3 cut = view::convert(t->frame, *drawn, {spec.cut_x, 0.0, spec.cut_z});
+                const bool right = items.x()[row] == spec.x && items.z()[row] == spec.z &&
+                                   std::abs(at.x(spec.x) - p.x) < 1e-6 && std::abs(at.z(spec.z) - p.z) < 1e-6 &&
+                                   std::abs(at.x(spec.cut_x) - cut.x) < 1e-6 &&
+                                   std::abs(at.z(spec.cut_z) - cut.z) < 1e-6;
+                wrong += right ? 0U : 1U;
+                out += t->frame != *drawn ? 1U : 0U;
+            }
+        }
+        CHECK(wrong == 0);
+        return out;
+    };
+    CHECK(carried() > 0);
+    // The crossing: the first frame drawn at the south-west window whose frame drawn is its cell's, its places moved.
+    const style::CameraState west = inside(2);
+    for (int k = 0; k < 40 && w.frames().current() == before; ++k) {
+        if (session.draw(west, {}).stale) session.remake();
+    }
+    ATLAS_REQUIRE(w.frames().current() != before, "the frame drawn never became the south-west cell's");
+    CHECK(map.drawn_pack() == made->cells[2]);
+    CHECK(carried() > 0);
+    ATLAS_REQUIRE(draw_until_complete(session, map, west) > 0, "the south-west window never completed");
+    ATLAS_REQUIRE(draw_until_still(session, map, west), "the south-west window never came to rest");
+    CHECK(map.drawn_pack() == made->cells[2]);
+    CHECK(w.items_masked_again() == masked);
+    const std::size_t in_other_frames = carried();
+    CHECK(in_other_frames > 0);
+    // The frame drawn at the south-west window now, as its image holds it.
+    const auto picture = [&]() -> std::optional<gpu::Pixels> {
+        if (!session.draw(west, {}).drawn || kept->kept == nullptr) return std::nullopt;
+        auto pixels = kept->kept->read(kept->kept->latest());
+        if (!pixels) return std::nullopt;
+        return std::move(*pixels);
+    };
+    const std::optional<gpu::Pixels> first = picture();
+    const std::optional<gpu::Pixels> second = picture();
+    ATLAS_REQUIRE(first.has_value() && second.has_value(), "the south-west window's pictures were not read");
+    ATLAS_REQUIRE(*first == *second, "two pictures at rest differ: something moves with the clock");
+    w.place_items_in_frame();
+    const std::optional<gpu::Pixels> placed_in_frame = picture();
+    ATLAS_REQUIRE(placed_in_frame.has_value(), "the picture after the full placement was not read");
+    std::size_t differ = 0;
+    const std::size_t bytes = std::min(first->rgba.size(), placed_in_frame->rgba.size());
+    for (std::size_t i = 0; i + 4 <= bytes; i += 4) {
+        bool same = true;
+        for (std::size_t k = 0; k < 4; ++k) same = same && first->rgba[i + k] == placed_in_frame->rgba[i + k];
+        differ += same ? 0U : 1U;
+    }
+    CHECK(differ == 0);
+    CHECK(*first == *placed_in_frame);
+    MESSAGE(std::format("crossed into {}: {} rows masked again, {} of {} rows in other frames' places, {} pixels "
+                        "differ after the full placement",
+                        made->cells[2], w.items_masked_again() - masked, in_other_frames, items.live(), differ));
     session.close();
 }
 

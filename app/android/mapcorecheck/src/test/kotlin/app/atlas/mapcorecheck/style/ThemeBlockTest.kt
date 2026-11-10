@@ -156,7 +156,8 @@ class ThemeBlockTest {
         fun fresh() = ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, false)
         fresh(); b.putInt(ThemeBlock.VERSION_AT, 2)
         assertEquals("version", parse(StyleHost.themeDump(b))["error"])
-        fresh(); b.putInt(ThemeBlock.FLAGS_AT, 1 shl 12)
+        // the first flag past the core's own (DAYLIGHT is 1 shl 12)
+        fresh(); b.putInt(ThemeBlock.FLAGS_AT, 1 shl 13)
         assertEquals("flags", parse(StyleHost.themeDump(b))["error"])
         fresh(); b.putDouble(ThemeBlock.SUN_AT, Double.NaN)
         assertEquals("not_finite", parse(StyleHost.themeDump(b))["error"])
@@ -195,5 +196,22 @@ class ThemeBlockTest {
         b.putInt(ThemeBlock.FLAGS_AT, b.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.TONE_STRENGTH.inv())
         b.putFloat(ThemeBlock.TONE_AT, 1.5f)
         assertEquals("reserved", parse(StyleHost.themeDump(b))["error"])
+    }
+
+    @Test
+    fun theDaylightRidesAsItsFlag() {
+        // RenderOptions.daylight (amsterdam.py's ATLAS_DAYLIGHT): DAYLIGHT among the flags, which the core takes (at night
+        // the open places' pools under their larger glows); without it the block is as before
+        val th = Amsterdam.THEMES.getValue("wet")
+        val (az, el, L) = Amsterdam.sunOf(th)
+        val b = ThemeBlock.allocate()
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, false)
+        val without = b.getInt(ThemeBlock.FLAGS_AT)
+        assertEquals(0, without and ThemeBlock.DAYLIGHT)
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, false, daylight = true)
+        assertEquals(without or ThemeBlock.DAYLIGHT, b.getInt(ThemeBlock.FLAGS_AT))
+        val dump = parse(StyleHost.themeDump(b))
+        assertTrue(dump.toString(), "error" !in dump)
+        assertEquals("${without or ThemeBlock.DAYLIGHT}", dump["flags"])
     }
 }

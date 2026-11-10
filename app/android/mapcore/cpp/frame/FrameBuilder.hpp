@@ -28,6 +28,7 @@
 #include "frame/Pass.hpp"
 #include "frame/PassRegistry.hpp"
 #include "frame/Ranks.hpp"
+#include "frame/RenderThreads.hpp"
 #include "frame/Selectors.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -142,6 +143,8 @@ struct FrameState {
     /// The boxes the markers take this frame, for the labels, which update after the markers: emptied before the
     /// passes update (frame/MarkerBoxes.hpp).
     MarkerBoxes* marker_boxes = nullptr;
+    /// Where a pass tells the platform of the threads the frame's work runs on (FrameOptions::render_threads), or null.
+    RenderThreads* render_threads = nullptr;
 };
 
 /// The builder's choices, made once.
@@ -166,7 +169,9 @@ struct FrameOptions {
     /// paper's grain leaves the composite where its step is off (MapFrame::set_screen clears both).
     bool grain = true;
     /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
-    /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
+    /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another. Where it
+    /// is more than one, a pass may make parts of its own beside the rest (PassContext::threads: the buildings'
+    /// windows).
     std::uint32_t threads = 0;
     /// The screen fields read where the ground lies (the app's map: FrameState::grounded): the clouds' shadows
     /// (COMPOSITE_CLOUD_GROUND) and the water's ripple, each keeping its place while the map moves and scaling with the
@@ -178,6 +183,9 @@ struct FrameOptions {
     /// default. A tool measuring what each pass costs the GPU leaves one out at a time (tests/frame/
     /// pinch_audit_vk_test.cpp's ATLAS_PINCH_COST); a pass left out still selects and updates, and records nothing.
     std::uint64_t passes = ~std::uint64_t{0};
+    /// Where the passes tell the platform of the threads the frame's work runs on, each time the ground makes its team
+    /// (frame/RenderThreads.hpp: the render thread's hint session on Android); none by default.
+    std::shared_ptr<RenderThreads> render_threads;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
@@ -385,7 +393,8 @@ private:
     std::unique_ptr<MarkerBoxes> marker_boxes_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
-    bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
+    bool depth24_ = false;      ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
+    std::uint32_t samples_ = 1; ///< the scene's samples a pixel (the frame block's info.w: the standing fades' dither)
     bool prepared_ = false;
     bool other_passes_said_ = false; ///< built_by said once that a scene's passes are not the frame's
     double stage_f_ms_ = 0;

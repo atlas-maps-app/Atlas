@@ -123,7 +123,7 @@ struct Path {
                     const geo::P2 w = g.points[pl.first + q];
                     const sh::float3 local{static_cast<float>(w.x - g.origin.x), static_cast<float>(pl.y),
                                            static_cast<float>(w.z - g.origin.z)};
-                    return sh::camera_of(cam, sh::eye_relative(t.place, local));
+                    return sh::camera_of(cam, sh::placed(cam, t.place, local));
                 };
                 const sh::float3 ka = at(k);
                 const sh::float3 kb = at(k + 1);

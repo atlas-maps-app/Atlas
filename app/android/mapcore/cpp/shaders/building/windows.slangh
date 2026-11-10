@@ -411,8 +411,8 @@ inline BuildingWindowShape building_window_cut_in(FrameCamera cam, TilePlace pla
     float3 c[5] = {origin, origin, origin, origin, origin};
     uint m = 0u;
     for (uint i = 0u; i < 4u; ++i) {
-        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(win, i)));
-        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(win, (i + 1u) % 4u)));
+        float3 a = camera_of(cam, placed(cam, place, building_prim_corner(win, i)));
+        float3 b = camera_of(cam, placed(cam, place, building_prim_corner(win, (i + 1u) % 4u)));
         bool ai = a.z >= near_z;
         bool bi = b.z >= near_z;
         if (ai) {
@@ -528,7 +528,7 @@ inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace plac
 /// test point).
 inline float4 building_window_plane(FrameCamera cam, TilePlace place, BuildingFace f) {
     float3 nrm = {f.normal.x / place.scale.x, f.normal.y, f.normal.z};
-    float3 on_face = eye_relative(place, f.test);
+    float3 on_face = placed(cam, place, f.test);
     float3 nk = camera_of(cam, nrm);
     float4 plane = {nk.x, nk.y, nk.z, ((nrm.x * on_face.x) + (nrm.y * on_face.y)) + (nrm.z * on_face.z)};
     return plane;
@@ -613,10 +613,10 @@ inline BuildingSash building_sash(FrameCamera cam, TilePlace place, BuildingPrim
     float3 top = (q4.c2 + q4.c3) / 2.0f;
     float3 left = q4.c0 + (q4.c3 - q4.c0) * BUILDING_SASH_CROSS;
     float3 right = q4.c1 + (q4.c2 - q4.c1) * BUILDING_SASH_CROSS;
-    float3 k0 = camera_of(cam, eye_relative(place, bottom));
-    float3 k1 = camera_of(cam, eye_relative(place, top));
-    float3 k2 = camera_of(cam, eye_relative(place, left));
-    float3 k3 = camera_of(cam, eye_relative(place, right));
+    float3 k0 = camera_of(cam, placed(cam, place, bottom));
+    float3 k1 = camera_of(cam, placed(cam, place, top));
+    float3 k2 = camera_of(cam, placed(cam, place, left));
+    float3 k3 = camera_of(cam, placed(cam, place, right));
     if (k0.z < near_z || k1.z < near_z || k2.z < near_z || k3.z < near_z) {
         return s;
     }
@@ -926,6 +926,20 @@ inline float building_shop_frame_width(FrameWindows w) {
     return asfloat(w.shop.z);
 }
 
+/// A shop's glazing's glass at the moment: by day the plain glass's (amsterdam.py's url(#glass)), at night `night`
+/// (0xRRGGBB), the style's windows.shop_glass_open while one of its building's places is open (open_here: '#FFD08C'),
+/// else its shop_glass_closed ('#0E1119').
+inline BuildingGlass building_shop_glass(FrameWindows w, uint theme_flags, uint night) {
+    if ((theme_flags & THEME_NIGHT) == 0u) {
+        return building_glass(w, theme_flags, BUILDING_WINDOW_PLAIN, 0u, false);
+    }
+    BuildingGlass g;
+    g.top = building_rgb(night);
+    g.bottom = g.top;
+    g.gradient = false;
+    return g;
+}
+
 /// The plinths' colour at the moment, and the cornices'.
 inline float3 building_plinth_colour(FrameWindows w, uint theme_flags) {
     return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.facades.y : w.facades.x);
@@ -945,12 +959,12 @@ inline float building_tenths(uint tenths) {
     return float(tenths) / 10.0f;
 }
 
-// A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read
-// (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6; its
-// glass drawn, bit 7: building_glass_drawn at its frame's half width; a shop's glazing, bit 8: its frame the shops'
-// colour and width, its glass's gradient over its own box), its wall's record among the frame's walls, its painter
-// slot, its span's low end; v1 its span's high end and its first three corners' x, y (CSS px) but the last; then the
-// rest of its five corners. A header 0: the window is not drawn.
+// A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read (4
+// uint4): v0 its header (corners, bits 0-2; lit, bit 3: a shop's glazing's, one of its places open at night; its wall's
+// warehouse flag, bit 4; its style, bits 5-6; its glass drawn, bit 7: building_glass_drawn at its frame's half width; a
+// shop's glazing, bit 8: its frame the shops' colour and width, its glass's gradient over its own box), its wall's
+// record among the frame's walls, its painter slot, its span's low end; v1 its span's high end and its first three
+// corners' x, y (CSS px) but the last; then the rest of its five corners. A header 0: the window is not drawn.
 static const uint BUILDING_WINDOW_RECORD_VECTORS = 4u;
 static const uint BUILDING_WINDOW_LIT = 8u;
 static const uint BUILDING_WINDOW_RECORD_WAREHOUSE = 16u;
@@ -1200,12 +1214,14 @@ inline float2 building_facade_point(BuildingFacadeRecord r, uint v) {
 }
 
 // A windowed wall's record for the frame, which one decide stage writes once a windowed wall of the frame's jobs (the
-// first it has of the church windows', the windows', the facades' and the material faces': draw.slang's lanes; 3
+// first it has of the church windows', the windows', the facades' and the material faces': draw.slang's lanes; 4
 // uint4): its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its
 // lit ones' (CSS px; top below bottom where it has none; a church's windows' glass's as its dark ones' where it draws
 // them); its frames' half width and its sash bars' (CSS px), its reveals' colour (0xBBGGRR, the wall's colour times
-// 0.55 unlit at the moment), and its church windows' leading's width (CSS px).
-static const uint BUILDING_WALL_RECORD_VECTORS = 3u;
+// 0.55 unlit at the moment), and its church windows' leading's width (CSS px); its tile's standing fade (its range of
+// the dither's levels, shared/fade.slang's fade_word), for every part of its windows, and its shop glazing's glass at
+// night (0xRRGGBB: its job's open glass where one of its building's places is open, else its closed glass).
+static const uint BUILDING_WALL_RECORD_VECTORS = 4u;
 
 struct BuildingWallRecord {
     float4 plane;
@@ -1215,9 +1231,11 @@ struct BuildingWallRecord {
     float sash_half;
     uint reveal;
     float leading;
+    uint fade;
+    uint glazing;
 };
 
-inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c) {
+inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c, uint4 d) {
     BuildingWallRecord w;
     float4 plane = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
     float2 dark = {asfloat(b.x), asfloat(b.y)};
@@ -1229,6 +1247,8 @@ inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c) {
     w.sash_half = asfloat(c.y);
     w.reveal = c.z;
     w.leading = asfloat(c.w);
+    w.fade = d.x;
+    w.glazing = d.y;
     return w;
 }
 
@@ -1425,7 +1445,7 @@ inline BuildingArch building_arch_cut(FrameCamera cam, TilePlace place, Building
     for (uint i = 0u; i <= BUILDING_ARCH_POINTS; ++i) {
         float3 e = first;
         if (i < BUILDING_ARCH_POINTS) {
-            e = camera_of(cam, eye_relative(place, building_arch_point(wall, n, b, k, i, off, grow)));
+            e = camera_of(cam, placed(cam, place, building_arch_point(wall, n, b, k, i, off, grow)));
         }
         if (i == 0u) {
             first = e;
@@ -1618,11 +1638,11 @@ struct BuildingChurchLeading {
 inline BuildingChurchLeading building_church_leading_of(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
                                                        BuildingChurchBay b, uint k) {
     float uc = (float(k) + 0.5f) * b.bw;
-    float3 lb = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc - b.wh, b.ys, BUILDING_CHURCH_LEADING)));
-    float3 lt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc - b.wh, b.ye, BUILDING_CHURCH_LEADING)));
-    float3 rb = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc + b.wh, b.ys, BUILDING_CHURCH_LEADING)));
-    float3 rt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc + b.wh, b.ye, BUILDING_CHURCH_LEADING)));
-    float3 mt = camera_of(cam, eye_relative(place, building_church_point(wall, n, b, uc, b.ye + b.wh, BUILDING_CHURCH_LEADING)));
+    float3 lb = camera_of(cam, placed(cam, place, building_church_point(wall, n, b, uc - b.wh, b.ys, BUILDING_CHURCH_LEADING)));
+    float3 lt = camera_of(cam, placed(cam, place, building_church_point(wall, n, b, uc - b.wh, b.ye, BUILDING_CHURCH_LEADING)));
+    float3 rb = camera_of(cam, placed(cam, place, building_church_point(wall, n, b, uc + b.wh, b.ys, BUILDING_CHURCH_LEADING)));
+    float3 rt = camera_of(cam, placed(cam, place, building_church_point(wall, n, b, uc + b.wh, b.ye, BUILDING_CHURCH_LEADING)));
+    float3 mt = camera_of(cam, placed(cam, place, building_church_point(wall, n, b, uc, b.ye + b.wh, BUILDING_CHURCH_LEADING)));
     float step = b.ye > b.ys ? BUILDING_CHURCH_TRANSOM / (b.ye - b.ys) : 0.0f;
     BuildingChurchLeading l;
     uint4 l0 = {asuint(lb.x), asuint(lb.y), asuint(lb.z), asuint(lt.x)};
@@ -1999,8 +2019,8 @@ inline BuildingMaterialLine building_material_line(FrameCamera cam, TilePlace pl
     float3 a = {(wall.c0.x + ex * e.u0) + n.x * e.out, e.y0, (wall.c0.z + ez * e.u0) + n.z * e.out};
     float3 b = {(wall.c0.x + ex * e.u1) + n.x * e.out, e.y1, (wall.c0.z + ez * e.u1) + n.z * e.out};
     float near_z = cam.frame.w;
-    float3 k0 = camera_of(cam, eye_relative(place, a));
-    float3 k1 = camera_of(cam, eye_relative(place, b));
+    float3 k0 = camera_of(cam, placed(cam, place, a));
+    float3 k1 = camera_of(cam, placed(cam, place, b));
     if (k0.z < near_z || k1.z < near_z) {
         return l;
     }
@@ -2253,8 +2273,8 @@ inline BuildingBeam building_segment(FrameCamera cam, uint4 v0, uint4 v1, uint4 
     float near_z = cam.frame.w;
     float3 from = {asfloat(v0.x), asfloat(v0.y), asfloat(v0.z)};
     float3 to = {asfloat(v1.x), asfloat(v1.y), asfloat(v1.z)};
-    float3 k0 = camera_of(cam, eye_relative(place, from));
-    float3 k1 = camera_of(cam, eye_relative(place, to));
+    float3 k0 = camera_of(cam, placed(cam, place, from));
+    float3 k1 = camera_of(cam, placed(cam, place, to));
     if (k0.z < near_z || k1.z < near_z) {
         return b;
     }

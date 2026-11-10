@@ -375,6 +375,7 @@
     <string name="mine_part_timings">Temps des images</string>
     <string name="mine_part_pacing">Cadence des images</string>
     <string name="mine_part_compression">Compression</string>
+    <string name="mine_part_fast_refresh">Rafraîchissement rapide</string>
     <string name="mine_layers_cloud_shadows">Ombres des nuages</string>
     <string name="mine_layers_water_light">Reflets de l\'eau</string>
     <string name="mine_layers_facades">Détails des façades</string>
@@ -398,6 +399,7 @@
     <string name="mine_part_building_shadows">Ombres des bâtiments</string>
     <string name="mine_part_shadow_blur">Ombres douces</string>
     <string name="mine_part_park_shadows">Ombres des parcs</string>
+    <string name="mine_part_sun">Ensoleillement</string>
     <string name="mine_part_reflections">Reflets</string>
     <string name="mine_part_ripple">Ondulation</string>
     <string name="mine_part_glitter">Scintillement</string>
@@ -409,6 +411,7 @@
     <string name="mine_part_lamp_pools">Flaques de lumière</string>
     <string name="mine_part_lamp_halos">Halos des lampadaires</string>
     <string name="mine_part_lamp_streaks">Traînées des lampadaires</string>
+    <string name="mine_part_open_glows">Lueur des lieux ouverts</string>
     <string name="mine_part_rain">Pluie</string>
     <string name="mine_part_golden_wash">Lumière dorée</string>
     <string name="mine_part_walls">Murs</string>
@@ -427,6 +430,8 @@
     <string name="mine_part_kit_details">Détails des traditions</string>
     <string name="mine_part_doors">Portes</string>
     <string name="mine_part_house_numbers">Numéros</string>
+    <string name="mine_part_shopfronts">Devantures</string>
+    <string name="mine_part_terraces">Terrasses</string>
     <string name="mine_part_trees">Arbres</string>
     <string name="mine_part_leaf_filters">Filtres des feuilles</string>
     <string name="mine_part_furniture">Mobilier urbain</string>

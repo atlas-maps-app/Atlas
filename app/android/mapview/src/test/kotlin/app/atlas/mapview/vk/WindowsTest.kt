@@ -430,6 +430,31 @@ class WindowsTest {
     }
 
     @Test
+    fun aStepThatTakesALevelsTileWithNothingToDrawWritesNoPackButCountsItsWork() {
+        // the open sea in a far view: its level's tile holds nothing to draw, so the step writes its mark alone, no pack
+        // the core takes, and says false; that it worked tells the map its next step may find more (MapController asks
+        // it at the half second's end, where at rest no camera would ask), and a step with nothing to do counts none
+        val sea = MapCore.Window(12, 2100, 1340)
+        val land = MapCore.Window(12, 2101, 1346)
+        tiled = { t -> Windows.Tiled(if (t == sea) ByteArray(0) else "the tile ${t.id}".toByteArray(), nlDate, "netherlands") }
+        val core = Core()
+        core.levels = listOf(sea)
+        val before = withTiles.worked
+        assertFalse(withTiles.step(core))
+        assertTrue(withTiles.tiledOf(sea).exists())
+        assertFalse(withTiles.fileOf(sea).exists())
+        assertEquals(before + 1, withTiles.worked)
+        // the core wants it still (it holds no tile there), but it was taken lately: nothing to do, nothing counted
+        assertFalse(withTiles.step(core))
+        assertEquals(before + 1, withTiles.worked)
+        // a tile with something to draw: its pack written, true, and counted
+        core.levels = listOf(sea, land)
+        assertTrue(withTiles.step(core))
+        assertTrue(withTiles.fileOf(land).exists())
+        assertEquals(before + 2, withTiles.worked)
+    }
+
+    @Test
     fun aWindowNoCountrysTilesHoldOrWhoseTilesFailIsBuiltFromItsDataAsBefore() {
         val core = Core()
         core.wanted = listOf(w)

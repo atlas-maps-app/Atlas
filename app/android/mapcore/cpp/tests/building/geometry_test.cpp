@@ -1038,6 +1038,39 @@ TEST_CASE("buildings: a building's material face, as material_face's chain takes
     CHECK(gm::material_slots(gm::Material::none) == 0);
 }
 
+/// Stage T's shop floors' hours (TileBuildings::hours) of a tile at the finest level (no variants): each building
+/// with shop glazing has its places' (its record's place_hours, but those without), every other none, each distinct
+/// string once. Adds the items with hours to `with_hours` and the wrong ones to `wrong`.
+void check_hours(const gm::TileBuildings& g, const tl::Tile& tile, std::size_t& with_hours, std::size_t& wrong) {
+    std::vector<bool> glazed(g.items.size(), false);
+    for (const gm::WindowWall& w : g.window_walls) {
+        if ((w.flags & gm::window_flag::glazing) != 0) glazed[g.edged[w.wall].item] = true;
+    }
+    std::vector<std::string> distinct = g.hours;
+    std::ranges::sort(distinct);
+    CHECK(std::ranges::adjacent_find(distinct) == distinct.end());
+    CHECK((g.hours.empty() ? g.item_hours_first.empty() : g.item_hours_first.size() == g.items.size() + 1));
+    for (std::size_t i = 0; i < g.items.size(); ++i) {
+        const gm::BuildingItem& item = g.items[i];
+        const tl::Layer* l =
+            tile.layer(item.source == gm::Source::building ? tl::LayerId::building : tl::LayerId::part);
+        std::vector<std::string_view> want;
+        if (glazed[i] && l != nullptr) {
+            for (const std::uint32_t k :
+                 l->string_list(tl::building::place_hours, item.record).value_or(std::span<const std::uint32_t>{})) {
+                if (!l->strings[k].empty()) want.push_back(l->strings[k]);
+            }
+        }
+        std::vector<std::string_view> got;
+        if (!g.item_hours_first.empty()) {
+            for (std::uint32_t k = g.item_hours_first[i]; k < g.item_hours_first[i + 1]; ++k)
+                got.emplace_back(g.hours[g.item_hours[k]]);
+        }
+        with_hours += got.empty() ? 0 : 1;
+        wrong += got == want ? 0 : 1;
+    }
+}
+
 TEST_CASE("buildings: stage T of every bundled tile, at the levels its views load at, held to K8's samples") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
@@ -1075,6 +1108,8 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         std::size_t walls = 0;
         std::array<std::size_t, 5> faced{}; // the facade walls by their material face (gm::Material)
         std::size_t beams = 0;              // the hoist beams under old gables
+        std::size_t with_hours = 0;         // the shop floors whose places have opening hours
+        std::size_t hours_wrong = 0;
         double ms = 0;
         for (const std::uint8_t level : levels) {
             for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
@@ -1130,6 +1165,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                     CHECK(beam.to.y == beam.from.y);
                 }
                 beams += g.beams.size();
+                if (level == 0) check_hours(g, *tile, with_hours, hours_wrong);
                 wrong += c.wrong;
                 ++tiles;
             }
@@ -1138,7 +1174,11 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 sampled, " with a sun sample, ", windows, " windows on ", walls, " walls, ", wrong,
                 " not K8's; stage T ", ms / static_cast<double>(tiles), " ms a tile");
         MESSAGE(std::string(name), ": material faces on ", faced[1], " glass walls, ", faced[2], " metal, ", faced[3],
-                " with balconies, ", faced[4], " of parking garages; ", beams, " hoist beams under old gables");
+                " with balconies, ", faced[4], " of parking garages; ", beams, " hoist beams under old gables; ",
+                with_hours, " shop floors with their places' opening hours (", hours_wrong, " not their places')");
+        // the bundled Westerkerk's 134, the canal ring's 1,628
+        CHECK(hours_wrong == 0);
+        CHECK(with_hours >= 100);
         MESSAGE(std::string(name), ": a tile's range of the walls heap ",
                 static_cast<double>(all_bytes) / static_cast<double>(tiles) / (1 << 20), " MB on average, the densest ",
                 static_cast<double>(most_bytes) / (1 << 20), " MB: ", densest);
@@ -1253,6 +1293,8 @@ namespace {
                    f.lines_far == g.lines_far && f.shadow_near == g.shadow_near && f.shadow_far == g.shadow_far;
         }))
         return "a kit's walls";
+    if (a.hours != b.hours || a.item_hours_first != b.item_hours_first || a.item_hours != b.item_hours)
+        return "the shop floors' hours";
     atlas::passes::BuildingTile x;
     atlas::passes::BuildingTile y;
     if (atlas::passes::heap_words(a, 0.0, 0.0, x) != atlas::passes::heap_words(b, 0.0, 0.0, y))
@@ -1261,6 +1303,27 @@ namespace {
 }
 
 } // namespace
+
+TEST_CASE("buildings: a shop floor is open while one of its places' hours is open (open_here), else closed") {
+    atlas::passes::BuildingTile b;
+    b.hours = {"Mo-Su 08:00-22:00", "Mo-Fr 09:00-17:00", "not a rule"};
+    b.item_hours_first = {0, 2, 2, 3}; // item 0 the first two, item 1 none, item 2 the last
+    b.item_hours = {0, 1, 2};
+    const std::vector<std::int8_t> afternoon{1, 1, -1};
+    const std::vector<std::int8_t> evening{1, 0, -1};
+    const std::vector<std::int8_t> late{0, 0, -1};
+    CHECK(atlas::passes::shop_open(b, 0, afternoon));
+    CHECK(atlas::passes::shop_open(b, 0, evening));
+    CHECK_FALSE(atlas::passes::shop_open(b, 0, late));
+    CHECK_FALSE(atlas::passes::shop_open(b, 1, afternoon));
+    // hours open_at answers nothing for: not open
+    CHECK_FALSE(atlas::passes::shop_open(b, 2, afternoon));
+    // past the items, or without the moment's answers: closed
+    CHECK_FALSE(atlas::passes::shop_open(b, 3, afternoon));
+    CHECK_FALSE(atlas::passes::shop_open(b, 0, {}));
+    // a tile whose shop floors have no hours
+    CHECK_FALSE(atlas::passes::shop_open(atlas::passes::BuildingTile{}, 0, afternoon));
+}
 
 TEST_CASE("buildings: a dense tile walked in blocks on several threads is the one walk, word for word (gain 9)") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");

@@ -29,10 +29,12 @@ struct Box {
 [[nodiscard]] Box box_of(const tiles::GridBox& grid, std::int32_t top_cm, const view::GroundFrame& frame) noexcept;
 
 /// The view's frustum in its camera's coordinates: the frame plus a margin (CSS px) on every side, from the near
-/// plane out to `far` metres of depth.
+/// plane out to `far` metres of depth. Where the ground bends (`drop`, view::View::drop: 0 up to a camera 18 km from
+/// its target) each box is taken on the bent ground: down by the drop at its farthest point from the camera's target
+/// below, and at its nearest above.
 class Frustum {
 public:
-    Frustum(const view::Camera& camera, double margin_px, double far) noexcept;
+    Frustum(const view::Camera& camera, double margin_px, double far, double drop = 0.0) noexcept;
 
     /// Whether any of the box may be seen: false only when its eight corners all lie outside one plane.
     [[nodiscard]] bool sees(const Box& box) const noexcept;
@@ -45,10 +47,14 @@ public:
     [[nodiscard]] const view::Camera& camera() const noexcept { return camera_; }
 
 private:
+    /// The box on the bent ground (the box itself where nothing bends).
+    [[nodiscard]] Box bent(const Box& box) const noexcept;
+
     const view::Camera& camera_;
     std::array<view::Vec3, 5> normals_{}; // left, right, top, bottom, near: k · n >= offset is inside
     std::array<double, 5> offsets_{};
     double far_;
+    double drop_;
 };
 
 /// The visible cells of a tile: bit r · n + c for the cell in row r (from the north) and column c of its n × n
@@ -61,5 +67,14 @@ private:
 /// four places), the one holding it where they are coarser, or every cell for a gap of 0.
 [[nodiscard]] std::uint64_t cells_over(std::uint8_t per_side, std::uint32_t gap, std::uint32_t x,
                                        std::uint32_t y) noexcept;
+
+/// The cells of a tile of grid box `tile` ([south, west, north, east]) over the grid box `part`: the bits of its n × n
+/// cells as the packer cuts them (WorldGeometry.cellBoxes and Cells.cellOf: rows of equal latitude from the north,
+/// columns of equal longitude from the west) that overlap `part` by more than the grid's rounding. A world tile's
+/// ancestor draws these over it: the descendant's rows are Mercator's, so where an ancestor spans degrees of latitude
+/// the cell cells_over finds by key may lie beside it (the globe's 3/4/2 has its third row of cells end at 53.75° N,
+/// where 6/32/20 under it reaches 55.78° N).
+[[nodiscard]] std::uint64_t cells_overlapping(std::uint8_t per_side, const std::array<std::int32_t, 4>& tile,
+                                              const std::array<std::int32_t, 4>& part) noexcept;
 
 } // namespace atlas::scene

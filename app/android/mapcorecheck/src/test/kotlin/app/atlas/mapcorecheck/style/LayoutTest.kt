@@ -64,6 +64,7 @@ class LayoutTest {
         put("ThemeBlock.GOLDEN", ThemeBlock.GOLDEN)
         put("ThemeBlock.TONE", ThemeBlock.TONE)
         put("ThemeBlock.TONE_STRENGTH", ThemeBlock.TONE_STRENGTH)
+        put("ThemeBlock.DAYLIGHT", ThemeBlock.DAYLIGHT)
         for ((i, name) in ThemeBlock.MOMENTS.withIndex()) put("ThemeBlock.MOMENTS[$name]", i)
         put("CameraWriter.VERSION", CameraWriter.VERSION)
         put("CameraWriter.SIZE", CameraWriter.SIZE)
@@ -127,6 +128,10 @@ class LayoutTest {
         put("CameraWriter.PART_CORNICES", CameraWriter.PART_CORNICES)
         put("CameraWriter.PART_QUAY_WATERLINES", CameraWriter.PART_QUAY_WATERLINES)
         put("CameraWriter.PART_QUAY_TOPS", CameraWriter.PART_QUAY_TOPS)
+        put("CameraWriter.PART_SHOPFRONTS", CameraWriter.PART_SHOPFRONTS)
+        put("CameraWriter.PART_TERRACES", CameraWriter.PART_TERRACES)
+        put("CameraWriter.PART_OPEN_GLOWS", CameraWriter.PART_OPEN_GLOWS)
+        put("CameraWriter.PART_SUN", CameraWriter.PART_SUN)
         put("CameraWriter.PARTS", CameraWriter.PARTS)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)
@@ -142,7 +147,8 @@ class LayoutTest {
         // the slots the core's passes draw by
         val drawn = listOf(Slot.LEAVES, Slot.EVERGREEN, Slot.BARK, Slot.WOODS, Slot.BENCHES, Slot.LAMP_POSTS, Slot.BOLLARDS, Slot.TURBINES, Slot.PYLONS) +
             listOf(Slot.PAPER, Slot.LAWN, Slot.SQUARES, Slot.PARKING, Slot.PLAYGROUND, Slot.MEMORIAL, Slot.BRIDGE_DECK) +
-            listOf(Slot.QUAY_WALLS) +
+            listOf(Slot.QUAY_WALLS, Slot.WATER, Slot.WATER_SKY, Slot.WATER_DEEP, Slot.STREET) +
+            listOf(Slot.NIGHT_GROUND, Slot.NIGHT_WATER) +
             listOf(Slot.ASPHALT, Slot.PAVING_STONES, Slot.SETTS, Slot.CONCRETE_PAVING, Slot.BRICK_PAVING, Slot.BOARDWALK)
         for (slot in drawn) {
             put("Slot.${slot.name}", slot.code)

@@ -232,11 +232,12 @@ bool Buildings::ready_for(const frame::FrameState& last, const shaders::Theme& n
     if (moment_ != 0 && std::ranges::equal(std::as_bytes(std::span(&next, 1)), theme_) && same(palette, palette_)) {
         return true;
     }
-    // the tiles the frame before drew, a tile once though it draws for several (a stand-in ancestor)
+    // the tiles the frame before drew, those kept under ones fading in among them (what stands up of them draws: the
+    // standing fades), a tile once though it draws for several (a stand-in ancestor)
     std::vector<Ahead::Tile> drawn;
     if (last.cover != nullptr) {
         const std::uint32_t me = index();
-        for (const scene::CoverTile& t : last.cover->tiles()) {
+        for (const scene::CoverTile& t : last.cover->upright()) {
             if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
             const scene::PassTile& mine = t.drawn->passes[me];
             const auto* b = mine.cpu_as<BuildingTile>();
@@ -292,6 +293,8 @@ std::uint32_t Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme,
     }
     const std::uint64_t asked_now = asked_items_.empty() ? 0 : asked_revision_;
     Lit& lit = lit_[tile.handle];
+    // a tile's buildings let go of and built again (their part left out and drawn again): none of its areas lit
+    if (!same_owner(lit.of, mine.cpu)) lit = Lit{.of = mine.cpu};
     // the area this slot's frames read, else the other, once it holds the frame's moment and the asked building's
     // revision (the other slot's frame lit it): both slots read it from then on
     for (const std::uint32_t area : {std::uint32_t{lit.read[slot]}, 1U - lit.read[slot]}) {

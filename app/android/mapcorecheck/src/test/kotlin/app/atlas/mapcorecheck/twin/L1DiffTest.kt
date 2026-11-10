@@ -8,9 +8,10 @@ import org.junit.Test
 /**
  * L1Diff's rules on elements made by hand (the view 0 0 412 916, as the renders' S1 frame): what lies outside the view
  * is neither compared nor missing, an element one side lacks shifts nothing, a fill drawn in pieces counts as one
- * element only when the pieces cover it, a path's subpaths compare as a set, a match out of its place is out of order
- * only when it passes an element of another key that it overlaps, and a sliver one side alone draws is counted apart
- * where asked, but as an extra where its key is a known difference's.
+ * element only when the pieces cover it, a path's subpaths compare as a set, coordinates beyond the view differ only by
+ * what their edges draw in it, a match out of its place is out of order only when it passes an element of another key
+ * that it overlaps, and a sliver one side alone draws is counted apart where asked, but as an extra where its key is a
+ * known difference's.
  */
 class L1DiffTest {
     private val view = floatArrayOf(0f, 0f, 412f, 916f)
@@ -113,6 +114,29 @@ class L1DiffTest {
         assertEquals(1, step.oneStep)
         val far = L1Diff.diff("differs", listOf(fill("#ff000000", a)), listOf(fill("#ff000000", a.mapIndexed { i, v -> if (i == 0) v + 3 else v }.toDoubleArray())), view)
         assertEquals(1, far.differs)
+    }
+
+    @Test
+    fun coordinatesBeyondTheViewDifferOnlyByWhatTheirEdgesDrawInIt() {
+        // a flat roof under the camera, filled and stroked: one edge across the view, the rest thousands of px below it
+        // and to its right, where the twin's floats move two vertices by tenths
+        val roof = doubleArrayOf(-300.0, 600.0, 700.0, 610.0, 12000.0, 9000.0, -5000.0, 9000.0)
+        val floats = doubleArrayOf(-300.0, 600.0, 700.0, 610.0, 12000.4, 9000.3, -5000.5, 9000.0)
+        val same = L1Diff.diff("beyond", listOf(face("#ffa29b92", roof)), listOf(face("#ffa29b92", floats)), view)
+        assertEquals(1, same.beyondView)
+        assertEquals(0, same.differs)
+        // an edge across the view between two such vertices moves in it: they differ
+        val band = doubleArrayOf(-20000.0, 500.0, 20000.0, 520.0, 20000.0, 30000.0, -20000.0, 30000.0)
+        val moved = doubleArrayOf(-20000.0, 500.6, 20000.0, 520.6, 20000.0, 30000.0, -20000.0, 30000.0)
+        val across = L1Diff.diff("across", listOf(face("#ffa29b92", band)), listOf(face("#ffa29b92", moved)), view)
+        assertEquals(0, across.beyondView)
+        assertEquals(1, across.differs)
+        // a vertex in the view more than a step apart differs, whatever its edges
+        val near = doubleArrayOf(-300.0, 600.0, 200.0, 605.0, 12000.0, 9000.0, -5000.0, 9000.0)
+        val nearFloats = doubleArrayOf(-300.0, 600.0, 200.0, 605.3, 12000.4, 9000.3, -5000.5, 9000.0)
+        val inView = L1Diff.diff("in the view", listOf(face("#ffa29b92", near)), listOf(face("#ffa29b92", nearFloats)), view)
+        assertEquals(0, inView.beyondView)
+        assertEquals(1, inView.differs)
     }
 
     @Test

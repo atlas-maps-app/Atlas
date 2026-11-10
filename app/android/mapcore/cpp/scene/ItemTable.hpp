@@ -8,6 +8,10 @@
 // Rows come from the tiles' stage-T builders as tiles become resident (scene/Residency.hpp) and go with them; the
 // render thread alone changes the table, between frames. A freed row is reused; rows keep their numbers while they
 // live, so the ranks' order (frame/Ranks.hpp) survives a tile's arrival or departure.
+//
+// A row's points are its tile's, in its pack frame's metres, as its builder gave them; its place maps them into the
+// frame drawn (scene/World.hpp: a place for each pack frame), as the tiles' own geometry is placed where it is drawn,
+// so that a change of the frame drawn (a frame cell crossed) moves the places and rewrites no row.
 #pragma once
 
 #include <array>
@@ -61,12 +65,29 @@ struct ItemSpec {
     float radius = 0.0F;
     /// The tile it belongs to (Residency's handle).
     std::uint32_t tile = 0;
+    /// The cell of its tile its feature lies in, as the pack's cell table has it (bit `cell` of a CoverTile's cells):
+    /// what stands up of a tile kept under one fading in draws its cells under that tile alone (scene/Cover.hpp's
+    /// upright). Beside `tile`, in the padding before `owner`, so that an item takes no more room.
+    std::uint8_t cell = 0;
     /// Its owner, as the likeness harness keys owners (owner_key): the OSM element it draws.
     std::uint64_t owner = 0;
     /// The building it draws, keyed as `owner` is: an outline's own key, a part's outline's (where the part names one,
     /// else its own); 0 for an item of no building. The building the app asks about is drawn by the items of its key
     /// (frame/Ranks.hpp).
     std::uint64_t building = 0;
+};
+
+/// A place: the map of a frame's metres into the frame drawn's, x = x0 + sx·x east and z = z0 + sz·z south, y as it is.
+/// Every frame is equirectangular (view/Frames.hpp), so this is view::convert's map, to rounding. Place 0 is the frame
+/// drawn's own, which moves nothing; a row's until it is given another.
+struct ItemPlace {
+    double x0 = 0;
+    double sx = 1;
+    double z0 = 0;
+    double sz = 1;
+
+    [[nodiscard]] constexpr double x(double v) const noexcept { return x0 + (sx * v); }
+    [[nodiscard]] constexpr double z(double v) const noexcept { return z0 + (sz * v); }
 };
 
 /// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in
@@ -91,14 +112,24 @@ public:
     std::uint32_t add(const ItemSpec& item);
     /// Frees a row (its tile left the scene).
     void remove(std::uint32_t row) noexcept;
-    /// Rewrites a live row with `item` (its tile's spec in another frame, say); the row keeps its number.
+    /// Rewrites a live row with `item`; the row keeps its number and its place.
     void update(std::uint32_t row, const ItemSpec& item) noexcept;
     /// Sets or clears a live row's flag `flag` (item_flag::masked).
     void set_flag(std::uint32_t row, std::uint16_t flag, bool on) noexcept;
     /// Frees every row of tile `tile`; returns how many.
     std::size_t remove_tile(std::uint32_t tile) noexcept;
-    /// Forgets every row.
+    /// Forgets every row (the places stay).
     void clear() noexcept;
+
+    /// Adds a place; returns its number.
+    std::uint32_t add_place(const ItemPlace& place);
+    /// Moves place `place` (the frame drawn changed): its rows follow it, none rewritten.
+    void move_place(std::uint32_t place, const ItemPlace& to) noexcept;
+    /// Gives live row `row` place `place`.
+    void set_place(std::uint32_t row, std::uint32_t place) noexcept;
+    /// The places, by number, and each row's.
+    [[nodiscard]] std::span<const ItemPlace> places() const noexcept { return places_; }
+    [[nodiscard]] std::span<const std::uint32_t> place() const noexcept { return place_; }
 
     /// The rows in use and the rows the table holds (in use or free).
     [[nodiscard]] std::size_t live() const noexcept { return live_; }
@@ -107,7 +138,7 @@ public:
     /// How many rows were added or freed since the table was made (the ranks' cue to fix their order).
     [[nodiscard]] std::uint64_t changes() const noexcept { return changes_; }
 
-    // The columns, by row.
+    // The columns, by row (the points in their tile's pack frame, which the row's place maps into the frame drawn).
     [[nodiscard]] std::span<const double> x() const noexcept { return x_; }
     [[nodiscard]] std::span<const double> y() const noexcept { return y_; }
     [[nodiscard]] std::span<const double> z() const noexcept { return z_; }
@@ -123,6 +154,7 @@ public:
     [[nodiscard]] std::span<const std::uint32_t> tile() const noexcept { return tile_; }
     [[nodiscard]] std::span<const std::uint64_t> owner() const noexcept { return owner_; }
     [[nodiscard]] std::span<const std::uint64_t> building() const noexcept { return building_; }
+    [[nodiscard]] std::span<const std::uint8_t> cell() const noexcept { return cell_; }
     [[nodiscard]] std::span<const std::uint8_t> alive_rows() const noexcept { return alive_; }
     /// Row `row`'s slots in band `band`.
     [[nodiscard]] std::uint32_t slots(std::uint32_t row, std::size_t band) const noexcept {
@@ -137,9 +169,12 @@ private:
     std::vector<std::uint32_t> tile_;
     std::vector<std::uint64_t> owner_;
     std::vector<std::uint64_t> building_;
+    std::vector<std::uint8_t> cell_;
+    std::vector<std::uint32_t> place_;
     std::vector<std::uint32_t> slots_; // bands per row
     std::vector<std::uint8_t> alive_;
     std::vector<std::uint32_t> free_;
+    std::vector<ItemPlace> places_{ItemPlace{}};
     std::size_t live_ = 0;
     std::uint64_t changes_ = 0;
 };

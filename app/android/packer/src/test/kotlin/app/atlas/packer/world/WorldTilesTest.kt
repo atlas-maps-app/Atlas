@@ -41,7 +41,7 @@ class WorldTilesTest {
         ShapefileWriter.zip(land, "land_polygons", listOf(ShapefileWriter.Record(box(7.30, 43.725, 7.60, 43.90)), ShapefileWriter.Record(box(7.45, 43.70, 7.46, 43.71))))
         val out = tmp.newFolder("world")
         val scratch = File(tmp.root, "scratch")
-        val built = WorldTiles.build(pbf, land, out, scratch, 2, listOf(33, 23, 33, 23), false, ::println)
+        val built = WorldTiles.build(pbf, land, out, scratch, 2, WorldTiles.Run(WorldTiles.rectangle(33, 23, 33, 23)), false, ::println)
         assertEquals(0.0, built.worstCover, 0.0)
         assertEquals(0, built.ringsOutside)
         assertEquals((6..11).toList(), built.levels.keys.toList())

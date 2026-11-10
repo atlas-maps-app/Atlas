@@ -139,6 +139,10 @@ struct PassContext {
     /// writes the painter slot it draws at; and the frame's owner fragment module (null outside it).
     bool owners = false;
     vk::ShaderModule owner_module;
+    /// The threads the frame's prepare runs the passes on (FrameBuilder::prepare): where it is more than one, a pass
+    /// may make independent parts of its own at once on threads of their own, each with a context of its own (its
+    /// stats).
+    std::uint32_t threads = 1;
 };
 
 /// What a pass records a phase into.
@@ -228,10 +232,20 @@ public:
         (void)build;
         return {};
     }
+    /// The parts of the picture (style::camera_part) what its stage T makes of a tile serves: while every one of them
+    /// is left out, the residency builds none of it for the tiles that come (no stage T, heap bytes or items), builds
+    /// it for the resident tiles drawn as one of them comes back (scene::Residency's top-ups), and its item kinds take
+    /// no rank and are not placed (serves). Every part by default: a pass that names none is always built (the
+    /// ground, which the shadows, the reflections and the quays read too).
+    [[nodiscard]] virtual std::uint64_t camera_parts() const noexcept { return ~std::uint64_t{0}; }
+    /// Whether its stage T serves a part drawn while `left_out` (CameraState::parts) is left out.
+    [[nodiscard]] bool serves(std::uint64_t left_out) const noexcept { return (camera_parts() & ~left_out) != 0U; }
     /// The pack-level stage T of the pass: what it derives from a whole pack rather than a tile (D13's canal names:
     /// each name's first way in source order across the pack's label layer), once per pack, on a worker, when the
     /// pack becomes the active or the coarser one (scene/Packs.hpp); kept with the pack (scene::PackBuild::keep) and
-    /// read in FrameState::active_pack and coarser_pack. It must not touch the pass's own state.
+    /// read in FrameState::active_pack and coarser_pack. What it kept of an earlier composition of the pack's id (a
+    /// frame cell's) comes with it (scene::PackBuild::before), to take again what still holds. It must not touch the
+    /// pass's own state.
     [[nodiscard]] virtual gpu::Result<void> build_pack(scene::PackBuild& build) const {
         (void)build;
         return {};

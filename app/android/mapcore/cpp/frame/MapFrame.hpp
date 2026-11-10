@@ -67,6 +67,9 @@ struct MapOptions {
     /// The hints of each world's tile workers (ENGINE.md gain 8: platform::WorkerSession on Android, made anew for
     /// each world, its workers' priority and their hint session); none by default.
     std::function<std::shared_ptr<scene::WorkerHints>()> worker_hints;
+    /// Where the frame tells the platform of the threads its work runs on, the render thread and the ground's helpers
+    /// (FrameOptions::render_threads: the render thread's hint session on Android); none by default.
+    std::shared_ptr<RenderThreads> render_threads;
     /// The heaps' budget in bytes instead of the device's (scene::heap_budget): a test's, to compare budgets; 0 for the
     /// device's.
     std::uint64_t heaps_total = 0;
@@ -125,6 +128,12 @@ public:
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
     void set_screen(bool haze, bool vignette, bool grain) noexcept;
+    /// The kept walls' and near cells' shape records on (the default: as many as the frame slot's last frame kept) or
+    /// off from now on, each kept primitive then decided at each point (passes::Buildings::most_shape_chunks(0)), for
+    /// VK bench's comparison of the two at the map's far views (MapCore.shapeRecords); kept for every frame builder
+    /// made. "" where the frames' buildings draw from records, else why they cannot, or not yet (no frame drawn since
+    /// the frame builder or its output was made: what the device makes is known then).
+    [[nodiscard]] std::string set_shape_records(bool on);
     /// The passes the frames record from now on (FrameOptions::passes: a tool's measure of each pass's GPU work), kept
     /// for every frame builder made.
     void set_passes(std::uint64_t passes) noexcept {
@@ -156,10 +165,24 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> wanted_levels() const;
     /// The frame cells' levels' tiles its world draws or keeps in view (scene::World::levels_in_view).
     [[nodiscard]] std::vector<tiles::TileKey> levels_in_view() const;
+    /// The world's cache of remote packs' heads and chunks (ENGINE.md step 6: the world's own LRU), for its world and
+    /// every world made from now on; null: none, so a remote pack opens nowhere.
+    void set_world_cache(std::shared_ptr<tiles::ExpandedCache> cache);
+    /// The world's tiles whose chunks are not on the phone, nearest first (scene::WorldTiles::wants; none before the
+    /// world draws).
+    [[nodiscard]] std::vector<scene::WorldWant> world_wants() const;
+    /// The world's blocks its cover reaches without an open pack, nearest first (scene::WorldTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> world_blocks() const;
+    /// The open pack `id` of its world's store, or null.
+    [[nodiscard]] std::shared_ptr<const tiles::StorePack> world_pack(std::string_view id) const;
     /// The building under the view's device point (`x`, `y`) as the last frame drew it (scene/Pick.hpp: the ray from
     /// the last frame's eye through that point, among the buildings of the packs its resident tiles came from), or
     /// none.
     [[nodiscard]] std::optional<scene::Picked> pick(double x, double y);
+    /// What the view's device point (`x`, `y`) shows of the ground as the last frame drew it, from that frame's own
+    /// decisions (passes::Ground::pick: the ray from its eye through that point), or none. A building or an item may
+    /// stand before it: the app asks pick first.
+    [[nodiscard]] std::optional<scene::PickedGround> pick_ground(double x, double y);
     /// The world, while made (tests).
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).
@@ -189,6 +212,7 @@ private:
     unsigned workers_;
     std::function<void()> wake_;
     MapOptions options_;
+    std::shared_ptr<tiles::ExpandedCache> world_cache_; // set_world_cache
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;
@@ -202,6 +226,9 @@ private:
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;
     std::uint64_t passes_ = ~std::uint64_t{0};
+    bool shape_records_ = true;
+    /// set_shape_records' choice on the frame builder's buildings pass: "" where it draws from records, else why not.
+    [[nodiscard]] std::string apply_shape_records();
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;

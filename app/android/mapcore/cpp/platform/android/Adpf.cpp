@@ -20,6 +20,7 @@ struct HintApi {
     void* (*create_session)(void*, const std::int32_t*, std::size_t, std::int64_t) = nullptr;
     int (*report)(void*, std::int64_t) = nullptr;
     void (*close)(void*) = nullptr;
+    int (*update_target)(void*, std::int64_t) = nullptr;
     // API 35: a work duration with the GPU's share.
     void* (*duration_create)() = nullptr;
     void (*duration_release)(void*) = nullptr;
@@ -52,6 +53,7 @@ const HintApi& api() {
         bind(h.create_session, "APerformanceHint_createSession");
         bind(h.report, "APerformanceHint_reportActualWorkDuration");
         bind(h.close, "APerformanceHint_closeSession");
+        bind(h.update_target, "APerformanceHint_updateTargetWorkDuration");
         if (api_level() >= 35) {
             bind(h.duration_create, "AWorkDuration_create");
             bind(h.duration_release, "AWorkDuration_release");
@@ -83,7 +85,16 @@ bool HintSession::open(pid_t tid, std::int64_t target_ns) noexcept {
     const std::int32_t tids[1] = {static_cast<std::int32_t>(tid)};
     session_ = a.create_session(manager, tids, 1, target_ns);
     gpu_ = session_ != nullptr && a.gpu();
+    target_ns_ = target_ns;
+    if (session_ != nullptr && !threads_.empty()) take_threads(); // told before it opened
     return session_ != nullptr;
+}
+
+void HintSession::target(std::int64_t target_ns) noexcept {
+    if (session_ == nullptr || target_ns <= 0 || target_ns == target_ns_) return;
+    const HintApi& a = api();
+    if (a.update_target != nullptr) (void)a.update_target(session_, target_ns);
+    target_ns_ = target_ns;
 }
 
 void HintSession::report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_t gpu_ns) noexcept {
@@ -102,6 +113,22 @@ void HintSession::report(std::int64_t start_ns, std::int64_t cpu_ns, std::int64_
         }
     }
     (void)a.report(session_, cpu_ns);
+}
+
+void HintSession::threads(std::span<const std::int32_t> tids) {
+    threads_.assign(tids.begin(), tids.end());
+    if (session_ != nullptr) take_threads();
+}
+
+void HintSession::take_threads() noexcept {
+    const HintApi& a = api();
+    if (a.set_threads == nullptr || threads_.empty()) return; // API 33: the render thread alone
+    const int e = a.set_threads(session_, threads_.data(), threads_.size());
+    if (e != 0) {
+        log::warn("vk frame: the render thread's hint session refused its {} threads ({})", threads_.size(), e);
+    } else {
+        log::info("vk frame: the render thread's hint session holds it and {} helpers", threads_.size() - 1);
+    }
 }
 
 std::string HintSession::describe() const {

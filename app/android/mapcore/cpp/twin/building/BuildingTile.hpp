@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace atlas::shaders {
@@ -202,6 +203,12 @@ struct BuildingTile {
     /// part (else a building), bit 1 that building is a relation (else a way).
     std::vector<std::int64_t> ids;
     std::vector<std::uint8_t> owners;
+    /// Its build's serial (passes/OpenHours.hpp's key), and the opening hours of the places of its buildings whose
+    /// walls have shop glazing, with each item's among them (geometry::TileBuildings::hours).
+    std::uint64_t serial = 0;
+    std::vector<std::string> hours;
+    std::vector<std::uint32_t> item_hours_first;
+    std::vector<std::uint32_t> item_hours;
 
     /// A primitive's uint4 and a face's, as its records are lean or not.
     [[nodiscard]] std::uint32_t prim_vectors() const noexcept { return lean ? 3U : 4U; }
@@ -230,6 +237,18 @@ void building_colours(const shaders::Theme& theme, const style::PaletteBlock* pa
 void building_reveals(const shaders::Theme& theme, const style::PaletteBlock* palette,
                       std::span<const BuildingLight> lights, std::span<const std::uint32_t> faces,
                       std::span<std::uint32_t> out);
+
+/// Whether item `item`'s shop floor is open at a moment whose answers to its tile's hours are `answers`
+/// (passes::OpenHours's): one of its places' hours open (amsterdam.py's open_here, `open_at(...) is True`).
+[[nodiscard]] bool shop_open(const BuildingTile& b, std::uint32_t item, std::span<const std::int8_t> answers) noexcept;
+
+/// A shop floor's glazing's glass at night (0xRRGGBB): the style's windows.shop_glass_open while one of its building's
+/// places is open (shop_open), its shop_glass_closed while none is. The window jobs carry them (passes/Windows.cpp),
+/// not the frame block, which every stage takes: two of them may not grow (shaders/spirv.budget).
+struct ShopGlass {
+    std::uint32_t open = 0;
+    std::uint32_t closed = 0;
+};
 
 /// The sash bars' least width (CSS px).
 inline constexpr double sash_least = 0.7;
