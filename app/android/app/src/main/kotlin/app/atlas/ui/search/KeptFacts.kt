@@ -19,15 +19,20 @@ import java.io.IOException
 
 /**
  * Wikidata facts kept on the phone once fetched (the data is CC0), one small JSON file per item, so a place shows its
- * architect, year and namesake offline too. A file that cannot be read is treated as missing.
+ * architect, year and namesake offline too, and a brand its owner. A file that cannot be read is treated as missing.
  */
 class KeptFacts(private val dir: File) {
-    /** The kept item [qid], or null when it was never kept. */
-    fun read(qid: String): WikidataEntity? {
+    /**
+     * The kept item [qid], or null when it was never kept, or kept before [version] (by a version of Atlas that read
+     * fewer of its facts: asked again online, it is kept anew).
+     */
+    fun read(qid: String, version: Int = 1): WikidataEntity? {
         val f = fileOf(qid) ?: return null
         if (!f.isFile) return null
         return try {
-            decode(Json.parseToJsonElement(f.readText()).jsonObject)
+            val o = Json.parseToJsonElement(f.readText()).jsonObject
+            if (((o["v"] as? JsonPrimitive)?.intOrNull ?: 1) < version) return null
+            decode(o)
         } catch (e: IOException) {
             null
         } catch (e: IllegalArgumentException) {
@@ -52,7 +57,11 @@ class KeptFacts(private val dir: File) {
     companion object {
         private val QID = Regex("^Q\\d+$")
 
+        /** The facts a file keeps: 2 since a brand's owner and head office are kept. */
+        const val VERSION = 2
+
         fun encode(e: WikidataEntity): JsonObject = buildJsonObject {
+            put("v", VERSION)
             put("id", e.id)
             put("labels", strings(e.labels))
             put("descriptions", strings(e.descriptions))
@@ -73,6 +82,8 @@ class KeptFacts(private val dir: File) {
             put("styles", refs(e.styles))
             e.website?.let { put("website", it) }
             put("sitelinks", strings(e.sitelinks))
+            put("parents", refs(e.parents))
+            put("headquarters", refs(e.headquarters))
         }
 
         fun decode(o: JsonObject): WikidataEntity = WikidataEntity(
@@ -92,6 +103,8 @@ class KeptFacts(private val dir: File) {
             styles = o.refs("styles"),
             website = o.str("website"),
             sitelinks = o.map("sitelinks"),
+            parents = o.refs("parents"),
+            headquarters = o.refs("headquarters"),
         )
 
         private fun strings(m: Map<String, String>) = JsonObject(m.mapValues { JsonPrimitive(it.value) })

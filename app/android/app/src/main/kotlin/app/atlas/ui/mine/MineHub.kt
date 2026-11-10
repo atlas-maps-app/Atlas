@@ -11,6 +11,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import app.atlas.Services
+import app.atlas.providers.OpenAddresses
+import app.atlas.search.NationalParks
 import app.atlas.search.PlaceStore
 import app.atlas.search.RegionImport
 import app.atlas.services
@@ -163,7 +165,20 @@ class MineHub(private val services: Services) {
                 target.parentFile?.mkdirs()
                 val store = PlaceStore.open(target)
                 try {
-                    RegionImport(services.overpass).import(bbox, store, name = name) { p -> report(p.fraction.toFloat()) }
+                    // the house numbers OpenStreetMap lacks, from OpenAddresses, unless the user switched it off
+                    val addresses = services.openAddresses.takeIf { OpenAddresses.ID !in services.sourcesOff() }
+                    RegionImport(services.overpass, addresses = addresses).import(bbox, store, name = name) { p -> report(p.fraction.toFloat()) }
+                } finally {
+                    store.close()
+                }
+            }
+        },
+        // the country's national parks, so its largest greens are there offline however small the region
+        keepParks = if (services.config.offline) null else { bbox, target ->
+            withContext(Dispatchers.IO) {
+                val store = PlaceStore.open(target)
+                try {
+                    NationalParks(services.overpass).keep(bbox.center, store)
                 } finally {
                     store.close()
                 }

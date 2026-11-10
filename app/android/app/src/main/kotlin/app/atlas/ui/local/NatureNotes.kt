@@ -10,7 +10,8 @@ enum class NatureKind(val id: String, val filter: String, val colour: Long, val 
     WATER("water", "natural=spring or (natural=water and name) or ((waterway=river or waterway=canal or waterway=stream) and name)", 0xFF7FA7C4, "nature.spring"),
     BIRDS("birds", "leisure=bird_hide or (leisure=nature_reserve and name) or (natural=wetland and name)", 0xFFC98A2B, "nature.birds"),
     GARDENS("gardens", "(leisure=garden and name and not access=private and not access=no) or landuse=allotments", 0xFFB5532E, "nature.garden"),
-    WILD("wild", "leisure=nature_reserve or boundary=protected_area or natural=peak or natural=heath or (natural=wood and name)", 0xFF5E4A7A, "nature.peak");
+    // a protected area for nature only: the canal ring, a heritage site, is not wild
+    WILD("wild", "leisure=nature_reserve or boundary=national_park or (${GreenKind.NATURE_PROTECTED}) or natural=peak or natural=heath or (natural=wood and name)", 0xFF5E4A7A, "nature.peak");
 
     companion object {
         fun of(id: String?): NatureKind = entries.firstOrNull { it.id == id } ?: TREES
@@ -164,12 +165,30 @@ object NatureNotes {
             Note(kind, t["name"], what, t["garden:type"] ?: t["bird_hide"], facts, artFor(kind, t), f.distanceM, f.place)
         }
 
+    /**
+     * A park page's notes: its notable trees (never the "trees mapped" summary) and its bird places, measured from [here], at
+     * most [limit]: the trees first in a town's park, the birds first in a reserve and a national park.
+     */
+    fun parkNotes(park: Park, here: app.atlas.geo.LatLon, today: LocalDate, limit: Int = 3): List<Note> {
+        val fromHere = { f: Found -> Found(f.place, Geo.distance(here, f.place.location)) }
+        val trees = treeNotes(park.trees.map(fromHere), today, limit).filter { it.what != "trees" }
+        val birds = placeNotes(NatureKind.BIRDS, park.birds.map(fromHere).sortedBy { it.distanceM }, limit)
+        return (if (park.kind == GreenKind.PARK) trees + birds else birds + trees).take(limit)
+    }
+
     private fun artFor(kind: NatureKind, t: Map<String, String>): String = when (kind) {
         NatureKind.TREES -> "nature.tree"
         NatureKind.WATER -> if (t["natural"] == "spring") "nature.spring" else "nature.brook"
         NatureKind.BIRDS -> "nature.heron"
         NatureKind.GARDENS -> "nature.flower"
-        NatureKind.WILD -> if (t["natural"] == "peak") "nature.peak" else "nature.summit"
+        // what it is: a peak, a national park's shield, a reserve's leaf (as their rows wear them), a wood's tree
+        NatureKind.WILD -> when {
+            t["natural"] == "peak" -> "nature.peak"
+            t["boundary"] == "national_park" -> "place.national-park"
+            t["leisure"] == "nature_reserve" || t["boundary"] == "protected_area" -> "pinhead-leaf"
+            t["natural"] == "wood" -> "nature.tree"
+            else -> "nature.summit"
+        }
     }
 
     /** A score from which a tree is worth a line of its own. */

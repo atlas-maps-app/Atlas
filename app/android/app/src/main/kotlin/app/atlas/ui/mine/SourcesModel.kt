@@ -23,7 +23,8 @@ object SourcesModel {
 
     /** Atlas's own packs, released on GitHub: the map's windows read in place, and the regions taken offline. */
     val ATLAS_PACKS = ProviderInfo(
-        id = "atlas-packs", name = "Atlas's packs", licence = "ODbL", attribution = "Map data © OpenStreetMap contributors; extracts by Geofabrik",
+        id = "atlas-packs", name = "Atlas's packs", licence = "ODbL",
+        attribution = "Map data © OpenStreetMap contributors; extracts by Geofabrik; house numbers OpenStreetMap lacks from OpenAddresses and its sources",
         url = "https://github.com/atlas-maps-app/Atlas/releases",
         note = "The map's windows and offline regions, built on GitHub from OpenStreetMap's data; each window is read by its own bytes.",
         hosts = listOf("github.com", "release-assets.githubusercontent.com"),
@@ -101,13 +102,14 @@ object SourcesModel {
     fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL): String? =
         if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && host in it.hosts }?.id
 
-    /** A licence in a few characters for a tag: "ODbL", "CC BY 4.0", "open data", "own terms". */
+    /** A licence in a few characters for a tag: "ODbL", "CC BY 4.0", "open data", "own terms", "per source". */
     fun licenceLabel(licence: String): String {
         val l = licence.trim()
         return when {
             l.length <= 14 -> l
             l.startsWith("Open data", true) || l.startsWith("Open timetables", true) -> "open data"
             l.startsWith("Public", true) -> "public data"
+            l.startsWith("Each source", true) -> "per source"
             l.contains("terms", true) -> "own terms"
             else -> l.take(12).trimEnd(' ', ',', ';') + "…"
         }

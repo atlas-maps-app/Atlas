@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.unit.Velocity
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
@@ -50,6 +51,40 @@ class KitRobustnessTest {
             t += 16_000_000L
             return onFrame(t).also { seen += state.offset }
         }
+    }
+
+    private fun halfWay(stops: Set<SheetStop> = SheetStop.entries.toSet()) = SheetState(SheetStop.HALF, stops).also {
+        it.updateAnchors(mapOf(SheetStop.HIDDEN to 2000f, SheetStop.PEEK to 1800f, SheetStop.HALF to 1000f, SheetStop.FULL to 150f), 2000f)
+    }
+
+    @Test
+    fun aSheetIsHeldAtItsPeekUnlessItCanGo() {
+        val kept = halfWay(setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
+        kept.dragBy(5_000f)
+        assertEquals(1800f, kept.offset, 0.5f)
+        val going = halfWay()
+        going.dragBy(5_000f)
+        assertEquals(2000f, going.offset, 0.5f)
+    }
+
+    @Test
+    fun aPullDownRestsAtThePeekThenGoesOrPassesIt() = runBlocking {
+        val kind = halfWay()
+        withContext(Frames(kind)) { kind.settle(4_000f) }
+        assertEquals(SheetStop.PEEK, kind.stop)
+        withContext(Frames(kind)) { kind.settle(4_000f) }
+        assertEquals(SheetStop.HIDDEN, kind.stop)
+        val grid = halfWay().also { it.skipsPeek = true }
+        withContext(Frames(grid)) { grid.settle(4_000f) }
+        assertEquals(SheetStop.HIDDEN, grid.stop)
+    }
+
+    @Test
+    fun aListFlungToItsEndDoesNotTakeTheSheetAway() = runBlocking {
+        val s = halfWay().also { it.skipsPeek = true }
+        withContext(Frames(s)) { SheetScrollConnection(s).onPostFling(Velocity.Zero, Velocity(0f, 4_000f)) }
+        assertEquals(SheetStop.HALF, s.stop)
+        assertEquals(1000f, s.offset, 0.5f)
     }
 
     @Test

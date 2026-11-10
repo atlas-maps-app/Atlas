@@ -8,32 +8,37 @@ import app.atlas.mapview.MarkerStyle
 import app.atlas.model.Place
 import app.atlas.places.Brands
 import app.atlas.places.OpeningHours
-import app.atlas.places.Symbols
 import app.atlas.search.PlaceRecord
 import app.atlas.search.PlaceSource
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.walkMinutes
+import app.atlas.ui.kit.markOf
 import java.time.LocalDateTime
 
-/** Why a place stands out on the home's map; each kind has the Main board's own marker look. */
-enum class HighlightKind(val colour: Long, val priority: Int) {
+/**
+ * Why a place stands out on the home's map; each kind has the Main board's own marker look. A kind of place (a museum,
+ * a stop, a charger) wears its family's [colour], null here, as its pin does on every other screen (README decision 12):
+ * since the families were regrouped the board's purple museum read as Fun and its blue stop as Water. The board's own
+ * colour stays where the look says something else: what you saved, the landmark's gold star, a chain's tile.
+ */
+enum class HighlightKind(val colour: Long?, val priority: Int) {
     /** A place you saved: the board's dark disc with the orange check, with its name and walk on the nearest one. */
     SAVED(0xFF14161B, 1_000),
 
     /** The area's landmark: the board's gold star. */
     SIGHT(0xFFF2B705, 800),
 
-    /** A museum open now: the board's purple pin. */
-    MUSEUM(0xFF7B4DFF, 700),
+    /** A museum open now: the board's pin, in Culture & sights' colour. */
+    MUSEUM(null, 700),
 
-    /** The nearest tram, train or metro stop: the board's small blue pin. */
-    TRANSIT(0xFF1F5F99, 600),
+    /** The nearest tram, train or metro stop: the board's small pin, in Getting around's colour. */
+    TRANSIT(null, 600),
 
-    /** A branch of a café chain open now: the board's brown tile with the brand. */
+    /** A branch of a café chain open now: the board's brown tile with the brand, on its own sign where it is known. */
     BRANCH(0xFF3B2A20, 500),
 
-    /** Charging points, with their sockets as mapped: the board's green chip. */
-    CHARGER(0xFF178A4E, 400),
+    /** Charging points, with their sockets as mapped: the board's chip, in Charge's colour. */
+    CHARGER(null, 400),
 }
 
 /** A real place the home shows on its map before any category is chosen, and what to say on its marker. */
@@ -98,23 +103,25 @@ object HomeHighlights {
         return !s.unknown && s.isOpen
     }
 
-    /** The markers for [highlights], in the board's looks. */
+    /** The markers for [highlights], in the board's looks, a kind of place in its family's colour ([HighlightKind]). */
     fun markers(highlights: List<Highlight>): List<Marker> = highlights.map { h ->
         val p = h.place
         val id = "hl:${h.kind.name.lowercase()}:${p.key}"
+        val (symbol, family) = markOf(p)
+        val colour = h.kind.colour ?: (family.toLong() and 0xFFFFFFFFL)
         when (h.kind) {
             HighlightKind.SAVED -> Marker(
-                id, p.location, Symbols.symbolFor(p.tags), h.kind.colour, MarkerStyle.PIN,
+                id, p.location, symbol, colour, MarkerStyle.PIN,
                 label = if (h.value != null) p.tags["name"] else null, value = h.value, badge = "ui-check",
                 priority = h.kind.priority, place = p,
             )
-            HighlightKind.SIGHT -> Marker(id, p.location, "maki-star", h.kind.colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
+            HighlightKind.SIGHT -> Marker(id, p.location, "maki-star", colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
             HighlightKind.BRANCH -> Marker(
-                id, p.location, Symbols.symbolFor(p.tags), h.kind.colour, MarkerStyle.BRAND,
+                id, p.location, symbol, colour, MarkerStyle.BRAND,
                 logo = Brands.forTags(p.tags)?.id, priority = h.kind.priority, place = p,
             )
-            HighlightKind.CHARGER -> Marker(id, p.location, "maki-charging-station", h.kind.colour, MarkerStyle.CHIP, value = h.value, priority = h.kind.priority, place = p)
-            else -> Marker(id, p.location, Symbols.symbolFor(p.tags), h.kind.colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
+            HighlightKind.CHARGER -> Marker(id, p.location, "maki-charging-station", colour, MarkerStyle.CHIP, value = h.value, priority = h.kind.priority, place = p)
+            else -> Marker(id, p.location, symbol, colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
         }
     }
 }

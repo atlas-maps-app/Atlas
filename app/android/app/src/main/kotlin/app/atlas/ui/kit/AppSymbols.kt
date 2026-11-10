@@ -1,6 +1,8 @@
 package app.atlas.ui.kit
 
 import app.atlas.places.Icon
+import app.atlas.places.IconPath
+import app.atlas.places.ViewBox
 
 /**
  * The few UI symbols the app needs beyond `:places`' set: weather skies and a few controls as Lucide paths (ISC
@@ -10,6 +12,16 @@ import app.atlas.places.Icon
  */
 object AppSymbols {
     private val icons: Map<String, Icon> = mapOf(
+        // a round walk: a way round as a route along the streets draws it, and your dot where it starts and ends (a
+        // circle with an arrowhead read as "refresh", or a Q)
+        "ui-loop" to Icon(
+            "ui-loop",
+            ViewBox(0f, 0f, 24f, 24f),
+            listOf(
+                IconPath("M5.6 15.6 4.4 10.8 7.6 8.8 8.6 4.6 14.6 3.8 15.8 8.2 19.8 10.4 18.2 16.6 13.2 17.4 10.4 19.4", stroke = true, fill = false),
+                IconPath("M4.9 18.7A2.5 2.5 0 1 0 9.9 18.7A2.5 2.5 0 1 0 4.9 18.7Z", stroke = false, fill = true),
+            ),
+        ),
         "ui-cloud-sun" to strokedIcon(
             "ui-cloud-sun",
             "M12 2v2",
@@ -104,6 +116,13 @@ object AppSymbols {
             "M10 4a2 2 0 1 0 4 0a2 2 0 1 0 -4 0z",
             "M18 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0z",
             "M2 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0z",
+        ),
+        // places as large cards to slide through: one card between the edges of the next ones
+        "ui-cards" to strokedIcon(
+            "ui-cards",
+            "M2 4v16",
+            "M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+            "M22 4v16",
         ),
     )
 

@@ -2,9 +2,12 @@ package app.atlas.ui.mine.charge
 
 import app.atlas.Services
 import app.atlas.geo.LatLon
+import app.atlas.model.OsmId
+import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.providers.ChargerIndex
 import app.atlas.providers.NdwChargers
+import app.atlas.search.MemoryPlaces
 import app.atlas.testing.testServices
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -42,6 +45,21 @@ class ChargeRepositoryTest {
         assertFalse(got.online)
         assertEquals(1, got.places.count { it.extra["charger:id"] == "ndw:NL-TST-1" || it.extra["charger:ids"]?.contains("ndw:NL-TST-1") == true })
         assertTrue(got.sources.toString(), NdwChargers.ID in got.sources)
+        services.close()
+    }
+
+    /**
+     * Fuel holds the gas stations beside the chargers since 6 November (the owner: "Gas and charging belongs both into
+     * fuel"): the Charge screen asks for the chargers' own kind, not their family, so no pump stands among its chargers.
+     */
+    @Test
+    fun theChargersAloneNotTheGasStations() = runBlocking {
+        val w = Services.WESTERKERK
+        val charger = Place(OsmId(OsmType.NODE, 1), LatLon(w.lat + 0.001, w.lon), mapOf("amenity" to "charging_station", "capacity" to "2"))
+        val pump = Place(OsmId(OsmType.NODE, 2), LatLon(w.lat - 0.001, w.lon), mapOf("amenity" to "fuel", "brand" to "Shell", "name" to "Shell"))
+        val services = testServices(stores = listOf(MemoryPlaces(listOf(charger, pump))))
+        val got = ChargeRepository(services).load(w, 1_000.0)
+        assertEquals(listOf("charging_station"), got.places.map { it.tags["amenity"] })
         services.close()
     }
 

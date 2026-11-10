@@ -1,7 +1,7 @@
 package app.atlas.ui.home
 
-import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -67,6 +67,20 @@ class HomeScreenshotTest {
         capture("home")
     }
 
+    /**
+     * The area's highlights over the home's map from the Amsterdam place store, each in the board's look: a kind of
+     * place (the museum, the stop, the chargers) in its family's colour, as its pin is on every other screen.
+     */
+    @Test
+    fun homeShowsTheAreasHighlights() {
+        val services = testServices(places = true).apply { keepFixtureForecast() }
+        compose.setContent { AtlasRoot(services, BackStackNavigator(listOf(Dest.Home())), dark = false) }
+        compose.settle()
+        waitForWeather()
+        compose.settleScreen()
+        capture("home_highlights")
+    }
+
     @Test
     fun homeWithCategory() {
         // The Amsterdam place store is on the phone: eat comes from it, with every tag, so open and closed show.
@@ -75,16 +89,17 @@ class HomeScreenshotTest {
         compose.setContent { AtlasRoot(services, nav, dark = false) }
         val eat = Categories.byId("eat")!!.name("en")
         compose.onNodeWithContentDescription(eat).performClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Close the list")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("All filters")).fetchSemanticsNodes().isNotEmpty() }
         compose.settle()
         waitForWeather()
         capture("home_eat")
         // A row opens its place over the home's own map, on no other screen: the Place board's sheet and buttons.
-        val first = compose.onAllNodes(hasClickAction() and hasText("′", substring = true)).fetchSemanticsNodes().first()
+        // a place's row, not a brand's branches together
+        val first = compose.onAllNodes(hasTestTag("place")).fetchSemanticsNodes().first()
         compose.onNode(androidx.compose.ui.test.SemanticsMatcher("first row") { it.id == first.id }).performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Share")).fetchSemanticsNodes().isNotEmpty() }
         assertTrue("now on ${nav.current}", nav.current is Dest.Home)
-        compose.onAllNodes(hasContentDescription("Close the list")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
+        compose.onAllNodes(hasText("All filters")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
         compose.settle()
         capture("home_place")
         // The card's view from above takes the home's own map near the place, tilted, and its second press back (the
@@ -93,11 +108,11 @@ class HomeScreenshotTest {
         compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Back to the view before")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Back to the view before").performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("View from above")).fetchSemanticsNodes().isNotEmpty() }
-        // Its back closes it, and the category's list is there again.
+        // Its back closes it, and the search's sheet is there again.
         compose.onNodeWithContentDescription("Back").performClick()
         compose.waitForIdle()
         compose.onAllNodes(hasContentDescription("Share")).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
-        compose.onNodeWithContentDescription("Close the list").assertExists()
+        compose.onNodeWithText("All filters").assertExists()
         assertEquals(listOf<Dest>(Dest.Home()), nav.stack.toList())
     }
 

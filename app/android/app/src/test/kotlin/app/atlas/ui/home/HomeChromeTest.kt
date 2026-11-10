@@ -159,7 +159,11 @@ class HomeChromeTest {
     fun aChosenButtonPastTheEdgeScrollsIntoView() {
         var selected by mutableStateOf<String?>(null)
         compose.setContent {
-            AtlasTheme { Box(Modifier.width(412.dp).padding(horizontal = 12.dp)) { CategoryRow(selected, onSelect = { selected = it }) } }
+            AtlasTheme {
+                Box(Modifier.width(412.dp).padding(horizontal = 12.dp)) {
+                    OwnRow(HomeRow.buttons(null), selected, { selected = it.id }, editing = false, onEditing = {}, onOrder = {}, onRemove = {}, onAdd = {}, onReset = null)
+                }
+            }
         }
         compose.waitForIdle()
         val water = Categories.byId("water")!!.name("en")

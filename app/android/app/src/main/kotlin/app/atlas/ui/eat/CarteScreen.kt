@@ -65,6 +65,7 @@ import app.atlas.ui.kit.CssCorners
 import app.atlas.ui.kit.HonestyFooter
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.openTotal
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -151,7 +152,7 @@ fun CarteScreen(nav: Navigator) {
                     Flourish(Modifier.size(120.dp, 16.dp))
                     CssLine(stringResource(R.string.eat_la_carte), TITLE, Modifier.semantics { heading() })
                     val count = carte?.let { c ->
-                        if (c.countsOpen) stringResource(R.string.eat_carte_open, c.counted, ctx.at.format(HM_PADDED))
+                        if (c.countsOpen) stringResource(R.string.eat_carte_open, openTotal(c.counted, c.guessed), ctx.at.format(HM_PADDED))
                         else stringResource(R.string.eat_carte_places, c.counted)
                     } ?: stringResource(R.string.kit_loading)
                     CssLine(count.lowercase(Locale.forLanguageTag(ctx.lang)), COUNT_LINE)

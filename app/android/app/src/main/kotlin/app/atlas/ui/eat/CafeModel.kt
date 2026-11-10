@@ -50,6 +50,8 @@ data class CafeBoard(
     val lines: List<CafeLine>,
     val total: Int,
     val special: Special?,
+    /** Of the [open] places, those open by guessed hours. */
+    val guessed: Int = 0,
 )
 
 /** The café chalkboard's logic, over real tags and opening hours. */
@@ -69,6 +71,7 @@ object CafeModel {
         val all = EatSets.cafes(area.places)
         val morning = morningOf(at)
         val countsOpen = all.any { it.hasHours }
+        val open = all.filter { it.openness(at, area.hours).isOpen }
         val ofKind = if (kind == null) all else all.filter { kind.has(it) }
         val chosen = ofKind.filter { p -> toggles.all { it.has(p, morning, area) } }
         val rank = { o: Openness -> if (o.isOpen) 0 else if (o == Openness.UNKNOWN) 1 else 2 }
@@ -80,13 +83,14 @@ object CafeModel {
             )
         }.sortedWith(compareBy<CafeLine> { rank(it.openness) }.thenBy { it.place.distanceM })
         return CafeBoard(
-            open = if (countsOpen) all.count { it.openness(at, area.hours).isOpen } else all.size,
+            open = if (countsOpen) open.size else all.size,
             countsOpen = countsOpen,
             kindCounts = CafeKind.entries.associateWith { k -> all.count { k.has(it) } },
             toggleCounts = CafeToggle.entries.associateWith { t -> ofKind.count { t.has(it, morning, area) } },
             lines = lines.take(limit),
             total = lines.size,
             special = special(all, area, at),
+            guessed = if (countsOpen) open.count { it.guessed } else 0,
         )
     }
 

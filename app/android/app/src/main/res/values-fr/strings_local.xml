@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A park's page in French: its plan, its kinds, rules, trails and season, and the words it shares with the field notes and the year. -->
+<resources>
+    <string name="park_playground">Aire de jeux</string>
+    <string name="park_dogs">Espace canin</string>
+    <string name="park_cafe">Café</string>
+    <string name="park_toilets">Toilettes</string>
+    <string name="park_water">Eau potable</string>
+    <string name="park_courts">Terrains</string>
+    <string name="park_fitness">Agrès de fitness</string>
+    <string name="park_picnic">Tables de pique-nique</string>
+    <string name="park_you">VOUS</string>
+    <string name="park_unnamed">Parc</string>
+    <string name="park_none">Aucun parc cartographié près de vous</string>
+    <string name="park_none_text">Les parcs à moins de 1,5 km apparaissent ici dès que la zone est sur ce téléphone ou que vous êtes en ligne.</string>
+    <string name="park_nothing_marked">Rien n’est encore indiqué dans ce parc sur la carte.</string>
+    <string name="park_plan_desc">Plan de %1$s avec %2$d lieux indiqués</string>
+    <string name="park_ages">%1$s ans</string>
+    <string name="park_wc_at">WC %1$s</string>
+    <string name="park_water_at">eau %1$s</string>
+    <string name="park_visitor">Centre d’accueil</string>
+    <string name="park_sleep">Dormir dans le parc</string>
+    <string name="park_details">Détails</string>
+    <string name="park_now">%1$s, en ce moment</string>
+    <string name="park_notes_more">Toutes les notes</string>
+    <string name="park_rule_dogs_lead">chiens en laisse</string>
+    <string name="park_rule_no_dogs">chiens interdits</string>
+    <string name="park_rule_dogs">chiens bienvenus</string>
+    <string name="park_rule_no_drones">drones interdits</string>
+    <string name="park_rule_no_fires">feux interdits</string>
+    <string name="park_rule_fire_rings">feux dans les foyers</string>
+    <string name="park_rule_fee">entrée payante</string>
+    <string name="park_sources">Contour, chemins, arbres et règles : OpenStreetMap</string>
+    <plurals name="park_trails">
+        <item quantity="one">%d sentier</item>
+        <item quantity="other">%d sentiers</item>
+    </plurals>
+    <string name="parkland_walk_there">Y aller à pied, %1$s</string>
+    <string name="year_act_swim">Baignade</string>
+    <string name="year_act_foliage">Feuillage d’automne</string>
+    <string name="year_act_mushrooms">Champignons</string>
+    <string name="year_act_birds">Oiseaux</string>
+    <string name="year_act_stars">Étoiles</string>
+    <string name="year_act_ski">Ski</string>
+    <string name="year_act_blossom">Floraison</string>
+    <string name="year_act_festivals">Festivals</string>
+    <string name="year_phase_last">dernière chance · jusqu’à fin %1$s</string>
+    <string name="year_phase_peak">à son meilleur · jusqu’en %1$s</string>
+    <string name="year_phase_on">en cours · jusqu’en %1$s</string>
+    <string name="year_phase_soon">commence en %1$s</string>
+    <string name="nature_title">Carnet de terrain</string>
+    <string name="picnic_step_free">sans marche</string>
+    <string name="picnic_fenced">clôturé</string>
+    <string name="picnic_offline_text">Téléchargez cette zone dans Moi › Hors ligne et tout ceci s’affiche sans connexion.</string>
+</resources>

@@ -93,6 +93,59 @@ object LocalFixtures {
         services.local.parkShape = { park, _ -> app.atlas.ui.local.Parkland.shapeOf(westerparkElements, park.id!!) }
     }
 
+    /**
+     * Stonewood National Park: an invented national park some 10 km north-east of the Westerkerk, about 6 by 4 km with a
+     * lake left out of it, made up for the park page's wild sign (no such park exists, so its numbers are nobody's).
+     */
+    private val stonewoodRing = listOf(
+        LatLon(52.4330, 4.9600), LatLon(52.4318, 4.9790), LatLon(52.4342, 5.0010), LatLon(52.4322, 5.0230), LatLon(52.4368, 5.0420),
+        LatLon(52.4478, 5.0448), LatLon(52.4592, 5.0382), LatLon(52.4676, 5.0248), LatLon(52.4661, 5.0052), LatLon(52.4686, 4.9852),
+        LatLon(52.4631, 4.9641), LatLon(52.4540, 4.9558), LatLon(52.4428, 4.9579),
+    )
+    private val stonewoodLake = listOf(LatLon(52.4490, 5.0060), LatLon(52.4484, 5.0172), LatLon(52.4531, 5.0218), LatLon(52.4572, 5.0151), LatLon(52.4561, 5.0058), LatLon(52.4521, 5.0029))
+
+    val stonewood: Place by lazy {
+        val box = app.atlas.geo.BBox(4.9558, 52.4318, 5.0448, 52.4686)
+        Place(
+            OsmId(OsmType.RELATION, 990_001), box.center,
+            mapOf("boundary" to "national_park", "protect_class" to "2", "name" to "Stonewood National Park", "dog" to "leashed", "drone" to "no", "openfire" to "designated"),
+            box,
+        )
+    }
+
+    /** What is marked in Stonewood: where to ask and to sleep, toilets, water, tables, a café, three trails, an old oak, a hide and a fen. */
+    val stonewoodPlaces: List<Place> by lazy {
+        var id = 990_100L
+        fun at(lat: Double, lon: Double, vararg tags: Pair<String, String>, type: OsmType = OsmType.NODE) = Place(OsmId(type, ++id), LatLon(lat, lon), tags.toMap())
+        listOf(
+            at(52.4402, 4.9712, "tourism" to "information", "information" to "visitor_centre", "name" to "Stonewood Visitor Centre", "opening_hours" to "Tu-Su 10:00-17:00", "wheelchair" to "yes"),
+            at(52.4601, 5.0302, "tourism" to "camp_site", "name" to "Heron's Rest", "fee" to "yes"),
+            at(52.4632, 4.9752, "tourism" to "wilderness_hut", "name" to "Bog Hut"),
+            at(52.4404, 4.9716, "amenity" to "toilets"),
+            at(52.4603, 5.0306, "amenity" to "toilets"),
+            at(52.4400, 4.9708, "amenity" to "drinking_water"),
+            at(52.4479, 5.0102, "leisure" to "picnic_table"),
+            at(52.4582, 5.0122, "leisure" to "picnic_table"),
+            at(52.4470, 5.0198, "leisure" to "picnic_table"),
+            at(52.4477, 5.0150, "amenity" to "cafe", "name" to "The Boathouse", "opening_hours" to "Sa-Su 10:00-18:00"),
+            at(52.4500, 5.0000, "type" to "route", "route" to "hiking", "name" to "Stonewood Loop", "roundtrip" to "yes", "distance" to "12.5", type = OsmType.RELATION),
+            at(52.4560, 4.9800, "type" to "route", "route" to "hiking", "name" to "Heath Trail", "distance" to "7", type = OsmType.RELATION),
+            at(52.4510, 5.0260, "type" to "route", "route" to "hiking", "name" to "Lakeshore Walk", type = OsmType.RELATION),
+            at(52.4421, 4.9902, "natural" to "tree", "name" to "Stonewood Oak", "species" to "Quercus robur", "denotation" to "natural_monument", "start_date" to "1650", "height" to "24", "circumference" to "520"),
+            at(52.4430, 4.9910, "natural" to "tree", "leaf_type" to "broadleaved"),
+            at(52.4556, 5.0232, "leisure" to "bird_hide", "name" to "Reedbed Hide"),
+            at(52.4645, 4.9905, "natural" to "wetland", "wetland" to "reedbed", "name" to "Stonewood Fen", type = OsmType.WAY),
+        )
+    }
+
+    /** Makes the screens see Stonewood: the park and its places by filter, and its outline with the lake. */
+    fun answerWithStonewood(services: Services) {
+        services.local.finder.fake = { filter, _, _ -> (stonewoodPlaces + stonewood).filter { filter.matches(it.tags) } }
+        val rings = listOf(stonewoodRing, stonewoodLake)
+        val holes = listOf(false, true)
+        services.local.parkShape = { park, _ -> if (park.key == stonewood.key) ParkShape(rings, emptyList(), emptyList(), outlined = true, holes = holes, areaM2 = ParkShape.areaOf(rings, holes)) else null }
+    }
+
     private fun overpass(name: String) = app.atlas.providers.OverpassParser.parse(java.io.StringReader(resource(name))).places()
 
     /** The buildings within 300 m of the Westerkerk as OpenStreetMap had them on 16 October 2026 (an Overpass answer, tags trimmed), with their boxes. */

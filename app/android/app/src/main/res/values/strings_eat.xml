@@ -45,7 +45,7 @@
     <string name="eat_source_pack">From the map’s data on this phone · OpenStreetMap</string>
     <string name="eat_source_online">From OpenStreetMap, online</string>
     <string name="eat_la_carte">La Carte</string>
-    <string name="eat_carte_open">%1$d open · %2$s</string>
+    <string name="eat_carte_open">%1$s open · %2$s</string>
     <string name="eat_carte_places">%1$d places</string>
     <string name="eat_sort_nearest">Nearest</string>
     <string name="eat_sort_most">Most</string>
@@ -72,7 +72,7 @@
     <string name="eat_diet_gluten_free">Gluten-free</string>
     <string name="eat_diet_halal">Halal</string>
     <string name="eat_diet_kosher">Kosher</string>
-    <string name="eat_page_count">%1$d places · %2$d open · %3$s</string>
+    <string name="eat_page_count">%1$d places · %2$s open · %3$s</string>
     <string name="eat_pad_add">Jot on the order pad</string>
     <string name="eat_pad_remove">Take off the order pad</string>
     <!-- The guest check (Order) -->
@@ -123,7 +123,7 @@
     <string name="eat_wish_reservable">reservations</string>
     <!-- The bar -->
     <string name="eat_bar_title">THE BAR</string>
-    <string name="eat_bar_open">%1$d open</string>
+    <string name="eat_bar_open">%1$s open</string>
     <string name="eat_bar_last_call">last call %1$s</string>
     <string name="eat_bar_none">No venue here fits that</string>
     <string name="eat_bar_cocktails">Cocktails</string>
@@ -158,8 +158,8 @@
     <string name="eat_sport_pool">pool</string>
     <!-- The café chalkboard -->
     <string name="eat_cafe_title">Coffee &amp; Co.</string>
-    <string name="eat_cafe_open_now">%1$d open now</string>
-    <string name="eat_cafe_open_at">%1$d open at %2$s</string>
+    <string name="eat_cafe_open_now">%1$s open now</string>
+    <string name="eat_cafe_open_at">%1$s open at %2$s</string>
     <string name="eat_cafe_none">No café here fits that</string>
     <string name="eat_cafe_coffee">Coffee</string>
     <string name="eat_cafe_tea">Tea</string>
@@ -176,7 +176,7 @@
     <string name="eat_special_brunch">brunch now</string>
     <string name="eat_special_open_till">open till %1$s</string>
     <!-- A cuisine world (the ticket machine) -->
-    <string name="eat_world_open">%1$d OPEN</string>
+    <string name="eat_world_open">%1$s OPEN</string>
     <string name="eat_world_none">No shop of this kind here fits that</string>
     <string name="eat_world_none_here">Nothing of this kind is mapped near here</string>
     <string name="eat_world_only">only</string>
@@ -185,8 +185,8 @@
     <string name="eat_world_late">Open at 23:00</string>
     <!-- Late bites (the neon wall) -->
     <string name="eat_late_title">Late Bites</string>
-    <string name="eat_late_open_till">%1$d open · till %2$s</string>
-    <string name="eat_late_open">%1$d open past midnight</string>
+    <string name="eat_late_open_till">%1$s open · till %2$s</string>
+    <string name="eat_late_open">%1$s open past midnight</string>
     <string name="eat_late_no_hours">Opening hours unknown here</string>
     <string name="eat_late_none">No kitchen here is open past midnight by its hours</string>
     <string name="eat_late_midnight">0:00+</string>

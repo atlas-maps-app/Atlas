@@ -17,6 +17,7 @@ import app.atlas.providers.Http
 import app.atlas.providers.Mangrove
 import app.atlas.providers.NdwChargers
 import app.atlas.providers.Nominatim
+import app.atlas.providers.OpenAddresses
 import app.atlas.providers.OpenChargeMap
 import app.atlas.providers.OsmChargers
 import app.atlas.providers.Overpass
@@ -36,10 +37,12 @@ import app.atlas.route.OverpassRestrictionSource
 import app.atlas.route.Router
 import app.atlas.route.SegmentStore
 import app.atlas.route.WaterRouter
+import app.atlas.search.NationalParks
 import app.atlas.search.PlaceSource
 import app.atlas.search.PlaceStore
 import app.atlas.search.Regions
 import app.atlas.search.SearchEngine
+import app.atlas.search.StoreVersionException
 import app.atlas.services.Connectivity
 import app.atlas.services.DemoLocationSource
 import app.atlas.services.FixedConnectivity
@@ -95,6 +98,8 @@ data class ServicesConfig(
     val clock: Clock = Clock.systemDefaultZone(),
     /** Wire the map engine to this app's region packs ([MapData]); tests that draw no map leave it off. */
     val mapEngine: Boolean = true,
+    /** A router in place of the phone's own (tests: one that needs no routing data). */
+    val router: Router? = null,
 )
 
 /**
@@ -117,6 +122,18 @@ class Dirs(val files: File, val cache: File) {
     val http = File(cache, "http")
     val edits = File(files, "edits/queue.json")
     val osmAccount = File(files, "settings/osm.preferences_pb")
+}
+
+/**
+ * A region's place store this Atlas cannot open, and why ([cause]): one of another version of Atlas ([otherVersion],
+ * another store schema), else a damaged file. [bytes] is what it takes with SQLite's files beside it.
+ */
+class UnreadableStore(
+    val file: File,
+    val cause: Throwable?,
+    val bytes: Long = listOf("", "-wal", "-shm", "-journal").sumOf { File(file.path + it).length() },
+) {
+    val otherVersion: Boolean get() = cause is StoreVersionException
 }
 
 /**
@@ -189,23 +206,53 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     private val openStores = HashMap<File, PlaceStore>()
 
+    private val unreadable = MutableStateFlow<Map<File, UnreadableStore>>(emptyMap())
+
+    /**
+     * The store files in `places/` that could not be opened, by file: their regions' cards say so and offer the download
+     * again. Looked at again with the files ([reloadRegions]).
+     */
+    val unreadableStores: StateFlow<Map<File, UnreadableStore>> = unreadable.asStateFlow()
+
     /** The offline place stores of the downloaded regions (`places/<region>.db`), all searched at once. */
     val placeStores: Regions by lazy {
         Regions(config.placeStores.orEmpty()).also { if (config.placeStores == null) syncPlaceStores(it) }
     }
 
-    /** Attaches the store files in `places/` that are new and detaches (and closes) the ones that are gone. */
+    /**
+     * Attaches the store files in `places/` that are new and detaches (and closes) the ones that are gone. A store filed
+     * under other category rules (an update of Atlas changed them) is attached as it was filed and filed anew in the
+     * background, once; one that cannot be opened goes to [unreadableStores].
+     */
     private fun syncPlaceStores(regions: Regions) = synchronized(openStores) {
         val files = dirs.places.listFiles { f -> f.isFile && f.name.endsWith(".db") }.orEmpty().toSet()
         for (gone in openStores.keys - files) {
             openStores.remove(gone)?.let { regions.detach(it); runCatching { it.close() } }
         }
+        val refused = HashMap<File, UnreadableStore>()
         for (f in files - openStores.keys) {
-            runCatching { PlaceStore.open(f) }.getOrNull()?.let { store ->
-                openStores[f] = store
-                regions.attach(store)
+            val opened = runCatching { PlaceStore.open(f, refile = false) }
+            val store = opened.getOrNull()
+            if (store == null) {
+                refused[f] = UnreadableStore(f, opened.exceptionOrNull())
+                continue
+            }
+            openStores[f] = store
+            regions.attach(store)
+            // a country takes a while: its places answer as they were filed meanwhile, then what is built from them again
+            val refile = store.needsRefile
+            // a download from before its country's national parks came with it takes them once the phone is online, once
+            // a run of the app, after any filing anew (one writer at a time)
+            val parks = !config.offline && store.meta(NationalParks.KEPT) == null
+            if (refile || parks) scope.launch(Dispatchers.IO) {
+                if (refile && runCatching { store.refile() }.isSuccess) regionVersion.value++
+                if (parks) {
+                    connectivity.online.first { it }
+                    store.bounds?.center?.let { at -> runCatching { NationalParks(overpass).keep(at, store) } }
+                }
             }
         }
+        unreadable.value = refused
     }
 
     /** The search box: offline over [placeStores]; online it adds Photon and Overpass. */
@@ -243,6 +290,14 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http), Nominatim(http)) }
     val mangrove: Mangrove by lazy { Mangrove(http) }
 
+    /** The house numbers OpenStreetMap lacks, read with a region taken offline (unless switched off). */
+    val openAddresses: OpenAddresses by lazy { OpenAddresses(http) }
+
+    /** Open ratings for a search's places, from Mangrove's reviews of the area: one request for the whole list. */
+    val areaRatings: app.atlas.services.AreaRatings by lazy {
+        app.atlas.services.AreaRatings(mangrove, clock) { !config.offline && connectivity.online.value && Mangrove.ID !in sourcesOff() }
+    }
+
     /** Ratings from Mangrove (open, no key) and the keyed providers the user enabled with a key. */
     val ratings: RatingsAggregator by lazy {
         RatingsAggregator(listOf(mangrove, FoursquareRatings(http, keys), YelpRatings(http, keys), TripAdvisorRatings(http, keys)))
@@ -272,6 +327,12 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Wikidata: a place's architect, year, namesake and image, and brand facts. */
     val wikidata: app.atlas.providers.Wikidata by lazy { app.atlas.providers.Wikidata(http) }
+
+    /** The EU's bathing waters and the Dutch swim register's advisories, for lakes and beaches in the search. */
+    val bathing: app.atlas.providers.BathingWaters by lazy { app.atlas.providers.BathingWaters(http) }
+
+    /** Wikipedia: a place's article, read in the app. */
+    val wikipedia: app.atlas.providers.Wikipedia by lazy { app.atlas.providers.Wikipedia(http) }
 
     /** Wikimedia Commons: images with their licences. */
     val commons: app.atlas.providers.Commons by lazy { app.atlas.providers.Commons(http) }
@@ -355,7 +416,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     }
 
     /** Every mode: land through BRouter, water through Atlas's water router, electric vehicles through the EV planner. */
-    val router: Router by lazy { MultiRouter.standard(brouter, WaterRouter(brouter), EvPlanner(brouter, chargerSource)) }
+    val router: Router by lazy { config.router ?: MultiRouter.standard(brouter, WaterRouter(brouter), EvPlanner(brouter, chargerSource)) }
 
     // ---- The phone -----------------------------------------------------------------------------------------------
 

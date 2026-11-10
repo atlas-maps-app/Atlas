@@ -119,7 +119,8 @@ fun WeatherScreen(args: Dest.Weather, nav: Navigator) {
     val advice = remember(f, now) { f?.let { WeatherAdvice.of(it, now) }.orEmpty() }
     LaunchedEffect(at, advice.any { it.kind == Advice.Kind.RAIN_SOON || it.kind == Advice.Kind.RAIN_NOW }) {
         if (advice.any { it.kind == Advice.Kind.RAIN_SOON || it.kind == Advice.Kind.RAIN_NOW }) {
-            cafe = withContext(Dispatchers.IO) { runCatching { services.places.nearby("cafe", at, 800.0, 3).first { it.places.isNotEmpty() || it.error != null }.places.firstOrNull() }.getOrNull() }
+            // a café is a kind (a preset) of the restaurants' category, not a category of its own
+            cafe = runCatching { services.localData.places(at, 800.0, CAFE, 3).value.firstOrNull() }.getOrNull()
         }
     }
     val log = remember(f, live) { services.mine.pressure.readings() }
@@ -394,3 +395,6 @@ private fun SunItem(symbol: String, text: String, colour: Long) {
         BText(text, bt(12f, 700, 15.5f, tnum = true), colour)
     }
 }
+
+/** What makes a café, as the search's tree has it (amenity=cafe). */
+private val CAFE: app.atlas.places.TagFilter by lazy { app.atlas.places.CategoryTree.preset("amenity/cafe")!!.filter }

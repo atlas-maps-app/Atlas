@@ -90,6 +90,7 @@ import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.walkMinutes
+import app.atlas.ui.kit.markOf
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import java.util.Locale
@@ -233,14 +234,14 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 when {
                     facts == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
                     else -> {
-                        facts.spot?.let { s -> SpotCard(s, lang) { services.remember(s); nav.go(Dest.Place.of(s)) } }
+                        facts.spot?.let { s -> SpotCard(s, lang) { services.remember(s); nav.go(Dest.Place.page(s)) } }
                         if (facts.nearby.isNotEmpty()) {
                             Kicker(stringResource(R.string.whatshere_nearby))
                             Card(padding = PaddingValues(horizontal = 16.dp, vertical = 2.dp), elevation = 0.dp, colour = c.cardMuted) {
                                 val now = app.atlas.ui.kit.rememberNow(facts)
                                 facts.nearby.forEachIndexed { i, n ->
                                     val line = remember(n, now) { PlaceLine.of(n, p, lang, now) }
-                                    PlaceResultRow(line, now, lang, onClick = { services.remember(n); nav.go(Dest.Place.of(n)) })
+                                    PlaceResultRow(line, now, lang, onClick = { services.remember(n); nav.go(Dest.Place.page(n)) })
                                     if (i < facts.nearby.lastIndex) Hairline()
                                 }
                             }
@@ -325,7 +326,7 @@ private fun Header(title: String, facts: HereFacts?, p: LatLon, here: LatLon) {
 private fun SpotCard(place: Place, lang: String, onOpen: () -> Unit) {
     val services = LocalServices.current
     val c = Atlas.colors
-    val (symbol, colour) = remember(place) { symbolOf(place) }
+    val (symbol, colour) = remember(place) { markOf(place) }
     val facts = remember(place) {
         val now = LocalDateTime.now(services.clock)
         val ctx = OpeningHoursContext.forPlace(place.tags["addr:country"], ZonedDateTime.now(services.clock).zone, place.location.lat, place.location.lon)
@@ -337,8 +338,8 @@ private fun SpotCard(place: Place, lang: String, onOpen: () -> Unit) {
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             SymbolTile(symbol, Color(colour), size = 48.dp)
             Column(Modifier.weight(1f)) {
-                Text(Localise.name(place.tags, lang) ?: kindOf(place, lang) ?: "", style = Atlas.type.name, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                kindOf(place, lang)?.let { Text(it, style = Atlas.type.caption, color = c.inkSoft, maxLines = 1) }
+                Text(Localise.name(place.tags, lang) ?: kindTitleOf(place, lang) ?: "", style = Atlas.type.name, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                kindOf(place, lang)?.takeIf { Localise.name(place.tags, lang) != null }?.let { Text(it, style = Atlas.type.caption, color = c.inkSoft, maxLines = 1) }
             }
             Symbol("ui-arrow-right", tint = c.go, size = 20.dp)
         }

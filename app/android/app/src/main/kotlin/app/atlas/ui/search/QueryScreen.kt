@@ -190,7 +190,7 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
                     is MapHit.OnFeature -> hit.place
                     is MapHit.Empty -> null
                 }
-                p?.let { services.remember(it); nav.go(Dest.Place.of(it)) }
+                p?.let { services.remember(it); nav.go(Dest.Place.page(it)) }
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
@@ -269,7 +269,7 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
                     nav.go(Dest.RegionPicker(centre.lat, centre.lon))
                 }, glyph = 19f, bg = WARM, tint = INK)
             }
-            QueryResults(state, parsed, here, lang, vm, onPlace = { p -> services.remember(p); nav.go(Dest.Place.of(p)) })
+            QueryResults(state, parsed, here, lang, vm, onPlace = { p -> services.remember(p); nav.go(Dest.Place.page(p)) })
         }
     }
 
@@ -448,9 +448,9 @@ private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, on
     ) {
         RankTile(rank)
         Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            BoardLine(h.record.name(lang) ?: kindOf(h.place, lang) ?: h.place.key, boardText(16f, 600, 20.5f), INK)
+            BoardLine(h.record.name(lang) ?: kindTitleOf(h.place, lang) ?: h.place.key, boardText(16f, 600, 20.5f), INK)
             if (h.near.isEmpty()) {
-                listOfNotNull(kindOf(h.place, lang), addressOf(h.place)).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
+                listOfNotNull(kindOf(h.place, lang)?.takeIf { h.record.name(lang) != null }, addressOf(h.place)).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
                     BoardLine(it, boardText(12f, 400, 15.5f), GREY)
                 }
             } else {
@@ -538,7 +538,7 @@ private fun AddDialog(onAdd: (String) -> Unit, onDismiss: () -> Unit) {
     val options = listOf(
         "ui-clock" to R.string.query_add_open, "ui-wifi" to R.string.query_add_wifi, "ui-plug" to R.string.query_add_outlet,
         "ui-umbrella" to R.string.query_add_terrace, "ui-wheelchair" to R.string.query_add_stepfree, "ui-leaf" to R.string.query_add_vegetarian,
-        "maki-park" to R.string.query_add_park, "maki-bicycle" to R.string.query_add_bikes, "maki-bus" to R.string.query_add_stop,
+        "maki-park" to R.string.query_add_park, "mode.bike" to R.string.query_add_bikes, "maki-bus" to R.string.query_add_stop,
     )
     SearchDialog(stringResource(R.string.query_add), onDismiss) {
         Kicker(stringResource(R.string.query_add_kicker))

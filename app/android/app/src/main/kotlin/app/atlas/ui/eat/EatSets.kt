@@ -1,5 +1,6 @@
 package app.atlas.ui.eat
 
+import app.atlas.ui.kit.guessedTime
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -47,18 +48,27 @@ object EatSets {
     }
 
     /**
-     * The last closing time among [places] after [from], for "last call 4:00" and "till 3:00"; null when none says
-     * when it closes. A place open 24/7 never closes, so it does not count.
+     * The last closing time among [places] after [from], for "last call 4:00" and "till 3:00": by the hours of their
+     * own, else, where none of those says, by guessed ones; null when none says when it closes. A place open 24/7
+     * never closes, so it does not count.
      */
-    fun lastCall(places: List<EatPlace>, area: EatArea, from: LocalDateTime): LocalDateTime? =
-        places.mapNotNull { it.closesAt(from, area.hours) }.maxOrNull()
+    fun lastCall(places: List<EatPlace>, area: EatArea, from: LocalDateTime): LastCall? {
+        val closing = places.mapNotNull { p -> p.closesAt(from, area.hours)?.let { it to p.guessed } }
+        closing.filter { !it.second }.maxOfOrNull { it.first }?.let { return LastCall(it, guessed = false) }
+        return closing.maxOfOrNull { it.first }?.let { LastCall(it, guessed = true) }
+    }
+
+    /** When the last of some places closes; [guessed] when only guessed hours say ("≈4:00"). */
+    data class LastCall(val at: LocalDateTime, val guessed: Boolean) {
+        val shown: String get() = guessedTime(at.format(HM), guessed)
+    }
 
     /** What the six objects show at [at]. */
     data class Counts(
         val carte: EatArea.Count,
         val cafe: EatArea.Count,
         val late: EatArea.Count,
-        val lateUntil: LocalDateTime?,
+        val lateUntil: LastCall?,
         val bar: EatArea.Count,
         val sweets: EatArea.Count,
         val market: EatArea.Count,
@@ -71,7 +81,7 @@ object EatSets {
         return Counts(
             carte = area.count(carte(p), at),
             cafe = area.count(cafes(p), at),
-            late = if (sketch) EatArea.Count(0, open = false) else EatArea.Count(late.size, open = true),
+            late = if (sketch) EatArea.Count(0, open = false) else EatArea.Count(late.size, open = true, guessed = late.count { it.guessed }),
             lateUntil = if (sketch) null else lastCall(late, area, lateMoment(at)),
             bar = area.count(bars(p), at),
             sweets = area.count(sweets(p), at),

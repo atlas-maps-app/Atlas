@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The closest matches when nothing is just as asked, and hours guessed by kind. -->
+<resources>
+    <string name="relax_closest">Niets past helemaal: wat het dichtst in de buurt komt</string>
+    <string name="relax_none_within">Niets binnen %1$s: de dichtstbijzijnde, verder weg</string>
+    <string name="relax_opens_in">Open over %1$d min</string>
+    <string name="relax_opens_at">Open om %1$s</string>
+    <string name="relax_closed_at">Sluit om %1$s</string>
+    <string name="relax_hours_unknown">Tijden onbekend</string>
+    <string name="relax_beyond">%1$s buiten de cirkel</string>
+    <string name="relax_farther">%1$s naar %2$s</string>
+    <string name="relax_farther_none">Geen %1$s in de buurt</string>
+    <string name="relax_rated">Beoordeeld %1$s voor %2$s+</string>
+    <string name="relax_unrated">Geen beoordeling, %1$s+ gevraagd</string>
+    <string name="relax_lacks">Niet %1$s</string>
+    <string name="relax_unsaid">Zegt niets over: %1$s</string>
+    <string name="relax_outside">%1$s buiten %2$s</string>
+    <string name="relax_elsewhere">Niet in %1$s</string>
+    <string name="relax_kind_hours">≈ de tijden die de meeste zaken van dit soort hier aanhouden</string>
+    <string name="relax_loose_wish">wat het moet hebben</string>
+    <string name="relax_loose_rating">de beoordeling</string>
+    <string name="relax_loose_area">het gebied</string>
+    <plurals name="relax_price_up">
+        <item quantity="one">Eén prijsstap hoger</item>
+        <item quantity="other">%1$d prijsstappen hoger</item>
+    </plurals>
+    <plurals name="relax_price_down">
+        <item quantity="one">Eén prijsstap lager</item>
+        <item quantity="other">%1$d prijsstappen lager</item>
+    </plurals>
+</resources>

@@ -64,6 +64,7 @@ import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.openTotal
 
 /* The Cafe board's chalk and slate (`canvas/project/Cafe.dc.html`). */
 private val CHALK = Color(0xFFF2F0E6)
@@ -137,8 +138,8 @@ fun CafeScreen(nav: Navigator) {
                         val count = board?.let { b ->
                             when {
                                 !b.countsOpen -> stringResource(R.string.eat_carte_places, b.open)
-                                ctx.table.time == null -> stringResource(R.string.eat_cafe_open_now, b.open)
-                                else -> stringResource(R.string.eat_cafe_open_at, b.open, ctx.at.format(HM))
+                                ctx.table.time == null -> stringResource(R.string.eat_cafe_open_now, openTotal(b.open, b.guessed))
+                                else -> stringResource(R.string.eat_cafe_open_at, openTotal(b.open, b.guessed), ctx.at.format(HM))
                             }
                         } ?: stringResource(R.string.kit_loading)
                         CssLine(count, COUNT)
@@ -308,9 +309,9 @@ private fun ChalkLine(line: CafeLine, ctx: EatContext, modifier: Modifier, onCli
 @Composable
 private fun SpecialBox(s: Special, modifier: Modifier, onClick: () -> Unit) {
     val what = when {
-        s.brunch && s.until != null -> stringResource(R.string.eat_special_brunch_till, s.until.format(HM))
+        s.brunch && s.until != null -> guessMark(s.place, stringResource(R.string.eat_special_brunch_till, s.until.format(HM)))
         s.brunch -> stringResource(R.string.eat_special_brunch)
-        s.until != null -> stringResource(R.string.eat_special_open_till, s.until.format(HM))
+        s.until != null -> guessMark(s.place, stringResource(R.string.eat_special_open_till, s.until.format(HM)))
         else -> ""
     }
     Row(

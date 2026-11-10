@@ -45,7 +45,7 @@
     <string name="eat_source_pack">Uit de kaartgegevens op deze telefoon · OpenStreetMap</string>
     <string name="eat_source_online">Uit OpenStreetMap, online</string>
     <string name="eat_la_carte">La Carte</string>
-    <string name="eat_carte_open">%1$d open · %2$s</string>
+    <string name="eat_carte_open">%1$s open · %2$s</string>
     <string name="eat_carte_places">%1$d plekken</string>
     <string name="eat_sort_nearest">Dichtstbij</string>
     <string name="eat_sort_most">Meeste</string>
@@ -72,7 +72,7 @@
     <string name="eat_diet_gluten_free">Glutenvrij</string>
     <string name="eat_diet_halal">Halal</string>
     <string name="eat_diet_kosher">Koosjer</string>
-    <string name="eat_page_count">%1$d plekken · %2$d open · %3$s</string>
+    <string name="eat_page_count">%1$d plekken · %2$s open · %3$s</string>
     <string name="eat_pad_add">Op het bestelblok zetten</string>
     <string name="eat_pad_remove">Van het bestelblok halen</string>
     <!-- De bestelbon (Order) -->
@@ -124,7 +124,7 @@
 
     <!-- De bar -->
     <string name="eat_bar_title">DE BAR</string>
-    <string name="eat_bar_open">%1$d open</string>
+    <string name="eat_bar_open">%1$s open</string>
     <string name="eat_bar_last_call">laatste ronde %1$s</string>
     <string name="eat_bar_none">Hier past geen kroeg bij</string>
     <string name="eat_bar_cocktails">Cocktails</string>
@@ -160,8 +160,8 @@
 
     <!-- Het krijtbord (café) -->
     <string name="eat_cafe_title">Koffie &amp; Co.</string>
-    <string name="eat_cafe_open_now">%1$d nu open</string>
-    <string name="eat_cafe_open_at">%1$d open om %2$s</string>
+    <string name="eat_cafe_open_now">%1$s nu open</string>
+    <string name="eat_cafe_open_at">%1$s open om %2$s</string>
     <string name="eat_cafe_none">Hier past geen café bij</string>
     <string name="eat_cafe_coffee">Koffie</string>
     <string name="eat_cafe_tea">Thee</string>
@@ -179,7 +179,7 @@
     <string name="eat_special_open_till">open tot %1$s</string>
 
     <!-- Een keukenwereld (de kaartjesautomaat) -->
-    <string name="eat_world_open">%1$d OPEN</string>
+    <string name="eat_world_open">%1$s OPEN</string>
     <string name="eat_world_none">Hier past geen zaak van deze soort bij</string>
     <string name="eat_world_none_here">Hier staat niets van deze soort op de kaart</string>
     <string name="eat_world_only">alleen</string>
@@ -189,8 +189,8 @@
 
     <!-- Laat eten (de neonmuur) -->
     <string name="eat_late_title">Late Hap</string>
-    <string name="eat_late_open_till">%1$d open · tot %2$s</string>
-    <string name="eat_late_open">%1$d open na middernacht</string>
+    <string name="eat_late_open_till">%1$s open · tot %2$s</string>
+    <string name="eat_late_open">%1$s open na middernacht</string>
     <string name="eat_late_no_hours">Openingstijden hier onbekend</string>
     <string name="eat_late_none">Volgens de openingstijden is hier geen keuken na middernacht open</string>
     <string name="eat_late_midnight">0:00+</string>

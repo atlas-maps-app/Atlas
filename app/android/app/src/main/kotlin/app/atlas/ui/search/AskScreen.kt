@@ -217,7 +217,7 @@ fun AskScreen(args: Dest.Ask, nav: Navigator) {
                             },
                         )
                     }
-                    Timeline(plan, onPlace = { p -> services.remember(p); nav.go(Dest.Place.of(p)) }, Modifier.padding(start = 16.dp, end = 16.dp, top = 2.5.dp))
+                    Timeline(plan, onPlace = { p -> services.remember(p); nav.go(Dest.Place.page(p)) }, Modifier.padding(start = 16.dp, end = 16.dp, top = 2.5.dp))
                     Refinements(state.refine, vm::toggle, Modifier.padding(horizontal = 16.dp))
                     Totals(plan, Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
                     BoardLine(stringResource(R.string.ask_estimates), boardText(11f, 400, 14f), FAINT, Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp), lines = 3)
@@ -379,7 +379,7 @@ private fun Timeline(plan: AskPlan, onPlace: (app.atlas.model.Place) -> Unit, mo
                             BoardLine(stringResource(R.string.ask_none_for, s.label), boardText(15f, 800, 19.5f), FAINT)
                             BoardLine(stringResource(R.string.ask_none_text), boardText(12f, 400, 15.5f), FAINT)
                         } else {
-                            BoardLine(hit.record.name(lang) ?: kindOf(hit.place, lang) ?: s.label, boardText(15f, 800, 19.5f), INK)
+                            BoardLine(hit.record.name(lang) ?: kindTitleOf(hit.place, lang) ?: s.label, boardText(15f, 800, 19.5f), INK)
                             BoardLine(stopLine(s, lang), boardText(12f, 400, 15.5f, tnum = true), SOFT)
                         }
                     }
@@ -394,7 +394,7 @@ private fun Timeline(plan: AskPlan, onPlace: (app.atlas.model.Place) -> Unit, mo
 private fun stopLine(s: AskStop, lang: String): String {
     val hit = s.hit ?: return ""
     val parts = ArrayList<String>()
-    kindOf(hit.place, lang)?.takeIf { it != hit.record.name(lang) }?.let { parts += it }
+    kindOf(hit.place, lang)?.takeIf { hit.record.name(lang).let { n -> n != null && it != n } }?.let { parts += it }
     if (s.walkM > 0) parts += stringResource(R.string.ask_walk, walkMinutes(WalkTime.seconds(s.walkM)))
     when (s.openThen) {
         true -> parts += stringResource(R.string.ask_open_then)

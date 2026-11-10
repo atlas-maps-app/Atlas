@@ -1,11 +1,14 @@
 package app.atlas.ui.search
 
 import android.content.Intent
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -39,13 +42,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
@@ -58,29 +66,40 @@ import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.places.Categories
 import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
+import app.atlas.providers.Forecast
+import app.atlas.ui.eat.Meal
+import app.atlas.ui.eat.mealName
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.walkMinutes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZonedDateTime
 import java.util.Locale
+import kotlin.math.floor
 import kotlin.random.Random
 
 /**
- * One wedge of the wheel, in the board's order and colours: a kind of outing, the categories it draws from, its name and
- * whether it is indoors.
+ * One wedge of the wheel: a kind of outing, the categories it draws from, its name, whether it is indoors, and a colour of
+ * its [own] where the thing has one (the night's sky, the sun going down). Every other wedge wears its places' family
+ * colour, as their pins do on the map (the owner, 10 November, "Yes, improve it", to Culture in Eat & drink's rust and
+ * Odd in Fun's violet): a colour is the family's own or the thing's, never one made up.
  */
 @Immutable
-data class Wedge(val id: String, val categories: List<String>, @StringRes val label: Int, val indoors: Boolean) {
-    /** The wedge's fill on the board's wheel. */
-    val colour: Long get() = WheelArt.FILLS[WherePicker.WEDGES.indexOfFirst { it.id == id }.coerceAtLeast(0)]
+data class Wedge(val id: String, val categories: List<String>, @StringRes val label: Int, val indoors: Boolean, private val own: Long? = null) {
+    /** The wedge's fill: its own colour, else its places' family colour as categories.json has it. */
+    val colour: Long get() = own ?: Categories.byId(categories.first())?.colour?.let { it.toLong() and 0xFFFFFFFFL } ?: 0xFF5A6478L
 }
 
 /** The places each wedge can land on, already narrowed by the chips. */
@@ -101,20 +120,23 @@ data class WhereFilters(val walkMinutes: Int = 15, val free: Boolean = false, va
 
 /**
  * "Where to?": a random but fitting idea for what to do, from the places around. Eight wedges draw from Atlas's
- * categories; the chips narrow them (a walk of at most 15 or 30 minutes, free, open now, indoors); a wedge with nothing
- * that fits is greyed and never chosen.
+ * categories; the chips narrow them (a walk of at most 15 or 30 minutes, free, open now, indoors); a place known to be
+ * shut is never one; a wedge with nothing that fits is greyed and never chosen.
  */
 object WherePicker {
-    /** The board's eight wedges, clockwise from the top: water, views, food, quiet, night, nature, culture, odd. */
+    /**
+     * The eight wedges, clockwise from the top: the board's, with Odd moved from beside Culture to beside Water, so the
+     * three that draw from Culture & sights (Odd, Quiet, Culture) wear its colour and no two of them touch.
+     */
     val WEDGES = listOf(
         Wedge("water", listOf("water"), R.string.where_w_water, indoors = false),
-        Wedge("views", listOf("viewpoint"), R.string.where_w_views, indoors = false),
+        Wedge("odd", listOf("sights"), R.string.where_w_odd, indoors = false),
+        Wedge("views", listOf("viewpoint"), R.string.where_w_views, indoors = false, own = 0xFFF2A71B),
         Wedge("food", listOf("restaurants"), R.string.where_w_food, indoors = true),
         Wedge("quiet", listOf("library", "worship"), R.string.where_w_quiet, indoors = true),
-        Wedge("night", listOf("drinks"), R.string.where_w_night, indoors = true),
+        Wedge("night", listOf("drinks"), R.string.where_w_night, indoors = true, own = 0xFF2A2350),
         Wedge("nature", listOf("parks", "nature_spots"), R.string.where_w_nature, indoors = false),
         Wedge("culture", listOf("museums", "stage"), R.string.where_w_culture, indoors = true),
-        Wedge("odd", listOf("sights"), R.string.where_w_odd, indoors = false),
     )
     private const val LIMIT = 80
 
@@ -139,31 +161,54 @@ object WherePicker {
         WheelPlaces(out)
     }
 
-    /** True when [p] of wedge [w] passes the chips: near enough, named, free, open, indoors. */
+    /**
+     * True when [p] of wedge [w] passes the chips: near enough, named, free, indoors, and never known to be shut now (the
+     * wheel sent the morning to a pub that opens at four). "Open now" asks more: indoors with no hours mapped may well be
+     * shut.
+     */
     fun fits(p: Place, w: Wedge, at: LatLon, f: WhereFilters, now: LocalDateTime, hours: OpeningHoursContext): Boolean {
         if (p.tags["name"] == null) return false
         if (Geo.distance(at, p.location) > f.radiusM) return false
         if (f.indoors && !w.indoors) return false
         if (f.free && (p.tags["fee"] == "yes" || p.tags["charge"] != null)) return false
-        if (f.openNow) {
-            val oh = OpeningHours.parseOrNull(p.tags["opening_hours"])
-            if (oh != null && oh.isOpen(now, hours) == false) return false
-            // Indoors with no hours mapped may well be shut: only what surely is open.
-            if (oh == null && w.indoors) return false
-        }
+        val oh = OpeningHours.parseOrNull(p.tags["opening_hours"])
+        if (oh != null && oh.isOpen(now, hours) == false) return false
+        if (f.openNow && oh == null && w.indoors) return false
         return true
     }
 
     /**
-     * A spin: a wedge with places, and one of its nearest few, those not [closed] now first; null when nothing fits.
+     * A spin: a wedge with places, and one of its nearest few, those not [closed] now first; null when nothing fits. The
+     * places already [seen] wait until every other has had its turn, so "Another" goes through them all before one comes
+     * round again.
      */
-    fun spin(places: WheelPlaces, at: LatLon, random: Random, closed: (Place) -> Boolean = { false }): Pair<Int, Place>? {
-        val live = WEDGES.indices.filter { places.of(WEDGES[it]).isNotEmpty() }
+    fun spin(places: WheelPlaces, at: LatLon, random: Random, closed: (Place) -> Boolean = { false }, seen: Set<String> = emptySet()): Pair<Int, Place>? {
+        val fresh = WheelPlaces(places.byWedge.mapValues { (_, list) -> list.filter { it.key !in seen } })
+        val from = if (WEDGES.any { fresh.of(it).isNotEmpty() }) fresh else places
+        val live = WEDGES.indices.filter { from.of(WEDGES[it]).isNotEmpty() }
         if (live.isEmpty()) return null
         val i = live[random.nextInt(live.size)]
-        val all = places.of(WEDGES[i]).sortedBy { Geo.distance(at, it.location) }
+        val all = from.of(WEDGES[i]).sortedBy { Geo.distance(at, it.location) }
         val near = all.filterNot(closed).ifEmpty { all }.take(8)
         return i to near[random.nextInt(near.size)]
+    }
+
+    /**
+     * True when the forecast on the phone [f] says rain at [now] or within two hours, by one fetched under 12 hours ago
+     * (as the home's moments trust it): the wheel then starts indoors, and the chip says so.
+     */
+    fun wet(f: Forecast?, now: Instant): Boolean {
+        if (f == null || Duration.between(f.fetchedAt, now) >= Duration.ofHours(12)) return false
+        // from the start of the quarter that holds now, so rain falling now counts
+        val rain = f.nextRain(now.minusSeconds(900)) ?: return false
+        return rain.isBefore(now.plus(Duration.ofHours(2)))
+    }
+
+    /** The wedge's name on its card: the food's says Lunch or Dinner at those hours, as the search's Eat does. */
+    @StringRes
+    fun title(w: Wedge, at: LocalTime): Int {
+        val meal = Meal.at(at)
+        return if (w.id == "food" && (meal == Meal.LUNCH || meal == Meal.DINNER)) mealName(meal) else w.label
     }
 }
 
@@ -175,35 +220,59 @@ private const val INK = 0xFF1E1830
  * wedge (greyed when nothing near fits), and a spin that lands on a real place: the card in the wedge's colour with its
  * kind, name, walk, whether it is free and the sunset (tap it for the way there), then "Another", save and share. The
  * board's numbers: the chips 38 px at 100, the wheel 300 × 320 at 160, the card at 500 (corners 28, 18 px in), and the
- * buttons 56 px, 28 px from the foot.
+ * buttons 56 px, 28 px from the foot. The wheel spins from its hub, from "Another" or from a flick of a finger on it,
+ * ticking as each wedge passes the pointer. With rain now or soon on the phone's forecast it starts indoors.
  */
 @Composable
 fun WhereScreen(args: Dest.Where, nav: Navigator) {
     val services = LocalServices.current
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val lang = remember { Locale.getDefault().language }
     val here = rememberHere()
     val now = rememberNow()
     var filters by remember { mutableStateOf(WhereFilters()) }
+    // Rain now or within two hours, by the forecast the phone already holds (no call goes out): the wheel starts indoors.
+    // Asked once, before the wheel fills, so it never fills outdoors first; the chip turns it off.
+    var asked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val forecast = try {
+            services.weather.kept(here)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (WherePicker.wet(forecast, services.clock.instant())) filters = filters.copy(indoors = true)
+        asked = true
+    }
     val hours = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
-    val places by produceState<WheelPlaces?>(null, filters, here) { value = WherePicker.places(services, here, filters, now, hours) }
+    val places by produceState<WheelPlaces?>(null, filters, here, asked) { if (asked) value = WherePicker.places(services, here, filters, now, hours) }
     var spins by rememberSaveable { mutableIntStateOf(0) }
     var landed by remember { mutableStateOf<Pair<Int, Place>?>(null) }
+    // the places landed on, so that "Another" goes through the rest before one comes round again
+    val seen = remember { mutableSetOf<String>() }
     val angle = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val spin: () -> Unit = spin@{
+    val spin: (Boolean) -> Unit = spin@{ clockwise ->
         val p = places ?: return@spin
         val closed = { pl: Place -> OpeningHours.parseOrNull(pl.tags["opening_hours"])?.isOpen(now, hours) == false }
-        val pick = WherePicker.spin(p, here, Random(services.clock.millis() + spins), closed) ?: run { landed = null; return@spin }
+        val pick = WherePicker.spin(p, here, Random(services.clock.millis() + spins), closed, seen) ?: run { landed = null; return@spin }
         spins++
         landed = null
         scope.launch {
-            // Land the wedge's middle under the pointer at the top, after four full turns.
-            val wedge = 360f / WherePicker.WEDGES.size
-            val target = -(pick.first * wedge + wedge / 2 + WheelArt.BASE_TURN)
-            val base = angle.value - angle.value % 360f
-            angle.animateTo(base - 360f * 4 + target, tween(2_600, easing = CubicBezierEasing(0.1f, 0.6f, 0.2f, 1f)))
+            // The wedge's middle under the pointer at the top, after four full turns the way it was sent.
+            angle.animateTo(WheelArt.landing(angle.value, pick.first, WherePicker.WEDGES.size, clockwise), tween(2_600, easing = CubicBezierEasing(0.1f, 0.6f, 0.2f, 1f)))
+            seen += pick.second.key
             landed = pick
+            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+        }
+    }
+    // A tick as each wedge passes the pointer, as a prize wheel's clapper clicks over its pegs.
+    LaunchedEffect(angle) {
+        val sweep = 360f / WherePicker.WEDGES.size
+        snapshotFlow { floor((angle.value + WheelArt.BASE_TURN) / sweep).toInt() }.drop(1).collect {
+            haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
         }
     }
     LaunchedEffect(filters) { landed = null }
@@ -216,18 +285,26 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
     val glow = remember { cssRadial(false, 206f, 274.5f, 0f to 0xFFFFF8EC, 0.7f to 0xFFF6E6D0, 1f to 0xFFF6E6D0) }
     Column(Modifier.fillMaxSize().boardBox(0xFFF6E6D0, grad = listOf(glow)).padding(top = boardShift())) {
         BoardTitleRow(stringResource(R.string.where_title), INK, onBack = { nav.back() })
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            WhereChip("≤ 15′", filters.walkMinutes == 15, symbol = "ui.clock") { filters = filters.copy(walkMinutes = 15) }
-            WhereChip("≤ 30′", filters.walkMinutes == 30) { filters = filters.copy(walkMinutes = 30) }
-            WhereChip(stringResource(R.string.where_free), filters.free) { filters = filters.copy(free = !filters.free) }
-            WhereChip(stringResource(R.string.category_open_now), filters.openNow) { filters = filters.copy(openNow = !filters.openNow) }
-            WhereChip(stringResource(R.string.where_indoors), filters.indoors) { filters = filters.copy(indoors = !filters.indoors) }
+        // The chips spread across the row as on the board, and scroll where they are wider than the screen (a phone
+        // 360 dp wide, or longer words than English).
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).widthIn(min = maxWidth).padding(horizontal = 16.dp),
+                horizontalArrangement = ChipsSpread,
+            ) {
+                WhereChip("≤ 15′", filters.walkMinutes == 15, symbol = "ui.clock") { filters = filters.copy(walkMinutes = 15) }
+                WhereChip("≤ 30′", filters.walkMinutes == 30) { filters = filters.copy(walkMinutes = 30) }
+                WhereChip(stringResource(R.string.where_free), filters.free) { filters = filters.copy(free = !filters.free) }
+                WhereChip(stringResource(R.string.category_open_now), filters.openNow) { filters = filters.copy(openNow = !filters.openNow) }
+                WhereChip(stringResource(R.string.where_indoors), filters.indoors) { filters = filters.copy(indoors = !filters.indoors) }
+            }
         }
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-            Wheel(places, { angle.value }, onSpin = spin, lang = lang, modifier = Modifier.padding(top = 22.dp).width(300.dp))
+            Wheel(
+                places, { angle.value }, onSpin = { spin(false) },
+                onTurn = { d -> scope.launch { angle.snapTo(angle.value + d) } }, onFling = { clockwise -> spin(clockwise) },
+                lang = lang, modifier = Modifier.padding(top = 22.dp).width(300.dp),
+            )
             val part = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp)
             when {
                 places == null -> BoardLine(stringResource(R.string.kit_loading), boardText(12f, 400, 15.5f), 0xFF6B6480, part)
@@ -245,7 +322,7 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                Modifier.weight(1f).height(56.dp).boardBox(0xFFFFFFFF, round(28f)).clickable(role = Role.Button, onClick = spin),
+                Modifier.weight(1f).height(56.dp).boardBox(0xFFFFFFFF, round(28f)).clickable(role = Role.Button) { spin(false) },
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -269,6 +346,23 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
                 },
                 off, side = 56f, glyph = 20f, bg = INK, tint = 0xFFFFFFFF,
             )
+        }
+    }
+}
+
+/**
+ * The chips' row: spread to the row's ends as the board's justify-content: space-between, never closer than 8 dp, the
+ * row as wide as they need where they are wider than the screen.
+ */
+private val ChipsSpread = object : Arrangement.Horizontal {
+    override val spacing = 8.dp
+
+    override fun Density.arrange(totalSize: Int, sizes: IntArray, layoutDirection: LayoutDirection, outPositions: IntArray) {
+        val gap = if (sizes.size > 1) maxOf(spacing.roundToPx(), (totalSize - sizes.sum()) / (sizes.size - 1)) else 0
+        var x = 0
+        for (i in sizes.indices) {
+            outPositions[i] = if (layoutDirection == LayoutDirection.Ltr) x else totalSize - x - sizes[i]
+            x += sizes[i] + gap
         }
     }
 }
@@ -299,7 +393,6 @@ private fun Landed(w: Wedge, p: Place, here: LatLon, now: LocalDateTime, hours: 
     val line = remember(p, now) { PlaceLine.of(p, here, lang, now, open = OpeningHours.parseOrNull(p.tags["opening_hours"])?.status(now, hours)) }
     val sunset = remember(here, now) { Sun.times(now.toLocalDate(), here.lat, here.lon, ZonedDateTime.now(services.clock).zone).sunset?.toLocalDateTime() }
     val walk = Geo.distance(here, p.location)
-    val index = WherePicker.WEDGES.indexOf(w)
     Column(
         modifier.fillMaxWidth().heightIn(min = 190.dp)
             .boardBox(w.colour, round(28f), listOf(CssShadow(0f, 14f, 28f, 0f, (w.colour and 0xFFFFFFL) or 0x4C000000L)))
@@ -308,8 +401,8 @@ private fun Landed(w: Wedge, p: Place, here: LatLon, now: LocalDateTime, hours: 
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WedgeGlyph(index, 26f)
-            BoardLine(stringResource(w.label).uppercase(Locale.getDefault()), boardText(13f, 800, 17f, spacing = 1.3f), 0xD1FFFFFF)
+            WedgeGlyph(w, 26f)
+            BoardLine(stringResource(WherePicker.title(w, now.toLocalTime())).uppercase(Locale.getDefault()), boardText(13f, 800, 17f, spacing = 1.3f), 0xD1FFFFFF)
         }
         BoardBlock(line.summary.name, boardText(34f, 400, 34f, family = SERIF), 0xFFFFFFFF, lines = 2)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -322,7 +415,7 @@ private fun Landed(w: Wedge, p: Place, here: LatLon, now: LocalDateTime, hours: 
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             line.summary.kind?.let { WherePill(it) }
-            WherePill(stringResource(R.string.whatshere_open_place), Modifier.clickable(role = Role.Button) { services.remember(p); nav.go(Dest.Place.of(p)) })
+            WherePill(stringResource(R.string.whatshere_open_place), Modifier.clickable(role = Role.Button) { services.remember(p); nav.go(Dest.Place.page(p)) })
         }
     }
 }

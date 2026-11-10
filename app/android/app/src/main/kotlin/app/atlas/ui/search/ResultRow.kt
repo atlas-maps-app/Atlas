@@ -2,6 +2,7 @@ package app.atlas.ui.search
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,7 +38,6 @@ import app.atlas.model.Place
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
 import app.atlas.places.Presets
-import app.atlas.places.Symbols
 import app.atlas.places.Localise
 import app.atlas.geo.Geo
 import app.atlas.ui.kit.Atlas
@@ -135,6 +135,9 @@ fun ResultRow(
     titleLines: Int = 1,
     hairline: Boolean = true,
     onClick: (() -> Unit)? = null,
+    /** A long press: what the row's kind is, or its hours to correct. */
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
 ) {
     Row(
         modifier
@@ -142,7 +145,13 @@ fun ResultRow(
             .then(if (hairline) Modifier.drawBehind { drawRect(Color(0xFFEEF0F4), size = Size(size.width, density)) } else Modifier)
             .padding(top = 1.dp)
             .heightIn(min = 64.dp)
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
+            .then(
+                when {
+                    onLongClick != null -> Modifier.combinedClickable(role = Role.Button, onLongClickLabel = onLongClickLabel, onLongClick = onLongClick, onClick = onClick ?: {})
+                    onClick != null -> Modifier.clickable(role = Role.Button, onClick = onClick)
+                    else -> Modifier
+                },
+            ),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -215,14 +224,14 @@ fun RankTile(rank: Int, size: Dp = 40.dp) {
     }
 }
 
-/** The kind of [place] in [lang] from its preset, or null. */
+/** The kind of [place] in [lang] from its preset ("Gifts"), or null. */
 fun kindOf(place: Place, lang: String?): String? = Presets.match(place.tags)?.name(lang)
+
+/** What [place] is, to title it when it has no name of its own: its preset's own name ("Gift Shop"), or null. */
+fun kindTitleOf(place: Place, lang: String?): String? = Presets.match(place.tags)?.fullName(lang)
 
 /** The one-line address of [place], or null. */
 fun addressOf(place: Place): String? = Localise.address(place.tags)
-
-/** The symbol and colour of a place, as the map and the lists show it. */
-fun symbolOf(place: Place): Pair<String, Int> = Symbols.symbolFor(place.tags) to Symbols.colourFor(place.tags)
 
 /** Metres from [from] to [place], or null when either is unknown. */
 fun distanceTo(from: LatLon?, place: Place): Double? = from?.let { Geo.distance(it, place.location) }

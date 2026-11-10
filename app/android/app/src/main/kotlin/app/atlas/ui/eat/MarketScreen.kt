@@ -62,6 +62,7 @@ import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.openTotal
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.TextStyle as DateTextStyle
@@ -108,7 +109,7 @@ fun MarketScreen(nav: Navigator) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = bottomRoom(40.dp))) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = boardTop(112.dp)), contentAlignment = Alignment.Center) {
-                    RubberStamp(stringResource(R.string.eat_market).uppercase() + " · " + (board?.count?.toString() ?: "…"))
+                    RubberStamp(stringResource(R.string.eat_market).uppercase() + " · " + (board?.let { openTotal(it.count, it.guessed) } ?: "…"))
                 }
             }
             item {
@@ -348,7 +349,7 @@ private fun PaperSlip(r: StallRow, index: Int, ctx: EatContext, modifier: Modifi
             CssLine(r.place.name, SLIP.copy(fontWeight = FontWeight.Bold))
         }) {
             val end = if (closed && r.opens != null && r.opens.toLocalDate() != ctx.at.toLocalDate()) {
-                r.opens.dayOfWeek.getDisplayName(DateTextStyle.SHORT, Locale.forLanguageTag(ctx.lang)).take(2)
+                guessMark(r.place, r.opens.dayOfWeek.getDisplayName(DateTextStyle.SHORT, Locale.forLanguageTag(ctx.lang)).take(2))
             } else "${r.place.walkMinutes}′"
             CssLine(end, SLIP)
         }

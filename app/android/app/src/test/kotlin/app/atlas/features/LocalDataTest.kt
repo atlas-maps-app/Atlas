@@ -28,6 +28,7 @@ import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -319,6 +320,64 @@ class LocalDataTest {
         // The router's street namer, on the same data.
         assertEquals("Prinsengracht", packOnly().wayNamer().name(LatLon(52.37530, 4.88405), 15.0))
         assertNull(LocalData(stores = { null }, packs = { null }).wayNamer().name(LatLon(52.37530, 4.88405), 15.0))
+    }
+
+    @Test
+    fun aParksOutlineAndItsPathsComeFromThePackOffline() {
+        // Postzegelpark, a pocket park some 600 m from the Westerkerk: a closed way in the bundled pack.
+        val e = pack.elements(BBox.around(here, 3_000.0)) { it.tag("leisure") == "park" && it.tag("name") == "Postzegelpark" }.single()
+        val box = PackFeatures.boxOf(e)!!
+        val id = PackFeatures.osmId(e)
+        assertEquals(OsmId(OsmType.WAY, 1423270125), id)
+        val o = packOnly().outlineOf(id, box, app.atlas.ui.local.Parkland.PATHS)!!
+        assertEquals(1, o.rings.size)
+        assertTrue(o.holes.none { it })
+        assertTrue("${o.rings[0].size}", o.rings[0].size >= 4)
+        assertTrue(o.rings[0].all { it in box.buffer(1.0) })
+        // some 50 by 100 m less its corners
+        assertTrue("${o.areaM2}", o.areaM2 in 1_000.0..6_000.0)
+        assertTrue(o.paths.all { it.size >= 2 })
+        // the outline alone when no paths are asked for; none for a node, an id the pack lacks, or a box it does not cover
+        assertTrue(packOnly().outlineOf(id, box)!!.paths.isEmpty())
+        assertNull(packOnly().outlineOf(OsmId(OsmType.NODE, 1), box))
+        assertNull(packOnly().outlineOf(OsmId(OsmType.WAY, 1), box))
+        assertNull(packOnly().outlineOf(id, BBox(5.0, 51.0, 5.1, 51.1)))
+        assertNull(LocalData(stores = { null }, packs = { null }).outlineOf(id, box))
+    }
+
+    @Test
+    fun aParksOutlineComesFromItsStoreWhereNoPackHoldsIt() {
+        // a country kept as its tiles: no element pack, its place store keeps the Vondelpark's outline (here a box of it)
+        val id = OsmId(OsmType.RELATION, 2_554_787)
+        val box = BBox(4.8584, 52.3553, 4.8826, 52.3620)
+        val ring = intArrayOf(523553000, 48584000, 523553000, 48826000, 523620000, 48826000, 523620000, 48584000, 523553000, 48584000)
+        val store = app.atlas.search.PlaceStore.inMemory()
+        store.writer().use { w ->
+            assertTrue(w.putOutline(id, listOf(ring), listOf(false)))
+            w.finish()
+        }
+        val local = LocalData(stores = { app.atlas.search.Regions(listOf(Fixtures.amsStore, store)) }, packs = { null })
+        assertNull(local.outlineOf(id, box, app.atlas.ui.local.Parkland.PATHS))
+        val o = local.storedOutline(id)!!
+        assertEquals(listOf(false), o.holes)
+        assertEquals(5, o.rings.single().size)
+        assertTrue(o.rings.single().all { it in box.buffer(1.0) })
+        // some 1,640 by 745 m, and no paths: this store keeps none, and says so
+        assertTrue("${o.areaM2}", o.areaM2 in 1.15e6..1.30e6)
+        assertTrue(o.paths.isEmpty())
+        assertFalse(o.pathsKept)
+        // the packer's store keeps the paths in it beside its outline
+        store.writer().use { w ->
+            w.putPaths(id, listOf(intArrayOf(523586000, 48640000, 523586000, 48770000)), 1.0)
+            w.finish()
+        }
+        val walked = local.storedOutline(id)!!
+        assertTrue(walked.pathsKept)
+        assertEquals(listOf(listOf(LatLon(52.3586, 4.864), LatLon(52.3586, 4.877))), walked.paths)
+        // none where the store keeps none, or there is no store
+        assertNull(storeOnly().storedOutline(id))
+        assertNull(LocalData(stores = { null }, packs = { null }).storedOutline(id))
+        store.close()
     }
 
     @Test

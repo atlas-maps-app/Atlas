@@ -242,7 +242,7 @@ private fun BrandRow(brands: List<BrandChip>, selected: String?, onPick: (String
                 if (b.independent) {
                     Box(Modifier.size(40.dp).boardBox(0xFFE9E3D8, round(20f)), contentAlignment = Alignment.Center) { Sym("fact.independent", 22f, 22f) }
                 } else {
-                    ShopLogo(b.brand, b.name, 40.dp, key = b.key, round = b.brand?.logoSlug == null)
+                    ShopLogo(b.brand, b.name, 40.dp, round = b.brand?.logoSlug == null)
                 }
                 Line("$name ${b.count}", bt(14f, 600, 18f), if (on) 0xFFFFFFFF else INK)
             }
@@ -324,7 +324,8 @@ private fun SortTabs(selected: AisleSort, cheapest: Boolean, onPick: (AisleSort)
 @Composable
 private fun ShelfLabel(p: ShopPlace, spec: AisleSpec, area: ShopArea, now: java.time.LocalDateTime, rating: app.atlas.providers.Rating?, isCheapest: Boolean, onClick: () -> Unit) {
     val closed = p.openness(now, area.hours) == Open.CLOSED
-    val colour = p.brand?.let { brandColour(it, null) } ?: p.tags["brand"]?.let { brandColour(null, it) } ?: spec.colour
+    // a chain's strip is its sign's colour, its own or the neutral sign's (none is made up), an independent's the aisle's
+    val colour = if (p.brand != null || p.tags["brand"] != null) app.atlas.ui.kit.BrandSigns.colour(p.brand) else spec.colour
     val strip = if (isCheapest) Color(0xFFF28C28) else colour
     val ink = if (isCheapest) 0xFF3A3520 else SOFT
     Column(
@@ -338,7 +339,7 @@ private fun ShelfLabel(p: ShopPlace, spec: AisleSpec, area: ShopArea, now: java.
         Box(Modifier.fillMaxWidth().height(8.dp).background(strip))
         Row(Modifier.weight(1f).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (p.brand != null || p.tags["brand"] != null) {
-                ShopLogo(p.brand, p.tags["brand"] ?: p.name, 44.dp, key = p.tags["brand"], round = p.brand?.logoSlug == null)
+                ShopLogo(p.brand, p.tags["brand"] ?: p.name, 44.dp, round = p.brand?.logoSlug == null)
             } else {
                 Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(spec.colour.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
                     Sym(spec.glyph, 24f, 24f, hue(spec.glyph) ?: (spec.colour.toArgb().toLong() and 0xFFFFFFFFL))

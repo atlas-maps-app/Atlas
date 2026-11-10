@@ -142,7 +142,7 @@ internal class ShopPlace(val place: Place, val name: String, val distanceM: Doub
 
         /** Wraps [place] measured from [centre]; null when it has no name to show. */
         fun of(place: Place, centre: LatLon, lang: String?, nameless: Boolean = false): ShopPlace? {
-            val name = Localise.name(place.tags, lang) ?: Presets.match(place.tags)?.name(lang)?.takeIf { nameless } ?: return null
+            val name = Localise.name(place.tags, lang) ?: Presets.match(place.tags)?.fullName(lang)?.takeIf { nameless } ?: return null
             return ShopPlace(place, name, Geo.distance(centre, place.location))
         }
     }

@@ -66,6 +66,6 @@ class HomeDemoCameraTest {
         }
         val vm = HomeViewModel(s, null, null)
         assertEquals(CameraPosition(left.target, 15.0, 10.0, 40.0), vm.map.camera)
-        assertTrue(vm.focus == null)
+        assertTrue(vm.pin == null)
     }
 }

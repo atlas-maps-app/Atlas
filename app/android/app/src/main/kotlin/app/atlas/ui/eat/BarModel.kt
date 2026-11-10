@@ -68,11 +68,13 @@ data class Crawl(val stops: List<EatPlace>, val minutes: Int)
 data class BarCard(
     val open: Int,
     val countsOpen: Boolean,
-    val lastCall: LocalDateTime?,
+    val lastCall: EatSets.LastCall?,
     val tabCounts: Map<BarTab, Int>,
     val moodCounts: Map<BarMood, Int>,
     val venues: List<Venue>,
     val total: Int,
+    /** Of the [open] venues, those open by guessed hours. */
+    val guessed: Int = 0,
 )
 
 /** The bar card's logic: tabs, moods, hooks, last call and the three-stop crawl, all from real tags and hours. */
@@ -152,6 +154,7 @@ object BarModel {
                 Venue(p, hooks(p, at, area), p.openness(at, area.hours), p.closesAt(at, area.hours))
             },
             total = chosen.size,
+            guessed = if (countsOpen) open.count { it.guessed } else 0,
         )
     }
 

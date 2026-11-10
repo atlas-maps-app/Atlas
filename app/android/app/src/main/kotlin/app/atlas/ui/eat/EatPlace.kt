@@ -10,6 +10,7 @@ import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
+import app.atlas.search.KnownHours
 import app.atlas.ui.kit.WalkTime
 import java.time.Duration
 import java.time.LocalDateTime
@@ -55,15 +56,37 @@ class EatPlace(
     /** The parsed `opening_hours`, or null when none is mapped or it cannot be read. */
     val hours: OpeningHours? by lazy { OpeningHours.parseOrNull(place.tags["opening_hours"]) }
 
-    /** True when the place has hours Atlas can read. */
-    val hasHours: Boolean get() = hours != null
+    /**
+     * The hours worked out where it maps none ([EatArea.guessHours]): those its brand's other branches around keep,
+     * else those the places of its kind around it keep. Never confirmed.
+     */
+    @Volatile
+    var guess: KnownHours? = null
+        internal set
 
-    /** The status at [at]; null when the hours are not mapped or not readable. */
-    fun status(at: LocalDateTime, context: OpeningHoursContext): OpenStatus? = hours?.status(at, context)
+    /** True once [guess] was worked out among the places it was found with. */
+    @Volatile
+    internal var weighed: Boolean = false
 
-    /** Open, closing soon, closed or unknown at [at]. */
+    /**
+     * The hours the screens go by: its own, else the guess. A guess counts as its hours wherever it may hold (open now,
+     * the counts, the filters) and is marked "≈" wherever it is shown ([guessed]; the owner, 4 November: "Its
+     * important to know that theyre guessed but they still count if the guess may hold").
+     */
+    val known: OpeningHours? get() = hours ?: guess?.hours
+
+    /** True when the hours gone by are guessed, not its own. */
+    val guessed: Boolean get() = hours == null && guess != null
+
+    /** True when the place has hours Atlas can read, or guess. */
+    val hasHours: Boolean get() = known != null
+
+    /** The status at [at]; null when no hours are known or guessed. */
+    fun status(at: LocalDateTime, context: OpeningHoursContext): OpenStatus? = known?.status(at, context)
+
+    /** Open, closing soon, closed or unknown at [at], by the hours known or guessed. */
     fun openness(at: LocalDateTime, context: OpeningHoursContext): Openness {
-        val h = hours ?: return Openness.UNKNOWN
+        val h = known ?: return Openness.UNKNOWN
         if (h.isAlwaysOpen) return Openness.OPEN
         val s = h.status(at, context)
         if (s.unknown) return Openness.UNKNOWN
@@ -75,20 +98,20 @@ class EatPlace(
 
     /** When it closes after [at] if open then and the hours say so; null otherwise (closed, 24/7, an open end). */
     fun closesAt(at: LocalDateTime, context: OpeningHoursContext): LocalDateTime? {
-        val h = hours ?: return null
+        val h = known ?: return null
         if (h.isAlwaysOpen) return null
         return closesAt(h.status(at, context))
     }
 
     /** When it next opens after [at] if closed then; null when it is open or the hours do not say. */
     fun opensAt(at: LocalDateTime, context: OpeningHoursContext): LocalDateTime? {
-        val s = hours?.status(at, context) ?: return null
+        val s = known?.status(at, context) ?: return null
         if (s.isOpen || s.unknown) return null
         return s.changesAt?.takeIf { s.nextChangeKind == ChangeKind.OPENS }
     }
 
-    /** True for `24/7` hours. */
-    val alwaysOpen: Boolean get() = hours?.isAlwaysOpen == true
+    /** True for `24/7` hours, known or guessed. */
+    val alwaysOpen: Boolean get() = known?.isAlwaysOpen == true
 
     private fun closesAt(s: OpenStatus): LocalDateTime? =
         if (s.isOpen && !s.openEnd && s.nextChangeKind == ChangeKind.CLOSES) s.changesAt else null

@@ -50,7 +50,7 @@ sealed interface OpenSay {
     data object Closed : OpenSay
 
     companion object {
-        /** The words for [p] at [at]; null when its hours are not mapped. */
+        /** The words for [p] at [at]; null when no hours are known or guessed. */
         fun of(p: EatPlace, at: LocalDateTime, area: EatArea): OpenSay? {
             if (p.alwaysOpen) return Always
             return when (p.openness(at, area.hours)) {
@@ -63,11 +63,14 @@ sealed interface OpenSay {
     }
 }
 
-/** "→ 23:00" (green), "closes 19:30" (amber), "opens 9:00" (grey), "24/7"; null when the hours are not mapped. */
+/**
+ * "→ 23:00" (green), "closes 19:30" (amber), "opens 9:00" (grey), "24/7", each after "≈" where the hours are guessed;
+ * null when none are known or guessed.
+ */
 @Composable
 internal fun openWords(p: EatPlace, ctx: EatContext): Pair<String, Color>? {
     val c = Atlas.colors
-    return when (val s = OpenSay.of(p, ctx.at, ctx.area) ?: return null) {
+    val (words, colour) = when (val s = OpenSay.of(p, ctx.at, ctx.area) ?: return null) {
         is OpenSay.Until -> "→ ${s.at.format(HM)}" to c.open
         is OpenSay.ClosesSoon -> stringResource(R.string.eat_closes_at, s.at.format(HM)) to c.caution
         OpenSay.Open -> stringResource(R.string.kit_open) to c.open
@@ -75,7 +78,11 @@ internal fun openWords(p: EatPlace, ctx: EatContext): Pair<String, Color>? {
         is OpenSay.Opens -> stringResource(R.string.eat_opens_at, opensText(s, ctx.lang)) to c.inkSoft
         OpenSay.Closed -> stringResource(R.string.kit_closed) to c.inkSoft
     }
+    return guessMark(p, words) to colour
 }
+
+/** [words] about [p]'s hours, after "≈" where they are guessed ([EatPlace.guessed]), as the one search's rows say it. */
+internal fun guessMark(p: EatPlace, words: String): String = if (p.guessed) "≈ $words" else words
 
 /** [t] as "9:00" on the day of [from], "Wed 9:00" on another day: a place that opens tomorrow must not look as if it opens today. */
 internal fun dayTime(t: LocalDateTime, from: LocalDateTime, lang: String, pattern: DateTimeFormatter = HM): String =

@@ -40,7 +40,7 @@ object QuestFinder {
     suspend fun near(services: Services, at: LatLon, lang: String, online: Boolean): Pair<List<PlaceQuest>, PlaceOrigin?> = withContext(Dispatchers.Default) {
         val store = services.placeStores
         val now = LocalDateTime.now(services.clock)
-        val answered = services.saved.answers.value.mapTo(HashSet()) { it.placeKey + "|" + it.key }
+        val answered = answered(services)
         if (store.covers(at)) {
             val places = store.inBox(BBox.around(at, RADIUS_M)).map { it.place }
             return@withContext questsOf(places, at, lang, now, answered) to PlaceOrigin.STORE
@@ -57,6 +57,13 @@ object QuestFinder {
         } ?: return@withContext emptyList<PlaceQuest>() to PlaceOrigin.ONLINE
         questsOf(places, at, lang, now, answered) to PlaceOrigin.ONLINE
     }
+
+    /** How many quests [places] hold around [at] now, those answered from this phone left out: at most [MAX]. */
+    fun countAround(services: Services, places: List<Place>, at: LatLon, lang: String): Int =
+        questsOf(places.filter { Geo.distance(at, it.location) <= RADIUS_M }, at, lang, LocalDateTime.now(services.clock), answered(services)).size
+
+    /** The quests answered from this phone, as "key|tag". */
+    private fun answered(services: Services): Set<String> = services.saved.answers.value.mapTo(HashSet()) { it.placeKey + "|" + it.key }
 
     /** The quests of [places] seen from [at] at [now], nearest first, skipping those in [answered] ("key|tag"). */
     fun questsOf(places: List<Place>, at: LatLon, lang: String, now: LocalDateTime, answered: Set<String>): List<PlaceQuest> {

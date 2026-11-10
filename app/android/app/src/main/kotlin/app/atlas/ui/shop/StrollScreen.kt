@@ -73,6 +73,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.places.Symbols
 import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
@@ -291,7 +292,8 @@ private fun ShopCard(
             val style = remember(p.key) { facadeStyle(p) }
             if (p.brand != null) ShopLogo(p.brand, p.name, 52.dp)
             else Box(Modifier.size(52.dp).boardBox(if (style.dark) INK else (style.wall.toArgb().toLong() and 0xFFFFFFFFL), round(14f)), contentAlignment = Alignment.Center) {
-                Sym(if (p.tags["shop"] == "books") "place.books" else "place.shop", 26f, 26f, style.signText.toArgb().toLong() and 0xFFFFFFFFL)
+                // the place's own kind symbol, as its list row and its pin wear it
+                Sym(remember(p.key) { Symbols.symbolFor(p.tags) }, 26f, 26f, style.signText.toArgb().toLong() and 0xFFFFFFFFL)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Block(p.name, bt(30f, 400, 30f, SERIF), INK, Modifier.semantics { heading() })
@@ -347,7 +349,10 @@ private fun FactDot(symbol: String, label: String) {
     Box(Modifier.size(30.dp).boardBox(0xFFF1EEE8, round(15f)).semantics { contentDescription = label }, contentAlignment = Alignment.Center) { Sym(symbol, 15f, 15f) }
 }
 
-/** The sign that hangs over the pavement from a bracket: the board's own (iron, chain, rounded plate) with the kind's glyph on the plate. */
+/**
+ * The sign that hangs over the pavement from a bracket: the board's own (iron, chain, rounded plate) with the place's kind
+ * symbol on the plate, the one its list row and its pin wear (Symbols.symbolFor), so a greengrocer hangs its own sign.
+ */
 @Composable
 private fun HangingSign(p: ShopPlace, modifier: Modifier) {
     val style = remember(p.key) { facadeStyle(p) }
@@ -355,12 +360,7 @@ private fun HangingSign(p: ShopPlace, modifier: Modifier) {
         val svg = ShopBoards.SIGN
         svg.substringBefore("<path d=\"M34 30").plus("</svg>").replace("#2F5D3A", "#%06X".format(style.wall.toArgb() and 0xFFFFFF))
     }
-    val glyph = when {
-        p.tags["shop"] == "books" -> "place.books"
-        p.tags["shop"] in setOf("bakery", "pastry") -> "food.bread"
-        p.tags["shop"] in setOf("supermarket", "convenience", "greengrocer") -> "grocery.supermarket"
-        else -> "place.shop"
-    }
+    val glyph = remember(p.key) { Symbols.symbolFor(p.tags) }
     Box(modifier.size(70.dp, 80.dp)) {
         BoardArt(frame, tint = Color(0xFF1A1A1A))
         Sym(glyph, 24f, 24f, 0xFFF4EBDD, Modifier.offset(x = 22.dp, y = 24.dp))

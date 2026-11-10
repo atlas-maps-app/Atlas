@@ -20,6 +20,7 @@
     <string name="kit_closed_opens">dicht · opent %1$s</string>
     <string name="kit_closed">dicht</string>
     <string name="kit_hours_unknown">openingstijden onbekend</string>
+    <string name="kit_about">ongeveer %1$d</string>
     <string name="kit_mic">Spreek</string>
     <string name="kit_mic_unavailable">Spraakzoeken heeft de spraakherkenning op de telefoon zelf nodig</string>
     <string name="kit_offline">Offline</string>

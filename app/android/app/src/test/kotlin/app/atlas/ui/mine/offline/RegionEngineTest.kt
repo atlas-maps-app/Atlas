@@ -155,6 +155,30 @@ class RegionEngineTest {
         packs, packDownloader, importPlaces, segments, segmentSizes, mapBuilder, voices, clock, tilesVersion,
     )
 
+    private fun RegionDeps.withParks(keep: suspend (BBox, File) -> Unit) = RegionDeps(
+        packs, packDownloader, importPlaces, segments, segmentSizes, mapBuilder, voices, clock, tilesVersion, keep,
+    )
+
+    @Test
+    fun theCountrysNationalParksComeWithTheRegionsPlacesAndAFailureThereLeavesItWhole() {
+        val p = thePack()
+        val asked = ArrayList<File>()
+        // kept in the region's store after its places: the store grows by them, and its record with it
+        val e = engine(deps({ listOf(p) }).withParks { _, file -> asked += file; file.appendBytes(ByteArray(2_000)) })
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertEquals(listOf(files.places(id)), asked)
+        assertEquals(82_000L, files.get(id)!!.layers.getValue(RegionLayer.PLACES).bytes)
+        // none to be had (offline, Overpass down): the places are taken all the same, the parks later
+        val other = engine(deps({ listOf(p) }).withParks { _, _ -> throw IOException("offline") })
+        val again = RegionEngine.idFor("Around Amsterdam again")
+        other.begin(again, "Around Amsterdam again", inside, setOf(RegionLayer.PLACES))
+        runBlocking { other.resume(again) }
+        assertEquals(80_000L, files.get(again)!!.layers.getValue(RegionLayer.PLACES).bytes)
+        assertEquals(80_000L, files.places(again).length())
+    }
+
     @Test
     fun aRegionInsideAPackTakesItsMapAndPlacesFromThePackAndKeepsEachLayerRecorded() {
         val p = thePack()
@@ -494,6 +518,27 @@ class AtlasRegionManagerTest {
         runBlocking { m.run(id) }
         m.update(id)
         assertEquals(Triple(id, true, true), queue.queued.last())
+    }
+
+    @Test
+    fun placesThisAtlasCannotReadAreTakenAgain() {
+        val m = manager()
+        val id = m.download(RegionRequest("Amsterdam", box, setOf(RegionLayer.MAP, RegionLayer.PLACES)))
+        runBlocking { m.run(id) }
+        val store = File(tmp.root, "places/$id.db")
+        val wal = File(store.path + "-wal").apply { writeBytes(ByteArray(500)) }
+        assertTrue(store.isFile)
+        queue.queued.clear()
+        runBlocking { m.downloadPlacesAgain(id) }
+        // the store goes with SQLite's file beside it, the map stays, and the places are queued as a layer the region lacks
+        assertFalse(store.exists() || wal.exists())
+        assertEquals(listOf(Triple(id, true, false)), queue.queued)
+        val d = m.details.value.single()
+        assertEquals(setOf(RegionLayer.MAP), d.meta.layers.keys)
+        assertTrue(d.progress!!.waiting)
+        assertTrue(runBlocking { m.run(id) }.isSuccess)
+        assertTrue(store.isFile)
+        assertTrue(m.regions.value.single().complete)
     }
 
     @Test

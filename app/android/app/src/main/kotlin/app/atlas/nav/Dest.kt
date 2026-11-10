@@ -109,6 +109,12 @@ sealed interface Dest {
             /** The destination for [place], whose key the caller has put in the place cache (`Services.remember`). */
             fun of(place: OsmPlace): Place =
                 Place(place.location.lat, place.location.lon, place.id?.toString(), place.name(), place.key)
+
+            /**
+             * The page a row opens for [place]: a park's, a nature reserve's or a national park's own (its plan, rules, trails,
+             * trees and birds; the place page behind its details), else the place page. The caller keeps it in the cache.
+             */
+            fun page(place: OsmPlace): Dest = app.atlas.ui.local.Parkland.destOf(place) ?: of(place)
         }
     }
 
@@ -203,12 +209,14 @@ sealed interface Dest {
         val mode: String? = null,
         /** Stops on the way, in order, as `lat,lon,name` joined by `|` (a shopping run); null for none. */
         val via: String? = null,
+        /** What the way was asked to avoid or keep to ("motorways,quiet", GoJson.wishes), for this way only; null for none. */
+        val wish: String? = null,
     ) : Dest {
         val to: LatLon? get() = if (toLat != null && toLon != null) LatLon(toLat, toLon) else null
         val from: LatLon? get() = if (fromLat != null && fromLon != null) LatLon(fromLat, fromLon) else null
         override val route get() = Routes.build(
             "route", "tolat" to toLat, "tolon" to toLon, "to" to toName, "fromlat" to fromLat, "fromlon" to fromLon, "from" to fromName, "mode" to mode,
-            "via" to via,
+            "via" to via, "wish" to wish,
         )
         override val tab get() = Tab.GO
 
@@ -414,14 +422,23 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = app.atlas.ui.local.NatureScreen(this, nav)
     }
 
-    /** A park's own plan: what is in it and where. [osmId] names the park ("w123"); null opens the nearest. */
-    data class Parkland(val osmId: String? = null, val lat: Double? = null, val lon: Double? = null) : Dest {
+    /**
+     * A park's own page: its plan, what is in it and where; a nature reserve's and a national park's too. [osmId] names the
+     * park ("w123"), [key] the place the caller kept in the place cache (`Services.remember`); neither opens the nearest.
+     * [lat] and [lon] stand for where you are; null is the phone's own place.
+     */
+    data class Parkland(val osmId: String? = null, val lat: Double? = null, val lon: Double? = null, val key: String? = null) : Dest {
         val at: LatLon? get() = if (lat != null && lon != null) LatLon(lat, lon) else null
-        override val route get() = Routes.build("parkland", "id" to osmId, "lat" to lat, "lon" to lon)
+        override val route get() = Routes.build("parkland", "id" to osmId, "lat" to lat, "lon" to lon, "key" to key)
         override val tab get() = Tab.MAP
 
         @Composable
         override fun Content(nav: Navigator) = app.atlas.ui.local.ParklandScreen(this, nav)
+
+        companion object {
+            /** The page of the park [place], which the caller has kept in the place cache; you where the phone is. */
+            fun of(place: OsmPlace): Parkland = Parkland(place.id?.toString(), key = place.key)
+        }
     }
 
     /** Picnic and play: tables, grills, playgrounds, dog parks, lawns, splash pads, fitness and courts; [kind] picks one plate. */
@@ -724,7 +741,7 @@ sealed interface Dest {
             "needs" to { a -> a.str("kind")?.let { Needs(it) } },
             "go" to { _ -> Go },
             "route" to { a ->
-                Route(a.double("tolat"), a.double("tolon"), a.str("to"), a.double("fromlat"), a.double("fromlon"), a.str("from"), a.str("mode"), a.str("via"))
+                Route(a.double("tolat"), a.double("tolon"), a.str("to"), a.double("fromlat"), a.double("fromlon"), a.str("from"), a.str("mode"), a.str("via"), a.str("wish"))
             },
             "navigate" to { a -> a.latLon("to")?.let { Navigate(it.lat, it.lon, a.str("to"), a.str("mode", "WALK"), a.bool("demo")) } },
             "ears" to { _ -> Ears },
@@ -747,7 +764,7 @@ sealed interface Dest {
             "peaks" to { a -> Peaks(a.double("lat"), a.double("lon")) },
             "collect" to { _ -> Collect },
             "nature" to { a -> Nature(a.str("kind"), a.double("lat"), a.double("lon")) },
-            "parkland" to { a -> Parkland(a.str("id"), a.double("lat"), a.double("lon")) },
+            "parkland" to { a -> Parkland(a.str("id"), a.double("lat"), a.double("lon"), a.str("key")) },
             "picnic" to { a -> Picnic(a.str("kind")) },
             "swim" to { a -> Swim(a.str("kind")) },
             "relax" to { a -> Relax(a.str("kind")) },

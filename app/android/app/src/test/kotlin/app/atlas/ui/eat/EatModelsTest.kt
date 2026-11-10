@@ -99,13 +99,14 @@ class EatModelsTest {
         assertTrue(r.base > 100)
         assertEquals(r.lines.last().count, r.total)
         assertTrue(r.served.size <= 12 && r.served.size == minOf(12, r.total))
-        // Every place served fits every hard line.
+        // Every place served fits every hard line: open by its own hours, or, mapping none, by those its brand's
+        // branches or its kind around it keep (guessed, never confirmed).
         for (h in r.served) {
             val p = area[h.place.key]!!
             assertTrue(p.cuisines.any { it == "italian" || it == "japanese" })
             assertTrue(p.outside && p.kind != EatKind.FAST_FOOD)
             assertTrue(Geo.distance(area.centre, p.location) <= OrderModel.walkMetres(15) + 1)
-            assertTrue(p.openness(evening, area.hours).isOpen)
+            assertTrue(p.hours == null || p.openness(evening, area.hours).isOpen)
         }
         val ql = OrderModel.ql(pad, evening, area)
         assertTrue(ql, ql.contains("around:") && ql.contains("cuisine") && ql.contains("outdoor_seating"))
@@ -129,7 +130,7 @@ class EatModelsTest {
         println("bar: ${card.open} open, last call ${card.lastCall}, tabs ${card.tabCounts}, moods ${card.moodCounts}")
         assertTrue(card.countsOpen && card.open > 50)
         assertNotNull(card.lastCall)
-        assertTrue(card.lastCall!!.isAfter(evening.plusHours(4)))
+        assertTrue(card.lastCall!!.at.isAfter(evening.plusHours(4)))
         assertTrue(card.tabCounts.getValue(BarTab.PUBS) > 50)
         // Open first, nearest first among them.
         val open = card.venues.takeWhile { it.openness.isOpen }

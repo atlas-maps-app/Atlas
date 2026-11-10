@@ -53,13 +53,32 @@ interface Navigator {
     /** Shows [tab]'s home; the Map stays underneath, so back from any tab lands on the map. */
     fun tab(tab: Tab)
 
-    /** Replaces the whole back stack (deep links, CI). An empty [stack] means the Map home. */
+    /** Replaces the whole back stack (CI's screens, the saved stack). An empty [stack] means the Map home. */
     fun reset(stack: List<Dest>)
+
+    /**
+     * Opens a link's [stack] ([Links]: the Map home at the link's point, the link's screen over it) on top of the screens
+     * open, so back returns to where the user was: the link's screen alone (a point or a place brings itself into the
+     * map on screen); where the map is all a link opens (a map view), the Map home at that view.
+     */
+    fun land(stack: List<Dest>)
+
+    /**
+     * Whether [home] is all a link opened (a map view), so it pins the link's point until the map is moved away from it.
+     * The Map home under a link's screen pins nothing: the screen shows its own point, which leaves with it.
+     */
+    fun pins(home: Dest.Home): Boolean = false
 }
 
-/** The app's [Navigator] over a back stack that survives configuration changes and process death (as routes). */
+/**
+ * The app's [Navigator] over a back stack that survives configuration changes and process death (as routes). An
+ * [initial] stack that is the Map home alone at a point is a map view a link opened the app on.
+ */
 class BackStackNavigator(initial: List<Dest> = listOf(Dest.Home())) : Navigator {
     val stack: SnapshotStateList<Dest> = mutableStateListOf<Dest>().apply { addAll(initial.ifEmpty { listOf(Dest.Home()) }) }
+
+    /** The map view a link opened last ([pins]). */
+    private var mapView: Dest.Home? = (initial.singleOrNull() as? Dest.Home)?.takeIf { it.focus != null }
 
     override val current: Dest get() = stack.last()
 
@@ -93,6 +112,20 @@ class BackStackNavigator(initial: List<Dest> = listOf(Dest.Home())) : Navigator 
         this.stack.clear()
         this.stack.addAll(full)
     }
+
+    override fun land(stack: List<Dest>) {
+        val home = stack.firstOrNull() as? Dest.Home
+        val screens = if (home != null) stack.drop(1) else stack
+        when {
+            screens.isNotEmpty() -> screens.forEach(::go)
+            home?.focus != null -> {
+                mapView = home
+                go(home)
+            }
+        }
+    }
+
+    override fun pins(home: Dest.Home): Boolean = home.focus != null && home == mapView
 
     companion object {
         /** Saves the stack as routes; unknown routes (an older build's) are dropped on restore, the map stays underneath. */

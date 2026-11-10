@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="row_star">Dans votre rangée</string>
+    <string name="row_change">Modifier votre rangée</string>
+    <string name="row_move_left">Vers la gauche</string>
+    <string name="row_move_right">Vers la droite</string>
+    <string name="row_take_out">Retirer %1$s de votre rangée</string>
+    <string name="row_add">Ajouter à votre rangée</string>
+    <string name="row_reset">Rétablir votre rangée</string>
+    <string name="row_done">Terminé</string>
+</resources>

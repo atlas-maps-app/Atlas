@@ -1,9 +1,9 @@
 package app.atlas.ui.home
 
-import android.os.SystemClock
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.os.SystemClock
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.datastore.preferences.core.Preferences
 import androidx.compose.ui.geometry.Rect
@@ -12,6 +12,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewModelScope
 import app.atlas.Services
+import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
@@ -31,8 +32,6 @@ import app.atlas.model.Fix
 import app.atlas.providers.Forecast
 import app.atlas.providers.Weather
 import app.atlas.services.LocationQuality
-import app.atlas.services.NearbyPlaces
-import app.atlas.services.PlaceOrigin
 import app.atlas.services.SavedCamera
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.CurrentWeather
@@ -40,7 +39,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -64,25 +62,17 @@ import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.pow
 
-/** The category row's answer: which category, whether it is still looking, the places and where they came from. */
-data class CategoryResults(
-    val categoryId: String,
-    val loading: Boolean,
-    val places: List<app.atlas.model.Place> = emptyList(),
-    val source: PlaceOrigin? = null,
-    val error: String? = null,
-    val centre: LatLon,
-)
-
 /**
  * The Map home's state: the camera (restored, saved as it moves), the location and follow mode, the map's look from
- * settings, the weather and its moments, and the places of the chosen category.
+ * settings, the weather and its moments, and the places of the chosen category. A link's [focus] starts the camera
+ * there; [pinned] (the map is all the link opened, a map view) pins it too.
  */
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val services: Services,
     focus: LatLon?,
     focusZoom: Double?,
+    pinned: Boolean = false,
     private val clock: () -> Instant = { services.clock.instant() },
     private val zone: ZoneId = services.clock.zone,
 ) : ViewModel() {
@@ -118,8 +108,12 @@ class HomeViewModel(
         return list.packs.any { p in it.box }
     }
 
-    /** The focus of a geo: link, drawn as a pin. */
-    val focus: LatLon? = focus
+    /**
+     * The point of a link that opened only the map (a map view), drawn as a pin until the map is moved away from it;
+     * null otherwise. Under a link's screen the map pins nothing: the screen shows its own point, which leaves with it.
+     */
+    var pin: LatLon? by mutableStateOf(if (pinned) focus else null)
+        private set
 
     private val cameraMoves = MutableStateFlow(map.camera)
 
@@ -197,10 +191,6 @@ class HomeViewModel(
             }
         }
         .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val resultsState = MutableStateFlow<CategoryResults?>(null)
-    val results: StateFlow<CategoryResults?> = resultsState.asStateFlow()
-    private var resultsJob: Job? = null
 
     /** Where and when (elapsed time, not the wall clock) the forecast was last looked for, and how that went. */
     private var triedAt: LatLon? = null
@@ -329,6 +319,8 @@ class HomeViewModel(
             cameraUnset = false
             if (map.follow != Follow.NONE) map.follow = Follow.NONE
         }
+        // the ground in view is the moved camera's: the map sets it just before it tells of the move
+        if (pin != null) pin = pinAfterMove(pin, map.visibleBounds)
         cameraMoves.value = camera
     }
 
@@ -408,36 +400,6 @@ class HomeViewModel(
         placeModels.viewModelStore.clear()
     }
 
-    /** Shows the places of [categoryId] around the view; the same again clears them. */
-    fun selectCategory(categoryId: String?) {
-        resultsJob?.cancel()
-        if (categoryId == null || resultsState.value?.categoryId == categoryId) {
-            resultsState.value = null
-            return
-        }
-        val centre = map.camera.target
-        val radius = radiusFor(map.camera.zoom)
-        resultsState.value = CategoryResults(categoryId, loading = true, centre = centre)
-        resultsJob = viewModelScope.launch {
-            var last: NearbyPlaces? = null
-            try {
-                services.places.nearby(categoryId, centre, radius, MAX_RESULTS).collect { r ->
-                    // An online answer replaces the tiles' unless it failed and the tiles had something.
-                    val keep = last
-                    val use = if (r.error != null && keep != null && keep.places.isNotEmpty()) keep.copy(error = r.error) else r
-                    last = use
-                    resultsState.value = CategoryResults(categoryId, loading = false, places = use.places, source = use.source, error = use.error, centre = centre)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                resultsState.value = CategoryResults(categoryId, false, last?.places.orEmpty(), last?.source, e.message ?: e.toString(), centre)
-                return@launch
-            }
-            if (last == null) resultsState.value = CategoryResults(categoryId, loading = false, centre = centre)
-        }
-    }
-
     /**
      * Fetches the forecast for [at] when it is due: never looked for yet, moved [WEATHER_MOVE_M] since, older than
      * [WEATHER_MAX_AGE_MS], or [WEATHER_RETRY_MS] after a try that brought nothing fresh while online, or at once when
@@ -469,13 +431,9 @@ class HomeViewModel(
 
         /** How far around the target names are looked for at zoom 16 (twice at 15, half at 17). */
         private const val LABEL_RADIUS_M = 1_500.0
-        const val MAX_RESULTS = 60
         private const val WEATHER_MOVE_M = 5_000.0
         private const val WEATHER_MAX_AGE_MS = 30 * 60_000L
         private const val WEATHER_RETRY_MS = 2 * 60_000L
-
-        /** How far around the view to look for a category: about the visible area at that zoom. */
-        fun radiusFor(zoom: Double): Double = (800.0 * Math.pow(2.0, 16.0 - zoom)).coerceIn(300.0, 5_000.0)
 
         /** CI's script of the core's transitional rule (MainActivity's `atlas.vk.script transition`). */
         const val TRANSITION_SCRIPT = "transition"
@@ -513,6 +471,12 @@ internal fun mapStyleOf(p: Preferences, ciTheme: Theme?): MapStyle {
     val with3d = if (p[SettingsKeys.MAP_3D] ?: true) layers + MapLayer.BUILDINGS_3D else layers - MapLayer.BUILDINGS_3D
     return MapStyle(theme = theme, layers = with3d, language = p[SettingsKeys.NAME_LANGUAGE], calm = true)
 }
+
+/**
+ * A link's [pin] once the map has moved to show [ground] (the ground in view; null before the view's first frame): it
+ * goes when the map is moved away from it, its point out of view, by the user's fingers or a button.
+ */
+internal fun pinAfterMove(pin: LatLon?, ground: BBox?): LatLon? = pin?.takeUnless { ground != null && it !in ground }
 
 /**
  * Where the camera's target goes for the ground at [place] to show inside [band] (screen px), nothing else of the view

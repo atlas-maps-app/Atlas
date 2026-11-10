@@ -68,6 +68,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.cssRadial
 import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.openTotal
 
 /* The Ramen board's paper, inks and metals (`canvas/project/Ramen.dc.html`). */
 private val WASHI = Color(0xFFF3EEE3)
@@ -293,7 +294,7 @@ private fun TicketMachine(m: Machine, ctx: EatContext, picked: String?, modifier
             val glow = LED.shadow
             CssLine(m.world.ticket, native(m.world, 14f, 20f).copy(color = Color(0xFF7CFF9E), shadow = glow))
             Spacer(Modifier.weight(1f))
-            CssLine(if (m.countsOpen) stringResource(R.string.eat_world_open, m.open) else m.open.toString(), LED)
+            CssLine(if (m.countsOpen) stringResource(R.string.eat_world_open, openTotal(m.open, m.guessed)) else m.open.toString(), LED)
             CssLine("|", LED, color = Color(0xFF3E7A4E))
             CssLine(ctx.at.format(HM_PADDED), LED)
         }
@@ -354,7 +355,7 @@ private fun MachineKey(b: MachineButton, world: CuisineWorld, at: LocalDateTime,
                 val small = if (closed) ink else META
                 if (closed) {
                     CssLine(world.preparing, native(world, 12f, 17.5f), color = ink)
-                    b.opens?.let { CssLine(dayTime(it, at, lang, HM_PADDED), KEY_META, color = small) }
+                    b.opens?.let { CssLine(guessMark(b.place, dayTime(it, at, lang, HM_PADDED)), KEY_META, color = small) }
                 } else {
                     CssLine("${b.place.walkMinutes}′", KEY_META, color = small)
                     b.dots?.let { CssLine("●".repeat(it) + "○".repeat(5 - it), KEY_META.copy(letterSpacing = 1.sp), color = SEAL) }
@@ -365,7 +366,7 @@ private fun MachineKey(b: MachineButton, world: CuisineWorld, at: LocalDateTime,
                             CssLine(stringResource(R.string.eat_world_only), KEY_META, color = small)
                         }
                     }
-                    if (b.dots == null && !b.vegan && !b.cashOnly && b.closes != null) CssLine("→ " + b.closes.format(HM_PADDED), KEY_META, color = small)
+                    if (b.dots == null && !b.vegan && !b.cashOnly && b.closes != null) CssLine(guessMark(b.place, "→ " + b.closes.format(HM_PADDED)), KEY_META, color = small)
                 }
             }
         }
@@ -409,7 +410,7 @@ private fun PaperTicket(t: MealTicket, world: CuisineWorld, at: LocalDateTime, l
                     t.button.closes != null -> "→ " + t.button.closes.format(HM_PADDED)
                     t.button.opens != null -> world.preparing + " " + dayTime(t.button.opens, at, lang, HM_PADDED)
                     else -> null
-                }
+                }?.let { guessMark(t.button.place, it) }
                 state?.let {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         Symbol("ui.clock", tint = INDIGO, size = 13.dp)

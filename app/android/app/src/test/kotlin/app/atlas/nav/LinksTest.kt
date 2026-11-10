@@ -17,6 +17,26 @@ class LinksTest {
     }
 
     @Test
+    fun aStackIsTheMapAtTheLinksPointWithTheLinksScreenOver() {
+        // what a cold start opens on; while the app runs, the screen over the map lands on top of the screens open
+        assertEquals(
+            listOf(Dest.Home(52.37452, 4.88377, 17.0), Dest.WhatsHere(52.37452, 4.88377, go = true)),
+            Links.forUri("geo:52.37452,4.88377"),
+        )
+        assertEquals(
+            listOf(Dest.Home(52.37452, 4.88377, 17.0), Dest.Place(52.37452, 4.88377, name = "Westerkerk")),
+            Links.forUri("geo:0,0?q=52.37452,4.88377(Westerkerk)"),
+        )
+        assertEquals(listOf(Dest.Home(52.37, 4.87, 19.0), Dest.Place(52.37, 4.87, "n240316872")), Links.forUri("https://www.openstreetmap.org/node/240316872#map=19/52.37000/4.87000"))
+        // no point of their own: the map where it is
+        assertEquals(listOf(Dest.Home(), Dest.Place(osmId = "w99205257")), Links.forUri("https://www.openstreetmap.org/way/99205257"))
+        assertEquals(listOf(Dest.Home(), Dest.Search("coffee shop")), Links.forUri("geo:0,0?q=coffee+shop"))
+        assertEquals(listOf(Dest.Home(), Dest.Search("Albert Heijn Westermarkt")), Links.forText("Albert Heijn Westermarkt"))
+        // a map view is the map alone, at its view
+        assertEquals(listOf<Dest>(Dest.Home(52.3745, 4.8838, 17.0)), Links.forUri("https://www.openstreetmap.org/#map=17/52.3745/4.8838"))
+    }
+
+    @Test
     fun whatsHereKeepsTheBuildingAPressNamed() {
         val pressed = Dest.WhatsHere(52.37452, 4.88377, "w266556292")
         assertEquals(pressed, Dest.parse(pressed.route))

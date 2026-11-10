@@ -20,6 +20,7 @@
     <string name="kit_closed_opens">fermé · ouvre à %1$s</string>
     <string name="kit_closed">fermé</string>
     <string name="kit_hours_unknown">horaires inconnus</string>
+    <string name="kit_about">environ %1$d</string>
     <string name="kit_mic">Parler</string>
     <string name="kit_mic_unavailable">La recherche vocale nécessite la reconnaissance vocale intégrée au téléphone</string>
     <string name="kit_offline">Hors ligne</string>

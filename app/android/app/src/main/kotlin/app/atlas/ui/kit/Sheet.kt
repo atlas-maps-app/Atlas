@@ -68,6 +68,9 @@ class SheetState(initial: SheetStop = SheetStop.PEEK, val stops: Set<SheetStop> 
     var stop: SheetStop by mutableStateOf(initial)
         private set
 
+    /** On its way down it passes over its peek: for a view with nothing to peek at. */
+    var skipsPeek: Boolean by mutableStateOf(false)
+
     internal var offset by mutableFloatStateOf(Float.NaN)
     internal var anchors: Map<SheetStop, Float> by mutableStateOf(emptyMap())
     internal var containerHeight by mutableFloatStateOf(0f)
@@ -107,9 +110,16 @@ class SheetState(initial: SheetStop = SheetStop.PEEK, val stops: Set<SheetStop> 
         return offset - before
     }
 
-    internal suspend fun settle(velocity: Float) {
+    /** Comes to rest after a pull, or after what a flung list had left, which never takes it off the screen ([away] false). */
+    internal suspend fun settle(velocity: Float, away: Boolean = true) {
         if (offset.isNaN() || anchors.isEmpty()) return
-        val candidates = anchors.filterKeys { it in stops || it == SheetStop.HIDDEN && stop == SheetStop.HIDDEN }
+        val candidates = anchors.filterKeys {
+            when (it) {
+                SheetStop.HIDDEN -> stop == SheetStop.HIDDEN || away && it in stops
+                SheetStop.PEEK -> it in stops && !skipsPeek
+                else -> it in stops
+            }
+        }
         val target = when {
             abs(velocity) > FLING_VELOCITY -> {
                 // A fling goes to the next rest in its direction.
@@ -129,6 +139,11 @@ class SheetState(initial: SheetStop = SheetStop.PEEK, val stops: Set<SheetStop> 
 
     internal fun minAnchor(): Float = anchors.filterKeys { it in stops }.values.minOrNull() ?: 0f
     internal fun maxAnchor(): Float = anchors.filterKeys { it in stops }.values.maxOrNull() ?: containerHeight
+
+    /** Where a sheet asked to fold goes: to its peek; from its peek, or past it, away where it can go. */
+    internal val folded: SheetStop get() = if (SheetStop.HIDDEN in stops && (skipsPeek || stop == SheetStop.PEEK)) SheetStop.HIDDEN else SheetStop.PEEK
+
+    internal val atRest: Boolean get() = anchors.values.any { abs(it - offset) < 1f }
 
     internal fun updateAnchors(new: Map<SheetStop, Float>, height: Float) {
         containerHeight = height
@@ -169,10 +184,15 @@ class SheetLook(val surface: Modifier, val grabber: Color) {
     }
 }
 
+/** The room a [Sheet]'s grabber takes at its top, which content drawn under the grabber keeps free itself. */
+val SHEET_GRABBER_ROOM: Dp = 21.dp
+
 /**
  * A bottom sheet over the map, as on the Design board: a white surface with 30 px top corners (or a board's own
  * [look]), a grabber, and rests at [peekHeight], half the screen ([halfFraction]) and nearly full (leaving
- * [fullTopGap]). Drag the grabber or the content; scrollable content inside hands the drag over at its top.
+ * [fullTopGap]). Drag the grabber or the content; scrollable content inside hands the drag over at its top. With
+ * [grabberOver] the grabber lies over the content, which then reaches the sheet's top edge and keeps
+ * [SHEET_GRABBER_ROOM] free itself (a head in its own colour up to the edge), the grabber in [grabber]'s colour.
  */
 @Composable
 fun Sheet(
@@ -182,6 +202,8 @@ fun Sheet(
     halfFraction: Float = 0.52f,
     fullTopGap: Dp = 72.dp,
     look: SheetLook? = null,
+    grabberOver: Boolean = false,
+    grabber: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -215,23 +237,35 @@ fun Sheet(
                 .semantics {
                     customActions = listOf(
                         CustomAccessibilityAction(expand) { scope.launch { state.animateTo(SheetStop.FULL) }; true },
-                        CustomAccessibilityAction(collapse) { scope.launch { state.animateTo(SheetStop.PEEK) }; true },
+                        CustomAccessibilityAction(collapse) { scope.launch { state.animateTo(state.folded) }; true },
                     )
                 },
         ) {
-            Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
-                Box(
-                    Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background((look ?: SheetLook.Default).grabber)
-                        .semantics { contentDescription = expand },
-                )
+            val grab = @Composable {
+                Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background(grabber ?: (look ?: SheetLook.Default).grabber)
+                            .semantics { contentDescription = expand },
+                    )
+                }
             }
-            CompositionLocalProvider(LocalContentColor provides argb(BOARD_INK)) { content() }
+            if (!grabberOver) grab()
+            CompositionLocalProvider(LocalContentColor provides argb(BOARD_INK)) {
+                if (grabberOver) {
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                        Column(Modifier.fillMaxSize()) { content() }
+                        grab()
+                    }
+                } else {
+                    content()
+                }
+            }
         }
     }
 }
 
 /** Lets a list inside the sheet move the sheet first when pulled at its top or pushed while the sheet is not full. */
-private class SheetScrollConnection(private val state: SheetState) : NestedScrollConnection {
+internal class SheetScrollConnection(private val state: SheetState) : NestedScrollConnection {
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
         val dy = available.y
         // Pushing up while the sheet is below its top: the sheet rises before the content scrolls.
@@ -245,15 +279,15 @@ private class SheetScrollConnection(private val state: SheetState) : NestedScrol
     }
 
     override suspend fun onPreFling(available: Velocity): Velocity {
-        val notAtRest = state.anchors.values.none { abs(it - state.offset) < 1f }
-        return if (notAtRest && (available.y < 0 && state.offset > state.minAnchor() || available.y > 0)) {
+        return if (!state.atRest && (available.y < 0 && state.offset > state.minAnchor() || available.y > 0)) {
             state.settle(available.y)
             available
         } else Velocity.Zero
     }
 
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-        state.settle(available.y)
+        // what a list flung to its end has left never takes the sheet away: only a pull on the sheet does
+        state.settle(available.y, away = !state.atRest)
         return available
     }
 }

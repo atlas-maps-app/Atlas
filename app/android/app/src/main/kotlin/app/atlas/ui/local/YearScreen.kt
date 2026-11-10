@@ -50,7 +50,7 @@ private val Paper = Color(0xFFEFE8D8)
 private val Muted = Color(0xFF8A7E66)
 
 @Composable
-private fun activityName(id: String): String = when (id) {
+internal fun activityName(id: String): String = when (id) {
     "swim" -> stringResource(R.string.year_act_swim); "foliage" -> stringResource(R.string.year_act_foliage)
     "mushrooms" -> stringResource(R.string.year_act_mushrooms); "birds" -> stringResource(R.string.year_act_birds)
     "stars" -> stringResource(R.string.year_act_stars); "ski" -> stringResource(R.string.year_act_ski)

@@ -1,6 +1,8 @@
 package app.atlas.ui.search
 
 import app.atlas.Services
+import app.atlas.places.CategoryTree
+import app.atlas.search.PlaceRecord
 import app.atlas.services.PlaceOrigin
 import app.atlas.testing.testServices
 import kotlinx.coroutines.flow.first
@@ -33,6 +35,31 @@ class BrandsAroundTest {
         assertTrue(n.independents.none { it.key in chainKeys })
     }
 
+    /** A kind's chains share one stack (the owner, 6 November: "Brands around stacks by kind?"). */
+    @Test
+    fun aKindsChainsShareAStack() = runBlocking {
+        val chains = BrandsAround.near(testServices(places = true), Services.WESTERKERK, BRANDS_RADIUS_M).chains
+        val stacks = BrandsAround.stacks(chains)
+        println("stacks: " + stacks.joinToString(" | ") { s -> "${s.kind?.id}: ${s.chains.joinToString { "${it.brand.name} ${it.branches.size}" }}" })
+        // Every chain on one stack, once; the stacks in the order of their first chains, most branches first in each.
+        assertEquals(chains.map { it.brand.id }.sorted(), stacks.flatMap { s -> s.chains.map { it.brand.id } }.sorted())
+        val first = stacks.map { chains.indexOf(it.chains.first()) }
+        assertEquals(first.sorted(), first)
+        for (s in stacks) assertTrue(s.chains.zipWithNext().all { (a, b) -> chains.indexOf(a) < chains.indexOf(b) })
+        // A chain's stack is the kind most of its branches are.
+        for (s in stacks) for (c in s.chains) {
+            val kinds = c.branches.map { CategoryTree.of(it.tags, PlaceRecord.geometryOf(it))?.id }
+            assertTrue("${c.brand.name}: $kinds on ${s.kind?.id}", kinds.count { it == s.kind?.id } == kinds.groupingBy { it }.eachCount().values.max())
+        }
+        // Around the Westerkerk the clothes chains stack, the most branches on top; Albert Heijn, the one supermarket
+        // chain, is a sign of its own.
+        assertTrue("${stacks.size} stacks of ${chains.size}", stacks.size < chains.size)
+        val clothes = stacks.first { it.kind?.id == "preset:shop/clothes" }
+        assertTrue(clothes.chains.map { it.brand.name }.toString(), clothes.chains.size >= 5)
+        assertEquals(clothes.chains.maxOf { it.branches.size }, clothes.chains.first().branches.size)
+        assertEquals(listOf("Albert Heijn"), stacks.first { s -> s.chains.any { it.brand.name == "Albert Heijn" } }.chains.map { it.brand.name })
+    }
+
     @Test
     fun withoutARegionTheBundledPackTells() = runBlocking {
         val n = BrandsAround.near(testServices(), Services.WESTERKERK, BRANDS_RADIUS_M)
@@ -50,26 +77,16 @@ class BrandsAroundTest {
         assertTrue(!BrandsAround.isTrade(mapOf("historic" to "monument", "name" to "Homomonument")))
     }
 
+    /** The branches a brand's page lists ([SearchSheetModel]'s chain), nearest first, from the region's store. */
     @Test
     fun aBrandsBranchesAreNearestFirstFromTheStore() = runBlocking {
-        val (branches, origin) = BrandsAround.branches(testServices(places = true), "albertheijn-1cf55d", Services.WESTERKERK, BRAND_RADIUS_M)
-        assertEquals(PlaceOrigin.STORE, origin)
+        val got = testServices(places = true).localData.branches("albertheijn-1cf55d", Services.WESTERKERK, 3_000.0)
+        val branches = got.value
+        assertEquals(PlaceOrigin.STORE, got.origin)
         assertTrue("branches: ${branches.size}", branches.isNotEmpty())
         assertTrue(branches.all { app.atlas.places.Brands.forTags(it.tags)?.id == "albertheijn-1cf55d" })
         assertTrue(branches.zipWithNext().all { (a, b) ->
             app.atlas.geo.Geo.distance(Services.WESTERKERK, a.location) <= app.atlas.geo.Geo.distance(Services.WESTERKERK, b.location)
         })
-    }
-
-    @Test
-    fun aCategorysLinesCountWhatIsOpen() {
-        val s = testServices(places = true)
-        val now = java.time.LocalDateTime.now(s.clock)
-        val found = kotlinx.coroutines.runBlocking { s.places.nearby("drinks", Services.WESTERKERK, CATEGORY_RADIUS_M, CATEGORY_LIMIT).first() }
-        val lines = CategoryPlaces.of(s, found, Services.WESTERKERK, "en", now)
-        assertEquals(PlaceOrigin.STORE, lines.origin)
-        assertEquals(found.places.size, lines.lines.size)
-        assertTrue(lines.open in 1..lines.lines.size)
-        assertEquals(lines.lines.count { it.tone == Tone.OPEN || it.tone == Tone.SOON }, lines.open)
     }
 }

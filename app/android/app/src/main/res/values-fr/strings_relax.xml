@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The closest matches when nothing is just as asked, and hours guessed by kind. -->
+<resources>
+    <string name="relax_closest">Rien ne convient tout à fait : ce qui s’en approche le plus</string>
+    <string name="relax_none_within">Rien à moins de %1$s : les plus proches, plus loin</string>
+    <string name="relax_opens_in">Ouvre dans %1$d min</string>
+    <string name="relax_opens_at">Ouvre à %1$s</string>
+    <string name="relax_closed_at">Ferme à %1$s</string>
+    <string name="relax_hours_unknown">Horaires inconnus</string>
+    <string name="relax_beyond">%1$s hors du cercle</string>
+    <string name="relax_farther">%1$s jusqu’à %2$s</string>
+    <string name="relax_farther_none">Pas de %1$s à proximité</string>
+    <string name="relax_rated">Noté %1$s pour %2$s+</string>
+    <string name="relax_unrated">Pas de note, %1$s+ demandé</string>
+    <string name="relax_lacks">Pas %1$s</string>
+    <string name="relax_unsaid">Ne dit rien sur : %1$s</string>
+    <string name="relax_outside">%1$s hors de %2$s</string>
+    <string name="relax_elsewhere">Pas à %1$s</string>
+    <string name="relax_kind_hours">≈ les horaires que tiennent la plupart des lieux de ce genre ici</string>
+    <string name="relax_loose_wish">ce qu’il doit avoir</string>
+    <string name="relax_loose_rating">la note</string>
+    <string name="relax_loose_area">la zone</string>
+    <plurals name="relax_price_up">
+        <item quantity="one">Un cran de prix au-dessus</item>
+        <item quantity="other">%1$d crans de prix au-dessus</item>
+    </plurals>
+    <plurals name="relax_price_down">
+        <item quantity="one">Un cran de prix en dessous</item>
+        <item quantity="other">%1$d crans de prix en dessous</item>
+    </plurals>
+</resources>

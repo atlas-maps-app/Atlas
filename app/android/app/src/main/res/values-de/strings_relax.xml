@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The closest matches when nothing is just as asked, and hours guessed by kind. -->
+<resources>
+    <string name="relax_closest">Nichts passt ganz: was am nächsten kommt</string>
+    <string name="relax_none_within">Nichts innerhalb %1$s: die nächsten, weiter weg</string>
+    <string name="relax_opens_in">Öffnet in %1$d Min.</string>
+    <string name="relax_opens_at">Öffnet %1$s</string>
+    <string name="relax_closed_at">Schließt %1$s</string>
+    <string name="relax_hours_unknown">Zeiten unbekannt</string>
+    <string name="relax_beyond">%1$s außerhalb des Kreises</string>
+    <string name="relax_farther">%1$s bis %2$s</string>
+    <string name="relax_farther_none">Kein %1$s in der Nähe</string>
+    <string name="relax_rated">Bewertet %1$s statt %2$s+</string>
+    <string name="relax_unrated">Keine Bewertung, %1$s+ gefragt</string>
+    <string name="relax_lacks">Nicht %1$s</string>
+    <string name="relax_unsaid">Sagt nichts über: %1$s</string>
+    <string name="relax_outside">%1$s außerhalb von %2$s</string>
+    <string name="relax_elsewhere">Nicht in %1$s</string>
+    <string name="relax_kind_hours">≈ die Zeiten, die die meisten Orte dieser Art hier halten</string>
+    <string name="relax_loose_wish">dem, was es haben soll</string>
+    <string name="relax_loose_rating">der Bewertung</string>
+    <string name="relax_loose_area">dem Gebiet</string>
+    <plurals name="relax_price_up">
+        <item quantity="one">Eine Preisstufe höher</item>
+        <item quantity="other">%1$d Preisstufen höher</item>
+    </plurals>
+    <plurals name="relax_price_down">
+        <item quantity="one">Eine Preisstufe tiefer</item>
+        <item quantity="other">%1$d Preisstufen tiefer</item>
+    </plurals>
+</resources>

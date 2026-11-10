@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The closest matches when nothing is just as asked, and hours guessed by kind (the owner, 4 November 2026). -->
+<resources>
+    <!-- Head over the results when none fits every filter or requirement and the closest are shown instead. -->
+    <string name="relax_closest">None fits all of it: the closest</string>
+    <!-- Head when no place of the kind is within the widest circle (%1$s: its reach) and the nearest anywhere are shown. -->
+    <string name="relax_none_within">None within %1$s: the nearest, farther away</string>
+    <!-- A closest match: not open at the time asked, it opens this many minutes after. -->
+    <string name="relax_opens_in">Opens in %1$d min</string>
+    <!-- The same, an hour or more after: the time it opens. -->
+    <string name="relax_opens_at">Opens %1$s</string>
+    <!-- A closest match for a time ahead: it closes before then, at this time. -->
+    <string name="relax_closed_at">Closes %1$s</string>
+    <!-- A closest match whose hours are not known. -->
+    <string name="relax_hours_unknown">Hours not known</string>
+    <!-- A closest match beyond the circle asked for (%1$s: how far beyond). -->
+    <string name="relax_beyond">%1$s beyond the circle</string>
+    <!-- A closest match farther than asked from what it should be near (%1$s: the distance, %2$s: what). -->
+    <string name="relax_farther">%1$s to %2$s</string>
+    <!-- A closest match with nothing it should be near at hand (%1$s: what). -->
+    <string name="relax_farther_none">No %1$s at hand</string>
+    <!-- A closest match rated under the rating asked (%1$s its rating, %2$s the one asked). -->
+    <string name="relax_rated">Rated %1$s for %2$s+</string>
+    <!-- A closest match with no rating (%1$s: the rating asked). -->
+    <string name="relax_unrated">No rating, %1$s+ asked</string>
+    <!-- A closest match that does not have what was asked (%1$s: the value, as its filter chip says it). -->
+    <string name="relax_lacks">Not %1$s</string>
+    <!-- A closest match whose tags do not say what was asked (%1$s: the value). -->
+    <string name="relax_unsaid">Does not say: %1$s</string>
+    <!-- A closest match outside the area asked (%1$s: how far, %2$s: the area). -->
+    <string name="relax_outside">%1$s outside %2$s</string>
+    <!-- A closest match outside the area asked where how far cannot be told (%1$s: the area). -->
+    <string name="relax_elsewhere">Not in %1$s</string>
+    <!-- Why a place's hours are marked ≈ when they are guessed from the places of its kind around it. -->
+    <string name="relax_kind_hours">≈ the hours most places of its kind around keep</string>
+    <!-- What was let go of to find any (find_loosened): a wish or a tag. -->
+    <string name="relax_loose_wish">what it should have</string>
+    <!-- The same: a rating. -->
+    <string name="relax_loose_rating">the rating</string>
+    <!-- The same: the area named. -->
+    <string name="relax_loose_area">the area</string>
+    <!-- A closest match dearer (or cheaper) than the price asked, by price bands. -->
+    <plurals name="relax_price_up">
+        <item quantity="one">One price step up</item>
+        <item quantity="other">%1$d price steps up</item>
+    </plurals>
+    <!-- The same, cheaper. -->
+    <plurals name="relax_price_down">
+        <item quantity="one">One price step down</item>
+        <item quantity="other">%1$d price steps down</item>
+    </plurals>
+</resources>

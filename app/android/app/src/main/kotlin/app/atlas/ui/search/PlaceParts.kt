@@ -1,12 +1,6 @@
 package app.atlas.ui.search
 
 import android.graphics.BitmapFactory
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.ui.draw.clipToBounds
-import app.atlas.ui.kit.CssShadow
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,11 +11,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -34,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -43,12 +43,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.atlas.R
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.nav.Dest
+import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Brand
 import app.atlas.places.Categories
@@ -59,17 +61,20 @@ import app.atlas.places.Localise
 import app.atlas.places.OpenState
 import app.atlas.providers.AggregateRating
 import app.atlas.providers.Mangrove
+import app.atlas.providers.OpenAddresses
 import app.atlas.providers.WikidataEntity
+import app.atlas.search.HoursFrom
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Card
 import app.atlas.ui.kit.ClockDial
+import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.OpenWords
 import app.atlas.ui.kit.PlaceSummary
 import app.atlas.ui.kit.Symbol
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 /** The sheet of a place, top to bottom. */
 @Composable
@@ -79,13 +84,15 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
     var review by remember { mutableStateOf(false) }
     var confirmReview by remember { mutableStateOf<Triple<Int, String, app.atlas.providers.Service?>?>(null) }
     var confirmQuest by remember { mutableStateOf<Pair<Quest, Boolean>?>(null) }
-    val summary = remember(place, here, state.now) { PlaceSummary.of(place, here, lang, state.now).copy(open = state.status) }
+    // the status comes after the place where the hours are borrowed
+    val summary = remember(place, here, state.now, state.status) { PlaceSummary.of(place, here, lang, state.now).copy(open = state.status) }
     val words = remember(summary, state.now) { OpenWords.of(summary, state.now) }
+    val guessed = state.guess?.let { guessFrom(it) }
 
     Header(place, summary, state.brand, state.facts)
-    Actions(place, summary, nav)
+    Actions(place, summary, state.brandSite ?: state.brandWiki?.website, nav)
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (state.hours != null) HoursDial(state, words, onOpen = { week = true })
+        if (state.hours != null) HoursDial(state, words, guessed, onOpen = { week = true })
         Ratings(state.ratings, Modifier.weight(1f), onWrite = { review = true })
     }
     QuestStrip(state, onAnswer = { q, yes -> confirmQuest = q to yes }, onTags = { tags = true })
@@ -98,7 +105,9 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
 
     if (tags) RawTagsDialog(place) { tags = false }
     if (week && state.hours != null) {
-        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, state.country) { week = false }
+        // borrowed hours lead on to the real ones: What's here on the place, where a note leaves them for the mappers
+        val correct = place.id?.takeIf { guessed != null }?.let { id -> { week = false; nav.go(Dest.WhatsHere(place.location.lat, place.location.lon, id.toString())) } }
+        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, state.country, guessed, correct) { week = false }
     }
     if (review) {
         val eatery = Categories.groupOf(place.tags)?.id == "eat"
@@ -212,14 +221,16 @@ private val UNSAFE_SCHEME = Regex("^(javascript|intent|file|content|data|vbscrip
 
 /**
  * The board's actions, 8 px apart: the blue route button (52 px, the Go symbol 8 px before the walk minutes in 16 / 600)
- * taking the room left, then call, web, menu and mail as 52 px discs of pale blue.
+ * taking the room left, then call, web, menu and mail as 52 px discs of pale blue. A branch that maps no website opens
+ * [brandSite], its brand's, and says so to TalkBack.
  */
 @Composable
-private fun Actions(place: Place, summary: PlaceSummary, nav: Navigator) {
+private fun Actions(place: Place, summary: PlaceSummary, brandSite: String?, nav: Navigator) {
     val uri = LocalUriHandler.current
     val t = place.tags
     val phone = (t["phone"] ?: t["contact:phone"])?.substringBefore(';')?.trim()
-    val web = webUrl(t["website"] ?: t["contact:website"] ?: t["url"])
+    val own = webUrl(t["website"] ?: t["contact:website"] ?: t["url"])
+    val web = own ?: webUrl(brandSite)
     val menu = webUrl(t["website:menu"])
     val mail = (t["email"] ?: t["contact:email"])?.substringBefore(';')?.trim()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -233,19 +244,27 @@ private fun Actions(place: Place, summary: PlaceSummary, nav: Navigator) {
             BoardSymbol("tab.go", 21f, 0xFFFFFFFF)
             BoardLine(summary.distanceM?.let(::walkOrDistance) ?: route, boardText(16f, 600, 20.5f, tnum = true), 0xFFFFFFFF)
         }
+        // a park's, a nature reserve's or a national park's own page: its plan, rules, trails, trees and birds
+        app.atlas.ui.local.Parkland.destOf(place)?.let { park ->
+            val services = app.atlas.nav.LocalServices.current
+            RoundAction("ui.map", stringResource(R.string.place_park_plan), { services.remember(place); nav.go(park) })
+        }
         if (phone != null) RoundAction("ui.phone", stringResource(R.string.place_call, phone), { runCatching { uri.openUri("tel:" + phone.filter { it.isDigit() || it == '+' }) } })
-        if (web != null) RoundAction("ui.web", stringResource(R.string.place_web), { runCatching { uri.openUri(web) } })
+        if (web != null) RoundAction("ui.web", stringResource(if (own != null) R.string.place_web else R.string.place_web_brand), { runCatching { uri.openUri(web) } })
         if (menu != null) RoundAction("ui-receipt", stringResource(R.string.place_menu), { runCatching { uri.openUri(menu) } })
         if (mail != null && (phone == null || web == null)) RoundAction("ui-mail", stringResource(R.string.place_mail), { runCatching { uri.openUri("mailto:$mail") } })
     }
 }
 
-/** The board's dial: the 24-hour clock of today's hours (108 px) with "→ 23:00" or "opens 7:00" 4 px under it; tap for the week. */
+/**
+ * The board's dial: the 24-hour clock of today's hours (108 px) with "→ 23:00" or "opens 7:00" 4 px under it; tap for the
+ * week. Borrowed hours say "≈" first, as a row says them, and under that whose they are ([guessed]).
+ */
 @Composable
-private fun HoursDial(state: PlaceState, words: OpenWords?, onOpen: () -> Unit) {
+private fun HoursDial(state: PlaceState, words: OpenWords?, guessed: String?, onOpen: () -> Unit) {
     val hours = state.hours ?: return
     val spans = remember(hours, state.now) { hours.spans(state.now.toLocalDate(), state.hoursContext) }
-    val (text, colour) = when (words) {
+    val (said, colour) = when (words) {
         OpenWords.Always -> stringResource(R.string.kit_open_24_7) to 0xFF178A4E
         is OpenWords.OpenUntil -> "→ " + untilClock(words.at) to 0xFF178A4E
         is OpenWords.ClosesIn -> stringResource(R.string.kit_closes_in, words.minutes) to 0xFF8A5A00
@@ -257,16 +276,32 @@ private fun HoursDial(state: PlaceState, words: OpenWords?, onOpen: () -> Unit) 
         OpenWords.Closed -> stringResource(R.string.kit_closed) to SOFT
         null -> stringResource(R.string.kit_hours_unknown) to 0xFF8A5A00
     }
+    val text = if (guessed != null) "≈ $said" else said
     val week = stringResource(R.string.place_hours_week)
+    // the lines keep clear of the rounded corners the press is drawn in (at 20 they cut the last line's first letter)
+    val clear = Modifier.padding(horizontal = 6.dp)
     Column(
-        Modifier.clip(RoundedCornerShape(20.dp)).clickable(role = Role.Button, onClickLabel = week, onClick = onOpen),
+        Modifier.widthIn(max = 156.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = week, onClick = onOpen),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        ClockDial(spans, state.now.toLocalTime(), size = 108.dp, contentDescription = text)
-        BoardLine(text, boardText(12f, 600, 15.5f, tnum = true), colour)
-        if (spans.any { it.state == OpenState.UNKNOWN }) BoardLine(stringResource(R.string.place_hours_unsure), boardText(11f, 400, 14f), 0xFF8A5A00)
+        ClockDial(spans, state.now.toLocalTime(), size = 108.dp, contentDescription = listOfNotNull(text, guessed).joinToString(", "))
+        BoardLine(text, boardText(12f, 600, 15.5f, tnum = true), colour, clear)
+        if (guessed != null) BoardLine(guessed, boardText(11f, 400, 14f, align = TextAlign.Center), SOFT, clear, lines = 2)
+        if (spans.any { it.state == OpenState.UNKNOWN }) BoardLine(stringResource(R.string.place_hours_unsure), boardText(11f, 400, 14f), 0xFF8A5A00, clear)
     }
+}
+
+/**
+ * Whose borrowed hours are, under the "≈": "as at Raadhuisstraat 43-H", "as 7 of 9 branches near" (those that keep
+ * exactly them), "from 2 branches near" (where none keeps exactly them), "as most of its kind around".
+ */
+@Composable
+private fun guessFrom(g: HoursGuess): String = when {
+    g.from == HoursFrom.KIND -> stringResource(R.string.place_hours_as_kind)
+    g.places == 1 -> g.branch?.let { stringResource(R.string.place_hours_as_at, it) } ?: stringResource(R.string.place_hours_as_branch)
+    g.keep > 0 -> pluralStringResource(R.plurals.place_hours_as_branches, g.places, g.keep, g.places)
+    else -> pluralStringResource(R.plurals.place_hours_from_branches, g.places, g.places)
 }
 
 /** The merged rating with its stars, trend and the sources that answered; honest when there is none. */
@@ -468,7 +503,8 @@ private fun InfoCard(place: Place, state: PlaceState, here: LatLon) {
 /** Wikidata's story of the place: its photo (with its credit), what it is, when built, by whom, after whom named. */
 @Composable
 private fun WikiCard(e: WikidataEntity, image: KeptImage?, lang: String) {
-    val uri = LocalUriHandler.current
+    val services = LocalServices.current
+    var reading by remember { mutableStateOf(false) }
     val langs = listOf(lang, "en")
     Card(Modifier.fillMaxWidth(), padding = PaddingValues(0.dp), elevation = 0.dp, colour = Color(WARM), shape = RoundedCornerShape(20.dp)) {
         // Decoded off the main thread: a photo is a few hundred kilobytes of JPEG.
@@ -489,11 +525,18 @@ private fun WikiCard(e: WikidataEntity, image: KeptImage?, lang: String) {
             if (e.namedAfter.isNotEmpty()) WikiRow("ui-user", stringResource(R.string.place_wiki_named), e.namedAfter.mapNotNull { it.label(langs) }.joinToString(", "))
             val wiki = langs.firstNotNullOfOrNull { l -> e.sitelinks["${l}wiki"]?.let { l to it } }
             if (wiki != null) {
+                // read here, in the app; the reader leads on to Wikipedia itself
+                val url = "https://${wiki.first}.wikipedia.org/wiki/" + wiki.second.replace(' ', '_')
                 Text(
-                    stringResource(R.string.place_wiki_read),
-                    Modifier.clip(CircleShape).clickable(role = Role.Button) { runCatching { uri.openUri("https://${wiki.first}.wikipedia.org/wiki/" + wiki.second.replace(' ', '_')) } }.padding(vertical = 4.dp),
+                    stringResource(R.string.place_wiki_open),
+                    Modifier.clip(CircleShape).clickable(role = Role.Button) { reading = true }.padding(vertical = 4.dp),
                     style = boardText(12f, 700, 15.5f), color = Color(0xFF2E5BFF),
                 )
+                // offline, the article as read before, else at once the way to it for later
+                val online = !services.config.offline && services.connectivity.online.value
+                if (reading) {
+                    WikiReader(url, load = { if (online) services.wikipedia.article(wiki.first, wiki.second) else services.wikipedia.cached(wiki.first, wiki.second) }) { reading = false }
+                }
             }
         }
     }
@@ -550,7 +593,10 @@ private fun ReviewCard(review: Sending, onWrite: () -> Unit) {
 @Composable
 private fun Sources(place: Place, state: PlaceState) {
     val rows = buildList {
-        if (state.complete) {
+        if (place.source == OpenAddresses.ID) {
+            // a house number OpenStreetMap lacks: the credit and licence its source asks for
+            add("ui-house" to stringResource(R.string.place_source_addresses, place.extra[OpenAddresses.CREDIT] ?: "", place.extra[OpenAddresses.LICENCE] ?: ""))
+        } else if (state.complete) {
             add("ui-map" to stringResource(R.string.place_source_osm, place.id?.toString() ?: ""))
         } else {
             add("ui-layers" to stringResource(R.string.place_source_label))

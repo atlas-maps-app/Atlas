@@ -53,6 +53,8 @@ data class MarketBoard(
     val week: List<MarketDay>,
     val checks: Map<MarketCheck, Int>,
     val rows: List<StallRow>,
+    /** Of the [count] open places, those open by guessed hours. */
+    val guessed: Int = 0,
 )
 
 /** Markets and fresh food: stalls and shops by kind, the week's market days from `opening_hours`, and the list. */
@@ -60,6 +62,7 @@ object MarketModel {
     fun board(area: EatArea, at: LocalDateTime, stall: Stall?, checks: Set<MarketCheck>): MarketBoard {
         val all = EatSets.market(area.places)
         val countsOpen = all.any { it.hasHours }
+        val open = all.filter { it.openness(at, area.hours).isOpen }
         val shops = all.filter { it.kind != EatKind.MARKETPLACE }
         val ofStall = if (stall == null) all else all.filter { stall.has(it) }
         val sunday = at.toLocalDate().with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).atTime(12, 0)
@@ -68,12 +71,13 @@ object MarketModel {
         val rows = chosen.map { p -> StallRow(p, p.openness(at, area.hours), p.opensAt(at, area.hours)) }
             .sortedWith(compareBy<StallRow> { rank(it.openness) }.thenBy { it.place.distanceM })
         return MarketBoard(
-            count = if (countsOpen) all.count { it.openness(at, area.hours).isOpen } else all.size,
+            count = if (countsOpen) open.size else all.size,
             countsOpen = countsOpen,
             stalls = Stall.entries.associateWith { s -> shops.count { s.has(it) } },
             week = week(all.filter { it.kind == EatKind.MARKETPLACE }, area, at.toLocalDate()),
             checks = MarketCheck.entries.associateWith { c -> ofStall.count { c.has(it, sunday, area) } },
             rows = rows,
+            guessed = if (countsOpen) open.count { it.guessed } else 0,
         )
     }
 

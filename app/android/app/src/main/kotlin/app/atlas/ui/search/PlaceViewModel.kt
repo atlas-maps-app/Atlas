@@ -3,21 +3,28 @@ package app.atlas.ui.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.atlas.Services
+import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.Brand
+import app.atlas.places.BrandHours
+import app.atlas.places.BrandSite
 import app.atlas.places.Brands
 import app.atlas.places.Fact
 import app.atlas.places.Facts
+import app.atlas.places.InferredHours
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.providers.AggregateRating
 import app.atlas.providers.Service
 import app.atlas.providers.WikidataEntity
+import app.atlas.search.HoursBook
+import app.atlas.search.HoursFrom
 import app.atlas.search.PlaceRecord
+import app.atlas.search.PlaceSource
 import app.atlas.services.SettingsKeys
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +39,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
+import kotlin.math.roundToInt
 
 /** Where the ratings of a place stand: not asked (offline), being asked, the answer, or why it failed. */
 sealed interface RatingsState {
@@ -71,10 +79,22 @@ data class PlaceState(
     val review: Sending = Sending.Idle,
     /** True when the place came with full tags (a downloaded region or Overpass), not just a map label's. */
     val complete: Boolean = false,
+    /** For a branch that maps no website, its brand's own site as its branches in the regions link it ([BrandSite]). */
+    val brandSite: String? = null,
+    /** Where [hours] are borrowed, not the place's own: whose they are ([BorrowedHours]); null for its own or none. */
+    val guess: HoursGuess? = null,
 ) {
     /** The first question still to ask: one whose answer is on its way or sent is done, one that failed to go out is open again. */
     val openQuest: Quest? get() = quests.firstOrNull { answered[it.key].let { s -> s == null || s is Sending.Failed } }
 }
+
+/**
+ * Hours a place that maps none borrows ([BorrowedHours]): its brand's branches' near ([from] BRAND) or its kind's around
+ * it (KIND), never its own, so never confirmed. [places] is how many places' weeks they are worked out from, [keep] how
+ * many of those keep exactly them, and [branch] the one branch they come from as a brand's page names it
+ * ("Raadhuisstraat 43-H"), where it is one and named.
+ */
+data class HoursGuess(val hours: OpeningHours, val from: HoursFrom, val places: Int, val keep: Int, val branch: String? = null)
 
 /**
  * Loads one place for its sheet: from the screens' cache, the downloaded regions (every tag and its outline) or
@@ -114,6 +134,28 @@ class PlaceViewModel(
         val p = place ?: return
         viewModelScope.launch { wiki(p) }
         viewModelScope.launch { ratings(p) }
+        viewModelScope.launch { brandSite(p) }
+        viewModelScope.launch { borrow(p) }
+    }
+
+    /** A place that maps no hours takes its brand's branches' near, else its kind's around it ([BorrowedHours]): a guess, shown as one. */
+    private suspend fun borrow(p: Place) {
+        if ("opening_hours" in p.tags) return
+        val guess = withContext(Dispatchers.IO) { runCatching { BorrowedHours.of(services.placeStores, p, lang) }.getOrNull() } ?: return
+        mutable.update { s ->
+            if (s.hours != null || s.place?.key != p.key) s else s.copy(hours = guess.hours, status = guess.hours.status(s.now, s.hoursContext), guess = guess)
+        }
+    }
+
+    /** A branch without a website of its own gets its brand's: the site its brand's branches within 50 km share. */
+    private suspend fun brandSite(p: Place) {
+        if (BrandSite.mapped(p.tags) != null) return
+        val brand = Brands.forTags(p.tags) ?: return
+        val site = withContext(Dispatchers.IO) {
+            val branches = runCatching { services.placeStores.byBrand(listOf(brand.id), BBox.around(p.location, 50_000.0), 300) }.getOrDefault(emptyList())
+            BrandSite.of(branches.filter { it.place.key != p.key }.map { it.tags }, mutable.value.country)
+        }
+        if (site != null) mutable.update { it.copy(brandSite = site) }
     }
 
     /** The place from the screens' cache, merged with the downloaded regions' full record when they have it. */
@@ -266,4 +308,52 @@ class PlaceViewModel(
             if (r is Sending.Done) ratings(p)
         }
     }
+}
+
+/**
+ * The hours a place's page shows for a place that maps none, as the search's rows, pins and counts give it them
+ * ([HoursBook]; the owner, 6 November, of two Birkenstock stores, one mapped closed and one with no hours: "if the other
+ * branch is closed the other one is probably closed too"): its brand's, worked out from the weeks its nearest
+ * [BRANCH_SAMPLE] other branches within [BRANCH_REACH_M] keep, one of them enough ([BrandHours.MIN_SIBLINGS]); else its
+ * kind's around it, as [HoursBook.ofKind] works them out from the places of its category within reach of its cell. A place
+ * whose own hours do not read, and one usually open (a park, a bench), borrows none.
+ */
+internal object BorrowedHours {
+    /** How far a branch may lie to lend its hours: the search's widest circle. */
+    const val BRANCH_REACH_M = SearchSheetModel.MAX_RADIUS_M
+
+    /** How many of the nearest branches with readable hours a brand's hours are worked out from: as many as a kind's. */
+    const val BRANCH_SAMPLE = HoursBook.KIND_SAMPLE
+
+    /** [p]'s borrowed hours from the places of [source]; [lang] names the branch they come from. Reads the regions. */
+    fun of(source: PlaceSource, p: Place, lang: String): HoursGuess? {
+        if ("opening_hours" in p.tags) return null
+        val r = PlaceRecord.of(p)
+        return ofBrand(source, r, lang) ?: ofKind(source, r)
+    }
+
+    private fun ofBrand(source: PlaceSource, r: PlaceRecord, lang: String): HoursGuess? {
+        val brand = r.brand ?: return null
+        val near = source.byBrand(listOf(brand), BBox.around(r.location, BRANCH_REACH_M)).asSequence()
+            .filter { it.place.key != r.place.key }
+            .map { it to it.distanceTo(r.location) }
+            .filter { it.second <= BRANCH_REACH_M }
+            .sortedBy { it.second }
+            .mapNotNull { (b, _) -> b.tags["opening_hours"]?.let(OpeningHours::parseOrNull)?.let(BrandHours::weekOf)?.let { b to it } }
+            .take(BRANCH_SAMPLE)
+            .toList()
+        val inferred = BrandHours.fromWeeks(near.map { it.second }, BrandHours.MIN_SIBLINGS) ?: return null
+        val one = near.singleOrNull()?.first?.let { b -> Brands.byId(brand)?.let { branchName(b.place, brandName(it), lang) } }
+        return HoursGuess(inferred.hours, HoursFrom.BRAND, inferred.from, kept(inferred), one)
+    }
+
+    private fun ofKind(source: PlaceSource, r: PlaceRecord): HoursGuess? {
+        val category = r.category ?: return null
+        // a kind's guess is made for the middle of the place's cell: its places within reach of anywhere in the cell
+        val around = source.byCategory(listOf(category), BBox.around(r.location, HoursBook.KIND_REACH_M + HoursBook.CELL_DEG * 111_320.0))
+        val inferred = HoursBook((around + r).distinctBy { it.place.key }).ofKind(r) ?: return null
+        return HoursGuess(inferred.hours, HoursFrom.KIND, inferred.from, kept(inferred))
+    }
+
+    private fun kept(h: InferredHours): Int = (h.agreement * h.from).roundToInt()
 }

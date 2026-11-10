@@ -188,6 +188,7 @@ private fun feeds(id: String): String = stringResource(
         "osm-edits" -> R.string.mine_feeds_edits
         "commons" -> R.string.mine_feeds_images
         "atlas-packs" -> R.string.mine_feeds_packs
+        "openaddresses" -> R.string.mine_feeds_addresses
         "brouter" -> R.string.mine_feeds_routing
         "panoramax" -> R.string.mine_feeds_photos
         "open-prices" -> R.string.mine_feeds_prices

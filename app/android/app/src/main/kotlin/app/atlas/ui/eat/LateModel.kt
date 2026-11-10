@@ -52,10 +52,12 @@ data class LateSpot(val place: EatPlace, val until: LocalDateTime?, val bites: L
 data class LateWall(
     val count: Int,
     val hoursKnown: Boolean,
-    val till: LocalDateTime?,
+    val till: EatSets.LastCall?,
     val tiles: List<Pair<Bite, Int>>,
     val chipCounts: Map<LateChip, Int>,
     val spots: List<LateSpot>,
+    /** Of the [count] late places, those open late by guessed hours. */
+    val guessed: Int = 0,
 )
 
 /**
@@ -85,6 +87,7 @@ object LateModel {
             tiles = tiles,
             chipCounts = LateChip.entries.associateWith { c -> ofBite.count { c.has(it, night, area) } },
             spots = sorted,
+            guessed = late.count { it.guessed },
         )
     }
 }

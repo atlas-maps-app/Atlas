@@ -37,7 +37,8 @@ class SourcesTruthTest {
         "met-norway" to "Weather(http", "wikidata" to "Wikidata(http)", "commons" to "Commons(http)", "osm-notes" to "OsmNotes(http)",
         "osm-edits" to "OsmEdits(http", "atlas-packs" to "WindowPacks(", "brouter" to "SegmentStore(dirs.segments",
         "panoramax" to "PanoramaxSource(", "open-prices" to "OpenPrices(", "iss-orbit" to "TleStore.SECOND_URL",
-        "tankerkoenig" to "Tankerkoenig(",
+        "tankerkoenig" to "Tankerkoenig(", "bathing-water" to "BathingWaters(http)", "wikipedia" to "Wikipedia(http)",
+        "openaddresses" to "OpenAddresses(http)",
     )
 
     /** The written but unwired sources' clients, which the app must not build while no screen lists them. */

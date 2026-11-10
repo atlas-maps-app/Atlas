@@ -154,15 +154,25 @@ internal fun copy(context: Context, label: String, text: String) {
 
 /**
  * The week of [hours] from [today]: each day's open time as a bar over 24 hours (green open, amber unknown) and in
- * words, today in bold, public holidays named; the raw `opening_hours` underneath.
+ * words, today in bold, public holidays named; the raw `opening_hours` underneath. Hours the place borrows are titled
+ * "≈" and end with whose they are ([guessed]) and the way to give the real ones ([onCorrect]).
  */
 @Composable
-internal fun WeekTableDialog(hours: OpeningHours, raw: String, today: LocalDate, ctx: OpeningHoursContext, country: String?, onDismiss: () -> Unit) {
+internal fun WeekTableDialog(
+    hours: OpeningHours,
+    raw: String,
+    today: LocalDate,
+    ctx: OpeningHoursContext,
+    country: String?,
+    guessed: String? = null,
+    onCorrect: (() -> Unit)? = null,
+    onDismiss: () -> Unit,
+) {
     val c = Atlas.colors
     val locale = Locale.getDefault()
     val days = remember(hours, today) { (0 until 7).map { d -> today.plusDays(d.toLong()).let { it to hours.spans(it, ctx) } } }
     val holidays = remember(country) { country?.let { PublicHolidays.forCountry(it) } }
-    SearchDialog(stringResource(R.string.place_hours), onDismiss) {
+    SearchDialog((if (guessed != null) "≈ " else "") + stringResource(R.string.place_hours), onDismiss) {
         for ((date, spans) in days) {
             val isToday = date == today
             val holiday = holidays?.holiday(date)
@@ -183,7 +193,17 @@ internal fun WeekTableDialog(hours: OpeningHours, raw: String, today: LocalDate,
             }
         }
         Hairline()
-        Text(raw, style = Atlas.type.mono, color = c.inkSoft)
+        if (guessed == null) {
+            Text(raw, style = Atlas.type.mono, color = c.inkSoft)
+        } else {
+            Text(guessed, style = Atlas.type.caption, color = c.inkSoft)
+            if (onCorrect != null) {
+                PillButton(onClick = onCorrect, background = c.cardMuted) {
+                    Symbol("ui.edit", size = 18.dp)
+                    Text(stringResource(R.string.find_explain_hours), style = Atlas.type.label)
+                }
+            }
+        }
     }
 }
 

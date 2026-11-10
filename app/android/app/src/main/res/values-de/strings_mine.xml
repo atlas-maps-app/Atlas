@@ -59,6 +59,11 @@
     <string name="mine_offline_actions_delete">Löschen</string>
     <string name="mine_offline_actions_cancel">Stopp</string>
     <string name="mine_offline_actions_retry">Erneut</string>
+    <string name="mine_offline_actions_again">Erneut laden</string>
+    <string name="mine_offline_unreadable">Orte unlesbar</string>
+    <string name="mine_offline_unreadable_version">Die Orte stammen von einer anderen Version von Atlas, darum kann die Offline-Suche sie hier nicht lesen.</string>
+    <string name="mine_offline_unreadable_damaged">Die Datei mit den Orten ist beschädigt, darum kann die Offline-Suche sie hier nicht lesen.</string>
+    <string name="mine_offline_orphan_text">Diese Orte gehören zu keinem Gebiet auf diesem Telefon, und diese Version von Atlas kann sie nicht lesen. Löschen gibt %1$s frei.</string>
     <string name="mine_offline_delete_title">%1$s löschen?</string>
     <string name="mine_offline_delete_text">Das gibt %1$s frei. Karte, Suche und Routen dort brauchen dann Verbindung.</string>
     <string name="mine_offline_delete_confirm">Löschen</string>
@@ -181,6 +186,7 @@
     <string name="mine_sent_reverse">der Ort, nach dem du fragst, wenn Photon nicht antwortet</string>
     <string name="mine_sent_edits">die Gebäude, die du ergänzt; deine Änderungen, öffentlich unter deinem OpenStreetMap-Benutzernamen, nur wenn du angemeldet bist</string>
     <string name="mine_sent_windows">welche Teile der Karte du ansiehst: Bytes eines Pakets</string>
+    <string name="mine_sent_addresses">wo ein Gebiet liegt, das du lädst, nichts über dich</string>
     <string name="mine_sent_brouter">die 5°-Kachel, in der du eine Route planst, um ihre Routendaten zu messen</string>
     <string name="mine_sent_images">die Namen der Bilder eines Ortes</string>
     <string name="mine_sent_photo">der Ort, den du ansiehst, um dort ein Foto zu finden</string>
@@ -248,6 +254,7 @@
     <string name="mine_feeds_chargemap">Preise und Live-Status: nur Partner, keine öffentliche API</string>
     <string name="mine_feeds_fuel">Kraftstoffpreise in Deutschland, live</string>
     <string name="mine_feeds_packs">die Fenster der Karte und Offline-Gebiete, aus OpenStreetMap</string>
+    <string name="mine_feeds_addresses">Hausnummern, die OpenStreetMap fehlen, mit einem Gebiet, das du lädst</string>
     <string name="mine_feeds_routing">Routendaten zum Gehen, Radfahren und Fahren</string>
     <string name="mine_feeds_images">Bilder von Orten, jedes mit seiner Lizenz</string>
     <string name="mine_feeds_photos">Straßenfotos, offen und geteilt</string>

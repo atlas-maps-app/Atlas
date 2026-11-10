@@ -103,7 +103,15 @@ data class RouteUi(
  * rows. Planning runs offline through the app's router as soon as anything changes; data missing for the area turns
  * into an offer to download the routing segment.
  */
-class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoint?, mode: Mode?, stops: List<Endpoint> = emptyList()) : ViewModel() {
+class RouteViewModel(
+    private val services: Services,
+    from: Endpoint,
+    to: Endpoint?,
+    mode: Mode?,
+    stops: List<Endpoint> = emptyList(),
+    /** What this way was asked to avoid or keep to ([GoJson.wishes]): over the kept preferences, for this way only. */
+    wish: String? = null,
+) : ViewModel() {
     private val hub = services.go
     private val state = MutableStateFlow(RouteUi(from = from, to = to, stops = stops, mode = mode ?: Mode.WALK))
     val ui: StateFlow<RouteUi> = state.asStateFlow()
@@ -112,7 +120,7 @@ class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoin
 
     init {
         viewModelScope.launch {
-            val prefs = hub.store.prefs.first()
+            val prefs = GoJson.wishes(wish, hub.store.prefs.first())
             val vehicles = hub.store.vehicles.first()
             val m = mode ?: hub.store.mode.first()
             state.update { it.copy(prefs = prefs, vehicles = vehicles, mode = m) }

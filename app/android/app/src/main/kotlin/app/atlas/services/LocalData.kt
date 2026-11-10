@@ -35,6 +35,9 @@ import app.atlas.search.coversAll
 import app.atlas.search.walk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -72,6 +75,12 @@ data class LocalAddress(
 
 /** A named street or waterway with its lines (a way's geometry, or a waterway relation's member ways). */
 data class LocalStreet(val id: OsmId, val name: String?, val ref: String?, val water: Boolean, val tags: Map<String, String>, val lines: List<List<LatLon>>)
+
+/**
+ * An area's closed rings ([holes] marks the inner ones), its area less the holes', and the paths asked for with it;
+ * [pathsKept] false where its source keeps none (a place store's landscape, or a store from before paths were kept).
+ */
+class LocalOutline(val rings: List<List<LatLon>>, val holes: List<Boolean>, val areaM2: Double, val paths: List<List<LatLon>>, val pathsKept: Boolean = true)
 
 /**
  * A bridge over a route: where along it (metres), the point, its name, the clearance under it for boats (the seamark's,
@@ -145,6 +154,101 @@ class LocalData(
     /** Places in [box] whose tags pass [filter], nearest its middle first, at most [limit]. */
     suspend fun places(box: BBox, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>> = withContext(Dispatchers.IO) {
         layered(box.center, box, filter, { it.location in box }) { nearest(it, box.center, limit) }
+    }
+
+    /**
+     * The nearest places whose tags pass [filter] however far they are, for a kind none of which is near (the owner, 4
+     * November: "Default should be no maximum distance pre set if there are no results"): from the region's store
+     * holding [centre], all of it, else the packs within [FARTHER_PACKS_M]; where the phone holds none, from Overpass
+     * online within each of [FARTHER_ONLINE_M] in turn until some are found. Nearest first, at most [limit].
+     */
+    suspend fun farther(centre: LatLon, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>> = withContext(Dispatchers.IO) {
+        storeCovering(centre)?.let { s ->
+            val found = s.byFilter(filter, s.bounds ?: BBox.around(centre, FARTHER_PACKS_M)).map { it.place }
+            if (found.isNotEmpty()) return@withContext LocalAnswer(nearest(found, centre, limit), PlaceOrigin.STORE)
+        }
+        packsCovering(centre)?.let { f ->
+            val found = packPlaces(f, BBox.around(centre, FARTHER_PACKS_M)) { filter.matches(it) }
+            if (found.isNotEmpty()) return@withContext LocalAnswer(nearest(found, centre, limit), PlaceOrigin.PACK)
+        }
+        var last = LocalAnswer<List<Place>>(emptyList(), null)
+        for (r in FARTHER_ONLINE_M) {
+            val got = askOverpass(filter, BBox.around(centre, r), FARTHER_WAIT_MS)
+            if (got.value.isNotEmpty()) return@withContext got.copy(value = nearest(got.value, centre, limit))
+            last = got
+            // offline, or a question that failed: asking wider fails too
+            if (got.origin == null || got.error != null) break
+        }
+        last
+    }
+
+    /**
+     * The nearest places of each of [kinds] (their filters, by id) however far they are, for a list of kinds none of
+     * which is near (the owner, 6 November: "no way to then extend the search until results for every kind turn up"):
+     * where [farther] looks, from the region's store holding [centre], else the packs within [FARTHER_PACKS_M], read once
+     * for all of them; those the phone holds none of from Overpass online within each of [FARTHER_ONLINE_M] in turn, as
+     * many in one question as it can take. Each kind as it is found, nearest first, at most [limit]; at the end those
+     * found nowhere, with no places and why where the network could not be asked or failed.
+     */
+    fun nearestEach(centre: LatLon, kinds: Map<String, TagFilter>, limit: Int = 1): Flow<Pair<String, LocalAnswer<List<Place>>>> = flow {
+        val left = LinkedHashMap(kinds)
+        storeCovering(centre)?.let { s ->
+            val box = s.bounds ?: BBox.around(centre, FARTHER_PACKS_M)
+            for ((id, filter) in kinds) {
+                val found = s.byFilter(filter, box).map { it.place }
+                if (found.isEmpty()) continue
+                left -= id
+                emit(id to LocalAnswer(nearest(found, centre, limit), PlaceOrigin.STORE))
+            }
+        }
+        if (left.isNotEmpty()) packsCovering(centre)?.let { f ->
+            val filters = left.values.toList()
+            val all = packPlaces(f, BBox.around(centre, FARTHER_PACKS_M)) { tags -> filters.any { it.matches(tags) } }
+            for ((id, filter) in left.toList()) {
+                val found = all.filter { filter.matches(it.tags) }
+                if (found.isEmpty()) continue
+                left -= id
+                emit(id to LocalAnswer(nearest(found, centre, limit), PlaceOrigin.PACK))
+            }
+        }
+        var last = LocalAnswer<List<Place>>(emptyList(), null)
+        wider@ for (r in FARTHER_ONLINE_M) {
+            for (ids in askable(left)) {
+                val got = askOverpass(TagFilter.Or(ids.map { left.getValue(it) }), BBox.around(centre, r), FARTHER_WAIT_MS)
+                last = got
+                // offline, or a question that failed: the next fails too
+                if (got.origin == null || got.error != null) break@wider
+                for (id in ids) {
+                    val filter = left.getValue(id)
+                    val found = got.value.filter { filter.matches(it.tags) }
+                    if (found.isEmpty()) continue
+                    left -= id
+                    emit(id to got.copy(value = nearest(found, centre, limit)))
+                }
+            }
+        }
+        for (id in left.keys) emit(id to last.copy(value = emptyList()))
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * [kinds]' ids in groups, each as many as one Overpass question can ask together ([OverpassSelectors]), in their
+     * order; a kind that cannot be asked at all is left out.
+     */
+    private fun askable(kinds: Map<String, TagFilter>): List<List<String>> {
+        val out = ArrayList<List<String>>()
+        var group = ArrayList<String>()
+        for ((id, filter) in kinds) {
+            if (OverpassSelectors.of(filter) == null) continue
+            val with = group + id
+            if (group.isNotEmpty() && OverpassSelectors.of(TagFilter.Or(with.map { kinds.getValue(it) })) == null) {
+                out += group
+                group = arrayListOf(id)
+            } else {
+                group = ArrayList(with)
+            }
+        }
+        if (group.isNotEmpty()) out += group
+        return out
     }
 
     private suspend fun layered(
@@ -375,6 +479,42 @@ class LocalData(
             PackFeatures.osmId(s.element), s.name, s.ref, s.water, s.element.tagsOrEmpty,
             s.lines.map { g -> (0 until g.size).filter { !g.isNull(it) }.map { LatLon(g.lat[it], g.lon[it]) } },
         )
+    }
+
+    /**
+     * The outline of the area [id] (a park, a reserve, a national park) as a downloaded region's element pack holds it, with
+     * the ways whose `highway` is one of [paths] meeting [box] (its box): what a park's plan draws, offline. Null where no
+     * pack holds the area whole (a node, a relation whose members the extract cut off, a region kept as the country's tiles).
+     */
+    fun outlineOf(id: OsmId, box: BBox, paths: Set<String> = emptySet()): LocalOutline? {
+        val f = packsMeeting(box) ?: return null
+        val type = when (id.type) {
+            app.atlas.model.OsmType.NODE -> return null
+            app.atlas.model.OsmType.WAY -> ElementType.WAY
+            app.atlas.model.OsmType.RELATION -> ElementType.RELATION
+        }
+        val me = f.elements(box) { it.type == type && it.id == id.id }.firstOrNull() ?: return null
+        val o = PackFeatures.outlineOf(me) ?: return null
+        val rings = o.starts.indices.map { r ->
+            val end = if (r + 1 < o.starts.size) o.starts[r + 1] else o.coords.size / 2
+            (o.starts[r] until end).map { LatLon(o.coords[2 * it + 1], o.coords[2 * it]) }
+        }
+        val lines = if (paths.isEmpty()) emptyList() else f.elements(box) { it.type == ElementType.WAY && it.tag("highway") in paths }
+            .flatMap(PackFeatures::linesOf)
+            .map { g -> (0 until g.size).filter { !g.isNull(it) }.map { LatLon(g.lat[it], g.lon[it]) } }
+            .filter { it.size >= 2 }
+        return LocalOutline(rings, o.inner.toList(), o.areaM2, lines)
+    }
+
+    /**
+     * The outline of the area [id] as a downloaded region's place store keeps it, simplified for a plan, with the paths in
+     * it where the store keeps them (an area up to 3 km across: [app.atlas.search.Outlines]), for a park, a reserve or a
+     * national park where no element pack holds it (a country kept as its tiles). Null where the store keeps none (a
+     * region imported from Overpass, a national park beyond it).
+     */
+    fun storedOutline(id: OsmId): LocalOutline? {
+        val o = stores()?.outline(id) ?: return null
+        return LocalOutline(o.rings, o.inner, o.areaM2, o.paths.orEmpty(), pathsKept = o.paths != null)
     }
 
     /**
@@ -643,6 +783,15 @@ class LocalData(
 
     companion object {
         const val DEFAULT_LIMIT = 200
+
+        /** How far around the packs are read for a kind none of which is near, in metres. */
+        const val FARTHER_PACKS_M = 100_000.0
+
+        /** How far around Overpass is asked, in turn, for a kind none of which is near the phone's own places, in metres. */
+        val FARTHER_ONLINE_M = doubleArrayOf(25_000.0, 100_000.0)
+
+        /** How long one such question may take. */
+        const val FARTHER_WAIT_MS = 30_000L
 
         /** A water this large is named over the map (m²): the IJ, a lake, a harbour; not a canal's pieces. */
         const val WATER_MIN_M2 = 200_000.0

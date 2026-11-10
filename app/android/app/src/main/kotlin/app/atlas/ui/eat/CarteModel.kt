@@ -48,6 +48,8 @@ data class Carte(
     val counted: Int,
     val countsOpen: Boolean,
     val total: Int,
+    /** Of [counted] open places, those open by guessed hours ([EatPlace.guessed]). */
+    val guessed: Int,
     /** Places per diet among all restaurants, before the diet filter: a diet with none is shown off. */
     val dietCounts: Map<Diet, Int>,
     val anyRated: Boolean,
@@ -123,6 +125,7 @@ object CarteModel {
             counted = if (countsOpen) open.size else places.size,
             countsOpen = countsOpen,
             total = places.size,
+            guessed = places.count { it.key in open && it.guessed },
             dietCounts = Diet.entries.associateWith { d -> all.count { it.diet(d.key) } },
             anyRated = places.any { ratings.stars(it.key) != null },
         )

@@ -55,6 +55,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.TagFilter
+import app.atlas.search.covers
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
@@ -101,11 +102,18 @@ fun NatureScreen(args: Dest.Nature, nav: Navigator) {
     val place = rememberPlaceName(here)
     val backLabel = stringResource(R.string.kit_back)
     val addLabel = stringResource(R.string.nature_add_find)
+    // Whether the phone holds this spot's places: an empty page offline says to download the area only where it does not.
+    var held by remember(here) { mutableStateOf(true) }
     val notes by produceState<List<Note>?>(null, here, kind) {
         value = null
+        val filter = TagFilter.parse(kind.filter)
         val radius = if (kind == NatureKind.TREES) 800.0 else 2_500.0
-        val found = services.local.finder.find(TagFilter.parse(kind.filter), here, radius, limit = if (kind == NatureKind.TREES) 400 else 80)
-        value = if (kind == NatureKind.TREES) NatureNotes.treeNotes(found.places, today) else NatureNotes.placeNotes(kind, found.places)
+        var found = services.local.finder.find(filter, here, radius, limit = if (kind == NatureKind.TREES) 400 else 80).places
+        // Wild places lie out of town: with fewer than three near, the nearest as far as a day out goes.
+        if (kind == NatureKind.WILD && found.size < 3) found = services.local.finder.find(filter, here, WILD_FAR_M, limit = 80).places
+        val made = if (kind == NatureKind.TREES) NatureNotes.treeNotes(found, today) else NatureNotes.placeNotes(kind, found)
+        if (made.isEmpty()) held = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { services.placeStores.covers(here) }
+        value = made
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF4E5A3E))) {
@@ -133,9 +141,9 @@ fun NatureScreen(args: Dest.Nature, nav: Navigator) {
                 Spacer(Modifier.height(20.5.dp))
                 when {
                     notes == null -> BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, Garamond.css(), 18f))
-                    notes!!.isEmpty() -> StateMessage(kind.symbol, stringResource(R.string.nature_none, kindName(kind).lowercase(Locale.getDefault())), text = if (!services.local.online()) stringResource(R.string.picnic_offline_text) else null, tint = Garamond)
+                    notes!!.isEmpty() -> StateMessage(kind.symbol, stringResource(R.string.nature_none, kindName(kind).lowercase(Locale.getDefault())), text = if (!services.local.online() && !held) stringResource(R.string.picnic_offline_text) else null, tint = Garamond)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                        for ((i, n) in notes!!.withIndex()) NoteEntry(n, i, now, zone, onClick = { services.remember(n.place); nav.go(Dest.Place.of(n.place)) })
+                        for ((i, n) in notes!!.withIndex()) NoteEntry(n, i, now, zone, onClick = { services.remember(n.place); nav.go(Dest.Place.page(n.place)) })
                     }
                 }
             }
@@ -180,7 +188,22 @@ private fun tabSymbol(k: NatureKind): String = when (k) {
 /** The board's face for the Latin names and the place: EB Garamond, italic. */
 private const val GARAMOND = "EB Garamond"
 
+/** The drawings that carry their own colours: the board's pressed leaves, its heron and its flower. */
+private val SKETCHES = setOf("nature.plane-leaf", "nature.ginkgo-leaf", "nature.elm-leaf", "nature.heron", "nature.flower")
+
+/** The ink a section's plain line drawings are pencilled in on a pressing: its tab's colour, darkened to read on the card. */
+private fun inkOf(k: NatureKind): Color = when (k) {
+    NatureKind.TREES -> Color(0xFF6E7A3A)
+    NatureKind.WATER -> Color(0xFF4F7FA6)
+    NatureKind.BIRDS -> Color(0xFF3E4A56)
+    NatureKind.GARDENS -> Color(0xFFB5532E)
+    NatureKind.WILD -> Color(0xFF5E4A7A)
+}
+
 /** How each of the board's pressings is turned, degrees, and where its strip of tape is: -1 left, 1 right, 0 none. */
+/** How far the wild notes look when nothing wild is near (metres): a day out from town. */
+private const val WILD_FAR_M = 25_000.0
+
 private val TILTS = floatArrayOf(-3f, 2f, -1.5f, 2.5f, -2f)
 private val TAPES = intArrayOf(-1, 1, -1, 0, 1)
 
@@ -190,7 +213,7 @@ private val TAPES = intArrayOf(-1, 1, -1, 0, 1)
  * and where and how far in Geist 12 at 700.
  */
 @Composable
-private fun NoteEntry(n: Note, index: Int, now: java.time.Instant, zone: java.time.ZoneId, onClick: () -> Unit) {
+internal fun NoteEntry(n: Note, index: Int, now: java.time.Instant, zone: java.time.ZoneId, onClick: () -> Unit) {
     val lang = Locale.getDefault().language
     val common = Trees.nameOf(n.what.replaceFirstChar { it.uppercase() })?.let { if (lang == "nl") it.nl else it.en }
     val title = when {
@@ -207,7 +230,9 @@ private fun NoteEntry(n: Note, index: Int, now: java.time.Instant, zone: java.ti
     val tape = TAPES[index % 5]
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
         Box(Modifier.size(92.dp, 104.dp).rotate(tilt).boardBox(0xFFFBF8EE, shadows = shadow(0f, 2f, 5f, 0x26000000), clip = false)) {
-            Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.Center) { Glyph(n.art, Color(0xFF6E7A3A).takeIf { n.art == "nature.tree" } ?: Color.Unspecified, 76.dp) }
+            // A pressed leaf or a sketch in its own colours; a plain line drawing (a spring, a summit, a tree) in its section's ink.
+            val sketch = n.art in SKETCHES
+            Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.Center) { Glyph(n.art, if (sketch) Color.Unspecified else inkOf(n.kind), if (sketch || n.art == "nature.tree") 76.dp else 56.dp) }
             if (tape != 0) Box(Modifier.offset(x = if (tape < 0) (-8).dp else 64.dp, y = (-6).dp).rotate(if (tape < 0) -30f else 30f).size(36.dp, 14.dp).background(Color(0xCCE9D7A0)))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

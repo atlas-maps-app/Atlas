@@ -2,7 +2,6 @@
 <resources>
     <!-- Zoeken -->
     <string name="search_title">Zoeken</string>
-    <string name="search_hint">Zoek of vraag</string>
     <string name="search_hint_in">Zoek %1$s</string>
     <string name="search_clear">Wissen</string>
     <string name="search_every">Elke %1$s op de kaart</string>
@@ -43,9 +42,6 @@
     <string name="search_failed">Zoeken mislukt</string>
     <string name="search_offline_title">Werkt offline</string>
     <string name="search_offline_text">elke plek in je regio\'s is zonder bereik te vinden</string>
-    <string name="search_recent">Recent · ook coördinaten of pluscodes</string>
-    <string name="search_recent_clear">Wissen</string>
-    <string name="search_recent_none">Nog niets. Coördinaten zoals 52.3745, 4.8838 en pluscodes zoals 9F469VFP+R4 werken ook.</string>
     <string name="search_say">Of zeg het gewoon</string>
     <string name="search_say_ask">rustig café met een stopcontact, dan eten</string>
     <string name="search_say_near">café 200 m van een fietsstation</string>
@@ -95,6 +91,7 @@
 
     <!-- Plek -->
     <string name="place_route">Route</string>
+    <string name="place_park_plan">Plattegrond van het park</string>
     <string name="place_osm">Op OpenStreetMap</string>
     <string name="place_tags">%1$d tags</string>
     <string name="place_not_found">Deze plek staat niet op de telefoon en er is geen verbinding om haar op te zoeken.</string>
@@ -108,12 +105,24 @@
     <string name="place_saved_plain">Bewaard · tik om weg te halen</string>
     <string name="place_call">%1$s bellen</string>
     <string name="place_web">Website</string>
+    <string name="place_web_brand">Website van het merk</string>
     <string name="place_menu">Menukaart</string>
     <string name="place_mail">E-mail</string>
     <string name="place_opens">opent %1$s</string>
     <string name="place_hours">Openingstijden</string>
     <string name="place_hours_week">Toon de week</string>
     <string name="place_hours_unsure">sommige tijden onzeker</string>
+    <string name="place_hours_as_at">zoals %1$s</string>
+    <string name="place_hours_as_branch">zoals de andere vestiging</string>
+    <plurals name="place_hours_as_branches">
+        <item quantity="one">zoals %1$d van %2$d vestiging in de buurt</item>
+        <item quantity="other">zoals %1$d van %2$d vestigingen in de buurt</item>
+    </plurals>
+    <plurals name="place_hours_from_branches">
+        <item quantity="one">uit %d vestiging in de buurt</item>
+        <item quantity="other">uit %d vestigingen in de buurt</item>
+    </plurals>
+    <string name="place_hours_as_kind">zoals de meeste van dit soort hier</string>
     <string name="place_fact_yes">ja</string>
     <string name="place_fact_no">nee</string>
     <string name="place_fact_limited">deels</string>
@@ -173,6 +182,7 @@
     <string name="place_source_walk">Loopminuten: de rechte lijn × 1,3 bij 4,8 km/u</string>
     <string name="place_source_wikidata">Wikidata %1$s · CC0</string>
     <string name="place_source_commons">Foto van Wikimedia Commons · %1$s</string>
+    <string name="place_source_addresses">Adres: %1$s, via OpenAddresses · %2$s</string>
 
     <!-- Lijsten -->
     <string name="lists_default">Bewaard</string>
@@ -228,30 +238,48 @@
     <string name="ask_on_foot">te voet</string>
     <string name="ask_stops">stops gevonden</string>
     <string name="ask_until">tot</string>
+    <string name="ask_instead">of</string>
+    <string name="ask_route_all">Route langs elke stop</string>
     <string name="ask_estimates">Lopen is de rechte lijn × 1,3 bij 4,8 km/u; de tijd per plek is wat gebruikelijk is voor dat soort plek.</string>
 
     <!-- Merken -->
     <string name="brands_title">Merken</string>
     <string name="brands_chains">Ketens</string>
     <string name="brands_independent">Zelfstandig</string>
+    <plurals name="brands_n_chains">
+        <item quantity="one">%d keten</item>
+        <item quantity="other">%d ketens</item>
+    </plurals>
     <string name="brands_none">Hier in de buurt niets in de kaart</string>
     <string name="brands_branches">%1$s, %2$d in de buurt</string>
-    <plurals name="brand_branches_open">
-        <item quantity="one">%1$d vestiging · %2$d open</item>
-        <item quantity="other">%1$d vestigingen · %2$d open</item>
-    </plurals>
-    <string name="brands_all_on_map">Alle %1$d op de kaart</string>
-    <string name="brands_bell">Houd me op de hoogte van dit merk (op de telefoon)</string>
-    <string name="brands_bell_on">Dit merk volgen · tik om te stoppen</string>
     <string name="brands_from_store">Uit de regio op deze telefoon · OpenStreetMap en de name-suggestion-index</string>
     <string name="brands_from_pack">Uit de kaartgegevens op deze telefoon · OpenStreetMap en de name-suggestion-index</string>
-    <string name="brands_hidden">verborgen</string>
     <string name="brands_hidden_n">%1$d verborgen</string>
     <string name="brands_hidden_show">Toon de %1$d verborgen merken</string>
     <string name="brands_hidden_hide">Verberg de %1$d merken weer</string>
     <string name="brands_hide">%1$s en de spelden verbergen</string>
     <string name="brands_show">%1$s weer tonen</string>
     <string name="brand_unknown">Geen merk dat Atlas kent</string>
+    <string name="brand_today">Vandaag</string>
+    <string name="brand_today_closed">Vandaag dicht</string>
+    <string name="brand_today_latest">de laatste tot %1$s</string>
+    <string name="brand_week_show">Toon de openingstijden van de week</string>
+    <string name="brand_week_hide">Verberg de openingstijden van de week</string>
+    <string name="brand_trades">Actief in</string>
+    <string name="brand_worldwide">Wereldwijd</string>
+    <plurals name="brand_countries">
+        <item quantity="one">%d land</item>
+        <item quantity="other">%d landen</item>
+    </plurals>
+    <string name="brand_since">Sinds</string>
+    <string name="brand_part_of">Onderdeel van</string>
+    <string name="brand_head_office">Hoofdkantoor</string>
+    <string name="brand_website">Website</string>
+    <string name="brand_wikipedia">Wikipedia</string>
+    <string name="brand_also_near">Meer van deze soort in de buurt</string>
+    <string name="kind_also_sold">Ook te koop bij</string>
+    <string name="kind_see_also">Zie ook</string>
+    <string name="kind_together">Ook hier tonen</string>
 
     <!-- Soort -->
     <string name="category_title">In de buurt</string>
@@ -326,7 +354,7 @@
     <string name="where_sunset">zonsondergang %1$s</string>
     <string name="where_nothing">Hier past niets</string>
     <string name="where_nothing_text">Probeer een langere wandeling, of minder filters.</string>
-    <string name="where_footer">Ideeën uit OpenStreetMap om je heen; grijze vakken hebben niets dat bij de filters past.</string>
+    <string name="where_footer">Ideeën uit OpenStreetMap om je heen, geen enkele nu dicht; grijze vakken hebben niets dat past.</string>
     <string name="where_w_water">Water</string>
     <string name="where_w_views">Uitzicht</string>
     <string name="where_w_food">Eten</string>
@@ -394,4 +422,12 @@
         <item quantity="one">… nog %d tag</item>
         <item quantity="other">… nog %d tags</item>
     </plurals>
+    <string name="search_route_to">Route naar %1$s</string>
+    <string name="search_route_from">vanaf %1$s</string>
+    <string name="search_route_here">vanaf hier</string>
+    <string name="search_route_via">via %1$s</string>
+    <string name="place_wiki_open">Lees het artikel</string>
+    <string name="place_wiki_none">Het artikel is nu niet te lezen</string>
+    <string name="place_wiki_minutes">%1$d minuten lezen</string>
+    <string name="place_wiki_licence">Tekst van Wikipedia, CC BY-SA</string>
 </resources>

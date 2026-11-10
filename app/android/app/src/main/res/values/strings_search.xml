@@ -2,7 +2,6 @@
 <resources>
     <!-- Search -->
     <string name="search_title">Search</string>
-    <string name="search_hint">Search or ask</string>
     <string name="search_hint_in">Search %1$s</string>
     <string name="search_clear">Clear</string>
     <string name="search_every">Every %1$s on the map</string>
@@ -43,9 +42,6 @@
     <string name="search_failed">Search failed</string>
     <string name="search_offline_title">Works offline</string>
     <string name="search_offline_text">every place in your regions is searchable with no signal</string>
-    <string name="search_recent">Recent · also type coordinates or plus codes</string>
-    <string name="search_recent_clear">Clear</string>
-    <string name="search_recent_none">Nothing yet. Coordinates like 52.3745, 4.8838 and plus codes like 9F469VFP+R4 work too.</string>
     <string name="search_say">Or just say it</string>
     <string name="search_say_ask">quiet café with an outlet, then dinner</string>
     <string name="search_say_near">café 200 m from a bike dock</string>
@@ -95,6 +91,7 @@
 
     <!-- Place -->
     <string name="place_route">Route</string>
+    <string name="place_park_plan">Park plan</string>
     <string name="place_osm">On OpenStreetMap</string>
     <string name="place_tags">%1$d tags</string>
     <string name="place_not_found">This place is not on the phone, and there is no connection to look it up.</string>
@@ -108,12 +105,25 @@
     <string name="place_saved_plain">Saved · tap to remove</string>
     <string name="place_call">Call %1$s</string>
     <string name="place_web">Website</string>
+    <string name="place_web_brand">The brand\'s website</string>
     <string name="place_menu">Menu</string>
     <string name="place_mail">E-mail</string>
     <string name="place_opens">opens %1$s</string>
     <string name="place_hours">Opening hours</string>
     <string name="place_hours_week">Show the week</string>
     <string name="place_hours_unsure">some hours unsure</string>
+    <!-- Under the dial, after "≈": whose hours a place that maps none borrows. %1$s names the other branch ("Raadhuisstraat 43-H"). -->
+    <string name="place_hours_as_at">as at %1$s</string>
+    <string name="place_hours_as_branch">as at its other branch</string>
+    <plurals name="place_hours_as_branches">
+        <item quantity="one">as %1$d of %2$d branch near</item>
+        <item quantity="other">as %1$d of %2$d branches near</item>
+    </plurals>
+    <plurals name="place_hours_from_branches">
+        <item quantity="one">from %d branch near</item>
+        <item quantity="other">from %d branches near</item>
+    </plurals>
+    <string name="place_hours_as_kind">as most of its kind around</string>
     <string name="place_fact_yes">yes</string>
     <string name="place_fact_no">no</string>
     <string name="place_fact_limited">in part</string>
@@ -173,6 +183,7 @@
     <string name="place_source_walk">Walk minutes: the straight line × 1.3 at 4.8 km/h</string>
     <string name="place_source_wikidata">Wikidata %1$s · CC0</string>
     <string name="place_source_commons">Photo from Wikimedia Commons · %1$s</string>
+    <string name="place_source_addresses">Address: %1$s, through OpenAddresses · %2$s</string>
 
     <!-- Lists -->
     <string name="lists_default">Saved</string>
@@ -228,30 +239,49 @@
     <string name="ask_on_foot">on foot</string>
     <string name="ask_stops">stops found</string>
     <string name="ask_until">until</string>
+    <string name="ask_instead">or</string>
+    <string name="ask_route_all">Route past every stop</string>
     <string name="ask_estimates">Walks are the straight line × 1.3 at 4.8 km/h; stays are the usual for each kind of place.</string>
 
     <!-- Brands -->
     <string name="brands_title">Brands</string>
     <string name="brands_chains">Chains</string>
     <string name="brands_independent">Independent</string>
+    <!-- how many chains a kind's stack holds, under it on the Brands board -->
+    <plurals name="brands_n_chains">
+        <item quantity="one">%d chain</item>
+        <item quantity="other">%d chains</item>
+    </plurals>
     <string name="brands_none">None mapped around here</string>
     <string name="brands_branches">%1$s, %2$d nearby</string>
-    <plurals name="brand_branches_open">
-        <item quantity="one">%1$d branch · %2$d open</item>
-        <item quantity="other">%1$d branches · %2$d open</item>
-    </plurals>
-    <string name="brands_all_on_map">All %1$d on the map</string>
-    <string name="brands_bell">Tell me about this brand (kept on the phone)</string>
-    <string name="brands_bell_on">Watching this brand · tap to stop</string>
     <string name="brands_from_store">From the region on this phone · OpenStreetMap and the name-suggestion index</string>
     <string name="brands_from_pack">From the map\'s data on this phone · OpenStreetMap and the name-suggestion index</string>
-    <string name="brands_hidden">hidden</string>
     <string name="brands_hidden_n">%1$d hidden</string>
     <string name="brands_hidden_show">Show the %1$d hidden brands</string>
     <string name="brands_hidden_hide">Hide the %1$d hidden brands again</string>
     <string name="brands_hide">Hide %1$s and its pins</string>
     <string name="brands_show">Show %1$s again</string>
     <string name="brand_unknown">Not a brand Atlas knows</string>
+    <string name="brand_today">Today</string>
+    <string name="brand_today_closed">Closed today</string>
+    <string name="brand_today_latest">the last till %1$s</string>
+    <string name="brand_week_show">Show the week\'s hours</string>
+    <string name="brand_week_hide">Hide the week\'s hours</string>
+    <string name="brand_trades">Trades in</string>
+    <string name="brand_worldwide">Worldwide</string>
+    <plurals name="brand_countries">
+        <item quantity="one">%d country</item>
+        <item quantity="other">%d countries</item>
+    </plurals>
+    <string name="brand_since">Since</string>
+    <string name="brand_part_of">Part of</string>
+    <string name="brand_head_office">Head office</string>
+    <string name="brand_website">Website</string>
+    <string name="brand_wikipedia">Wikipedia</string>
+    <string name="brand_also_near">More of its kind near</string>
+    <string name="kind_also_sold">Also sold at</string>
+    <string name="kind_see_also">See also</string>
+    <string name="kind_together">Show here too</string>
 
     <!-- Category -->
     <string name="category_title">Nearby</string>
@@ -326,7 +356,7 @@
     <string name="where_sunset">sunset %1$s</string>
     <string name="where_nothing">Nothing fits here</string>
     <string name="where_nothing_text">Try a longer walk, or fewer chips.</string>
-    <string name="where_footer">Ideas from OpenStreetMap around you; greyed wedges have nothing that fits the chips.</string>
+    <string name="where_footer">Ideas from OpenStreetMap around you, none of them shut now; greyed wedges have nothing that fits.</string>
     <string name="where_w_water">Water</string>
     <string name="where_w_views">Views</string>
     <string name="where_w_food">Food</string>
@@ -394,4 +424,12 @@
         <item quantity="one">… %d more tag</item>
         <item quantity="other">… %d more tags</item>
     </plurals>
+    <string name="search_route_to">Route to %1$s</string>
+    <string name="search_route_from">from %1$s</string>
+    <string name="search_route_here">from here</string>
+    <string name="search_route_via">via %1$s</string>
+    <string name="place_wiki_open">Read the article</string>
+    <string name="place_wiki_none">The article could not be read now</string>
+    <string name="place_wiki_minutes">A %1$d-minute read</string>
+    <string name="place_wiki_licence">Text from Wikipedia, CC BY-SA</string>
 </resources>
