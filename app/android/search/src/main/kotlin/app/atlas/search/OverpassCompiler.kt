@@ -70,7 +70,9 @@ object OverpassCompiler {
     private fun needsClientCheck(q: Query): Boolean {
         var needs = false
         q.walk {
-            if (it is Query.OpenAt || (it is Query.Tags && hasCompare(it.filter)) || it is Query.Name) needs = true
+            if (it is Query.OpenAt || (it is Query.Tags && hasCompare(it.filter)) || it is Query.Name || it is Query.Want || it is Query.Rated ||
+                it is Query.Inside || it is Query.Contains || it is Query.ChangesAt || it is Query.Coloured || it is Query.ClosedOn || it is Query.Than
+            ) needs = true
         }
         return needs
     }
@@ -204,6 +206,22 @@ object OverpassCompiler {
                     body.append("(.").append(subject).append("; - .").append(close).append(";)->.").append(target).append(";\n")
                     return target
                 }
+                is Query.Inside -> {
+                    // what lies in the containers' areas, and what lies at their outlines (a point, an area Overpass
+                    // has none for); the containers come along for the client's check
+                    val subject = set(q.subject, area)
+                    val containers = nearSet(q.container, area, INSIDE_AROUND_M)
+                    val inArea = "in${++areas}"
+                    body.append(".").append(containers).append(" map_to_area->.").append(inArea).append(";\n")
+                    body.append("(nwr.").append(subject).append("(area.").append(inArea).append("); nwr.").append(subject)
+                        .append("(around.").append(containers).append(":").append(num(INSIDE_AROUND_M)).append(");)->.").append(target).append(";\n")
+                    return target
+                }
+                is Query.Contains -> {
+                    // every subject in the area, with the parts for the client to place inside them
+                    nearSet(q.part, area, 0.0)
+                    return set(q.subject, area, target)
+                }
                 is Query.Sort -> return set(q.query, area, target)
                 is Query.Limit -> return set(q.query, area, target)
                 is Query.Tags -> return set(lift(q.filter), area, target)
@@ -279,7 +297,7 @@ object OverpassCompiler {
             }
             is Query.Name -> listOf(Alt("nwr", listOf("[~${OverpassQl.quote(NAME_KEYS)}~${OverpassQl.quote(nameRegex(q.text))},i]"), false))
             // checked by the client; see Alt.selectors for when the server is asked for opening hours
-            is Query.OpenAt -> listOf(Alt("nwr", emptyList(), false, open = true))
+            is Query.OpenAt, is Query.ClosedOn -> listOf(Alt("nwr", emptyList(), false, open = true))
             is Query.Type -> listOf(Alt(typeName(q.type), emptyList(), false))
             is Query.Id -> listOf(Alt(typeName(q.id.type), listOf("(id:${q.id.id})"), false))
             is Query.Newer -> listOf(Alt("nwr", listOf("(newer:${OverpassQl.quote(q.since.truncatedTo(ChronoUnit.SECONDS).toString())})"), false))
@@ -289,8 +307,12 @@ object OverpassCompiler {
             }
             is Query.InArea -> {
                 val b = q.bbox
-                if (b != null) listOf(Alt("nwr", listOf(OverpassArea.Box(b).clause()), true))
-                else listOf(Alt("nwr", listOf("(area.${namedArea(q.name!!)})"), true))
+                when {
+                    b != null -> listOf(Alt("nwr", listOf(OverpassArea.Box(b).clause()), true))
+                    // the searcher's town, quarter or centre, unresolved: the search area stands for it
+                    q.name!!.startsWith("@") -> listOf(Alt.ANY)
+                    else -> listOf(Alt("nwr", listOf("(area.${namedArea(q.name!!)})"), true))
+                }
             }
             is Query.AlongRoute -> {
                 val line = if (q.line.size > 2) Shapes.simplify(q.line, q.maxDetourM / 4) else q.line
@@ -305,6 +327,12 @@ object OverpassCompiler {
                 }
             }
             is Query.Prefer, Query.All -> listOf(Alt.ANY)
+            // checked by the client over what the rest finds: a want keeps what does not say, a rating is not in the map
+            is Query.Want, is Query.Rated, is Query.Than -> listOf(Alt.ANY)
+            is Query.ChangesAt -> listOf(Alt("nwr", listOf("[${OverpassQl.quote("opening_hours")}]"), false))
+            is Query.Coloured -> listOf(Alt("nwr", listOf("[~${OverpassQl.quote("^(colour|building:colour|roof:colour)$")}~${OverpassQl.quote(".")}]"), false))
+            // containment needs set algebra (see set)
+            is Query.Inside, is Query.Contains -> null
             is Query.And -> {
                 var acc: List<Alt>? = listOf(Alt.ANY)
                 for (p in q.parts) {
@@ -318,7 +346,9 @@ object OverpassCompiler {
             is Query.Not -> when (val p = q.part) {
                 is Query.Tags -> filterAlts(TagFilter.Not(p.filter))
                 is Query.Category -> categoryFilter(p.id)?.let { filterAlts(TagFilter.Not(it)) }
-                is Query.OpenAt, is Query.Prefer -> listOf(Alt.ANY)
+                is Query.OpenAt, is Query.Prefer, is Query.Want, is Query.Rated, is Query.ChangesAt, is Query.Coloured, is Query.ClosedOn, is Query.Than -> listOf(Alt.ANY)
+                // "not in the centre" nobody could find narrows nothing
+                is Query.InArea -> if (p.bbox == null && p.name?.startsWith("@") == true) listOf(Alt.ANY) else null
                 else -> null
             }
             is Query.NotNear -> null
@@ -338,6 +368,8 @@ object OverpassCompiler {
             is TagFilter.NotEquals -> one("[${OverpassQl.quote(f.key)}!=${OverpassQl.quote(f.value)}]")
             is TagFilter.Matches -> one(matches(f.key, f.pattern, f.negate))
             is TagFilter.KeyMatches -> one("[~${OverpassQl.quote(f.keyPattern)}~${OverpassQl.quote(f.valuePattern ?: ".")},i]")
+            // some key of the glob's; what it must say is checked offline on what comes back
+            is TagFilter.AnyKey -> one("[~${OverpassQl.quote(f.keyPattern)}~\".\"]")
             is TagFilter.Compare -> {
                 val base = Units.toBase(f.value, f.unit).value
                 val t = "t[${OverpassQl.quote(f.key)}]"
@@ -385,6 +417,9 @@ object OverpassCompiler {
     }
 
     private const val MAX_ALTERNATIVES = 32
+
+    /** How far from a container's outline a place counts as at it, online (a point container, a mall without an area). */
+    private const val INSIDE_AROUND_M = 25.0
 
     /** A tag filter's own and/or/not as query nodes, so set algebra can take over where filter chains cannot. */
     private fun lift(f: TagFilter): Query = when (f) {

@@ -24,13 +24,19 @@ import kotlin.math.roundToInt
  * natural language.
  */
 internal object PowerParser {
-    private val TAG_OP = Regex("""(^|[\s(!])(["'][^"']+["']|[A-Za-z_][\w:.\-]*)\s*(=|!=|~|!~|>=|<=|<|>)""")
+    private val TAG_OP = Regex("""(^|[\s(!])(["'][^"']+["']|[A-Za-z_][\w:.\-*]*)\s*(=|!=|~|!~|>=|<=|<|>)""")
     private val SPECIAL = Regex("""(?i)(^|\s)(type|id|newer|limit|sort):\S""")
     private val DISTANCE = Regex("""(?i)^(\d+(?:[.,]\d+)?)\s*(m|km|mi|ft)?$""")
     private val UNITS = mapOf("m" to 1.0, "km" to 1000.0, "mi" to 1609.344, "ft" to 0.3048)
     private val SORTS = mapOf(
         "distance" to SortBy.DISTANCE, "nearest" to SortBy.DISTANCE, "rating" to SortBy.RATING, "relevance" to SortBy.RELEVANCE,
-        "open" to SortBy.OPEN_LONGEST, "open_longest" to SortBy.OPEN_LONGEST,
+        "open" to SortBy.OPEN_LONGEST, "open_longest" to SortBy.OPEN_LONGEST, "oldest" to SortBy.OLDEST, "newest" to SortBy.NEWEST,
+        "tallest" to SortBy.TALLEST, "height" to SortBy.TALLEST, "highest" to SortBy.HIGHEST, "ele" to SortBy.HIGHEST,
+        "cheapest" to SortBy.CHEAPEST, "price" to SortBy.CHEAPEST, "largest" to SortBy.LARGEST, "biggest" to SortBy.LARGEST,
+        "size" to SortBy.LARGEST, "hours" to SortBy.MOST_HOURS, "most_hours" to SortBy.MOST_HOURS,
+        "earliest" to SortBy.OPENS_EARLIEST, "opens_earliest" to SortBy.OPENS_EARLIEST, "opens_latest" to SortBy.OPENS_LATEST,
+        "smallest" to SortBy.SMALLEST, "longest" to SortBy.LONGEST, "length" to SortBy.LONGEST, "power" to SortBy.POWER, "kw" to SortBy.POWER, "stars" to SortBy.STARS,
+        "latest" to SortBy.CLOSES_LATEST, "closes_latest" to SortBy.CLOSES_LATEST, "next" to SortBy.OPENS_NEXT, "opens_next" to SortBy.OPENS_NEXT,
     )
     private const val DEFAULT_NEAR = 200.0
     private const val AROUND = 1_000.0
@@ -173,7 +179,8 @@ internal object PowerParser {
         } catch (e: TagFilterException) {
             null
         }
-        if (filter != null && (looksLikePower(text) || filter !is TagFilter.Has && filter !is TagFilter.And)) {
+        // "toilets:wheelchair": a key with subkeys is a key, not words
+        if (filter != null && (looksLikePower(text) || filter !is TagFilter.Has && filter !is TagFilter.And || filter is TagFilter.Has && ':' in filter.key)) {
             // bare words among tags name kinds or properties, as in Overpass Turbo's wizard: "toilets wheelchair=yes"
             val words = HashMap<String, ParsedQuery>()
             collectBareWords(filter, text, lang, now, words)
@@ -201,7 +208,7 @@ internal object PowerParser {
     private fun collectBareWords(f: TagFilter, text: String, lang: String, now: ZonedDateTime?, into: MutableMap<String, ParsedQuery>) {
         when (f) {
             is TagFilter.Has -> {
-                if (Regex("""(^|[\s(])${Regex.escape(f.key)}(?=$|[\s)])""").containsMatchIn(text)) {
+                if (':' !in f.key && Regex("""(^|[\s(])${Regex.escape(f.key)}(?=$|[\s)])""").containsMatchIn(text)) {
                     val p = NaturalParser(lang, now).parse(f.key)
                     if (p.steps.size == 1 && p.unknown.isEmpty()) into[f.key] = p
                 }

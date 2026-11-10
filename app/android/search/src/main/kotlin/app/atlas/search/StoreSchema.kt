@@ -6,14 +6,17 @@ import app.atlas.model.OsmType
 /**
  * The tables of a region's store file. Bump [VERSION] when they change, or what goes into the text index does (its
  * words, kind tokens or importance): a store of another version is then refused when it is opened ([PlaceStore.open]
- * says so).
+ * says so), and its region downloaded again. A change of the category rules is no reason: a store opened under other
+ * rules than it was filed under files its places anew from their tags ([Filing], [StoreRefile]). Nor is a table that a
+ * store can do without: one opened from before it has it created empty ([PlaceStore] runs [CREATE] on every opening),
+ * and an Atlas from before it does not read it (the outlines, 10 November 2026).
  *
  * Coordinates are integers of 1e-7 degree ([E7]). Tags are varint blobs over two dictionaries ([TagBlob]); the lookup
  * table holds only the keys searches filter on ([TagIndex]); pure address points live in a compact table of their
  * own under deduplicated streets ([Addresses]); trees are keyed by their position's Morton code ([Morton]).
  */
 internal object StoreSchema {
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** The tokenizer of both text indexes: Atlas folds the text itself, so it only splits; `_` starts a kind token. */
     private const val TOKENIZE = "tokenize=\"unicode61 remove_diacritics 0 tokenchars '_'\""
@@ -55,12 +58,18 @@ internal object StoreSchema {
         // Trees for the map engine: keyed by the Morton code of their position, with a tiny kind id.
         "CREATE TABLE IF NOT EXISTS treekind(id INTEGER PRIMARY KEY, leaf_type TEXT, genus TEXT)",
         "CREATE TABLE IF NOT EXISTS tree(id INTEGER PRIMARY KEY, kind INTEGER NOT NULL, height INTEGER)",
+        // The outlines of the areas a park's page draws (parks, reserves, national parks) under their places' keys,
+        // simplified and packed ([Outlines]); the packer writes them, from the extract's whole geometry.
+        "CREATE TABLE IF NOT EXISTS outline(id INTEGER PRIMARY KEY, rings BLOB NOT NULL)",
+        // The paths in those its plan draws them for (up to 3 km across), under the same keys: a row with no lines says the
+        // area has none, no row that the store does not keep them.
+        "CREATE TABLE IF NOT EXISTS paths(id INTEGER PRIMARY KEY, lines BLOB NOT NULL)",
     )
 
     /** Every table of this version, for [PlaceStore.clear]. */
     val TABLES = listOf(
         "place", "place_rt", "lookup", "stat", "place_fts", "street", "street_rt", "street_fts", "address", "word", "gram",
-        "treekind", "tree", "tagkey", "tagvalue",
+        "treekind", "tree", "outline", "paths", "tagkey", "tagvalue",
     )
 
     /** Longest tag value held by its id in the lookup table; longer ones are held as present and checked on the row. */

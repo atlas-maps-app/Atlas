@@ -8,6 +8,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.Place
+import app.atlas.places.Kinds
 import app.atlas.places.Presets
 import java.io.Closeable
 import java.io.File
@@ -19,8 +20,15 @@ import kotlin.concurrent.withLock
 /** A tree for the map engine: where it stands, broadleaved or needleleaved, its genus and height when mapped. */
 data class Tree(val id: Long, val location: LatLon, val leafType: String?, val genus: String?, val height: Double?)
 
-/** What an import did, and how long it took; [addresses] are the address points it kept apart from the places. */
-data class ImportStats(val elements: Long, val places: Int, val trees: Int, val skipped: Long, val millis: Long, val addresses: Int = 0)
+/**
+ * What an import did, and how long it took; [addresses] are the address points it kept apart from the places, [filled]
+ * those of them from OpenAddresses ([AddressFill]), [outlines] the green areas' outlines kept beside their places and
+ * [paths] the pieces of path kept in them ([Outlines]).
+ */
+data class ImportStats(
+    val elements: Long, val places: Int, val trees: Int, val skipped: Long, val millis: Long, val addresses: Int = 0, val filled: Int = 0,
+    val outlines: Int = 0, val paths: Int = 0,
+)
 
 /** A store this version of Atlas cannot read: a pack built for another store schema. The region must be downloaded again. */
 class StoreVersionException(message: String) : IOException(message)
@@ -33,9 +41,12 @@ class StoreVersionException(message: String) : IOException(message)
  * ([inBox], [addresses], [nearestAddress]), though not by id ([get]); trees live in a light table of their own
  * ([trees]). Fill it with [writer] (or [importOverpass]); read it as a [PlaceSource].
  *
+ * A place's category comes from its tags at import, under the category rules of that day ([Filing]); a store opened
+ * under other rules files its places anew, once, from their tags ([refile]).
+ *
  * One connection, guarded by a lock: safe from any thread, one statement at a time.
  */
-class PlaceStore private constructor(val file: File?, private val conn: SQLiteConnection) : PlaceSource, Closeable {
+class PlaceStore private constructor(val file: File?, private val conn: SQLiteConnection, internal val filing: Filing) : PlaceSource, Closeable {
     internal val lock = ReentrantLock()
     internal val statements = HashMap<String, SQLiteStatement>()
     internal var closed = false
@@ -64,6 +75,28 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     /** The languages whose kind names the text index answers to. */
     val languages: List<String> get() = meta("langs")?.split(',')?.filter { it.isNotEmpty() } ?: emptyList()
+
+    /**
+     * How many places the store filed anew, when it was opened or by [refile]: their category or symbol changed with the
+     * category rules; 0 when it was filed under this Atlas's rules.
+     */
+    @Volatile
+    var refiled: Int = 0
+        private set
+
+    /** True while its places are filed under other category rules than this Atlas's: opened with `refile = false`, for [refile]. */
+    val needsRefile: Boolean get() = meta(StoreRefile.FILED) != filing.fingerprint
+
+    /**
+     * Files the places anew under this Atlas's category rules if they were filed under others ([needsRefile]): each one's
+     * category and symbol from its tags again, and what follows from them (lookup rows, kind tokens, counts, the typo
+     * vocabulary). A few thousand places at a time under the lock, so the store answers meanwhile, partly filed; on a
+     * country it takes a while. Returns how many places changed ([refiled]).
+     */
+    fun refile(): Int {
+        if (!needsRefile) return 0
+        return StoreRefile(this, filing).run().also { refiled = it }
+    }
 
     /** How many places it holds, its address points included (all that [inBox] finds); [addressCount] counts those. */
     override val size: Int
@@ -394,13 +427,34 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         m
     }.also { treeKinds = it }
 
+    /**
+     * The outline the store keeps of the area [id], a park, a reserve or a national park, with the paths in it where it
+     * keeps them ([Outlines]); null where it keeps none (a store from an Overpass import, or from before outlines were kept).
+     */
+    override fun outline(id: OsmId): PlaceOutline? = locked {
+        if (id.id !in 0..StoreSchema.MAX_OSM_ID) return@locked null
+        val key = StoreSchema.pack(id)
+        val rings = stmt("SELECT rings FROM outline WHERE id = ?1") { st ->
+            st.bindLong(1, key)
+            if (st.step()) st.getBlob(0) else null
+        } ?: return@locked null
+        val paths = stmt("SELECT lines FROM paths WHERE id = ?1") { st ->
+            st.bindLong(1, key)
+            if (st.step()) Outlines.decodeLines(st.getBlob(0)) else null
+        }
+        Outlines.decode(rings, paths)
+    }
+
     /** The address points in [box] alone: elements that are only an address (a house number on a street). */
     fun addresses(box: BBox, limit: Int = PlaceSource.UNLIMITED): List<PlaceRecord> = locked { addressBook.inBox(box, limit) }
 
     /** The address point nearest [p] within [maxDistance] metres, for "what is the address here". */
     fun nearestAddress(p: LatLon, maxDistance: Double = 100.0): PlaceRecord? = locked { addressBook.nearest(p, maxDistance) }
 
-    /** A stored setting: "name", "langs", "imported", "schema", "places", "addresses"… */
+    /** The OpenAddresses sources of the store's address points, with their licence and credit ([AddressFill]). */
+    fun addressSources(): List<AddressCredit> = AddressCredits.read(this)
+
+    /** A stored setting: "name", "langs", "imported", "schema", "filed", "places", "addresses"… */
     fun meta(key: String): String? = locked {
         stmt("SELECT value FROM meta WHERE key = ?1") { st -> st.bindText(1, key); if (st.step()) st.getText(0) else null }
     }
@@ -520,6 +574,27 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         }
     }
 
+    /**
+     * The places that carry [key] (= [value] when given) whose boxes cover the most ground, the largest first, at most
+     * [limit]: a region's largest parks, read through the lookup table and ordered by the boxes the store holds (in
+     * degrees, so a hair off across a tall country; [Largest] orders them by their ground). A key the table holds by
+     * value only; none for any other.
+     */
+    fun largest(key: String, value: String?, limit: Int): List<PlaceRecord> = locked {
+        if (!TagIndex.byValue(key) || value != null && !TagIndex.holdsValue(key, value)) return@locked emptyList()
+        val kid = dict.findKey(key)
+        if (kid < 0) return@locked emptyList()
+        val vid = value?.let { dict.findValue(it) }
+        if (vid != null && vid < 0) return@locked emptyList()
+        val v = if (vid == null) "" else " AND v = ?2"
+        stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT place FROM lookup WHERE k = ?1$v) AND p.ds IS NOT NULL ORDER BY (p.dw + p.de) * (p.ds + p.dn) DESC LIMIT ?3") { st ->
+            st.bindLong(1, kid.toLong())
+            if (vid != null) st.bindLong(2, vid.toLong())
+            st.bindLong(3, limit.toLong())
+            rows(st, limit)
+        }
+    }
+
     /** Places in [box] (or every place) that carry key id [key] (any when -1) and that [accept] keeps, at most [limit]. */
     private inline fun scan(key: Int, box: BBox?, limit: Int, accept: (PlaceRecord) -> Boolean): List<PlaceRecord> {
         val sql = if (box == null) "SELECT $COLS FROM place p" else "SELECT $COLS FROM place_rt r JOIN place p ON p.id = r.id WHERE $RT_WHERE"
@@ -559,12 +634,14 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         if (!st.isNull(13)) extra = extra + ("timestamp" to Instant.ofEpochSecond(st.getLong(13)).toString())
         val source = if (st.isNull(14)) "osm" else dict.value(st.getLong(14).toInt())
         val place = Place(StoreSchema.unpack(key), LatLon(E7.deg(lat), E7.deg(lon)), tags, box, source, extra)
+        val preset = if (st.isNull(7)) null else dict.value(st.getLong(7).toInt())
         return PlaceRecord(
             place,
             category = if (st.isNull(8)) null else dict.value(st.getLong(8).toInt()),
             brand = if (st.isNull(9)) null else dict.value(st.getLong(9).toInt()),
-            preset = if (st.isNull(7)) null else dict.value(st.getLong(7).toInt()),
-            symbol = dict.value(st.getLong(10).toInt()),
+            preset = preset,
+            // filed with the symbols of its day: a kind's own is the table's as it is now, with no filing anew
+            symbol = preset?.let { Presets.byId(it) }?.let { Kinds.symbolOf(it) } ?: dict.value(st.getLong(10).toInt()),
         )
     }
 
@@ -643,19 +720,30 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
         private val driver by lazy { BundledSQLiteDriver() }
 
-        /** Opens (or creates) the store in [file]; one of another store schema is refused ([StoreVersionException]). */
-        fun open(file: File): PlaceStore {
+        /**
+         * Opens (or creates) the store in [file]; one of another store schema is refused ([StoreVersionException]). A
+         * store filed under other category rules than this Atlas's is filed anew first ([refiled]), which takes a while
+         * on a country; with [refile] false it opens at once as it was filed, for [PlaceStore.refile] in the background.
+         */
+        fun open(file: File, refile: Boolean = true): PlaceStore = open(file, Filing.current, refile)
+
+        /** Opens the store in [file] under [filing]'s rules (tests: the rules of another day). */
+        internal fun open(file: File, filing: Filing, refile: Boolean = true): PlaceStore {
             file.absoluteFile.parentFile?.mkdirs()
-            return create(file, driver.open(file.absolutePath))
+            return create(file, driver.open(file.absolutePath), filing, refile)
         }
 
         /** A store that lives in memory only, for tests and online results. */
-        fun inMemory(): PlaceStore = create(null, driver.open(":memory:"))
+        fun inMemory(): PlaceStore = create(null, driver.open(":memory:"), Filing.current, refile = true)
 
-        private fun create(file: File?, conn: SQLiteConnection): PlaceStore {
-            val s = PlaceStore(file, conn)
+        private fun create(file: File?, conn: SQLiteConnection, filing: Filing, refile: Boolean): PlaceStore {
+            val s = PlaceStore(file, conn, filing)
             try {
-                s.locked { s.setUp() }
+                s.locked {
+                    s.setUp()
+                    // a store with no places has nothing to wait for
+                    if (s.needsRefile && (refile || s.long("SELECT EXISTS (SELECT 1 FROM place)") == 0L)) s.refile()
+                }
             } catch (e: Throwable) {
                 s.close()
                 throw e

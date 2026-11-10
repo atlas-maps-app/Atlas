@@ -1,5 +1,6 @@
 package app.atlas.search
 
+import app.atlas.places.Kinds
 import app.atlas.places.Preset
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
@@ -11,7 +12,7 @@ class Seller internal constructor(val filter: TagFilter, val likelihood: Int, va
     val query: Query get() = Query.Tags(filter)
 
     /** The symbol to draw it with. */
-    val symbol: String = preset?.let { Presets.iconOf(it) }?.takeIf { Symbols.has(it) } ?: Symbols.symbolFor(Lexicon.sampleOf(filter))
+    val symbol: String = preset?.let { Kinds.symbolOf(it) } ?: Symbols.symbolFor(Lexicon.sampleOf(filter))
 
     /** Its name in [lang]: "Hardware Store", "Bouwmarkt". */
     fun name(lang: String = "en"): String = preset?.name(lang) ?: filter.toText()
@@ -61,7 +62,7 @@ tools|hardware+doityourself:5,trade:4,variety_store:2|en:drill,hammer,screwdrive
 cables|electrical:5,hardware+doityourself:5,electronics:4,variety_store:3,department_store:3|en:extension cord,extension lead,power strip,plug adapter,travel adapter,adapter|nl:verlengsnoer,stekkerdoos,verloopstekker,wereldstekker,adapter|de:verlangerungskabel,steckdosenleiste,reiseadapter,adapter|fr:rallonge,multiprise,adaptateur
 phone_charger|mobile_phone:5,electronics:5,computer:3,variety_store:3,department_store:3,kiosk+newsagent:2,convenience:1|en:phone charger,charging cable,charger cable,usb cable,usb c cable,lightning cable,power bank,powerbank|nl:telefoonoplader,oplader,oplaadkabel,usb kabel,powerbank|de:ladegerat,handy ladegerat,ladekabel,usb kabel,powerbank|fr:chargeur,chargeur de telephone,cable usb,cable de charge,batterie externe
 phone|mobile_phone:5,electronics:3,kiosk+newsagent:3,convenience:2,supermarket:2|en:sim card,sim,prepaid sim,phone case,screen protector|nl:simkaart,prepaid simkaart,telefoonhoesje,hoesje,screenprotector|de:simkarte,prepaidkarte,handyhulle,schutzfolie|fr:carte sim,coque,coque de telephone,protection d ecran
-phone_repair|mobile_phone:5,craft=electronics_repair:5,electronics:3,computer:3|en:phone repair,screen repair,cracked screen,broken screen|nl:telefoon reparatie,scherm reparatie,kapot scherm|de:handy reparatur,displayreparatur,display kaputt|fr:reparation telephone,reparation ecran,ecran casse
+phone_repair|mobile_phone:5,craft=electronics_repair:5,electronics:3,computer:3|en:cracked screen,broken screen,cracked phone|nl:scherm reparatie,kapot scherm,gebarsten scherm|de:displayreparatur,display kaputt|fr:reparation ecran,ecran casse
 headphones|electronics:5,hifi:5,mobile_phone:4,computer:3,department_store:3|en:headphones,earphones,earbuds,headset|nl:koptelefoon,oortjes,headset|de:kopfhorer,headset|fr:ecouteurs,casque audio
 computer|computer:5,electronics:5,stationery:2,copyshop:2|en:laptop,computer,mouse,keyboard,ink cartridge,printer ink,toner,usb stick,memory card,sd card,hdmi cable|nl:laptop,computer,muis,toetsenbord,inktcartridge,printerinkt,toner,usb stick,geheugenkaart,sd kaart|de:laptop,computer,maus,tastatur,druckerpatrone,toner,usb stick,speicherkarte,sd karte|fr:ordinateur,ordinateur portable,souris,clavier,cartouche d encre,toner,cle usb,carte memoire,carte sd
 camera|photo:5,electronics:4|en:camera,film roll,camera film,photo prints|nl:camera,fototoestel,fotorolletje,foto afdrukken|de:kamera,fotoapparat,fotoabzuge|fr:appareil photo,pellicule,tirages photo
@@ -72,8 +73,8 @@ cards|stationery:5,gift:4,variety_store:4,books:3,department_store:3,kiosk+newsa
 printing|copyshop:5,stationery:3,photo:3|en:print,printing,print documents,photocopy,photocopies,copies|nl:printen,afdrukken,kopieren,kopietjes|de:drucken,ausdrucken,kopieren,kopien|fr:imprimer,impression,photocopie,photocopies
 key_copy|craft=key_cutter:5,locksmith:5,shoe_repair:4,hardware+doityourself:2|en:key copy,spare key,key cutting,duplicate key,copy a key|nl:sleutel bijmaken,sleutel laten maken,reservesleutel,sleutel kopieren|de:schlussel nachmachen,ersatzschlussel,schlussel kopieren|fr:double de cle,copie de cle,refaire une cle
 padlock|hardware+doityourself:5,locksmith:4,bicycle:3,variety_store:3|en:padlock,padlocks|nl:hangslot,hangsloten|de:vorhangeschloss,vorhangschloss|fr:cadenas
-bike_parts|bicycle:5,variety_store:2,sports:2,department_store:2|en:bike light,bike lights,bicycle light,bicycle lights,inner tube,bike tyre,bike tire,bike lock,bicycle lock,bike pump,bicycle pump,puncture repair kit|nl:fietslampje,fietslampjes,fietsverlichting,fietslamp,binnenband,buitenband,fietsslot,fietspomp,plakset,plakspullen|de:fahrradlicht,fahrradlampe,fahrradschlauch,schlauch,fahrradreifen,fahrradschloss,luftpumpe,fahrradpumpe,flickzeug|fr:eclairage velo,lumiere velo,chambre a air,pneu velo,antivol,antivol velo,pompe a velo,rustines
-bike_repair|bicycle:5|en:bike repair,bicycle repair,flat tyre,flat tire,puncture,bike mechanic|nl:fietsenmaker,fietsreparatie,lekke band,fiets repareren|de:fahrradreparatur,fahrradwerkstatt,platten,platter reifen|fr:reparation velo,crevaison,reparateur velo
+bike_parts|bicycle:5,variety_store:2,sports:2,department_store:2|en:bike light,bike lights,bicycle light,bicycle lights,inner tube,bike tyre,bike tire,bike lock,bicycle lock,puncture repair kit|nl:fietslampje,fietslampjes,fietsverlichting,fietslamp,binnenband,buitenband,fietsslot,plakset,plakspullen|de:fahrradlicht,fahrradlampe,fahrradschlauch,schlauch,fahrradreifen,fahrradschloss,flickzeug|fr:eclairage velo,lumiere velo,chambre a air,pneu velo,antivol,antivol velo,rustines
+bike_repair|bicycle:5|en:flat tyre,flat tire,puncture,broken chain|nl:lekke band,band plakken,kapotte ketting|de:platten,platter reifen,reifenpanne|fr:crevaison,pneu creve
 medicine|amenity=pharmacy:5,chemist:5,supermarket:2,convenience:1|en:painkillers,painkiller,paracetamol,ibuprofen,aspirin,plasters,plaster,band aid,band aids,bandage,cough syrup,medicine,medicines,medication,cold medicine,allergy tablets|nl:pijnstillers,pijnstiller,paracetamol,ibuprofen,aspirine,pleisters,pleister,verband,hoestdrank,medicijnen,medicijn,hooikoortstabletten|de:schmerzmittel,schmerztabletten,paracetamol,ibuprofen,aspirin,pflaster,verband,hustensaft,medikamente,medizin|fr:antidouleur,antidouleurs,paracetamol,ibuprofene,aspirine,pansements,pansement,sirop pour la toux,medicaments,medicament
 toiletries|chemist:5,supermarket:4,amenity=pharmacy:3,convenience:3,cosmetics:2,department_store:2|en:toothbrush,toothpaste,shampoo,conditioner,deodorant,razor,razors,razor blades,tampons,sanitary pads,condoms,sunscreen,sun cream,suncream,soap,shower gel,nappies,diapers|nl:tandenborstel,tandpasta,shampoo,conditioner,deodorant,scheermesjes,tampons,maandverband,condooms,zonnebrand,zonnebrandcreme,zeep,douchegel,luiers|de:zahnburste,zahnpasta,shampoo,spulung,deo,deodorant,rasierer,rasierklingen,tampons,binden,kondome,sonnencreme,seife,duschgel,windeln|fr:brosse a dents,dentifrice,shampoing,apres shampoing,deodorant,rasoir,lames de rasoir,tampons,serviettes hygieniques,preservatifs,creme solaire,savon,gel douche,couches
 lens_care|optician:5,chemist:4,amenity=pharmacy:4|en:contact lens solution,lens solution,contact lenses|nl:lenzenvloeistof,contactlenzen|de:kontaktlinsenflussigkeit,kontaktlinsen|fr:solution pour lentilles,lentilles de contact
@@ -88,7 +89,7 @@ drinks|alcohol:5,wine:4,beverages:4,supermarket:3,convenience:2|en:liquor,spirit
 flowers|florist:5,garden_centre:3,amenity=marketplace:2,supermarket:2|en:flowers,bouquet,bunch of flowers,roses,tulips|nl:bloemen,bos bloemen,boeket,rozen,tulpen|de:blumen,blumenstrauss,strauss,rosen,tulpen|fr:fleurs,bouquet,bouquet de fleurs,roses,tulipes
 garden|garden_centre:5,doityourself:4,florist:3,hardware:2|en:plants,houseplant,houseplants,seeds,potting soil,compost,flower pot,plant pot|nl:planten,kamerplant,kamerplanten,zaden,potgrond,bloempot|de:pflanzen,zimmerpflanze,zimmerpflanzen,saatgut,blumenerde,blumentopf|fr:plantes,plante,plante d interieur,graines,terreau,pot de fleurs
 pet_food|pet:5,supermarket:3,garden_centre:2|en:dog food,cat food,cat litter,pet food,bird seed|nl:hondenvoer,kattenvoer,kattenbakvulling,dierenvoer,vogelzaad|de:hundefutter,katzenfutter,katzenstreu,tierfutter,vogelfutter|fr:croquettes,nourriture pour chien,nourriture pour chat,litiere,graines pour oiseaux
-books|books:5,second_hand+charity:2,department_store:2,kiosk+newsagent:2,stationery:1|en:book,books,novel,a novel,paperback|nl:boek,boeken,roman,leesboek|de:buch,bucher,roman,taschenbuch|fr:livre,livres,roman,poche
+books|books:5,second_hand+charity:2,department_store:2,kiosk+newsagent:2,stationery:1|en:book,books,novel,a novel,paperback|nl:boek,boeken,roman,leesboek|de:buch,bucher,roman,taschenbuch|fr:livre,livres,poche
 press|kiosk+newsagent:5,tobacco:4,books:2,supermarket:2,convenience:2|en:newspaper,newspapers,magazine,magazines|nl:krant,kranten,tijdschrift,tijdschriften|de:zeitung,zeitungen,zeitschrift,zeitschriften,magazin|fr:journal,journaux,magazine,magazines
 tobacco|tobacco:5,kiosk+newsagent:4,convenience:3,amenity=fuel:3|en:cigarettes,tobacco,rolling papers,lighter,cigars|nl:sigaretten,tabak,vloei,shag,aansteker,sigaren|de:zigaretten,tabak,zigarettenpapier,feuerzeug,zigarren|fr:cigarettes,tabac,feuilles a rouler,briquet,cigares
 vape|e-cigarette:5,tobacco:4,kiosk+newsagent:2|en:vape,e cigarette,e liquid,vape juice|nl:e sigaret,vape,e liquid|de:e zigarette,liquid,vape|fr:cigarette electronique,vapoteuse,e liquide
@@ -126,6 +127,7 @@ coffee_beans|coffee:5,tea:3,deli:3,supermarket:3|en:coffee beans,ground coffee,c
 loose_tea|tea:5,coffee:3,deli:3,supermarket:2|en:loose tea,tea leaves,loose leaf tea|nl:losse thee,thee kopen|de:loser tee,teeblatter|fr:the en vrac,feuilles de the
 sweets|confectionery+chocolate:5,supermarket:3,convenience:3,kiosk+newsagent:3|en:sweets,candy,licorice,liquorice,chocolates,box of chocolates|nl:snoep,dropjes,bonbons,doos bonbons|de:susigkeiten,bonbons,lakritz,pralinen|fr:bonbons,confiserie,reglisse,chocolats,boite de chocolats
 cake_to_go|pastry:5,bakery:4,supermarket:2|en:birthday cake,pastries,whole cake|nl:verjaardagstaart,hele taart,taartje|de:torte,geburtstagstorte,kuchen kaufen|fr:gateau d anniversaire,un gateau,gateau entier
+frozen_food|frozen_food:5,supermarket:4,convenience:2|en:frozen food,frozen pizza,frozen vegetables,frozen meals,fish fingers|nl:diepvries,diepvriesproducten,diepvriespizza,diepvriesgroente,vissticks|de:tiefkuhlkost,tiefkuhlpizza,tiefkuhlgemuse,fischstabchen|fr:surgeles,produits surgeles,pizza surgelee,legumes surgeles
 """.trimIndent()
 
     /** Every item of the catalogue. */
@@ -134,6 +136,32 @@ cake_to_go|pastry:5,bakery:4,supermarket:2|en:birthday cake,pastries,whole cake|
     private val byId: Map<String, Goods> by lazy { all.associateBy { it.id } }
 
     fun byId(id: String): Goods? = byId[id]
+
+    /**
+     * The kinds of place that also sell what [kind] is named for (the owner, 6 November: "A bakery might sell
+     * pastries"): the other sellers of the goods it surely sells, each at its likeliest, the likeliest first, those that
+     * only perhaps sell them left out. A pastry shop's cakes at a bakery and a supermarket, a butcher's meat at a
+     * supermarket and the market, a frozen food shop's at a supermarket ("Supermarkets have frozen food"); none for a kind
+     * that surely sells nothing of the catalogue. Of a kind that surely sells several, those that sell more than half of
+     * them: a supermarket's groceries and detergent at a convenience store, not at the chemist's for its detergent alone.
+     */
+    fun alsoSold(kind: Preset): List<Seller> {
+        val tags = kind.tags
+        val named = all.filter { g -> g.sellers.any { it.likelihood == SURELY && it.filter.matches(tags) } }
+        val best = LinkedHashMap<String, Seller>()
+        val sells = HashMap<String, Int>()
+        for (g in named) for (s in g.sellers) {
+            if (s.likelihood < LIKELY || s.filter.matches(tags)) continue
+            val key = s.filter.toText()
+            sells[key] = (sells[key] ?: 0) + 1
+            if ((best[key]?.likelihood ?: 0) < s.likelihood) best[key] = s
+        }
+        return best.filterKeys { 2 * sells.getValue(it) > named.size }.values.sortedByDescending { it.likelihood }
+    }
+
+    /** The likelihoods (of 5) of a kind named for the goods, and from which another likely sells them too. */
+    private const val SURELY = 5
+    private const val LIKELY = 2
 
     private fun load(): List<Goods> = TABLE.lines().filter { it.isNotBlank() }.map { line ->
         val cols = line.split('|')

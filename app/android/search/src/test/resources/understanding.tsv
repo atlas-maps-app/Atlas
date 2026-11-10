@@ -1,0 +1,724 @@
+# Atlas search: what people type, and what it must mean. One query per line.
+# Columns, tab-separated: lang, query, expect, freq, note. expect lists the facts the parse must have, joined by " ; ".
+# expect holds only what the query says; what the app should infer or do is in note.
+# Conventions:
+# - "near me", "nearby", "around here", "in de buurt", "in der Nähe", "près d'ici" are the default area and add no fact.
+# - A superlative is a sort; limit= only when the query says a number ("3 closest").
+# - A named place after near, next to, by, bij, bei, près de is near=name=X; after in, on, at, op, im, à it is area=X (town, district, park, street, station, postcode).
+# - want= when an often unmapped property qualifies a kind (toilets, internet_access, power_supply, changing_table, highchair, kids_area, dog and wheelchair at venues, shade, air_conditioning, breakfast, real_fire, payment:*): places that say nothing stay, as unsure. tag= is a firm condition, and so is a property searched on its own.
+# - Vague wishes are prefer=: kid friendly is highchair and kids_area; quiet is no live music, away from bars and busy roads.
+# - tag=brand!=* means no brand tag (not a chain); tag=key!=value also passes places without the key; a bare tag=key means the key is set.
+# - Reference clock: Tuesday 2026-11-03 14:00 Europe/Amsterdam. today = Tu, tomorrow = We, early = 07:00, morning = 09:00, lunch = 12:00, tonight = 20:30, late and at night = 23:00 (open=late).
+# - "Open until T", "open after T", "past T" and "opens before T" are open=T (closing at T counts); "closes before T" and "opens after T" are closes=T and opens=T, one-sided.
+# - Years: the 17th century is start_date>=1600 and <1700; older than 300 years is start_date<1726; newly built is >=2021; the last 10 years is >=2016.
+# - Speeds: walking 80 m/min, cycling 250 m/min, driving 600 m/min; walking distance is within=1200; a 5-minute walk is within=400.
+# - Cheap is sort=CHEAPEST: prices are seldom mapped, so the note says what to rank on. Dates and public holidays add only the kind; the note names the PH rule.
+# - route=A->B for directions and for "on the way to"; an end is here, home, work, a name, or a kind (the nearest one). The travel mode is in the note.
+# - intent= names an activity; the note lists what it expands to and when it depends on weather or season.
+# - What the model cannot express yet is written as it should be (area=@neighbourhood) or as unsupported=WHY.
+# - notarea=X is an area kept out of; closed=Mo closed all that day by the hours; than=height>Name compares with another place; per= tells a count by place; via=A|B are a way's stops in order; near=k=v+k2=v2 is one place with both tags.
+# section: owner
+en	built before 1900	kind=building=* ; tag=start_date<1900	useful	buildings with a start_date before 1900; a shop or café in such a building counts through its building
+en	starbucks with toilets near inside a mall	brand=Starbucks ; want=toilets ; inside=shop=mall	useful	"near" means nearby, not a second place; a branch inside a mall likely has toilets (the mall's) even when its own tags say nothing
+en	newly built	kind=building=* ; tag=start_date>=2021	useful	newest first; buildings under construction (building=construction) are a different question
+en	oldest building in america	kind=building=* ; sort=OLDEST ; area=America	rare	America most likely means the United States; start_date is patchy there, so this needs online data and a caveat
+en	red church	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; colour=red	rare	colour from building:colour or roof:colour, or the building it stands in; brick (building:material=brick) suggests red
+en	woods	kind=natural=wood|landuse=forest	common	
+en	playground in the woods with a lake	kind=leisure=playground ; inside=natural=wood|landuse=forest ; contains=water=lake	useful	"with a lake" belongs to the woods (Contains); a playground close to that lake is the best result
+en	nearest trashcan	kind=amenity=waste_basket ; sort=DISTANCE	common	
+en	how many trashcans in this town	kind=amenity=waste_basket ; ask=COUNT ; area=@town	rare	waste baskets are under-mapped: say the count is a lower bound
+en	bakery that opens late	kind=shop=bakery ; open=late	useful	open late in the evening, latest closing first (CLOSES_LATEST); the reading "opens late in the morning" is rarer
+en	overview of bakery opening times	kind=shop=bakery ; ask=HOURS	useful	a table of the opening hours of the bakeries around, today first
+en	What shops close around 19:30?	kind=shop=* ; closes=19:30	useful	today, within about half an hour of 19:30
+en	Supermarket with the longest opening time - and maybe an atm nearby	kind=shop=supermarket ; sort=MOST_HOURS ; prefer=near=amenity=atm	useful	in the evening read it as open the longest from now (OPEN_LONGEST); "maybe" makes the ATM a wish; a bank with atm=yes counts
+# section: food_drink
+en	coffee	kind=amenity=cafe	common	cafés first; shops selling beans (shop=coffee) further down
+en	pizza	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=pizza	common	cuisine is a list (pizza;italian): one entry is enough
+en	sushi near me	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=sushi	common	Japanese restaurants without cuisine=sushi are likely
+en	vegan restaurant	kind=amenity=restaurant ; tag=diet:vegan=yes|only	common	diet:vegan=only first
+en	halal burger	kind=amenity=fast_food|amenity=restaurant ; tag=cuisine=burger ; tag=diet:halal=yes|only	useful	
+en	pub with a beer garden	kind=amenity=pub ; tag=outdoor_seating=garden	useful	outdoor_seating=yes is likely; beer_garden=yes is used but undocumented; amenity=biergarten counts too
+en	cocktail bar	kind=amenity=bar ; tag=cocktails=yes	useful	drink:cocktail=yes|served and names with cocktail count too
+en	breakfast	kind=amenity=cafe|amenity=restaurant ; want=breakfast	common	breakfast=yes or cuisine=breakfast; in the morning, open now
+en	brunch on sunday	kind=amenity=cafe|amenity=restaurant ; prefer=tag=cuisine=brunch ; open=Su	useful	brunch is seldom tagged; open late Sunday morning, about 10:00 to 14:00
+en	ice cream	kind=amenity=ice_cream|shop=ice_cream	common	
+en	lunch spot with outdoor seating	kind=amenity=cafe|amenity=restaurant ; tag=outdoor_seating=yes	useful	any outdoor_seating value but no (terrace, garden, roof); open at lunch, about 12:00 to 14:00
+en	indonesian rijsttafel	kind=amenity=restaurant ; tag=cuisine=indonesian	useful	rijsttafel is an Indonesian set meal, not a table
+en	thai takeaway	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=thai ; tag=takeaway=yes|only	useful	
+nl	snackbar	kind=amenity=fast_food	common	a Dutch snack bar: fries and kroketten (cuisine=friture, fries or dutch)
+nl	patat	kind=amenity=fast_food ; tag=cuisine=fries|friture	common	patat and friet are fries; snack bars without a cuisine likely sell them
+nl	pannenkoekenhuis	kind=amenity=restaurant ; tag=cuisine=pancake	useful	
+nl	vegetarisch restaurant	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only	common	vegan places count too
+nl	haring	kind=amenity=fast_food|shop=seafood ; tag=cuisine=fish|seafood	useful	a herring stall (haringkar) or a fishmonger that serves it
+nl	bruin cafe	kind=amenity=pub|amenity=bar	useful	a traditional Dutch pub; a Dutch café is a bar as often as a coffee place
+nl	surinaams eten	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=surinamese	useful	often takeaway (roti, broodje pom)
+nl	lunchroom	kind=amenity=cafe	useful	a Dutch lunchroom is a daytime café that serves lunch, open until about 17:00
+de	döner	kind=amenity=fast_food ; tag=cuisine=kebab	common	Döner is cuisine=kebab (doner and turkish too)
+de	biergarten	kind=amenity=biergarten	useful	pubs with outdoor_seating=garden count too
+de	frühstück am sonntag	kind=amenity=cafe|amenity=restaurant ; want=breakfast ; open=Su	useful	Sunday morning
+de	kneipe	kind=amenity=pub|amenity=bar	common	
+de	konditorei	kind=shop=pastry	useful	cafés with cuisine=cake count too
+de	imbiss in der nähe	kind=amenity=fast_food	common	"in der Nähe" is the default area
+fr	crêperie	kind=amenity=restaurant ; tag=cuisine=crepe	useful	
+fr	brasserie ouverte	kind=amenity=restaurant|amenity=bar ; open=now	useful	a French brasserie is a restaurant or a bar; "ouverte" alone means open now
+fr	restaurant végétarien	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only	common	
+fr	bar à vin	kind=amenity=bar ; tag=drink:wine=yes|served	useful	
+# section: shops
+en	bike shop	kind=shop=bicycle	common	shops that repair (service:bicycle:repair=yes) are useful too
+en	hardware store	kind=shop=hardware|shop=doityourself	common	
+en	bookshop	kind=shop=books	common	
+en	thrift store	kind=shop=second_hand|shop=charity	useful	
+en	souvenir shop	kind=shop=gift	useful	souvenir shops are shop=gift (shop=souvenir is a tagging mistake)
+en	electronics store	kind=shop=electronics	useful	
+en	zero waste shop	kind=shop=* ; tag=bulk_purchase=yes|only	rare	unpackaged goods; zero_waste=yes|only counts too
+en	organic food shop	kind=shop=supermarket|shop=health_food|shop=greengrocer ; tag=organic=yes|only	useful	organic=only first
+en	liquor store	kind=shop=alcohol	useful	the Dutch slijterij; shop=wine for wine
+en	where can i buy a sim card	kind=shop=mobile_phone	useful	kiosks and convenience shops at stations and the airport sell them too
+en	farmers market saturday	kind=amenity=marketplace ; open=Sa	useful	markets keep day-specific opening_hours
+nl	drogist	kind=shop=chemist	common	Kruidvat, Etos, DA; shop=chemist is the drugstore, not the pharmacy
+nl	bakker	kind=shop=bakery	common	
+nl	slager	kind=shop=butcher	useful	
+nl	fietsenmaker	kind=shop=bicycle ; want=service:bicycle:repair	common	most Dutch bike shops repair, but few say so
+nl	tweedehands kleding	kind=shop=clothes ; tag=second_hand=yes|only	useful	kringloopwinkels (shop=second_hand) that sell clothes count too
+nl	kringloopwinkel	kind=shop=second_hand|shop=charity	useful	
+nl	bouwmarkt	kind=shop=doityourself	useful	Gamma, Praxis, Karwei
+nl	markt vandaag	kind=amenity=marketplace ; open=Tu	useful	today is Tuesday on the reference clock
+de	bäckerei	kind=shop=bakery	common	
+de	baumarkt	kind=shop=doityourself	useful	
+de	buchhandlung	kind=shop=books	useful	
+de	drogerie	kind=shop=chemist	useful	dm and Rossmann
+de	wochenmarkt samstag	kind=amenity=marketplace ; open=Sa	useful	
+fr	boulangerie	kind=shop=bakery	common	
+fr	supermarché ouvert dimanche	kind=shop=supermarket ; open=Su	common	
+fr	fleuriste	kind=shop=florist	useful	
+fr	caviste	kind=shop=wine	useful	a wine merchant
+# section: brands_names
+en	albert heijn	brand=Albert Heijn	common	
+en	ah to go	brand=AH to go	useful	a separate small-store brand of Albert Heijn (stations); plain Albert Heijn branches are the fallback
+en	mcdonalds	brand=McDonald's	common	apostrophe left out
+en	kfc near the station	brand=KFC ; near=railway=station	useful	the station: the nearest one, or the town's main station
+en	rijksmuseum	name=Rijksmuseum	common	
+en	anne frank house	name=Anne Frank House	common	the OSM name is Anne Frank Huis: match name:en and translations
+en	vondelpark	name=Vondelpark	common	the park itself before things named after it
+en	the albert heijn on the albert cuypstraat	brand=Albert Heijn ; area=Albert Cuypstraat	useful	a street as the area: the branch on or at that street
+en	bijenkorf	brand=De Bijenkorf	useful	the department store on the Dam; bijenkorf also means beehive
+en	dam square	name=Dam	useful	the square called Dam (place=square), not a waterway=dam
+en	heineken experience	name=Heineken Experience	useful	a museum in the old brewery, not bars that sell Heineken
+en	any ah within 2 km	brand=Albert Heijn ; within=2000	useful	AH is Albert Heijn
+en	kruidvat or etos	brand=Kruidvat ; brand=Etos	useful	either brand
+nl	de dichtstbijzijnde ah	brand=Albert Heijn ; sort=DISTANCE	common	
+nl	hema in de kalverstraat	brand=HEMA ; area=Kalverstraat	useful	
+nl	lidl of aldi	brand=Lidl ; brand=Aldi	useful	"of" means or here
+nl	waar is de dichtstbijzijnde action	brand=Action ; sort=DISTANCE	useful	Action is a store chain, not the English word
+de	edeka	brand=EDEKA	useful	
+de	dm drogerie	brand=dm ; kind=shop=chemist	useful	dm-drogerie markt
+de	rewe mit parkplatz	brand=REWE ; near=amenity=parking	useful	a car park at or next to the shop, often its own (access=customers)
+fr	carrefour	brand=Carrefour	common	Carrefour Market, City and Express are its formats
+fr	le louvre	name=Louvre	useful	the Musée du Louvre; the Louvre metro station and shops come after it
+fr	monoprix	brand=Monoprix	useful	
+# section: services
+en	atm	kind=amenity=atm	common	banks with atm=yes count too
+en	post office	kind=amenity=post_office	common	post_office=post_partner counts (post desks in shops)
+en	where can i post a letter	kind=amenity=post_box	common	post offices count too
+en	parcel locker	kind=amenity=parcel_locker	useful	
+en	laundromat	kind=shop=laundry ; tag=self_service=yes	useful	
+en	barber	kind=shop=hairdresser ; tag=hairdresser=barber	common	
+en	phone repair	kind=craft=electronics_repair|shop=mobile_phone ; tag=mobile_phone:repair=yes|only	useful	phone shops that repair without saying so are likely
+en	key cutting	kind=craft=key_cutter|shop=locksmith	useful	shoe repairers often cut keys too
+en	coworking space	kind=office=coworking|amenity=coworking_space	useful	
+en	print something	kind=shop=copyshop	useful	libraries with printers count too
+en	currency exchange	kind=amenity=bureau_de_change	useful	
+en	american embassy	kind=office=diplomatic ; tag=diplomatic=embassy ; tag=country=US	rare	in the Netherlands the embassy is near The Hague and the consulate is in Amsterdam (diplomatic=consulate)
+en	passport photo	kind=amenity=photo_booth	useful	biometric booths; photographers (craft=photographer, shop=photo) too
+en	repair cafe	tag=repair=assisted_self_service	rare	Repair Cafés meet on set days, often in community centres
+nl	pinautomaat	kind=amenity=atm	common	
+nl	postnl punt	brand=PostNL ; kind=amenity=post_office|amenity=parcel_locker	useful	PostNL points sit in shops (post_office=post_partner)
+nl	kapper	kind=shop=hairdresser	common	
+nl	wasserette	kind=shop=laundry ; tag=self_service=yes	useful	
+nl	stomerij	kind=shop=dry_cleaning	useful	
+de	geldautomat	kind=amenity=atm	common	
+fr	distributeur de billets	kind=amenity=atm	common	
+fr	coiffeur	kind=shop=hairdresser	common	
+fr	bureau de poste	kind=amenity=post_office	useful	La Poste relay points (post_partner) count
+# section: health_emergency
+en	pharmacy open now	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	common	
+en	hospital	kind=amenity=hospital|healthcare=hospital	common	
+en	emergency room	kind=amenity=hospital|healthcare=hospital ; tag=emergency=yes	common	A&E; a hospital without emergency=yes is no substitute; also say to call 112
+en	doctor	kind=amenity=doctors|healthcare=doctor	common	
+en	dentist	kind=amenity=dentist|healthcare=dentist	common	
+en	defibrillator	kind=emergency=defibrillator	useful	ones reachable at any hour first (opening_hours, indoor=no)
+en	police station	kind=amenity=police	useful	
+en	optician	kind=shop=optician	useful	
+nl	apotheek	kind=amenity=pharmacy|healthcare=pharmacy	common	
+nl	spoedeisende hulp	kind=amenity=hospital|healthcare=hospital ; tag=emergency=yes	useful	SEH, also called eerste hulp
+nl	huisarts	kind=amenity=doctors|healthcare=doctor	common	
+nl	tandarts	kind=amenity=dentist|healthcare=dentist	common	
+nl	huisartsenpost	kind=amenity=doctors|healthcare=doctor	useful	the out-of-hours GP service, open evenings, nights and weekends, often at a hospital; names start with Huisartsenpost
+nl	dichtstbijzijnde aed	kind=emergency=defibrillator ; sort=DISTANCE	useful	AED; say whether it can be reached now (opening_hours, indoor)
+de	apotheke notdienst	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	useful	the pharmacy on duty; the rota is rarely in opening_hours, so say so
+de	notaufnahme	kind=amenity=hospital|healthcare=hospital ; tag=emergency=yes	useful	
+de	zahnarzt	kind=amenity=dentist|healthcare=dentist	useful	
+fr	pharmacie de garde	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	useful	the pharmacy on duty; the rota is rarely in OSM
+fr	urgences	kind=amenity=hospital|healthcare=hospital ; tag=emergency=yes	useful	
+fr	médecin	kind=amenity=doctors|healthcare=doctor	useful	
+# section: transport_mobility
+en	train station	kind=railway=station	common	not metro or light rail stations (station=subway, station=light_rail)
+en	nearest metro	kind=railway=station ; tag=station=subway ; sort=DISTANCE	common	walk to the entrances (railway=subway_entrance)
+en	tram stop	kind=railway=tram_stop	common	or public_transport=platform with tram=yes
+en	bus stop	kind=highway=bus_stop	common	
+en	free ferry	kind=amenity=ferry_terminal ; tag=fee=no	useful	the IJ ferries in Amsterdam are free; fee sits on the route=ferry, not on the terminal
+en	free parking	kind=amenity=parking ; tag=fee=no	common	
+en	park and ride	kind=amenity=parking ; tag=park_ride	useful	P+R; any park_ride value but no
+en	fast charger	kind=amenity=charging_station ; tag=socket:*:output>=50	useful	fast means 50 kW or more (CCS, CHAdeMO); output is in kW
+en	tesla supercharger	kind=amenity=charging_station ; brand=Tesla Supercharger	useful	
+en	bike rental	kind=amenity=bicycle_rental	common	OV-fiets at Dutch stations is what most locals use
+en	cheapest diesel	kind=amenity=fuel ; tag=fuel:diesel=yes ; sort=CHEAPEST	useful	fuel prices are not in OSM: say so, and rank unmanned discount stations (self_service, automated) first
+en	airport	kind=aeroway=aerodrome	useful	public airports with an iata code first (Schiphol), not airstrips
+en	car sharing	kind=amenity=car_sharing	useful	
+en	bike pump	kind=amenity=bicycle_repair_station|amenity=compressed_air	useful	repair stations with service:bicycle:pump=yes; bike shops lend pumps too
+en	disabled parking	kind=amenity=parking_space ; tag=parking_space=disabled	useful	car parks with capacity:disabled count too
+nl	station	kind=railway=station	common	a Dutch station is the railway station
+nl	dichtstbijzijnde tramhalte	kind=railway=tram_stop ; sort=DISTANCE	common	
+nl	pont naar noord	kind=amenity=ferry_terminal	useful	the free GVB ferries across the IJ; "naar Noord" names where it goes (Amsterdam-Noord): terminals on a ferry route there
+nl	parkeergarage	kind=amenity=parking ; tag=parking=multi-storey|underground	common	
+nl	bewaakte fietsenstalling	kind=amenity=bicycle_parking ; tag=supervised=yes	useful	often free for the first 24 hours
+nl	ov fiets	brand=OV-fiets	useful	the rental bikes at stations (amenity=bicycle_rental)
+nl	laadpaal	kind=amenity=charging_station	common	
+nl	tankstation	kind=amenity=fuel	common	
+de	tankstelle	kind=amenity=fuel	common	
+de	ladesäule	kind=amenity=charging_station	common	
+de	parkhaus	kind=amenity=parking ; tag=parking=multi-storey	useful	
+de	u-bahn	kind=railway=station ; tag=station=subway	useful	
+fr	gare	kind=railway=station	common	
+fr	station de métro	kind=railway=station ; tag=station=subway	useful	
+fr	arrêt de bus	kind=highway=bus_stop	common	
+fr	location de vélos	kind=amenity=bicycle_rental	useful	
+# section: lodging
+en	hotel	kind=tourism=hotel	common	
+en	cheap hostel	kind=tourism=hostel ; sort=CHEAPEST	useful	room prices are not in OSM: say so
+en	campsite with electricity	kind=tourism=camp_site ; want=power_supply	useful	power_supply=yes on campsites; pitches with socket tags count too
+en	4 star hotel	kind=tourism=hotel ; tag=stars=4	useful	4 and 4S; offer 5 stars after
+en	b&b	kind=tourism=guest_house ; tag=guest_house=bed_and_breakfast	useful	other guest houses after
+nl	camping	kind=tourism=camp_site	common	the campsite, not the activity
+nl	camperplaats	kind=tourism=caravan_site	useful	a motorhome stopover
+nl	goedkoop hotel	kind=tourism=hotel ; sort=CHEAPEST	useful	
+de	jugendherberge	kind=tourism=hostel	useful	Hostelling International youth hostels first
+de	pension	kind=tourism=guest_house	useful	
+fr	chambre d'hôte	kind=tourism=guest_house ; tag=guest_house=bed_and_breakfast	useful	
+# section: culture_heritage
+en	art museum	kind=tourism=museum ; tag=museum=art	useful	galleries (tourism=gallery) after
+en	free museums	kind=tourism=museum ; tag=fee=no	useful	a Museumkaart does not make entry free
+en	concert hall	kind=amenity=theatre ; tag=theatre:type=concert_hall	useful	pop venues are amenity=music_venue
+en	windmills	kind=man_made=windmill	useful	
+en	castle	kind=historic=castle	useful	
+en	unesco world heritage	tag=heritage=1 ; tag=heritage:operator=whc	rare	the canal ring, Kinderdijk and Schokland are within reach
+en	statues	kind=tourism=artwork ; tag=artwork_type=statue	useful	memorials with memorial=statue count too
+en	street art	kind=tourism=artwork ; tag=artwork_type=mural|graffiti	useful	
+en	war memorial	kind=historic=memorial ; tag=memorial=war_memorial	useful	
+en	art gallery	kind=tourism=gallery|shop=art	useful	tourism=gallery shows art, shop=art sells it
+en	tourist information	kind=tourism=information ; tag=information=office	useful	boards and maps (information=board, map) after
+nl	molen	kind=man_made=windmill|man_made=watermill	common	mostly windmills
+nl	bioscoop	kind=amenity=cinema	common	
+nl	rijksmonumenten in de buurt	tag=heritage=2 ; tag=heritage:operator=rce	useful	national monuments; the monument number is in ref:rce
+nl	bibliotheek	kind=amenity=library	common	the OBA in Amsterdam
+nl	struikelstenen	kind=historic=memorial ; tag=memorial=stolperstein	useful	
+de	burg	kind=historic=castle	useful	castle_type=defensive first; a Schloss is castle_type=palace or stately
+de	aussichtspunkt	kind=tourism=viewpoint	useful	
+fr	musée gratuit le dimanche	kind=tourism=museum ; tag=fee=no ; open=Su	useful	free on (first) Sundays is fee:conditional=no @ (Su[1]); the model cannot read conditional tags
+fr	château	kind=historic=castle	useful	a château is a castle or a stately home (castle_type=stately); wine châteaux are wineries
+fr	monument historique	tag=heritage:operator=mhs	rare	classé is heritage=2, inscrit heritage=3; the number is in ref:mhs
+# section: religion
+en	mosque	kind=amenity=place_of_worship|building=mosque ; tag=religion=muslim	useful	
+en	synagogue	kind=amenity=place_of_worship|building=synagogue ; tag=religion=jewish	useful	
+en	catholic church with mass on sunday	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; tag=denomination=roman_catholic|catholic ; open=Su	rare	mass times are in service_times, not opening_hours
+en	hindu temple	kind=amenity=place_of_worship|building=temple ; tag=religion=hindu	rare	
+en	buddhist temple	kind=amenity=place_of_worship|building=temple ; tag=religion=buddhist	rare	
+nl	kerk	kind=amenity=place_of_worship|building=church ; tag=religion=christian	common	
+nl	moskee	kind=amenity=place_of_worship|building=mosque ; tag=religion=muslim	useful	
+de	evangelische kirche	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; tag=denomination=evangelical|lutheran|protestant	rare	German evangelisch means Protestant (Lutheran), not evangelical as in English
+fr	église	kind=amenity=place_of_worship|building=church ; tag=religion=christian	common	
+# section: nature_outdoors
+en	park	kind=leisure=park	common	
+en	beach	kind=natural=beach	common	
+en	lake	kind=water=lake	useful	natural=water with water=lake; reservoirs and big ponds may do too
+en	picnic spot	kind=leisure=picnic_table|tourism=picnic_site	useful	parks with grass count; dry weather only
+en	bbq spot	kind=amenity=bbq	useful	parks that allow barbecues are rarely tagged
+en	hiking trail	kind=route=hiking	useful	marked routes (route=hiking or foot relations), then paths through woods
+en	nature reserve	kind=leisure=nature_reserve|boundary=protected_area	useful	
+en	botanical garden	kind=leisure=garden ; tag=garden:type=botanical	useful	the Hortus Botanicus
+en	park with a pond	kind=leisure=park ; contains=water=pond	useful	
+en	beach with a lifeguard	kind=natural=beach ; tag=supervised=yes	rare	or a lifeguard post (emergency=lifeguard) on it; lifeguards work in summer only
+en	cherry blossoms	kind=natural=tree ; tag=genus=Prunus	rare	in bloom only in April; the Bloesempark in the Amsterdamse Bos
+en	mountains near amsterdam	kind=natural=peak ; near=name=Amsterdam	rare	there are none: say so, and offer the nearest hills (Utrechtse Heuvelrug, the dunes) or the Vaalserberg
+en	a quiet park	kind=leisure=park ; prefer=notnear=highway=motorway|highway=trunk|highway=primary	useful	quiet: away from busy roads, bars and events
+nl	bos	kind=natural=wood|landuse=forest	common	
+nl	strand	kind=natural=beach	common	
+nl	natuurgebied	kind=leisure=nature_reserve|boundary=protected_area	useful	
+nl	zwemplas	kind=leisure=bathing_place|leisure=swimming_area	useful	official bathing water (ref:EU:bwid); in summer, mention water quality warnings
+nl	duinen	kind=natural=dune	useful	
+nl	bankje in de schaduw	kind=amenity=bench ; want=shade	useful	shade is rarely tagged: benches under trees (natural=tree nearby) are likely; matters on sunny days
+nl	heide	kind=natural=heath	useful	purple in late August
+de	wald	kind=natural=wood|landuse=forest	common	
+de	see zum baden	kind=water=lake ; intent=swim	useful	bathing places (leisure=bathing_place) on the lake first; summer only
+de	grillplatz	kind=amenity=bbq	useful	
+de	wanderweg	kind=route=hiking	useful	
+fr	plage	kind=natural=beach	common	
+fr	parc avec un étang	kind=leisure=park ; contains=water=pond	useful	
+fr	aire de pique-nique	kind=leisure=picnic_table|tourism=picnic_site	useful	
+fr	sentier de randonnée	kind=route=hiking	useful	GR routes
+# section: sport
+en	tennis court	kind=leisure=pitch ; tag=sport=tennis	useful	public courts (access=yes) first; clubs after
+en	bouldering	kind=leisure=sports_centre ; tag=sport=climbing ; tag=climbing:boulder=yes	useful	
+en	skatepark	kind=leisure=pitch ; tag=sport=skateboard	useful	
+en	ping pong table	kind=leisure=pitch ; tag=sport=table_tennis	useful	public outdoor tables
+en	24 hour gym	kind=leisure=fitness_centre ; open=24/7	useful	
+en	outdoor gym	kind=leisure=fitness_station	useful	calisthenics parks
+en	bowling	kind=leisure=bowling_alley	useful	
+en	yoga studio	kind=leisure=fitness_centre|leisure=sports_centre ; tag=sport=yoga	useful	
+nl	sportschool	kind=leisure=fitness_centre	common	a Dutch sportschool is a gym, not a school
+nl	zwembad	kind=leisure=swimming_pool|leisure=sports_centre	common	public pools (access=yes) first; a sports_centre only with sport=swimming
+nl	voetbalveld	kind=leisure=pitch ; tag=sport=soccer	useful	
+nl	ijsbaan	kind=leisure=ice_rink	useful	some are temporary winter rinks
+de	hallenbad	kind=leisure=swimming_pool|leisure=sports_centre ; tag=indoor=yes	useful	
+de	freibad	kind=leisure=swimming_pool|leisure=sports_centre ; tag=outdoor=yes	useful	open in summer only
+de	kletterhalle	kind=leisure=sports_centre ; tag=sport=climbing	useful	indoor climbing (indoor=yes)
+fr	piscine	kind=leisure=swimming_pool|leisure=sports_centre	common	
+fr	terrain de basket	kind=leisure=pitch ; tag=sport=basketball	useful	
+# section: kids_family
+en	indoor playground	kind=leisure=indoor_play	useful	good for rainy days
+en	children's museum	kind=tourism=museum ; tag=museum=children	useful	science museums (museum=science, NEMO) appeal too
+en	baby changing table	tag=changing_table=yes	useful	on its own it is firm: mostly toilets, malls and department stores
+en	trampoline park	kind=leisure=trampoline_park	rare	
+en	daycare	kind=amenity=childcare|amenity=kindergarten	useful	
+nl	speeltuin	kind=leisure=playground	common	
+nl	kinderboerderij	kind=tourism=zoo ; tag=zoo=petting_zoo	common	very common in Dutch towns, usually free
+nl	speeltuin met zandbak	kind=leisure=playground ; contains=playground=sandpit	useful	for toddlers
+nl	kindvriendelijk restaurant	kind=amenity=restaurant ; prefer=tag=highchair=yes ; prefer=tag=kids_area=yes	useful	pancake houses too
+de	spielplatz im park	kind=leisure=playground ; inside=leisure=park	useful	
+de	kinderfreundliches café	kind=amenity=cafe ; prefer=tag=highchair=yes ; prefer=tag=kids_area=yes	useful	
+fr	aire de jeux	kind=leisure=playground	common	
+fr	ferme pédagogique	kind=tourism=zoo ; tag=zoo=petting_zoo	rare	
+# section: dogs
+en	dog park	kind=leisure=dog_park	common	
+en	dog friendly cafe	kind=amenity=cafe ; want=dog	useful	dog=yes or leashed; most Dutch cafés allow dogs without saying so
+en	beaches where dogs are allowed	kind=natural=beach ; want=dog	useful	dog:conditional: many beaches ban dogs in summer
+en	hotel that allows dogs	kind=tourism=hotel ; want=dog	useful	
+nl	losloopgebied honden	tag=dog=unleashed	useful	off-leash areas and dog parks (leisure=dog_park)
+nl	hondvriendelijk terras	kind=amenity=cafe|amenity=bar|amenity=restaurant ; tag=outdoor_seating=yes ; want=dog	useful	
+nl	dierenarts	kind=amenity=veterinary	common	
+nl	poepzakjes	kind=amenity=vending_machine ; tag=vending=excrement_bags	useful	bag dispensers at dog areas too
+de	hundewiese	kind=leisure=dog_park	useful	off-leash areas (dog=unleashed) too
+fr	parc à chiens	kind=leisure=dog_park	useful	
+# section: basic_needs
+en	toilets open now	kind=amenity=toilets ; open=now	useful	most public toilets have no opening_hours; those inside buildings close at night
+en	wheelchair accessible toilet	kind=amenity=toilets ; tag=wheelchair=yes	useful	toilets:wheelchair=yes on other places counts
+en	drinking water	kind=amenity=drinking_water	common	refill points (drinking_water:refill=yes) too
+en	charge my phone	intent=charge_phone	useful	device charging stations, cafés and libraries with outlets (want=power_supply)
+en	free wifi	tag=internet_access=wlan|yes ; prefer=tag=internet_access:fee=no	useful	wifi is the rule; free is seldom tagged, so it only ranks
+en	cafe with wifi and power outlets	kind=amenity=cafe ; want=internet_access ; want=power_supply	useful	
+en	a place to sit	intent=sit	useful	benches, picnic tables, squares; shelters or cafés when it rains
+en	shelter from the rain	intent=shelter	useful	shelters (amenity=shelter), bus stops with shelter=yes, arcades, cafés; only when it rains
+en	where to recycle batteries	kind=amenity=recycling ; tag=recycling:batteries=yes	useful	shops that take them back (supermarkets, drugstores) are likely
+en	luggage storage	kind=amenity=luggage_locker|amenity=locker	useful	station lockers; staffed storage in shops is rarely mapped
+en	food bank	kind=amenity=social_facility ; tag=social_facility=food_bank	rare	
+en	vending machine for drinks	kind=amenity=vending_machine ; tag=vending=drinks	useful	
+nl	openbaar toilet	kind=amenity=toilets	common	
+nl	gratis wc	kind=amenity=toilets ; tag=fee=no	common	
+nl	plaskrul	kind=amenity=toilets ; tag=toilets:position=urinal	useful	the open-air urinals of Amsterdam
+nl	water bijvullen	tag=drinking_water:refill=yes	useful	Refill points in cafés and shops; public taps (amenity=drinking_water) too
+nl	glasbak	kind=amenity=recycling ; tag=recycling:glass_bottles=yes	common	
+nl	textielcontainer	kind=amenity=recycling ; tag=recycling:clothes=yes	useful	
+nl	papiercontainer	kind=amenity=recycling ; tag=recycling:paper=yes	useful	often underground (location=underground)
+nl	minibieb	kind=amenity=public_bookcase	useful	
+de	öffentliche toilette	kind=amenity=toilets	common	
+fr	toilettes publiques gratuites	kind=amenity=toilets ; tag=fee=no	common	
+fr	wifi gratuit	tag=internet_access=wlan|yes ; prefer=tag=internet_access:fee=no	useful	
+fr	eau potable	kind=amenity=drinking_water	useful	
+# section: attributes
+en	wheelchair accessible restaurant	kind=amenity=restaurant ; want=wheelchair	common	wheelchair=yes first, then limited, then unknown
+en	restaurant that takes credit cards	kind=amenity=restaurant ; want=payment:credit_cards	useful	
+en	pizza delivery	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=pizza ; tag=delivery=yes	useful	
+en	drive through	kind=amenity=fast_food ; tag=drive_through=yes	useful	
+en	bar where you can smoke	kind=amenity=bar|amenity=pub ; tag=smoking=yes|isolated|separated|outside	rare	Dutch bars allow smoking only in a closed smoking room (isolated) or outside
+en	air conditioned cafe	kind=amenity=cafe ; want=air_conditioning	useful	matters on hot days
+en	lgbt friendly bar	kind=amenity=bar|amenity=pub ; tag=lgbtq=primary|welcome|only	useful	
+en	lit football pitch	kind=leisure=pitch ; tag=sport=soccer ; tag=lit=yes	rare	for playing after dark
+en	rooftop bar	kind=amenity=bar ; tag=outdoor_seating=roof	useful	
+en	heated terrace	kind=amenity=cafe|amenity=bar|amenity=restaurant ; tag=outdoor_seating=yes ; want=outdoor_seating:heated	rare	no common key says a terrace is heated: a wish its tags seldom say, asked of the searcher
+en	women only gym	kind=leisure=fitness_centre ; tag=female=yes	rare	female=yes implies men are not admitted
+en	restaurant with a view	kind=amenity=restaurant ; prefer=tag=outdoor_seating=roof	useful	proxies: a roof terrace (outdoor_seating=roof) or a view tag; a high level, next to water or a viewpoint would add more
+en	cinema with a hearing loop	kind=amenity=cinema ; tag=hearing_loop=yes	rare	hearing_loop is a draft key
+en	pub with a fireplace	kind=amenity=pub ; want=real_fire	rare	real_fire=yes, fireplace or stove; cosy in winter
+nl	rolstoeltoegankelijk restaurant	kind=amenity=restaurant ; want=wheelchair	common	
+nl	terras	kind=amenity=cafe|amenity=bar|amenity=restaurant ; tag=outdoor_seating=yes	common	a Dutch terras is outdoor seating; best when the sun shines
+nl	terras in de zon	kind=amenity=cafe|amenity=bar|amenity=restaurant ; tag=outdoor_seating=yes ; prefer=tag=outdoor_seating=yes	useful	a sunny wish, not an area called zon; which terraces get sun now depends on the sun's position and the shadows of buildings; only on sunny days
+nl	cafe waar je contant kan betalen	kind=amenity=cafe|amenity=pub|amenity=bar ; want=payment:cash	useful	many Dutch places are card only (payment:cash=no): those go
+nl	homobar	kind=amenity=bar|amenity=pub ; tag=lgbtq=primary|only	useful	
+de	barrierefreies restaurant	kind=amenity=restaurant ; want=wheelchair	useful	
+de	café mit kartenzahlung	kind=amenity=cafe ; want=payment:cards	useful	Karte is a bank card here (girocard, debit_cards); many German cafés take cash only
+de	raucherkneipe	kind=amenity=pub|amenity=bar ; tag=smoking=yes|isolated|separated	rare	
+fr	restaurant accessible fauteuil roulant	kind=amenity=restaurant ; want=wheelchair	useful	
+fr	restaurant avec terrasse	kind=amenity=restaurant ; tag=outdoor_seating=yes	common	
+fr	bar qui accepte la carte bleue	kind=amenity=bar ; want=payment:cards	useful	carte bleue is any bank card here (payment:cb, debit_cards, visa)
+# section: time
+en	what's open now	open=now	common	no kind: shops, food and services open now, nearest first
+en	restaurants still open	kind=amenity=restaurant ; open=now	common	"still" hints it is late: show closing times
+en	pharmacy open at 8pm	kind=amenity=pharmacy|healthcare=pharmacy ; open=20:00	useful	
+en	bakery open tomorrow morning	kind=shop=bakery ; open=We 09:00	useful	tomorrow is Wednesday; morning is 09:00, and earlier suits a bakery
+en	restaurants open tonight	kind=amenity=restaurant ; open=20:30	common	
+en	24 hour pharmacy	kind=amenity=pharmacy|healthcare=pharmacy ; open=24/7	useful	
+en	cafe open early	kind=amenity=cafe ; open=early	useful	open at 07:00, earliest first
+en	which supermarket opens earliest	kind=shop=supermarket ; sort=OPENS_EARLIEST	useful	in the evening, tomorrow's opening
+en	bars open until midnight	kind=amenity=bar ; open=00:00	useful	tonight's midnight; a bar closing at 00:00 counts
+en	cafe that opens before 7	kind=amenity=cafe ; open=07:00	useful	opening before 7 means being open at 7; earliest first (OPENS_EARLIEST)
+en	bakeries that open at 7	kind=shop=bakery ; opens=07:00	useful	the opening time is about 07:00 (ChangesAt OPEN); "open at 7" without "that" is open=07:00
+en	gyms open after 10pm	kind=leisure=fitness_centre ; open=22:00	useful	open after 22:00 means still open at 22:00
+en	shops that close before 6	kind=shop=* ; closes=18:00	rare	one-sided: closing at or before 18:00 today, not around it
+en	what time does the hema close	brand=HEMA ; ask=HOURS	common	today's closing time at the nearest branch
+en	shops closing soon	kind=shop=* ; closes=14:30	useful	soon is within about 30 minutes of now (14:00 on the reference clock); the model has no relative times
+en	is the ah open in an hour	brand=Albert Heijn ; open=15:00	useful	an hour after 14:00; a yes or no for the nearest branch
+en	supermarket open on christmas day	kind=shop=supermarket	useful	25 December: the PH rule in opening_hours decides; most are closed
+en	markets this weekend	kind=amenity=marketplace ; open=Sa ; open=Su	useful	either day
+en	when does the market open on saturday	kind=amenity=marketplace ; ask=HOURS ; open=Sa	useful	Saturday's hours, not today's
+nl	wat is er nu open	open=now	common	
+nl	supermarkt open op zondag	kind=shop=supermarket ; open=Su	common	not every Dutch town has Sunday shopping (koopzondag)
+nl	bakker morgen vroeg	kind=shop=bakery ; open=We 07:00	useful	morgen is tomorrow (Wednesday), vroeg is early
+nl	apotheek open tot 22 uur	kind=amenity=pharmacy|healthcare=pharmacy ; open=22:00	useful	a pharmacy closing at 22:00 counts
+nl	restaurant om half acht	kind=amenity=restaurant ; open=19:30	useful	Dutch half acht is 7:30 (evening for a restaurant), not 8:30
+nl	restaurants vanavond open	kind=amenity=restaurant ; open=20:30	common	
+nl	koopavond	kind=shop=* ; open=Th 20:00	rare	late shopping night: Thursday in Amsterdam (Friday in some towns), until 21:00
+nl	welke supermarkt gaat om 8 uur open	kind=shop=supermarket ; opens=08:00	useful	gaat open is opens; 8 uur is 08:00, in the morning for a supermarket
+nl	wanneer gaat de jumbo dicht	brand=Jumbo ; ask=HOURS	common	dicht is closed: today's closing time
+nl	cafe zondag 12 uur	kind=amenity=cafe|amenity=pub|amenity=bar ; open=Su 12:00	useful	
+nl	supermarkt open tweede kerstdag	kind=shop=supermarket	useful	26 December, a public holiday (PH): few are open
+de	apotheke jetzt geöffnet	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	common	
+de	bäckerei sonntags geöffnet	kind=shop=bakery ; open=Su	common	German bakeries often open on Sunday morning only
+de	supermarkt morgen früh	kind=shop=supermarket ; open=We 07:00	useful	morgen früh is tomorrow morning, not this morning
+de	restaurant bis 22 uhr geöffnet	kind=amenity=restaurant ; open=22:00	useful	
+de	öffnungszeiten edeka	brand=EDEKA ; ask=HOURS	useful	
+de	kneipe heute abend	kind=amenity=pub|amenity=bar ; open=20:30	useful	
+fr	boulangerie ouverte maintenant	kind=shop=bakery ; open=now	common	
+fr	pharmacie ouverte le dimanche	kind=amenity=pharmacy|healthcare=pharmacy ; open=Su	common	
+fr	restaurant ouvert ce soir	kind=amenity=restaurant ; open=20:30	useful	
+fr	bar ouvert jusqu'à minuit	kind=amenity=bar ; open=00:00	useful	
+fr	poste ouverte entre midi et deux	kind=amenity=post_office ; open=13:00	useful	open through lunch (12:00 to 14:00), when many French shops close
+fr	horaires du louvre	name=Louvre ; ask=HOURS	useful	closed on Tuesdays, which is today on the reference clock
+# section: price_rating
+en	free things to do	kind=tourism=attraction|tourism=museum|tourism=viewpoint|leisure=park ; tag=fee=no ; intent=sightsee	useful	museums, parks, viewpoints, ferries: anything with fee=no
+en	restaurants rated 4 stars or more	kind=amenity=restaurant ; rating>=4	useful	ratings come from providers, not OSM; stars here are a rating, not hotel stars
+en	top 5 cafes	kind=amenity=cafe ; sort=RATING ; limit=5	useful	
+en	best coffee in amsterdam	kind=amenity=cafe ; sort=RATING ; area=Amsterdam	useful	speciality coffee bars (cuisine=coffee_shop) are what is meant
+en	michelin star restaurant	kind=amenity=restaurant ; unsupported=michelin stars	rare	not in OSM
+en	cheapest parking	kind=amenity=parking ; sort=CHEAPEST	useful	compare charge per hour; free ones (fee=no) first; P+R is cheap
+en	parking under 2 euros an hour	kind=amenity=parking ; tag=charge<2	rare	charge reads like 2.50 EUR/hour: compare per hour in euros
+en	highly rated sushi	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=sushi ; rating>=4	useful	
+en	happy hour now	kind=amenity=bar|amenity=pub ; tag=happy_hours ; open=now	rare	happy_hours uses opening_hours syntax: its times must include now, not just the bar's
+nl	goedkoop eten	kind=amenity=restaurant|amenity=fast_food ; sort=CHEAPEST	common	
+nl	beste pizza	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=pizza ; sort=RATING	common	
+nl	restaurants met minstens 4 sterren	kind=amenity=restaurant ; rating>=4	useful	
+de	günstig essen	kind=amenity=restaurant|amenity=fast_food ; sort=CHEAPEST	common	
+de	kostenlos parken	kind=amenity=parking ; tag=fee=no	useful	
+de	restaurant mit der besten bewertung	kind=amenity=restaurant ; sort=RATING	useful	
+fr	resto pas cher	kind=amenity=restaurant ; sort=CHEAPEST	common	resto is restaurant
+fr	restaurants avec une note supérieure à 4	kind=amenity=restaurant ; rating>4	useful	
+# section: distance_containment
+en	cafes within 500m	kind=amenity=cafe ; within=500	common	
+en	restaurants within 5 minutes walk	kind=amenity=restaurant ; within=400	common	
+en	pharmacy 10 minutes by bike	kind=amenity=pharmacy|healthcare=pharmacy ; within=2500	useful	
+en	beach within 30 minutes drive	kind=natural=beach ; within=18000	useful	18 km at 600 m/min falls short of Zandvoort (about 25 km): a road-time estimate would do better
+en	coffee near central station	kind=amenity=cafe ; near=name=Central Station	common	in Amsterdam it is Amsterdam Centraal
+en	shops at schiphol	kind=shop=* ; area=Schiphol	useful	the airport is the area, airside shops included
+en	cafe in the vondelpark	kind=amenity=cafe ; area=Vondelpark	useful	
+en	toilets in a shopping mall	kind=amenity=toilets ; inside=shop=mall	useful	the mall's own toilets=yes counts
+en	park with a playground	kind=leisure=park ; contains=leisure=playground	common	
+en	campsite with a swimming pool	kind=tourism=camp_site ; contains=leisure=swimming_pool	useful	swimming_pool=yes on the campsite counts
+en	restaurant not near a busy road	kind=amenity=restaurant ; notnear=highway=motorway|highway=trunk|highway=primary	rare	
+en	house not within 500m of a motorway	kind=building=house|building=residential ; notnear=highway=motorway@500	rare	
+en	coffee on my way to work	kind=amenity=cafe ; route=here->work	useful	along the route with a small detour; the answer is places, not a route
+en	supermarket between home and work	kind=shop=supermarket ; route=home->work	useful	
+en	charging station along the a2	kind=amenity=charging_station ; near=ref=A2	rare	reachable from the motorway: service areas (highway=services) first
+en	playground within 100m of a cafe	kind=leisure=playground ; near=amenity=cafe@100	useful	
+en	restaurant on the beach	kind=amenity=restaurant ; inside=natural=beach	useful	beach pavilions (strandtenten) stand on the sand
+en	cafes in this neighbourhood	kind=amenity=cafe ; area=@neighbourhood	useful	the user's neighbourhood (place=neighbourhood, a suburb boundary); the model knows only @town
+nl	supermarkt binnen 500 meter	kind=shop=supermarket ; within=500	common	
+nl	restaurants op loopafstand	kind=amenity=restaurant ; within=1200	useful	
+nl	zwembad binnen 10 minuten fietsen	kind=leisure=swimming_pool|leisure=sports_centre ; within=2500	useful	
+nl	pinautomaat in het station	kind=amenity=atm ; inside=railway=station	useful	
+nl	hotel bij het rijksmuseum	kind=tourism=hotel ; near=name=Rijksmuseum	common	
+nl	tankstation op weg naar utrecht	kind=amenity=fuel ; route=here->Utrecht	useful	along the A2, a small detour
+de	apotheke im umkreis von 1 km	kind=amenity=pharmacy|healthcare=pharmacy ; within=1000	useful	
+de	café 5 minuten zu fuß	kind=amenity=cafe ; within=400	useful	
+de	hotel in der nähe vom hauptbahnhof	kind=tourism=hotel ; near=name=Hauptbahnhof	useful	in a German city its Hauptbahnhof; in Amsterdam, Amsterdam Centraal
+de	geldautomat im supermarkt	kind=amenity=atm ; inside=shop=supermarket	useful	
+fr	boulangerie à moins de 500 m	kind=shop=bakery ; within=500	useful	
+fr	pharmacie à 10 minutes à pied	kind=amenity=pharmacy|healthcare=pharmacy ; within=800	useful	
+fr	hôtel près de la gare	kind=tourism=hotel ; near=railway=station	useful	la gare: the nearest or the main station
+fr	parc avec une aire de jeux	kind=leisure=park ; contains=leisure=playground	useful	
+en	rail next to an underpass	kind=railway=rail ; near=highway=*+tunnel=yes@50	rare	next to is nearer than near (50 m); an underpass is a road's tunnel
+en	late cinema parking garage	kind=amenity=cinema ; open=late ; near=amenity=parking+parking=multi-storey	useful	a cinema open late with a car park by it; the film times are not in OSM
+# section: comparisons_superlatives
+en	highest point in the netherlands	kind=natural=peak|natural=hill ; sort=HIGHEST ; area=Netherlands	useful	HIGHEST is elevation (ele): the Vaalserberg, 322 m; TALLEST is a structure's height
+en	largest supermarket nearby	kind=shop=supermarket ; sort=LARGEST	useful	by the floor area of its building or area
+en	3 closest supermarkets	kind=shop=supermarket ; sort=DISTANCE ; limit=3	common	
+en	oldest pub in amsterdam	kind=amenity=pub ; sort=OLDEST ; area=Amsterdam	useful	the pub's start_date, else its building's
+en	buildings taller than 100m	kind=building=* ; tag=height>100	useful	height is in metres
+en	hotels with more than 100 rooms	kind=tourism=hotel ; tag=rooms>100	rare	
+en	buildings with more than 10 floors	kind=building=* ; tag=building:levels>10	useful	
+en	most powerful charger nearby	kind=amenity=charging_station ; sort=POWER	useful	highest socket:*:output first
+en	smallest house in amsterdam	kind=building=house|building=residential ; area=Amsterdam ; sort=SMALLEST	rare	by footprint; the narrowest houses (Singel 7) are sights
+en	which bar closes last	kind=amenity=bar ; sort=OPEN_LONGEST	useful	tonight's latest closing (CLOSES_LATEST in the new SortBy)
+en	longest bridge	kind=bridge=*|man_made=bridge ; sort=LONGEST	rare	by its length tag, else its outline's diagonal
+en	the 10 oldest buildings in utrecht	kind=building=* ; sort=OLDEST ; limit=10 ; area=Utrecht	useful	
+en	tallest church	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; sort=TALLEST	rare	the tower's height (man_made=tower, tower:type=bell_tower) counts for its church
+en	which supermarket is open longest on sunday	kind=shop=supermarket ; sort=MOST_HOURS ; open=Su	useful	Sunday's hours, not today's
+en	supermarket that opens first tomorrow	kind=shop=supermarket ; sort=OPENS_EARLIEST ; open=We	useful	
+en	buildings taller than the westertoren	kind=building=* ; name=Westertoren ; than=height>westertoren	rare	the Westertoren's own height (87 m) becomes the bound, looked up once
+en	hotel with the most stars	kind=tourism=hotel ; sort=STARS	rare	4S (superior) ranks over 4
+nl	hoogste gebouw van rotterdam	kind=building=* ; sort=TALLEST ; area=Rotterdam	useful	
+nl	grootste park van amsterdam	kind=leisure=park ; sort=LARGEST ; area=Amsterdam	useful	the Amsterdamse Bos is a wood, not leisure=park: mention it
+nl	oudste kerk van amsterdam	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; sort=OLDEST ; area=Amsterdam	useful	the Oude Kerk
+nl	gebouwen hoger dan 50 meter	kind=building=* ; tag=height>50	useful	
+nl	de 5 dichtstbijzijnde pinautomaten	kind=amenity=atm ; sort=DISTANCE ; limit=5	useful	
+nl	snelste laadpaal	kind=amenity=charging_station ; sort=POWER	useful	snelste means most powerful (socket:*:output)
+de	höchstes gebäude in frankfurt	kind=building=* ; sort=TALLEST ; area=Frankfurt	useful	Frankfurt am Main, not Frankfurt (Oder)
+de	nächster supermarkt	kind=shop=supermarket ; sort=DISTANCE	common	nächster means nearest here, not next
+de	größter see	kind=water=lake ; sort=LARGEST	rare	
+fr	la boulangerie la plus proche	kind=shop=bakery ; sort=DISTANCE	common	
+fr	le plus vieux café de paris	kind=amenity=cafe ; sort=OLDEST ; area=Paris	rare	Le Procope (1686)
+fr	hôtels de plus de 4 étoiles	kind=tourism=hotel ; tag=stars>4	rare	literally 5 stars; people often mean 4 or more
+en	highest area within 10km	kind=natural=peak|natural=hill ; sort=HIGHEST ; within=10000	useful	the highest ground near you: peaks and hills by elevation
+en	largest buildings in this town	kind=building=* ; sort=LARGEST ; area=@town	rare	by footprint
+en	bakery that opens the last in the morning	kind=shop=bakery ; sort=OPENS_LATEST ; opens=09:00	useful	of those opening in the morning, the latest first
+en	buildings taller than the westerkerk	kind=building=* ; than=height>westerkerk	rare	
+en	mountains higher than the zugspitze	kind=natural=peak ; than=ele>zugspitze	rare	a mountain higher than another stands higher above the sea
+# section: data_questions
+en	how many restaurants in amsterdam	kind=amenity=restaurant ; ask=COUNT ; area=Amsterdam	useful	
+en	how many cafes within 1 km	kind=amenity=cafe ; ask=COUNT ; within=1000	useful	
+en	how tall is the westertoren	name=Westertoren ; ask=height	useful	
+en	when was the rijksmuseum built	name=Rijksmuseum ; ask=start_date	useful	
+en	who designed the rijksmuseum	name=Rijksmuseum ; ask=architect	rare	Pierre Cuypers
+en	phone number of the nearest pharmacy	kind=amenity=pharmacy|healthcare=pharmacy ; sort=DISTANCE ; ask=phone	useful	phone or contact:phone
+en	website of the van gogh museum	name=Van Gogh Museum ; ask=website	useful	website or contact:website
+en	is the rijksmuseum wheelchair accessible	name=Rijksmuseum ; ask=wheelchair	useful	answer yes, limited, no or unknown, with wheelchair:description
+en	does the hema on the kalverstraat have toilets	brand=HEMA ; area=Kalverstraat ; ask=toilets	useful	yes, no or unknown; what most HEMA branches say helps
+en	how many people live in utrecht	name=Utrecht ; ask=population	rare	the population tag on the place
+en	how far is the beach	kind=natural=beach ; sort=DISTANCE	useful	answer with the distance and travel time to the nearest one
+en	which bakeries are open on sunday and when	kind=shop=bakery ; open=Su ; ask=HOURS	useful	
+en	how many trees in the vondelpark	kind=natural=tree ; ask=COUNT ; area=Vondelpark	rare	only mapped trees: say the count is a lower bound
+en	how many bars per neighbourhood in amsterdam	kind=amenity=bar ; ask=COUNT ; area=Amsterdam ; per=neighbourhood	rare	one count per neighbourhood (the finest of place=neighbourhood, quarter, suburb mapped), not one total
+en	how many museums are free	kind=tourism=museum ; tag=fee=no ; ask=COUNT	rare	
+en	how old is the oude kerk	name=Oude Kerk ; ask=start_date	useful	answer as an age: now minus start_date
+en	opening hours of albert heijn tomorrow	brand=Albert Heijn ; ask=HOURS ; open=We	useful	Wednesday's hours at the nearest branches
+en	how many bike parking spots at the station	kind=amenity=bicycle_parking ; ask=capacity ; near=railway=station	rare	sum capacity over the station's bike parkings
+nl	hoe hoog is de domtoren	name=Domtoren ; ask=height	useful	
+nl	wanneer is het paleis op de dam gebouwd	name=Paleis op de Dam ; ask=start_date	rare	one name with "op de Dam" in it, not a palace on a street called Dam
+nl	hoeveel laadpalen zijn er in deze stad	kind=amenity=charging_station ; ask=COUNT ; area=@town	useful	count stations, and sockets (capacity) if asked
+nl	telefoonnummer van de huisarts	kind=amenity=doctors|healthcare=doctor ; ask=phone	useful	the user's own GP if saved, else the nearest
+nl	is het vondelpark open	name=Vondelpark ; ask=HOURS	rare	parks seldom have opening_hours: open unless it says otherwise
+de	wie viele bäckereien gibt es hier	kind=shop=bakery ; ask=COUNT	useful	hier is the default area around the user
+de	wie hoch ist der kölner dom	name=Kölner Dom ; ask=height	useful	
+de	wann wurde das brandenburger tor gebaut	name=Brandenburger Tor ; ask=start_date	rare	
+fr	combien de boulangeries à paris	kind=shop=bakery ; ask=COUNT ; area=Paris	useful	
+fr	quelle est la hauteur de la tour eiffel	name=Tour Eiffel ; ask=height	useful	
+fr	le musée d'orsay est-il ouvert	name=Musée d'Orsay ; ask=HOURS	useful	say whether it is open now and until when; it is closed on Mondays
+en	count how many buildings in this town	kind=building=* ; ask=COUNT ; area=@town	useful	
+nl	hoeveel cafes per buurt	kind=amenity=cafe ; ask=COUNT ; per=neighbourhood	rare	
+en	how many restaurants per town	kind=amenity=restaurant ; ask=COUNT ; per=town	rare	
+# section: age_history
+en	buildings from the 17th century	kind=building=* ; tag=start_date>=1600 ; tag=start_date<1700	useful	
+en	houses older than 300 years	kind=building=house|building=residential ; tag=start_date<1726	useful	300 years before 2026
+en	buildings built in the last 10 years	kind=building=* ; tag=start_date>=2016	useful	
+en	art deco buildings	kind=building=* ; tag=building:architecture=art_deco	rare	
+en	brutalist buildings	kind=building=* ; tag=building:architecture=brutalist	rare	brutalist, not brutalism
+en	medieval churches	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; tag=start_date<1500	rare	medieval is before about 1500; building:architecture=romanesque or gothic helps
+en	world war 2 bunkers	kind=military=bunker ; tag=start_date>=1939 ; tag=start_date<=1945	rare	the Atlantic Wall in the dunes; many bunkers lack a start_date
+en	former churches	kind=building=church ; tag=amenity!=place_of_worship	rare	church buildings now used as shops, clubs or homes
+en	buildings under construction	kind=building=construction|landuse=construction	useful	not newly built
+en	what was here before	unsupported=history of a place	rare	OSM holds only the present; OpenHistoricalMap or old maps could answer
+en	listed buildings	tag=heritage	useful	British term for any heritage level; in the Netherlands rijksmonumenten (heritage=2) and municipal monuments
+nl	huizen ouder dan 1700	kind=building=house|building=residential ; tag=start_date<1700	useful	"ouder dan" with a year means built before it
+nl	gebouwen uit de gouden eeuw	kind=building=* ; tag=start_date>=1600 ; tag=start_date<1700	useful	the Dutch Golden Age is roughly the 17th century
+nl	nieuwbouw	kind=building=* ; tag=start_date>=2021	useful	recent buildings; a nieuwbouwwijk is a new district
+de	fachwerkhäuser	kind=building=* ; tag=building:material=timber_framing	useful	
+de	gebäude aus dem 19. jahrhundert	kind=building=* ; tag=start_date>=1800 ; tag=start_date<1900	useful	
+de	jugendstil häuser	kind=building=* ; tag=building:architecture=art_nouveau	rare	Jugendstil is Art Nouveau
+fr	églises romanes	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; tag=building:architecture=romanesque	rare	
+fr	ruines romaines	kind=historic=ruins|historic=archaeological_site ; tag=historic:civilization=ancient_roman	rare	
+# section: appearance
+en	white houses	kind=building=house|building=residential ; colour=white	rare	
+en	buildings with a green roof	kind=building=* ; colour=green	rare	a green roof is usually a planted roof (roof:material=grass or plants); a roof coloured green (roof:colour) counts too
+en	glass buildings	kind=building=* ; tag=building:material=glass	rare	
+en	brick churches	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; tag=building:material=brick	rare	
+en	golden statue	kind=tourism=artwork ; tag=artwork_type=statue ; colour=yellow	rare	gold falls in the yellow family
+en	domed buildings	kind=building=* ; tag=roof:shape=dome	rare	
+nl	witte kerk	kind=amenity=place_of_worship|building=church ; tag=religion=christian ; colour=white	rare	also a name: churches called Witte Kerk
+nl	huizen met een rieten dak	kind=building=house|building=residential ; tag=roof:material=thatch	rare	
+de	rotes backsteinhaus	kind=building=house|building=residential ; colour=red ; tag=building:material=brick	rare	
+fr	maison bleue	kind=building=house|building=residential ; colour=blue	rare	
+# section: activities_intents
+en	where can i swim	intent=swim	common	pools, bathing places and swimming areas; outdoor ones only in warm weather
+en	somewhere to study	intent=study	useful	libraries, then quiet cafés with wifi and outlets (want=internet_access, want=power_supply)
+en	where can i work on my laptop	intent=work	useful	coworking spaces, libraries, cafés with wifi and outlets; some cafés ban laptops
+en	a good spot for a picnic	intent=picnic	useful	parks with grass, picnic sites and tables; dry weather only
+en	watch the sunset	intent=watch_sunset	useful	west-facing viewpoints, beaches and waterfronts; time it to today's sunset; clear skies only
+en	stargazing	intent=stargaze	rare	dark places away from town lights; clear nights only
+en	where can i go running	intent=run	useful	parks, tracks, quiet paths
+en	nice walk	intent=walk	useful	parks, woods, walking routes (route=hiking or foot)
+en	fishing spot	intent=fish	rare	leisure=fishing; a fishing licence (VISpas) is needed in the Netherlands
+en	what to do when it rains	intent=indoors	useful	museums, cinemas, indoor play, pools; for rainy weather
+en	cool down on a hot day	intent=cool_down	useful	swimming spots, shade, fountains, air conditioning; for hot weather
+en	where to watch the football	intent=watch_football	useful	sports bars and pubs with screens; match times are not in OSM
+en	where can i barbecue	intent=barbecue	useful	amenity=bbq and parks that allow it; dry weather
+en	sightseeing	intent=sightsee	common	attractions, museums, viewpoints, monuments
+en	walk the dog	intent=walk_dog	useful	dog parks, off-leash areas (dog=unleashed), parks where dogs are allowed
+en	kitesurfing	intent=kitesurf	rare	beaches and lakes for kitesurfing (sport=kitesurfing); depends on wind
+nl	waar kan ik zwemmen	intent=swim	common	
+nl	wat te doen bij regen	intent=indoors	useful	for rainy weather
+nl	ergens rustig werken	intent=work ; prefer=tag=live_music!=yes	useful	rustig: no music, not a bar; libraries first
+nl	schaatsen	intent=ice_skate	useful	natural ice only after a hard frost; ice rinks otherwise
+nl	zonnen	intent=sunbathe	rare	beaches, lawns in parks; sunny days only
+nl	borrelen	intent=go_out	useful	drinks with snacks: bars and brown cafés, often from 17:00
+de	wo kann ich baden	intent=swim	useful	baden: swimming outdoors in summer
+de	was tun bei regen	intent=indoors	useful	
+fr	où se baigner	intent=swim	useful	
+fr	que faire quand il pleut	intent=indoors	useful	
+fr	sortir ce soir	intent=go_out ; open=20:30	useful	bars, clubs, theatres, music venues open tonight
+# section: night
+en	late night food	kind=amenity=fast_food|amenity=restaurant ; open=late	common	
+en	clubs tonight	kind=amenity=nightclub ; open=late	useful	tonight for clubs means late (23:00 and after), not 20:30
+en	bars open past 2am	kind=amenity=bar|amenity=pub ; open=02:00	useful	02:00 tonight, which is tomorrow's date
+en	24/7 shop	kind=shop=convenience|shop=supermarket ; open=24/7	useful	
+en	night bus	kind=highway=bus_stop ; tag=route_ref=N81	useful	the stops on night routes; route relations (by_night) are not in the offline store, so the stops their N-numbered lines serve
+en	well lit route home	route=here->home ; prefer=tag=lit=yes	rare	walking; prefer lit and busy streets; crime data is not in OSM
+en	live music tonight	kind=amenity=bar|amenity=pub|amenity=music_venue ; tag=live_music=yes ; open=20:30	useful	live_music=yes says they host it; what plays tonight is not in OSM
+en	when does the last metro leave	kind=railway=station ; tag=station=subway ; unsupported=timetables	useful	departures are not in OSM, and a station's hours are not its last train
+nl	avondwinkel	kind=shop=convenience ; open=late	useful	a late-night grocery (avond is evening), open until about 01:00
+nl	kroeg die laat open is	kind=amenity=pub|amenity=bar ; open=late	common	
+nl	wat is er 's nachts om 3 uur open	open=03:00	useful	's nachts 3 uur is 03:00 at night, not 15:00
+de	späti	kind=shop=convenience|shop=kiosk ; open=late	useful	the Berlin late-night kiosk
+fr	pharmacie de nuit	kind=amenity=pharmacy|healthcare=pharmacy ; open=late	useful	
+# section: directions
+en	directions to the rijksmuseum	route=here->Rijksmuseum	common	
+en	how do i get to schiphol by train	route=here->Schiphol	useful	by train; Schiphol has its own station
+en	take me home	route=here->home	common	
+en	route to work by bike	route=here->work	useful	cycling
+en	walk to the nearest hospital	route=here->amenity=hospital	useful	walking, to the nearest one; for an emergency say to call 112
+en	from centraal to the vondelpark	route=Centraal->Vondelpark	useful	Centraal is Amsterdam Centraal
+en	drive to utrecht avoiding highways	route=here->Utrecht ; prefer=tag=highway!=motorway	rare	by car, avoiding motorways: the router's own preference
+nl	hoe kom ik bij het anne frank huis	route=here->Anne Frank Huis	common	
+nl	fietsroute naar zandvoort	route=here->Zandvoort	useful	by bike
+de	wie komme ich zum bahnhof	route=here->railway=station	common	the nearest station
+fr	itinéraire vers la tour eiffel	route=here->Tour Eiffel	useful	
+fr	comment aller à la gare	route=here->railway=station	useful	
+en	los angeles no highways	route=here->Los Angeles ; prefer=tag=highway!=motorway	rare	a place and how the way keeps clear make a way
+nl	naar utrecht via amersfoort en hilversum	route=here->Utrecht ; via=amersfoort|hilversum	useful	
+en	from amsterdam to utrecht via hilversum	route=Amsterdam->Utrecht ; via=hilversum	useful	
+de	nach köln über bonn	route=here->Köln ; via=bonn	useful	
+en	manhattan street 26, 125, 487	route=here->manhattan street 487 ; via=manhattan street 26|manhattan street 125	rare	addresses one after the other are a way calling at each; a bare number is on the street before
+nl	prinsengracht 263, 500, 1012	route=here->prinsengracht 1012 ; via=prinsengracht 263|prinsengracht 500	rare	
+en	damrak 1, kalverstraat 92, leidseplein 12	route=here->leidseplein 12 ; via=damrak 1|kalverstraat 92	rare	
+# section: negations
+nl	musea die op maandag dicht zijn	kind=tourism=museum ; closed=Mo	useful	dicht after its day closes it
+nl	hotel buiten het centrum	kind=tourism=hotel ; notarea=@centre	rare	buiten before an area is outside it, not out of doors
+en	hotels outside amsterdam	kind=tourism=hotel ; notarea=Amsterdam	rare	
+en	hotel in amsterdam not in the centre	kind=tourism=hotel ; area=Amsterdam ; notarea=@centre	rare	the centre of the town named
+en	coffee not a chain	kind=amenity=cafe ; tag=brand!=*	useful	independent cafés: no brand tag
+en	bars that aren't touristy	kind=amenity=bar|amenity=pub ; prefer=notnear=tourism=attraction	rare	proxy: away from the main sights (300 m), and not a chain
+en	smoke free terrace	kind=amenity=cafe|amenity=bar|amenity=restaurant ; tag=outdoor_seating=yes ; tag=smoking=no	rare	smoking=outside means smoking is allowed on the terrace: those go
+en	toilets that aren't paid	kind=amenity=toilets ; tag=fee=no	useful	
+en	which museums are closed on monday	kind=tourism=museum ; closed=Mo	useful	by their hours (their brand's where they keep none); those that say none are not counted closed; many Dutch museums close on Mondays
+en	cafe without wifi	kind=amenity=cafe ; tag=internet_access=no	rare	few map it
+en	a beach that isn't crowded	kind=natural=beach ; prefer=notnear=amenity=parking	rare	proxy: far from car parks, stations and sights (400 m)
+en	hotel not in the city centre	kind=tourism=hotel ; notarea=@centre	rare	the centre is the town's quarter called so (Centrum in Amsterdam), else 1.2 km around its heart
+nl	restaurant zonder vlees	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only	useful	without meat is vegetarian
+nl	supermarkt maar geen albert heijn	kind=shop=supermarket ; tag=brand!=Albert Heijn	useful	supermarkets without a brand tag count
+nl	park zonder honden	kind=leisure=park ; tag=dog=no	rare	
+de	restaurant ohne fleisch	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only	useful	
+de	supermarkt außer lidl	kind=shop=supermarket ; tag=brand!=Lidl	useful	außer means except
+fr	restaurant sans viande	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only	useful	
+# section: power_syntax
+en	shop=bakery opening_hours=24/7	kind=shop=bakery ; tag=opening_hours=24/7	rare	the same as open=24/7
+en	cuisine=sushi outdoor_seating=yes	tag=cuisine=sushi ; tag=outdoor_seating=yes	rare	two tags side by side are and
+en	socket:type2_combo:output>=150	tag=socket:type2_combo:output>=150	rare	CCS at 150 kW or more; output is in kW
+en	socket:*:output>=150	tag=socket:*:output>=150	rare	any socket type
+en	height>100 in rotterdam	tag=height>100 ; area=Rotterdam	rare	power syntax mixed with words
+en	start_date<1600	tag=start_date<1600	rare	dates compare by year
+en	amenity=bench backrest=no	kind=amenity=bench ; tag=backrest=no	rare	
+en	shop=* !brand	kind=shop=* ; tag=brand!=*	rare	!key means the key is absent
+en	amenity=drinking_water or amenity=water_point	kind=amenity=drinking_water|amenity=water_point	rare	
+en	toilets:wheelchair	tag=toilets:wheelchair	rare	a bare key: the key is set, any value
+nl	amenity=cafe in utrecht	kind=amenity=cafe ; area=Utrecht	rare	
+de	shop=bakery sonntags	kind=shop=bakery ; open=Su	rare	
+# section: mixed_language
+en	bakker open on sunday	kind=shop=bakery ; open=Su	useful	a Dutch noun in an English query
+en	nearest pinautomaat	kind=amenity=atm ; sort=DISTANCE	useful	
+en	fietsenstalling near centraal	kind=amenity=bicycle_parking ; near=name=Centraal	useful	Centraal is Amsterdam Centraal
+en	boulangerie amsterdam	kind=shop=bakery ; area=Amsterdam	rare	also a name: many bakeries are called Boulangerie something
+nl	supermarkt open late	kind=shop=supermarket ; open=late	useful	English time words in Dutch
+nl	coffee to go bij het station	kind=amenity=cafe ; tag=takeaway=yes|only ; near=railway=station	useful	
+nl	vegan food in de pijp	kind=amenity=restaurant|amenity=fast_food|amenity=cafe ; tag=diet:vegan=yes|only ; area=De Pijp	useful	
+nl	rooftop bar met uitzicht	kind=amenity=bar ; tag=outdoor_seating=roof ; prefer=tag=outdoor_seating=roof	rare	uitzicht is a view: high floors, water
+de	döner open late	kind=amenity=fast_food ; tag=cuisine=kebab ; open=late	useful	
+fr	supermarché open now	kind=shop=supermarket ; open=now	rare	
+# section: typos_abbreviations
+en	resturant	kind=amenity=restaurant	common	
+en	pharmcy open now	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	common	
+en	mcd	brand=McDonald's	useful	
+en	ev charging 50kw+	kind=amenity=charging_station ; tag=socket:*:output>=50	useful	50kw+ means at least 50 kW
+en	wc	kind=amenity=toilets	common	WC works in all four languages
+en	bkery opn sun	kind=shop=bakery ; open=Su	rare	vowels dropped
+en	bars open 2nite	kind=amenity=bar ; open=20:30	rare	2nite is tonight
+en	coffee near cs	kind=amenity=cafe ; near=name=Centraal Station	useful	CS is Amsterdam Centraal (Centraal Station)
+en	hotels in a'dam	kind=tourism=hotel ; area=Amsterdam	useful	A'dam, Adam, Mokum and 020 all mean Amsterdam
+en	cafe 5min walk	kind=amenity=cafe ; within=400	useful	
+en	pharmacy open till 10pm	kind=amenity=pharmacy|healthcare=pharmacy ; open=22:00	useful	till means until
+en	cashpoint	kind=amenity=atm	useful	British for an ATM
+en	petrol station	kind=amenity=fuel	common	British petrol is American gas
+nl	apoteek	kind=amenity=pharmacy|healthcare=pharmacy	common	apotheek misspelled
+nl	dichtsbijzijnde pinautomaat	kind=amenity=atm ; sort=DISTANCE	common	dichtstbijzijnde misspelled
+nl	fietsnstalling	kind=amenity=bicycle_parking	useful	
+nl	kroegen in mokum	kind=amenity=pub|amenity=bar ; area=Amsterdam	rare	Mokum is Amsterdam
+de	backerei	kind=shop=bakery	useful	umlaut dropped (also baeckerei)
+de	hotel am hbf	kind=tourism=hotel ; near=name=Hauptbahnhof	useful	Hbf is Hauptbahnhof
+fr	pharmacie ouverte maintenent	kind=amenity=pharmacy|healthcare=pharmacy ; open=now	useful	maintenant misspelled
+fr	creperie	kind=amenity=restaurant ; tag=cuisine=crepe	useful	accent dropped
+fr	dab près d'ici	kind=amenity=atm	useful	DAB is distributeur automatique de billets; près d'ici is the default area
+# section: complex
+en	vegan restaurant with outdoor seating open tonight near the vondelpark	kind=amenity=restaurant ; tag=diet:vegan=yes|only ; tag=outdoor_seating=yes ; open=20:30 ; near=name=Vondelpark	useful	
+en	quiet cafe with wifi and outlets open until 10pm within 15 minutes by bike	kind=amenity=cafe ; prefer=tag=live_music!=yes ; want=internet_access ; want=power_supply ; open=22:00 ; within=3750	useful	quiet is a soft wish
+en	cheapest supermarket open after 9pm within walking distance	kind=shop=supermarket ; sort=CHEAPEST ; open=21:00 ; within=1200	useful	cheap by the brand's price level (Lidl, Aldi, Dirk), since prices are not mapped
+en	pizza place that delivers and is open past midnight	kind=amenity=restaurant|amenity=fast_food ; tag=cuisine=pizza ; tag=delivery=yes ; open=00:00	useful	
+en	a bench in the shade near water within 5 minutes walk	kind=amenity=bench ; want=shade ; near=natural=water ; within=400	useful	
+en	charging station with a cafe nearby where i can wait 30 minutes	kind=amenity=charging_station ; near=amenity=cafe	useful	the café should stay open for the next 30 minutes; a fast charger suits a short wait
+en	kid friendly restaurant with a play area and a high chair open for lunch on saturday	kind=amenity=restaurant ; want=kids_area ; want=highchair ; open=Sa 12:00	useful	
+en	starbucks or costa in the airport	brand=Starbucks ; brand=Costa Coffee ; inside=aeroway=aerodrome	useful	either brand; the airport the user is at, or the nearest
+en	old windmills you can visit on sunday within 20 km	kind=man_made=windmill ; open=Su ; within=20000	useful	you can visit: it has opening_hours or is a museum (tourism=museum); old is a soft wish
+en	canal houses from the golden age	kind=building=house|building=residential ; near=waterway=canal ; tag=start_date>=1600 ; tag=start_date<1700	rare	canal houses face a canal (grachtenpanden); the Golden Age is roughly the 17th century
+en	get coffee then take the train	kind=amenity=cafe ; route=here->railway=station	useful	two steps: a café open now on the way to the nearest station, then the station; the model has no multi-stop plans
+en	a playground near a cafe with a terrace	kind=leisure=playground ; near=amenity=cafe ; tag=outdoor_seating=yes	useful	the terrace belongs to the café, not the playground: a condition on the other place
+nl	goedkope italiaan met terras open op zondag in de pijp	kind=amenity=restaurant ; tag=cuisine=italian ; sort=CHEAPEST ; tag=outdoor_seating=yes ; open=Su ; area=De Pijp	useful	een italiaan is an Italian restaurant
+nl	supermarkt die nu open is met een pinautomaat	kind=shop=supermarket ; open=now ; contains=amenity=atm	useful	an ATM in or at the shop
+de	vegetarisches restaurant mit terrasse heute abend in der nähe vom dom	kind=amenity=restaurant ; tag=diet:vegetarian=yes|only ; tag=outdoor_seating=yes ; open=20:30 ; near=name=Dom	useful	der Dom is the town's cathedral (the Kölner Dom in Cologne)
+fr	boulangerie ouverte dimanche matin à moins de 10 minutes à pied	kind=shop=bakery ; open=Su 09:00 ; within=800	useful	
+en	eat cheap, then mall with free parking	kind=amenity=restaurant|amenity=fast_food ; sort=CHEAPEST	useful	two stops; the second a mall with a free car park (parking prices are Parkopedia's, not OSM's)
+en	authentic restaurant	kind=amenity=restaurant ; prefer=notnear=tourism=attraction	rare	away from the sights, and not a chain
+en	hidden gem cafe	kind=amenity=cafe ; prefer=notnear=amenity=parking	rare	away from what brings crowds in
+# section: hard_ambiguity
+nl	coffeeshop	kind=amenity=cafe|amenity=coffeeshop|shop=cannabis ; tag=cannabis:recreational=yes|only	useful	a Dutch coffeeshop sells cannabis; the wiki says shop=cannabis is wrong for cafés, but older data uses it and amenity=coffeeshop
+en	coffee shop	kind=amenity=cafe	common	in English a café; a Dutch coffeeshop (one word) sells cannabis
+en	cafe open at half eight	kind=amenity=cafe ; open=08:30	useful	British half eight is 8:30; Dutch half acht and German halb acht are 7:30
+de	bäckerei morgen	kind=shop=bakery ; open=We	useful	morgen alone is tomorrow; am Morgen is in the morning
+nl	meer met een strand	kind=water=lake ; contains=natural=beach	useful	meer is a lake here, not "more" (meer dan 10)
+nl	bank in het park	kind=amenity=bench ; inside=leisure=park	useful	bank is a bench in a park; in "bank in het centrum" it is a bank (amenity=bank)
+fr	librairie	kind=shop=books	useful	a bookshop, not a library (bibliothèque)
+fr	glacier	kind=amenity=ice_cream	useful	an ice-cream maker; natural=glacier only in the mountains
+nl	amsterdamse school	kind=building=* ; tag=building:architecture=amsterdam_school	rare	an architectural style, not a school in Amsterdam
+en	new york pizza	brand=New York Pizza	useful	a Dutch pizza chain, not pizza in New York
+en	blue bridge	kind=bridge=*|man_made=bridge ; colour=blue	rare	in Amsterdam the Blauwbrug (Blue Bridge) is meant, and it is not blue: show it first
+en	cafe de jaren	name=Cafe de Jaren	useful	a name that starts with a kind word: that café, not cafés named Jaren
+en	chemist open sunday	kind=amenity=pharmacy|healthcare=pharmacy|shop=chemist ; open=Su	useful	a British chemist is a pharmacy (Boots); OSM shop=chemist is a drugstore with no pharmacist
+nl	cafés in 1017	kind=amenity=cafe|amenity=pub|amenity=bar ; area=1017	rare	1017 is a postcode area in central Amsterdam, not a number of cafés
+nl	ijs	kind=amenity=ice_cream	common	ice cream; after a frost, natural ice to skate on (intent=ice_skate)
+nl	waar kan ik pinnen	kind=amenity=atm	common	pinnen is taking cash from a pinautomaat; with a shop it means paying by card (payment:debit_cards)
+en	restaurants near dam	kind=amenity=restaurant ; near=name=Dam	useful	Dam is the square in Amsterdam, not a waterway=dam
+nl	cafés in de jordaan	kind=amenity=cafe|amenity=pub|amenity=bar ; area=Jordaan	useful	a Dutch café is a pub as often as a coffee place

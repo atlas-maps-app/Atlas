@@ -10,8 +10,8 @@ internal data class Word(val text: String, val raw: String, val start: Int, val 
 
 /**
  * Splits natural-language queries into folded words: lower case, accents and apostrophes gone ("d'une" is "d une"),
- * hyphens as spaces ("step-free" is "step free"); commas, "&", "+" and ";" are words of their own; times ("22:00",
- * "22h30"), decimals ("2,5") and "24/7" stay whole.
+ * hyphens as spaces ("step-free" is "step free"); commas, "&", "+", ";" and currency signs are words of their own;
+ * times ("22:00", "22h30"), decimals ("2,5") and "24/7" stay whole.
  */
 internal object Words {
     fun split(text: String): List<Word> {
@@ -22,7 +22,8 @@ internal object Words {
             val c = text[i]
             when {
                 c.isWhitespace() -> i++
-                c == ',' || c == '&' || c == '+' || c == ';' -> {
+                // currency signs ("€100", "100 €") and the star of "4* hotel" are words of their own
+                c == ',' || c == '&' || c == '+' || c == ';' || c in CURRENCY || (c == '*' && i > 0 && text[i - 1].isDigit()) -> {
                     out += Word(c.toString(), c.toString(), i, i + 1)
                     i++
                 }
@@ -68,4 +69,6 @@ internal object Words {
     }
 
     private val MARKS = Regex("\\p{Mn}+")
+
+    private const val CURRENCY = "€$£"
 }

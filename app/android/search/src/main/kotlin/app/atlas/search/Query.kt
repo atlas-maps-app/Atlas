@@ -4,6 +4,8 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
+import app.atlas.places.ChangeKind
+import app.atlas.places.CompareOp
 import app.atlas.places.TagFilter
 import java.time.DayOfWeek
 import java.time.Instant
@@ -11,8 +13,21 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 
-/** How results are ordered. */
-enum class SortBy { RELEVANCE, DISTANCE, RATING, OPEN_LONGEST }
+/**
+ * How results are ordered: by relevance, distance, rating, open the longest tonight; by the year they were built
+ * (oldest, newest), how tall or how high they stand, what they cost, how big or small they are, how long (a bridge),
+ * a charger's power, a hotel's stars, how many hours they open today, and how early or late they open.
+ */
+enum class SortBy {
+    RELEVANCE, DISTANCE, RATING, OPEN_LONGEST, OLDEST, NEWEST, TALLEST, HIGHEST, CHEAPEST, LARGEST, SMALLEST, LONGEST, POWER, STARS,
+    MOST_HOURS, OPENS_EARLIEST, OPENS_LATEST, CLOSES_LATEST, OPENS_NEXT,
+}
+
+/**
+ * What a query asks for: the places, how many there are, how their opening hours compare, or one fact of a place
+ * ("how tall is the Westertoren": [ParsedQuery.asked] says which).
+ */
+enum class Ask { LIST, COUNT, HOURS, FACT }
 
 /** When a place should be open: now, at a time, tonight, late, on a day. Resolved against the search's clock. */
 sealed interface OpenTime {
@@ -64,10 +79,20 @@ sealed interface Query {
     /** Within [radius] metres of [center]; a null centre means the searcher's own location. */
     data class Within(val center: LatLon?, val radius: Double) : Query
 
-    /** Inside [bbox]; [name] says what the box is ("Amsterdam"), and stands alone until it is resolved. */
+    /**
+     * Inside [bbox]; [name] says what the box is ("Amsterdam"), and stands alone until it is resolved. [TOWN] names
+     * the town the searcher is in ("how many bins in this town"), [NEIGHBOURHOOD] the quarter ("cafés in this
+     * neighbourhood"), [CENTRE] the town's centre ("a hotel not in the city centre").
+     */
     data class InArea(val bbox: BBox?, val name: String? = null) : Query {
         init {
             require(bbox != null || name != null) { "An area needs a box or a name" }
+        }
+
+        companion object {
+            const val TOWN = "@town"
+            const val NEIGHBOURHOOD = "@neighbourhood"
+            const val CENTRE = "@centre"
         }
     }
 
@@ -103,6 +128,41 @@ sealed interface Query {
 
     /** A wish rather than a rule ("quiet", "cheap"): places that pass [part] rank higher, the others stay. */
     data class Prefer(val part: Query, val weight: Double = 0.25) : Query
+
+    /** [subject] lying in or at a place that [container] finds: a café in a mall, a cash machine in a station. */
+    data class Inside(val subject: Query, val container: Query) : Query
+
+    /** [subject] with a place that [part] finds lying in or at it: woods with a lake, a park with a playground. */
+    data class Contains(val subject: Query, val part: Query) : Query
+
+    /**
+     * A rule where saying nothing is not saying no ("a Starbucks with toilets"): places that pass [part] come first;
+     * those whose tags do not say come after them, likely when most of their brand's branches pass or a place that
+     * [nearby] finds lies within [metres] (public toilets next door), else unsure; those that say otherwise go. A
+     * place in a building takes what the building says of its age, height, floors and colour.
+     */
+    data class Want(val part: Query, val nearby: Query? = null, val metres: Double = 0.0) : Query
+
+    /** Rated [op] [value] (0..5) by the ratings providers give ("rated above 4"). */
+    data class Rated(val op: CompareOp, val value: Double) : Query
+
+    /**
+     * Places that open or close ([kind]) within [withinMinutes] of [at], on [day] (today when null): "what shops
+     * close around 19:30".
+     */
+    data class ChangesAt(val kind: ChangeKind, val at: LocalTime, val withinMinutes: Int = 30, val day: DayOfWeek? = null) : Query
+
+    /** Places whose own colour, their building's or their roof's, is of [family] ("red", "white"): a red church. */
+    data class Coloured(val family: String) : Query
+
+    /** Closed all of [day] by their opening hours (their brand's where they keep none); those that say none are not. */
+    data class ClosedOn(val day: DayOfWeek) : Query
+
+    /**
+     * Places whose [key] ("height", "ele", "start_date") stands [op] that of the place [other] finds: "taller than
+     * the Westertoren", "older than the Westerkerk".
+     */
+    data class Than(val key: String, val op: CompareOp, val other: Query) : Query
 
     /** Everything. */
     data object All : Query
@@ -141,6 +201,10 @@ fun Query.walk(visit: (Query) -> Unit) {
         is Query.Or -> parts.forEach { it.walk(visit) }
         is Query.Not -> part.walk(visit)
         is Query.Prefer -> part.walk(visit)
+        is Query.Inside -> { subject.walk(visit); container.walk(visit) }
+        is Query.Contains -> { subject.walk(visit); part.walk(visit) }
+        is Query.Want -> { part.walk(visit); nearby?.walk(visit) }
+        is Query.Than -> other.walk(visit)
         else -> {}
     }
 }

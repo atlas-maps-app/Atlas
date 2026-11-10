@@ -98,7 +98,8 @@ class OfflineEvaluatorTest {
         val at = Fixtures.saturday.toLocalDateTime()
         for (h in hits) {
             assertTrue(h.tags["diet:vegan"] in setOf("yes", "only"))
-            assertEquals(true, OpeningHours.parse(h.tags.getValue("opening_hours")).isOpen(at))
+            // by its own hours, else by its kind's around it, never confirmed
+            h.tags["opening_hours"]?.let { assertEquals(true, OpeningHours.parse(it).isOpen(at)) } ?: assertTrue(h.hoursInferred)
             assertTrue(h.open!!.isOpen)
         }
         // at four in the morning far fewer are open
@@ -114,7 +115,8 @@ class OfflineEvaluatorTest {
         val q = QueryParser.parse("step-free toilet, open now").query
         val hits = run(q).hits
         assertTrue(hits.any { it.place.id == OsmId(OsmType.NODE, 5831919166) }) // Westerkerk WC, no hours mapped
-        assertTrue(hits.all { it.tags["wheelchair"] in setOf("yes", "designated") || it.tags["toilets:wheelchair"] == "yes" })
+        // step-free is wanted: toilets that say so, then those that do not say, never those that say otherwise
+        assertTrue(hits.all { it.tags["wheelchair"] in setOf("yes", "designated") || it.tags["toilets:wheelchair"] == "yes" || it.tags["wheelchair"] == null })
     }
 
     @Test
@@ -275,5 +277,24 @@ class OfflineEvaluatorTest {
         }.map { it.place.key }.toSet()
         assertTrue(expected.size >= 5)
         assertEquals(expected, run(q).hits.map { it.place.key }.toSet())
+    }
+
+    @Test
+    fun aBranchWithoutHoursKeepsItsBrandsUnconfirmed() {
+        fun branch(id: Long, lon: Double, hours: String?) = app.atlas.model.Place(
+            OsmId(OsmType.NODE, id), LatLon(52.37, lon),
+            mapOf("amenity" to "cafe", "name" to "Starbucks", "brand" to "Starbucks", "brand:wikidata" to "Q37158") +
+                (hours?.let { mapOf("opening_hours" to it) } ?: emptyMap()),
+        )
+        val mem = MemoryPlaces(listOf(branch(1, 4.88, "Mo-Su 07:00-21:00"), branch(2, 4.885, "Mo-Su 07:00-21:00"), branch(3, 4.89, "Mo-Su 08:00-20:00"), branch(4, 4.895, null)))
+        val at = EvalContext(location = LatLon(52.37, 4.88), now = Fixtures.saturday)
+        val q = Query.and(Query.Brand("starbucks-795f60"), Query.OpenAt(OpenTime.Now))
+        val hits = OfflineEvaluator(mem).run(q, at).hits
+        assertEquals(4, hits.size)
+        val bare = hits.single { it.place.id == OsmId(OsmType.NODE, 4) }
+        assertTrue(bare.hoursInferred && bare.open!!.isOpen)
+        assertTrue(hits.filter { it !== bare }.none { it.hoursInferred })
+        // at ten at night it is closed, as they are
+        assertTrue(OfflineEvaluator(mem).run(q, at.copy(now = Fixtures.saturday.withHour(22))).hits.isEmpty())
     }
 }

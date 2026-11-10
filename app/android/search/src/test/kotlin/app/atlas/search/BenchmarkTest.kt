@@ -36,6 +36,19 @@ class BenchmarkTest {
     }
 
     @Test
+    fun filingAnewTakesLessThanTheImport() {
+        // the canal ring filed under the rules of 5 November, opened under today's: what a phone does once after an update
+        val f = File(Fixtures.dir, "refile.db")
+        val stats = PlaceStore.open(f, StoreFilingTest.FIFTH_OF_NOVEMBER).use { it.importOverpass(Fixtures.ams) }
+        val t0 = System.nanoTime()
+        val refiled = PlaceStore.open(f).use { it.refiled }
+        val ms = (System.nanoTime() - t0) / 1e6
+        println("filing ams/raw.json anew: ${"%.0f".format(ms)} ms, $refiled of ${stats.places} places filed otherwise; the import took ${stats.millis} ms")
+        assertTrue("$refiled places filed anew", refiled > 0)
+        assertTrue("filing anew took $ms ms, the import ${stats.millis} ms", ms < stats.millis)
+    }
+
+    @Test
     fun typicalQueriesUnderBudget() {
         val evaluator = OfflineEvaluator(Fixtures.store)
         val ctx = Fixtures.context()

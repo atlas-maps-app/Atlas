@@ -42,6 +42,7 @@ internal class KindWords(kinds: List<Kind>, langs: List<String>) {
                 Kind.PRESET -> Presets.byId(k.name)?.let { p ->
                     for (l in langs) {
                         texts += p.name(l)
+                        texts += p.fullName(l)
                         texts += p.terms(l).take(MAX_TERMS_PER_LANG)
                     }
                 }

@@ -95,8 +95,9 @@ class QueryParserTest {
         assertEquals(OpenTime.OnDay(DayOfWeek.SUNDAY), find<Query.OpenAt>(parse("bakery open tomorrow").query).single().time)
         val pizza = parse("pizza")
         assertTrue(filters(pizza.query).contains("cuisine=pizza"))
+        // without: a wish that it says no, so those that do not say stay, unsure
         val notTerrace = parse("café without terrace")
-        assertEquals(1, find<Query.Not>(notTerrace.query).size)
+        assertEquals(TagFilter.parse("outdoor_seating=no"), (find<Query.Want>(notTerrace.query).single().part as Query.Tags).filter)
         val sorted = parse("3 bakeries nearest")
         assertTrue(sorted.query is Query.Limit)
         assertEquals(SortBy.DISTANCE, ((sorted.query as Query.Limit).query as Query.Sort).by)
@@ -142,7 +143,8 @@ class QueryParserTest {
         val p = parse("A quiet café with an outlet, charge the car nearby, then the 20:00 film with cheap parking and a late ramen.")
         assertEquals(4, p.steps.size)
         assertTrue(filters(p.steps[0]).contains("amenity=cafe"))
-        assertTrue(filters(p.steps[0]).contains("power_supply=yes"))
+        // the outlet is a want: few cafés map their sockets
+        assertTrue(find<Query.Want>(p.steps[0]).any { w -> filters(w.part).any { it.startsWith("power_supply") } })
         assertTrue(filters(p.steps[1]).contains("amenity=charging_station"))
         assertEquals(OpenTime.Today(LocalTime.of(20, 0)), find<Query.OpenAt>(p.steps[2]).single().time)
         assertTrue(p.steps[2] is Query.Near)
@@ -218,7 +220,9 @@ class QueryParserTest {
         // two kinds side by side could be a name ("Café Molen"): read, but not surely a query
         val half = parse("café molen")
         assertFalse(half.structured)
-        val unknownWord = parse("café zwqx")
+        // a word after a kind may be where it is ("boulangerie amsterdam"); read again without, when no such place is known
+        assertEquals("zwqx", parse("café zwqx").guessedArea)
+        val unknownWord = QueryParser.parse("café zwqx", "en", guessAreas = false)
         assertEquals(listOf("zwqx"), unknownWord.unknown)
         assertTrue(unknownWord.confidence < 0.6)
     }
@@ -265,7 +269,8 @@ class QueryParserTest {
     fun roundTheClockIsNotMidnight() {
         for ((text, lang) in listOf("pharmacy 24h" to "en", "apotheek 24 uur" to "nl", "pharmacie 24h/24" to "fr", "pharmacie 24 heures" to "fr", "pharmacy 24/7" to "en")) {
             val p = parse(text, lang)
-            assertTrue(text, filters(p.query).contains("opening_hours=24/7"))
+            // round the clock: "24/7", or every day from midnight to midnight
+            assertTrue(text, filters(p.query).any { it.startsWith("opening_hours~") && "24/7" in it })
             assertTrue(text, find<Query.OpenAt>(p.query).isEmpty())
             assertTrue(text, p.unknown.isEmpty())
         }
@@ -281,5 +286,67 @@ class QueryParserTest {
         val open = find<Query.OpenAt>(p.query).single().time
         // a run straddling midnight may see the next day
         assertTrue("$open", open == OpenTime.OnDay(tomorrow) || open == OpenTime.OnDay(tomorrow.plus(1)))
+    }
+
+    @Test
+    fun somethingToDoThereIsAnIntent() {
+        // a lake to swim: the lakes, wanting bathing allowed (likely with a bathing place on the shore)
+        val lake = QueryParser.parse("lake to swim")
+        assertEquals("swim", lake.intent)
+        val want = (lake.query as Query.And).parts.filterIsInstance<Query.Want>().single()
+        assertEquals(TagFilter.parse("swimming=yes or bathing=yes"), (want.part as Query.Tags).filter)
+        assertEquals(ChipKind.AIM, lake.chips.last().kind)
+        // the same in Dutch, German (one word) and French
+        for ((text, lang) in listOf("meer om te zwemmen" to "nl", "Badesee" to "de", "lac pour se baigner" to "fr")) {
+            val p = QueryParser.parse(text, lang)
+            assertEquals(text, "swim", p.intent)
+            assertEquals(text, lake.query, p.query)
+        }
+        // on its own, the places that serve it
+        val alone = QueryParser.parse("where can I swim")
+        assertEquals("swim", alone.intent)
+        assertEquals(Intents.byId("swim")!!.filter, (alone.query as Query.Tags).filter)
+        assertTrue(alone.structured)
+        // a park to play: a playground in it, likely
+        assertEquals("play", QueryParser.parse("park to play").intent)
+    }
+
+    @Test
+    fun aWayFromOnePlaceToAnother() {
+        fun route(text: String, lang: String = "en") = QueryParser.parse(text, lang).route
+        assertEquals(RouteAsk("Westerkerk", "Anne Frank Huis", null, "from"), route("from Westerkerk to Anne Frank Huis"))
+        // "van" may begin the start's name: kept apart for the start to be looked up with it too
+        assertEquals(RouteAsk("gogh museum", "centraal station", null, "van"), route("van gogh museum naar centraal station", "nl"))
+        assertEquals(RouteAsk(null, "Bahnhof", null, null), route("wie komme ich zum Bahnhof", "de"))
+        assertEquals(RouteAsk("la gare", "la tour eiffel", null, "de"), route("de la gare a la tour eiffel", "fr"))
+        assertEquals(RouteAsk(null, "the nearest pharmacy", null, null), route("route to the nearest pharmacy"))
+        assertEquals(RouteAsk(null, "Westerkerk", "BIKE", null), route("directions to Westerkerk by bike"))
+        assertEquals(RouteAsk(null, "Albert Heijn", "WALK", null), route("walk to Albert Heijn"))
+        assertEquals(RouteAsk("Amsterdam", "Utrecht", null, null), route("Amsterdam to Utrecht"))
+        // not ways: a kind or something to do on either side, a time
+        for (t in listOf("lake to swim", "park to walk the dog", "bike to rent", "open from 9 to 5", "cafe to work")) assertEquals(t, null, route(t))
+    }
+
+    @Test
+    fun aKindWithFiltersIsThatKindsView() {
+        val now = java.time.ZonedDateTime.of(2026, 11, 3, 15, 0, 0, 0, java.time.ZoneId.of("Europe/Amsterdam"))
+        fun view(text: String) = KindViews.of(QueryParser.parse(text, "en", now), now)
+        val vegan = view("vegan restaurant open now")!!
+        assertEquals("preset:amenity/restaurant", vegan.node.id)
+        assertEquals(setOf("diet:vegan=~yes", "diet:vegan=~only", "@open=now"), vegan.selection.ids().toSet())
+        // a time asked about, a circle, an order
+        val late = view("restaurant open after 22:00 with vegan options within 10 min walk")!!
+        assertEquals(java.time.LocalDateTime.of(2026, 11, 3, 22, 0), late.at)
+        assertEquals(800.0, late.radius!!, 0.0)
+        assertEquals(Order.NEAREST, view("nearest pharmacy")!!.order)
+        // a cuisine is the restaurants' cuisine; one key's values are their kind's narrowest node with them chosen
+        assertEquals(setOf("cuisine=pizza"), view("pizza")!!.selection.ids().toSet())
+        val bars = view("bar open tonight")!!
+        assertEquals("cat:drinks", bars.node.id)
+        assertTrue("amenity=pub" in bars.selection.ids() && "@open=tonight" in bars.selection.ids())
+        // without: those that say no and those that say nothing
+        assertEquals(setOf("wheelchair=~no", "wheelchair=!"), view("toilets not wheelchair accessible")!!.selection.ids().toSet())
+        // more than a view holds stays a query
+        for (t in listOf("restaurant near a park", "charger 150 kW", "how many benches", "cinema after dinner")) assertEquals(t, null, view(t))
     }
 }
