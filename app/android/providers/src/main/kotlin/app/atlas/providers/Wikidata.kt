@@ -31,7 +31,8 @@ data class WikidataRef(val id: String, val labels: Map<String, String> = emptyMa
 
 /**
  * The facts Atlas shows from a Wikidata item: names and descriptions by language, the logo and small logo (Commons file
- * names), the brand colour, an image, the inception date, and for buildings the architect, namesake and style.
+ * names), the brand colour, an image, the inception date, for buildings the architect, namesake and style, and for a
+ * brand the company it belongs to and where its head office is.
  */
 data class WikidataEntity(
     val id: String,
@@ -57,6 +58,10 @@ data class WikidataEntity(
     val website: String?,
     /** Wikipedia article titles by site ("enwiki" → "Westerkerk"). */
     val sitelinks: Map<String, String>,
+    /** P749, the parent organisation, else P127, the owner: for a brand, the company it belongs to. */
+    val parents: List<WikidataRef> = emptyList(),
+    /** P159, where the head office is. */
+    val headquarters: List<WikidataRef> = emptyList(),
 ) {
     fun label(langs: List<String>): String? = langs.firstNotNullOfOrNull { labels[it] } ?: labels["en"] ?: labels.values.firstOrNull()
     fun description(langs: List<String>): String? = langs.firstNotNullOfOrNull { descriptions[it] } ?: descriptions["en"]
@@ -66,8 +71,9 @@ data class WikidataEntity(
 }
 
 /**
- * Wikidata through its batched `wbgetentities` API (50 items a call): the facts behind brand logos, "named after" and
- * "a building's story". Linked items (architect, namesake, style) are resolved in a second batched call. Data CC0.
+ * Wikidata through its batched `wbgetentities` API (50 items a call): the facts behind brand logos, "named after",
+ * "a building's story" and a brand's page. Linked items (architect, namesake, style, owner, head office) are resolved
+ * in a second batched call. Data CC0.
  */
 class Wikidata(private val http: Http, private val base: String = "https://www.wikidata.org/w/api.php") : Provider {
     override val info = INFO
@@ -82,7 +88,7 @@ class Wikidata(private val http: Http, private val base: String = "https://www.w
 
     /**
      * Items by id, fetched 50 at a time; ids that do not exist are left out. With [resolveLinks], the architects,
-     * namesakes and styles come with their labels in [langs].
+     * namesakes, styles, owners and head offices come with their labels in [langs].
      */
     suspend fun entities(qids: Collection<String>, langs: List<String> = listOf("en"), resolveLinks: Boolean = true): Map<String, WikidataEntity> {
         val ids = qids.map { it.trim().uppercase() }.filter { QID.matches(it) }.distinct()
@@ -93,11 +99,16 @@ class Wikidata(private val http: Http, private val base: String = "https://www.w
         val raw = fetch(missing, langs, "labels|descriptions|claims|sitelinks")
         var parsed = raw.mapValues { (_, o) -> parseEntity(o) }
         if (resolveLinks) {
-            val links = parsed.values.flatMap { e -> (e.architects + e.namedAfter + e.styles).map { it.id } }.distinct()
+            val links = parsed.values.flatMap { e -> (e.architects + e.namedAfter + e.styles + e.parents + e.headquarters).map { it.id } }.distinct()
             if (links.isNotEmpty()) {
                 val named = fetch(links, langs, "labels|descriptions").mapValues { (id, o) -> refOf(id, o) }
                 fun fill(list: List<WikidataRef>) = list.map { named[it.id] ?: it }
-                parsed = parsed.mapValues { (_, e) -> e.copy(architects = fill(e.architects), namedAfter = fill(e.namedAfter), styles = fill(e.styles)) }
+                parsed = parsed.mapValues { (_, e) ->
+                    e.copy(
+                        architects = fill(e.architects), namedAfter = fill(e.namedAfter), styles = fill(e.styles),
+                        parents = fill(e.parents), headquarters = fill(e.headquarters),
+                    )
+                }
             }
         }
         for ((id, e) in parsed) {
@@ -194,6 +205,8 @@ class Wikidata(private val http: Http, private val base: String = "https://www.w
                 styles = refs(claims, "P149"),
                 website = stringValue(claims, "P856"),
                 sitelinks = o.obj("sitelinks")?.mapNotNull { (site, v) -> v.asObject()?.str("title")?.let { site to it } }?.toMap() ?: emptyMap(),
+                parents = refs(claims, "P749").ifEmpty { refs(claims, "P127") },
+                headquarters = refs(claims, "P159"),
             )
         }
     }
