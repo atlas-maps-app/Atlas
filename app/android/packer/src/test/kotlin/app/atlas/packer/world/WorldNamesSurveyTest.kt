@@ -49,8 +49,10 @@ class WorldNamesSurveyTest {
         val levels = java.util.TreeMap<Int, Level>()
         val firsts = java.util.TreeMap<Int, MutableList<Pair<Long, String>>>()
         val waterTiles = HashMap<Pair<Int, String>, Int>()
+        // where each water's name stands: its tiles, kind, id and point
+        val waterWhere = HashMap<Pair<Int, String>, MutableList<String>>()
         var riverTwice = 0
-        for ((_, read) in packs) {
+        for ((packName, read) in packs) {
             val reader = Format3Reader(read())
             for (c in reader.chunks) {
                 val t = reader.decode(c)
@@ -72,6 +74,7 @@ class WorldNamesSurveyTest {
                         // a water by its id where it has one, else its name and point
                         val id = (f["id"] as Number?)?.toLong()?.toString() ?: "$text@${at.lat},${at.lon}"
                         waterTiles.merge(t.level to id, 1, Int::plus)
+                        waterWhere.getOrPut(t.level to id) { ArrayList() } += "$packName ${t.level}/${t.x}/${t.y}: $text ($kind, id ${f["id"]}, ${at.lat},${at.lon}, $count m²)"
                     } else if (!rivers.add(text)) {
                         riverTwice++
                     }
@@ -88,6 +91,7 @@ class WorldNamesSurveyTest {
             )
         }
         val again = waterTiles.filterValues { it > 1 }
+        for (k in again.keys.sortedWith(compareBy({ it.first }, { it.second })).take(40)) println("world-names: again L${k.first}: ${waterWhere[k]}")
         println("world-names: ${waterTiles.size} waters' names a level, ${again.size} of them in more than one tile; $riverTwice rivers twice in a tile")
         assertEquals("a water's name stands in one tile of a level", emptyMap<Pair<Int, String>, Int>(), again)
         assertEquals("a river's name stands once in a tile", 0, riverTwice)

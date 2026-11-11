@@ -38,7 +38,8 @@ class OsmNames private constructor(private val places: Map<String, List<Named>>,
         /** How far, degrees, a place's OSM node may lie from Natural Earth's point. */
         const val NEAR = 1.0
 
-        private val WIKIDATA = Regex("^Q[1-9][0-9]*$")
+        /** A Wikidata id (Natural Earth writes -1 where it has none). */
+        val WIKIDATA = Regex("^Q[1-9][0-9]*$")
 
         /** The place=* of the settlements and countries Natural Earth's places are. */
         val PLACES = setOf("country", "state", "province", "region", "city", "town", "village", "hamlet", "suburb", "municipality", "borough", "quarter", "locality", "island", "islet", "county")

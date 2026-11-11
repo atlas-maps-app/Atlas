@@ -29,8 +29,9 @@ import java.util.concurrent.Future
  * whether it is a capital, ranked by scalerank, then population. The water's names are Natural Earth's marine labels
  * (its geography's marine polygons: oceans, seas, bays and gulfs, straits and channels) and its lakes' (1:110m's at L0
  * and L1, 1:50m's from L2), each from the level its `min_label` asks for ([labelLevel]) at the centre of its largest
- * inscribed circle, with its area. With OpenStreetMap's names ([OsmNames], `--names`) a place or a water takes OSM's
- * `name` of its Wikidata id, in its own script (step 9's "Left"); without, Natural Earth's English names stay.
+ * inscribed circle, with its area; a water Natural Earth gives in parts, records of one Wikidata id, is named once
+ * ([PARTS_KM]). With OpenStreetMap's names ([OsmNames], `--names`) a place or a water takes OSM's `name` of its
+ * Wikidata id, in its own script (step 9's "Left"); without, Natural Earth's English names stay.
  */
 object Globe {
     const val USAGE = """packer globe <naturalearth-dir> <simplified-land-polygons-complete-3857.zip> <out.atlas> [--names <names.tsv>] [--threads N]
@@ -87,6 +88,22 @@ object Globe {
 
     /** log2(910 / 256): a level's start against a web map's zoom. */
     val LABEL_ZOOM: Double = Math.log(910.0 / 256.0) / Math.log(2.0)
+
+    /**
+     * How near its largest part, km, Natural Earth's other records of a water's Wikidata id are its parts: 1:50m's parts
+     * lie within 110 km of each other (the four Tikchik Lakes the farthest), while records of one id 730 km apart or more
+     * are other waters (two Grand Lakes, two Trout Lakes) or the halves of an ocean it names apart (the North and the
+     * South Atlantic and Pacific).
+     */
+    const val PARTS_KM = 300.0
+
+    /** The great circle's length, km, between two points in degrees (x the longitude, y the latitude). */
+    fun greatCircleKm(a: Coordinate, b: Coordinate): Double {
+        val p1 = Math.toRadians(a.y)
+        val p2 = Math.toRadians(b.y)
+        val h = Math.pow(Math.sin((p2 - p1) / 2), 2.0) + Math.cos(p1) * Math.cos(p2) * Math.pow(Math.sin(Math.toRadians(b.x - a.x) / 2), 2.0)
+        return 2 * WorldRefs.EARTH_RADIUS / 1000.0 * Math.asin(Math.sqrt(minOf(1.0, h)))
+    }
 
     /** The water's name's kind of a Natural Earth marine polygon's `featurecla` (null: no name drawn, a reef's). */
     fun marineKind(featurecla: String?): String? = when (featurecla?.trim()?.lowercase()) {
@@ -153,8 +170,9 @@ object Globe {
 
         // the water's names: each polygon's label at the centre of its largest polygon's largest inscribed circle (in
         // degrees, so an ocean's is not drawn to the pole as Mercator's area would), from the level its min_label asks
+        class Water(val kind: String, val own: String, val id: String?, val at: Coordinate, val point: Geometry, val m2: Double, val from: Int)
         class Label(val attrs: Map<String, Any?>, val point: Geometry, val from: Int)
-        fun labels(name: String, kind: (Map<String, Any?>) -> String?): List<Label> = shapes(name).mapNotNull { s ->
+        fun records(name: String, kind: (Map<String, Any?>) -> String?): List<Water> = shapes(name).mapNotNull { s ->
             val g = s.geometry ?: return@mapNotNull null
             val k = kind(s.attrs) ?: return@mapNotNull null
             val own = text(s.attrs, "name") ?: return@mapNotNull null
@@ -168,13 +186,42 @@ object Globe {
                 val w = WorldGeometry.worldOfDegrees(p) as Polygon
                 WorldProfile.squareMetres(w.exteriorRing.coordinates) - (0 until w.numInteriorRing).sumOf { WorldProfile.squareMetres(w.getInteriorRingN(it).coordinates) }
             }
-            val osm = names?.water(text(s.attrs, "wikidataid"))
-            if (osm != null) watersNamed++
-            val m = linkedMapOf<String, Any?>("kind" to k, "name" to (osm ?: own), "area" to Math.round(maxOf(0.0, m2)))
-            Label(m, world, labelLevel((attr(s.attrs, "min_label") as? Number)?.toDouble()))
+            val id = text(s.attrs, "wikidataid")?.takeIf { OsmNames.WIKIDATA.matches(it) }
+            Water(k, own, id, Coordinate(c.x, c.y), world, maxOf(0.0, m2), labelLevel((attr(s.attrs, "min_label") as? Number)?.toDouble()))
         }
-        val waters110 = labels("ne_110m_geography_marine_polys") { marineKind(text(it, "featurecla")) } + labels("ne_110m_lakes") { lakeKind(text(it, "featurecla")) }
-        val waters50 = labels("ne_50m_geography_marine_polys") { marineKind(text(it, "featurecla")) } + labels("ne_50m_lakes") { lakeKind(text(it, "featurecla")) }
+        // A water is named once. Natural Earth gives a few waters' parts records of their own under the water's Wikidata
+        // id, all within PARTS_KM of its largest: the same polygon twice (1:50m's Lake Mead, Lake Zaysan, Lake Volta, Teslin
+        // Lake, Lower Arrow Lake, and Fort Peck Lake as "Ft. Peck Lake" too), the Dead Sea's two basins, Femunden's two
+        // parts, the four Tikchik Lakes, Upper and Lower Red Lake, the Vistula Lagoon's two sides. Such a water takes one
+        // name, at its largest part's point, with their areas together, from the earliest level a part asks for. An id on
+        // records farther apart is a whole ocean's on the halves Natural Earth names apart (the North and the South
+        // Pacific, 6,400 km apart) or one lake's put on another (two Grand Lakes 730 km apart, two Trout Lakes 2,000 km):
+        // each keeps its own name, so that OpenStreetMap's one name is not given to both. The names keep the records'
+        // order, each water at its largest part's.
+        fun waters(all: List<Water>): List<Label> {
+            val bySize = all.indices.sortedByDescending { all[it].m2 }
+            val taken = BooleanArray(all.size)
+            val parts = java.util.TreeMap<Int, List<Water>>()
+            for (i in bySize) {
+                if (taken[i]) continue
+                val big = all[i]
+                val its = bySize.filter { j ->
+                    !taken[j] && (j == i || all[j].at == big.at || big.id != null && all[j].id == big.id && greatCircleKm(big.at, all[j].at) <= PARTS_KM)
+                }
+                for (j in its) taken[j] = true
+                parts[i] = its.map { all[it] }
+            }
+            val ids = parts.values.mapNotNull { it[0].id }.groupingBy { it }.eachCount()
+            return parts.values.map { its ->
+                val big = its[0]
+                val osm = big.id?.takeIf { ids[it] == 1 }?.let { names?.water(it) }
+                if (osm != null) watersNamed++
+                val m = linkedMapOf<String, Any?>("kind" to big.kind, "name" to (osm ?: big.own), "area" to Math.round(its.sumOf { it.m2 }))
+                Label(m, big.point, its.minOf { it.from })
+            }
+        }
+        val waters110 = waters(records("ne_110m_geography_marine_polys") { marineKind(text(it, "featurecla")) } + records("ne_110m_lakes") { lakeKind(text(it, "featurecla")) })
+        val waters50 = waters(records("ne_50m_geography_marine_polys") { marineKind(text(it, "featurecla")) } + records("ne_50m_lakes") { lakeKind(text(it, "featurecla")) })
         fun waterNames(z: Int): Source = Source(WorldProfile.WATER_NAME, (if (z <= 1) waters110 else waters50).filter { it.from <= z }.map { it.attrs to it.point })
         log("globe: Natural Earth and osmdata read in %.0f s, %d of their polygons mended".format((System.nanoTime() - t0) / 1e9, WorldGeometry.mendedSources.get()))
         if (names != null) {
