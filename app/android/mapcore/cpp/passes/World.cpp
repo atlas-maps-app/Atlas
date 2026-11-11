@@ -96,10 +96,14 @@ constexpr std::uint32_t fading_lifts = 7;
     }
     // the coast's line, the ladder's (the world pass draws it by the ladder's weight alone)
     if (style->ladder) out[wp::coast] = geometry::rgba(style->ladder->coast.colour).packed();
-    // the south pole's cap: Antarctica's ice, as the globe's glaciers are drawn
-    if (const std::optional<std::uint16_t> g = style->land_kind("glacier");
-        g && std::cmp_less(*g + wp::kinds, wp::size)) {
-        out[wp::south_cap] = out[*g + wp::kinds];
+    // the ice (glaciers, ice shelves, the south pole's cap): the ladder's, at night darkened as the land cover is;
+    // without the ladder the style's glacier where it has one (else the land's)
+    if (style->ladder) {
+        const geometry::Rgba c = geometry::rgba(style->ladder->ice);
+        out[wp::ice] = (night ? geometry::darken(c, 0.2) : c).packed();
+    } else if (const std::optional<std::uint16_t> g = style->land_kind("glacier");
+               g && std::cmp_less(*g + wp::kinds, wp::size)) {
+        out[wp::ice] = out[*g + wp::kinds];
     }
     return out;
 }

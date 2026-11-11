@@ -1430,8 +1430,8 @@ TEST_CASE(
             ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
             const view::View v = view_of(cam);
             const DiscCount n = blank_in_disc(*pixels, v);
-            // the pole's own pixel: the cap's colour, the sea's in the north, the land's in the south (the style holds
-            // no glacier yet: step 8's ladder gives it its colour)
+            // the pole's own pixel: the cap's colour, the sea's in the north, the ice's in the south (the ladder's
+            // #E8EEF2, which the palette holds with or without the look)
             const scene::WorldBend bend = scene::world_bend(v, centred_on(cam));
             const view::Vec3 at = scene::world_point(bend, centred_on(cam), pole.lat > 0 ? 90.0 : -90.0, 20.0);
             const std::optional<view::Vec2> css = v.camera().proj(at); // on the bent ground already
@@ -1440,7 +1440,8 @@ TEST_CASE(
             const auto px = static_cast<std::uint32_t>(std::clamp(s.x, 0.0, pixels->width - 1.0));
             const auto py = static_cast<std::uint32_t>(std::clamp(s.y, 0.0, pixels->height - 1.0));
             const std::size_t i = 4 * ((std::size_t{py} * pixels->width) + px);
-            const style::Rgb8 want = pole.lat > 0 ? theme.water : theme.ground;
+            const style::Rgb8 want =
+                pole.lat > 0 ? theme.water : style::Rgb8{.r = 0xE8, .g = 0xEE, .b = 0xF2, .a = 255};
             const auto near = [](std::uint8_t a, std::uint8_t b) { return std::abs(int{a} - int{b}) <= 40; };
             const bool coloured =
                 near(pixels->rgba[i], want.r) && near(pixels->rgba[i + 1], want.g) && near(pixels->rgba[i + 2], want.b);

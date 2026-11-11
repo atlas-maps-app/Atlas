@@ -51,6 +51,10 @@ struct WorldLadder {
     std::array<LadderStop, 5> land{};
     LadderTint coast;
     double coast_width = 0;
+    /// The ice: glaciers, ice shelves and the south pole's cap, below the globe and on it. The board's Antarctic stop,
+    /// the last of its land's, which ice keeps from a glacier in view to the globe: it does not take the land's ramp
+    /// (the user's yes of 3 November, kept to the globe on 11 November).
+    std::uint32_t ice = 0;
 
     /// The night: its colour and the caps where the sun stands under each altitude (degrees), each over the last; how
     /// soft their edges are below the globe (degrees of the sun's altitude; a pixel on it).

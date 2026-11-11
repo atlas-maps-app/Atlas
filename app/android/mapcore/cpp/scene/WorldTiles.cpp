@@ -122,9 +122,11 @@ public:
         }
     }
 
-    /// The colour of a land fill of `kind`: its LAND kind's, a lawn's, or the land's where the style has none.
+    /// The colour of a land fill of `kind`: its LAND kind's, a lawn's, or the land's where the style has none; the
+    /// globe's ice (Natural Earth's glaciers, its Antarctic ice shelves) the ice's where the style has the ladder.
     [[nodiscard]] std::uint8_t land_palette(std::string_view kind) const noexcept {
         if (style_ == nullptr) return world_palette::land;
+        if (style_->ladder && (kind == "glacier" || kind == "ice_shelf")) return world_palette::ice;
         const std::optional<std::uint16_t> k = style_->land_kind(kind);
         if (!k || *k + std::uint32_t{world_palette::kinds} >= world_palette::size) return world_palette::land;
         return static_cast<std::uint8_t>(world_palette::kinds + *k);
@@ -485,7 +487,7 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
             w.fill(water->ring(tl::water::ring, i), world_palette::water, c);
         });
     }
-    // the areas over the water (the globe's ice shelves: drawn as the land until the style has their colour)
+    // the areas over the water (the globe's ice shelves, in the ice's colour)
     if (ground != nullptr) {
         each_row(*ground, cells, [&](std::uint32_t i, std::uint32_t c) {
             const std::int64_t source = ground->integer(tl::ground::source, i);
@@ -601,7 +603,7 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
     std::unique_ptr<WorldTiles> w(new WorldTiles(store, std::move(heaps))); // NOLINT(cppcoreguidelines-owning-memory)
     // the poles' caps, in the heap for good from the first frame on
     for (std::size_t c = 0; c < w->caps_.size(); ++c) {
-        const WorldGeometry g = world_cap_geometry(c == 0 ? world_palette::water : world_palette::south_cap);
+        const WorldGeometry g = world_cap_geometry(c == 0 ? world_palette::water : world_palette::ice);
         const auto cap_bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
         const auto range = w->heaps_->allocate(HeapKind::ground, cap_bytes, 16, HeapEnd::low);
         if (!range) {
