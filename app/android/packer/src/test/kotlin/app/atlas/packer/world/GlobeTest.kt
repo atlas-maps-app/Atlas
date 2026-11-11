@@ -116,7 +116,9 @@ class GlobeTest {
         assertEquals(setOf("Paris", "Port"), names(2))
         assertEquals(setOf("Paris", "Port", "Town"), names(3))
         assertEquals(setOf("Paris", "Port", "Town"), names(5))
-        val capital = tiles.first { it.level == 0 }.layers[Layer.LABEL]!!.first { it["name"] == "Paris" }
+        // a level's label rows of [name], over all its tiles (a level past L0 has several)
+        fun labels(z: Int, name: String) = tiles.filter { it.level == z }.flatMap { it.layers[Layer.LABEL].orEmpty() }.filter { it["name"] == name }
+        val capital = labels(0, "Paris").first()
         assertEquals("yes", capital["tag:capital"])
         assertEquals("11000000", capital["tag:population"])
         // the water's names (source 2) from the level their min_label asks for, by OSM's name where it has their id
@@ -124,12 +126,14 @@ class GlobeTest {
         assertEquals(setOf("Mer", "Lac Léman"), names(1, WorldCut.WATER_NAMES))
         assertEquals(setOf("Mer", "Lac Léman", "Gulf"), names(2, WorldCut.WATER_NAMES))
         assertEquals(setOf("Mer", "Lac Léman", "Gulf"), names(5, WorldCut.WATER_NAMES))
-        val sea = tiles.first { it.level == 0 }.layers[Layer.LABEL]!!.single { it["name"] == "Mer" }
+        val sea = labels(0, "Mer").single()
         assertEquals("sea", sea["kind"])
         // its area in m², the box's 18° by 20° about 40° N: some 3.39 million km²
         assertEquals(3.39e12, (sea["count"] as Number).toDouble(), 0.05e12)
-        assertEquals("bay", tiles.first { it.level == 2 }.layers[Layer.LABEL]!!.first { it["name"] == "Gulf" }["kind"])
-        assertEquals("lake", tiles.first { it.level == 1 }.layers[Layer.LABEL]!!.first { it["name"] == "Lac Léman" }["kind"])
+        // a water's name in one tile of each level
+        assertEquals("bay", labels(2, "Gulf").single()["kind"])
+        assertEquals("lake", labels(1, "Lac Léman").single()["kind"])
+        for (z in 1..5) assertEquals("L$z", 1, labels(z, "Mer").size)
         assertEquals(1, Globe.labelLevel(2.0))
         assertEquals(2, Globe.labelLevel(3.7))
         assertEquals(0, Globe.labelLevel(1.8))

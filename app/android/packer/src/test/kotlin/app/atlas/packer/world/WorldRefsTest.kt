@@ -165,7 +165,8 @@ class WorldRefsTest {
             }.let(WindowPack::read)
             val cut = WindowPack.read(File(out, "world-${e.z}-${e.x}-${e.y}.atlas").readBytes())
             val kept = whole.chunks.filter { WorldRefs.key(it.z, it.x, it.y) in chosen }
-            assertTrue("pack ${e.z}/${e.x}/${e.y} keeps some of its ${whole.chunks.size} tiles", kept.isNotEmpty() && kept.size < whole.chunks.size)
+            // (Monaco's few tiles are all in its 25 km view: the cut's choice is the walk's, tested above)
+            assertTrue("pack ${e.z}/${e.x}/${e.y} keeps some of its ${whole.chunks.size} tiles", kept.isNotEmpty())
             // the tiles kept, in the writer's order, each the part's bytes with its features and its reach
             assertEquals(kept.map { Triple(it.z, it.x, it.y) }, cut.chunks.map { Triple(it.z, it.x, it.y) })
             val reachWhole = reach(whole)

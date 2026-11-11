@@ -156,7 +156,8 @@ class WorldCutTest {
         val tile = WorldCut().cut(z, x, y, items, land).tile!!
         val labels = tile.layers[Layer.LABEL]!!
         fun source(l: app.atlas.rendertiles.model.Feature) = (l["source"] as Number).toInt()
-        val bySource = labels.groupBy(::source).mapValues { (_, l) -> l.sortedBy { (it["index"] as Number).toLong() }.map { it["name"] } }
+        // a rank of 0 is the column's default, which the schema leaves out
+        val bySource = labels.groupBy(::source).mapValues { (_, l) -> l.sortedBy { (it["index"] as Number?)?.toLong() ?: 0L }.map { it["name"] } }
         assertEquals(
             mapOf(1 to listOf("Zaandam"), WorldCut.WATER_NAMES to listOf("Noordzee", "IJsselmeer", "Sloterplas"), WorldCut.RIVER_NAMES to listOf("Amstel", "Zaan")),
             bySource,
