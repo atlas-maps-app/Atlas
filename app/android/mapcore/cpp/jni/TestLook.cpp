@@ -15,6 +15,8 @@
 #include "gpu/PipelineCache.hpp"
 #include "jni/TestFrame.hpp"
 #include "load/Window.hpp"
+#include "scene/World.hpp"
+#include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -269,6 +271,8 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
         if (complete_frames > 4 && !map.animating()) break;
         if (map.animating() || map.world() == nullptr) continue;
         map.world()->residency().wait_idle();
+        // the world's tiles the frame wanted are built before the next one (its globe's pinned levels at the first)
+        if (scene::WorldTiles* tiles = map.world()->world_tiles(); tiles != nullptr) tiles->wait_idle();
         // as far as it gets with these packs: nothing under way (windows wanted that are not listed, or none within the
         // finest level's reach)
         if (frames > 4 && !map.complete() && map.world()->residency().stats().pending == 0) break;

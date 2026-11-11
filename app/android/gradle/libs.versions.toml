@@ -31,6 +31,8 @@ zstdJni = "1.5.7-20"
 # need Java 21): the world's mid zooms (`packer world`). Its GeoTools dependencies are not on Maven Central and are left
 # out; the packer reads shapefiles itself.
 planetiler = "0.7.0"
+# Planetiler's own JTS, named for :mapcorecheck's globe check, which hands the packer's world code its geometry
+jts = "1.19.0"
 
 [libraries]
 androidx-core = { group = "androidx.core", name = "core", version.ref = "core" }
@@ -56,6 +58,7 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver3"
 qrcodegen = { group = "io.nayuki", name = "qrcodegen", version.ref = "qrcodegen" }
 zstd-jni = { group = "com.github.luben", name = "zstd-jni", version.ref = "zstdJni" }
 planetiler-core = { group = "com.onthegomap.planetiler", name = "planetiler-core", version.ref = "planetiler" }
+jts-core = { group = "org.locationtech.jts", name = "jts-core", version.ref = "jts" }
 sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqlite" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

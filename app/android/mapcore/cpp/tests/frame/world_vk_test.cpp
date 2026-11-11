@@ -534,6 +534,17 @@ constexpr std::array<float, 4> green_clear{0.0F, 1.0F, 0.0F, 1.0F};
     return n;
 }
 
+/// The world passes draw without the style ladder while one of these lives (passes::World::ladder_for_tests): a test of
+/// the tiles' cover tells a pixel no tile draws by the sky's colour, which the ladder's space would lie over.
+struct NoLadder {
+    NoLadder() noexcept { passes::World::ladder_for_tests(false); }
+    NoLadder(const NoLadder&) = delete;
+    NoLadder& operator=(const NoLadder&) = delete;
+    NoLadder(NoLadder&&) = delete;
+    NoLadder& operator=(NoLadder&&) = delete;
+    ~NoLadder() { passes::World::ladder_for_tests(true); }
+};
+
 /// A session's start for the world's tests in folder `guard`.
 [[nodiscard]] auto start_world(const fs::path& guard) {
     fs::create_directories(guard);
@@ -1292,6 +1303,8 @@ TEST_CASE("the bend: a sweep from 1 km to 60,000 km in 120 steps at Amsterdam, T
         KeptWindow* kept = window.get();
         std::string why;
         ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // the tiles' cover alone: without the ladder a pixel no tile draws is the sky's, magenta
+        const NoLadder cover_alone;
         map.set_theme(magenta_sky());
         struct Place {
             const char* name;
@@ -1390,6 +1403,8 @@ TEST_CASE(
         KeptWindow* kept = window.get();
         std::string why;
         ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // the tiles' cover alone, as the sweep's
+        const NoLadder cover_alone;
         const style::ThemeBlock theme = magenta_sky();
         map.set_theme(theme);
         struct Pole {
@@ -1435,6 +1450,350 @@ TEST_CASE(
             CHECK(coloured);
             if (!out.empty()) {
                 CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("pole_{}.ppm", pole.name)).string()));
+            }
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+namespace {
+
+/// The globe's L0 tile as test::world_tile cuts it (cell c land west of (c % 3) / 2 of its width, sea east of it),
+/// with two cities of twelve million in cell 6, at (25° N, 70° E) and (20° N, 10° E), in place of its village.
+[[nodiscard]] test::TileBytes lit_globe_tile() {
+    using namespace atlas::tiles;
+    namespace col = test::columns;
+    test::TileBytes tile = test::world_tile(0, 0, 0);
+    test::LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    label.cells = {6, 6};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {{250'000'000, 700'000'000},
+                                                                             {200'000'000, 100'000'000}};
+    label.columns = {{"source", Codec::u8, col::u8({1, 1})},
+                     {"index", Codec::delta, col::delta({0, 1})},
+                     {"name", Codec::str, col::str(tile, {"East", "Middle"})},
+                     {"pos", Codec::point, col::point(at)},
+                     {"prev", Codec::point, col::point(at)},
+                     {"count", Codec::varu, col::varu({1, 1})},
+                     {"kind", Codec::str, col::str(tile, {"city", "city"})},
+                     {"tag:population", Codec::str, col::str(tile, {"12000000", "12000000"})}};
+    tile.layers.back() = label;
+    return tile;
+}
+
+/// Whether (`lat`, `lon`) is land in test::world_tile's L0 tile: its cell's rows of equal latitude from Mercator's
+/// 85.0511° N, its columns of 90°.
+[[nodiscard]] bool test_land(double lat, double lon) {
+    constexpr double top = 85.0511287798;
+    const auto row = static_cast<int>(std::floor((top - lat) / (top / 2.0)));
+    const auto column = static_cast<int>(std::floor((lon + 180.0) / 90.0));
+    const int c = (std::clamp(row, 0, 3) * 4) + std::clamp(column, 0, 3);
+    const double west = -180.0 + (90.0 * std::clamp(column, 0, 3));
+    return lon < west + (90.0 * (c % 3) / 2.0);
+}
+
+/// A pixel's colour as 0-1 values.
+[[nodiscard]] hlsl::float3 pixel_at(const gpu::Pixels& p, double x, double y) {
+    const auto px = static_cast<std::size_t>(std::clamp(std::floor(x), 0.0, static_cast<double>(p.width - 1)));
+    const auto py = static_cast<std::size_t>(std::clamp(std::floor(y), 0.0, static_cast<double>(p.height - 1)));
+    const std::size_t i = 4 * ((py * p.width) + px);
+    return {static_cast<float>(p.rgba[i]) / 255.0F, static_cast<float>(p.rgba[i + 1]) / 255.0F,
+            static_cast<float>(p.rgba[i + 2]) / 255.0F};
+}
+
+/// The pixels of `p` that are the tests' clear colour itself, green (the board's land is too green for count_clear,
+/// which also takes the clear colour through what lies faded over it: its #6E9E58 is green by 48 levels over its red).
+[[nodiscard]] std::size_t count_bare(const gpu::Pixels& p) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+        n += p.rgba[i + 1] >= 200 && p.rgba[i] <= 60 && p.rgba[i + 2] <= 60 ? 1U : 0U;
+    }
+    return n;
+}
+
+/// The most two colours part in a channel, in 8-bit levels.
+[[nodiscard]] double levels_apart(hlsl::float3 a, hlsl::float3 b) {
+    return 255.0 * static_cast<double>(std::max({std::abs(a.x - b.x), std::abs(a.y - b.y), std::abs(a.z - b.z)}));
+}
+
+} // namespace
+
+TEST_CASE("the globe's look: from 54,000 km the engine draws the board's Earth, each pixel the ladder's colour of its "
+          "place: the ramps by the surface's normal in the view, the night's caps by the sun's altitude there, the "
+          "shine over them, a city's light in the night alone, and space, the ring and the rim about the disc") {
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-globe-look-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> globe = test::world_pack({lit_globe_tile()}, coarse);
+    {
+        std::ofstream file(guard / tiles::world_globe_file, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        frame::MapPack base;
+        base.number = 102;
+        base.ref.id = std::string(tiles::world_globe_id);
+        base.ref.kind = tiles::PackKind::world_base;
+        base.ref.path = (guard / tiles::world_globe_file).string();
+        std::vector<frame::MapPack> packs;
+        packs.push_back(std::move(base));
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // a plain day without weather, so the frame is the world pass's colours alone; the sun low in the south-west
+        // of the moment's place, the terminator across the disc
+        style::ThemeBlock theme = magenta_sky();
+        theme.flags = 0;
+        theme.weather_code = 255;
+        theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+        theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+        theme.shadow_blur = theme.cloud_shadows = 0.0;
+        map.set_theme(theme);
+        map.set_screen(false, false, false);
+        const style::CameraState cam = camera(20.0, 10.0, 0.0, 0.0, 54'000'000.0);
+        draw_world_complete(session, map, cam);
+        ATLAS_REQUIRE(kept->kept != nullptr);
+        auto pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        if (!out.empty()) CHECK(gpu::write_ppm(*pixels, (fs::path(out) / "globe_look.ppm").string()));
+
+        // the frame's look, as the world pass makes it of the world's style's ladder
+        const view::View v = view_of(cam);
+        const view::Camera& c = v.camera();
+        const view::GroundFrame f = centred_on(cam);
+        const scene::WorldBend bend = scene::world_bend(v, f);
+        const tiles::Style* world_style = load::world_style();
+        ATLAS_REQUIRE(world_style != nullptr);
+        const std::optional<tiles::WorldLadder>& ladder = world_style->ladder;
+        ATLAS_REQUIRE(ladder.has_value());
+        const scene::WorldLook look =
+            scene::world_look(*ladder, cam.distance, theme, bend, c.eye(), density, static_cast<double>(size.width),
+                              static_cast<double>(size.height));
+        const shaders::WorldLookBlock& k = look.block;
+        CHECK(look.weights.caps == 1.0);
+        CHECK(look.weights.ramps == 1.0);
+        CHECK(look.weights.ring == 1.0);
+        CHECK(look.weights.space == 1.0);
+
+        const view::Vec3 sun = scene::direction_of(bend, look.sun.lat, look.sun.lon);
+        // the colour the ladder gives the ground at a place, under the glass's shine: world.slang's colour_fs and
+        // globe_fs on the CPU, away from the graticule's lines and the caps' edges
+        const auto expected = [&](double lat, double lon) {
+            const view::Vec3 n = scene::direction_of(bend, lat, lon);
+            const hlsl::float2 on_disc = {
+                static_cast<float>((n.x * c.right().x) + (n.y * c.right().y) + (n.z * c.right().z)),
+                static_cast<float>((n.x * c.up().x) + (n.y * c.up().y) + (n.z * c.up().z))};
+            hlsl::float3 d = shaders::globe_land(k, on_disc);
+            if (!test_land(lat, lon)) {
+                const hlsl::float2 from = on_disc - hlsl::float2{k.sea_at.x, k.sea_at.y};
+                d = shaders::globe_sea(k, std::sqrt(hlsl::dot(from, from)));
+            }
+            const auto sine = static_cast<float>((n.x * sun.x) + (n.y * sun.y) + (n.z * sun.z));
+            d = d + ((hlsl::float3{k.night.x, k.night.y, k.night.z} - d) * shaders::globe_night(k, sine, 1e-6F));
+            const hlsl::float2 lit = on_disc - hlsl::float2{k.shine_at.x, k.shine_at.y};
+            const float shine = hlsl::saturate(1.0F - (std::sqrt(hlsl::dot(lit, lit)) * k.shine_at.z)) * k.shine.w;
+            return d + ((hlsl::float3{k.shine.x, k.shine.y, k.shine.z} - d) * shine);
+        };
+        const auto altitude = [&](double lat, double lon) {
+            const view::Vec3 n = scene::direction_of(bend, lat, lon);
+            return pymath::degrees(pymath::asin((n.x * sun.x) + (n.y * sun.y) + (n.z * sun.z)));
+        };
+        const auto on_screen = [&](double lat, double lon) {
+            return c.pc(c.cam(scene::world_point(bend, f, lat, lon)));
+        };
+        struct Place {
+            const char* name;
+            double lat;
+            double lon;
+        };
+        int lit_places = 0;
+        int night_places = 0;
+        for (const Place place : {Place{.name = "the middle's sea", .lat = 20.0, .lon = 14.0},
+                                  Place{.name = "the north's land", .lat = 55.0, .lon = 20.0},
+                                  Place{.name = "the west's land", .lat = 15.0, .lon = -40.0},
+                                  Place{.name = "the south's land", .lat = -20.0, .lon = 20.0},
+                                  Place{.name = "the south's sea", .lat = -20.0, .lon = 65.0},
+                                  Place{.name = "the east's sea", .lat = 22.0, .lon = 66.0},
+                                  Place{.name = "the north-east's land", .lat = 65.0, .lon = 75.0},
+                                  Place{.name = "the far south's land", .lat = -45.0, .lon = 20.0}}) {
+            const double alt = altitude(place.lat, place.lon);
+            const view::Vec2 at = on_screen(place.lat, place.lon);
+            const hlsl::float3 drawn = pixel_at(*pixels, at.x * density, at.y * density);
+            const hlsl::float3 want = expected(place.lat, place.lon);
+            MESSAGE(std::format(
+                "{} ({:.0f}, {:.0f}): the sun {:.1f}° up, at ({:.1f}, {:.1f}) px, drawn #{:02X}{:02X}{:02X}, "
+                "the ladder's #{:02X}{:02X}{:02X}",
+                place.name, place.lat, place.lon, alt, at.x, at.y, std::lround(drawn.x * 255.0F),
+                std::lround(drawn.y * 255.0F), std::lround(drawn.z * 255.0F), std::lround(want.x * 255.0F),
+                std::lround(want.y * 255.0F), std::lround(want.z * 255.0F)));
+            // an edge of a cap within a degree and a half is another pixel's
+            bool edge = false;
+            for (const double line : {0.0, -6.0, -12.0, -18.0}) edge = edge || std::abs(alt - line) < 1.5;
+            if (edge) continue;
+            CHECK_MESSAGE(levels_apart(drawn, want) <= 3.0, place.name);
+            (alt > 0.0 ? lit_places : night_places) += 1;
+        }
+        CHECK(lit_places >= 2);
+        CHECK(night_places >= 2);
+        // the city in the night is lit, its light's colour at its place; the one by day is not
+        const view::Vec2 east = on_screen(25.0, 70.0);
+        const hlsl::float3 light = pixel_at(*pixels, east.x * density, east.y * density);
+        const double east_alt = altitude(25.0, 70.0);
+        MESSAGE(std::format("the city in the east: the sun {:.1f}° up, drawn #{:02X}{:02X}{:02X}", east_alt,
+                            std::lround(light.x * 255.0F), std::lround(light.y * 255.0F),
+                            std::lround(light.z * 255.0F)));
+        REQUIRE(east_alt < -11.0);
+        CHECK(levels_apart(light, hlsl::float3{k.light[0].x, k.light[0].y, k.light[0].z}) <= 3.0);
+        const view::Vec2 middle = on_screen(20.0, 10.0);
+        CHECK(levels_apart(pixel_at(*pixels, middle.x * density, middle.y * density), expected(20.0, 10.0)) <= 3.0);
+        // about the disc: space and its glow in a corner, the ring at its brightest, the rim on the limb
+        const double radius = c.focal() * view::earth_radius /
+                              std::sqrt(((view::earth_radius + cam.distance) * (view::earth_radius + cam.distance)) -
+                                        (view::earth_radius * view::earth_radius));
+        const auto space_at = [&](double x, double y) {
+            const hlsl::float2 from =
+                hlsl::float2{static_cast<float>(x), static_cast<float>(y)} - hlsl::float2{k.space_at.x, k.space_at.y};
+            const float glow = hlsl::saturate(std::sqrt(hlsl::dot(from, from)) * k.space_at.z / k.space_glow.w);
+            const hlsl::float3 inner{k.space_glow.x, k.space_glow.y, k.space_glow.z};
+            return inner + ((hlsl::float3{k.space.x, k.space.y, k.space.z} - inner) * glow);
+        };
+        CHECK(levels_apart(pixel_at(*pixels, 4.5, 4.5), space_at(4.5, 4.5)) <= 2.0);
+        CHECK(levels_apart(pixel_at(*pixels, 355.5, 630.5), space_at(355.5, 630.5)) <= 2.0);
+        const double ring_x = (c.cx() + (radius * static_cast<double>(k.air_at.y))) * density;
+        const double ring_y = c.cy() * density;
+        const hlsl::float3 behind = space_at(ring_x, ring_y);
+        const hlsl::float3 ring = behind + ((hlsl::float3{k.air.x, k.air.y, k.air.z} - behind) * k.air.w);
+        CHECK(levels_apart(pixel_at(*pixels, ring_x, ring_y), ring) <= 6.0);
+        const hlsl::float3 rim = pixel_at(*pixels, (c.cx() - radius) * density, c.cy() * density);
+        const hlsl::float3 inside = pixel_at(*pixels, (c.cx() - radius + 4.0) * density, c.cy() * density);
+        const hlsl::float3 outside = pixel_at(*pixels, (c.cx() - radius - 4.0) * density, c.cy() * density);
+        MESSAGE(std::format("the disc {:.1f} dp in radius; the rim's red {:.0f}, {:.0f} inside it and {:.0f} outside",
+                            radius, rim.x * 255.0F, inside.x * 255.0F, outside.x * 255.0F));
+        (void)inside;
+        // the rim's #CFE0FF at .55 over whatever lies under it; the ring's blue just outside it
+        CHECK(rim.x >= 110.0F / 255.0F);
+        CHECK(rim.z >= 140.0F / 255.0F);
+        CHECK(outside.x < 60.0F / 255.0F);
+        CHECK(outside.z > outside.x + 0.05F);
+        // no pixel of the frame is the clear colour's or the sky's (magenta)
+        CHECK(count_bare(*pixels) == 0);
+        std::size_t sky = 0;
+        for (std::size_t i = 0; i + 3 < pixels->rgba.size(); i += 4) {
+            const int r8 = pixels->rgba[i];
+            const int g8 = pixels->rgba[i + 1];
+            const int b8 = pixels->rgba[i + 2];
+            sky += r8 > g8 + 50 && b8 > g8 + 50 ? 1U : 0U;
+        }
+        CHECK(sky == 0);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the ladder: the world at its knots over the Netherlands, by day and at night, straight down and pitched, "
+          "when ATLAS_WORLD_DIR names it") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the ladder's knots are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-ladder-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // the day's moment, and a night's: the sun 30° under the moment's place's horizon in the north
+        const style::ThemeBlock day = sunny();
+        style::ThemeBlock night = sunny();
+        night.flags = style::theme_flag::night;
+        night.weather_code = 255;
+        night.cloud = night.cloud_low = night.wind = night.gust = night.wind_direction = 0.0;
+        night.temperature = night.pressure = night.visibility = night.humidity = 0.0;
+        night.shadow_blur = night.cloud_shadows = 0.0;
+        night.ground = {.r = 0x12, .g = 0x15, .b = 0x1F, .a = 255};
+        night.road = {.r = 0x1B, .g = 0x1F, .b = 0x2C, .a = 255};
+        night.water = {.r = 0x07, .g = 0x0C, .b = 0x14, .a = 255};
+        night.sky_top = {.r = 0x0A, .g = 0x0E, .b = 0x1C, .a = 255};
+        night.sky_horizon = {.r = 0x1A, .g = 0x22, .b = 0x3C, .a = 255};
+        night.haze = {.r = 0x16, .g = 0x1D, .b = 0x36, .a = 255};
+        night.sun_vector = {0.0, -1.0, 0.0};
+        night.sun_azimuth = 350.0;
+        night.sun_elevation = -30.0;
+        night.shadow_opacity = 0.0;
+        struct Knot {
+            const char* name;
+            double distance;
+            double pitch;
+        };
+        for (const bool dark : {false, true}) {
+            map.set_theme(dark ? night : day);
+            for (const Knot knot : {Knot{.name = "18", .distance = 18'500.0, .pitch = 0.0},
+                                    Knot{.name = "37", .distance = 37'000.0, .pitch = 0.0},
+                                    Knot{.name = "75", .distance = 75'000.0, .pitch = 0.0},
+                                    Knot{.name = "75p", .distance = 75'000.0, .pitch = 60.0},
+                                    Knot{.name = "300p", .distance = 300'000.0, .pitch = 60.0},
+                                    Knot{.name = "600", .distance = 600'000.0, .pitch = 0.0},
+                                    Knot{.name = "1000p", .distance = 1'000'000.0, .pitch = 55.0},
+                                    Knot{.name = "2000", .distance = 2'000'000.0, .pitch = 0.0},
+                                    Knot{.name = "3500p", .distance = 3'500'000.0, .pitch = 40.0},
+                                    Knot{.name = "6000", .distance = 6'000'000.0, .pitch = 0.0},
+                                    Knot{.name = "20000", .distance = 20'000'000.0, .pitch = 0.0},
+                                    Knot{.name = "54000", .distance = 54'000'000.0, .pitch = 0.0}}) {
+                const style::CameraState cam = camera(52.37, 4.89, 0.0, knot.pitch, knot.distance);
+                // until the world wants nothing more, or half a minute (a block's packs may lie beyond the folder's)
+                const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                int frames = 0;
+                while (std::chrono::steady_clock::now() < until) {
+                    const standin::Drawn drawn = session.draw(cam, {});
+                    if (drawn.stale) session.remake();
+                    frames += drawn.drawn ? 1 : 0;
+                    scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+                    const scene::WorldFrame* frame = tiles != nullptr ? tiles->frame() : nullptr;
+                    if (map.complete() && frame != nullptr && frame->wanted == 0 && !frame->fading && frames > 2) break;
+                    if (tiles != nullptr) tiles->wait_idle();
+                }
+                ATLAS_REQUIRE(kept->kept != nullptr);
+                auto pixels = kept->kept->read(kept->kept->latest());
+                ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+                const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+                ATLAS_REQUIRE(f != nullptr);
+                std::uint64_t lights = 0;
+                for (const scene::WorldDraw& d : f->draws) lights += d.light_cells != 0 ? d.tile->lights : 0U;
+                MESSAGE(std::format("{} {} km{}: {} draws, {} lights' places, {} wanted, {} px the clear colour's",
+                                    dark ? "night" : "day", knot.name, knot.pitch > 0 ? " pitched" : "",
+                                    f->draws.size(), lights, f->wanted, count_bare(*pixels)));
+                CHECK(count_bare(*pixels) == 0);
+                if (!out.empty()) {
+                    CHECK(gpu::write_ppm(
+                        *pixels,
+                        (fs::path(out) / std::format("ladder_{}_{}.ppm", dark ? "night" : "day", knot.name)).string()));
+                }
             }
         }
     }

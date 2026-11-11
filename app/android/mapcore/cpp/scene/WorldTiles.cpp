@@ -8,6 +8,7 @@
 #include "gpu/Frames.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/layers/Ground.hpp"
+#include "tiles/layers/Labels.hpp"
 #include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Water.hpp"
 
@@ -127,14 +128,55 @@ public:
         return static_cast<std::uint8_t>(world_palette::kinds + *k);
     }
 
+    /// The coast along a ring of the tile's land in cell `cell`: each of its edges that does not lie along the cell's
+    /// box, where the packer cut the land (WorldGeometry.cellBoxes: within the grid's rounding of an edge of it).
+    void coast(const tl::RingView& ring, std::uint32_t cell) {
+        const std::size_t n = ring.size();
+        if (n < 3) return;
+        const std::int64_t per_side = world_cells_per_side;
+        const std::int64_t r = cell / per_side;
+        const std::int64_t k = cell % per_side;
+        const std::int64_t height = std::int64_t{north_} - south_;
+        const std::int64_t width = std::int64_t{east_} - west_;
+        const auto row = [&](std::int64_t i) {
+            return north_ - pymath::floor_div((i * height) + per_side - 1, per_side);
+        };
+        const auto column = [&](std::int64_t i) {
+            return west_ + pymath::floor_div((i * width) + per_side - 1, per_side);
+        };
+        const std::array<std::int64_t, 2> lats = {row(r + 1), row(r)};
+        const std::array<std::int64_t, 2> lons = {column(k), column(k + 1)};
+        constexpr std::int64_t rounding = 16;
+        const auto along = [](std::int64_t a, std::int64_t b, const std::array<std::int64_t, 2>& edges) {
+            return std::ranges::any_of(
+                edges, [&](std::int64_t e) { return std::abs(a - e) <= rounding && std::abs(b - e) <= rounding; });
+        };
+        const std::uint32_t look = std::uint32_t{world_palette::coast} | (cell << 8U);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t j = i + 1 < n ? i + 1 : 0;
+            const Point a{.lat = ring.lat[i], .lon = ring.lon[i]};
+            const Point b{.lat = ring.lat[j], .lon = ring.lon[j]};
+            if ((a.lat == b.lat && a.lon == b.lon) || along(a.lat, b.lat, lats) || along(a.lon, b.lon, lons)) continue;
+            segment(a, b, look, split_depth);
+        }
+    }
+
+    /// A city's light at a point of the tile, of `size` (0 the largest), in cell `cell`.
+    void light(tl::GridPoint at, std::uint32_t size, std::uint32_t cell) {
+        lights_.push_back(quantised(at.lat, at.lon));
+        lights_.push_back(size | (cell << 8U));
+    }
+
     [[nodiscard]] WorldGeometry finish() {
         WorldGeometry g;
         g.triangles = static_cast<std::uint32_t>(triangles_.size());
         g.segments = static_cast<std::uint32_t>(segments_.size() / 3);
-        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size());
+        g.lights = static_cast<std::uint32_t>(lights_.size() / 2);
+        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size() + lights_.size());
         g.words.insert(g.words.end(), vertices_.begin(), vertices_.end());
         g.words.insert(g.words.end(), triangles_.begin(), triangles_.end());
         g.words.insert(g.words.end(), segments_.begin(), segments_.end());
+        g.words.insert(g.words.end(), lights_.begin(), lights_.end());
         return g;
     }
 
@@ -255,6 +297,7 @@ private:
     std::vector<std::uint32_t> vertices_;
     std::vector<std::uint32_t> triangles_;
     std::vector<std::uint32_t> segments_;
+    std::vector<std::uint32_t> lights_;
 };
 
 /// The eye's height over the sphere its target's ground bends to; over the flat ground where nothing bends.
@@ -383,6 +426,13 @@ double terrain_line_width(std::string_view hw, bool big) noexcept {
     return big ? 8.0 : 2.0;
 }
 
+bool world_lights(std::uint8_t z, std::string_view kind) noexcept {
+    constexpr std::uint8_t globe_last = 5;
+    constexpr std::uint8_t towns_from = 10;
+    if (kind == "city") return true;
+    return kind == "town" && z >= towns_from && z > globe_last;
+}
+
 WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style) {
     GeometryWriter w(tile.header, style);
     const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
@@ -420,6 +470,15 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
             }
         });
     }
+    // a globe's tile's coast, the ladder's line along its land's edge, under its other lines
+    constexpr std::uint8_t globe_last = 5;
+    if (ground != nullptr && style != nullptr && style->ladder && tile.header.level <= globe_last) {
+        each_row(*ground, cells, [&](std::uint32_t i, std::uint32_t c) {
+            if (std::cmp_equal(ground->integer(tl::ground::source, i), tl::ground::source_land_base)) {
+                w.coast(ground->ring(tl::ground::ring, i), c);
+            }
+        });
+    }
     // the rivers with the water, then the roads by class, the railways, the big roads and the runways
     constexpr std::int64_t rivers = 10;
     if (line != nullptr) {
@@ -452,6 +511,21 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
             } else if (source == 3) {
                 w.line(l, runway_width, world_palette::runway, c);
             }
+        });
+    }
+    // the lit places' lights, each sized by its people (the ladder's)
+    const tl::Layer* label = tile.layer(tl::LayerId::label);
+    if (label != nullptr && style != nullptr && style->ladder) {
+        constexpr std::uint8_t population = tl::slot_of(tl::label::columns, "tag:population");
+        const std::array<std::int64_t, 2>& sizes = style->ladder->light_sizes;
+        each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
+            if (label->integer(tl::label::source, i) != tl::label::source_place) return;
+            if (!world_lights(tile.header.level, label->string(tl::label::kind, i).value_or(""))) return;
+            std::int64_t people = 0;
+            if (const std::optional<std::string_view> text = label->string(population, i)) {
+                (void)std::from_chars(text->data(), text->data() + text->size(), people);
+            }
+            w.light(label->point(tl::label::pos, i), people >= sizes[0] ? 0U : (people >= sizes[1] ? 1U : 2U), c);
         });
     }
     return w.finish();
@@ -646,6 +720,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->box = {tile->header.south, tile->header.west, tile->header.north, tile->header.east};
     out->triangles = g.triangles;
     out->segments = g.segments;
+    out->lights = g.lights;
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
     const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
@@ -783,7 +858,8 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             if (std::ranges::none_of(blocks, [&b](const tl::TileKey& k) { return k.packed() == b.packed(); }))
                 blocks.push_back(b);
         }
-        std::map<std::uint64_t, std::uint64_t> cells; // by packed key: coarse to fine, then by column and row
+        std::map<std::uint64_t, std::uint64_t> cells;         // by packed key: coarse to fine, then by column and row
+        std::unordered_map<std::uint64_t, std::uint64_t> lit; // the cells each tile draws as a leaf's own drawer
         std::vector<std::pair<double, tl::TileKey>> asked;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
         // globe's resident levels are the floor every fade lies over, drawn whole from the first frame, so a zoom out
@@ -825,7 +901,10 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             // each an ancestor's cells over the leaf by their boxes, its rows being of equal latitude, not Mercator's
             const std::array<std::int32_t, 4> leaf_box = tl::tile_box(leaf.key);
             for (WorldTile* t = drawer; t != nullptr; t = fade_of(*t) < 1.0 ? ancestor(t->key, t->key.z) : nullptr) {
-                cells[t->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+                const std::uint64_t over = cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+                cells[t->key.packed()] |= over;
+                // the leaf's own drawer lights its cities, once
+                if (t == drawer) lit[t->key.packed()] |= over;
             }
             if (floored && drawer->key.z > 0) {
                 const int level = std::min<int>(world_floor, drawer->key.z - 1);
@@ -842,7 +921,11 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             const double fade = fade_of(t);
             frame_.fading = frame_.fading || fade < 1.0;
             if (t.triangles + t.segments > 0) {
-                frame_.draws.push_back({.tile = &t, .cells = bits, .fade = static_cast<float>(fade)});
+                const auto own = lit.find(k);
+                frame_.draws.push_back({.tile = &t,
+                                        .cells = bits,
+                                        .fade = static_cast<float>(fade),
+                                        .light_cells = own != lit.end() ? own->second : 0});
             }
         }
         // the tiles wanted nearest first (stable: the walk's order on a tie), each once

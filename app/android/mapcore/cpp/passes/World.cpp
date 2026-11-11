@@ -27,7 +27,12 @@ namespace {
 namespace wl = layouts::world_world;
 namespace wp = scene::world_palette;
 
-constexpr std::size_t palette_bytes = std::size_t{wp::size} * sizeof(std::uint32_t);
+/// A frame slot's palette: the moment's entries, then the day's (world.slang's PALETTE_DAY).
+constexpr std::size_t palette_bytes = 2 * std::size_t{wp::size} * sizeof(std::uint32_t);
+
+/// A frame slot's look block's place in the looks' buffer: a stride every device's uniform offsets align to.
+constexpr std::size_t look_stride = 1024;
+static_assert(sizeof(shaders::WorldLookBlock) <= look_stride);
 
 /// A theme colour as the palette's word, opaque.
 [[nodiscard]] constexpr std::uint32_t word_of(const style::Rgb8& c) noexcept {
@@ -60,22 +65,22 @@ constexpr std::array<std::string_view, 3> lawn_kinds = {"park", "garden", "grass
 /// The most levels whose fading tiles lie at depths of their own (a finer one shares the finest's).
 constexpr std::uint32_t fading_lifts = 7;
 
-/// World::paint_for_tests's colour (0: none).
-[[nodiscard]] std::atomic<std::uint32_t>& test_paint() noexcept {
-    static std::atomic<std::uint32_t> colour{0};
-    return colour;
+/// Space's depth: over the sky's slots and under the world's, so it draws only where nothing of the world does.
+[[nodiscard]] float space_depth(std::uint32_t camera_flags) noexcept {
+    const float scale = (camera_flags & shaders::CAMERA_DEPTH24) != 0U ? 0x1p-20F : 0x1p-60F;
+    return 3.25F * scale;
 }
 
-} // namespace
+/// The depth of what lies over the world (the glass, the lights): the topmost fading tile's, under the ground's first
+/// slot, tested without a write.
+[[nodiscard]] float over_depth(std::uint32_t camera_flags) noexcept { return fading_depth(camera_flags, fading_lifts); }
 
-void World::paint_for_tests(std::uint32_t colour) noexcept { test_paint().store(colour, std::memory_order_relaxed); }
-
-World::~World() { World::release(); }
-
-std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, bool night, const tiles::Style* style) {
-    std::vector<std::uint32_t> out(wp::size, word_of(theme.ground));
-    out[wp::water] = word_of(theme.water);
-    out[wp::road] = word_of(theme.road);
+/// The palette of a ground, a water and a road (the palette's words) and the world's style by day or at night.
+[[nodiscard]] std::vector<std::uint32_t> palette_from(std::uint32_t ground, std::uint32_t water, std::uint32_t road,
+                                                      bool night, const tiles::Style* style) {
+    std::vector<std::uint32_t> out(wp::size, ground);
+    out[wp::water] = water;
+    out[wp::road] = road;
     if (style == nullptr) return out;
     out[wp::rail] = word_of(style->rails, night);
     out[wp::asphalt] = word_of(style->asphalt, night);
@@ -89,6 +94,8 @@ std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, boo
         const geometry::Rgba c = geometry::rgba(lawn ? style->area_colour(kind) : style->land_colours[k]);
         out[k + wp::kinds] = (night ? geometry::darken(c, lawn ? 0.18 : 0.2) : c).packed();
     }
+    // the coast's line, the ladder's (the world pass draws it by the ladder's weight alone)
+    if (style->ladder) out[wp::coast] = geometry::rgba(style->ladder->coast.colour).packed();
     // the south pole's cap: Antarctica's ice, as the globe's glaciers are drawn
     if (const std::optional<std::uint16_t> g = style->land_kind("glacier");
         g && std::cmp_less(*g + wp::kinds, wp::size)) {
@@ -97,17 +104,56 @@ std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, boo
     return out;
 }
 
+/// World::paint_for_tests's colour (0: none).
+[[nodiscard]] std::atomic<std::uint32_t>& test_paint() noexcept {
+    static std::atomic<std::uint32_t> colour{0};
+    return colour;
+}
+
+/// World::ladder_for_tests's switch.
+[[nodiscard]] std::atomic<bool>& test_ladder() noexcept {
+    static std::atomic<bool> on{true};
+    return on;
+}
+
+} // namespace
+
+void World::paint_for_tests(std::uint32_t colour) noexcept { test_paint().store(colour, std::memory_order_relaxed); }
+
+void World::ladder_for_tests(bool on) noexcept { test_ladder().store(on, std::memory_order_relaxed); }
+
+World::~World() { World::release(); }
+
+std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, bool night, const tiles::Style* style) {
+    return palette_from(word_of(theme.ground), word_of(theme.water), word_of(theme.road), night, style);
+}
+
+std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme, const tiles::Style* style) {
+    const bool night = theme.has(style::theme_flag::night);
+    if (!night || style == nullptr || !style->ladder) return palette_of(theme, night, style);
+    const tiles::WorldLadder& l = *style->ladder;
+    return palette_from(geometry::rgba(l.day_ground).packed(), geometry::rgba(l.day_water).packed(),
+                        geometry::rgba(l.day_road).packed(), false, style);
+}
+
 void World::update(const frame::FrameState& state) {
     Slot& s = slots_.at(state.slot & 1U);
     s.drawing = false;
     draws_.clear();
     const scene::WorldFrame* world = state.world;
-    if (world == nullptr || world->draws.empty() || !state.view.has_value() || !*fills_ || !palette_buffer_) return;
+    space_ = false;
+    glass_ = false;
+    look_ = {};
+    if (world == nullptr || world->draws.empty() || !state.view.has_value() || !*fills_ || !palette_buffer_ ||
+        !look_buffer_) {
+        return;
+    }
     const bool night = state.theme.has(style::theme_flag::night);
     palette_ = palette_of(state.theme, night, world->style);
-    if (const std::uint32_t paint = test_paint().load(std::memory_order_relaxed); paint != 0) {
-        std::ranges::fill(palette_, paint);
-    }
+    const std::vector<std::uint32_t> day = day_palette_of(state.theme, world->style);
+    palette_.insert(palette_.end(), day.begin(), day.end());
+    const std::uint32_t paint = test_paint().load(std::memory_order_relaxed);
+    if (paint != 0) std::ranges::fill(palette_, paint);
     std::memcpy(palette_buffer_.bytes().data() + ((state.slot & 1U) * palette_bytes), palette_.data(), palette_bytes);
     palette_buffer_.flush();
     if (s.bound != world->buffer) {
@@ -121,6 +167,17 @@ void World::update(const frame::FrameState& state) {
     const view::Vec3& eye = camera.eye();
     const view::GroundFrame& f = world->frame;
     const scene::WorldBend& bend = world->bend;
+    // the frame's look by the style ladder (none where the world's style has no ladder, or a test paints the world)
+    if (world->style != nullptr && world->style->ladder && paint == 0 &&
+        test_ladder().load(std::memory_order_relaxed)) {
+        const view::Device& device = state.view->device();
+        look_ = scene::world_look(*world->style->ladder, camera.spec().dist, state.theme, bend, eye, device.density,
+                                  static_cast<double>(device.width_px), static_cast<double>(device.height_px));
+        space_ = look_.weights.space > 0.0;
+        glass_ = look_.weights.ring > 0.0;
+    }
+    std::memcpy(look_buffer_.bytes().data() + ((state.slot & 1U) * look_stride), &look_.block, sizeof(look_.block));
+    look_buffer_.flush();
     constexpr double radian = std::numbers::pi / 180.0;
     const std::array<float, 4> sphere{static_cast<float>(bend.sin_lat), static_cast<float>(bend.cos_lat),
                                       static_cast<float>(bend.sphere), static_cast<float>(view::earth_radius)};
@@ -158,6 +215,8 @@ void World::update(const frame::FrameState& state) {
                   4U * t.triangles};
         out.triangles = t.triangles;
         out.segments = t.segments;
+        out.lights = t.lights;
+        out.light_cells = static_cast<std::uint32_t>(d.light_cells & 0xFFFFU);
         draws_.push_back(out);
     }
     // the fading tiles' depths: their levels' ranks, coarse to fine
@@ -183,12 +242,16 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     const vk::raii::Device& d = context.device.handle();
     ATLAS_GPU_LET(module, frame::make_module(context, "world_world", spirv::world_world));
     module_ = std::move(module);
-    const std::array bindings{gpu::Binding{.slot = wl::world_words.binding,
-                                           .type = vk::DescriptorType::eStorageBuffer,
-                                           .stages = vk::ShaderStageFlagBits::eVertex},
-                              gpu::Binding{.slot = wl::world_palette.binding,
-                                           .type = vk::DescriptorType::eStorageBuffer,
-                                           .stages = vk::ShaderStageFlagBits::eVertex}};
+    const std::array bindings{
+        gpu::Binding{.slot = wl::world_words.binding,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = vk::ShaderStageFlagBits::eVertex},
+        gpu::Binding{.slot = wl::world_palette.binding,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = vk::ShaderStageFlagBits::eVertex},
+        gpu::Binding{.slot = wl::look.binding,
+                     .type = vk::DescriptorType::eUniformBuffer,
+                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -201,8 +264,13 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     ATLAS_GPU_LET(palette, context.device.memory().buffer(2 * palette_bytes, vk::BufferUsageFlagBits::eStorageBuffer,
                                                           gpu::MemoryUse::upload));
     palette_buffer_ = std::move(palette);
+    ATLAS_GPU_LET(looks, context.device.memory().buffer(2 * look_stride, vk::BufferUsageFlagBits::eUniformBuffer,
+                                                        gpu::MemoryUse::upload));
+    look_buffer_ = std::move(looks);
     for (std::size_t s = 0; s < slots_.size(); ++s) {
         gpu::SetWriter(*slots_.at(s).set)
+            .buffer(wl::look.binding, vk::DescriptorType::eUniformBuffer, look_buffer_.handle(), s * look_stride,
+                    sizeof(shaders::WorldLookBlock))
             .buffer(wl::world_palette.binding, vk::DescriptorType::eStorageBuffer, palette_buffer_.handle(),
                     s * palette_bytes, palette_bytes)
             // the words' binding until a world draws: the palette's buffer, never read
@@ -214,11 +282,11 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     const std::array<vk::DescriptorSetLayout, 1> extra{*set_layout_};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
     layout_ = std::move(layout);
-    const auto desc = [&](std::string_view name, const char* vertex) {
+    const auto desc = [&](std::string_view name, const char* vertex, const char* fragment = "colour_fs") {
         gpu::GraphicsDesc g{.label = {.name = name, .module = "world_world", .configuration = context.configuration},
                             .module = *module_,
                             .vertex = vertex,
-                            .fragment = "colour_fs",
+                            .fragment = fragment,
                             .layout = *layout_,
                             .target = context.pass.scene_target()};
         g.blends[0] = gpu::Blend::over();
@@ -246,6 +314,15 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     fading_fills_ = std::move(fading_fills);
     ATLAS_GPU_LET(lines, frame::make_pipeline(context, desc("world lines", "line_vs"), frame::Overdraw::opaque));
     lines_ = std::move(lines);
+    // over the world, tested against its depth without a write: the lights, and the triangle over the frame
+    gpu::GraphicsDesc light = desc("world lights", "light_vs", "light_fs");
+    light.depth_write = false;
+    ATLAS_GPU_LET(lights, frame::make_pipeline(context, light, frame::Overdraw::translucent));
+    lights_ = std::move(lights);
+    gpu::GraphicsDesc over = desc("world globe", "globe_vs", "globe_fs");
+    over.depth_write = false;
+    ATLAS_GPU_LET(globe, frame::make_pipeline(context, over, frame::Overdraw::translucent));
+    globe_ = std::move(globe);
     return {};
 }
 
@@ -253,6 +330,8 @@ void World::release() noexcept {
     fills_.clear();
     fading_fills_.clear();
     lines_.clear();
+    lights_.clear();
+    globe_.clear();
     layout_.clear();
     for (Slot& s : slots_) {
         s.set.clear();
@@ -263,12 +342,79 @@ void World::release() noexcept {
     set_layout_.clear();
     module_.clear();
     palette_buffer_ = gpu::Buffer{};
+    look_buffer_ = gpu::Buffer{};
     device_ = nullptr;
     draws_.clear();
+    space_ = false;
+    glass_ = false;
 }
 
 void World::record(const frame::Recording& recording, std::uint32_t phase) {
-    (void)phase;
+    if (phase == over_phase) {
+        record_over(recording);
+    } else {
+        record_tiles(recording);
+    }
+}
+
+void World::record_over(const frame::Recording& recording) {
+    const Slot& s = slots_.at(recording.state.slot & 1U);
+    if (!*globe_ || !*lights_ || !s.drawing) return;
+    const bool lit = look_.weights.caps > 0.0 &&
+                     std::ranges::any_of(draws_, [](const Draw& d) { return d.lights > 0 && d.light_cells != 0; });
+    if (!space_ && !glass_ && !lit) return;
+    const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
+    const std::uint32_t flags = recording.state.block.camera.flags.x;
+    const vk::Extent2D extent = recording.frame.output.extent();
+    // each draw at its depth exactly, as the tiles' (record_tiles)
+    const auto viewport = [&](float near, float far) {
+        cmd.setViewport(0, vk::Viewport{.x = 0,
+                                        .y = 0,
+                                        .width = static_cast<float>(extent.width),
+                                        .height = static_cast<float>(extent.height),
+                                        .minDepth = near,
+                                        .maxDepth = far});
+    };
+    std::uint64_t triangles = 0;
+    std::uint32_t count = 0;
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *globe_);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *s.set, {});
+    const auto over_frame = [&](std::uint32_t what, float depth) {
+        viewport(depth, depth);
+        wl::PushConstants pc{};
+        pc.origin = {0.0F, 0.0F, 0.0F, depth};
+        pc.at = {what, 0U, 0U, 0U};
+        cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
+        cmd.draw(3, 1, 0, 0);
+        ++triangles;
+        ++count;
+    };
+    // space where nothing of the world drew, then the glass over the disc
+    if (space_) over_frame(0U, space_depth(flags));
+    const float depth = over_depth(flags);
+    if (glass_) over_frame(1U, depth);
+    if (lit) {
+        viewport(depth, depth);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *lights_);
+        for (const Draw& d : draws_) {
+            if (d.lights == 0 || d.light_cells == 0) continue;
+            const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
+                                       .scale = d.scale,
+                                       .at = {d.at[0], d.light_cells, d.at[2], d.at[3] + (3U * d.segments)},
+                                       .globe = d.globe,
+                                       .sphere = d.sphere,
+                                       .target = d.target};
+            cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
+            cmd.draw(6, d.lights, 0, 0);
+            triangles += 2ULL * d.lights;
+            ++count;
+        }
+    }
+    viewport(0.0F, 1.0F);
+    recording.counters.draw("world over", triangles, count);
+}
+
+void World::record_tiles(const frame::Recording& recording) {
     const Slot& s = slots_.at(recording.state.slot & 1U);
     if (!*fills_ || !*lines_ || !s.drawing) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;

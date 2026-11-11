@@ -1,0 +1,41 @@
+{
+  "about": "The world's references at the style ladder's knots (ENGINE.md step 5, its step 8): the app's map over the Globe board's Earth (likeness/GlobeCheck.kt's BoardGlobe: the board's land and cities as a globe pack) at 18, 75, 600, 2,000 and 6,000 km and from the board's camera, by day and at night, straight down and pitched, as the phone draws it (every effect, S1), stored per version as the SHA-256 of each frame's pixels on each platform. likeness/GlobeCheck.kt's WorldRefsTest holds the engine to the current version's frames; a deliberate change to the world's look is a new version, recorded with -Datlas.engine.record=true.",
+  "version": "1",
+  "frames": [
+    {"name": "18 km sunny", "lat": 52.37, "lon": 4.89, "distance": 18500, "pitch": 0, "moment": "sunny"},
+    {"name": "18 km night", "lat": 52.37, "lon": 4.89, "distance": 18500, "pitch": 0, "moment": "night"},
+    {"name": "75 km sunny", "lat": 52.37, "lon": 4.89, "distance": 75000, "pitch": 0, "moment": "sunny"},
+    {"name": "75 km night", "lat": 52.37, "lon": 4.89, "distance": 75000, "pitch": 0, "moment": "night"},
+    {"name": "75 km pitched night", "lat": 52.37, "lon": 4.89, "distance": 75000, "pitch": 60, "moment": "night"},
+    {"name": "600 km sunny", "lat": 52.37, "lon": 4.89, "distance": 600000, "pitch": 0, "moment": "sunny"},
+    {"name": "600 km night", "lat": 52.37, "lon": 4.89, "distance": 600000, "pitch": 0, "moment": "night"},
+    {"name": "600 km pitched sunny", "lat": 52.37, "lon": 4.89, "distance": 600000, "pitch": 60, "moment": "sunny"},
+    {"name": "2000 km pitched sunny", "lat": 52.37, "lon": 4.89, "distance": 2000000, "pitch": 40, "moment": "sunny"},
+    {"name": "6000 km sunny", "lat": 52.37, "lon": 4.89, "distance": 6000000, "pitch": 0, "moment": "sunny"},
+    {"name": "6000 km night", "lat": 52.37, "lon": 4.89, "distance": 6000000, "pitch": 0, "moment": "night"},
+    {"name": "the board sunny", "lat": 20, "lon": 10, "distance": 53773000, "pitch": 0, "moment": "sunny"},
+    {"name": "the board night", "lat": 20, "lon": 10, "distance": 53773000, "pitch": 0, "moment": "night"}
+  ],
+  "versions": {
+    "1": {
+      "note": "",
+      "platforms": {
+        "lavapipe-macos": {
+          "18 km sunny": "7c37589ec7dbe70851fd24952c3eeb7e2dd6198063b510e48aefa1fe96e1c304",
+          "18 km night": "9caa63ed6d85b99db2bbfbfc94a5039c9f709aef054e2e7b6d919f349dddf854",
+          "75 km sunny": "bf3c676dc50edb3cdecc2c7e82ebab8f795aa6199bfd13fd30abe3798ec4db14",
+          "75 km night": "7915cbaff7e59965d1058ea908c215a143327ed5b1782470fa38337cc3f22927",
+          "75 km pitched night": "aa91c6bc79e17c4c7ae2c0c345481c1a60ea298fe5fc6b3d28fcd186d1e6fad9",
+          "600 km sunny": "ee9d0ee18cdaab38b16a69ce8a5a9994ad9faaeb0fc9cb9a7ecdc843aa51f746",
+          "600 km night": "ea0e0a0eb01c2b0702a52c30ee32540df2db8271eeda0e1e7417e7ac66e6b444",
+          "600 km pitched sunny": "5d1c6eecf33a6798c6b5de61625c075a00c748247ac2f26f9467aeec6c60a19f",
+          "2000 km pitched sunny": "04d697652d3ea5787440622f5bfbcfc403f50fddc4beb1c4c2c28b4f38e495eb",
+          "6000 km sunny": "a7d315fb305f33e64580828a3d78b679b46953842225ec572f3f4fc483f679ac",
+          "6000 km night": "8f5164f817508084adf72375a7ed2c8b23e4abee4bc052622083de8c9648d4e1",
+          "the board sunny": "48a1a38749a39cf3beac4ab5ac495901011fdf82d7d358a724a3213b2a306d86",
+          "the board night": "5104240541b24271f4b4c4c7086f089a69da19e5644622575dc3331c8512910f"
+        }
+      }
+    }
+  }
+}

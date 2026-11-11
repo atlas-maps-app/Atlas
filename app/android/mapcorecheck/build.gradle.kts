@@ -254,6 +254,10 @@ tasks.named("compileTestKotlin") { dependsOn(mapcoreAndroidFree) }
 
 dependencies {
     packerTool(project(":packer"))
+    // the globe check's Earth (likeness/GlobeCheck.kt): the Globe board's land and cities cut into a globe pack by the
+    // packer's own world code
+    testImplementation(project(":packer"))
+    testImplementation(libs.jts.core)
     testImplementation(project(":core"))
     // the phone's reader of a region's windows' index (WindowPackBuildTest), and of its country's tiles (PhoneLook)
     testImplementation(project(":tiles"))
