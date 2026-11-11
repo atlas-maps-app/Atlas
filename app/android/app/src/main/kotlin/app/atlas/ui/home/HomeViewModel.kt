@@ -15,6 +15,7 @@ import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.MapCore
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.CoreState
 import app.atlas.mapview.HomeView
@@ -240,6 +241,10 @@ class HomeViewModel(
                 MapEngine.script = null
                 viewModelScope.launch { worldScript() }
             }
+            NAMES_SCRIPT -> {
+                MapEngine.script = null
+                viewModelScope.launch { namesScript() }
+            }
         }
     }
 
@@ -298,6 +303,62 @@ class HomeViewModel(
         map.camera = start
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script done")
+    }
+
+    /**
+     * CI's scripted look at the world's names in eight scripts (ENGINE.md step 5, "Names"; smoke.sh's map phase): once
+     * the core's first picture is final, the camera looks straight down from [NAMES_KM] km and the core is given eight
+     * names no tile holds, one a script, in a column through the target ([NAMES]: `MapCore.testNames`). The core picks
+     * them, asks the app for their sprites, which Android's text stack draws, and places and draws them; the script
+     * says of each whether the device's fonts hold its letters (`vk script: names <script> glyphs|no glyphs`), holds
+     * the view [NAMES_HOLD_MS] for the core's `vk names` lines and [NAMES_SHOWN_MS] more for smoke.sh's screenshot,
+     * then takes the names away.
+     */
+    private suspend fun namesScript() {
+        val log = { line: String -> android.util.Log.i("AtlasMap", line) }
+        val start = map.camera
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        val core = (MapEngine.core as? CoreState.Ready)?.core
+        if (core == null) {
+            log("vk script: names: the core does not draw")
+            log("vk script done")
+            return
+        }
+        map.camera = start.copy(zoom = HomeView.zoomForDistance(NAMES_KM * 1_000.0, HomeView.HEIGHT_DP, start.target.lat), pitch = 0.0, bearing = 0.0)
+        delay(SCRIPT_SETTLE_MS)
+        // a column through the target, north to south, 4 % of the camera's distance apart
+        val step = NAMES_KM * 1_000.0 * 0.04 / 111_320.0
+        val names = NAMES.mapIndexed { i, (_, text) ->
+            MapCore.TestName(MapCore.TestName.CITY, start.target.lat + (3.5 - i) * step, start.target.lon, 1e6 - i, text)
+        }
+        val why = withContext(Dispatchers.Default) { core.testNames(names) }
+        log("vk script: names ${names.size} given${if (why.isEmpty()) "" else ", refused: $why"}")
+        val paint = android.graphics.Paint().apply { MapEngine.nameTypeface?.let { typeface = it } }
+        for ((script, text) in NAMES) {
+            // each character drawn by itself (all but spaces, the marks on the letter before them and the format characters)
+            var all = true
+            var i = 0
+            while (i < text.length) {
+                val cp = text.codePointAt(i)
+                val n = Character.charCount(cp)
+                val alone = !Character.isWhitespace(cp) && when (Character.getType(cp).toByte()) {
+                    Character.NON_SPACING_MARK, Character.COMBINING_SPACING_MARK, Character.ENCLOSING_MARK, Character.FORMAT, Character.CONTROL -> false
+                    else -> true
+                }
+                if (alone && !paint.hasGlyph(text.substring(i, i + n))) all = false
+                i += n
+            }
+            log("vk script: names $script ${if (all) "glyphs" else "no glyphs"}")
+        }
+        delay(NAMES_HOLD_MS)
+        log("vk script: names shown")
+        delay(NAMES_SHOWN_MS)
+        withContext(Dispatchers.Default) { core.testNames(emptyList()) }
+        log("vk script: back")
+        map.camera = start
         delay(SCRIPT_SETTLE_MS)
         log("vk script done")
     }
@@ -454,6 +515,24 @@ class HomeViewModel(
 
         /** CI's script of the world beyond the countries (MainActivity's `atlas.vk.script world`, with `atlas.ci.world`). */
         const val WORLD_SCRIPT = "world"
+
+        /** CI's script of the world's names in eight scripts (MainActivity's `atlas.vk.script names`). */
+        const val NAMES_SCRIPT = "names"
+        private const val NAMES_KM = 2.0
+        private const val NAMES_HOLD_MS = 12_000L
+        private const val NAMES_SHOWN_MS = 6_000L
+
+        /** A city's own name in each of the eight scripts ENGINE.md names: OpenStreetMap's `name` of each place. */
+        private val NAMES = listOf(
+            "Latin" to "Amsterdam",
+            "Cyrillic" to "Москва",
+            "Greek" to "Αθήνα",
+            "Arabic" to "القاهرة",
+            "Hebrew" to "ירושלים",
+            "Devanagari" to "दिल्ली",
+            "Thai" to "กรุงเทพมหานคร",
+            "CJK" to "東京",
+        )
 
         /**
          * Where the world script looks from, km from the start's target and pitch: the countries' cover beside the world

@@ -947,6 +947,79 @@ TEST_CASE("scene: a world tile's lit places are its lights in the world's style,
     CHECK(!atlas::scene::world_lights(11, "village"));
 }
 
+TEST_CASE("scene: a world tile's names are its places of the kinds the world names, in the packer's rank, each with "
+          "its own name, its people, its capital and its place") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(9, 262, 168);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b5 = atlas::test::cell_box(header, 5);
+    const auto b6 = atlas::test::cell_box(header, 6);
+    LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    // cell 5 holds the tile's first, third and fifth places by rank and a hamlet, cell 6 its second and fourth, a
+    // place without a name and a canal's name
+    label.cells = {5, 5, 5, 5, 6, 6, 6, 6};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {b5[0] + 10, b5[1] + 10}, {b5[0] + 20, b5[1] + 20}, {b5[0] + 30, b5[1] + 30}, {b5[0] + 40, b5[1] + 40},
+        {b6[0] + 10, b6[1] + 10}, {b6[0] + 20, b6[1] + 20}, {b6[0] + 30, b6[1] + 30}, {b6[0] + 40, b6[1] + 40}};
+    label.columns = {
+        {"source", Codec::u8, col::u8({1, 1, 1, 1, 1, 1, 1, 0})},
+        {"index", Codec::delta, col::delta({0, 2, 4, 6, 1, 3, 5, 0})},
+        {"name", Codec::str,
+         col::str(tile, {"Nederland", "\xd0\x9c\xd0\xbe\xd1\x81\xd0\xba\xd0\xb2\xd0\xb0", "Westzaan", "Haaldersbroek",
+                         "Amsterdam", "Zaandam", "", "Zaan"})},
+        {"pos", Codec::point, col::point(at)},
+        {"prev", Codec::point, col::point(at)},
+        {"count", Codec::varu, col::varu({1, 1, 1, 1, 1, 1, 1, 4})},
+        {"kind", Codec::str, col::str(tile, {"country", "city", "village", "hamlet", "city", "town", "town", ""})},
+        {"tag:population", Codec::str,
+         col::str(tile, {"17000000", "13000000", "", "120", " 900000 (2021)", "72000", "5000", ""})},
+        {"tag:capital", Codec::str, col::str(tile, {"", "", "", "", "yes", "", "", ""})}};
+    tile.layers.back() = label;
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const std::vector<atlas::scene::WorldName> names = atlas::scene::build_world_names(*decoded);
+    REQUIRE(names.size() == 5);
+    using atlas::scene::NameKind;
+    CHECK(names[0].text == "Nederland");
+    CHECK(names[0].kind == NameKind::country);
+    CHECK(names[0].people == 17'000'000.0);
+    CHECK(names[0].cell == 5);
+    CHECK(names[1].text == "Amsterdam");
+    CHECK(names[1].kind == NameKind::city);
+    CHECK(names[1].capital);
+    CHECK(names[1].people == 900'000.0);
+    CHECK(names[1].cell == 6);
+    CHECK(names[1].lat == doctest::Approx(Frame::degrees(b6[0] + 10)));
+    CHECK(names[1].lon == doctest::Approx(Frame::degrees(b6[1] + 10)));
+    // a name in its own script, as its bytes
+    CHECK(names[2].text == "\xd0\x9c\xd0\xbe\xd1\x81\xd0\xba\xd0\xb2\xd0\xb0");
+    CHECK_FALSE(names[2].capital);
+    CHECK(names[3].text == "Zaandam");
+    CHECK(names[3].kind == NameKind::town);
+    CHECK(names[4].text == "Westzaan");
+    CHECK(names[4].kind == NameKind::village);
+    CHECK(names[4].people == 0.0);
+    // by rank among the labels: under the boards' (0 or more), the country, the capital, the city, the town, the
+    // village
+    using atlas::scene::name_priority;
+    CHECK(name_priority(names[0]) < 0);
+    CHECK(name_priority(names[0]) > name_priority(names[1]));
+    CHECK(name_priority(names[1]) > name_priority(names[2]));
+    CHECK(name_priority(names[2]) > name_priority(names[3]));
+    CHECK(name_priority(names[3]) > name_priority(names[4]));
+}
+
 TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
           "the tile's winding, and the poles' caps are grids of it") {
     // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km

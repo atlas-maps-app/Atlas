@@ -14,8 +14,9 @@
 //   once it is clear again (by a pixel, so it does not flicker at the edge). Labels not yet placed (a point the frame
 //   brings in) are placed around the kept ones, at the set's size.
 // - The band: a set is drawn from 0.7 to 1.5 times its own size (the readable floor, Frame::least, may raise the low
-//   end); beyond it the set is placed anew at its own size, each label fading out over 250 ms where it stood as its
-//   new place fades in (the set standing for its own next level until the levels' sets come).
+//   end); beyond it the set is placed anew at its own size (over it where the floor is near it: band_room), each
+//   label fading out over 250 ms where it stood as its new place fades in (the set standing for its own next level
+//   until the levels' sets come).
 //
 // Everything is device px. The measures are the app's, taken from the paint LabelPainter draws with (MapCore.labels),
 // so at its own size a label's box is LabelPainter's to the bit.
@@ -80,6 +81,9 @@ struct Candidate {
     std::int32_t priority = 0;
     Measures measures;
     std::span<const Point> points;
+    /// A label on its way out (a name the frame no longer picks): one placed fades out where it stands, as one that
+    /// meets another does, and one not placed is not placed.
+    bool hidden = false;
 };
 
 /// A label's place: its candidate (index into the frame's candidates), the point and the spot it took, its stand.
@@ -129,6 +133,10 @@ public:
     /// be to come back, px.
     static constexpr double band_low = 0.7;
     static constexpr double band_high = 1.5;
+    /// The room a set placed anew has under its size before the band's low end: where the readable floor leaves less
+    /// (a low end over 0.85 of its own size: a name of 12 dp under a floor of 12 sp), the set is placed that much over
+    /// its own size, so a zoom out does not place it anew at once.
+    static constexpr double band_room = 0.85;
     static constexpr float margin = 1.0F;
 
     /// This frame's labels at `seconds`, the map's scale being `scale` (anything that grows with the map as the zoom

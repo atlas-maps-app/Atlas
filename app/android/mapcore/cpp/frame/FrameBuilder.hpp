@@ -55,10 +55,12 @@ class Heaps;         // scene/Heaps.hpp
 class ItemTable;     // scene/ItemTable.hpp
 struct ResidentPack; // scene/Packs.hpp
 struct WorldFrame;   // scene/WorldTiles.hpp
+struct WorldName;    // scene/WorldNames.hpp
 } // namespace atlas::scene
 
 namespace atlas::labels {
 struct LabelSet; // labels/ (K13): the app's label sprites for a frame (MapCore.labels, Appendix D)
+class NameStore; // labels/Names.hpp: the world's names' sprites (MapCore.names, ENGINE.md step 5's step 9)
 } // namespace atlas::labels
 
 namespace atlas::markers {
@@ -129,6 +131,9 @@ struct FrameState {
     const style::PaletteBlock* palette = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
+    /// The world's names' sprites (FrameInputs::names; null: the frame shows no names), and the names no tile holds.
+    labels::NameStore* names = nullptr;
+    std::span<const scene::WorldName> extra_names;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas for this frame (FrameInputs::routes; null: none).
@@ -234,6 +239,11 @@ struct FrameInputs {
     FrameScene* scene = nullptr;
     /// The app's label sprites (MapCore.labels; null: none), read by K13's labels pass.
     const labels::LabelSet* labels = nullptr;
+    /// The world's names' sprites (labels/Names.hpp; null: the frame shows no names): the labels pass says there which
+    /// names the frame shows without a sprite, and draws those the app has handed (MapCore.namesWanted, names). And
+    /// names no tile holds, picked as a tile's are (a test's: MapCore.testNames).
+    labels::NameStore* names = nullptr;
+    std::span<const scene::WorldName> extra_names;
     /// The app's markers (MapCore.markers; null: none), read by the markers pass.
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas (MapCore.routes; null: none), read by the routes pass.

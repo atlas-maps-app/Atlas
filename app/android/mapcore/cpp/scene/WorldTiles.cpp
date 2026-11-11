@@ -22,6 +22,7 @@
 #include <format>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <string_view>
 #include <utility>
 
@@ -544,6 +545,39 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
     return w.finish();
 }
 
+std::vector<WorldName> build_world_names(const tl::Tile& tile) {
+    std::vector<WorldName> names;
+    std::vector<std::int64_t> ranks;
+    const tl::Layer* label = tile.layer(tl::LayerId::label);
+    if (label == nullptr) return names;
+    constexpr std::uint8_t population = tl::slot_of(tl::label::columns, "tag:population");
+    constexpr std::uint8_t capital = tl::slot_of(tl::label::columns, "tag:capital");
+    const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
+    each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
+        if (label->integer(tl::label::source, i) != tl::label::source_place) return;
+        const std::optional<NameKind> kind = name_kind(label->string(tl::label::kind, i).value_or(""));
+        const std::string_view text = label->string(tl::label::name, i).value_or("");
+        if (!kind || text.empty()) return;
+        const tl::GridPoint at = label->point(tl::label::pos, i);
+        ranks.push_back(label->integer(tl::label::index, i));
+        names.push_back({.kind = *kind,
+                         .capital = label->string(capital, i).value_or("") == "yes",
+                         .cell = static_cast<std::uint8_t>(c),
+                         .people = load::num(label->string(population, i)).value_or(0.0),
+                         .lat = tl::Frame::degrees(at.lat),
+                         .lon = tl::Frame::degrees(at.lon),
+                         .text = std::string(text)});
+    });
+    // the tile's order, the packer's rank, which each cell's rows are in: the cells' rows merged by it
+    std::vector<std::uint32_t> order(names.size());
+    std::ranges::iota(order, 0U);
+    std::ranges::stable_sort(order, {}, [&ranks](std::uint32_t n) { return ranks[n]; });
+    std::vector<WorldName> ranked;
+    ranked.reserve(names.size());
+    for (const std::uint32_t n : order) ranked.push_back(std::move(names[n]));
+    return ranked;
+}
+
 WorldTiles::WorldTiles(const tl::Store& store, std::unique_ptr<Heaps> heaps) noexcept
     : store_(store), heaps_(std::move(heaps)) {}
 
@@ -740,6 +774,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->segments = g.segments;
     out->coast = g.coast;
     out->lights = g.lights;
+    out->names = build_world_names(*tile);
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
     const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));

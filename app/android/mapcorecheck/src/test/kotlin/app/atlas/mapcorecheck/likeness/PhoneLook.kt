@@ -43,7 +43,7 @@ import kotlin.math.pow
  */
 internal object LookHost {
     /** The layout of its calls; the library refuses another. */
-    const val ABI = 2
+    const val ABI = 3
 
     @JvmStatic external fun abi(): Int
     @JvmStatic external fun lastError(): String
@@ -68,6 +68,12 @@ internal object LookHost {
 
     /** MapCore.wantedWindows: nearest first, packed z << 48 | x << 24 | y. */
     @JvmStatic external fun wanted(handle: Long): LongArray
+
+    /** MapCore.namesWanted: the names the frames show without a sprite (count, then id, look and UTF-8 text each). */
+    @JvmStatic external fun namesWanted(handle: Long): ByteArray
+
+    /** MapCore.names: the names' sprites, a LabelBlock's block; "" or why they were refused. */
+    @JvmStatic external fun names(handle: Long, block: ByteBuffer, floorDp: Float): String
 
     /** The last frame, R G B A rows. */
     @JvmStatic external fun read(handle: Long, pixels: ByteBuffer): Boolean

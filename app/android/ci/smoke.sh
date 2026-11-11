@@ -59,7 +59,8 @@
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
 # frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
-# switch without its lines, no honest state under atlas.vk.off, or a world that does not come from world-latest or draw
+# switch without its lines, a script of the eight scripts' names without its glyphs, its eight sprites handed or six of
+# them drawn, no honest state under atlas.vk.off, or a world that does not come from world-latest or draw
 # whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
@@ -855,7 +856,7 @@ first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*'
 # back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
 # fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
 map_phase() {
-  local run line ms kind limit before after heap frame_ms tail
+  local run line ms kind limit before after heap frame_ms tail script handed drawn
   for run in mapfirst mapwarm; do
     vk_launch "$run" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
     wait_line "$run" 60 "vk first frame" || echo "MAP FAILED: no 'vk first frame' within 60 s ($run)"
@@ -905,6 +906,30 @@ map_phase() {
   done
   adb exec-out screencap -p > "$OUT/map-transition.png"
   vk_crashes maptrans; vk_anr maptrans
+  # The world's names in eight scripts (ENGINE.md step 5, "Names"): the core is given a city's own name in each (the
+  # names script), asks the app for their sprites, which Android's text stack draws, and places and draws them. Each
+  # script's letters must be in the device's fonts (`vk script: names <script> glyphs`), all eight sprites handed with
+  # none skipped (`vk names: <n> handed`), and the core's frames draw at least six of them (`vk names: picked 8 with
+  # sprites 8 drawn <n>`: the home's own labels and chrome may stand where one would).
+  vk_launch mapnames --es atlas.screen home --ez atlas.ci true --es atlas.vk.script names
+  # the script holds its view six seconds once the names are shown
+  wait_line mapnames 240 "vk script: names shown" && adb exec-out screencap -p > "$OUT/map-names.png"
+  wait_line mapnames 60 "vk script done" || { echo "MAP FAILED: the names script did not finish within 300 s"; FAIL=1; }
+  since_marker mapnames | grep -E 'AtlasMap: (vk (script|names)|label place)' | sed 's/.*AtlasMap: //' > "$OUT/map-names.txt"
+  cat "$OUT/map-names.txt"
+  for script in Latin Cyrillic Greek Arabic Hebrew Devanagari Thai CJK; do
+    grep -q "^vk script: names $script glyphs\$" "$OUT/map-names.txt" ||
+      { echo "MAP FAILED: the device's fonts do not hold the $script name's letters (no 'vk script: names $script glyphs')"; FAIL=1; }
+  done
+  handed=$(sed -n 's/^vk names: \([0-9]*\) handed.*/\1/p' "$OUT/map-names.txt" | awk '{ n += $1 } END { print n + 0 }')
+  [ "$handed" -ge 8 ] || { echo "MAP FAILED: $handed of the eight names' sprites were handed to the core"; FAIL=1; }
+  if grep -q '^vk names: .* without glyphs' "$OUT/map-names.txt"; then
+    echo "MAP FAILED: a name was skipped for want of glyphs"; FAIL=1
+  fi
+  drawn=$(sed -n '/^vk script: names 8 given/,/^vk script: names shown/s/^vk names: picked 8 with sprites 8 drawn \([0-9]*\)$/\1/p' "$OUT/map-names.txt" | tail -1)
+  echo "map: the eight scripts' names: $handed sprites handed, ${drawn:-0} drawn by the core"
+  [ "${drawn:-0}" -ge 6 ] || { echo "MAP FAILED: the core drew ${drawn:-0} of the eight names (at least 6)"; FAIL=1; }
+  vk_crashes mapnames; vk_anr mapnames
   # T2's honest state: the map's place says the phone's driver cannot draw it.
   vk_launch mapoff --es atlas.screen home --ez atlas.ci true --ez atlas.vk.off true
   wait_line mapoff 60 "vk honest:" && echo "map: $(since_marker mapoff | grep -m1 -o 'vk honest: .*')" ||

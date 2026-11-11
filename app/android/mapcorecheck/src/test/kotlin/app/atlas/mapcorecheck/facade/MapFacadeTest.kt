@@ -125,6 +125,36 @@ class MapFacadeTest {
                 assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, first, 8L, 0f))
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
 
+                // The world's names (ENGINE.md step 5, "Names"): none wanted before a frame shows any; their sprites as
+                // the app hands them back, under the core's ids and without points (the second without an image: a name
+                // the device has no glyphs for); refused, and why; and a test's names, which no tile holds.
+                assertEquals(0, ByteBuffer.wrap(Native.namesWanted(handle)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt())
+                val none = LabelBlock.Image(0, 0, 0, 0, IntArray(0))
+                val names = listOf(
+                    LabelBlock.Sprite(0x80000001L.toInt(), 0, 40.5f, 10.5f, 20f, -7f, image(6, 4), image(9, 6), DoubleArray(0)),
+                    LabelBlock.Sprite(0x80000002L.toInt(), 0, 0f, 0f, 0f, 0f, none, null, DoubleArray(0)),
+                )
+                assertEquals("", Native.names(handle, LabelBlock.write(names), 12f))
+                assertEquals("", Native.names(handle, LabelBlock.write(emptyList()), 12f))
+                assertEquals(
+                    "the names were refused: the large images' scale is not 0 or from 1 to 4, or 0 with a large image",
+                    Native.names(handle, LabelBlock.write(names, largeScale = 0.5f), 12f),
+                )
+                assertEquals(
+                    "the names were refused: sprite 0 is larger than a sprite may be",
+                    Native.names(handle, LabelBlock.write(listOf(sprite(4, 3000, 1, DoubleArray(0)))), 12f),
+                )
+                assertEquals("the names were refused: not a block of label sprites", Native.names(handle, notLabels.rewind() as ByteBuffer, 12f))
+                assertEquals("the names must be a direct buffer", Native.names(handle, ByteBuffer.allocate(8), 12f))
+                val tokyo = "\u6771\u4EAC".toByteArray(Charsets.UTF_8)
+                val given = ByteBuffer.allocate(4 + 32 + tokyo.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    .putInt(1).putInt(1).putDouble(35.68).putDouble(139.77).putDouble(3.7e7).putInt(tokyo.size).put(tokyo)
+                assertEquals("", Native.testNames(handle, given.array()))
+                assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array().copyOf(20)))
+                given.putInt(4, 9)
+                assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array()))
+                assertEquals("", Native.testNames(handle, ByteArray(4)))
+
                 // The markers: a chosen pin with its value and its name (its looks with the name right and left), a dot and a
                 // cluster of 12, as the app writes them, with a cluster's count in white; none; refused, and why.
                 fun look(width: Int, height: Int) = MarkerBlock.Image(width, height, width / 2, height / 2, IntArray(width * height) { it * 0x01010101 })

@@ -815,6 +815,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * off the main thread when that, the labels or their face change.
      */
     private fun sendLabels(c: CoreMap) {
+        // what the world's names are drawn with (ENGINE.md step 5, "Names"): the core asks for them as its frames show them
+        val nameFace = labelTypeface ?: MapEngine.nameTypeface
+        val globeFace = MapEngine.globeTypeface
+        val floor = READABLE_SP * fontScale
+        val look = c.names.look
+        if (look == null || look.density != density || look.face !== nameFace || look.globeFace !== globeFace || look.floorDp != floor) {
+            c.names.look = app.atlas.mapview.vk.CoreNames.Look(density, nameFace, globeFace, floor)
+        }
         val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f
         val labels = if (draws) overlays.labels else emptyList()
         val face = labelTypeface

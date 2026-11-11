@@ -19,7 +19,11 @@ import kotlin.math.ceil
  * from while it is grown, so it stays sharp. A label's two images are kept for the next hand-over (by its kind, text and
  * face), so only labels new to the map are drawn again.
  */
-internal class LabelSprites(val painter: LabelPainter) {
+internal class LabelSprites(
+    val painter: LabelPainter,
+    /** The texels of the images kept for the next hand-over. */
+    private val kept: Long = KEPT_TEXELS,
+) {
     /**
      * One label's sprite: its id, priority and points; its measures (half its text's width plus the pad, the pad, its
      * text's height, and (ascent + descent) / 2); its [own] image (LabelPainter's pixels) and its [large] one, each
@@ -53,15 +57,16 @@ internal class LabelSprites(val painter: LabelPainter) {
     /** The sprite of [label], known to the core as [id] (one thread at a time). */
     fun sprite(label: MapLabel, id: Int): Sprite {
         painter.measures(label.kind, label.text, measures)
-        val key = Key(label.kind, label.text, painter.typeface)
+        val key = Key(label.kind, label.text, if (label.kind == LabelKind.GLOBE) painter.globeTypeface else painter.typeface)
         val (own, large) = images[key] ?: run {
             largePainter.typeface = painter.typeface
+            largePainter.globeTypeface = painter.globeTypeface
             val made = image(painter, label.kind, label.text) to image(largePainter, label.kind, label.text)
             images[key] = made
             keptTexels += texels(made)
             // the least recently used go while the images kept are more than KEPT_TEXELS, never the one just drawn
             val eldest = images.entries.iterator()
-            while (keptTexels > KEPT_TEXELS && images.size > 1) {
+            while (keptTexels > kept && images.size > 1) {
                 val e = eldest.next()
                 keptTexels -= texels(e.value)
                 eldest.remove()
