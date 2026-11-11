@@ -10,9 +10,11 @@
 #include "gen/spirv/frame/overdraw.hpp"
 #include "gen/spirv/frame/owner.hpp"
 #include "gpu/Instance.hpp"
+#include "load/PackStyle.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
+#include "scene/WorldLook.hpp"
 #include "style/Palette.hpp"
 #include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
@@ -418,6 +420,17 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
                     .ground_y = 0,
                     .no_fin = false};
     }
+    // the style ladder's haze (ENGINE.md step 5): beyond 18 km its depths go to the camera's distance's (0.85 · D and
+    // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was
+    if (const tiles::Style* world = load::world_style(); world != nullptr && world->ladder) {
+        const tiles::WorldLadder& far = *world->ladder;
+        if (spec.dist > far.from) {
+            const scene::LadderWeights w = scene::ladder_weights(far, spec.dist);
+            settings.haze0 += ((far.haze_start * spec.dist) - settings.haze0) * w.caps;
+            settings.haze1 += ((far.haze_reach * spec.dist) - settings.haze1) * w.caps;
+            settings.haze_scale = 1.0 - w.haze;
+        }
+    }
     state_.view.emplace(spec, device);
     state_.layers = view::layers_of(state_.view->camera(), state_.theme, settings);
     const bool engine = cam.has(style::camera_flag::engine_mode);
@@ -433,6 +446,11 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (cam.leaves_out(style::camera_part::cloud_shadows)) steps &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
     if (cam.leaves_out(style::camera_part::rain)) steps &= ~shaders::COMPOSITE_RAIN;
     if (cam.leaves_out(style::camera_part::golden_wash)) steps &= ~shaders::COMPOSITE_WASH;
+    // and the moment's weather over the screen where the ladder's haze is gone (from 2,000 km: the place's clouds'
+    // shadows, its rain and its golden hour are not the planet's)
+    if (settings.haze_scale <= 0.0) {
+        steps &= ~(shaders::COMPOSITE_CLOUD_SHADOWS | shaders::COMPOSITE_RAIN | shaders::COMPOSITE_WASH);
+    }
     if (state_.grounded && (steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U) {
         steps |= shaders::COMPOSITE_CLOUD_GROUND;
     }

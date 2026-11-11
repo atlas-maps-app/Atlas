@@ -110,7 +110,7 @@ Layers layers_of(const Camera& cam, const style::ThemeBlock& th, const LayerSett
         }
         if (!l.night && th.sun_vector[1] > 0) l.sun = sun_point(cam, th.sun_vector, s.width, hy);
     }
-    l.haze = haze_of(cam, th.haze_max, s.haze0, s.haze1, s.ground_y, l.eye, hy, s.height);
+    l.haze = haze_of(cam, th.haze_max * s.haze_scale, s.haze0, s.haze1, s.ground_y, l.eye, hy, s.height);
     // truthy(th['cloud_shadows']): set, and not 0
     const bool cloud_shadows = th.has(style::theme_flag::cloud_shadows) && th.cloud_shadows != 0.0;
     if (l.weather && cloud_shadows && !l.eye) l.cloud_shadow_cut = -7 * (0.62 - th.cloud_shadows * 0.3);

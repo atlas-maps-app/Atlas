@@ -137,18 +137,27 @@ inline constexpr std::uint8_t asphalt = 4; ///< the big roads: the style's aspha
 inline constexpr std::uint8_t runway = 5;  ///< the runways: the style's runway pavement
 inline constexpr std::uint8_t south_cap =
     6;                                    ///< the south pole's cap: Antarctica's ice, the style's glacier (else land)
-inline constexpr std::uint8_t kinds = 7;  ///< the land cover: kinds + its LAND kind (the style's land table)
+inline constexpr std::uint8_t coast = 7;  ///< the coast: the ladder's line along the land's edge (the globe's tiles)
+inline constexpr std::uint8_t kinds = 8;  ///< the land cover: kinds + its LAND kind (the style's land table)
 inline constexpr std::uint32_t size = 64; ///< the palette's entries
 } // namespace world_palette
 
 /// A world tile's geometry as the heap holds it: its fills' vertex words (three a triangle: its box's fractions, u in
 /// the low half and v, from the north, in the high), a word a triangle (its colour, and its cell at bit 8), then three
-/// words a line's segment (its two ends, and its colour, its cell at bit 8 and its width in decimetres from bit 16).
+/// words a line's segment (its two ends, and its colour, its cell at bit 8 and its width in decimetres from bit 16),
+/// then two words a city's light (its place as a vertex word, and its size, 0 the largest, with its cell at bit 8).
+/// A globe's tile (L0 to L5) carries its land's edge among its lines, in the coast's palette entry with no width (the
+/// ladder's): each edge of its land's rings that is not its cells' cut.
 struct WorldGeometry {
     std::vector<std::uint32_t> words;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t lights = 0;
 };
+
+/// The places of a level-`z` world tile that are lit at night (ENGINE.md step 5, "City lights"): the globe's (L0 to
+/// L5, which hold Natural Earth's by scalerank), the base's cities, and its towns from L10.
+[[nodiscard]] bool world_lights(std::uint8_t z, std::string_view kind) noexcept;
 
 /// The width the renders' terrain lines take for a road of class `hw` (regions.py's LW, the widths of
 /// relief.py's lines: a motorway 12 m, a trunk 10, a primary 8, a secondary 7, a tertiary 6), metres; 8 for another big
@@ -156,7 +165,8 @@ struct WorldGeometry {
 [[nodiscard]] double terrain_line_width(std::string_view hw, bool big) noexcept;
 
 /// Stage T of a world tile: its geometry, its land cover coloured by `style`'s LAND kinds (none: as the land), each
-/// triangle and segment cut to its level's world_split_length.
+/// triangle and segment cut to its level's world_split_length, and its lit places' lights where the style has the
+/// ladder (their sizes by its people).
 [[nodiscard]] WorldGeometry build_world_geometry(const tiles::Tile& tile, const tiles::Style* style);
 
 /// A pole's cap: a grid of 128 by 16 quads over its box, two triangles each in the tiles' winding, in palette entry
@@ -175,6 +185,7 @@ struct WorldTile {
     HeapRange range;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t lights = 0;
     std::uint64_t drawn = 0; ///< the last frame that drew it
     double shown = -1;       ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
     bool pinned = false;     ///< the globe's L0 to L3: never let go of
@@ -197,6 +208,9 @@ struct WorldDraw {
     float fade = 1.0F;
     /// The plain land's box (a blank tile's draw): the place of a tile the world has nothing fine of yet.
     DegreeBox box{};
+    /// The cells whose lights it draws: those it draws for a tile the walk ends at, not the floor's under another
+    /// tile's nor an ancestor's under one fading in (a city is lit once).
+    std::uint64_t light_cells = 0;
 };
 
 /// What a frame draws of the world: its tiles coarse to fine, from the world's heap, in the frame drawn.

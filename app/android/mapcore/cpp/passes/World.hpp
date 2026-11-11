@@ -12,10 +12,17 @@
 // day and at night as the ground's land is, the railways', the big roads' asphalt and the runways' pavement): the
 // palette in set 2, a copy for each frame slot. Glaciers and ice shelves have no colour of the style: they are drawn as
 // the land, for the user's pick.
+//
+// Beyond 18 km the style ladder (ENGINE.md step 5, its step 8; scene/WorldLook.hpp) shades the world by the frame's
+// look, a block in set 2 beside the palette, whose second half is the day's colours (the night's hand-over to the
+// caps). After the opaque ground, in the translucent slot's first phase: space where the sky was, the atmosphere's ring
+// and the outline about the planet's disc (a triangle over the frame under the world's depth), the shine and the rim
+// over the disc (the same triangle over it), then the cities' lights on the night side, each tile's.
 #pragma once
 
 #include "frame/Pass.hpp"
 #include "gpu/Memory.hpp"
+#include "scene/WorldLook.hpp"
 
 #include <array>
 #include <cstdint>
@@ -46,8 +53,10 @@ public:
         std::array<float, 4> target{};
         std::uint32_t triangles = 0;
         std::uint32_t segments = 0;
-        float fade = 1.0F;      ///< under 1 while the tile fades in (scene::WorldDraw::fade)
-        std::uint8_t level = 0; ///< its tile's level
+        std::uint32_t lights = 0;      ///< its cities' lights, after its segments' words
+        std::uint32_t light_cells = 0; ///< the cells whose lights it draws (scene::WorldDraw::light_cells)
+        float fade = 1.0F;             ///< under 1 while the tile fades in (scene::WorldDraw::fade)
+        std::uint8_t level = 0;        ///< its tile's level
         std::uint32_t lift = 0; ///< while it fades, its depth's lift above the world's (World.cpp's fading_depth)
     };
 
@@ -69,23 +78,42 @@ public:
 
     /// What the last frame drew, coarse to fine.
     [[nodiscard]] std::span<const Draw> draws() const noexcept { return draws_; }
-    /// The palette the last frame drew with (scene::world_palette's entries, RGBA8, r in the low byte).
+    /// The palette the last frame drew with (scene::world_palette's entries, RGBA8, r in the low byte): the moment's,
+    /// then the day's.
     [[nodiscard]] std::span<const std::uint32_t> palette() const noexcept { return palette_; }
 
     /// The palette of the moment's theme `theme` (by day, or at night where `night`) and the world's style `style`
     /// (null: its entries the land's).
     [[nodiscard]] static std::vector<std::uint32_t> palette_of(const style::ThemeBlock& theme, bool night,
                                                                const tiles::Style* style);
+    /// The day's palette, which the ladder draws under the night's caps: palette_of's by day with the ladder's
+    /// ground, water and roads where the moment is night, the moment's own by day.
+    [[nodiscard]] static std::vector<std::uint32_t> day_palette_of(const style::ThemeBlock& theme,
+                                                                   const tiles::Style* style);
     /// Every world pass of the process paints all the world in `colour` (RGBA8, r in the low byte; 0: its palette
     /// again), so a test tells the world's pixels from the countries', whose colours are the world's by design.
     static void paint_for_tests(std::uint32_t colour) noexcept;
+    /// Every world pass of the process draws without the style ladder (`on` false: its palette alone, the sky where
+    /// no tile draws) or with it again, so a test of the tiles' cover tells a pixel no tile draws by the sky's colour.
+    static void ladder_for_tests(bool on) noexcept;
 
 private:
-    static constexpr std::array<frame::Phase, 1> phase_list{
-        frame::Phase{.slot = frame::Slot::ground, .order = -1, .id = 0}};
+    /// The tiles, first of the opaque ground; then over it, before every other translucent layer, space, the glass
+    /// and the lights.
+    static constexpr std::uint32_t tiles_phase = 0;
+    static constexpr std::uint32_t over_phase = 1;
+    static constexpr std::array<frame::Phase, 2> phase_list{
+        frame::Phase{.slot = frame::Slot::ground, .order = -1, .id = tiles_phase},
+        frame::Phase{.slot = frame::Slot::translucent, .order = 50, .id = over_phase}};
+
+    void record_tiles(const frame::Recording& recording);
+    void record_over(const frame::Recording& recording);
 
     std::vector<Draw> draws_;
     std::vector<std::uint32_t> palette_;
+    scene::WorldLook look_;
+    bool space_ = false;
+    bool glass_ = false;
 
     /// A frame slot's own: its set, the heap buffer bound to it, and its draws.
     struct Slot {
@@ -98,6 +126,7 @@ private:
     // ---- What prepare makes.
     const gpu::Device* device_ = nullptr;
     gpu::Buffer palette_buffer_; // two frame slots' palettes
+    gpu::Buffer look_buffer_;    // two frame slots' look blocks
     vk::raii::DescriptorSetLayout set_layout_{nullptr};
     vk::raii::DescriptorPool pool_{nullptr};
     vk::raii::PipelineLayout layout_{nullptr};
@@ -105,6 +134,8 @@ private:
     vk::raii::Pipeline fills_{nullptr};
     vk::raii::Pipeline fading_fills_{nullptr}; ///< a fading tile's fills: top first, GREATER, used only while one fades
     vk::raii::Pipeline lines_{nullptr};
+    vk::raii::Pipeline lights_{nullptr};
+    vk::raii::Pipeline globe_{nullptr}; ///< space and the glass: a triangle over the frame
 };
 
 } // namespace atlas::passes

@@ -1,0 +1,8 @@
+instant=2026-11-11T17:00:00Z
+lon=10.0
+tilt=20.0
+width=412
+height=915
+cx=206
+cy=420
+radius=150

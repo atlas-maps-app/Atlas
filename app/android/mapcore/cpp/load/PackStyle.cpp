@@ -283,6 +283,84 @@ std::optional<std::vector<std::byte>> world_style_section() {
     return style_section({.palette = amsterdam_palette(), .state = {.tz_h = 0}});
 }
 
+tl::WorldLadder world_ladder() noexcept {
+    tl::WorldLadder l;
+    // ENGINE.md's knots: 18, 75, 600, 2,000 and 6,000 km; the haze 0.85 · D and 2.2 · D deep, as a view's ladder has it
+    l.from = 18'000.0;
+    l.caps = 75'000.0;
+    l.ramps = 600'000.0;
+    l.ring = 2'000'000.0;
+    l.board = 6'000'000.0;
+    l.haze_start = 0.85;
+    l.haze_reach = 2.2;
+    // amsterdam.py's weather_theme under a clear sky by day: its ground (the plate), its water and its roads
+    l.day_ground = 0xD6CFC2;
+    l.day_water = 0x4F7590;
+    l.day_road = 0xC9C1B4;
+    // CosmosArt.drawEarth (R = 150 in the board's 412 x 915 frame). The sea: a radial gradient about the point 0.12
+    // and 0.16 of the disc's width left of and above its middle, 0.75 of its width in radius
+    l.sea = {{{.colour = 0x3A86C8, .at = 0.0}, {.colour = 0x1C5A9A, .at = 0.6}, {.colour = 0x0B2A55, .at = 1.0}}};
+    l.sea_centre = {-0.24, 0.32};
+    l.sea_radius = 1.5;
+    // the land: a vertical gradient from the disc's top to its bottom
+    l.land = {{{.colour = 0xC9D8B4, .at = 0.0},
+               {.colour = 0x6E9E58, .at = 0.3},
+               {.colour = 0x8FA35A, .at = 0.55},
+               {.colour = 0x6E9E58, .at = 0.75},
+               {.colour = 0xE8EEF2, .at = 1.0}}};
+    // the land's edge: #2F5A2A at 0x59 of 255, 0.6 wide
+    l.coast = {.colour = 0x2F5A2A, .opacity = 0x59 / 255.0};
+    l.coast_width = 0.6;
+    // the night: #030712 where the sun is under the horizon, and under each twilight's line
+    l.night = 0x030712;
+    l.cap_altitudes = {0.0, -6.0, -12.0, -18.0};
+    l.cap_opacities = {0.50, 0.20, 0.15, 0.12};
+    l.cap_soft = 1.0;
+    // drawLights: a city's radius by its size, its core by how deep its night is, its halo of 2.2 radii at .35; night =
+    // clamp((-alt - 1) / 10) * min(1, 3 * facing), none facing the eye by less than 0.08. A size's people are Natural
+    // Earth's POP_MAX of the board's 80 cities: its first size from ten million, its second from three
+    l.light_radii = {2.6, 1.9, 1.3};
+    l.light_sizes = {10'000'000, 3'000'000};
+    l.lights = {{{.colour = 0xFFE2A0, .opacity = 1.0},
+                 {.colour = 0xFFD27A, .opacity = 0x8C / 255.0},
+                 {.colour = 0xFFC45C, .opacity = 0x40 / 255.0}}};
+    l.light_halo = 2.2;
+    l.light_halo_opacity = 0.35;
+    l.light_from = 1.0;
+    l.light_over = 10.0;
+    l.light_facing = 3.0;
+    l.light_least_facing = 0.08;
+    // the graticule: #9CC8F0 at 0x38 of 255, 0.8 wide, meridians every 30° between 80° south and north, parallels
+    // every 30° up to 60°
+    l.graticule = {.colour = 0x9CC8F0, .opacity = 0x38 / 255.0};
+    l.graticule_width = 0.8;
+    l.meridian_step = 30.0;
+    l.parallel_step = 30.0;
+    l.parallel_most = 60.0;
+    l.meridian_most = 80.0;
+    // the atmosphere: a radial gradient of #6FB6FF out to 172 of the disc's 150, clear at .86 of that and at its end,
+    // 0x59 of 255 at .93
+    l.air = {.colour = 0x6FB6FF, .opacity = 0x59 / 255.0};
+    l.air_at = {0.86 * 172.0 / 150.0, 0.93 * 172.0 / 150.0, 172.0 / 150.0};
+    // the dashed outline behind the disc, and the rim over it
+    l.outline = {.colour = 0xCFE0FF, .opacity = 0x47 / 255.0};
+    l.outline_width = 1.2;
+    l.outline_dash = {3.0, 4.0};
+    l.rim = {.colour = 0xCFE0FF, .opacity = 0x8C / 255.0};
+    l.rim_width = 1.2;
+    // the highlight from the upper left: white at 0x47 of 255, clear 0.55 * 300 of the disc's 150 away
+    l.shine = {.colour = 0xFFFFFF, .opacity = 0x47 / 255.0};
+    l.shine_centre = {-0.4, 0.52};
+    l.shine_radius = 0.55 * 300.0 / 150.0;
+    // GlobeScreen's night behind it all: #05070D, and its glow of #0C1428 about the frame's middle, a little above
+    l.space = 0x05070D;
+    l.glow = 0x0C1428;
+    l.glow_centre = {0.5, 0.45};
+    l.glow_end = 0.7;
+    l.glow_radius = 0.75;
+    return l;
+}
+
 const tl::Style* world_style() {
     // the tables stay with the style for the process, as a pack's do with its own
     struct Made {
@@ -298,6 +376,7 @@ const tl::Style* world_style() {
             if (!typed) return;
             tables.emplace(std::move(*read));
             style.emplace(std::move(*typed));
+            style->ladder = world_ladder();
         }
     };
     static const Made made;
