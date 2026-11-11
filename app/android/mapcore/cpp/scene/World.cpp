@@ -726,8 +726,11 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
         if (wake_) world_tiles_->set_wake(wake_);
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
+    // where the camera's place has no country's levels (its flag), the world under the cover up to world_from as well,
+    // out to the cover's far plane
+    const double under_far = state.camera.has(style::camera_flag::world_under) ? far_of(distance) : 0.0;
     // each level from its start moved nearer by the governor's bias
-    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0));
+    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0), under_far);
 }
 
 double World::reach_of(double distance) const noexcept {
@@ -1294,8 +1297,14 @@ std::string World::tiles_line() const {
     }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;
-        for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
-        line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size(), finest, w->wanted, w->bare);
+        std::size_t land = 0; // the plain land's draws, under the cover
+        for (const WorldDraw& d : w->draws) {
+            finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
+            if (d.tile->blank) ++land;
+        }
+        line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size() - land, finest, w->wanted,
+                            w->bare);
+        if (w->under) line += std::format(" under land {}", land);
     }
     return line;
 }

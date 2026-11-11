@@ -251,6 +251,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var publishedRest = false
     private var publishedLocation: UserLocation? = null
     private var publishedOff = 0L
+    private var publishedUnder = false
 
     /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
     private var coreLocation = false
@@ -658,12 +659,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         // diagnostics switch off (MapEngine.leftOut)
         val off = (if (MapLayer.TREES in style.layers) 0L else MapPart.TREES.bit) or
             (if (MapLayer.SHADOWS in style.layers) 0L else MapPart.BUILDING_SHADOWS.bit) or MapEngine.leftOut
+        val lv = liveView(cam, v)
+        // where no country's levels are, the world under the core's cover from every distance
+        val under = MapEngine.worldUnder(lv.lat, lv.lon)
         if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest &&
-            location == publishedLocation && off == publishedOff
+            location == publishedLocation && off == publishedOff && under == publishedUnder
         ) {
             return
         }
-        val lv = liveView(cam, v)
         val n = if (next != null && nextNs > nowNs) liveView(next, v) else null
         // the window whose box holds the target, whatever the distance: zooming hands nothing over; where none does yet,
         // the nearest, so the core draws the windows it has around the place
@@ -678,11 +681,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 density = v.density.toDouble(), rest = rest, follow = state.follow != Follow.NONE,
                 pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = true,
                 location = location?.let { MapCameraSource.Location(it.at.lat, it.at.lon, it.accuracyM.toFloat(), it.heading?.toFloat()) },
-                off = off,
+                off = off, worldUnder = under,
             ),
         )
         publishedCamera = cam
         publishedOff = off
+        publishedUnder = under
         publishedViewport = v
         publishedRest = rest
         publishedLocation = location
@@ -949,7 +953,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val c = core
         if (c != null && c.packs.loaded) {
             placedCountries = MapEngine.countries
-            val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance)
+            val under = MapEngine.worldUnder(view.lat, view.lon)
+            val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance, under)
             if (at != place) {
                 place = at
                 canvasTick.intValue++

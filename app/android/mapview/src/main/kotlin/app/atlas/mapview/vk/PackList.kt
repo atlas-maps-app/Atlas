@@ -7,6 +7,7 @@ import app.atlas.mapcore.state.CameraWriter
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.RegionFrame
 import app.atlas.render.py.PyJson
+import app.atlas.tiles.WorldFetch
 import app.atlas.tiles.WorldIndex
 import java.io.DataInputStream
 import java.io.File
@@ -120,6 +121,28 @@ class PackList(
     /** Whether the world draws a camera [distance] metres from its target: on the phone, and beyond [LEVELS_REACH]. */
     fun worldDraws(distance: Double): Boolean = hasWorld && distance > LEVELS_REACH
 
+    /**
+     * The world's fine blocks (world.idx's L6 packs, each `x shl 16 or y`): the places the world has a map of at its
+     * finest levels, their packs on the phone or to be fetched as a view reaches them.
+     */
+    @Volatile
+    private var worldFine: Set<Int> = emptySet()
+
+    /**
+     * Whether the world draws a camera on [lat], [lon], [distance] metres from it: beyond [LEVELS_REACH], as everywhere;
+     * and where the place has no country's levels ([under], MapEngine.worldUnder) from the windows' own reach on
+     * ([CORE_REACH]), where the world holds a fine pack of the place: there the core draws the world under its cover
+     * from every distance (CameraWriter.WORLD_UNDER), so beyond the windows the picture is the world's, where the map
+     * said "Zoom in to see the map" until 11 November.
+     */
+    fun worldDraws(lat: Double, lon: Double, distance: Double, under: Boolean): Boolean {
+        if (!hasWorld) return false
+        if (distance > LEVELS_REACH) return true
+        if (!under || distance <= CORE_REACH) return false
+        val (x, y) = WorldFetch.tileOf(lat, lon, WorldIndex.FINE_BLOCK)
+        return (x shl 16 or y) in worldFine
+    }
+
     /** Whether the packs have been read once ([load]): until then nothing is known of where the core has tiles. */
     @Volatile
     var loaded: Boolean = false
@@ -197,8 +220,10 @@ class PackList(
     private fun worldOf(dir: File): List<MapCore.PackRef> {
         val out = ArrayList<MapCore.PackRef>()
         val idx = File(dir, "world.idx")
+        var fine = emptySet<Int>()
         if (idx.isFile) {
             val index = WorldIndex.read(idx.readBytes())
+            fine = index.entries.filter { it.z == WorldIndex.FINE_BLOCK }.mapTo(HashSet()) { it.x shl 16 or it.y }
             val held = worldHeld(index.entries.map { it.sha256 })
             for ((i, e) in index.entries.withIndex()) {
                 if (i >= held.size || !held[i]) continue
@@ -210,6 +235,7 @@ class PackList(
         if (globe.isFile) {
             out += MapCore.PackRef(WORLD_GLOBE_ID, numberOf(WORLD_GLOBE_ID), MapCore.PackRef.WORLD_BASE, path = globe.path, offset = globe.lastModified(), length = globe.length())
         }
+        worldFine = fine
         return out
     }
 

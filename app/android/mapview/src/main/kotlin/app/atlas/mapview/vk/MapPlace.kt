@@ -14,9 +14,15 @@ internal enum class MapPlace {
     DRAWN, WINDOWS, NEAR, WORLD;
 
     companion object {
-        /** The place of a camera on [lat], [lon], [distance] metres from it, with the packs [packs] and the countries [countryAt] gives. */
-        fun of(packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double): MapPlace {
-            if (packs.covers(lat, lon, distance) || packs.worldDraws(distance)) return DRAWN
+        /**
+         * The place of a camera on [lat], [lon], [distance] metres from it, with the packs [packs] and the countries
+         * [countryAt] gives; [under], whether the place has no country's levels (MapEngine.worldUnder), so the world
+         * draws under the cover there and is the picture from the windows' reach on ([PackList.worldDraws]).
+         */
+        fun of(
+            packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double, under: Boolean = false,
+        ): MapPlace {
+            if (packs.covers(lat, lon, distance) || packs.worldDraws(lat, lon, distance, under)) return DRAWN
             val reach = if (countryAt(lat, lon)?.levels == true) PackList.LEVELS_REACH else PackList.CORE_REACH
             return when {
                 distance <= reach -> WINDOWS

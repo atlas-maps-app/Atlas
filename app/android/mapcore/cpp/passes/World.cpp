@@ -131,12 +131,13 @@ void World::update(const frame::FrameState& state) {
         const scene::WorldTile& t = *d.tile;
         if (!t.range || (t.triangles == 0 && t.segments == 0)) continue;
         constexpr double grid = 1e-7;
-        // a cap's box is the frame's; a tile's longitudes within 180° of the target's
-        const scene::DegreeBox box = t.cap != 0 ? scene::world_cap_box(t.cap, bend.lon)
-                                                : scene::DegreeBox{.north = t.box[2] * grid,
-                                                                   .south = t.box[0] * grid,
-                                                                   .west = t.box[1] * grid,
-                                                                   .east = t.box[3] * grid};
+        // a cap's box is the frame's and the plain land's its draw's; a tile's longitudes within 180° of the target's
+        const scene::DegreeBox box = t.blank      ? d.box
+                                     : t.cap != 0 ? scene::world_cap_box(t.cap, bend.lon)
+                                                  : scene::DegreeBox{.north = t.box[2] * grid,
+                                                                     .south = t.box[0] * grid,
+                                                                     .west = t.box[1] * grid,
+                                                                     .east = t.box[3] * grid};
         const double shift = t.cap != 0 ? 0.0 : scene::wrap_shift(bend, (box.west + box.east) / 2.0);
         const double west = box.west + shift;
         const double east = box.east + shift;

@@ -213,6 +213,8 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_packs(JN
         p.ref.length = ec ? 0 : bytes;
         const auto time = fs::last_write_time(p.ref.path, ec);
         p.ref.offset = ec ? 0 : static_cast<std::uint64_t>(time.time_since_epoch().count());
+        // a world pack by its file is that file whole (tiles::PackRef: a world_mid's offset and length are its range)
+        if (p.ref.kind == tiles::PackKind::world_mid) p.ref.offset = 0;
         packs.push_back(std::move(p));
     }
     return java(env, refused + look->map->set_packs(std::move(packs)));

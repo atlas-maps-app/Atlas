@@ -173,6 +173,18 @@ class EdgeTest {
         assertNull(list.named(50.6292, 3.0573))
         assertTrue(list.worldDraws(PackList.LEVELS_REACH + 1))
         assertFalse(list.worldDraws(PackList.LEVELS_REACH))
+        // where no country's levels are (Lille: outside the Netherlands' box) the core draws the world under its cover
+        // from every distance, so beyond the windows' reach the world draws the camera where its index has the place's
+        // fine pack (here Mainz, in block 6/33/21, its head on the phone or not), and nowhere else
+        assertTrue(list.worldDraws(50.0, 8.27, PackList.CORE_REACH + 1, under = true))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
+        assertFalse(list.worldDraws(50.0, 8.27, PackList.CORE_REACH, under = true))
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH, under = true))
+        assertFalse(list.worldDraws(50.6292, 3.0573, PackList.CORE_REACH + 1, under = true))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH, under = true))
+        // and where a country's levels are, beyond their reach alone
+        assertFalse(list.worldDraws(50.0, 8.27, PackList.LEVELS_REACH, under = false))
+        assertTrue(list.worldDraws(50.0, 8.27, PackList.LEVELS_REACH + 1, under = false))
         // a new version's index names the pack by another SHA-256: listed anew once that head is on the phone
         val again = WorldIndex.Entry(6, 33, 21, 9, 11, 0, 20, 80, 1, IntArray(4), ByteArray(WorldIndex.HASH_BYTES) { 7 })
         File(world, "world.idx").outputStream().use { WorldIndex(Instant.EPOCH, listOf(WorldIndex.Part("world-mid.000", 100)), listOf(again)).write(it) }
@@ -187,6 +199,8 @@ class EdgeTest {
         assertFalse(list.hasWorld)
         assertFalse(list.worldDraws(PackList.LEVELS_REACH + 1))
         assertEquals(WORLD, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
+        assertFalse(list.worldDraws(50.0, 8.27, PackList.CORE_REACH + 1, under = true))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
     }
 
     @Test

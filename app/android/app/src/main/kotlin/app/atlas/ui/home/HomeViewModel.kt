@@ -284,8 +284,10 @@ class HomeViewModel(
      * [WORLD_VIEWS] in turn, waits there for the world's packs of the start's block (the first start's index and globe,
      * then those packs' heads, which the view's first frames there ask for) and then for the map's picture to be final
      * (the chunks of the tiles in view, which its frames ask for by ranges),
-     * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then back. `vk script …` lines mark each step for smoke.sh,
-     * which reads the world's fetch (`vk world` lines) and the core's rests (`vk tiles … world` lines) between them.
+     * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then, the same way, [WORLD_UNDER_KM] km over [AWAY],
+     * where no country's levels are and the world draws under the core's cover (ENGINE.md step 3); then back. `vk
+     * script …` lines mark each step for smoke.sh, which reads the world's fetch (`vk world` lines) and the core's rests
+     * (`vk tiles … world` lines) between them.
      */
     private suspend fun worldScript() {
         val log = { line: String -> android.util.Log.i("AtlasMap", line) }
@@ -305,6 +307,18 @@ class HomeViewModel(
             log("vk script: world at $km km ${if (final) "final" else "not final: ${map.status}"}")
             delay(WORLD_HOLD_MS)
         }
+        log("vk script: world under out to $WORLD_UNDER_KM km")
+        map.camera = start.copy(
+            target = AWAY, zoom = HomeView.zoomForDistance(WORLD_UNDER_KM * 1_000.0, HomeView.HEIGHT_DP, AWAY.lat), pitch = WORLD_UNDER_PITCH,
+        )
+        val there = kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!worldHere(AWAY)) delay(1_000)
+        } != null
+        log("vk script: world's packs under ${if (there) "on the phone" else "not on the phone within ${WORLD_WAIT_MS / 1_000} s"}")
+        delay(WORLD_SETTLE_MS)
+        val under = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: world under at $WORLD_UNDER_KM km ${if (under) "final" else "not final: ${map.status}"}")
+        delay(WORLD_HOLD_MS)
         log("vk script: back")
         map.camera = start
         delay(SCRIPT_SETTLE_MS)
@@ -470,6 +484,13 @@ class HomeViewModel(
          * (the canal ring's tiles at 25 km pitched 60°, ENGINE.md step 5's seam), and the world alone at 100 km pitched 30°.
          */
         private val WORLD_VIEWS = listOf(25 to 60.0, 100 to 30.0)
+
+        /**
+         * Where it looks at the world under the core's cover: [AWAY] from 12 km pitched 30°, within the countries' levels'
+         * reach (18 km) at a place that has none.
+         */
+        private const val WORLD_UNDER_KM = 12
+        private const val WORLD_UNDER_PITCH = 30.0
 
         /** How long the script waits for the world's packs' heads, then for the picture: the index, the globe's 9.7 MB and the chunks over the emulator's network. */
         private const val WORLD_WAIT_MS = 300_000L
