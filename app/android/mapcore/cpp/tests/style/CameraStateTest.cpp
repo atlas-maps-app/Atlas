@@ -139,7 +139,7 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
     const std::vector<Breakage> breakages = {
         {"version 0", [](CameraState& s) { s.version = 0; }, CameraError::version},
         {"version 2", [](CameraState& s) { s.version = 2; }, CameraError::version},
-        {"an unknown flag", [](CameraState& s) { s.flags = 2048; }, CameraError::flags},
+        {"an unknown flag", [](CameraState& s) { s.flags = 4096; }, CameraError::flags},
         {"version 2's trees flag", [](CameraState& s) { s.flags |= 64U; }, CameraError::flags},
         {"an unknown part", [](CameraState& s) { s.parts = std::uint64_t{1} << 56U; }, CameraError::parts},
         {"the parts' last bit", [](CameraState& s) { s.parts = std::uint64_t{1} << 63U; }, CameraError::parts},

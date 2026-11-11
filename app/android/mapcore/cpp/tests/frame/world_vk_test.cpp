@@ -12,6 +12,7 @@
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/PackStyle.hpp"
+#include "load/Window.hpp"
 #include "passes/Ground.hpp"
 #include "passes/World.hpp"
 #include "scene/Cells.hpp"
@@ -1929,6 +1930,254 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
                             asked.size(), kept, drawn.size(), f->draws.size(), f->bare));
         CHECK(std::ranges::includes(drawn, asked));
         CHECK(tiles->stats().failed == 0);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world under the cover: where the camera's place has no country's levels its fine packs' tiles draw "
+          "from every distance, the plain land where it has none, and a window's picture is final without them") {
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-under-{}", ::getpid());
+    fs::create_directories(guard);
+    // Amsterdam's L6 block (32, 21) with its L9 to L11 tiles over the city, which the app brings by ranges, and the
+    // globe's L0 and L5 tiles over it, a file on the phone (the world by ranges' packs)
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> block = test::world_pack(
+        {test::world_tile(9, 262, 168), test::world_tile(10, 525, 336), test::world_tile(11, 1051, 673)}, fine);
+    const std::vector<std::byte> globe =
+        test::world_pack({test::world_tile(0, 0, 0), test::world_tile(5, 16, 10)}, coarse);
+    {
+        std::ofstream out(guard / tiles::world_globe_file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    auto opened = tiles::ExpandedCache::open((guard / "world-cache").string(), std::uint64_t{1} << 24U);
+    ATLAS_REQUIRE(opened);
+    const std::shared_ptr<tiles::ExpandedCache> cache(std::move(*opened));
+    frame::MapPack remote;
+    remote.number = 101;
+    remote.ref.id = "world/6/32/21";
+    remote.ref.kind = tiles::PackKind::world_mid;
+    remote.ref.length = block.size();
+    remote.ref.identity = tiles::Sha256::of(block);
+    remote.ref.fetch = tiles::Store::absent();
+    frame::MapPack base;
+    base.number = 102;
+    base.ref.id = std::string(tiles::world_globe_id);
+    base.ref.kind = tiles::PackKind::world_base;
+    base.ref.path = (guard / tiles::world_globe_file).string();
+    // a window in the L11 tile's middle, a hall of four floors 40 m square in its own middle: a place the phone drew
+    // before
+    const tiles::TileKey place = tiles::tile_of(14, 523'300'000, 48'300'000);
+    const std::array<std::int32_t, 4> pb = tiles::tile_box(place);
+    const double hall_lat = (pb[0] + pb[2]) / 2e7;
+    const double hall_lon = (pb[1] + pb[3]) / 2e7;
+    frame::MapPack window;
+    {
+        const double dlat = 40.0 / 110540.0;
+        const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(hall_lat)));
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry += std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", hall_lat + a,
+                                    hall_lon + o);
+        }
+        const std::string json = std::format(
+            R"({{"version":0.6,"elements":[{{"type":"way","id":7,"nodes":[1,2,3,4,1],"tags":{{"building":"yes",)"
+            R"("building:levels":"4"}},"geometry":[{}]}}]}})",
+            geometry);
+        auto built =
+            load::build_window(std::as_bytes(std::span(json.data(), json.size())), place, load::place_of(place));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        const fs::path file = guard / "window.atlas";
+        std::ofstream out(file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                  static_cast<std::streamsize>(built->pack.size()));
+        window.number = 7;
+        window.ref.id = std::format("window/14/{}/{}", place.x, place.y);
+        window.ref.kind = tiles::PackKind::window;
+        window.ref.path = file.string();
+    }
+    // the head as WorldFetch.head brings it: the block's bytes before its chunks and after them
+    const std::span<const std::byte> all(block);
+    auto whole = tiles::Pack::open(std::make_unique<tiles::MemorySource>(all));
+    ATLAS_REQUIRE(whole);
+    const tiles::Section* chunks = tiles::find_section(whole->sections(), "chunks");
+    ATLAS_REQUIRE(chunks != nullptr);
+    const std::uint64_t chunks_end = chunks->offset + chunks->stored;
+    const std::array<tiles::PackBytes, 2> head = {
+        {{.offset = 0, .bytes = all.first(chunks->offset)}, {.offset = chunks_end, .bytes = all.subspan(chunks_end)}}};
+    auto started = start_world(guard);
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        map.set_world_cache(cache);
+        ATLAS_REQUIRE(tiles::Store::keep_head(*cache, remote.ref, head, load::world_style()));
+        const auto packs = [&](bool with_window) {
+            std::vector<frame::MapPack> out{remote, base};
+            if (with_window) out.push_back(window);
+            return out;
+        };
+        CHECK(map.set_packs(packs(false)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto kept_window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = kept_window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(kept_window), size, why), why);
+        map.set_theme(sunny());
+        const std::shared_ptr<const tiles::StorePack> pack = map.world_pack(remote.ref.id);
+        ATLAS_REQUIRE(pack != nullptr);
+        passes::World::paint_for_tests(magenta);
+        const auto frame_of = [&]() -> const scene::WorldFrame* {
+            const scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+            return tiles != nullptr ? tiles->frame() : nullptr;
+        };
+        // draws `cam` until `done` holds, at most a minute
+        const auto draw_until = [&](const style::CameraState& cam, const auto& done) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                if (done()) return true;
+                scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+                if (tiles != nullptr) tiles->wait_idle();
+            }
+            return false;
+        };
+        const auto land_draws = [](const scene::WorldFrame& f) {
+            return std::ranges::count_if(f.draws, [](const scene::WorldDraw& d) { return d.tile->blank; });
+        };
+        const auto finest = [](const scene::WorldFrame& f) {
+            unsigned z = 0;
+            for (const scene::WorldDraw& d : f.draws) z = std::max(z, unsigned{d.tile->key.z});
+            return z;
+        };
+        // the last frame's pixels in the world's test paint (the moment's weather and grain lie over it), and in the
+        // clear colour; with ATLAS_LOOK_OUT, the frame written as <out>/under_<name>.ppm
+        const std::string look = environment("ATLAS_LOOK_OUT");
+        const auto pixels_of = [&](const char* name) -> std::pair<std::size_t, std::size_t> {
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE_OR_RETURN((std::pair<std::size_t, std::size_t>{0, 0}), pixels.has_value(),
+                                    pixels.error().text());
+            if (!look.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(look) / std::format("under_{}.ppm", name)).string()));
+            }
+            return {count_near(*pixels, magenta_rgb, 60), count_clear(*pixels)};
+        };
+        constexpr std::size_t frame_pixels = std::size_t{size.width} * size.height;
+        // the app's part (WorldReads), where a case lets the tiles come: each chunk the view wants kept
+        tiles::Zstd zstd;
+        const auto keep_wanted = [&] {
+            for (const scene::WorldWant& w : map.world_wants()) {
+                (void)tiles::Store::keep(*cache, *pack, {.offset = w.offset, .bytes = all.subspan(w.offset, w.length)},
+                                         zstd);
+            }
+        };
+        // 500 m over the hall, straight down, with no pack but the world's. Without the flag the world draws nothing
+        // up to 18 km, as before
+        style::CameraState cam = camera(hall_lat, hall_lon, 0.0, 0.0, 500.0);
+        for (int i = 0; i < 3; ++i) (void)session.draw(cam, {});
+        CHECK(frame_of() == nullptr);
+        CHECK(map.world_wants().empty());
+        // with it, the L11 tile holding the place is asked for, and the plain land lies at its box meanwhile: no
+        // coarser tile stands in (the globe's tiles do only beyond 18 km), and the picture waits
+        cam.flags |= style::camera_flag::world_under;
+        CHECK(draw_until(cam, [&] { return frame_of() != nullptr && !map.world_wants().empty(); }));
+        {
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK(f->under);
+            CHECK(f->wanted > 0);
+            CHECK(land_draws(*f) > 0);
+            CHECK(std::cmp_equal(land_draws(*f), f->draws.size()));
+            CHECK_FALSE(map.complete());
+            const auto [world, clear] = pixels_of("land");
+            MESSAGE(
+                std::format("500 m over the hall with no tile of the world's yet: {} draws of the plain land, {} of "
+                            "{} px in the world's paint, {} the clear colour",
+                            land_draws(*f), world, frame_pixels, clear));
+            CHECK(world > frame_pixels * 8 / 10); // the land, in the world's test paint
+            CHECK(clear == 0);
+        }
+        // the window listed and named: its tiles are the picture, final though the world's tile has not come (a place
+        // drawn before the world was fetched, offline), with the plate under the window alone
+        MESSAGE(map.set_packs(packs(true)));
+        cam.pack_id = window.number;
+        CHECK(draw_until(cam, [&] { return map.complete(); }));
+        {
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK(f->under);
+            CHECK(f->wanted > 0);
+            CHECK_FALSE(map.world()->cover()->tiles().empty());
+            const auto [world, clear] = pixels_of("window");
+            MESSAGE(std::format("500 m over the hall, its window drawn and the world's tile absent: {} of {} px the "
+                                "world's land, {} the clear colour",
+                                world, frame_pixels, clear));
+            CHECK(world == 0); // the view lies within the window's tile: its plate and its hall cover the land
+            CHECK(clear == 0);
+        }
+        // the world's chunks come: the L11 tile fades in over the land and draws alone
+        CHECK(draw_until(cam, [&] {
+            keep_wanted();
+            const scene::WorldFrame* f = frame_of();
+            return f != nullptr && f->wanted == 0 && !f->fading && map.world_wants().empty();
+        }));
+        {
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK(f->under);
+            CHECK(finest(*f) == 11);
+            CHECK(land_draws(*f) == 0);
+            CHECK(map.complete());
+            CHECK(map.world()->tiles_line().find(" under land 0") != std::string::npos);
+        }
+        // 3 km over the L9 tile's west edge (4.21875° east): east of it the block's L9 tile draws its cells, west of it
+        // the block holds nothing (the globe's L5 does), so the plain land lies there, not the globe's coast
+        cam = camera(52.33, 4.21875, 0.0, 0.0, 3'000.0);
+        cam.flags |= style::camera_flag::world_under;
+        CHECK(draw_until(cam, [&] {
+            keep_wanted();
+            const scene::WorldFrame* f = frame_of();
+            return f != nullptr && f->wanted == 0 && !f->fading && map.world_wants().empty();
+        }));
+        {
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK(f->under);
+            CHECK(land_draws(*f) > 0);
+            CHECK(finest(*f) == 9);
+            CHECK(std::ranges::none_of(f->draws, [](const scene::WorldDraw& d) {
+                return !d.tile->blank && d.tile->key.z < scene::world_fine_first;
+            }));
+            const auto [world, clear] = pixels_of("edge");
+            CHECK(world > frame_pixels * 8 / 10);
+            CHECK(clear == 0);
+        }
+        // 20 km further west no tile in view has a fine one: nothing is drawn up to 18 km, as without the flag
+        cam = camera(52.33, 3.92, 0.0, 0.0, 3'000.0);
+        cam.flags |= style::camera_flag::world_under;
+        for (int i = 0; i < 3; ++i) (void)session.draw(cam, {});
+        CHECK(frame_of() == nullptr);
+        // and beyond 18 km the world draws as it does everywhere, whatever the flag
+        cam = camera(hall_lat, hall_lon, 0.0, 0.0, 30'000.0);
+        cam.flags |= style::camera_flag::world_under;
+        CHECK(draw_until(cam, [&] {
+            keep_wanted();
+            const scene::WorldFrame* f = frame_of();
+            return f != nullptr && f->wanted == 0 && !f->fading && map.world_wants().empty();
+        }));
+        {
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK_FALSE(f->under);
+            CHECK(land_draws(*f) == 0);
+        }
+        passes::World::paint_for_tests(0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

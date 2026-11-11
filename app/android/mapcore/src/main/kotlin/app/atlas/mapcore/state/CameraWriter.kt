@@ -47,6 +47,12 @@ object CameraWriter {
     const val HEADING = 32
 
     /**
+     * The camera's place has no country's levels (no published country with its frame cells' levels holds the target):
+     * the world draws under the core's cover from every distance, not only beyond 18 km (ENGINE.md step 3).
+     */
+    const val WORLD_UNDER = 2048
+
+    /**
      * The parts of the picture the map leaves out ([parts]): each one's bit number in that word (style::camera_part's
      * bits), [PARTS] of them. The map's own layers set two (MapLayer.TREES and SHADOWS off: [PART_TREES],
      * [PART_BUILDING_SHADOWS]); a debug build's Look settings switch every one, so the map's panel shows on the phone what
@@ -178,7 +184,7 @@ object CameraWriter {
     /** A direct, little-endian buffer for one camera state, all zeros (made once, then reused for every frame). */
     fun allocate(): ByteBuffer = ByteBuffer.allocateDirect(SIZE).order(ByteOrder.LITTLE_ENDIAN)
 
-    /** The version, the [flags] (REST, ENGINE_MODE, RADIUS_CUT, FOLLOW) and the frame's [sequence] number. */
+    /** The version, the [flags] (REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, WORLD_UNDER) and the frame's [sequence] number. */
     fun header(out: ByteBuffer, sequence: Long, flags: Int) {
         check(out)
         out.putInt(VERSION_AT, VERSION)

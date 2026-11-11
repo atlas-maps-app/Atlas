@@ -59,7 +59,8 @@
 namespace atlas::scene {
 
 /// How far from its target a camera is before the world draws, metres (Kotlin's PackList.LEVELS_REACH): up to it the
-/// countries' cover alone, as before the world.
+/// countries' cover alone, as before the world, but where the camera's place has no country's levels (the camera's
+/// flag world_under: WorldTiles::update's `under_far`), where the world lies under the cover from every distance.
 inline constexpr double world_from = 18'000.0;
 
 /// How long a world tile fades in from the first frame it can be drawn, seconds (the countries' cover's): its
@@ -174,6 +175,11 @@ struct WorldGeometry {
 /// `palette` and cell 0.
 [[nodiscard]] WorldGeometry world_cap_geometry(std::uint8_t palette);
 
+/// The plain land: one quad over its box, two triangles in the tiles' winding, in the land's palette entry and cell 0.
+/// Drawn at a tile's box where the world lies under the cover (WorldTiles::update's `under_far`) and has no tile of its
+/// fine packs there yet, as the plate lay there before.
+[[nodiscard]] WorldGeometry world_blank_geometry();
+
 /// A resident world tile.
 struct WorldTile {
     tiles::TileKey key;
@@ -188,6 +194,7 @@ struct WorldTile {
     bool pinned = false;     ///< the globe's L0 to L3: never let go of
     bool ever_drawn = false;
     std::int8_t cap = 0; ///< a pole's cap: 1 the north's, -1 the south's (its box the frame's: world_cap_box)
+    bool blank = false;  ///< the plain land (world_blank_geometry): its box each draw's own (WorldDraw::box)
     /// The pack it was built from: once the store no longer holds it (a new version of the world), the tile is let go.
     std::shared_ptr<const tiles::StorePack> pack;
 };
@@ -202,6 +209,8 @@ struct WorldDraw {
     const WorldTile* tile = nullptr;
     std::uint64_t cells = 0;
     float fade = 1.0F;
+    /// The plain land's box (a blank tile's draw): the place of a tile the world has nothing fine of yet.
+    DegreeBox box{};
     /// The cells whose lights it draws: those it draws for a tile the walk ends at, not the floor's under another
     /// tile's nor an ancestor's under one fading in (a city is lit once).
     std::uint64_t light_cells = 0;
@@ -224,6 +233,9 @@ struct WorldFrame {
     /// The cells in view no resident tile draws (no ancestor down to the globe's L0 holds them): 0 once the globe's
     /// coarse levels are resident, so a zoom out never shows the frame's clear colour.
     std::size_t bare = 0;
+    /// Drawn up to world_from, under the cover, where no country's levels are (WorldTiles::update's `under_far`): the
+    /// cover's tiles are the picture where it has any, and the world lies under them.
+    bool under = false;
 };
 
 /// What the world holds: resident tiles, their heap bytes and triangles, builds done and failed.
@@ -253,9 +265,16 @@ public:
     /// Frame `number`'s world at `seconds` (the frame's clock): its cover for `view`'s camera (in `frame`'s metres)
     /// `distance` metres from its target, on its bent ground, each level from `reach` times its start (walk_world),
     /// the tiles it draws and those it wants, the tiles built since the last frame taken in and room made. Nothing is
-    /// drawn up to world_from, or without a world pack in the store. Render thread.
+    /// drawn up to world_from, or without a world pack in the store.
+    ///
+    /// With `under_far` (metres; 0: none) the world is drawn up to world_from too, out to that far plane, under the
+    /// cover (the camera's flag world_under: no country's levels at its place, so beyond its windows the cover has
+    /// nothing; ENGINE.md step 3): there each tile in view is drawn by the fine packs' tile holding it (L9 to L11) once
+    /// resident, meanwhile by its nearest resident ancestor of those levels, else by the plain land at its box, as the
+    /// plate lay there, so a coarse level never stands in for a street's place (the globe's coast, seen from 500 m);
+    /// and nothing is drawn where no tile in view has a fine one, held or resident. Render thread.
     void update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
-                double seconds, double reach = 1.0);
+                double seconds, double reach = 1.0, double under_far = 0.0);
 
     /// The last update's frame, or null where it draws nothing.
     [[nodiscard]] const WorldFrame* frame() const noexcept { return drawing_ ? &frame_ : nullptr; }
@@ -300,6 +319,7 @@ private:
     std::unique_ptr<Heaps> heaps_;
     std::unordered_map<std::uint64_t, std::unique_ptr<WorldTile>> resident_; // by packed key
     std::array<std::unique_ptr<WorldTile>, 2> caps_; // the north's and the south's, built with the heap
+    std::unique_ptr<WorldTile> blank_;               // the plain land, built with the heap
     WorldFrame frame_;
     bool drawing_ = false;
     std::shared_ptr<const tiles::StorePack> style_pack_;
@@ -308,7 +328,7 @@ private:
     std::unordered_set<std::uint64_t> open_blocks_;   ///< their blocks, packed (their ids, tiles::world_pack_id)
     bool pinned_asked_ = false;
 
-    mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats
+    mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats, style_pack_'s writes
     std::condition_variable wake_worker_;
     std::condition_variable idle_cv_;
     std::vector<tiles::TileKey> queue_;

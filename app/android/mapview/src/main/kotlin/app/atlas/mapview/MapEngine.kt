@@ -414,6 +414,14 @@ object MapEngine {
     fun countryAt(lat: Double, lon: Double): CountryTiles? = countries.firstOrNull { it.holds(lat, lon) }
 
     /**
+     * Whether the place at [lat], [lon] has no country's levels: no published country whose tiles hold its frame cells'
+     * levels holds it ([CountryTiles.levels]), so beyond its windows the core's cover has nothing there, and the world
+     * draws under it from every distance (CameraWriter.WORLD_UNDER; ENGINE.md step 3). False until the published list
+     * is read: nothing is known of the countries before.
+     */
+    fun worldUnder(lat: Double, lon: Double): Boolean = countries.isNotEmpty() && countryAt(lat, lon)?.levels != true
+
+    /**
      * The user's own edits that OpenStreetMap accepted, which the windows draw until the map's data carries them
      * (ENGINE.md step 6), oldest first; the app sets it with its EditQueue's mapped edits. One still waiting, or
      * refused, is not drawn. Read on the windows' background thread.

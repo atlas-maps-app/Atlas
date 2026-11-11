@@ -387,6 +387,18 @@ WorldGeometry world_cap_geometry(std::uint8_t palette) {
     return g;
 }
 
+WorldGeometry world_blank_geometry() {
+    constexpr std::uint32_t nw = 0;
+    constexpr std::uint32_t ne = 65'535U;
+    constexpr std::uint32_t sw = 65'535U << 16U;
+    constexpr std::uint32_t se = ne | sw;
+    WorldGeometry g;
+    g.triangles = 2;
+    // counter-clockwise with north up, as earcut leaves the tiles' triangles
+    g.words = {nw, sw, se, nw, se, ne, std::uint32_t{world_palette::land}, std::uint32_t{world_palette::land}};
+    return g;
+}
+
 double world_far(double distance, double height) noexcept {
     const double k = distance / world_from;
     const double h = std::max(height, 0.0);
@@ -570,6 +582,22 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
         cap->cap = c == 0 ? std::int8_t{1} : std::int8_t{-1};
         w->caps_.at(c) = std::move(cap);
     }
+    // the plain land, in the heap for good as well
+    {
+        const WorldGeometry g = world_blank_geometry();
+        const auto blank_bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
+        if (const auto range = w->heaps_->allocate(HeapKind::ground, blank_bytes, 16, HeapEnd::low); range) {
+            w->heaps_->write(*range, std::as_bytes(std::span(g.words)));
+            auto blank = std::make_unique<WorldTile>();
+            blank->range = *range;
+            blank->triangles = g.triangles;
+            blank->pinned = true;
+            blank->blank = true;
+            w->blank_ = std::move(blank);
+        } else {
+            log::warn("vk world: no room for the plain land");
+        }
+    }
     w->heaps_->flush();
     w->worker_ = std::jthread([raw = w.get()](const std::stop_token& stop) { raw->run(stop); });
     return w;
@@ -627,9 +655,9 @@ bool WorldTiles::take_style() {
         }
     }
     {
-        // the builders read it for each tile they build (build), under the mutex
+        // the worker reads it for each tile it builds (build)
         const std::scoped_lock lock(mutex_);
-        style_pack_ = std::move(style);
+        style_pack_.swap(style);
     }
     std::vector<const tl::StorePack*> world;
     for (const std::shared_ptr<const tl::StorePack>& p : open) {
@@ -781,7 +809,7 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
 }
 
 void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
-                        double seconds, double reach) {
+                        double seconds, double reach, double under_far) {
     const view::Camera& camera = view.camera();
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
@@ -819,6 +847,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
     frame_.wanted = 0;
     frame_.fading = false;
     frame_.bare = 0;
+    frame_.under = false;
     frame_.bend = world_bend(view, frame);
     if (style_pack_ == nullptr && std::ranges::none_of(seen_packs_, [](const auto& p) { return is_world(*p); })) {
         const std::scoped_lock lock(mutex_);
@@ -840,10 +869,13 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         }
     }
     std::vector<tl::TileKey> blocks;
-    if (distance > world_from) {
+    // up to world_from, under the cover where the camera's place has no country's levels (out to the cover's far plane)
+    const bool under = distance <= world_from && under_far > 0.0 && blank_ != nullptr;
+    if (distance > world_from || under) {
         drawing_ = true;
+        frame_.under = under;
         const WorldBend& bend = frame_.bend;
-        const double far = world_far(distance, eye_height(bend));
+        const double far = under ? under_far : world_far(distance, eye_height(bend));
         const Frustum frustum(camera, 40.0, far);
         std::unordered_map<std::uint64_t, bool> held_cache;
         const auto held = [&](const tl::TileKey& key) {
@@ -902,7 +934,41 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         // a leaf drawn at it or coarser has its drawer's parent level's under it (where L2 tiles meet L3's, from
         // 9,600 km out, their seam has an L2 tile under it, whose edge is its L2 neighbour's)
         const bool floored = bend.drop > 0.0;
+        // under the cover, a place is drawn by the fine packs' tiles alone (the tile holding it, or while that comes
+        // its nearest resident ancestor of theirs), and has the plain land at its box until one has faded in; no
+        // tile lights its cities there (the ladder's lights begin beyond world_from)
+        std::vector<DegreeBox> blanks;
+        const auto fine = [](const tl::TileKey& key) { return key.z >= world_fine_first; };
         for (const WorldLeaf& leaf : leaves) {
+            if (!under) break;
+            const tl::TileKey& h = leaf.holder;
+            const std::array<std::int32_t, 4> leaf_box = tl::tile_box(leaf.key);
+            WorldTile* t = nullptr;
+            if (fine(h)) {
+                if (auto it = resident_.find(h.packed()); it != resident_.end()) {
+                    t = it->second.get();
+                } else {
+                    asked.emplace_back(leaf.distance, h);
+                    t = ancestor(h, h.z);
+                }
+            }
+            bool floor = false; // a tile faded in lies under the place
+            for (; t != nullptr && fine(t->key) && !floor; t = ancestor(t->key, t->key.z)) {
+                cells[t->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+                floor = fade_of(*t) >= 1.0;
+            }
+            if (!floor) blanks.push_back(degrees_of(grid_of(leaf.key)));
+        }
+        // nothing fine in view, held or resident: the cover alone, as before
+        if (under && (!cells.empty() || !asked.empty())) {
+            blank_->drawn = number;
+            blank_->ever_drawn = true;
+            for (const DegreeBox& box : blanks) {
+                frame_.draws.push_back({.tile = blank_.get(), .cells = 1, .fade = 1.0F, .box = box});
+            }
+        }
+        for (const WorldLeaf& leaf : leaves) {
+            if (under) break;
             const tl::TileKey& h = leaf.holder;
             WorldTile* drawer = nullptr;
             if (auto it = resident_.find(h.packed()); it != resident_.end()) {
