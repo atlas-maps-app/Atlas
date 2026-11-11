@@ -174,6 +174,17 @@ object MapEngine {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && display?.supportedModes?.any { it.refreshRate > 61f } == true
 
     /**
+     * The world's names' faces (ENGINE.md step 5, "Names"), from the app: the boards' Instrument Serif italic for a
+     * city's, a town's and a village's name where a map is given no label face of its own, and the Globe board's Geist
+     * (its variable font; the painter draws it at 700) for the names on the globe. Null until the app gives them: a serif italic and a bold sans meanwhile.
+     */
+    @Volatile
+    var nameTypeface: android.graphics.Typeface? = null
+
+    @Volatile
+    var globeTypeface: android.graphics.Typeface? = null
+
+    /**
      * The user's strength of TONE (the Map look's Tone: 0 off, 1 the renders', up to 2): the core lights by it from the
      * next moment it is handed (CoreMap.moment); [tone] sets it.
      */

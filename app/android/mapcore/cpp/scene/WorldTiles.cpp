@@ -22,6 +22,7 @@
 #include <format>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <string_view>
 #include <utility>
 
@@ -130,7 +131,9 @@ public:
     }
 
     /// The coast along a ring of the tile's land in cell `cell`: each of its edges that does not lie along the cell's
-    /// box, where the packer cut the land (WorldGeometry.cellBoxes: within the grid's rounding of an edge of it).
+    /// box, where the packer cut the land (WorldGeometry.cellBoxes: within the grid's rounding of an edge of it), nor
+    /// along the world's own edge beyond 85°, where Mercator's square cuts Antarctica (its land's last latitude is the
+    /// projection's, a vertex's rounding from the tile's).
     void coast(const tl::RingView& ring, std::uint32_t cell) {
         const std::size_t n = ring.size();
         if (n < 3) return;
@@ -153,12 +156,19 @@ public:
                 edges, [&](std::int64_t e) { return std::abs(a - e) <= rounding && std::abs(b - e) <= rounding; });
         };
         const std::uint32_t look = std::uint32_t{world_palette::coast} | (cell << 8U);
+        constexpr std::int32_t worlds_edge = 850'000'000; // 85°, the grid's 1e-7°
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t j = i + 1 < n ? i + 1 : 0;
             const Point a{.lat = ring.lat[i], .lon = ring.lon[i]};
             const Point b{.lat = ring.lat[j], .lon = ring.lon[j]};
             if ((a.lat == b.lat && a.lon == b.lon) || along(a.lat, b.lat, lats) || along(a.lon, b.lon, lons)) continue;
+            if ((a.lat <= -worlds_edge && b.lat <= -worlds_edge) || (a.lat >= worlds_edge && b.lat >= worlds_edge)) {
+                continue;
+            }
+            // into the coast's own words, which follow the tile's other lines
+            std::swap(segments_, coasts_);
             segment(a, b, look, split_depth);
+            std::swap(segments_, coasts_);
         }
     }
 
@@ -171,12 +181,14 @@ public:
     [[nodiscard]] WorldGeometry finish() {
         WorldGeometry g;
         g.triangles = static_cast<std::uint32_t>(triangles_.size());
-        g.segments = static_cast<std::uint32_t>(segments_.size() / 3);
+        g.coast = static_cast<std::uint32_t>(coasts_.size() / 3);
+        g.segments = static_cast<std::uint32_t>(segments_.size() / 3) + g.coast;
         g.lights = static_cast<std::uint32_t>(lights_.size() / 2);
-        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size() + lights_.size());
+        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size() + coasts_.size() + lights_.size());
         g.words.insert(g.words.end(), vertices_.begin(), vertices_.end());
         g.words.insert(g.words.end(), triangles_.begin(), triangles_.end());
         g.words.insert(g.words.end(), segments_.begin(), segments_.end());
+        g.words.insert(g.words.end(), coasts_.begin(), coasts_.end());
         g.words.insert(g.words.end(), lights_.begin(), lights_.end());
         return g;
     }
@@ -298,6 +310,7 @@ private:
     std::vector<std::uint32_t> vertices_;
     std::vector<std::uint32_t> triangles_;
     std::vector<std::uint32_t> segments_;
+    std::vector<std::uint32_t> coasts_;
     std::vector<std::uint32_t> lights_;
 };
 
@@ -483,7 +496,7 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
             }
         });
     }
-    // a globe's tile's coast, the ladder's line along its land's edge, under its other lines
+    // a globe's tile's coast, the ladder's line along its land's edge, the last of its lines
     constexpr std::uint8_t globe_last = 5;
     if (ground != nullptr && style != nullptr && style->ladder && tile.header.level <= globe_last) {
         each_row(*ground, cells, [&](std::uint32_t i, std::uint32_t c) {
@@ -542,6 +555,39 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
         });
     }
     return w.finish();
+}
+
+std::vector<WorldName> build_world_names(const tl::Tile& tile) {
+    std::vector<WorldName> names;
+    std::vector<std::int64_t> ranks;
+    const tl::Layer* label = tile.layer(tl::LayerId::label);
+    if (label == nullptr) return names;
+    constexpr std::uint8_t population = tl::slot_of(tl::label::columns, "tag:population");
+    constexpr std::uint8_t capital = tl::slot_of(tl::label::columns, "tag:capital");
+    const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
+    each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
+        if (label->integer(tl::label::source, i) != tl::label::source_place) return;
+        const std::optional<NameKind> kind = name_kind(label->string(tl::label::kind, i).value_or(""));
+        const std::string_view text = label->string(tl::label::name, i).value_or("");
+        if (!kind || text.empty()) return;
+        const tl::GridPoint at = label->point(tl::label::pos, i);
+        ranks.push_back(label->integer(tl::label::index, i));
+        names.push_back({.kind = *kind,
+                         .capital = label->string(capital, i).value_or("") == "yes",
+                         .cell = static_cast<std::uint8_t>(c),
+                         .people = load::num(label->string(population, i)).value_or(0.0),
+                         .lat = tl::Frame::degrees(at.lat),
+                         .lon = tl::Frame::degrees(at.lon),
+                         .text = std::string(text)});
+    });
+    // the tile's order, the packer's rank, which each cell's rows are in: the cells' rows merged by it
+    std::vector<std::uint32_t> order(names.size());
+    std::ranges::iota(order, 0U);
+    std::ranges::stable_sort(order, {}, [&ranks](std::uint32_t n) { return ranks[n]; });
+    std::vector<WorldName> ranked;
+    ranked.reserve(names.size());
+    for (const std::uint32_t n : order) ranked.push_back(std::move(names[n]));
+    return ranked;
 }
 
 WorldTiles::WorldTiles(const tl::Store& store, std::unique_ptr<Heaps> heaps) noexcept
@@ -754,7 +800,9 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->box = {tile->header.south, tile->header.west, tile->header.north, tile->header.east};
     out->triangles = g.triangles;
     out->segments = g.segments;
+    out->coast = g.coast;
     out->lights = g.lights;
+    out->names = build_world_names(*tile);
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
     const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));

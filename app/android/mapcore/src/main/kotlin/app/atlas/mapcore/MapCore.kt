@@ -349,6 +349,67 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun labels(block: ByteBuffer, revision: Long, least: Float = 0f): String =
         core.call("the core is closed") { Native.labels(it, block, revision, least) }
 
+    /** A name of the world the map shows and has no sprite of: the core's [id] of it, its [look] and its [text]. */
+    class NameWant(val id: Int, val look: Int, val text: String) {
+        companion object {
+            /** The looks, as the core numbers them (`scene::NameStyle`). */
+            const val CITY = 0
+            const val TOWN = 1
+            const val VILLAGE = 2
+            const val GLOBE = 3
+        }
+    }
+
+    /**
+     * The world's names the map's frames show without a sprite, by rank (ENGINE.md step 5, "Names"): the app draws
+     * each as the boards' labels are drawn and hands them back ([names]). Each is asked for once in two seconds. Off
+     * the main thread.
+     */
+    fun namesWanted(): List<NameWant> = core.call(emptyList()) { h ->
+        val b = ByteBuffer.wrap(Native.namesWanted(h)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (b.remaining() < 4) return@call emptyList()
+        List(b.getInt()) {
+            val id = b.getInt()
+            val look = b.getInt()
+            val text = ByteArray(b.getInt())
+            b.get(text)
+            NameWant(id, look, String(text, Charsets.UTF_8))
+        }
+    }
+
+    /**
+     * The sprites of names the core asked for ([namesWanted]), as `state.LabelBlock` writes them, each under the id
+     * the core gave and without points (the core knows its place); one with an empty image is a name the device has
+     * no glyphs for, which the core does not ask for again. Their text is drawn no smaller than [floorDp] (the
+     * readable floor: 12 sp times Android's font scale). "" or why they were refused. Off the main thread.
+     */
+    fun names(block: ByteBuffer, floorDp: Float): String = core.call("the core is closed") { Native.names(it, block, floorDp) }
+
+    /** A name for [testNames]: its [kind] (`TestName.COUNTRY` and on), its place, its people and its [text]. */
+    class TestName(val kind: Int, val lat: Double, val lon: Double, val people: Double, val text: String) {
+        companion object {
+            const val COUNTRY = 0
+            const val CITY = 1
+            const val TOWN = 2
+            const val VILLAGE = 3
+            const val SUBURB = 4
+        }
+    }
+
+    /**
+     * Names no tile holds, which the map picks as a tile's from now on (none: an empty list): the tests' (smoke's
+     * eight scripts). "" or why they were refused. Off the main thread.
+     */
+    fun testNames(names: List<TestName>): String = core.call("the core is closed") { h ->
+        val texts = names.map { it.text.toByteArray(Charsets.UTF_8) }
+        val b = ByteBuffer.allocate(4 + names.size * 32 + texts.sumOf { it.size }).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.putInt(names.size)
+        for ((i, n) in names.withIndex()) {
+            b.putInt(n.kind).putDouble(n.lat).putDouble(n.lon).putDouble(n.people).putInt(texts[i].size).put(texts[i])
+        }
+        Native.testNames(h, b.array())
+    }
+
     /**
      * The map's markers from now on, as `state.MarkerBlock` writes them (each look the app drew once, the clusters'
      * counts, and what the core places them by; an empty block, none), at [revision]: the core places them each frame

@@ -216,6 +216,7 @@ void World::update(const frame::FrameState& state) {
                   4U * t.triangles};
         out.triangles = t.triangles;
         out.segments = t.segments;
+        out.coast = t.coast;
         out.lights = t.lights;
         out.light_cells = static_cast<std::uint32_t>(d.light_cells & 0xFFFFU);
         draws_.push_back(out);
@@ -249,7 +250,7 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
                      .stages = vk::ShaderStageFlagBits::eVertex},
         gpu::Binding{.slot = wl::world_palette.binding,
                      .type = vk::DescriptorType::eStorageBuffer,
-                     .stages = vk::ShaderStageFlagBits::eVertex},
+                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{.slot = wl::look.binding,
                      .type = vk::DescriptorType::eUniformBuffer,
                      .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment}};
@@ -315,6 +316,20 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     fading_fills_ = std::move(fading_fills);
     ATLAS_GPU_LET(lines, frame::make_pipeline(context, desc("world lines", "line_vs"), frame::Overdraw::opaque));
     lines_ = std::move(lines);
+    // the same three with the look's stages, for the frames the ladder shades
+    whole.label.name = "world fills look";
+    whole.vertex = "fill_look_vs";
+    whole.fragment = "look_fs";
+    ATLAS_GPU_LET(look_fills, frame::make_pipeline(context, whole, frame::Overdraw::opaque));
+    look_fills_ = std::move(look_fills);
+    fading.label.name = "world fills fading look";
+    fading.vertex = "fill_look_vs";
+    fading.fragment = "look_fs";
+    ATLAS_GPU_LET(look_fading, frame::make_pipeline(context, fading, frame::Overdraw::opaque));
+    look_fading_fills_ = std::move(look_fading);
+    ATLAS_GPU_LET(look_lines, frame::make_pipeline(context, desc("world lines look", "line_look_vs", "look_fs"),
+                                                   frame::Overdraw::opaque));
+    look_lines_ = std::move(look_lines);
     // over the world, tested against its depth without a write: the lights, and the triangle over the frame
     gpu::GraphicsDesc light = desc("world lights", "light_vs", "light_fs");
     light.depth_write = false;
@@ -331,6 +346,9 @@ void World::release() noexcept {
     fills_.clear();
     fading_fills_.clear();
     lines_.clear();
+    look_fills_.clear();
+    look_fading_fills_.clear();
+    look_lines_.clear();
     lights_.clear();
     globe_.clear();
     layout_.clear();
@@ -361,7 +379,7 @@ void World::record(const frame::Recording& recording, std::uint32_t phase) {
 void World::record_over(const frame::Recording& recording) {
     const Slot& s = slots_.at(recording.state.slot & 1U);
     if (!*globe_ || !*lights_ || !s.drawing) return;
-    const bool lit = look_.weights.caps > 0.0 &&
+    const bool lit = look_.weights.caps > 0.0 && !look_.plain &&
                      std::ranges::any_of(draws_, [](const Draw& d) { return d.lights > 0 && d.light_cells != 0; });
     if (!space_ && !glass_ && !lit) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
@@ -442,6 +460,12 @@ void World::record_tiles(const frame::Recording& recording) {
                                         .minDepth = near,
                                         .maxDepth = far});
     };
+    // the look's stages where the ladder shades the frame; the plain ones where it leaves the palette's colours
+    const bool looked = look_.block.weights.x > 0.0F && *look_fills_ && *look_fading_fills_ && *look_lines_;
+    const vk::raii::Pipeline& fills = looked ? look_fills_ : fills_;
+    const vk::raii::Pipeline& fading_fills = looked ? look_fading_fills_ : fading_fills_;
+    const vk::raii::Pipeline& lines = looked ? look_lines_ : lines_;
+    const bool coasts = looked && look_.block.weights.y > 0.0F;
     float at = -1.0F;
     for (const Draw& d : draws_) {
         const bool fading = d.fade < 1.0F;
@@ -457,16 +481,18 @@ void World::record_tiles(const frame::Recording& recording) {
                                    .sphere = d.sphere,
                                    .target = d.target};
         if (d.triangles > 0) {
-            bind(fading ? fading_fills_ : fills_);
+            bind(fading ? fading_fills : fills);
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
             cmd.draw(3 * d.triangles, 1, 0, 0);
             triangles += d.triangles;
         }
-        if (d.segments > 0) {
-            bind(lines_);
+        // its lines, its coast's (the last of them) only where the ramps give the coast a weight
+        const std::uint32_t segments = coasts ? d.segments : d.segments - std::min(d.coast, d.segments);
+        if (segments > 0) {
+            bind(lines);
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
-            cmd.draw(6, d.segments, 0, 0);
-            triangles += 2ULL * d.segments;
+            cmd.draw(6, segments, 0, 0);
+            triangles += 2ULL * segments;
         }
     }
     if (at >= 0.0F) viewport(0.0F, 1.0F);

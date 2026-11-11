@@ -107,8 +107,9 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
     double size = reference_ > 0.0 && scale > 0.0 ? scale / reference_ : 1.0;
     if (reference_ <= 0.0 || size < low || size > band_high) {
         const double before = reference_;
-        reference_ = scale > 0.0 ? scale : 1.0;
-        size = 1.0;
+        // at its own size; where the floor leaves less than band_room under it, that much over it
+        size = scale > 0.0 ? std::max(1.0, low / band_room) : 1.0;
+        reference_ = scale > 0.0 ? scale / size : 1.0;
         for (State& st : states_) {
             if (!st.present) continue;
             st.present = false;
@@ -133,14 +134,15 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
     for (const std::uint32_t c : order_) {
         const std::uint32_t s = state_of_[c];
         if (s == none || !states_[s].present) {
-            others.push_back(c);
+            if (!candidates[c].hidden) others.push_back(c);
             continue;
         }
         const State& st = states_[s];
         const Candidate& label = scaled_[c];
         const bool has = st.point < label.points.size() && projected(label.points[st.point]);
         const Stand stand = has ? stand_at(label.measures, label.points[st.point], st.spot) : Stand{};
-        const bool clear = has && clear_of(st.shown ? stand.box : grown(stand.box, margin), frame, index_);
+        const bool clear =
+            has && !label.hidden && clear_of(st.shown ? stand.box : grown(stand.box, margin), frame, index_);
         if (clear) index_.insert(stand.box);
         placed_.push_back({.candidate = c, .point = st.point, .spot = st.spot, .stand = stand});
         clear_.push_back(clear ? 1 : 0);

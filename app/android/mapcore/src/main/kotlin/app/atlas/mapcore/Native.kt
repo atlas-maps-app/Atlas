@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 26
+    const val ABI = 27
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -361,6 +361,27 @@ object Native {
      * drawn no smaller than [least] of their own size; "" or why they were refused.
      */
     @JvmStatic external fun labels(handle: Long, block: ByteBuffer, revision: Long, least: Float): String
+
+    /**
+     * The world's names the map's frames show without a sprite, by rank (ENGINE.md step 5, "Names"), little-endian:
+     * their count (u32), then each one's id (u32), its look (u32: 0 a city's, 1 a town's, 2 a village's, 3 the Globe
+     * board's) and its text (u32 bytes, then UTF-8). Each is asked for once in two seconds.
+     */
+    @JvmStatic external fun namesWanted(handle: Long): ByteArray
+
+    /**
+     * The names' sprites (`state.LabelBlock`'s block in a direct buffer, each sprite without points; one without an
+     * image is a name the device has no glyphs for), their text drawn no smaller than [floorDp]; "" or why they were
+     * refused.
+     */
+    @JvmStatic external fun names(handle: Long, block: ByteBuffer, floorDp: Float): String
+
+    /**
+     * Names no tile holds, picked as a tile's are from now on (a test's), little-endian: their count (u32), then each
+     * one's kind (u32: 0 a country, 1 a city, 2 a town, 3 a village, 4 a suburb), latitude, longitude and people (f64
+     * each) and its text (u32 bytes, then UTF-8); "" or why they were refused.
+     */
+    @JvmStatic external fun testNames(handle: Long, block: ByteArray): String
 
     /**
      * The map's markers (`state.MarkerBlock`'s block in a direct buffer; an empty block takes them away) at [revision];

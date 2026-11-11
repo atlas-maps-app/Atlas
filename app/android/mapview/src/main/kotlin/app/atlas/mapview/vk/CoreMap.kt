@@ -79,6 +79,9 @@ internal class CoreMap(
 
     private val main = Handler(Looper.getMainLooper())
 
+    /** The world's names: asked of the core after each presented frame, drawn here and handed back ([CoreNames]). */
+    val names = CoreNames(core, main)
+
     /** Why the core turned the map off for the session (the device lost three times in a row), or null while it is on. */
     @Volatile
     var offReason: String? = null
@@ -94,6 +97,7 @@ internal class CoreMap(
                 if (firstCompleteAt < 0) firstCompleteAt = SystemClock.uptimeMillis()
             }
             if (done != was) main.post(onChange)
+            names.framePresented()
         },
         onOff = { reason ->
             offReason = reason
@@ -287,6 +291,7 @@ internal class CoreMap(
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */
     fun close() {
+        names.close()
         synchronized(switch) {
             gone = true
             if (owner !== this) return

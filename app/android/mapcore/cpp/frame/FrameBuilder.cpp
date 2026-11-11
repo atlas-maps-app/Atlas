@@ -380,6 +380,8 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.slot = slot;
     state_.render_threads = options_.render_threads.get();
     state_.labels = inputs_.labels;
+    state_.names = inputs_.names;
+    state_.extra_names = inputs_.extra_names;
     state_.markers = inputs_.markers;
     state_.routes = inputs_.routes;
     state_.asked = inputs_.asked;

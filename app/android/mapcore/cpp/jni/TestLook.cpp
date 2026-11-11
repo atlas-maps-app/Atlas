@@ -14,6 +14,8 @@
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "jni/TestFrame.hpp"
+#include "labels/Names.hpp"
+#include "labels/Sprites.hpp"
 #include "load/Window.hpp"
 #include "scene/World.hpp"
 #include "scene/WorldTiles.hpp"
@@ -41,7 +43,7 @@ namespace fs = std::filesystem;
 
 /// The layout of this file's calls; MT/likeness/PhoneLook.kt's LookHost.ABI. 2: screen takes no painter switch (the
 /// phone draws true depth alone).
-constexpr jint look_abi = 2;
+constexpr jint look_abi = 3;
 
 thread_local std::string last_error; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): per thread
 
@@ -284,6 +286,40 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
                                  "fragments, record {:.1f} ms",
                                  frames, map.complete() ? "yes" : "no", map.drawn_pack(), map.tiles_line(), last.draws,
                                  last.triangles_k, last.fragments_k, last.record_ms));
+}
+
+/// The world's names the map's frames show without a sprite, by rank, as Native.namesWanted gives them: little-endian,
+/// their count (u32), then each one's id (u32), its look (u32) and its text's bytes (u32, then UTF-8).
+JNIEXPORT jbyteArray JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_namesWanted(JNIEnv* env, jclass /*unused*/,
+                                                                                       jlong handle) {
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const std::vector<labels::NameWant> wants = look_of(handle)->map->names().ask(now);
+    std::vector<jbyte> out;
+    const auto put = [&out](std::uint32_t v) {
+        for (unsigned k = 0; k < 4; ++k) out.push_back(static_cast<jbyte>((v >> (8U * k)) & 0xFFU));
+    };
+    put(static_cast<std::uint32_t>(wants.size()));
+    for (const labels::NameWant& w : wants) {
+        put(w.id);
+        put(w.style);
+        put(static_cast<std::uint32_t>(w.text.size()));
+        for (const char c : w.text) out.push_back(static_cast<jbyte>(c));
+    }
+    jbyteArray array = env->NewByteArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetByteArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The names' sprites, as Native.names takes them (LabelBlock's block in a direct buffer, each sprite without
+/// points), their text no smaller than `floor_dp`; "" or why they were refused.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_names(JNIEnv* env, jclass /*unused*/,
+                                                                              jlong handle, jobject block,
+                                                                              jfloat floor_dp) {
+    frame::MapFrame& map = *look_of(handle)->map;
+    auto read = labels::read_label_block(bytes_of(env, block));
+    if (!read) return java(env, std::format("the names were refused: {}", read.error()));
+    const auto kept = map.names().give(std::move(read->sprites), read->large_scale, floor_dp, map.seconds());
+    return java(env, kept ? std::string() : std::format("the names were refused: {}", labels::describe(kept.error())));
 }
 
 /// The windows the map's world wants built, nearest first (MapCore.wantedWindows), packed z << 48 | x << 24 | y.

@@ -29,6 +29,7 @@
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Window.hpp"
@@ -37,6 +38,7 @@
 #include "osm/Edits.hpp"
 #include "passes/BlurCheck.hpp"
 #include "routes/Routes.hpp"
+#include "scene/WorldNames.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Palette.hpp"
@@ -427,6 +429,31 @@ public:
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
             map_->set_labels(std::move(set));
+            ask_frame();
+        });
+    }
+
+    /// The names the map's frames show without a sprite, by rank (labels::NameStore::ask: each asked for once in two
+    /// seconds, on the bridge's own clock, which runs while the map rests).
+    [[nodiscard]] std::vector<labels::NameWant> names_wanted() {
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        return on_session([this, now] { return map_->names().ask(now); });
+    }
+
+    /// The names' sprites the app hands back (labels::NameStore::give); "" or why they were refused.
+    [[nodiscard]] std::string names(std::vector<labels::LabelSprite> sprites, float large_scale, float floor_dp) {
+        return on_session([this, &sprites, large_scale, floor_dp] {
+            const auto kept = map_->names().give(std::move(sprites), large_scale, floor_dp, map_->seconds());
+            if (!kept) return std::string(labels::describe(kept.error()));
+            ask_frame();
+            return std::string();
+        });
+    }
+
+    /// Names no tile holds, picked as a tile's are from now on (a test's).
+    void test_names(std::vector<scene::WorldName> names) {
+        on_session([this, &names] {
+            map_->set_extra_names(std::move(names));
             ask_frame();
         });
     }
@@ -1563,6 +1590,82 @@ jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     return java(env, "");
 }
 
+/// The world's names the map's frames show without a sprite, by rank, for the app to draw (ENGINE.md step 5, "Names"):
+/// little-endian, their count (u32), then each one's id (u32), its look (u32: scene::NameStyle) and its text's bytes
+/// (u32, then UTF-8). Each is asked for once in two seconds.
+jbyteArray native_names_wanted(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<labels::NameWant> wants =
+        core != nullptr ? core->names_wanted() : std::vector<labels::NameWant>{};
+    std::vector<jbyte> out;
+    const auto put = [&out](std::uint32_t v) {
+        for (unsigned k = 0; k < 4; ++k) out.push_back(static_cast<jbyte>((v >> (8U * k)) & 0xFFU));
+    };
+    put(static_cast<std::uint32_t>(wants.size()));
+    for (const labels::NameWant& w : wants) {
+        put(w.id);
+        put(w.style);
+        put(static_cast<std::uint32_t>(w.text.size()));
+        for (const char c : w.text) out.push_back(static_cast<jbyte>(c));
+    }
+    jbyteArray array = env->NewByteArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetByteArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The names' sprites the app hands back (MK/state/LabelBlock.kt's block in a direct buffer, each sprite without
+/// points; one without an image is a name the device has no glyphs for), their text drawn no smaller than `floor_dp`
+/// (the readable floor: 12 sp times Android's font scale). "" or why they were refused.
+jstring native_names(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jfloat floor_dp) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
+    const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
+    if (address == nullptr || capacity < 0) return java(env, "the names must be a direct buffer");
+    auto read =
+        labels::read_label_block(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!read) return java(env, std::format("the names were refused: {}", read.error()));
+    if (read->sprites.empty()) return java(env, "");
+    const std::string why = core->names(std::move(read->sprites), read->large_scale, floor_dp);
+    return java(env, why.empty() ? why : std::format("the names were refused: {}", why));
+}
+
+/// Names no tile holds, picked as a tile's are from now on (a test's: smoke's eight scripts): little-endian, their
+/// count (u32), then each one's kind (u32: scene::NameKind), latitude, longitude and people (f64 each) and its
+/// text's bytes (u32, then UTF-8). "" or why they were refused.
+jstring native_test_names(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray block) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    std::vector<jbyte> bytes(block == nullptr ? 0 : static_cast<std::size_t>(env->GetArrayLength(block)));
+    if (!bytes.empty()) env->GetByteArrayRegion(block, 0, static_cast<jsize>(bytes.size()), bytes.data());
+    std::size_t at = 0;
+    const auto take = [&](void* to, std::size_t n) {
+        if (bytes.size() - at < n) return false;
+        std::memcpy(to, bytes.data() + at, n);
+        at += n;
+        return true;
+    };
+    std::uint32_t count = 0;
+    if (!take(&count, 4)) return java(env, "the names were refused: no count");
+    std::vector<scene::WorldName> names;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::uint32_t kind = 0;
+        std::uint32_t length = 0;
+        scene::WorldName name;
+        if (!take(&kind, 4) || !take(&name.lat, 8) || !take(&name.lon, 8) || !take(&name.people, 8) ||
+            !take(&length, 4) || bytes.size() - at < length ||
+            kind > static_cast<std::uint32_t>(scene::NameKind::suburb)) {
+            return java(env, std::format("the names were refused: name {} is cut short, or of no kind", i));
+        }
+        name.kind = static_cast<scene::NameKind>(kind);
+        name.text.assign(reinterpret_cast<const char*>(bytes.data() + at), length);
+        at += length;
+        names.push_back(std::move(name));
+    }
+    core->test_names(std::move(names));
+    return java(env, "");
+}
+
 /// The app's markers for the map (MK/state/MarkerBlock.kt's block in a direct buffer, markers/Markers.hpp's
 /// read_marker_block: each marker's look as the app drew it, the clusters' counts, and what the core places them by),
 /// at `revision`; an empty block takes them away. "" or why they were refused.
@@ -1798,8 +1901,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 63>& methods() {
-    static const std::array<JNINativeMethod, 63> table{{
+const std::array<JNINativeMethod, 66>& methods() {
+    static const std::array<JNINativeMethod, 66> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1853,6 +1956,9 @@ const std::array<JNINativeMethod, 63>& methods() {
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
+        method("namesWanted", "(J)[B", fn(&native_names_wanted)),
+        method("names", "(JLjava/nio/ByteBuffer;F)Ljava/lang/String;", fn(&native_names)),
+        method("testNames", "(J[B)Ljava/lang/String;", fn(&native_test_names)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),

@@ -11,6 +11,7 @@
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "labels/Names.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Window.hpp"
 #include "passes/Ground.hpp"
@@ -21,6 +22,7 @@
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "scene/WorldBend.hpp"
+#include "scene/WorldNames.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -2264,6 +2266,149 @@ TEST_CASE("the world's painter's order holds wherever the camera stands: from 45
         MESSAGE(std::format("{} draws; pixels changed from the picture a centimetre back:{} of {}", f->draws.size(),
                             steps, all));
         CHECK(most * 200 < all);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world's names: the frame over the globe asks for its places' names by rank, in the look of its "
+          "distance, and draws the sprites handed where the world pass draws their places") {
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-names-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> globe = test::world_pack({lit_globe_tile()}, coarse);
+    {
+        std::ofstream file(guard / tiles::world_globe_file, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        frame::MapPack base;
+        base.number = 102;
+        base.ref.id = std::string(tiles::world_globe_id);
+        base.ref.kind = tiles::PackKind::world_base;
+        base.ref.path = (guard / tiles::world_globe_file).string();
+        std::vector<frame::MapPack> packs;
+        packs.push_back(std::move(base));
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        style::ThemeBlock theme = magenta_sky();
+        theme.flags = 0;
+        theme.weather_code = 255;
+        theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+        theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+        theme.shadow_blur = theme.cloud_shadows = 0.0;
+        map.set_theme(theme);
+        map.set_screen(false, false, false);
+        // The tile's two cities, at (25 N, 70 E) and (20 N, 10 E), from over a place between them; each sprite a block
+        // of one colour no pixel of the world has.
+        const auto sprite = [](std::uint32_t id, std::uint32_t colour) {
+            labels::LabelSprite made{
+                .id = id, .measures = {.half = 20.0F + 8.0F, .pad = 8.0F, .text_height = 16.0F, .baseline = -4.0F}};
+            made.own = {.width = 40,
+                        .height = 16,
+                        .pixels = std::vector<std::uint32_t>(std::size_t{40} * 16, colour),
+                        .anchor_x = 20,
+                        .anchor_y = 12};
+            return made;
+        };
+        const auto count = [](const gpu::Pixels& p, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+            std::size_t n = 0;
+            for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+                n += p.rgba[i] == r && p.rgba[i + 1] == g && p.rgba[i + 2] == b ? 1U : 0U;
+            }
+            return n;
+        };
+        struct Place {
+            const char* name;
+            double lat;
+            double lon;
+            std::uint32_t sprite; // its block's colour, premultiplied, R in the low byte
+            std::array<std::uint8_t, 3> rgb;
+        };
+        const std::array<Place, 2> places{
+            Place{.name = "East", .lat = 25.0, .lon = 70.0, .sprite = 0xFF'F0'10'F0U, .rgb = {0xF0, 0x10, 0xF0}},
+            Place{.name = "Middle", .lat = 20.0, .lon = 10.0, .sprite = 0xFF'10'F0'F0U, .rgb = {0xF0, 0xF0, 0x10}}};
+        struct Look {
+            const char* name;
+            style::CameraState camera;
+            scene::NameStyle style;
+            std::size_t named;
+        };
+        // From 5,000 km over the eastern city: it alone stands on the frame, in a city's look. From 18,000 km over a
+        // place between the two, the frame's long side along the parallel: both, in the globe's look.
+        const std::array<Look, 2> looks{Look{.name = "5000 km",
+                                             .camera = camera(25.0, 70.0, 0.0, 0.0, 5'000'000.0),
+                                             .style = scene::NameStyle::city,
+                                             .named = 1},
+                                        Look{.name = "18000 km",
+                                             .camera = camera(22.0, 40.0, 90.0, 0.0, 18'000'000.0),
+                                             .style = scene::NameStyle::globe,
+                                             .named = 2}};
+        std::uint32_t before = 0;
+        double asked = 0.0;
+        for (const Look& look : looks) {
+            const style::CameraState& cam = look.camera;
+            draw_world_complete(session, map, cam);
+            // the places that stand on the frame, where the world pass draws them
+            const view::View v = view_of(cam);
+            const view::GroundFrame f = centred_on(cam);
+            const scene::WorldBend bend = scene::world_bend(v, f);
+            std::vector<std::pair<const Place*, view::Vec2>> standing;
+            for (const Place& p : places) {
+                const auto at = scene::name_point(bend, f, v, p.lat, p.lon, 0.1);
+                if (at && at->x >= 0.0 && at->y >= 0.0 && at->x <= size.width && at->y <= size.height) {
+                    standing.emplace_back(&p, *at);
+                }
+            }
+            CHECK(standing.size() == look.named);
+            // they are wanted, in the tile's rank (their people are the same), in the distance's look
+            asked += 100.0;
+            const std::vector<labels::NameWant> wants = map.names().ask(asked);
+            ATLAS_REQUIRE(wants.size() == standing.size());
+            ATLAS_REQUIRE(!wants.empty());
+            std::vector<labels::LabelSprite> sprites;
+            for (std::size_t i = 0; i < wants.size(); ++i) {
+                CHECK(wants[i].text == standing[i].first->name);
+                CHECK(wants[i].style == static_cast<std::uint8_t>(look.style));
+                CHECK((wants[i].id & scene::name_id_bit) != 0);
+                sprites.push_back(sprite(wants[i].id, standing[i].first->sprite));
+            }
+            CHECK(wants[0].id != before); // another look is another id
+            before = wants[0].id;
+            ATLAS_REQUIRE(map.names().give(std::move(sprites), 0.0F, 0.0F, map.seconds()).has_value());
+            // drawn until the fades are over
+            for (int n = 0; n < 400 && (n < 3 || map.animating()); ++n) (void)session.draw(cam, {});
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            if (!out.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("names_{}.ppm", look.name)).string()));
+            }
+            // each sprite whole, at its own size, on whole pixels, centred on its place's point
+            for (const auto& [place, at] : standing) {
+                const std::size_t block = count(*pixels, place->rgb[0], place->rgb[1], place->rgb[2]);
+                MESSAGE(std::format("names from {}: {}'s sprite {} px of 640, its place at ({:.1f}, {:.1f})", look.name,
+                                    place->name, block, at.x, at.y));
+                CHECK(block == 640);
+                const hlsl::float3 colour = {static_cast<float>(place->rgb[0]) / 255.0F,
+                                             static_cast<float>(place->rgb[1]) / 255.0F,
+                                             static_cast<float>(place->rgb[2]) / 255.0F};
+                CHECK(levels_apart(pixel_at(*pixels, at.x, at.y), colour) < 1.0);
+            }
+            CHECK(map.names().ask(1e9).empty());
+        }
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

@@ -14,7 +14,8 @@
 //
 // The texels are set 1's (frame/FrameLayout.hpp's sprites, which passes/Labels.hpp's SpriteGlobals fills from the
 // frame's LabelSet): every sprite's rows one after another, premultiplied RGBA8, R in the low byte. The frame slot's
-// sprites to draw are the pass's own set (2).
+// sprites to draw are the pass's own set (2), and beside them the texels of the world's names' sprites, the pass's own
+// buffer (ENGINE.md step 5, "Names"): a sprite says which of the two its texels are in.
 
 #include "shared/frame.slang"
 
@@ -25,7 +26,7 @@
 /// One sprite to draw: where it stands in the view and where its texels are.
 struct SpriteDraw {
     float4 target; // its top-left corner (x, y) in the view's device px and its size there (z, w): whole px at scale 1
-    uint4 source;  // x: its first texel; y: its row's texels (its width); z: its rows (its height)
+    uint4 source;  // x: its first texel; y: its row's texels (its width); z: its rows (its height); w: 1 a name's
     float4 fade;   // x: its opacity, 0 to 1 (the 250 ms fades); y: its scale, view px a texel (1: texel for texel)
 };
 
@@ -35,6 +36,7 @@ static const float sprite_widest = 3.0f;
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
 [[vk::binding(13, 1)]] StructuredBuffer<uint> sprite_texels;
 [[vk::binding(0, 2)]] StructuredBuffer<SpriteDraw> sprite_draws;
+[[vk::binding(1, 2)]] StructuredBuffer<uint> name_texels;
 
 struct SpriteOut {
     float4 position : SV_Position;
@@ -74,7 +76,14 @@ float4 sprite_texel(SpriteDraw s, int2 texel, uint n) {
         return float4(0.0f);
     }
     uint i = s.source.x + uint(texel.y) * s.source.y + uint(texel.x);
-    uint t = i < n ? sprite_texels[i] : 0u;
+    uint t = 0u;
+    if (i < n) {
+        if (s.source.w != 0u) {
+            t = name_texels[i];
+        } else {
+            t = sprite_texels[i];
+        }
+    }
     return float4(float(t & 0xFFu), float((t >> 8u) & 0xFFu), float((t >> 16u) & 0xFFu), float(t >> 24u)) / 255.0f;
 }
 
@@ -111,7 +120,11 @@ SpriteColour sprite_fs(SpriteOut v) {
     float2 view = css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z;
     uint n;
     uint stride;
-    sprite_texels.GetDimensions(n, stride);
+    if (s.source.w != 0u) {
+        name_texels.GetDimensions(n, stride);
+    } else {
+        sprite_texels.GetDimensions(n, stride);
+    }
     float4 c;
     if (s.fade.y == 1.0f) {
         // at its own size: the texel under the pixel

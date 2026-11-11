@@ -210,8 +210,21 @@ internal class WorldHost(private val w: Int, private val h: Int, private val den
         CameraWriter.pack(camera, 0L, CameraWriter.PROFILE_NONE)
         CameraWriter.keepOuts(camera, 0)
         CameraWriter.noLocation(camera)
-        val drew = LookHost.draw(handle, camera, 120.0)
+        var drew = LookHost.draw(handle, camera, 120.0)
         check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
+        // The world's names: those the frames show without a sprite are handed, as the app hands Android's (TestNames'
+        // here), and the map drawn again, until it wants none (a round's sprites can make room for more names).
+        var named = 0
+        for (round in 0 until NAME_ROUNDS) {
+            val wants = TestNames.wants(LookHost.namesWanted(handle))
+            if (wants.isEmpty()) break
+            val why = LookHost.names(handle, TestNames.block(wants, density), TestNames.FLOOR_DP)
+            check(why.isEmpty()) { why }
+            named += wants.size
+            drew = LookHost.draw(handle, camera, 120.0)
+            check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
+        }
+        if (named > 0) drew += "; $named names' sprites handed"
         val pixels = ByteBuffer.allocateDirect(w * h * 4)
         check(LookHost.read(handle, pixels)) { LookHost.lastError() }
         val rgb = ByteArray(w * h * 3)
@@ -225,6 +238,9 @@ internal class WorldHost(private val w: Int, private val h: Int, private val den
 
     private companion object {
         var sequence = 0L
+
+        /** The rounds of names handed for one picture at most (a round is every name the frame wants at once). */
+        const val NAME_ROUNDS = 6
 
         /** MapCore.PackRef.WORLD_BASE: the globe's kind (tiles::PackKind::world_base). */
         const val WORLD_BASE = 4

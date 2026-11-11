@@ -302,6 +302,7 @@ void MapFrame::release(gpu::PipelineWatch* watch) noexcept {
 
 void MapFrame::next(const style::CameraState& camera, double seconds) {
     if (!made() || !theme_.has_value()) return; // not ready()
+    seconds_ = seconds;
     // The pack the app names for this camera, else the world's own choice.
     if (camera.pack_id != active_number_) {
         active_number_ = camera.pack_id;
@@ -321,6 +322,8 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .mode = map_mode,
                           .scene = world_.get(),
                           .labels = labels_.get(),
+                          .names = &names_,
+                          .extra_names = extra_names_,
                           .markers = markers_.get(),
                           .routes = routes_.get(),
                           .asked = asked_,

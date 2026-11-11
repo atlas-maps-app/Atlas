@@ -305,12 +305,25 @@ TEST_CASE("a placed label stays where it is on the map, growing and shrinking wi
     CHECK(entry(drawn, 2, true) != nullptr); // its place in the band before, fading out
     CHECK(placement.fading());
 
-    // The readable floor raises the band's low end: from that size, shrinking to 0.85 of it is beyond the band.
+    // The readable floor raises the band's low end: from that size, shrinking to 0.85 of it is beyond the band. A
+    // floor that leaves less than 0.85 of room under the set's own size has it placed anew that much over it (0.9 /
+    // 0.85), so a further step out is within the band and does not place it anew again.
     drawn = placement.update(c, frame, at * 1.6, 3.0);
     const Frame floored{.width = 400, .height = 300, .least = 0.9F};
     drawn = placement.update(c, floored, at * 1.6 * 0.85, 3.1);
-    CHECK(placement.size() == 1.0F);
-    CHECK(placement.reference() == at * 1.6 * 0.85);
+    CHECK(placement.size() == doctest::Approx(0.9 / 0.85));
+    CHECK(placement.reference() == doctest::Approx(at * 1.6 * 0.85 / (0.9 / 0.85)));
+    const double placed_at = placement.reference();
+    drawn = placement.update(c, floored, at * 1.6 * 0.85 * 0.9, 3.2);
+    CHECK(placement.reference() == placed_at);
+    CHECK(placement.size() == doctest::Approx(0.9 / 0.85 * 0.9));
+    // a floor of 0.8 leaves that room: placed anew at its own size, as without a floor
+    Placement lower;
+    const Frame low{.width = 400, .height = 300, .least = 0.8F};
+    (void)lower.update(c, low, at, 0.0);
+    (void)lower.update(c, low, at * 0.75, 0.1);
+    CHECK(lower.size() == 1.0F);
+    CHECK(lower.reference() == at * 0.75);
     // without it, the same is within the band
     Placement unfloored;
     (void)unfloored.update(c, frame, at, 0.0);
@@ -354,6 +367,66 @@ TEST_CASE("placed labels that the map's turn brings together: the one of lower p
     ATLAS_REQUIRE(lower != nullptr);
     CHECK(lower->stand.x == 300.0F);
     CHECK(lower->alpha == 0.0F);
+}
+
+TEST_CASE("a label on its way out fades out where it stands and is not placed anew; a new label fades in; a label "
+          "of higher priority brought in is placed around those kept, none overlapping") {
+    // Three names in a row; the middle one leaves the pick.
+    std::array<Point, 1> a{{{.x = 100, .y = 100}}};
+    std::array<Point, 1> b{{{.x = 300, .y = 100}}};
+    std::array<Point, 1> d{{{.x = 500, .y = 100}}};
+    std::vector<Candidate> c{
+        {.id = 1, .label = 0, .priority = -1, .measures = measures(60, 20), .points = a},
+        {.id = 2, .label = 1, .priority = -2, .measures = measures(60, 20), .points = b},
+        {.id = 3, .label = 2, .priority = -3, .measures = measures(60, 20), .points = d},
+    };
+    const Frame frame{.width = 600, .height = 300};
+    Placement placement;
+    auto drawn = placement.update(c, frame, 0.01, 0.0);
+    ATLAS_REQUIRE(drawn.size() == 3);
+    c[1].hidden = true;
+    drawn = placement.update(c, frame, 0.01, 1.0);
+    const Drawn* leaving = entry(drawn, 1);
+    ATLAS_REQUIRE(leaving != nullptr);
+    CHECK(leaving->stand.x == 300.0F); // where it stood
+    CHECK(leaving->alpha == 1.0F);
+    CHECK(placement.fading());
+    drawn = placement.update(c, frame, 0.01, 1.125);
+    leaving = entry(drawn, 1);
+    ATLAS_REQUIRE(leaving != nullptr);
+    CHECK(leaving->alpha == doctest::Approx(0.5F));
+    drawn = placement.update(c, frame, 0.01, 1.3);
+    CHECK(entry(drawn, 1) == nullptr);
+    CHECK(placement.placed() == 2);
+    // gone from the frame's candidates, and a name of the highest priority comes where it stood, between the two
+    // kept: it fades in from nothing, and neither of them moves or fades (they were placed first)
+    c.erase(c.begin() + 1);
+    c[1].label = 1;
+    std::array<Point, 1> e{{{.x = 300, .y = 100}}};
+    c.push_back({.id = 4, .label = 2, .priority = 0, .measures = measures(60, 20), .points = e});
+    drawn = placement.update(c, frame, 0.01, 2.0);
+    const Drawn* fresh = entry(drawn, 2);
+    ATLAS_REQUIRE(fresh != nullptr);
+    CHECK(fresh->alpha == 0.0F);
+    CHECK(fresh->stand.x == 300.0F);
+    drawn = placement.update(c, frame, 0.01, 2.25);
+    ATLAS_REQUIRE(drawn.size() == 3);
+    for (const Drawn& one : drawn) CHECK(one.alpha == 1.0F);
+    CHECK(entry(drawn, 0)->stand.x == 100.0F);
+    CHECK(entry(drawn, 1)->stand.x == 500.0F);
+    for (std::size_t i = 0; i < drawn.size(); ++i) {
+        for (std::size_t j = i + 1; j < drawn.size(); ++j) {
+            const Box& p = drawn[i].stand.box;
+            const Box& q = drawn[j].stand.box;
+            CHECK_FALSE((p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b));
+        }
+    }
+    // a label that was never placed and comes hidden is not placed
+    std::array<Point, 1> f{{{.x = 300, .y = 250}}};
+    c.push_back({.id = 5, .label = 3, .priority = -9, .measures = measures(60, 20), .points = f, .hidden = true});
+    drawn = placement.update(c, frame, 0.01, 3.0);
+    CHECK(entry(drawn, 3) == nullptr);
+    CHECK(placement.placed() == 3);
 }
 
 TEST_CASE("a set of labels keeps every image's texels once, and a sprite goes where its anchor lands rounded") {

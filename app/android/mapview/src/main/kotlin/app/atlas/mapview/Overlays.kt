@@ -72,6 +72,17 @@ enum class LabelKind {
 
     /** A quarter ("Jordaan"): italic serif 17 board px in #3A3F4B on white halos of 6 and 2 px. */
     AREA,
+
+    /**
+     * The world's names (ENGINE.md step 5, "Names"), which the core picks and places: a city (and a country) in the
+     * Main board's place style, a quarter's; a town the same at 15 px; a village (and a suburb) at 13 px.
+     */
+    CITY,
+    TOWN,
+    VILLAGE,
+
+    /** A name on the globe, beyond 6,000 km: the Globe board's Geist 700 at 12 px, white on a soft night glow. */
+    GLOBE,
 }
 
 /**

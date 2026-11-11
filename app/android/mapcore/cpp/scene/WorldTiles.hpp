@@ -39,6 +39,7 @@
 #include "scene/Cells.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/WorldBend.hpp"
+#include "scene/WorldNames.hpp"
 #include "tiles/Store.hpp"
 
 #include <array>
@@ -146,12 +147,14 @@ inline constexpr std::uint32_t size = 64; ///< the palette's entries
 /// the low half and v, from the north, in the high), a word a triangle (its colour, and its cell at bit 8), then three
 /// words a line's segment (its two ends, and its colour, its cell at bit 8 and its width in decimetres from bit 16),
 /// then two words a city's light (its place as a vertex word, and its size, 0 the largest, with its cell at bit 8).
-/// A globe's tile (L0 to L5) carries its land's edge among its lines, in the coast's palette entry with no width (the
-/// ladder's): each edge of its land's rings that is not its cells' cut.
+/// A globe's tile (L0 to L5) carries its land's edge as the last of its lines (`coast` of its `segments`), in the
+/// coast's palette entry with no width (the ladder's): each edge of its land's rings that is not its cells' cut. The
+/// world pass leaves them out of a frame under the ramps, where the coast has no weight.
 struct WorldGeometry {
     std::vector<std::uint32_t> words;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t coast = 0;
     std::uint32_t lights = 0;
 };
 
@@ -169,6 +172,11 @@ struct WorldGeometry {
 /// ladder (their sizes by its people).
 [[nodiscard]] WorldGeometry build_world_geometry(const tiles::Tile& tile, const tiles::Style* style);
 
+/// The places a world tile names (scene/WorldNames.hpp), in the tile's order, the packer's rank: its label layer's
+/// place nodes of a kind the world names, each with its `name`, its people (the number its population's text starts
+/// with) and whether it is a capital.
+[[nodiscard]] std::vector<WorldName> build_world_names(const tiles::Tile& tile);
+
 /// A pole's cap: a grid of 128 by 16 quads over its box, two triangles each in the tiles' winding, in palette entry
 /// `palette` and cell 0.
 [[nodiscard]] WorldGeometry world_cap_geometry(std::uint8_t palette);
@@ -185,10 +193,12 @@ struct WorldTile {
     HeapRange range;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t coast = 0; ///< the last of its segments: its coast's
     std::uint32_t lights = 0;
-    std::uint64_t drawn = 0; ///< the last frame that drew it
-    double shown = -1;       ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
-    bool pinned = false;     ///< the globe's L0 to L3: never let go of
+    std::vector<WorldName> names; ///< the places it names, by rank (build_world_names)
+    std::uint64_t drawn = 0;      ///< the last frame that drew it
+    double shown = -1;   ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
+    bool pinned = false; ///< the globe's L0 to L3: never let go of
     bool ever_drawn = false;
     std::int8_t cap = 0; ///< a pole's cap: 1 the north's, -1 the south's (its box the frame's: world_cap_box)
     bool blank = false;  ///< the plain land (world_blank_geometry): its box each draw's own (WorldDraw::box)
@@ -208,8 +218,8 @@ struct WorldDraw {
     float fade = 1.0F;
     /// The plain land's box (a blank tile's draw): the place of a tile the world has nothing fine of yet.
     DegreeBox box{};
-    /// The cells whose lights it draws: those it draws for a tile the walk ends at, not the floor's under another
-    /// tile's nor an ancestor's under one fading in (a city is lit once).
+    /// The cells whose lights it draws and whose places it names: those it draws for a tile the walk ends at, not the
+    /// floor's under another tile's nor an ancestor's under one fading in (a city is lit once, and named once).
     std::uint64_t light_cells = 0;
 };
 

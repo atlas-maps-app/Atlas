@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import app.atlas.geo.LatLon
 import app.atlas.mapcore.state.LabelBlock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,6 +37,8 @@ class LabelSpritesTest {
         LabelKind.AREA to "Jordaan", LabelKind.AREA to "De Pijp", LabelKind.AREA to "Grachtengordel-West",
         LabelKind.AREA to "Bedrijventerrein Sloterdijk", LabelKind.AREA to "Oud-Zuid", LabelKind.AREA to "Haarlemmerbuurt",
         LabelKind.WATER to "Nieuwe Meer", LabelKind.AREA to "Spaarndammer- en Zeeheldenbuurt",
+        // the world's names in their looks (ENGINE.md step 5, "Names")
+        LabelKind.CITY to "Amsterdam", LabelKind.TOWN to "Zaandam", LabelKind.VILLAGE to "Westzaan", LabelKind.GLOBE to "Amsterdam",
     )
 
     private fun differing(a: IntArray, b: IntArray): Int = a.indices.count { a[it] != b[it] }
@@ -79,6 +82,41 @@ class LabelSpritesTest {
             println("label sprites at density $density: ${names.size} labels, ${own / names.size} texels a label at its own size, ${big / names.size} at the band's top")
         }
         println("label sprites: $sprites sprites at 3 densities and their large images equal LabelPainter's drawing, $compared pixels compared")
+    }
+
+    @Test
+    fun theWorldsNamesTakeTheirLooksSizesAndANameWithoutGlyphsIsKnown() {
+        val density = 2.625f
+        val painter = LabelPainter(density).also { it.typeface = face }
+        val maker = LabelSprites(painter)
+        fun sprite(kind: LabelKind, text: String) = maker.sprite(MapLabel("", text, kind, emptyList()), 1)
+        // a city's name is a quarter's (the Main board's place style); a town's and a village's the same, smaller
+        val city = sprite(LabelKind.CITY, "Amsterdam")
+        val area = sprite(LabelKind.AREA, "Amsterdam")
+        assertEquals(area.own.width, city.own.width)
+        assertEquals(area.own.height, city.own.height)
+        assertTrue(area.own.pixels.contentEquals(city.own.pixels))
+        val town = sprite(LabelKind.TOWN, "Amsterdam")
+        val village = sprite(LabelKind.VILLAGE, "Amsterdam")
+        assertTrue("a town's name is smaller than a city's", town.textHeight < city.textHeight && town.half < city.half)
+        assertTrue("a village's smaller than a town's", village.textHeight < town.textHeight && village.half < town.half)
+        assertEquals(15f / 17f, town.textHeight / city.textHeight, 0.01f)
+        assertEquals(13f / 17f, village.textHeight / city.textHeight, 0.01f)
+        // the sizes are the core's (scene::name_size_dp), by which it works out the readable floor of each look
+        assertEquals(17f, LabelPainter.sizeOf(LabelKind.CITY))
+        assertEquals(15f, LabelPainter.sizeOf(LabelKind.TOWN))
+        assertEquals(13f, LabelPainter.sizeOf(LabelKind.VILLAGE))
+        assertEquals(12f, LabelPainter.sizeOf(LabelKind.GLOBE))
+        // the globe's: white letters on a dark glow (a city's: dark ink on white)
+        val globe = sprite(LabelKind.GLOBE, "Amsterdam")
+        fun opaque(image: LabelBlock.Image) = image.pixels.filter { it ushr 24 == 0xFF }
+        assertTrue("the globe's letters are white", opaque(globe.own).any { it and 0xFFFFFF == 0xFFFFFF })
+        assertTrue("a city's letters are the board's ink", opaque(city.own).any { it and 0xFF < 0x60 })
+        assertTrue("the globe's glow is dark", globe.own.pixels.any { (it ushr 24) in 0x20..0xE0 && (it and 0xFF) < 0x20 })
+        // a name the fonts have no glyph for is known before it is drawn; Latin letters, digits and marks are there
+        assertTrue(painter.hasGlyphs(LabelKind.CITY, "Amsterdam-Zuidoost 2"))
+        assertTrue(painter.hasGlyphs(LabelKind.GLOBE, "São Paulo"))
+        assertFalse(painter.hasGlyphs(LabelKind.CITY, "Am\uDB80\uDC00sterdam"))
     }
 
     @Test

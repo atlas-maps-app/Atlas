@@ -334,6 +334,10 @@ class MapData(private val services: Services) {
                 MapEngine.worldCacheBytes = maxOf(MapEngine.WORLD_CACHE_BYTES, (mb ?: 0).toLong() shl 20)
             }
         }
+        // the world's names' faces: the boards' Instrument Serif italic, and the Globe board's Geist (one variable
+        // font file: the names' painter sets its weight to 700)
+        MapEngine.nameTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.instrument_serif_italic) }.getOrNull()
+        MapEngine.globeTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.geist) }.getOrNull()
         val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk world: $line") }
         val world = WorldFetch(dir, client = services.http.client, drop = {
             MapEngine.worldCacheDir()?.let { cache ->

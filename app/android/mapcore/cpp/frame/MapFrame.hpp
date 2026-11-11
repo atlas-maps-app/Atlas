@@ -22,6 +22,7 @@
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
 #include "markers/Markers.hpp"
 #include "routes/Routes.hpp"
@@ -118,6 +119,12 @@ public:
     [[nodiscard]] std::uint64_t palette_revision() const noexcept { return palette_revision_; }
     /// The app's labels from now on (MapCore.labels; null: none), drawn by the labels pass.
     void set_labels(std::shared_ptr<const labels::LabelSet> labels) noexcept { labels_ = std::move(labels); }
+    /// The world's names' sprites (labels/Names.hpp): what the frames want of the app, and what it hands back.
+    [[nodiscard]] labels::NameStore& names() noexcept { return names_; }
+    /// The map's clock at its last frame, seconds (the names' store's times are on it).
+    [[nodiscard]] double seconds() const noexcept { return seconds_; }
+    /// Names no tile holds, picked as a tile's are from now on (a test's; none: an empty list).
+    void set_extra_names(std::vector<scene::WorldName> names) { extra_names_ = std::move(names); }
     /// The app's markers from now on (MapCore.markers; null: none), drawn by the markers pass.
     void set_markers(std::shared_ptr<const markers::MarkerSet> markers) noexcept { markers_ = std::move(markers); }
     /// The app's routes and areas from now on (MapCore.routes; null: none), drawn by the routes pass.
@@ -219,6 +226,9 @@ private:
     style::PaletteBlock palette_{};
     std::uint64_t palette_revision_ = 0;
     std::shared_ptr<const labels::LabelSet> labels_;
+    labels::NameStore names_;
+    std::vector<scene::WorldName> extra_names_;
+    double seconds_ = 0;
     std::shared_ptr<const markers::MarkerSet> markers_;
     std::shared_ptr<const routes::RouteSet> routes_;
     std::optional<AskedBuilding> asked_;
