@@ -12,6 +12,7 @@
 // output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
 // and bytes printed, a line a level: `world level <z> ...`.
 #include "base/pymath/PyMath.hpp"
+#include "load/PackStyle.hpp"
 #include "passes/World.hpp"
 #include "scene/Cells.hpp"
 #include "scene/WorldTiles.hpp"
@@ -804,6 +805,102 @@ TEST_CASE("scene: a world tile's geometry lies the land under everything, then t
     CHECK(atlas::scene::world_far(1e6, 1e6) == doctest::Approx(std::sqrt((2.0 * 6'371'000.0 * 1e6) + 1e12)));
 }
 
+TEST_CASE("scene: a world tile's lit places are its lights in the world's style, sized by their people; a town from "
+          "L10 on, a village never, and none without the ladder; a globe's tile carries its coast") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    const auto places = [](std::uint8_t z, std::uint32_t x, std::uint32_t y) {
+        TileBytes tile = world_tile(z, x, y);
+        TileHeader header;
+        header.cells_per_side = tile.n;
+        const auto tb = tile.grid_box();
+        header.south = tb[0];
+        header.west = tb[1];
+        header.north = tb[2];
+        header.east = tb[3];
+        const auto b = atlas::test::cell_box(header, 5);
+        LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+        label.cells = {5, 5, 5, 5, 5};
+        const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {{b[0] + 10, b[1] + 10},
+                                                                                 {b[0] + 20, b[1] + 20},
+                                                                                 {b[0] + 30, b[1] + 30},
+                                                                                 {b[0] + 40, b[1] + 40},
+                                                                                 {b[0] + 50, b[1] + 50}};
+        label.columns = {
+            {"source", Codec::u8, col::u8({1, 1, 1, 1, 1})},
+            {"index", Codec::delta, col::delta({0, 1, 2, 3, 4})},
+            {"name", Codec::str, col::str(tile, {"Tokyo", "Madrid", "Utrecht", "Zaandam", "Westzaan"})},
+            {"pos", Codec::point, col::point(at)},
+            {"prev", Codec::point, col::point(at)},
+            {"count", Codec::varu, col::varu({1, 1, 1, 1, 1})},
+            {"kind", Codec::str, col::str(tile, {"city", "city", "city", "town", "village"})},
+            {"tag:population", Codec::str, col::str(tile, {"37000000", " 6700000 (2021)", "360000", "72000", ""})}};
+        tile.layers.back() = label;
+        return tile;
+    };
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto built = [&](std::uint8_t z, std::uint32_t x, std::uint32_t y,
+                           const atlas::tiles::Style* style) -> atlas::scene::WorldGeometry {
+        TileBytes tile = places(z, x, y);
+        const auto raw = tile.encode();
+        auto decoded = decoder.decode(raw, arena);
+        ATLAS_REQUIRE_OR_RETURN({}, decoded.has_value(), describe(decoded.error()));
+        return atlas::scene::build_world_geometry(*decoded, style);
+    };
+    // L9: its three cities, by their people the first size, the second (the number its tag's text starts with, as the
+    // packer ranks by it) and the third; its town not yet
+    const atlas::scene::WorldGeometry g9 = built(9, 262, 168, world);
+    REQUIRE(g9.lights == 3);
+    const std::size_t lights9 = (4 * std::size_t{g9.triangles}) + (3 * std::size_t{g9.segments});
+    REQUIRE(g9.words.size() == lights9 + (2 * std::size_t{g9.lights}));
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        const std::uint32_t what = g9.words[lights9 + (2 * std::size_t{i}) + 1];
+        CHECK((what & 0xFFU) == i);
+        CHECK(((what >> 8U) & 0xFFU) == 5U);
+    }
+    // each light's place is its node's, a vertex word within the tile's cell 5 (row 1, column 1)
+    const std::uint32_t at = g9.words[lights9];
+    CHECK((at & 0xFFFFU) > 16'383U);
+    CHECK((at & 0xFFFFU) < 32'768U);
+    CHECK((at >> 16U) > 16'383U);
+    CHECK((at >> 16U) < 32'768U);
+    // L10: the town too, of the third size
+    const atlas::scene::WorldGeometry g10 = built(10, 525, 336, world);
+    REQUIRE(g10.lights == 4);
+    CHECK((g10.words[g10.words.size() - 1] & 0xFFU) == 2U);
+    // the globe's levels: a city alone (its tiles hold Natural Earth's by scalerank)
+    CHECK(built(5, 16, 10, world).lights == 3);
+    // none without the world's style
+    CHECK(built(9, 262, 168, nullptr).lights == 0);
+    // a globe's tile carries its coast among its lines: each edge of its land that is not its cells' cut, here the
+    // east edge of each half cell's land, a meridian (one u), in the coast's entry with no width; the base's none
+    const auto coasts = [](const atlas::scene::WorldGeometry& g) {
+        std::size_t n = 0;
+        const std::size_t lines = 4 * std::size_t{g.triangles};
+        for (std::size_t i = 0; i < g.segments; ++i) {
+            const std::uint32_t what = g.words[lines + (3 * i) + 2];
+            if ((what & 0xFFU) != atlas::scene::world_palette::coast) continue;
+            ++n;
+            CHECK((what >> 16U) == 0U);
+            CHECK((g.words[lines + (3 * i)] & 0xFFFFU) == (g.words[lines + (3 * i) + 1] & 0xFFFFU));
+        }
+        return n;
+    };
+    const atlas::scene::WorldGeometry g0 = built(0, 0, 0, world);
+    CHECK(coasts(g0) >= 5);
+    CHECK(coasts(g9) == 0);
+    CHECK(coasts(built(0, 0, 0, nullptr)) == 0);
+    CHECK(atlas::scene::world_lights(6, "city"));
+    CHECK(!atlas::scene::world_lights(9, "town"));
+    CHECK(atlas::scene::world_lights(11, "town"));
+    CHECK(!atlas::scene::world_lights(3, "town"));
+    CHECK(!atlas::scene::world_lights(11, "village"));
+}
+
 TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
           "the tile's winding, and the poles' caps are grids of it") {
     // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km
@@ -939,4 +1036,28 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     CHECK(p[atlas::scene::world_palette::road] == 0xFF5A5046U);
     CHECK(p[atlas::scene::world_palette::rail] == 0xFF1E140AU);
     CHECK(p[atlas::scene::world_palette::kinds + 3] == 0xFF1E140AU);
+    // the day's palette under the ladder's caps: the moment's own by day; at night the ladder's ground, water and
+    // roads, and the style's colours by day
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    CHECK(atlas::passes::World::day_palette_of(theme, world) == atlas::passes::World::palette_of(theme, false, world));
+    theme.flags |= atlas::style::theme_flag::night;
+    const std::vector<std::uint32_t> night = atlas::passes::World::palette_of(theme, true, world);
+    const std::vector<std::uint32_t> day = atlas::passes::World::day_palette_of(theme, world);
+    REQUIRE(day.size() == atlas::scene::world_palette::size);
+    CHECK(day[atlas::scene::world_palette::land] == 0xFFC2CFD6U);
+    CHECK(day[atlas::scene::world_palette::water] == 0xFF90754FU);
+    CHECK(day[atlas::scene::world_palette::road] == 0xFFB4C1C9U);
+    theme.flags = 0;
+    const std::vector<std::uint32_t> by_day = atlas::passes::World::palette_of(theme, false, world);
+    for (std::size_t k = atlas::scene::world_palette::rail; k < day.size(); ++k) {
+        if (k != atlas::scene::world_palette::south_cap && k < atlas::scene::world_palette::kinds) {
+            CHECK(day[k] == by_day[k]);
+        }
+    }
+    CHECK(night[atlas::scene::world_palette::land] == 0xFF1E140AU);
+    // without the ladder the day's palette is the moment's
+    theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_palette_of(theme, nullptr) ==
+          atlas::passes::World::palette_of(theme, true, nullptr));
 }

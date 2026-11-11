@@ -58,6 +58,8 @@ struct LayerSettings {
     double pitch = 90.0; ///< cfg's pitch where it has one (the engine's), else 90
     double haze0 = haze0_default;
     double haze1 = haze1_default;
+    /// How much of the haze there is (the style ladder's: 1 up to a camera 600 km from its target, 0 from 2,000 km).
+    double haze_scale = 1.0;
     double ground_y = 0; ///< the target's height (the ground's under it)
     bool no_fin = false;
 };

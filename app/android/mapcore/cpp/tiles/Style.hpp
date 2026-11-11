@@ -6,6 +6,7 @@
 
 #include "tiles/Error.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/WorldLadder.hpp"
 
 #include <array>
 #include <cstdint>
@@ -342,6 +343,9 @@ struct Style {
     bool no_shadows = false;
     /// `tradition`, where the pack has one (a region's, or a window's in a kit's country).
     std::optional<KitStyle> kit;
+    /// The style ladder's values (tiles/WorldLadder.hpp): the world's style's alone (load::world_style), which no
+    /// pack's tables hold; nothing in a pack's own style.
+    std::optional<WorldLadder> ladder;
 
     /// A land kind's place in `land`, or nothing.
     [[nodiscard]] std::optional<std::uint16_t> land_kind(std::string_view kind) const noexcept;
