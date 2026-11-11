@@ -440,8 +440,8 @@ class GlobeCheckTest {
         const val ABOUT = 1.25
         /**
          * The most the core's frame may differ from the board's picture, mean levels (0 to 255) of a region's pixels:
-         * the design's 1.5 over the frame and on the disc (0.51 and 0.93 measured on lavapipe, 11 November), and what
-         * the limb's last 4 dp, the rim and the ring leave (1.54 measured) and space (0.23).
+         * the design's 1.5 over the frame and on the disc (0.50 and 0.88 measured on lavapipe, 11 November), and what
+         * the limb's last 4 dp, the rim and the ring leave (1.52 measured) and space (0.23).
          */
         const val MOST_FRAME = 1.5
         const val MOST_DISC = 1.5

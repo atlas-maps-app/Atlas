@@ -224,6 +224,9 @@ WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstan
     float2 t = {c.turn.x * n.x + c.turn.y * n.y, c.turn.z * n.x + c.turn.w * n.y};
     o.position = float4(t.x, t.y, push.origin.w, 1.0f);
     float alpha = min(1.0f, wide) * push.scale.z * coast;
+    // a coast's segment by its own length's share of its quad, without its caps': where a detailed coast (a fjord's)
+    // has many segments to a pixel their caps would pile up into a band
+    if (entry == GLOBE_COAST_ENTRY) alpha *= length_px / (length_px + 2.0f * half_px);
     float4 colour = unpack(world_palette[entry]);
     o.colour = float4(colour.rgb, alpha);
     return o;
