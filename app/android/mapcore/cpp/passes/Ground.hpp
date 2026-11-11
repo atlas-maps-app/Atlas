@@ -593,6 +593,9 @@ struct GroundFrame {
     bool weather = false;
     bool night = false;
     bool engine = false; ///< the renders' radius cut applies
+    /// The world draws this frame (FrameState::world): no plate but under each tile drawn. A frame at rest decides
+    /// again when it comes or goes (the world's packs landing, the camera's world_under flag), as the plate does.
+    bool world = false;
     /// The app's map (FrameState::grounded): a line px wide and a coaster track's shadow take their width at each of
     /// their points (LINE_METRES) rather than at their one point, a line of a fixed width is drawn from the near plane
     /// on (ground_flag::near_clip), and a street, a big road's asphalt and a runway's or a taxiway's pavement are as
