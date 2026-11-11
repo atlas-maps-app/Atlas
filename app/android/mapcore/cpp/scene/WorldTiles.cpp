@@ -6,6 +6,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "base/trace.hpp"
 #include "gpu/Frames.hpp"
+#include "load/Real.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/layers/Ground.hpp"
 #include "tiles/layers/Labels.hpp"
@@ -521,11 +522,11 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
         each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
             if (label->integer(tl::label::source, i) != tl::label::source_place) return;
             if (!world_lights(tile.header.level, label->string(tl::label::kind, i).value_or(""))) return;
-            std::int64_t people = 0;
-            if (const std::optional<std::string_view> text = label->string(population, i)) {
-                (void)std::from_chars(text->data(), text->data() + text->size(), people);
-            }
-            w.light(label->point(tl::label::pos, i), people >= sizes[0] ? 0U : (people >= sizes[1] ? 1U : 2U), c);
+            // its people as the packer ranks its places by them: the number the tag's text starts with (real.py's num)
+            const double people = load::num(label->string(population, i)).value_or(0.0);
+            const std::uint32_t size =
+                people >= static_cast<double>(sizes[0]) ? 0U : (people >= static_cast<double>(sizes[1]) ? 1U : 2U);
+            w.light(label->point(tl::label::pos, i), size, c);
         });
     }
     return w.finish();

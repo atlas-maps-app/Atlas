@@ -835,7 +835,7 @@ TEST_CASE("scene: a world tile's lit places are its lights in the world's style,
             {"prev", Codec::point, col::point(at)},
             {"count", Codec::varu, col::varu({1, 1, 1, 1, 1})},
             {"kind", Codec::str, col::str(tile, {"city", "city", "city", "town", "village"})},
-            {"tag:population", Codec::str, col::str(tile, {"37000000", "6700000", "360000", "72000", ""})}};
+            {"tag:population", Codec::str, col::str(tile, {"37000000", " 6700000 (2021)", "360000", "72000", ""})}};
         tile.layers.back() = label;
         return tile;
     };
@@ -851,7 +851,8 @@ TEST_CASE("scene: a world tile's lit places are its lights in the world's style,
         ATLAS_REQUIRE_OR_RETURN({}, decoded.has_value(), describe(decoded.error()));
         return atlas::scene::build_world_geometry(*decoded, style);
     };
-    // L9: its three cities, by their people the first size, the second and the third; its town not yet
+    // L9: its three cities, by their people the first size, the second (the number its tag's text starts with, as the
+    // packer ranks by it) and the third; its town not yet
     const atlas::scene::WorldGeometry g9 = built(9, 262, 168, world);
     REQUIRE(g9.lights == 3);
     const std::size_t lights9 = (4 * std::size_t{g9.triangles}) + (3 * std::size_t{g9.segments});
