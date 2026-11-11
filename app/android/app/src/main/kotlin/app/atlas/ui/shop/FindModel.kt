@@ -1,5 +1,6 @@
 package app.atlas.ui.shop
 
+import app.atlas.places.Kinds
 import app.atlas.places.Presets
 import app.atlas.places.TagFilter
 import app.atlas.places.Text
@@ -64,7 +65,7 @@ internal object FindModel {
         val filter = TagFilter.parse(tag.entries.joinToString(" and ") { (k, v) -> if (v == "*") k else "$k=$v" })
         return FindAnswer(
             t,
-            listOf(FindSeller(hit.id, hit.name(lang).uppercase(), filter, 5, Presets.iconOf(hit) ?: "place.shop", colourOf(hit.id), filter.toText().replace(" and ", " · "))),
+            listOf(FindSeller(hit.id, hit.name(lang).uppercase(), filter, 5, Kinds.symbolOf(hit) ?: "place.shop", colourOf(hit.id), filter.toText().replace(" and ", " · "))),
             FindAnswer.Source.PRESET,
         )
     }

@@ -388,9 +388,12 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
     LaunchedEffect(c.key) {
         nearby = withContext(Dispatchers.IO) {
             buildList {
-                for ((id, symbol) in listOf("cafe" to "place.cafe", "toilet" to "need.toilet.2")) {
-                    val found = runCatching { services.places.nearby(id, c.place.location, 250.0, 1).let { f -> f.firstOrNull { it.places.isNotEmpty() || it.error != null } } }.getOrNull()
-                    if (found?.places?.isNotEmpty() == true) add(symbol)
+                // a café is a kind (a preset) of the restaurants' category; toilets are a category of their own
+                val cafe = app.atlas.places.CategoryTree.preset("amenity/cafe")!!.filter
+                val toilet = app.atlas.places.CategoryTree.category("toilets")!!.filter
+                for ((filter, symbol) in listOf(cafe to "place.cafe", toilet to "need.toilet.2")) {
+                    val found = runCatching { services.localData.places(c.place.location, 250.0, filter, 1) }.getOrNull()
+                    if (found?.value?.isNotEmpty() == true) add(symbol)
                 }
             }
         }

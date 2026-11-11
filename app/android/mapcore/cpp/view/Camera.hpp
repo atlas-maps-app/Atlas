@@ -12,6 +12,7 @@
 
 #include "base/hlsl.hpp"
 #include "frame/FrameBlock.hpp"
+#include "view/Bend.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -120,18 +121,32 @@ struct Device {
     std::uint32_t quarter_turns = 0;
 };
 
-/// The frame's view: the engine camera on a device.
+/// The frame's view: the engine camera on a device, and the bend of its ground (view/Bend.hpp) by its distance.
 class View {
 public:
-    View(const CameraSpec& spec, const Device& device) noexcept : camera_(spec), device_(device) {}
+    View(const CameraSpec& spec, const Device& device) noexcept
+        : camera_(spec), device_(device), drop_(drop_of(spec.dist)) {}
 
     [[nodiscard]] const Camera& camera() const noexcept { return camera_; }
     [[nodiscard]] const Device& device() const noexcept { return device_; }
 
     /// The view's device point of CSS point p: p times the density, from the frame's top-left corner.
     [[nodiscard]] Vec2 device_point(Vec2 p) const noexcept { return {p.x * device_.density, p.y * device_.density}; }
-    /// The view's device point of world point p (Camera.pc times the density), or nothing nearer than the near plane.
+    /// The view's device point of world point p (Camera.pc times the density) on the bent ground (bent()), or nothing
+    /// nearer than the near plane.
     [[nodiscard]] std::optional<Vec2> device_proj(Vec3 p) const noexcept;
+
+    /// The bend's drop, w₁/2R (view/Bend.hpp: 0 up to a camera 18 km from its target).
+    [[nodiscard]] double drop() const noexcept { return drop_; }
+    /// World point p dropped by the bend as the vertex stages drop it (camera.slang's bent): by the drop times the
+    /// square of its distance from the camera's target along the ground. p itself, bit for bit, where nothing bends.
+    [[nodiscard]] Vec3 bent(Vec3 p) const noexcept {
+        if (drop_ == 0.0) return p;
+        const Vec3& t = camera_.spec().target;
+        const double dx = p.x - t.x;
+        const double dz = p.z - t.z;
+        return {p.x, p.y - (drop_ * ((dx * dx) + (dz * dz))), p.z};
+    }
 
     /// The camera as the GPU reads it (camera.slang's FrameCamera): in float, relative to the eye. `rest` turns the
     /// snapping at rest on; `engine` the renders' radius cut.
@@ -145,6 +160,7 @@ public:
 private:
     Camera camera_;
     Device device_;
+    double drop_ = 0;
 };
 
 /// The pre-rotation of `quarter_turns` (0-3) as camera.slang's turn: how the view's normalised coordinates map onto

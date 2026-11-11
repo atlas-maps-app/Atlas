@@ -406,82 +406,28 @@ private val NEEDLE_SOUTH = svgPath("M7 25l4-12H3z")
 /** The eight categories of the Map home, in the boards' order. */
 val HOME_CATEGORIES = listOf("eat", "groceries", "shops", "stay", "charge", "nature", "fun", "water")
 
-/** The Main board's own symbol and colour for each of [HOME_CATEGORIES], and its symbol size in dp. */
-internal class HomeCategory(val id: String, val symbol: String, val colour: Color, val size: Dp)
+/**
+ * The Main board's own symbol for each of [HOME_CATEGORIES], and its symbol size in dp. Its colour is its category's
+ * (categories.json), the one its pins and rows wear: the board's, but for the colours the owner moved on 5 November.
+ * Fun, days out since the owner regrouped the categories that day, wears the boards' big wheel (the theme park's,
+ * and the card's) for the board's notes: a ticket did not say what is behind it (the owner, 6 November). Fuel, the gas
+ * stations and the chargers since that day ("Gas and charging belongs both into fuel"), wears a pump, where the board's
+ * bolt said power alone.
+ */
+internal class HomeCategory(val id: String, val symbol: String, val size: Dp)
 
 internal val HOME_CATEGORY_LOOK: Map<String, HomeCategory> = listOf(
-    HomeCategory("eat", "main.eat", Color(0xFFB8461A), 22.dp),
-    HomeCategory("groceries", "main.groceries", Color(0xFF1E7A46), 22.dp),
-    HomeCategory("shops", "main.shops", Color(0xFF7A2233), 21.dp),
-    HomeCategory("stay", "main.stay", Color(0xFF5B3FD6), 22.dp),
-    HomeCategory("charge", "main.charge", Color(0xFF178A4E), 22.dp),
-    HomeCategory("nature", "main.outdoors", Color(0xFF2F6B34), 22.dp),
-    HomeCategory("fun", "main.events", Color(0xFF7B4DFF), 22.dp),
-    HomeCategory("water", "main.water", Color(0xFF1F5F99), 22.dp),
+    HomeCategory("eat", "main.eat", 22.dp),
+    HomeCategory("groceries", "main.groceries", 22.dp),
+    HomeCategory("shops", "main.shops", 21.dp),
+    HomeCategory("stay", "main.stay", 22.dp),
+    HomeCategory("charge", "ui-fuel", 22.dp),
+    HomeCategory("nature", "main.outdoors", 22.dp),
+    HomeCategory("fun", "place.theme-park", 22.dp),
+    HomeCategory("water", "main.water", 22.dp),
 ).associateBy { it.id }
 
-/**
- * The row of category buttons above the search bar: the board's eight 44 dp buttons 8 dp apart, each at its own size
- * whatever the phone (never narrowed to fit), in one row that scrolls sideways under the screen's edges, the first
- * lined up with the chrome [margin] in from the side; the chosen one fills with its colour and, if it lies past an
- * edge, scrolls into view. Each button's shape follows it as the row scrolls (`frosted`: the core's keep-out, and its
- * glass when the glass is on).
- */
-@Composable
-fun CategoryRow(selected: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier, lang: String? = null, margin: Dp = 12.dp) {
-    val look = homeLook()
-    val shape = RoundedCornerShape(percent = 50)
-    val density = LocalDensity.current
-    val ids = remember { HOME_CATEGORIES.filter { Categories.byId(it) != null } }
-    val reveal = remember(ids) { ids.associateWith { BringIntoViewRequester() } }
-    LaunchedEffect(selected) {
-        val r = selected?.let { reveal[it] } ?: return@LaunchedEffect
-        // the button and the margin beside it, so it does not end against the screen's edge
-        val side = with(density) { PILL.toPx() }
-        val pad = with(density) { margin.toPx() }
-        r.bringIntoView(Rect(-pad, 0f, side + pad, side))
-    }
-    Row(
-        modifier
-            .bleed(margin)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = margin),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        for (id in ids) {
-            val cat = Categories.byId(id) ?: continue
-            val board = HOME_CATEGORY_LOOK.getValue(id)
-            val on = id == selected
-            val name = cat.name(lang)
-            Box(
-                Modifier
-                    .bringIntoViewRequester(reveal.getValue(id))
-                    .size(PILL)
-                    .cssShadow(shape, y = 4.dp, blur = 14.dp, colour = look.shadow.copy(alpha = look.shadow.alpha * 0.1f / 0.12f))
-                    .then(if (on) Modifier.background(board.colour, shape) else Modifier.frosted(shape, look.frostStrong, blur = 20.dp))
-                    .clip(shape)
-                    .toggleable(on, role = Role.Switch) { onSelect(id) }
-                    .semantics { contentDescription = name },
-                contentAlignment = Alignment.Center,
-            ) {
-                Symbol(board.symbol, tint = if (on) Color.White else board.colour, size = board.size, weight = MainSymbols.Width.PILL)
-            }
-        }
-    }
-}
-
-/** A category button's side: the board's 44 dp. */
-private val PILL = 44.dp
-
-/**
- * Lays this out [horizontal] wider on each side than its parent allows, reaching over the parent's padding: a row that
- * scrolls under the screen's edges inside a padded column.
- */
-private fun Modifier.bleed(horizontal: Dp): Modifier = layout { m, c ->
-    val pad = horizontal.roundToPx()
-    val p = m.measure(c.offset(horizontal = 2 * pad))
-    layout(maxOf(0, p.width - 2 * pad), p.height) { p.place(-pad, 0) }
-}
+// The row of the eight's buttons above the search bar is the home's own row now (HomeRow.kt: OwnRow).
 
 /** "Search or ask", 58 dp high, with the A-near-B rings and the dark mic. The field itself opens the search screen. */
 @Composable

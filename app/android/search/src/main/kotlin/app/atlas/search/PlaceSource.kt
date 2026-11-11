@@ -45,6 +45,9 @@ interface PlaceSource {
     /** About how many places lie in [box]. */
     fun estimate(box: BBox): Int
 
+    /** The outline it keeps of the area [id] (a park, a reserve, a national park), or null: a region's store keeps them ([Outlines]). */
+    fun outline(id: OsmId): PlaceOutline? = null
+
     companion object {
         const val UNLIMITED = Int.MAX_VALUE
     }
@@ -159,6 +162,11 @@ class Regions(stores: Collection<PlaceSource> = emptyList()) : PlaceSource {
     override fun estimate(key: String, value: String?): Int = list.sumOf { it.estimate(key, value) }
 
     override fun estimate(box: BBox): Int = list.sumOf { if (meets(it, box)) it.estimate(box) else 0 }
+
+    override fun outline(id: OsmId): PlaceOutline? {
+        for (s in list) s.outline(id)?.let { return it }
+        return null
+    }
 
     private fun meets(s: PlaceSource, box: BBox): Boolean = s.bounds?.intersects(box) ?: false
 

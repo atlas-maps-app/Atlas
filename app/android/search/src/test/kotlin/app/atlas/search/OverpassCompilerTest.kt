@@ -122,11 +122,12 @@ class OverpassCompilerTest {
             [out:json][timeout:60];
             nwr["amenity"="bicycle_rental"](52.3682014,4.8670533,52.3817986,4.8929467)->.near1;
             nwr["leisure"="park"](52.3682014,4.8670533,52.3817986,4.8929467)->.near2;
-            nwr["amenity"="cafe"]["internet_access"~"^(wlan|yes|wifi|public)${'$'}",i](around.near1:200)(around.near2:200)(52.37,4.87,52.38,4.89)->.result;
+            nwr["amenity"="cafe"](around.near1:200)(around.near2:200)(52.37,4.87,52.38,4.89)->.result;
             .result out tags bb qt;
             .near1 out tags bb qt;
             .near2 out tags bb qt;
             """.trimIndent(),
+            // wifi is wanted: cafés that do not say come too, so the server is not asked for it
             ql("wifi café near a bike dock & a park"),
         )
         assertEquals(
@@ -204,13 +205,22 @@ class OverpassCompilerTest {
         assertEquals(
             """
             [out:json][timeout:60];
-            (
-              nwr["amenity"~"^(bar|pub|biergarten|nightclub)${'$'}",i](52.37,4.87,52.38,4.89);
-              nwr["shop"~"^(alcohol|wine|beverages)${'$'}",i](52.37,4.87,52.38,4.89);
-            )->.result;
+            nwr["amenity"~"^(bar|pub|biergarten|nightclub)${'$'}",i](52.37,4.87,52.38,4.89)->.result;
             .result out tags bb qt;
             """.trimIndent(),
             OverpassCompiler.compile(Query.Category("drinks"), box),
+        )
+        // a category of two rules asks for both
+        assertEquals(
+            """
+            [out:json][timeout:60];
+            (
+              nwr["tourism"="viewpoint"](52.37,4.87,52.38,4.89);
+              nwr["leisure"="bird_hide"](52.37,4.87,52.38,4.89);
+            )->.result;
+            .result out tags bb qt;
+            """.trimIndent(),
+            OverpassCompiler.compile(Query.Category("viewpoint"), box),
         )
         assertTrue(OverpassCompiler.compile(Query.Limit(Query.tags("amenity=cafe"), 10), box).contains(".result out tags bb qt 10;"))
         // a client-side check (opening hours) needs every candidate: no limit then

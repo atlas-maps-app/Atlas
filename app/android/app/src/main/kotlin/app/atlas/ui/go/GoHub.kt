@@ -108,7 +108,7 @@ class GoHub(private val services: Services) {
      * Starts guiding [route] (found for [req]) and, from the visible screen ([context]), the service that keeps it going.
      * [demo] drives the simulator instead of the phone's location. Any trip guided before ends.
      */
-    fun startNav(context: Context, req: RouteRequest, route: Route, name: String?, settings: GuideSettings, demo: Boolean): NavSession {
+    fun startNav(context: Context, req: RouteRequest, route: Route, name: String?, settings: GuideSettings, demo: Boolean, remembered: Boolean = true): NavSession {
         stopNav()
         stopEars()
         // A trip begins with the voice on: a mute left from an earlier one would make this one silent without warning.
@@ -126,7 +126,7 @@ class GoHub(private val services: Services) {
         val fixes = if (demo) NavSession.demoFixes(route, services.clock.instant()) else services.location.fixes(LocationQuality.NAVIGATION)
         session.start(fixes)
         // A simulated drive is not a place you went to.
-        if (!demo) services.scope.launch { store.visited(SavedPlace(name ?: "", req.waypoints.last()), services.clock.millis()) }
+        if (!demo && remembered) services.scope.launch { store.visited(SavedPlace(name ?: "", req.waypoints.last()), services.clock.millis()) }
         NavigationService.start(context)
         return session
     }

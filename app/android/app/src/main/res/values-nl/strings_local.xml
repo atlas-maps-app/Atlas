@@ -462,6 +462,23 @@
     <string name="park_ages">leeftijd %1$s</string>
     <string name="park_wc_at">WC %1$s</string>
     <string name="park_water_at">water %1$s</string>
+    <string name="park_visitor">Bezoekerscentrum</string>
+    <string name="park_sleep">Slapen in het park</string>
+    <string name="park_details">Details</string>
+    <string name="park_now">%1$s, nu</string>
+    <string name="park_notes_more">Alle notities</string>
+    <string name="park_rule_dogs_lead">honden aan de lijn</string>
+    <string name="park_rule_no_dogs">geen honden</string>
+    <string name="park_rule_dogs">honden welkom</string>
+    <string name="park_rule_no_drones">geen drones</string>
+    <string name="park_rule_no_fires">geen vuur</string>
+    <string name="park_rule_fire_rings">vuur alleen in vuurplaatsen</string>
+    <string name="park_rule_fee">entree</string>
+    <string name="park_sources">Omtrek, paden, bomen en regels: OpenStreetMap</string>
+    <plurals name="park_trails">
+        <item quantity="one">%d wandelroute</item>
+        <item quantity="other">%d wandelroutes</item>
+    </plurals>
     <string name="local_on">Aan</string>
     <string name="local_off">Uit</string>
     <string name="nature_add_find">Een vondst toevoegen</string>

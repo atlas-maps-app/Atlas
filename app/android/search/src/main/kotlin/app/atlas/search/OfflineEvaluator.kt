@@ -10,15 +10,20 @@ import app.atlas.geo.PreparedPolygon
 import app.atlas.geo.Shapes
 import app.atlas.places.Brands
 import app.atlas.places.Categories
+import app.atlas.places.Facts
+import app.atlas.places.ChangeKind
 import app.atlas.places.OpenState
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
 import app.atlas.places.Presets
 import app.atlas.places.TagFilter
+import app.atlas.places.Years
+import java.time.DayOfWeek
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.temporal.TemporalAdjusters
 import java.util.IdentityHashMap
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
@@ -47,20 +52,45 @@ class OfflineEvaluator(val source: PlaceSource) {
         limit = limit.coerceAtLeast(0)
         val run = Run(ctx)
         val area = run.areaOf(q)
+        val largest = if (area == null && sort == SortBy.LARGEST) largestOf(q, ctx, limit) else null
         val candidates = when {
             area != null -> run.candidates(q, area)
+            largest != null -> largest
             // A seed of a few thousand places is cheap anywhere; a bigger one (every café of a country) is looked
             // for around the searcher first, then further, like a query nothing narrows down.
             q.hasSeed() && (run.cost(q, null) <= WIDE_SEED || (ctx.location == null && ctx.viewport == null)) -> run.candidates(q, null)
             else -> run.expanding(q)
         }
         run.scope = extentOf(candidates)
+        run.branches = candidates
         val hits = ArrayList<Hit>()
         for (c in candidates) run.hit(q, c)?.let { hits += it }
-        sortHits(hits, sort)
+        run.likely(hits)
+        sortHits(hits, sort, run)
         val total = hits.size
         val out = if (hits.size > limit) hits.subList(0, limit).toList() else hits
-        return QueryResult(out, total, candidates.size, (System.nanoTime() - started) / 1000)
+        return QueryResult(out, total, candidates.size, (System.nanoTime() - started) / 1000, hits.count { it.sure == Sure.YES })
+    }
+
+    /**
+     * The largest of the kind [q] asks for across the region that holds the searcher, read by their size ([Largest])
+     * where no area is asked: "largest parks" are the region's largest, not the largest of the nearest few (the user,
+     * 9 November: "Is it somewhere possible to see the largest green areas in your country or around you?"). Null
+     * where the query names no kind, or no store holds the searcher: then it is read as any query is.
+     */
+    private fun largestOf(q: Query, ctx: EvalContext, limit: Int): List<PlaceRecord>? {
+        val kind = kindOf(q) ?: return null
+        val at = ctx.location ?: ctx.viewport?.center
+        val stores = (source as? Regions)?.stores ?: listOf(source)
+        val holding = stores.filter { at == null || it.covers(at) }.ifEmpty { return null }
+        return Largest.of(holding, kind, limit.coerceIn(1, LARGEST_MAX) * LARGEST_SPARE)
+    }
+
+    /** The kind a query asks for: its tags, or those of the first of its parts that has them ("parks with a dog area"). */
+    private fun kindOf(q: Query): TagFilter? = when (q) {
+        is Query.Tags -> q.filter
+        is Query.And -> q.parts.firstNotNullOfOrNull { kindOf(it) }
+        else -> null
     }
 
     /**
@@ -78,16 +108,54 @@ class OfflineEvaluator(val source: PlaceSource) {
         return out
     }
 
+    /**
+     * When nothing is just as asked: the places [base] finds (what they are: a kind, a name, an area), each with what
+     * it misses of [requirements] and how far off ([Hit.misses]), closest first ([Closest.rank]), by score between
+     * equals. Empty when [base] finds nothing either.
+     */
+    fun closest(base: Query, requirements: List<Query>, ctx: EvalContext): QueryResult {
+        val started = System.nanoTime()
+        val found = run(base, ctx.copy(limit = max(ctx.limit, CLOSEST_POOL)))
+        if (found.hits.isEmpty() || requirements.isEmpty()) return found
+        val run = Run(ctx)
+        val records = found.hits.map { it.record }
+        run.branches = records
+        run.scope = extentOf(records)
+        val ranked = Closest.rank(found.hits.map { h -> h.copy(misses = requirements.mapNotNull { run.miss(it, h.record) }) }) { it.misses }
+        val out = if (ranked.size > ctx.limit) ranked.subList(0, ctx.limit).toList() else ranked
+        return QueryResult(out, ranked.size, found.examined, (System.nanoTime() - started) / 1000, out.count { it.sure == Sure.YES })
+    }
+
+    /** [hits] each with what it misses of [requirements] and how far off ([Hit.misses]), read for [ctx]; in their order. */
+    fun withMisses(hits: List<Hit>, requirements: List<Query>, ctx: EvalContext): List<Hit> {
+        if (hits.isEmpty() || requirements.isEmpty()) return hits
+        val run = Run(ctx)
+        val records = hits.map { it.record }
+        run.branches = records
+        run.scope = extentOf(records)
+        return hits.map { h -> h.copy(misses = h.misses + requirements.mapNotNull { run.miss(it, h.record) }) }
+    }
+
     /** The places [query] finds, unranked: for the far side of a "near", and for counts. */
     fun matches(query: Query, ctx: EvalContext, area: BBox? = null): List<PlaceRecord> {
         val run = Run(ctx)
         val a = area ?: run.areaOf(query)
         val cands = if (a != null || query.hasSeed()) run.candidates(query, a) else run.expanding(query)
         run.scope = extentOf(cands)
+        run.branches = cands
         return cands.filter { run.matches(query, it, null) }
     }
 
-    private fun sortHits(hits: MutableList<Hit>, by: SortBy) {
+    private fun sortHits(hits: MutableList<Hit>, by: SortBy, run: Run? = null) {
+        // the orders by a value: those with it first, by it; those without after, by score
+        fun byValue(descending: Boolean, value: (Hit) -> Double?) {
+            val values = IdentityHashMap<Hit, Double?>().apply { for (h in hits) put(h, value(h)) }
+            val known = compareBy<Hit> { if (values[it] == null) 1 else 0 }
+            hits.sortWith(
+                known.then(if (descending) compareByDescending { values[it] ?: 0.0 } else compareBy { values[it] ?: 0.0 })
+                    .thenByDescending { it.score },
+            )
+        }
         when (by) {
             SortBy.RELEVANCE -> hits.sortWith(compareByDescending<Hit> { it.score }.thenBy { it.distance ?: Double.MAX_VALUE })
             SortBy.DISTANCE -> hits.sortWith(compareBy<Hit> { it.distance ?: Double.MAX_VALUE }.thenByDescending { it.score })
@@ -97,8 +165,51 @@ class OfflineEvaluator(val source: PlaceSource) {
                     .thenByDescending { h -> h.open?.takeIf { it.isOpen }?.changesAt ?: LocalDateTime.MAX }
                     .thenByDescending { it.score },
             )
+            SortBy.OLDEST -> byValue(false) { Years.year(it.tags["start_date"] ?: it.tags["building:start_date"] ?: "") }
+            SortBy.NEWEST -> byValue(true) { Years.year(it.tags["start_date"] ?: it.tags["building:start_date"] ?: "") }
+            SortBy.TALLEST -> byValue(true) { heightOf(it.tags) }
+            SortBy.HIGHEST -> byValue(true) { metres(it.tags["ele"]) ?: heightOf(it.tags) }
+            SortBy.CHEAPEST -> byValue(false) { Tells.price(it.tags) }
+            SortBy.LARGEST -> byValue(true) { h -> footprint(h) }
+            // a point has no size to go by
+            SortBy.SMALLEST -> byValue(false) { h -> footprint(h)?.takeIf { it > 0 } }
+            SortBy.LONGEST -> byValue(true) { h -> metres(h.tags["length"]) ?: h.place.bbox?.let { b -> Geo.distance(LatLon(b.south, b.west), LatLon(b.north, b.east)) }?.takeIf { it > 0 } }
+            SortBy.POWER -> byValue(true) { Power.maxKw(it.tags) }
+            SortBy.STARS -> byValue(true) { stars(it.tags["stars"]) }
+            SortBy.MOST_HOURS -> byValue(true) { h -> run?.hoursToday(h.record)?.toDouble() }
+            SortBy.OPENS_EARLIEST -> byValue(false) { h -> run?.opensToday(h.record)?.toDouble() }
+            SortBy.OPENS_LATEST -> byValue(true) { h -> run?.opensToday(h.record)?.toDouble() }
+            SortBy.CLOSES_LATEST -> byValue(true) { h -> run?.closesToday(h.record)?.toDouble() }
+            // open ones first, then the closed by when they open
+            SortBy.OPENS_NEXT -> byValue(false) { h ->
+                h.open?.takeIf { !it.unknown }?.let { s -> if (s.isOpen) 0.0 else s.changesAt?.toEpochSecond(java.time.ZoneOffset.UTC)?.toDouble() }
+            }
         }
     }
+
+    /** How much ground a place covers, by its box (in square degrees, shrunk by the latitude): to compare, not to say. */
+    private fun footprint(h: Hit): Double? = h.place.bbox?.let { b -> (b.east - b.west) * (b.north - b.south) * kotlin.math.cos(Math.toRadians(b.center.lat)) }
+
+    /** A hotel's stars ("4", "3S": superior is half a star more). */
+    private fun stars(v: String?): Double? {
+        val n = v?.let { Regex("""^\s*(\d+(?:[.,]\d)?)""").find(it)?.groupValues?.get(1)?.replace(',', '.')?.toDoubleOrNull() } ?: return null
+        return if (v.trim().endsWith("S", ignoreCase = true)) n + 0.5 else n
+    }
+
+    /** What a comparison of [key] reads of a place: its height, its elevation, the year it was built. */
+    private fun measure(key: String, t: Map<String, String>): Double? = when (key) {
+        "height" -> heightOf(t)
+        "start_date" -> Years.year(t["start_date"] ?: t["building:start_date"] ?: "")
+        else -> metres(t[key])
+    }
+
+    /** How tall a place stands, in metres: its height, else three metres a floor. */
+    private fun heightOf(t: Map<String, String>): Double? =
+        metres(t["height"]) ?: metres(t["building:height"]) ?: t["building:levels"]?.toDoubleOrNull()?.let { it * 3 }
+
+    private fun metres(v: String?): Double? = v?.let { app.atlas.places.Units.parse(it) }?.takeIf {
+        it.dimension == app.atlas.places.Dimension.LENGTH || it.dimension == app.atlas.places.Dimension.NONE
+    }?.value
 
     private fun openRank(s: OpenStatus?): Int = when {
         s == null || s.unknown -> 1
@@ -113,6 +224,8 @@ class OfflineEvaluator(val source: PlaceSource) {
         is Query.Within, is Query.InArea, is Query.AlongRoute -> true
         is Query.Near -> subject.hasSeed() || other.hasSeed()
         is Query.NotNear -> subject.hasSeed()
+        is Query.Inside -> subject.hasSeed() || container.hasSeed()
+        is Query.Contains -> subject.hasSeed()
         is Query.Sort -> query.hasSeed()
         is Query.Limit -> query.hasSeed()
         is Query.And -> parts.any { it.hasSeed() }
@@ -139,6 +252,17 @@ class OfflineEvaluator(val source: PlaceSource) {
         private val hours = HashMap<String, OpeningHours?>()
         private val now: LocalDateTime = ctx.now.toLocalDateTime()
 
+        /** The places looked at, whose branches of a brand (else places of a kind) give the hours of those that keep none. */
+        var branches: Collection<PlaceRecord> = emptyList()
+        private val book by lazy { HoursBook(branches) }
+
+        /** Per want and brand, how many branches' tags pass it and how many say otherwise; each place counted once. */
+        private val wantStats = IdentityHashMap<Query.Want, HashMap<String, IntArray>>()
+        private val tallied = IdentityHashMap<Query.Want, HashSet<String>>()
+
+        /** The buildings places lie in, for what a place takes of its building. */
+        private val buildings = Query.Inside(Query.All, Query.Tags(TagFilter.Has("building")))
+
         /** The box around the candidates being checked, when known: the far side of a "near" is fetched for it. */
         var scope: BBox? = null
 
@@ -150,6 +274,8 @@ class OfflineEvaluator(val source: PlaceSource) {
             is Query.And -> q.parts.mapNotNull { areaOf(it) }.reduceOrNull { a, b -> intersect(a, b) }
             is Query.Near -> areaOf(q.subject)
             is Query.NotNear -> areaOf(q.subject)
+            is Query.Inside -> areaOf(q.subject)
+            is Query.Contains -> areaOf(q.subject)
             is Query.Sort -> areaOf(q.query)
             is Query.Limit -> areaOf(q.query)
             else -> null
@@ -162,16 +288,24 @@ class OfflineEvaluator(val source: PlaceSource) {
 
         private val areaCache = HashMap<String, BBox?>()
 
-        /** No spatial part and nothing to look up: around the searcher (or the view), widening until enough match. */
+        /**
+         * No spatial part and nothing to look up: around the searcher (or the view), widening until enough match. A
+         * query with a seed that none matches within the widest circle looks wherever the regions hold its places (the
+         * owner, 4 November: "Default should be no maximum distance pre set if there are no results"); one without
+         * would read every place there is, and stops at the circle.
+         */
         fun expanding(q: Query): List<PlaceRecord> {
             ctx.viewport?.let { return candidates(q, it) }
             val at = ctx.location ?: return source.bounds?.let { candidates(q, it) } ?: emptyList()
             var last: List<PlaceRecord> = emptyList()
+            var found = 0
             for (r in doubleArrayOf(1_500.0, 6_000.0, 25_000.0)) {
                 last = candidates(q, BBox.around(at, r))
                 scope = extentOf(last)
-                if (last.count { matches(q, it, null) } >= ctx.limit) return last
+                found = last.count { matches(q, it, null) }
+                if (found >= ctx.limit) return last
             }
+            if (found == 0 && q.hasSeed()) source.bounds?.let { b -> last = candidates(q, b); scope = extentOf(last) }
             return last
         }
 
@@ -187,6 +321,8 @@ class OfflineEvaluator(val source: PlaceSource) {
             is Query.Within, is Query.InArea, is Query.AlongRoute -> areaOf(q)?.let { b -> source.inBox(area?.let { intersect(it, b) } ?: b) }
             is Query.Near -> seedNear(q, area)
             is Query.NotNear -> seed(q.subject, area)
+            is Query.Inside -> seedInside(q, area)
+            is Query.Contains -> seed(q.subject, area)
             is Query.Sort -> seed(q.query, area)
             is Query.Limit -> seed(q.query, area)
             is Query.And -> {
@@ -242,6 +378,21 @@ class OfflineEvaluator(val source: PlaceSource) {
             return seed(q.subject, box) ?: source.inBox(box)
         }
 
+        /** The places in or at [q]'s containers, as a near clause's seed is the places around its far side. */
+        private fun seedInside(q: Query.Inside, area: BBox?): List<PlaceRecord>? {
+            val within = nearSet(q, area?.buffer(INSIDE_M))
+            if (within.size == 0) return emptyList()
+            val extent = within.extent.buffer(POINT_CONTAINER_M)
+            val box = area?.let { intersect(it, extent) } ?: extent
+            if (within.size <= PER_NEIGHBOUR_SEEDS) {
+                return union(within.records.map { c ->
+                    val a = intersect(box, PlaceRecord.boxOf(c.place).buffer(if (c.place.bbox == null) POINT_CONTAINER_M else INSIDE_M))
+                    seed(q.subject, a) ?: source.inBox(a)
+                })
+            }
+            return seed(q.subject, box) ?: source.inBox(box)
+        }
+
         /** About how many places a seed for [q] would fetch in [area]. */
         fun cost(q: Query, area: BBox?): Double {
             val scale = if (area == null || source.size == 0) 1.0 else min(1.0, source.estimate(area).toDouble() / source.size)
@@ -255,6 +406,8 @@ class OfflineEvaluator(val source: PlaceSource) {
                 }?.times(scale) ?: 500.0
                 is Query.Near -> min(cost(q.subject, area), cost(q.other, area) * 8)
                 is Query.NotNear -> cost(q.subject, area)
+                is Query.Inside -> min(cost(q.subject, area), cost(q.container, area) * 8)
+                is Query.Contains -> cost(q.subject, area)
                 is Query.And -> q.parts.filter { it.hasSeed() }.minOfOrNull { cost(it, area) } ?: Double.MAX_VALUE
                 is Query.Or -> q.parts.sumOf { cost(it, area) }
                 is Query.Within, is Query.InArea, is Query.AlongRoute -> areaOf(q)?.let { source.estimate(it).toDouble() } ?: Double.MAX_VALUE
@@ -330,9 +483,11 @@ class OfflineEvaluator(val source: PlaceSource) {
                 val prefer = found.prefer
                 val openUnknown = found.openUnknown
                 val along = found.along
-                matches(p, r, found).also { if (!it) found.reset(why, near, relevance, prefer, openUnknown, along) }
+                val unsure = found.unsure.size
+                matches(p, r, found).also { if (!it) found.reset(why, near, relevance, prefer, openUnknown, along, unsure) }
             }
-            is Query.Not -> !matches(q.part, r, null)
+            // "not in the centre" of a town nobody could resolve narrows nothing either
+            is Query.Not -> (q.part as? Query.InArea)?.let { resolve(it) == null } == true || !matches(q.part, r, null)
             is Query.Type -> r.id?.type == q.type
             is Query.Id -> r.id == q.id
             is Query.Newer -> r.place.extra["timestamp"]?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }?.let { !it.isBefore(q.since) } ?: false
@@ -343,7 +498,187 @@ class OfflineEvaluator(val source: PlaceSource) {
                 }
                 true
             }
+            is Query.Inside -> matches(q.subject, r, found) && inside(q, r, found)
+            is Query.Contains -> matches(q.subject, r, found) && contains(q, r, found)
+            is Query.Want -> want(q, r, found)
+            is Query.Rated -> ctx.rating(r.place)?.let { q.op.test(it, q.value) } ?: false
+            is Query.ChangesAt -> changesAt(q, r, found)
+            is Query.Coloured -> q.family in Colours.of(r.tags)
+            is Query.ClosedOn -> closedOn(q.day, r, found)
+            is Query.Than -> than(q, r)
             Query.All -> true
+        }
+
+        /** True when [r]'s hours (its brand's, where it keeps none) keep it shut all of [day]; unknown hours do not. */
+        private fun closedOn(day: DayOfWeek, r: PlaceRecord, found: Found?): Boolean {
+            val known = hoursOrBrand(r) ?: return false
+            val date = now.toLocalDate().with(TemporalAdjusters.nextOrSame(day))
+            val shut = known.first.spans(date, ctx.hours).none { it.state == OpenState.OPEN || it.state == OpenState.UNKNOWN }
+            if (shut) found?.let { it.why += "closed"; if (!known.second) it.inferred = true }
+            return shut
+        }
+
+        /** Per comparison with another place, that place's measure: NaN where no place of its name says one. */
+        private val bounds = IdentityHashMap<Query.Than, Double>()
+
+        /** True when [r]'s measure stands as [q] asks against the other place's ("taller than the Westertoren"). */
+        private fun than(q: Query.Than, r: PlaceRecord): Boolean {
+            val bound = bounds.getOrPut(q) { boundOf(q) }
+            if (bound.isNaN()) return false
+            val v = measure(q.key, r.tags) ?: return false
+            return q.op.test(v, bound)
+        }
+
+        /** The measure of the place [Query.Than.other] finds: the best named of them, then the nearest. */
+        private fun boundOf(q: Query.Than): Double {
+            val name = q.other as? Query.Name
+            val known = this@OfflineEvaluator.matches(q.other, ctx.copy(viewport = null))
+                .mapNotNull { p -> measure(q.key, p.tags)?.let { v -> Triple(p, v, name?.let { relevance(it, p) } ?: 1.0) } }
+            return known.sortedWith(compareByDescending<Triple<PlaceRecord, Double, Double>> { it.third }.thenBy { t -> ctx.location?.let { t.first.distanceTo(it) } ?: 0.0 })
+                .firstOrNull()?.second ?: Double.NaN
+        }
+
+        /** True when [r] lies in or at a place of [q]'s containers (a point one: near it), noted as a near match. */
+        private fun inside(q: Query.Inside, r: PlaceRecord, found: Found?): Boolean {
+            val c = container(q, r) ?: return false
+            found?.let { it.near += NearMatch(nearIndex.getOrPut(q) { nearIndex.size }, c.first, c.second, INSIDE_M) }
+            return true
+        }
+
+        /** The container of [q] that [r] lies in, the smallest of them, and how far from its outline (0 inside). */
+        private fun container(q: Query, r: PlaceRecord): Pair<PlaceRecord, Double>? =
+            nearSet(q, around(r, POINT_CONTAINER_M), candidate = true).around(r, POINT_CONTAINER_M)
+                .filter { (c, d) -> c.place.key != r.place.key && d <= (if (c.place.bbox == null) POINT_CONTAINER_M else INSIDE_M) }
+                .minByOrNull { (c, d) -> d + boxArea(c) }
+
+        private fun boxArea(c: PlaceRecord): Double = c.place.bbox?.let { (it.east - it.west) * (it.north - it.south) } ?: 0.0
+
+        /** True when a place of [q]'s parts lies in or at [r]'s outline (around it, for a place drawn as a point). */
+        private fun contains(q: Query.Contains, r: PlaceRecord, found: Found?): Boolean {
+            val reach = if (r.place.bbox == null) POINT_CONTAINER_M else INSIDE_M
+            val box = PlaceRecord.boxOf(r.place).buffer(reach)
+            val part = nearSet(q, box, candidate = true).inBox(box)
+                .filter { it.place.key != r.place.key && r.distanceTo(it.location) <= reach }
+                .minByOrNull { Geo.distance(r.location, it.location) } ?: return false
+            found?.let { it.near += NearMatch(nearIndex.getOrPut(q) { nearIndex.size }, part, Geo.distance(r.location, part.location), reach) }
+            return true
+        }
+
+        /**
+         * A want: passed by [r]'s tags (one of the reasons it matched), or by its building's for what a building says
+         * (its age, height, floors, colours); failed when they say otherwise; else kept, unsure, likely when a place
+         * [Query.Want.nearby] finds is within reach. Its brand's branches are counted, for [likely].
+         */
+        private fun want(q: Query.Want, r: PlaceRecord, found: Found?): Boolean {
+            if (matches(q.part, r, null)) { tally(q, r, true); found?.why?.add(whyOf(q.part)); return true }
+            if (says(q.part, r)) { tally(q, r, false); return false }
+            building(q.part, r)?.let { b ->
+                if (matches(q.part, b, null)) { found?.why?.add("building"); return true }
+                if (says(q.part, b)) return false
+            }
+            val near = q.nearby?.let { nearSet(q, around(r, q.metres), candidate = true).nearest(r, q.metres) }
+            found?.unsure?.add(q to (near != null))
+            return true
+        }
+
+        /**
+         * True when [r]'s tags say otherwise than [part], which they do not pass: a value it reads that it does not take
+         * (a bare "yes" only says there is one: "outdoor_seating=yes" leaves a garden open), its rating, its hours.
+         */
+        private fun says(part: Query, r: PlaceRecord): Boolean = when (part) {
+            is Query.Tags -> against(part.filter, r.tags)
+            is Query.Rated -> ctx.rating(r.place) != null
+            is Query.Coloured -> Colours.KEYS.any { it in r.tags }
+            is Query.OpenAt, is Query.ChangesAt -> "opening_hours" in r.tags
+            is Query.And -> part.parts.any { says(it, r) }
+            is Query.Or -> part.parts.any { says(it, r) }
+            // what it must not be, it is: said when the tags that make it are readable
+            is Query.Not -> (part.part as? Query.Tags)?.filter?.keys()?.any { readable(it, r.tags) } ?: says(part.part, r)
+            else -> true
+        }
+
+        /** True when [tags] speak against [f]: a key it reads there, readable, with a value it does not take. */
+        private fun against(f: TagFilter, tags: Map<String, String>): Boolean = when (f) {
+            is TagFilter.And -> f.parts.any { against(it, tags) }
+            is TagFilter.Or -> f.parts.any { against(it, tags) }
+            is TagFilter.Not -> f.part.keys().any { readable(it, tags) }
+            is TagFilter.Equals -> readable(f.key, tags) && !f.matches(tags) && !(tags[f.key] == "yes" && f.value != "no")
+            is TagFilter.Matches -> readable(f.key, tags) && !f.matches(tags) && !(tags[f.key] == "yes" && !f.negate && !f.matches(mapOf(f.key to "no")))
+            else -> f.keys().any { readable(it, tags) } && !f.matches(tags)
+        }
+
+        /** True when [tags] hold [k] in a form it can be read in (a date key's value a date). */
+        private fun readable(k: String, tags: Map<String, String>): Boolean = tags[k]?.let { v -> !Years.isDateKey(k) || Years.of(v) != null } == true
+
+        /** The building [r] lies in, when [part] reads what a building says and [r] is not a building itself. */
+        private fun building(part: Query, r: PlaceRecord): PlaceRecord? {
+            if ("building" in r.tags || r.place.bbox != null && r.id?.type != app.atlas.model.OsmType.NODE) return null
+            if (!readsBuilding(part)) return null
+            return container(buildings, r)?.first
+        }
+
+        private fun readsBuilding(part: Query): Boolean = when (part) {
+            is Query.Tags -> part.filter.keys().any { it in BUILDING_KEYS }
+            is Query.Coloured -> true
+            is Query.And -> part.parts.any { readsBuilding(it) }
+            is Query.Or -> part.parts.any { readsBuilding(it) }
+            else -> false
+        }
+
+        private fun tally(q: Query.Want, r: PlaceRecord, yes: Boolean) {
+            val brand = r.brand ?: return
+            if (!tallied.getOrPut(q) { HashSet() }.add(r.place.key)) return
+            val counts = wantStats.getOrPut(q) { HashMap() }.getOrPut(brand) { IntArray(2) }
+            counts[if (yes) 0 else 1]++
+        }
+
+        /**
+         * [hits] that are unsure of a want made likely where most of their brand's branches that say pass it (at
+         * least [LIKELY_BRANCHES], twice as many passing as not), and scored as sure as they are.
+         */
+        fun likely(hits: MutableList<Hit>) {
+            for ((i, h) in hits.withIndex()) {
+                if (h.sure != Sure.MAYBE) continue
+                val brand = h.record.brand ?: continue
+                val wants = unsureOf[h.record] ?: continue
+                val all = wants.all { w -> wantStats[w]?.get(brand)?.let { (yes, no) -> yes >= LIKELY_BRANCHES && yes >= 2 * no } == true }
+                if (all) hits[i] = h.copy(sure = Sure.LIKELY, score = h.score / MAYBE_FACTOR * LIKELY_FACTOR, why = h.why + "brand")
+            }
+        }
+
+        /** The wants each unsure hit did not know, for [likely]. */
+        private val unsureOf = IdentityHashMap<PlaceRecord, List<Query.Want>>()
+
+        /** Places that open or close within the minutes asked of the time asked, on the day asked (today when none). */
+        private fun changesAt(q: Query.ChangesAt, r: PlaceRecord, found: Found?): Boolean {
+            val (oh, own) = hoursOrBrand(r) ?: return false
+            if (!own) found?.let { it.inferred = true }
+            val date = q.day?.let { now.toLocalDate().with(TemporalAdjusters.nextOrSame(it)) } ?: now.toLocalDate()
+            val spans = oh.weekTable(date, ctx.hours)[date.dayOfWeek.value - 1].filter { it.state == OpenState.OPEN }
+            val target = q.at.hour * 60 + q.at.minute
+            val times = if (q.kind == ChangeKind.OPENS) spans.map { it.start } else spans.filter { !it.openEnd }.map { it.end }
+            return times.any { t -> kotlin.math.abs(t - target) <= q.withinMinutes || kotlin.math.abs(t - DAY_MINUTES - target) <= q.withinMinutes }
+        }
+
+        /** How many minutes [r] is open today by its own hours or its brand's, or null when it has neither. */
+        fun hoursToday(r: PlaceRecord): Int? {
+            val oh = hoursOrBrand(r)?.first ?: return null
+            if (oh.isAlwaysOpen) return 1440
+            return oh.weekTable(now.toLocalDate(), ctx.hours)[now.dayOfWeek.value - 1].filter { it.state == OpenState.OPEN }.sumOf { it.minutes }
+        }
+
+        /** When [r] first opens today, minutes from midnight, or null when it does not or has no hours. */
+        fun opensToday(r: PlaceRecord): Int? {
+            val oh = hoursOrBrand(r)?.first ?: return null
+            if (oh.isAlwaysOpen) return 0
+            return oh.weekTable(now.toLocalDate(), ctx.hours)[now.dayOfWeek.value - 1].filter { it.state == OpenState.OPEN }.minOfOrNull { it.start }
+        }
+
+        /** When [r] last closes today, minutes from midnight (past 1440 after midnight), or null when it does not open or has no hours. */
+        fun closesToday(r: PlaceRecord): Int? {
+            val oh = hoursOrBrand(r)?.first ?: return null
+            if (oh.isAlwaysOpen) return DAY_MINUTES
+            return oh.weekTable(now.toLocalDate(), ctx.hours)[now.dayOfWeek.value - 1].filter { it.state == OpenState.OPEN }.maxOfOrNull { it.end }
         }
 
         /** A short reason for a filter or query part: its tag text, at most [WHY_LENGTH] characters. */
@@ -383,13 +718,14 @@ class OfflineEvaluator(val source: PlaceSource) {
         }
 
         private fun openAt(t: OpenTime, r: PlaceRecord, found: Found?): Boolean {
-            val oh = hoursOf(r)
-            if (oh == null) {
+            val known = hoursOrGuess(r)
+            if (known == null) {
                 // No hours mapped: toilets, docks and the like are usually always open; the rest we cannot vouch for.
                 val usually = usuallyOpen(r)
                 if (usually) found?.let { it.openUnknown = true }
                 return usually
             }
+            val oh = known.first
             val ok = when (t) {
                 OpenTime.Now -> oh.isOpen(now, ctx.hours)
                 is OpenTime.At -> oh.isOpen(t.time, ctx.hours)
@@ -402,7 +738,7 @@ class OfflineEvaluator(val source: PlaceSource) {
                     else oh.spans(date, ctx.hours).any { it.state == OpenState.OPEN }
                 }
             }
-            if (ok == true) found?.let { it.why += "open" }
+            if (ok == true) found?.let { it.why += "open"; if (!known.second) it.inferred = true }
             return ok == true
         }
 
@@ -414,6 +750,110 @@ class OfflineEvaluator(val source: PlaceSource) {
         fun hoursOf(r: PlaceRecord): OpeningHours? {
             val raw = r.tags["opening_hours"] ?: return null
             return hours.getOrPut(raw) { OpeningHours.parseOrNull(raw) }
+        }
+
+        /**
+         * [r]'s hours and whether they are its own: its own when it keeps any, else its brand's as its branches among
+         * the places looked at keep them (unconfirmed), else null.
+         */
+        fun hoursOrBrand(r: PlaceRecord): Pair<OpeningHours, Boolean>? {
+            if ("opening_hours" in r.tags) return hoursOf(r)?.let { it to true }
+            return r.brand?.let { book.ofBrand(it) }?.let { it to false }
+        }
+
+        /**
+         * The same, else its kind's as the places of its kind around it keep them ([HoursBook], unconfirmed): for
+         * whether it is open at a time asked, never for a day it is closed or a time it changes.
+         */
+        fun hoursOrGuess(r: PlaceRecord): Pair<OpeningHours, Boolean>? {
+            if ("opening_hours" in r.tags) return hoursOf(r)?.let { it to true }
+            return book.of(r)?.let { it.hours to false }
+        }
+
+        /** The "near"s looked for farther, to tell how far the nearest is for a place that is not near enough. */
+        private val farther = IdentityHashMap<Query.Near, Query.Near>()
+
+        /** What [r] misses of the requirement [q] and how far off it is, or null when it meets it. */
+        fun miss(q: Query, r: PlaceRecord): Miss? {
+            if (matches(q, r, null)) return null
+            return when (q) {
+                is Query.OpenAt -> openMiss(q.time, r)
+                is Query.Within -> (q.center ?: ctx.location)?.let { c -> Miss.Beyond((r.distanceTo(c) - q.radius).coerceAtLeast(0.0), q.radius) } ?: lacks(q, r)
+                is Query.Near -> {
+                    val wide = farther.getOrPut(q) { q.copy(maxDistance = q.maxDistance * FARTHER_LOOK) }
+                    val d = nearSet(wide, around(r, wide.maxDistance), candidate = true).nearest(r, wide.maxDistance)?.second
+                    val (label, symbol) = labelOf(q.other)
+                    Miss.Farther(label, symbol, d, q.maxDistance)
+                }
+                is Query.Rated -> Miss.Rated(ctx.rating(r.place), q.value)
+                is Query.Want -> (q.part as? Query.Rated)?.let { Miss.Rated(ctx.rating(r.place), it.value) } ?: lacks(q.part, r)
+                is Query.InArea -> Miss.Outside(q.name?.takeIf { !it.startsWith("@") && !it.equals("bbox", true) } ?: "", resolve(q)?.let { outside(it, r.location) })
+                else -> lacks(q, r)
+            }
+        }
+
+        /** How far [r] is from being open at [t]: as [Closest.openMiss] tells, the hours of its brand or kind standing in for its own. */
+        private fun openMiss(t: OpenTime, r: PlaceRecord): Miss {
+            val h = hoursOrGuess(r)?.first ?: return Miss.HoursUnknown
+            val (at, back) = when (t) {
+                OpenTime.Now -> now to false
+                is OpenTime.At -> t.time to true
+                is OpenTime.Today -> today(t.time) to true
+                OpenTime.Tonight -> now.toLocalDate().atTime(20, 30) to true
+                OpenTime.Late -> now.toLocalDate().atTime(23, 0) to true
+                is OpenTime.OnDay -> (t.time?.let { now.toLocalDate().with(TemporalAdjusters.nextOrSame(t.day)).atTime(it) } ?: return lacks(Query.OpenAt(t), r)) to true
+            }
+            return Closest.openMiss(h, at, back, ctx.hours) ?: lacks(Query.OpenAt(t), r)
+        }
+
+        /** [r] does not have what [q] asks: its first key's label (with the value asked, where one is), and whether [r] says nothing of it. */
+        private fun lacks(q: Query, r: PlaceRecord): Miss {
+            val keys = keysOf(q)
+            val (label, symbol) = labelOf(q)
+            return Miss.Lacks(keys.firstOrNull() ?: "", label, symbol, unsaid = keys.isNotEmpty() && keys.none { it in r.tags })
+        }
+
+        /**
+         * The words and symbol for what [q] asks: a tag's value as its facet calls it ("Vegan"), else its key's
+         * ("Wi-Fi"); no words for what reads no tag.
+         */
+        private fun labelOf(q: Query): Pair<String, String?> {
+            when (q) {
+                is Query.Near -> return labelOf(q.other)
+                is Query.NotNear -> return labelOf(q.other)
+                is Query.Inside -> return labelOf(q.container)
+                is Query.Contains -> return labelOf(q.part)
+                is Query.Category -> Categories.byId(q.id)?.let { return it.name(ctx.lang) to it.symbol }
+                is Query.And -> return q.parts.map { labelOf(it) }.firstOrNull { it.first.isNotEmpty() } ?: ("" to null)
+                is Query.Or -> return q.parts.map { labelOf(it) }.firstOrNull { it.first.isNotEmpty() } ?: ("" to null)
+                else -> {}
+            }
+            val f = (q as? Query.Tags)?.filter ?: (q as? Query.Want)?.part?.let { (it as? Query.Tags)?.filter } ?: (q as? Query.Not)?.part?.let { (it as? Query.Tags)?.filter }
+            val first = f?.let { firstTag(it) }
+            val key = first?.first ?: keysOf(q).firstOrNull() ?: return "" to null
+            val facet = Labels.facet(key, ctx.lang)
+            val value = first?.second ?: return facet to Labels.facetSymbol(key)
+            val id = Facts.stateOf(value)?.let { "~" + it.name.lowercase(Locale.ROOT) }
+            val kind = if (id != null) FacetKind.FLAG else FacetKind.VALUES
+            val v = id ?: value
+            return Labels.value(key, kind, v, facet, ctx.lang).second to (Labels.valueSymbol(key, kind, v) ?: Labels.facetSymbol(key))
+        }
+
+        private fun firstTag(f: TagFilter): Pair<String, String?>? = when (f) {
+            is TagFilter.Equals -> f.key to f.value
+            is TagFilter.Has -> f.key to null
+            is TagFilter.Compare -> f.key to null
+            is TagFilter.Matches -> f.key to null
+            is TagFilter.And -> f.parts.firstNotNullOfOrNull { firstTag(it) }
+            is TagFilter.Or -> f.parts.firstNotNullOfOrNull { firstTag(it) }
+            else -> null
+        }
+
+        /** Metres from [p] to the nearest edge of [b], 0 inside it. */
+        private fun outside(b: BBox, p: LatLon): Double {
+            val lat = p.lat.coerceIn(b.south, b.north)
+            val lon = p.lon.coerceIn(b.west, b.east)
+            return Geo.distance(p.lat, p.lon, lat, lon)
         }
 
         private fun near(q: Query.Near, r: PlaceRecord, found: Found?): Boolean {
@@ -440,6 +880,9 @@ class OfflineEvaluator(val source: PlaceSource) {
             val (other, d, subject) = when (q) {
                 is Query.Near -> Triple(q.other, q.maxDistance, q.subject)
                 is Query.NotNear -> Triple(q.other, q.minDistance, q.subject)
+                is Query.Inside -> Triple(q.container, POINT_CONTAINER_M, q.subject)
+                is Query.Contains -> Triple(q.part, POINT_CONTAINER_M, q.subject)
+                is Query.Want -> Triple(q.nearby ?: Query.All, q.metres, Query.All)
                 else -> error("not a near clause")
             }
             // the first time, for the subject's own area or around all the candidates; when a candidate falls
@@ -473,9 +916,11 @@ class OfflineEvaluator(val source: PlaceSource) {
             val found = Found()
             if (!matches(q, r, found)) return null
             val distance = ctx.location?.let { r.distanceTo(it) } ?: areaOf(q)?.center?.let { r.distanceTo(it) }
-            val hours = hoursOf(r)
+            // its kind's hours stand in only where the query asks when it is open
+            val known = if (asksOpen(q)) hoursOrGuess(r) else hoursOrBrand(r)
+            val inferred = known?.second == false
             val at = openTimeOf(q)
-            val status = hours?.status(at, ctx.hours)
+            val status = known?.first?.status(at, ctx.hours)
             val rating = ctx.rating(r.place)
 
             val scale = withinRadius(q)?.let { max(it / 2, 100.0) } ?: DISTANCE_SCALE
@@ -486,7 +931,7 @@ class OfflineEvaluator(val source: PlaceSource) {
                 status.unknown -> 0.9
                 status.isOpen -> 1.0
                 else -> 0.8
-            }
+            } * (if (inferred) INFERRED_FACTOR else 1.0)
             // a place looked up by its name is that place, open or not: its hours only nudge
             val openFactor = if (byName(q)) 1.0 - 0.25 * (1.0 - openState) else openState
             val ratingFactor = rating?.let { 0.8 + 0.04 * it.coerceIn(0.0, 5.0) } ?: 0.94
@@ -494,7 +939,19 @@ class OfflineEvaluator(val source: PlaceSource) {
             for (n in found.near) nearFactor *= 1.0 - 0.25 * (n.distance / n.maxDistance).coerceIn(0.0, 1.0)
             val named = if (r.name() != null) 1.0 else 0.9
             val relevance = found.relevance
-            val score = relevance * relevance * distanceFactor * openFactor * ratingFactor * nearFactor * found.prefer * named
+            // a want its tags do not say: likely when a place that provides it is at hand, else unsure
+            val sure = when {
+                found.unsure.isEmpty() -> Sure.YES
+                found.unsure.all { it.second } -> Sure.LIKELY
+                else -> Sure.MAYBE
+            }
+            if (sure == Sure.MAYBE) unsureOf[r] = found.unsure.filter { !it.second }.map { it.first }
+            val sureFactor = when (sure) {
+                Sure.YES -> 1.0
+                Sure.LIKELY -> LIKELY_FACTOR
+                else -> MAYBE_FACTOR
+            }
+            val score = relevance * relevance * distanceFactor * openFactor * ratingFactor * nearFactor * found.prefer * named * sureFactor
             return Hit(
                 record = r,
                 score = score,
@@ -505,7 +962,19 @@ class OfflineEvaluator(val source: PlaceSource) {
                 along = found.along,
                 why = found.why.distinct(),
                 rating = rating,
+                sure = sure,
+                unknown = found.unsure.flatMap { keysOf(it.first.part) }.distinct(),
+                hoursInferred = inferred,
             )
+        }
+
+        private val asks = IdentityHashMap<Query, Boolean>()
+
+        /** True when [q] asks whether its places are open at some time. */
+        private fun asksOpen(q: Query): Boolean = asks.getOrPut(q) {
+            var open = false
+            q.walk { if (it is Query.OpenAt) open = true }
+            open
         }
 
         private fun openTimeOf(q: Query): LocalDateTime {
@@ -533,7 +1002,21 @@ class OfflineEvaluator(val source: PlaceSource) {
             is Query.Within -> q.radius
             is Query.And -> q.parts.firstNotNullOfOrNull { withinRadius(it) }
             is Query.Near -> withinRadius(q.subject)
+            is Query.Inside -> withinRadius(q.subject)
+            is Query.Contains -> withinRadius(q.subject)
             else -> null
+        }
+
+        /** The keys [q] reads, for saying what a place does not say. */
+        private fun keysOf(q: Query): List<String> = when (q) {
+            is Query.Tags -> q.filter.keys().toList()
+            is Query.Rated -> listOf("rating")
+            is Query.Coloured -> listOf("building:colour")
+            is Query.OpenAt, is Query.ChangesAt -> listOf("opening_hours")
+            is Query.And -> q.parts.flatMap { keysOf(it) }
+            is Query.Or -> q.parts.flatMap { keysOf(it) }.take(1)
+            is Query.Not -> keysOf(q.part)
+            else -> emptyList()
         }
     }
 
@@ -542,18 +1025,25 @@ class OfflineEvaluator(val source: PlaceSource) {
         var relevance = 1.0
         var prefer = 1.0
         var openUnknown = false
+
+        /** Its hours, asked about, are its brand's rather than its own. */
+        var inferred = false
         var along: Double? = null
         val near = ArrayList<NearMatch>(2)
         val why = ArrayList<String>(2)
 
+        /** The wants its tags did not say, each with whether a place providing it is at hand. */
+        val unsure = ArrayList<Pair<Query.Want, Boolean>>(1)
+
         /** Goes back to the notes as they stood: reasons, near matches, text relevance, preferences, route position. */
-        fun reset(whySize: Int, nearSize: Int, relevance: Double, prefer: Double, openUnknown: Boolean, along: Double?) {
+        fun reset(whySize: Int, nearSize: Int, relevance: Double, prefer: Double, openUnknown: Boolean, along: Double?, unsureSize: Int) {
             this.relevance = relevance
             this.prefer = prefer
             this.openUnknown = openUnknown
             this.along = along
             while (why.size > whySize) why.removeAt(why.size - 1)
             while (near.size > nearSize) near.removeAt(near.size - 1)
+            while (unsure.size > unsureSize) unsure.removeAt(unsure.size - 1)
         }
     }
 
@@ -569,6 +1059,18 @@ class OfflineEvaluator(val source: PlaceSource) {
                 t.add(frame.x(b.west), frame.y(b.south), frame.x(b.east), frame.y(b.north))
             }
             t.finish()
+        }
+
+        /** The places of the set whose boxes [b] touches. */
+        fun inBox(b: BBox): List<PlaceRecord> {
+            val t = tree ?: return emptyList()
+            return t.search(frame.x(b.west), frame.y(b.south), frame.x(b.east), frame.y(b.north)).map { records[it] }
+        }
+
+        /** Every place of the set within [max] metres of [r] (its outline from [r]'s point), with the distance. */
+        fun around(r: PlaceRecord, max: Double): List<Pair<PlaceRecord, Double>> {
+            val b = BBox.around(r.location, max)
+            return inBox(b).map { it to it.distanceTo(r.location) }.filter { it.second <= max }
         }
 
         /** The nearest of the set to [r] within [max] metres (not [r] itself), and its distance. */
@@ -613,10 +1115,38 @@ class OfflineEvaluator(val source: PlaceSource) {
     internal companion object {
         const val TEXT_CANDIDATES = 300
         const val WIDE_SEED = 20_000.0
+
+        /** The most a "largest" sort lists of a region's ([largestOf]), and how many times as many it reads to check. */
+        const val LARGEST_MAX = 60
+        const val LARGEST_SPARE = 2
+
+        /** How many of a query's places, as what they are, the closest matches are chosen from. */
+        const val CLOSEST_POOL = 400
+
+        /** How many times its distance a "near" not met is looked for, to tell how far the nearest is. */
+        const val FARTHER_LOOK = 10.0
         const val PER_NEIGHBOUR_SEEDS = 48
         const val MIN_RELEVANCE = 0.45
         const val DISTANCE_SCALE = 1_500.0
         const val WHY_LENGTH = 48
+
+        /** How far outside a container's outline a place still counts as in it (drawn on its edge), and near one drawn as a point. */
+        const val INSIDE_M = 10.0
+        const val POINT_CONTAINER_M = 60.0
+
+        /** How a want's unsure and likely places score against the sure. */
+        const val MAYBE_FACTOR = 0.55
+        const val LIKELY_FACTOR = 0.8
+
+        /** Hours that are a brand's, not the place's own, count a little less. */
+        const val INFERRED_FACTOR = 0.96
+        const val DAY_MINUTES = 1440
+
+        /** A brand's branches that say so make a want likely at its others from this many on. */
+        const val LIKELY_BRANCHES = 3
+
+        /** What a building says of the places in it: its age, its height and floors, its colours, its stone. */
+        val BUILDING_KEYS = setOf("start_date", "building:start_date", "height", "building:height", "building:levels", "building:colour", "roof:colour", "building:material", "colour")
 
         /** The box around every place of [records], or null when there are none. */
         fun extentOf(records: List<PlaceRecord>): BBox? {

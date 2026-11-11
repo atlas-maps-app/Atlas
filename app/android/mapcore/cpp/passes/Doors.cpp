@@ -189,14 +189,6 @@ struct Plane {
     return o;
 }
 
-/// The first of a tile's items that are doors.
-[[nodiscard]] std::uint32_t first_door(const scene::ResidentTile& tile, std::uint16_t kind) noexcept {
-    for (std::size_t i = 0; i < tile.items.size(); ++i) {
-        if (tile.items[i].kind == kind) return static_cast<std::uint32_t>(i);
-    }
-    return static_cast<std::uint32_t>(tile.items.size());
-}
-
 /// A colour of the style (0xRRGGBB) as the shaders take it, 0xBBGGRR.
 [[nodiscard]] std::uint32_t bgr(std::uint32_t rgb) noexcept {
     return ((rgb >> 16U) & 0xFFU) | (rgb & 0xFF00U) | ((rgb & 0xFFU) << 16U);
@@ -304,7 +296,9 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         if (doors == nullptr || doors->doors.empty()) continue;
         // a tile's doors once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (!scene::draws_items(tiles, c)) continue;
-        const std::uint32_t fade = dithers ? sh::fade_word(t.place.offset.w, t.place.scale.w) : 0U;
+        // (the doors come back on fading in on the tile: their share of its range, scene::Cover::dither)
+        const std::array<float, 2> range = state.cover->dither(t, pass);
+        const std::uint32_t fade = dithers ? sh::fade_word(range[0], range[1]) : 0U;
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
         // none of its nodes 2 to 75 m deep: the depth is linear, so its box's corners bound it
         double least = 1e300;
@@ -320,7 +314,7 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
             most = std::max(most, d);
         }
         if (least > 75 + 1 || most < 2 - 1) continue;
-        const std::uint32_t first = first_door(*t.drawn, kind);
+        const std::uint32_t first = scene::first_of(*t.drawn, pass, kind);
         for (std::size_t i = 0; i < doors->doors.size() && first + i < t.drawn->rows.size(); ++i) {
             const std::uint32_t row = t.drawn->rows[first + i];
             // a coarser pack's door within the active pack's box is the active pack's to draw (none); and a door the
@@ -659,8 +653,10 @@ void Doors::select(const frame::FrameState& state, frame::Selectors& selectors) 
     const std::array<double, 2> details{frame::Selectors::never, frame::Selectors::never};
     selectors.set_details(kind_, details);
     // the doors left out of the map: their items take no rank
-    selectors.leave_out(kind_, state.camera.leaves_out(style::camera_part::doors));
+    selectors.leave_out(kind_, !serves(state.camera.parts));
 }
+
+std::uint64_t Doors::camera_parts() const noexcept { return style::camera_part::doors; }
 
 gpu::Result<void> Doors::build(scene::TileBuild& b) const {
     geometry::TileDoors g = geometry::build_doors({.tile = &b.tile(), .head = &b.head(), .kind = kind_});

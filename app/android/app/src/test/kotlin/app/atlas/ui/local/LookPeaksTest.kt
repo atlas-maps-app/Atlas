@@ -252,7 +252,7 @@ class LookPeaksTest {
     fun theNewDestinationsRoundTripThroughTheirRoutes() {
         val all = listOf(
             Dest.Time(52.3745, 4.884), Dest.Time(), Dest.Look(52.37495, 4.88356, 315.0), Dest.Look(), Dest.Peaks(47.2692, 11.4041), Dest.Peaks(),
-            Dest.Nature("wild", 52.37, 4.88), Dest.Parkland("w23935953", 52.3873, 4.8728), Dest.Picnic("play"), Dest.Swim("sea"), Dest.Relax("sauna"),
+            Dest.Nature("wild", 52.37, 4.88), Dest.Parkland("w23935953", 52.3873, 4.8728), Dest.Parkland("r2554787", key = "r2554787"), Dest.Parkland(key = "osm:52.37,4.88"), Dest.Picnic("play"), Dest.Swim("sea"), Dest.Relax("sauna"),
             Dest.Moon, Dest.Planets, Dest.Galaxy, Dest.Season, Dest.Year, Dest.Moments, Dest.Sky, Dest.Collect,
         )
         for (d in all) assertEquals(d.route, d, Dest.parse(d.route))

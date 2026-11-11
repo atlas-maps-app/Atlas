@@ -1,5 +1,6 @@
 package app.atlas.search
 
+import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.Geometry
@@ -16,7 +17,7 @@ import kotlin.concurrent.withLock
  * the streets' boxes and text, the statistics and the typo vocabulary, and records the region's metadata.
  */
 class StoreWriter internal constructor(
-    private val store: PlaceStore,
+    internal val store: PlaceStore,
     private val langs: List<String>,
     private val regionName: String?,
 ) : Closeable {
@@ -28,6 +29,7 @@ class StoreWriter internal constructor(
     private val treeKinds = HashMap<String, Int>()
     private val sink = ByteSink(512)
     private val extraSink = ByteSink(64)
+    private val outlineSink = ByteSink(1024)
 
     var elements = 0L
         private set
@@ -40,6 +42,18 @@ class StoreWriter internal constructor(
 
     /** Address points added (to the address table, not as places). */
     var addresses = 0
+        private set
+
+    /** Of [addresses], those from OpenAddresses ([AddressFill]). */
+    var filled = 0
+        private set
+
+    /** Outlines kept beside their places ([putOutline]). */
+    var outlines = 0
+        private set
+
+    /** Pieces of path kept in the outlined areas ([putPaths]). */
+    var paths = 0
         private set
 
     init {
@@ -83,7 +97,7 @@ class StoreWriter internal constructor(
         val tags = StoredTags.filter(place.tags, place.source)
         if (place.source == "osm") Addresses.parts(tags)?.let { addAddress(it, place); return }
         val p = if (tags === place.tags) place else place.copy(tags = tags)
-        insert(PlaceRecord.of(p, geometry ?: PlaceRecord.geometryOf(p)), tags)
+        insert(PlaceRecord.of(p, geometry ?: PlaceRecord.geometryOf(p), store.filing.categoryOf(tags)), tags)
     }
 
     private fun insert(r: PlaceRecord, tags: Map<String, String>) {
@@ -213,14 +227,25 @@ class StoreWriter internal constructor(
         st.reset()
     }
 
-    private fun addAddress(a: AddressParts, p: Place) {
-        val lat = E7.of(p.location.lat)
-        val lon = E7.of(p.location.lon)
+    private fun addAddress(a: AddressParts, p: Place) = addAddress(a, E7.of(p.location.lat), E7.of(p.location.lon), p.id?.let(StoreSchema::pack))
+
+    /**
+     * Adds an address point from OpenAddresses at [lat], [lon] (1e-7 degree): its `osm` column says which of the store's
+     * sources it came from ([AddressCredits.osmOf]). One already there (the same number on the same street) stays.
+     */
+    internal fun addFilled(a: AddressParts, lat: Int, lon: Int, source: Int): Boolean {
+        val added = addAddress(a, lat, lon, AddressCredits.osmOf(source), replace = false)
+        if (added) filled++
+        return added
+    }
+
+    private fun addAddress(a: AddressParts, lat: Int, lon: Int, osm: Long?, replace: Boolean = true): Boolean {
         val cell = Addresses.cellOf(lat, lon)
-        val osm = p.id?.let(StoreSchema::pack)
+        var added = true
         store.locked {
             val street = streets.idOf(a, cell)
-            store.stmt("INSERT OR REPLACE INTO address(street, hn, lat, lon, osm) VALUES (?1, ?2, ?3, ?4, ?5)") { st ->
+            val sql = if (replace) "INSERT OR REPLACE" else "INSERT OR IGNORE"
+            store.stmt("$sql INTO address(street, hn, lat, lon, osm) VALUES (?1, ?2, ?3, ?4, ?5)") { st ->
                 st.bindLong(1, street)
                 st.bindText(2, a.housenumber)
                 st.bindLong(3, (lat - Addresses.cellSouth(cell)).toLong())
@@ -228,8 +253,49 @@ class StoreWriter internal constructor(
                 if (osm == null) st.bindNull(5) else st.bindLong(5, osm)
                 st.step()
             }
+            if (!replace) added = store.long("SELECT changes()") > 0
         }
+        if (!added) return false
         addresses++
+        tick()
+        return true
+    }
+
+    /**
+     * Keeps the outline of the area [id] beside its place, for its park page offline ([Outlines]: the packer keeps those
+     * of the areas [Outlines.keeps]): its closed [rings] as (lat, lon) pairs in 1e-7 degree, each ending on its first
+     * point, [inner] marking the holes. They are simplified for a plan; false when nothing of them is left to draw. An
+     * outline kept again replaces the one before; a place replaced keeps its outline.
+     */
+    fun putOutline(id: OsmId, rings: List<IntArray>, inner: List<Boolean>): Boolean {
+        val blob = Outlines.encode(rings, inner, outlineSink) ?: return false
+        store.locked {
+            store.stmt("INSERT OR REPLACE INTO outline(id, rings) VALUES (?1, ?2)") { st ->
+                st.bindLong(1, StoreSchema.pack(id))
+                st.bindBlob(2, blob)
+                st.step()
+            }
+        }
+        outlines++
+        tick()
+        return true
+    }
+
+    /**
+     * Keeps the paths in the area [id] beside its outline ([putOutline]), for its plan offline: the pieces of the ways the
+     * plan draws ([Outlines.PATHS]) that run in it, as (lat, lon) pairs in 1e-7 degree, simplified within [toleranceM]
+     * ([Outlines.toleranceOf] its outline). No [lines] says the area has none; paths kept again replace those before.
+     */
+    fun putPaths(id: OsmId, lines: List<IntArray>, toleranceM: Double) {
+        val blob = Outlines.encodeLines(lines, toleranceM, outlineSink)
+        store.locked {
+            store.stmt("INSERT OR REPLACE INTO paths(id, lines) VALUES (?1, ?2)") { st ->
+                st.bindLong(1, StoreSchema.pack(id))
+                st.bindBlob(2, blob)
+                st.step()
+            }
+        }
+        paths += lines.count { it.size >= 4 }
         tick()
     }
 
@@ -276,7 +342,7 @@ class StoreWriter internal constructor(
         if (++pending >= BATCH) commit()
     }
 
-    private var committed = LongArray(5)
+    private var committed = LongArray(8)
 
     /** Commits what was added so far and goes on in a new transaction. */
     fun commit() {
@@ -285,7 +351,7 @@ class StoreWriter internal constructor(
             store.exec("BEGIN")
         }
         pending = 0
-        committed = longArrayOf(elements, places.toLong(), trees.toLong(), skipped, addresses.toLong())
+        committed = longArrayOf(elements, places.toLong(), trees.toLong(), skipped, addresses.toLong(), filled.toLong(), outlines.toLong(), paths.toLong())
     }
 
     /** Throws away everything added since the last [commit] (counts included), as if it never came. */
@@ -306,6 +372,9 @@ class StoreWriter internal constructor(
         trees = committed[2].toInt()
         skipped = committed[3]
         addresses = committed[4].toInt()
+        filled = committed[5].toInt()
+        outlines = committed[6].toInt()
+        paths = committed[7].toInt()
     }
 
     /** Commits, works out streets, statistics and vocabulary, and records the metadata. */
@@ -316,6 +385,7 @@ class StoreWriter internal constructor(
             putMeta("langs", langs.joinToString(","))
             regionName?.let { putMeta("name", it) }
             putMeta("imported", Instant.now().toString())
+            putMeta(StoreRefile.FILED, store.filing.fingerprint)
             store.exec("COMMIT")
             store.exec("INSERT INTO place_fts(place_fts) VALUES ('optimize')")
             store.exec("INSERT INTO street_fts(street_fts) VALUES ('optimize')")
@@ -324,10 +394,10 @@ class StoreWriter internal constructor(
             store.invalidate()
         }
         finished = true
-        return ImportStats(elements, places, trees, skipped, (System.nanoTime() - started) / 1_000_000, addresses)
+        return ImportStats(elements, places, trees, skipped, (System.nanoTime() - started) / 1_000_000, addresses, filled, outlines, paths)
     }
 
-    private fun putMeta(key: String, value: String) {
+    internal fun putMeta(key: String, value: String) {
         store.stmt("INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)") { st -> st.bindText(1, key); st.bindText(2, value); st.step() }
     }
 

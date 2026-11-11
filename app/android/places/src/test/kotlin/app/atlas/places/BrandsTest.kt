@@ -27,6 +27,9 @@ class BrandsTest {
         assertEquals("Q2262314", Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "supermarket"), "nl")!!.wikidata)
         assertEquals("Q6310864", Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "supermarket"), "cl")!!.wikidata)
         assertEquals("Q3562323", Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "toys"), "gr")!!.wikidata)
+        // a sign's colour goes with its item, not its name: the Dutch supermarket's yellow is not the toy shop's
+        assertEquals(0xFFFFD500.toInt(), Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "supermarket"), "nl")!!.colour)
+        assertNull(Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "toys"), "gr")!!.colour)
         // the name alone needs the exact main tag
         assertEquals("Q38076", Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "fast_food"))!!.wikidata)
         assertNull(Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "bench")))

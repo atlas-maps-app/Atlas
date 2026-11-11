@@ -1,7 +1,13 @@
 package app.atlas.ui.mine
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
@@ -144,6 +150,25 @@ class MineScreenshotTest {
     }
 
     @Test
+    fun aboutAllTheWayDown() {
+        // The licence list under the first screen, a screen at a time (mine_about_2, _3, …), each starting with the last
+        // tenth of the one before: it grows with the modules' LICENSES.md files.
+        show(Dest.About, phone())
+        val range = SemanticsProperties.VerticalScrollAxisRange
+        val page = compose.onNode(SemanticsMatcher.keyIsDefined(range) and hasAnyDescendant(hasText("OkHttp", substring = true)))
+        var n = 1
+        while (true) {
+            val node = page.fetchSemanticsNode()
+            val at = node.config[range].value()
+            if (at >= node.config[range].maxValue()) break
+            page.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, node.size.height * 0.9f) }
+            capture("mine_about_${++n}")
+            assertTrue("the page scrolls on from $at", page.fetchSemanticsNode().config[range].value() > at)
+        }
+        assertTrue("$n screens", n >= 2)
+    }
+
+    @Test
     fun newPhone() {
         show(Dest.NewPhone, phone())
         capture("mine_newphone")
@@ -199,6 +224,16 @@ class MineScreenshotTest {
         show(Dest.Layers, testServices(places = true, clock = noon).apply { keepFixtureForecast() })
         compose.onNodeWithContentDescription("Fast refresh").performScrollTo()
         capture("mine_layers_fast_refresh")
+    }
+
+    @Test
+    fun layersSun() {
+        // The engine parts' shadows row: the sun's own chip (its light and shade on the faces and crowns) beside the
+        // shadows', dark (drawn, as unset).
+        val noon = java.time.Clock.fixed(java.time.Instant.parse("2026-10-14T11:30:00Z"), java.time.ZoneId.of("Europe/Amsterdam"))
+        show(Dest.Layers, testServices(places = true, clock = noon).apply { keepFixtureForecast() })
+        compose.onNodeWithContentDescription("Sunlight").performScrollTo()
+        capture("mine_layers_sun")
     }
 
     @Test

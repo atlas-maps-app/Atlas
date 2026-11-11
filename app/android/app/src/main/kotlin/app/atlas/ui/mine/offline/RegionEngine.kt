@@ -43,6 +43,11 @@ class RegionDeps(
      * takes ([MapKind.TILES]); null where no core runs here, and a country's tiles are not taken.
      */
     val tilesVersion: () -> String? = { null },
+    /**
+     * Adds the national parks of the box's country to the place store at the file (app.atlas.search.NationalParks), so
+     * the country's largest greens are there offline; none where the phone does not ask online.
+     */
+    val keepParks: (suspend (BBox, File) -> Unit)? = null,
 )
 
 /** What a region would take: the bytes of each layer (null when unknown) and the pack behind it, if one is used. */
@@ -308,7 +313,15 @@ class RegionEngine(
                     if (!part.renameTo(target)) { target.delete(); part.renameTo(target) }
                     LayerRecord("overpass", target.length(), now)
                 }
-                record(meta.id, layer, record)
+                // the country's national parks with the region's places: a few kilobytes, and without them the region is
+                // still whole (the store takes them once the phone is next online)
+                try {
+                    deps.keepParks?.invoke(meta.bbox, target)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+                record(meta.id, layer, record.copy(bytes = target.length()))
             }
             RegionLayer.ROUTING -> {
                 val store = deps.segments ?: throw RegionException("Routing data cannot be stored on this phone.")
@@ -376,6 +389,19 @@ class RegionEngine(
         updates.putAll(found)
         refresh()
         return found
+    }
+
+    /**
+     * Forgets the places of [id] and removes their store, so that [resume] takes them anew: a store this Atlas cannot read
+     * (one of another version of Atlas, or a damaged file) is of no use, and the download may need its room. A store that
+     * no region holds goes the same way. Returns bytes freed.
+     */
+    fun dropPlaces(id: String): Long {
+        val freed = files.deletePlaces(id)
+        files.edit(id) { it.copy(layers = it.layers - RegionLayer.PLACES) }
+        refresh()
+        onChanged()
+        return freed
     }
 
     /** Removes the region and the files only it uses; routing tiles stay when another region needs them. Returns bytes freed. */

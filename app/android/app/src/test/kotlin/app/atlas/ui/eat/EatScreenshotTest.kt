@@ -1,5 +1,15 @@
 package app.atlas.ui.eat
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -15,6 +25,7 @@ import app.atlas.Services
 import app.atlas.nav.AtlasRoot
 import app.atlas.nav.BackStackNavigator
 import app.atlas.nav.Dest
+import app.atlas.nav.ProvideServices
 import app.atlas.testing.settle
 import app.atlas.testing.shotsDir
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -191,6 +202,29 @@ class EatScreenshotTest {
         // The base map itself is drawn by frames Robolectric does not run (as on the Map home's shots): pins, sheet and cards are what this checks.
         compose.onNodeWithText("Trending").assertExists()
         capture("eat_map")
+    }
+
+    /** Each cuisine house's nearest place, its card wearing the house (the HouseCards board), two by two. */
+    @Test
+    @Config(qualifiers = "w648dp-h1660dp-xhdpi")
+    fun houseCards() {
+        val services = EatFixtures.services()
+        var houses = 0
+        compose.setContent {
+            ProvideServices(services) {
+                val ctx = rememberEatContext()
+                val places = remember(ctx.area) { CuisineHouse.entries.mapNotNull { h -> ctx.area.places.firstOrNull { CuisineHouse.of(it) == h } } }
+                SideEffect { houses = places.size }
+                Column(Modifier.background(Color(0xFFF3EEE6)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    for (two in places.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { for (p in two) EatCard(p, ctx, null) {} }
+                }
+            }
+        }
+        // the area comes from the place store off the main thread; the cards show nothing that says "Looking…"
+        compose.waitUntil(30_000) { houses > 0 }
+        compose.settle()
+        assertEquals(CuisineHouse.entries.size, houses)
+        capture("eat_house_cards")
     }
 
     @Test

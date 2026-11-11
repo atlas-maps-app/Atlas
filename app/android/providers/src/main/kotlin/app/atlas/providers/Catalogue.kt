@@ -10,7 +10,8 @@ object Catalogue {
         Overpass.INFO, Nominatim.INFO, Photon.INFO,
         Mangrove.INFO, FoursquareRatings.INFO, YelpRatings.INFO, TripAdvisorRatings.INFO,
         OpenChargeMap.INFO, OsmChargers.INFO, NdwChargers.INFO, BnetzaChargers.INFO,
-        Weather.INFO, MetNorway.INFO, Wikidata.INFO, Commons.INFO, OsmNotes.INFO, OsmEdits.INFO,
+        Weather.INFO, MetNorway.INFO, Wikidata.INFO, Wikipedia.INFO, Commons.INFO, OsmNotes.INFO, OsmEdits.INFO,
+        BathingWaters.INFO, OpenAddresses.INFO,
     )
 
     /**

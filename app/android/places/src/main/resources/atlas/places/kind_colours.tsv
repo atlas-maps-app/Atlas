@@ -1,0 +1,31 @@
+# The thing's own colour. The owner, 6 November: "A bread is brown to me and cheese yellow ... If the category symbols
+# carry the real thing in color they would be very recognizable", then, of Groceries drawn so: "Real colors look good".
+# A kind whose thing has a colour everyone knows, a food or a drink, wears it wherever Atlas draws its places (places
+# KindColours): its pin, its disc in the rows, its chip, its card and its page. Every other kind keeps its family's.
+# Each is its thing's colour moved the least it takes, most not at all, so that for every eye it is never taken for
+# another family's mark, open or closed, nor for a closed place of its own, and its own closed mark (lighter) still
+# shows (FamilyColoursTest). Two kinds may share one, coffee and chocolate both brown: their symbols tell them.
+# Groceries
+shop/bakery #AC671E
+shop/pastry #D49A3A
+shop/cheese #F2B90C
+shop/butcher #B8252D
+shop/seafood #3F7A9E
+shop/greengrocer #E8731A
+shop/coffee #5A371D
+shop/tea #658C06
+shop/chocolate #5A3220
+shop/confectionery #E0487F
+shop/frozen_food #3FA7D6
+shop/farm #AB3337
+shop/spices #BD2531
+shop/nuts #8E5F2F
+shop/ice_cream #E279B6
+# Eat & drink
+amenity/cafe #5E371A
+amenity/ice_cream #E279B6
+amenity/fast_food/ice_cream #E279B6
+amenity/pub #D08A0B
+amenity/biergarten #D08A0B
+shop/wine #7D1050
+shop/alcohol #316F5F

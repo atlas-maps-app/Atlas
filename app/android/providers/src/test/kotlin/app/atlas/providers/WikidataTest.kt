@@ -32,6 +32,9 @@ class WikidataTest {
             assertEquals("1887-05-27", ah.inception.toString())
             assertEquals("https://www.ah.nl/", ah.website)
             assertEquals("Dutch supermarket tycoon (1927–2011)", ah.namedAfter.single().descriptions["en"])
+            // a brand's owner and head office, linked items too
+            assertEquals(listOf("Q20539261"), ah.parents.map { it.id })
+            assertEquals(listOf("Q211260"), ah.headquarters.map { it.id })
             val kerk = got.getValue("Q1130722")
             assertEquals("1631", kerk.inception.toString())
             assertEquals("Hendrick de Keyser", kerk.architects.single().label(listOf("en")))
@@ -41,7 +44,7 @@ class WikidataTest {
             val first = m.take()
             assertEquals("wbgetentities", first.url.queryParameter("action"))
             assertEquals("Q1653985|Q1130722", first.url.queryParameter("ids"))
-            assertEquals("Q3081413|Q525861|Q840829", m.take().url.queryParameter("ids"))
+            assertEquals("Q3081413|Q20539261|Q211260|Q525861|Q840829", m.take().url.queryParameter("ids"))
             // Asked again, the cache answers.
             wd.entity("Q1653985", listOf("nl", "en"))
             assertEquals(2, m.count)

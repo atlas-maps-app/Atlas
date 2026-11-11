@@ -78,6 +78,18 @@ class AtlasRegionManager(
         scheduler().schedule(id, wifiOnly(), update = true)
     }
 
+    /**
+     * Downloads the places of [id] again in place of a store this Atlas cannot read (`Services.unreadableStores`): the
+     * store goes first, then the places are taken as a download takes a layer the region lacks.
+     */
+    suspend fun downloadPlacesAgain(id: String) = withContext(Dispatchers.IO) {
+        val m = files.get(id) ?: return@withContext
+        engine.dropPlaces(id)
+        engine.begin(id, m.name, m.bbox, m.wanted.ifEmpty { m.layers.keys } + RegionLayer.PLACES)
+        engine.waiting(id)
+        scheduler().schedule(id, wifiOnly(), update = false)
+    }
+
     override fun cancel(id: String) {
         scheduler().cancel(id)
         synchronized(running) { running.remove(id)?.cancel() }

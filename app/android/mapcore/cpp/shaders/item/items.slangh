@@ -116,7 +116,7 @@ static const uint ITEM_FACE = 1u;
 static const uint ITEM_SEGMENT = 2u;
 static const uint ITEM_CIRCLE = 3u;
 static const uint ITEM_GLOW = 4u;
-static const uint ITEM_RADIAL = 5u; // a circle filled with its own radial gradient (an open place's glow at night)
+static const uint ITEM_RADIAL = 5u; // a circle or ellipse with its own radial gradient (an open place's glow, its pool)
 static const uint ITEM_RECORD_KIND = 0xFFu;
 static const uint ITEM_ROUND_START = 256u; // tree.slangh's TREE_ROUND_START and TREE_ROUND_END
 static const uint ITEM_ROUND_END = 512u;
@@ -554,6 +554,17 @@ inline ItemRecord item_radial(float2 at, float radius, uint c0, uint c1, uint c2
     uint4 e = {asuint(o2), asuint(middle), 0u, 0u};
     r.c = c;
     r.e = e;
+    return r;
+}
+
+/// An ellipse about `at` (as printed) of radii `rx` and `ry`, filled as item_radial fills its circle, its gradient over
+/// the ellipse's box (passes/Shopfronts.cpp: an open place's pool on the ground at night with the daylight), at painter
+/// depth `depth`: item_radial's record with ry in e.z (0 there is a circle's).
+inline ItemRecord item_pool(float2 at, float rx, float ry, uint c0, uint c1, uint c2, float o0, float o1, float o2,
+                            float middle, float depth) {
+    ItemRecord r = item_radial(at, rx, c0, c1, c2, o0, o1, o2, middle);
+    r.d.z = asuint(depth);
+    r.e.z = asuint(ry);
     return r;
 }
 

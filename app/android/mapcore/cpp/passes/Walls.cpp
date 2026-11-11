@@ -102,8 +102,10 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
                                          reach(part::kit_details, corner_boards_reach(focal))};
     selectors.set_details(kind_, details);
     // every part of the buildings left out: their items take no rank
-    selectors.leave_out(kind_, (left_out_ & part::buildings) == part::buildings);
+    selectors.leave_out(kind_, !serves(left_out_));
 }
+
+std::uint64_t Buildings::camera_parts() const noexcept { return style::camera_part::buildings; }
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     const tiles::Style& style = b.style();
@@ -182,13 +184,14 @@ ShopGlass shop_glass_of(const frame::FrameState& state) noexcept {
 
 void Buildings::write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
                            const BuildingTile& b) {
-    if (rows_written_.contains(tile.handle)) return;
+    if (const auto at = rows_written_.find(tile.handle); at != rows_written_.end() && same_owner(at->second, mine.cpu))
+        return;
     const std::uint32_t first = first_item(tile, kind_);
     std::vector<std::uint32_t> rows(std::size_t{(b.items + 3) / 4} * 4, 0);
     for (std::uint32_t k = 0; k < b.items && first + k < tile.rows.size(); ++k) rows[k] = tile.rows[first + k];
     heaps.write(mine.ranges[0], std::as_bytes(std::span(rows)), b.rows_at * 16);
     heaps.flush();
-    rows_written_.insert(tile.handle);
+    rows_written_[tile.handle] = mine.cpu;
 }
 
 void Buildings::update(const frame::FrameState& state) {
@@ -282,6 +285,10 @@ void Buildings::update(const frame::FrameState& state) {
         TileDraw d;
         shaders::BuildingPush push{};
         push.place = t.place;
+        // the buildings come back on fading in on the tile: their share of its range (scene::Cover::dither)
+        const std::array<float, 2> range = state.cover->dither(t, me);
+        push.place.offset.w = range[0];
+        push.place.scale.w = range[1];
         push.at = {0U, base + b->faces_at, colours, base + b->rows_at};
         // its sun bits' first texel in set 1's sun_bits and their fade (none yet: every face unlit); the edged list's
         // first primitive (a near cell's wall)
@@ -334,8 +341,9 @@ void Buildings::update(const frame::FrameState& state) {
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
-        std::erase_if(rows_written_,
-                      [&](std::uint32_t h) { return std::ranges::find(drawn_handles_, h) == drawn_handles_.end(); });
+        std::erase_if(rows_written_, [&](const auto& e) {
+            return std::ranges::find(drawn_handles_, e.first) == drawn_handles_.end();
+        });
     }
     if (lit_.size() > 4096) {
         std::erase_if(

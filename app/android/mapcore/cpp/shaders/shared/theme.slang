@@ -45,6 +45,7 @@ static const uint THEME_WET_SET = 256u;       // th['wet'] is set (fixed moments
 static const uint THEME_GOLDEN = 512u;        // the golden moment: the golden wash over the frame
 static const uint THEME_TONE = 1024u;         // the profile's TONE: highlights ease off above 205 (the regions' profile)
 static const uint THEME_TONE_STRENGTH = 2048u; // the user's strength of TONE in flags.y (0-2); the renders' 1 without
+static const uint THEME_DAYLIGHT = 4096u;     // RenderOptions.daylight (ATLAS_DAYLIGHT): the day frames' light, any hour
 
 /// True when the theme's flags hold `flag`.
 inline bool theme_has(Theme th, uint flag) {

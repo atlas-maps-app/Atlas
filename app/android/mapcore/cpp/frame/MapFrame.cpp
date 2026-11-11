@@ -12,8 +12,12 @@
 
 #include <algorithm>
 #include <format>
+#include <span>
+#include <string>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace atlas::frame {
 
@@ -33,6 +37,16 @@ constexpr Mode map_mode = Mode::full;
 void close_owned(tiles::PackRef& ref) noexcept {
     if (ref.fd >= 0) ::close(ref.fd);
     ref.fd = -1;
+}
+
+/// A listing's places by its packs' ids, each id's in the listing's order: a pack is looked for among the listings of
+/// its own id alone (same_source asks the id first), so matching a listing of thousands of windows against the last
+/// one takes as many lookups, not their product (each a frame's time on the render thread as each window landed).
+[[nodiscard]] std::unordered_map<std::string, std::vector<std::size_t>> places_by_id(std::span<const MapPack> packs) {
+    std::unordered_map<std::string, std::vector<std::size_t>> out;
+    out.reserve(packs.size());
+    for (std::size_t i = 0; i < packs.size(); ++i) out[packs[i].ref.id].push_back(i);
+    return out;
 }
 
 } // namespace
@@ -87,22 +101,40 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
     std::string out;
     std::vector<MapPack> kept;
     kept.reserve(packs.size());
+    // The listing's windows join and leave their frame cells, and each cell they change is composed and opened once,
+    // at its end (tiles::Store::hold), however many of its windows it brings.
+    if (world_) world_->store().hold();
     // The packs no longer listed, or listed with other bytes, leave the world first.
-    for (MapPack& old : packs_) {
-        const auto again =
-            std::ranges::find_if(packs, [&old](const MapPack& p) { return same_source(p.ref, old.ref); });
-        if (again != packs.end()) continue;
-        if (world_) (void)world_->store().remove(old.ref.id);
-        close_owned(old.ref);
+    {
+        const auto listed = places_by_id(packs);
+        for (MapPack& old : packs_) {
+            const auto at = listed.find(old.ref.id);
+            if (at != listed.end() &&
+                std::ranges::any_of(at->second, [&](std::size_t i) { return same_source(packs[i].ref, old.ref); })) {
+                continue;
+            }
+            if (world_) (void)world_->store().remove(old.ref.id);
+            close_owned(old.ref);
+        }
     }
+    const auto open_before = places_by_id(packs_);
+    std::vector<bool> taken(packs_.size(), false); // an earlier listing's pack kept already, once for one listed now
     for (MapPack& p : packs) {
-        const auto before = std::ranges::find_if(packs_, [&p](const MapPack& o) { return same_source(o.ref, p.ref); });
-        if (before != packs_.end()) {
+        std::size_t before = packs_.size(); // none
+        if (const auto at = open_before.find(p.ref.id); at != open_before.end()) {
+            for (const std::size_t i : at->second) {
+                if (taken[i] || !same_source(packs_[i].ref, p.ref)) continue;
+                before = i;
+                break;
+            }
+        }
+        if (before < packs_.size()) {
             // The same bytes: the pack open in the world stays, with the descriptor it was opened from (the new
             // listing's copy is closed), under the number the app gives it now.
+            taken[before] = true;
             close_owned(p.ref);
-            MapPack same = std::move(*before);
-            before->ref.fd = -1;
+            MapPack same = std::move(packs_[before]);
+            packs_[before].ref.fd = -1;
             same.number = p.number;
             kept.push_back(std::move(same));
             out += std::format("{} kept\n", kept.back().ref.id);
@@ -119,6 +151,7 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
         out += std::format("{} {}\n", p.ref.id, world_ ? "opened" : "listed");
         kept.push_back(std::move(p));
     }
+    if (world_) world_->store().release();
     packs_ = std::move(kept);
     // A number the app no longer lists leaves the choice to the world.
     if (active_number_ != 0 &&
@@ -209,7 +242,9 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
             fields_ = held;
         }
     }
-    // The packs listed so far open in the new world; one that no longer opens is dropped, saying why.
+    // The packs listed so far open in the new world, each frame cell composed once; one that no longer opens is
+    // dropped, saying why.
+    world_->store().hold();
     std::erase_if(packs_, [this](MapPack& p) {
         const std::string why = open(p);
         if (why.empty()) return false;
@@ -217,6 +252,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
         close_owned(p.ref);
         return true;
     });
+    world_->store().release();
     world_->set_active(active_id_);
     return {};
 }
@@ -351,8 +387,10 @@ bool MapFrame::complete() const noexcept {
     if (world_->active() == nullptr || world_->incoming() != nullptr || !world_final) return false;
     // a cover of no tile is final only where it wants none and the world draws the camera: beyond the countries' reach
     // (100 km over the canal ring, whose pack still holds the target) the world's picture is the whole one
+    // (and a part come back on is drawn once its top-ups are taken and faded in: Cover::lacking, Cover::fading)
     const scene::Cover& cover = *world_->cover();
-    if ((cover.tiles().empty() && !world_draws) || cover.missing() > 0 || cover.fading()) return false;
+    if ((cover.tiles().empty() && !world_draws) || cover.missing() > 0 || cover.lacking() > 0 || cover.fading())
+        return false;
     return world_->frames().weight(now()) >= 1.0;
 }
 

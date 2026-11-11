@@ -33,7 +33,7 @@
     <string name="eat_bar_title">LE BAR</string>
     <string name="eat_bar_last_call">dernière tournée %1$s</string>
     <string name="eat_cafe_title">Café &amp; Cie</string>
-    <string name="eat_cafe_open_now">%1$d ouverts</string>
+    <string name="eat_cafe_open_now">%1$s ouverts</string>
     <string name="eat_special">suggestion du jour</string>
     <string name="eat_late_title">Petite faim</string>
     <string name="eat_market_days">Jours de marché</string>

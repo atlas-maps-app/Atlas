@@ -1,0 +1,58 @@
+{
+ "currentVersion": 11.5,
+ "folders": [],
+ "services": [
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2015",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2016",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2017",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2018",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2019",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2020",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2021",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2022",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2023",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2024",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM_2025",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_Dyna_WM",
+   "type": "MapServer"
+  },
+  {
+   "name": "BathingWater/BathingWater_TimeSlider_Dyna_WM",
+   "type": "MapServer"
+  }
+ ]
+}

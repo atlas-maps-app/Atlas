@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symbol manager</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <button id="backBtn" class="ghost" hidden>← All symbols</button>
+  <div class="brand">Symbols</div>
+  <input id="kindSearch" type="search" placeholder="Find a kind  ( / )" autocomplete="off">
+  <div class="filters" id="filters" role="tablist"></div>
+  <div class="spacer"></div>
+  <span id="live" class="live" title="Read live from the files">live</span>
+  <button id="historyBtn" class="ghost">History</button>
+  <button id="importBtn" class="ghost" hidden>Import a set</button>
+</header>
+<main id="listView" class="listview">
+  <nav id="famNav" class="famnav" aria-label="Families"></nav>
+  <div id="list" class="list"><p class="empty">Loading the symbols database…</p></div>
+</main>
+<main id="detailView" class="layout" hidden>
+  <nav id="kinds" class="kinds" aria-label="Kinds"></nav>
+  <section id="detail" class="detail"></section>
+</main>
+<main id="symbolView" class="symview" hidden>
+  <div id="sym" class="sym"></div>
+</main>
+
+<dialog id="importDlg" class="dlg">
+  <form method="dialog" class="dlg-body" id="importForm">
+    <h2>Import a set</h2>
+    <p class="muted">Pick SVG files or a folder of them. They become candidates here, beside Maki, Temaki and ours, to
+      compare at a pin's size. A kind may wear one once Atlas may carry the set: with its licence and where it's from,
+      and for a licence that asks for its notice (MIT, ISC, BSD, Apache, CC BY) the set's licence file, which a folder
+      picked or dropped here brings along. A swap then brings the drawing into the app and credits the set under About
+      &amp; licences. A licence that forbids changes or sale, or asks for share-alike, needs a look by Claude first.</p>
+    <div class="drop" id="drop">
+      <span>Drop SVG files or a folder here</span>
+      <span class="muted">or</span>
+      <label class="filebtn">Choose files<input type="file" id="importFiles" accept=".svg,image/svg+xml" multiple hidden></label>
+      <label class="filebtn">Choose a folder<input type="file" id="importFolder" webkitdirectory hidden></label>
+    </div>
+    <div class="grid2">
+      <label>Short name <input id="impPrefix" placeholder="tabler" maxlength="16" required></label>
+      <label>Set's name <input id="impName" placeholder="Tabler Icons 3.24"></label>
+      <label>Licence <input id="impLicence" placeholder="MIT"></label>
+      <label>Where it's from <input id="impSource" placeholder="https://…"></label>
+    </div>
+    <div id="impStatus" class="muted"></div>
+    <div id="impPreview" class="imp-preview"></div>
+    <div class="dlg-actions">
+      <button type="button" class="ghost" id="impCancel">Cancel</button>
+      <button type="button" id="impGo" disabled>Import</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="historyDlg" class="dlg">
+  <div class="dlg-body">
+    <h2>Changes made here</h2>
+    <div id="historyList"></div>
+    <div class="dlg-actions"><button type="button" class="ghost" id="historyClose">Close</button></div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

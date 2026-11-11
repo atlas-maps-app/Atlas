@@ -40,7 +40,7 @@ class KeptImages(private val dir: File) {
         }
     }
 
-    private fun keep(name: String, image: KeptImage) {
+    internal fun keep(name: String, image: KeptImage) {
         dir.mkdirs()
         val f = fileOf(name)
         f.writeBytes(image.bytes)

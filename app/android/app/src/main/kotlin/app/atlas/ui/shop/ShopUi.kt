@@ -69,32 +69,19 @@ internal fun opensText(opens: LocalDateTime, now: LocalDateTime): String =
     if (opens.toLocalDate() == now.toLocalDate()) opens.hm()
     else opens.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) + " " + opens.hm()
 
-private val MONOGRAMS = longArrayOf(0xFF2F5D8A, 0xFFC8322D, 0xFF2F7D3A, 0xFFE8962C, 0xFF7B4FD6, 0xFF0E8C8C, 0xFF8A5A2B, 0xFFD2457F)
-
-/** The colour a brand's sign has, or one picked by its key so each chain keeps its own. */
-internal fun brandColour(brand: app.atlas.places.Brand?, key: String?): Color =
-    brand?.colour?.let { Color(it) } ?: Color(MONOGRAMS[Math.floorMod((brand?.id ?: key ?: "").hashCode(), MONOGRAMS.size)])
-
 /**
- * A chain's logo on its sign colour (a simple-icons glyph where `:places` has one, else its first letter in the aisle
- * sign's lettering): [round] makes it a disc, as the boards draw some of them, else a soft square.
+ * A chain's sign ([BrandSign]): its logo on its colour (a simple-icons glyph where `:places` has one, else its first
+ * letter in the aisle sign's lettering): [round] makes it a disc, as the boards draw some of them, else a soft square.
+ * The boards' marks: 12 px corners (or round), the logo 24 px, a letter in Overpass Black at half the size.
  */
 @Composable
-internal fun ShopLogo(brand: app.atlas.places.Brand?, name: String, size: Dp, modifier: Modifier = Modifier, key: String? = null, round: Boolean = false) {
-    val bg = brandColour(brand, key ?: name)
-    val fg = brand?.textColour?.let { Color(it) } ?: app.atlas.ui.kit.contentColourFor(bg)
-    // The boards' marks: 12 px corners (or round), the logo 24 px, a letter in Overpass Black at half the size.
-    val shape = if (round) CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(minOf(12.dp, size * 0.3f))
-    Box(modifier.size(size).clip(shape).background(bg), contentAlignment = Alignment.Center) {
-        val slug = brand?.logoSlug
-        if (slug != null) Symbol("logo-$slug", tint = fg, size = minOf(24.dp, size * 0.6f))
-        else androidx.compose.material3.Text(
-            name.trim().take(1).uppercase(),
-            style = androidx.compose.ui.text.TextStyle(fontFamily = ShopType.overpass, fontWeight = androidx.compose.ui.text.font.FontWeight.Black, fontSize = (size.value * 0.5f).sp),
-            color = fg,
-        )
-    }
-}
+internal fun ShopLogo(brand: app.atlas.places.Brand?, name: String, size: Dp, modifier: Modifier = Modifier, round: Boolean = false) =
+    app.atlas.ui.kit.BrandSign(
+        brand, name, size, modifier,
+        shape = if (round) CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(minOf(12.dp, size * 0.3f)),
+        logo = minOf(24.dp, size * 0.6f),
+        lettering = androidx.compose.ui.text.TextStyle(fontFamily = ShopType.overpass, fontWeight = androidx.compose.ui.text.font.FontWeight.Black, fontSize = (size.value * 0.5f).sp),
+    )
 
 /** Starts [intent] from [context]; false when no app on the phone takes it (a tablet without a dialler, no browser). */
 internal fun startSafely(context: Context, intent: Intent): Boolean = try {

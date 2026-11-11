@@ -5,12 +5,14 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.places.Text
+import app.atlas.providers.OpenAddresses
 
 /**
  * The read side of a store's address points: found by street and number ("prinsengracht 263", "12 rue de la gare",
  * "1016 gv 263"), by postcode, by box and by tag, as [PlaceRecord]s with the tags their element had and its OSM id (so
  * points stacked at one position keep keys of their own; [PlaceStore.get] does not find them, as no index holds the
- * ids). Used under the store's lock.
+ * ids). A point from OpenAddresses ([AddressFill]) is a place of that source, with its source's credit and licence.
+ * Used under the store's lock.
  */
 internal class AddressBook(private val store: PlaceStore) {
     /** A street as its address points need it: its names and its cell's corner, which their positions are offsets from. */
@@ -35,7 +37,13 @@ internal class AddressBook(private val store: PlaceStore) {
         PlaceRecord.of(Place(null, LatLon(0.0, 0.0), mapOf("addr:street" to "Main Street", Addresses.HOUSENUMBER to "1")))
     }
 
-    fun forget() = streets.clear()
+    /** Per source of the store's OpenAddresses points ([AddressCredits]), what its points carry: its credit and licence. */
+    private var credits: List<Map<String, String>>? = null
+
+    fun forget() {
+        streets.clear()
+        credits = null
+    }
 
     // --------------------------------------------------------------------------------------------- by text
 
@@ -341,8 +349,17 @@ internal class AddressBook(private val store: PlaceStore) {
 
     private fun record(s: Street, hn: String, lat: Int, lon: Int, osm: Long): PlaceRecord {
         val tags = Addresses.tags(s.name, s.kind, hn, s.postcode, s.city, s.country)
-        val id = if (osm < 0) null else StoreSchema.unpack(osm)
-        return PlaceRecord(Place(id, LatLon(E7.deg(lat), E7.deg(lon)), tags), null, null, template.preset, template.symbol)
+        val at = LatLon(E7.deg(lat), E7.deg(lon))
+        val place = when (val source = AddressCredits.sourceOf(osm)) {
+            null -> Place(if (osm < 0) null else StoreSchema.unpack(osm), at, tags)
+            else -> Place(null, at, tags, source = OpenAddresses.ID, extra = creditOf(source))
+        }
+        return PlaceRecord(place, null, null, template.preset, template.symbol)
+    }
+
+    private fun creditOf(source: Int): Map<String, String> {
+        val all = credits ?: AddressCredits.read(store).map { mapOf(OpenAddresses.CREDIT to it.credit, OpenAddresses.LICENCE to it.licence) }.also { credits = it }
+        return all.getOrNull(source) ?: emptyMap()
     }
 
 

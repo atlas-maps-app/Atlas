@@ -17,6 +17,7 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Terraces in the sun/shade · Terraces · Eat & drink
 - The Eat screens on the real places · Eat · Eat & drink
 - The Eat screens, crafted: felt carte, guest check, ticket machine · Eat · Eat & drink
+- Cuisine houses, fused: the carte's chapters as houses, a front for every house as Ramen's is Japan's, the thumb index's tabs edged with their house's motif (the Eat card already wears its house) · Houses · Eat & drink
 - Market days this week · Market days · Eat & drink, by kind
 - ATMs and crypto · Money · Errands, cash, post & laundry
 - Long-term storage · Storage · Errands, cash, post & laundry
@@ -41,7 +42,16 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Crafted icons on the map home · Main · Home, search & place
 - What’s here: press anywhere to open the place or item card · What’s here · Home, search & place
 - Location off: the app without a fix · Location off · Home, search & place
-- Open at any hour · Open at · Home, search & place
+- One tap adds what similar places around map: a toilet’s fee as the toilets near it say · Place · Home, search & place
+- Long-press a value on a place, its hours, to correct it there · Place · Home, search & place
+- Michelin stars and other guides’ awards, from Wikidata, for “michelin restaurant” · Search · Home, search & place
+- The map’s baked 3D awnings in the home row’s colours (render PoiStyle, mapcore PoiStyle.cpp), with the tiles cut again · Main · Home, search & place
+- A symbol of its own for the 42 kinds marked redo in kinds.tsv, for want of a fitting one (its sheets show them in red) · Main · Home, search & place
+- The places as cards in Saved and Groceries, as in the search · Saved · Home, search & place
+- A place opens over the map it was found on: 30 screens push the place page alone · Place · Home, search & place
+- The bar stays and each tab keeps its history: it shows on 5 of 65 screens · Main · Home, search & place
+- A row opens its place: the Pump, Charge, Parkland and Peaks rows go straight to the route · Route · Home, search & place
+- One Where to?: Go’s bar and planner, the search’s wheel and the charging route’s wait as one; Home and Work’s empty sign opens a search that cannot set them · Go · Home, search & place
 - Build proper hillshade · Height & hillshade layer · Layers & zoom
 - Map layers as switches on the one look · Layers · Layers & zoom
 - Malls, parks, outdoors and nature reserves · Parks & reserves nearby · Mall · Nature, parks & calm
@@ -52,12 +62,14 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Cool in a heat wave, warm in the cold · Heat & cold · Needs
 - With a Museumkaart, every museum is a free toilet · Toilet · Needs
 - Outdoor and indoor pools · Swim · Play, culture & sport
+- Water temperature at Dutch bathing spots, from Rijkswaterstaat · Swim · Play, culture & sport
 - A sports page · Sports · Play, culture & sport
+- Film times at a cinema, for “late cinema with parking” · Cinemas · Play, culture & sport
 - When it rains, the wheel goes indoors · Where to go · Play, culture & sport
 - Public sport grounds · Play, culture & sport
 - Repair and second-hand first · Find a thing · Shops
-- Who stands behind it: chains, owners, headquarters, and what their prices did · A brand: who owns it · Shops
-- Every popular brand with its SVG logo, and every branch in one tap · Brands · Shops
+- What a chain's prices did, on its page beside who owns it · A brand: who owns it · Shops
+- Every popular brand with its SVG logo · Brands · Shops
 
 ## Go
 
@@ -66,6 +78,7 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Live traffic · Traffic · Car, moto & truck
 - Chargers and charging routes from Chargemap, beside OpenStreetMap’s · Charge · Fuel, charge & park
 - Car care: garages, tyres, a wash · Car care · Fuel, charge & park
+- Parking prices and free car parks, from Parkopedia · Parking · Fuel, charge & park
 - Offline weather · Weather with no signal · Off the grid
 - Bike and foot navigation · Walk, turn by turn · Ride (building) · On foot & by bike
 - Bike routes overview nearby · Bike routes nearby · On foot & by bike
@@ -82,6 +95,7 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Bikes and dogs on board · On board · Transit, water & air
 - Stops nobody serves: on the map, but not in today’s timetable · Transit · Transit, water & air
 - Public transport · Transit, water & air
+- The last metro: a stop’s departures, from Transitous · Transit · Transit, water & air
 - Transit and traffic as objects: flip clock, departure board, motorway sign, shop signs · Transit · Transit, water & air
 
 ## Soon
@@ -94,9 +108,11 @@ One line each. A line with a screen name points at the board it improves. Marks:
 - Flood and water dryness · Flood & drought · Safety & environment
 - Immersive monuments in Look, in every country · Monuments · Then & now, up close
 - Historical street view · Street view in time · Then & now, up close
+- What stood here before, from OpenHistoricalMap · What’s here · Then & now, up close
 - Drone maps · Drone map · Then & now, up close
 - A building’s story · Then & now, up close
 - Who the street is named after · Named after · Then & now, up close
+- No dead ends: Look’s labels and Time’s buildings open nothing, and Named after and A building’s story open only from Local’s drawers · Look · Then & now, up close
 
 ## Mine
 
@@ -125,7 +141,6 @@ One line each. A line with a screen name points at the board it improves. Marks:
 
 ## Unplaced
 
-- All categories overview · Categories · map_categories
 
 ## Planned screens, by page
 
@@ -156,7 +171,7 @@ Screens the pages planned and never drew: a name and one line.
 
 **Map · Shops**
 
-- A brand: who owns it: Chains, owners, headquarters and what their prices did; the SVG logo as the pin, every branch in one tap
+- A brand: what its prices did, beside who owns it on its page
 
 **Map · Errands, cash, post & laundry**
 

@@ -46,20 +46,44 @@ object Quests {
         .take(max)
 
     /** The note an answer leaves: what the place is, its link, the question, the answer and the tag it suggests. */
-    fun noteText(place: Place, quest: Quest, yes: Boolean): String {
+    fun noteText(place: Place, quest: Quest, yes: Boolean): String =
+        note(place, (quest.fact.label ?: quest.key.replace('_', ' ')).trimEnd('?'), yes, quest.key, quest.valueFor(yes))
+
+    /**
+     * Whether a search's wish of [key] that a place does not say ("toilets") is answered with yes or no; not a time,
+     * a colour or a year, which a visitor tells on the place's page.
+     */
+    fun yesNo(key: String): Boolean = key in YES_NO_KEYS || YES_NO_PREFIXES.any { key.startsWith(it) }
+
+    /**
+     * The note answering a search's wish of [key] that the place's tags do not say ("toilets?"), in [noteText]'s
+     * words: "yes" mapped as the key's yes (wireless for Wi-Fi), "no" as no.
+     */
+    fun keyNote(place: Place, key: String, yes: Boolean): String =
+        note(place, key.replace('_', ' ').replace(':', ' ').replaceFirstChar { it.uppercase() }, yes, key, if (yes) YES_VALUES[key] ?: "yes" else "no")
+
+    private fun note(place: Place, question: String, yes: Boolean, key: String, value: String): String {
         val name = Localise.name(place.tags, "en")
         val kind = Presets.match(place.tags)?.name("en")
         val what = listOfNotNull(name, kind?.takeIf { it != name }?.let { "($it)" }).joinToString(" ").ifEmpty { "This place" }
-        val question = (quest.fact.label ?: quest.key.replace('_', ' ')).trimEnd('?')
         return buildString {
             append(what)
             place.id?.let { append(" — ").append(it.url) }
             append('\n')
             append(question).append("? A visitor answered: ").append(if (yes) "yes" else "no").append('.')
             append('\n')
-            append("Suggested tag: ").append(quest.key).append('=').append(quest.valueFor(yes))
+            append("Suggested tag: ").append(key).append('=').append(value)
         }
     }
+
+    private val YES_NO_KEYS = setOf(
+        "toilets", "wheelchair", "internet_access", "outdoor_seating", "indoor_seating", "takeaway", "delivery", "changing_table",
+        "lit", "smoking", "self_service", "drive_through", "reservation", "fee", "dog", "covered", "shelter", "bench", "backrest",
+        "drinking_water", "bottle", "air_conditioning", "power_supply", "organic", "second_hand", "bin", "swimming", "dispensing",
+        "cash_in", "automated", "indoor", "highchair", "kids_area", "level_crossing", "tactile_paving", "toilets:wheelchair",
+    )
+    private val YES_NO_PREFIXES = listOf("diet:", "payment:", "recycling:", "toilets:", "wheelchair:", "drink:", "sport:", "service:")
+    private val YES_VALUES = mapOf("internet_access" to "wlan")
 
     /** The note "leave a note for mappers" starts from: where it is, then the user's own words. */
     fun pointNote(words: String, about: String?): String = buildString {

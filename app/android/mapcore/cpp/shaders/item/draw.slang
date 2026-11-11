@@ -634,9 +634,12 @@ ItemOut place_part(ItemRecord r, uint index, uint vertex, uint fade) {
         float4 shape = {a.x, a.y, b.x, b.y};
         o.shape = shape;
     } else {
-        float2 u = {(corner == 1u || corner == 2u) ? extent : -extent, corner >= 2u ? extent : -extent};
+        // a pool's ellipse (a radial record with ry): its box
+        float ry = kind == ITEM_RADIAL ? asfloat(r.e.z) : 0.0f;
+        float tall = ry > 0.0f ? ry + frame.camera.device.z : extent;
+        float2 u = {(corner == 1u || corner == 2u) ? extent : -extent, corner >= 2u ? tall : -tall};
         o.position = clip_of(frame.camera, a + u, 1.0f, d0);
-        float4 shape = {a.x, a.y, asfloat(r.a.w), 0.0f};
+        float4 shape = {a.x, a.y, asfloat(r.a.w), ry};
         o.shape = shape;
     }
     float4 paint = {0.0f, 0.0f, asfloat(r.a.w), asfloat(r.a.z)};
@@ -699,7 +702,8 @@ bool part_covers(ItemRecord r, float2 s) {
 }
 
 /// The samples of the fragment at `v` its shape covers: a fan's are the rasteriser's (all kept); an edge's those within
-/// the stroke's half width of it (round-capped); a segment's, a circle's and a glow's each sample in it.
+/// the stroke's half width of it (round-capped); a segment's, a circle's and a glow's each sample in it; a pool's every
+/// sample of its box (its gradient fades to nothing at the ellipse's edge, as the ground's pools, so it needs no edge).
 uint shape_coverage(ItemOut v) {
     uint word = v.kind.x;
     uint kind = word & ITEM_RECORD_KIND;
@@ -715,7 +719,7 @@ uint shape_coverage(ItemOut v) {
             uint caps = kind == ITEM_FACE ? ITEM_ROUND : word;
             covered = tree_segment_covers(s, v.shape.xy, v.shape.zw, v.paint.z, caps);
         } else {
-            covered = tree_circle_covers(s, v.shape.xy, v.shape.z);
+            covered = v.shape.w > 0.0f || tree_circle_covers(s, v.shape.xy, v.shape.z);
         }
         if (covered) {
             mask |= 1u << i;
@@ -856,7 +860,8 @@ ItemTarget items_tints_fs(ItemOut v) {
 
 /// An open place's glow at night (ITEM_RADIAL, a translucent record): its gradient at the pixel's centre, premultiplied,
 /// on the samples it covers that its tile's standing fade keeps; drawn after every object, outside the objects' group,
-/// so with no grain.
+/// so with no grain. A pool's (with ry) the same over its ellipse, the gradient's circle stretched to the ellipse's box
+/// (objectBoundingBox), drawn on the ground.
 [shader("fragment")]
 ItemTarget items_radials_fs(ItemOut v) {
     uint mask = coverage_of(v);
@@ -866,8 +871,12 @@ ItemTarget items_radials_fs(ItemOut v) {
     ItemRecord r = record_at(item_sides, v.kind.z);
     float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
     float2 d = centre - v.shape.xy;
+    if (v.shape.w > 0.0f) {
+        d = float2(d.x / v.shape.z, d.y / v.shape.w);
+    }
+    float t = v.shape.w > 0.0f ? sqrt(d.x * d.x + d.y * d.y) : sqrt(d.x * d.x + d.y * d.y) / v.shape.z;
     float4 g = item_radial_at(v.colour, tree_rgb(r.c.x), tree_rgb(r.c.y), asfloat(r.c.z), asfloat(r.c.w),
-                              asfloat(r.e.x), asfloat(r.e.y), sqrt(d.x * d.x + d.y * d.y) / v.shape.z);
+                              asfloat(r.e.x), asfloat(r.e.y), t);
     ItemTarget o;
     o.colour = float4(g.xyz * g.w, g.w);
     o.coverage = mask;

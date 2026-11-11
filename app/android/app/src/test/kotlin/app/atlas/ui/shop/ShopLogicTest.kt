@@ -7,6 +7,7 @@ import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.BoardSymbols
 import app.atlas.places.OpeningHoursContext
+import app.atlas.places.Symbols
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -257,7 +258,7 @@ class ShopLogicTest {
     @Test
     fun everyBoardSymbolTheScreensDrawExists() {
         val ids = ShelfArts.values.map { it.symbol } + FamilyArts.values.map { it.symbol } + StreamArts.values.map { it.symbol } +
-            ShopKind.entries.map { it.glyph } + listOf(
+            ShopKind.entries.map { it.glyph }.filter { '.' in it } + listOf(
             "bin.battery", "bin.deposit", "bin.electronics", "bin.hazardous", "bin.organic", "bin.paper", "bin.pizza-box", "bin.plastic-bag",
             "bin.plastic.2", "bin.recycling", "bin.takeout-tub", "bin.textile", "bin.trash", "brand.greencart", "drop.battery", "drop.battery.2",
             "fact.baby", "fact.bottle-refill", "fact.card", "fact.container", "fact.delivery", "fact.independent", "fact.new", "fact.open",
@@ -275,7 +276,20 @@ class ShopLogicTest {
             "ui.lock.2", "ui.mail", "ui.phone", "ui.pin", "ui.plus", "ui.route", "ui.search", "ui.star",
             "ui.tag", "ui.volume",
         )
-        val missing = ids.distinct().filterNot { BoardSymbols.has(it) }
+        val missing = ids.distinct().filterNot { BoardSymbols.has(it) } +
+            // a shop kind the boards draw no glyph of its own for wears its kind's symbol from the one symbols table
+            ShopKind.entries.map { it.glyph }.filterNot { '.' in it || Symbols.has(it) }
         assertTrue("missing symbols: $missing", missing.isEmpty())
+    }
+
+    @Test
+    fun aShopKindTheBoardsDrawNoGlyphForWearsItsOwnKindsSymbol() {
+        // health food wore the greengrocer's produce, the newsagent the bookshop's book, the pet and variety shops the bare shop front
+        val own = listOf(ShopKind.HEALTH_FOOD to "health_food", ShopKind.NEWSAGENT to "newsagent", ShopKind.PET to "pet", ShopKind.VARIETY to "variety_store")
+        for ((k, shop) in own) {
+            assertEquals(k.name, Symbols.symbolFor(mapOf("shop" to shop)), k.glyph)
+            assertTrue(k.name, Symbols.has(k.glyph))
+            assertTrue("${k.name} shares ${k.glyph}", ShopKind.entries.none { it != k && it.glyph == k.glyph })
+        }
     }
 }

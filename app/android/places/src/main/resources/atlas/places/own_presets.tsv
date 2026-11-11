@@ -1,0 +1,14 @@
+# Kinds Atlas lists that id-tagging-schema keeps no preset for, as presets of Atlas's own. The owner, 9 November, of
+# the national parks among the nature reserves, whose rows said "Nature reserves": "Yes, do it" to "Give national parks
+# a kind of their own, so their rows say "National park"?". id-tagging-schema 7.3.0 draws a national park only as a
+# relation, and build_places_data.py leaves out every preset drawn only so. Presets.all takes these after presets.json
+# (a line of an id it holds is skipped, and its names stand), and their names stand beside id-tagging-schema's in the
+# app's languages; the others say the English. Each wants its symbol in kinds.tsv too. OwnPresetsTest keeps it true.
+#
+# kind         the preset's id, as id-tagging-schema names a kind
+# tags         what makes a place one, k=v, joined by ","
+# drawn        how a map draws one: p a point, a an area (a multipolygon too), v a vertex, l a line, r a relation
+# facts        the preset whose facts its place page asks for (id-tagging-schema's fields), or -
+# en nl de fr  its name in each of the app's languages, then after " | " the words it is searched by too, joined by ","
+
+boundary/national_park	boundary=national_park	ap	leisure/nature_reserve	National Park | national parks	Nationaal park | nationale parken	Nationalpark | Nationalparks, Nationalparke	Parc national | parcs nationaux

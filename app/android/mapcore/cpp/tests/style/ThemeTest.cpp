@@ -146,7 +146,7 @@ TEST_CASE("a theme block the port could not have made is refused, with the reaso
     const double inf = std::numeric_limits<double>::infinity();
     const std::vector<Breakage> breakages = {
         {"version 2", [](ThemeBlock& b) { b.version = 2; }, ThemeError::version},
-        {"an unknown flag", [](ThemeBlock& b) { b.flags |= 1U << 12U; }, ThemeError::flags},
+        {"an unknown flag", [](ThemeBlock& b) { b.flags |= 1U << 13U; }, ThemeError::flags},
         {"wet without wet_set", [](ThemeBlock& b) { b.flags = (b.flags | flag::wet) & ~flag::wet_set; },
          ThemeError::flags},
         {"a TONE strength without its flag", [](ThemeBlock& b) { b.tone = 1.5F; }, ThemeError::reserved},

@@ -60,6 +60,17 @@
 // geometry::FillKind's names (road, rail, big ...: a kind's share of a picture). ATLAS_PINCH_LEAST=0: the app's map's
 // streets narrower than 1.5 device px at their own width (Ground::draw_least_width), the far flicker's base;
 // ATLAS_PINCH_THIN=0: its water narrower than that as it lies (Ground::draw_thin_water).
+// ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
+// target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
+// ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
+// decides each of its frames as at rest (the ground's area test, the pack's hold). ATLAS_PINCH_GRAIN=0: the Look
+// settings' grain off (the paper's grain and the materials', MapFrame::set_screen).
+// ATLAS_PINCH_ARRIVE=<n>: ATLAS_PINCH_TILES' packs handed over n a frame before the pinch, nearest the target first,
+// as the app hands its windows and levels' tiles over as they come (each set_packs the whole list so far), each frame
+// at the pinch's start at rest with the world's threads then let finish; each frame's set_packs milliseconds and the
+// active pack's tallest solid scanned whole at each of its zooms (sun::scene_maxh, as SunGlobals::maxh scanned a pack
+// it had not seen) logged with the tiles' line (the sun's scenes), and the `vk packs` lines say each composition's
+// stage T.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -72,7 +83,10 @@
 #include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
+#include "scene/World.hpp"
 #include "standin/Session.hpp"
 #include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
@@ -103,6 +117,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -581,6 +596,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
         }
     }
+    const std::size_t tiles_first = listed.size(); // ATLAS_PINCH_TILES' packs, from here to tiles_end
     // ATLAS_PINCH_TILES: folders of packs as the phone keeps what it took from a country's tiles (each
     // `<z>-<x>-<y>.atlas`: a place's window, L14, or a frame cell's level's tile, L13 or L12), listed as the app lists
     // them (windows, named by their tiles) where they lie within ATLAS_PINCH_RADIUS km of the target (40 by default)
@@ -631,6 +647,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         }
         MESSAGE(std::format("{} packs listed from {}", found.size(), dirs));
     }
+    const std::size_t tiles_end = listed.size();
     REQUIRE(!listed.empty());
     std::vector<frame::MapPack> packs;
     packs.reserve(listed.size());
@@ -690,7 +707,17 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
              .fade_seconds = fade.empty() ? 0.0 : std::stod(fade),
              .triangle_budget = budget.empty() ? 0U : static_cast<std::uint64_t>(1.0e6 * std::stod(budget))});
         standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
-        MESSAGE(map.set_packs(packs));
+        if (environment("ATLAS_PINCH_GRAIN") == "0") map.set_screen(true, true, false);
+        // ATLAS_PINCH_ARRIVE: the first list without ATLAS_PINCH_TILES' packs, which come a few a frame (below)
+        const std::string arrive = environment("ATLAS_PINCH_ARRIVE");
+        {
+            std::vector<frame::MapPack> first = packs;
+            if (!arrive.empty()) {
+                first.erase(first.begin() + static_cast<std::ptrdiff_t>(tiles_first),
+                            first.begin() + static_cast<std::ptrdiff_t>(tiles_end));
+            }
+            MESSAGE(map.set_packs(first));
+        }
         CHECK(session.map(&map).empty());
         auto window = std::make_unique<KeptWindow>();
         KeptWindow* kept = window.get();
@@ -744,18 +771,62 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             // and each part by its own name (style::camera_part's, bit by bit): windows, window_depth, plinths ...;
             // the water's surface as water_surface, as "water" names the water's light (alpha 19's defaults above)
-            constexpr std::array<const char*, 55> each{
-                "ground",          "water_surface",  "canopy",       "ground_lines",     "setts",
-                "ground_text",     "quays",          "sky",          "building_shadows", "park_shadows",
-                "cloud_shadows",   "reflections",    "ripple",       "glitter",          "rings",
-                "glints",          "water_streaks",  "lit_streets",  "wet_cores",        "lamp_pools",
-                "lamp_halos",      "lamp_streaks",   "rain",         "golden_wash",      "walls",
-                "roofs",           "roof_edges",     "windows",      "window_depth",     "shop_glazing",
-                "church_windows",  "material_faces", "hoist_beams",  "kit_details",      "doors",
-                "house_numbers",   "trees",          "leaf_filters", "furniture",        "region_items",
-                "labels",          "routes",         "markers",      "location",         "frosted",
-                "shadow_blur",     "near_cells",     "kept_cull",    "plinths",          "cornices",
-                "quay_waterlines", "quay_tops",      "shopfronts",   "terraces",         "open_glows"};
+            constexpr std::array<const char*, 56> each{"ground",
+                                                       "water_surface",
+                                                       "canopy",
+                                                       "ground_lines",
+                                                       "setts",
+                                                       "ground_text",
+                                                       "quays",
+                                                       "sky",
+                                                       "building_shadows",
+                                                       "park_shadows",
+                                                       "cloud_shadows",
+                                                       "reflections",
+                                                       "ripple",
+                                                       "glitter",
+                                                       "rings",
+                                                       "glints",
+                                                       "water_streaks",
+                                                       "lit_streets",
+                                                       "wet_cores",
+                                                       "lamp_pools",
+                                                       "lamp_halos",
+                                                       "lamp_streaks",
+                                                       "rain",
+                                                       "golden_wash",
+                                                       "walls",
+                                                       "roofs",
+                                                       "roof_edges",
+                                                       "windows",
+                                                       "window_depth",
+                                                       "shop_glazing",
+                                                       "church_windows",
+                                                       "material_faces",
+                                                       "hoist_beams",
+                                                       "kit_details",
+                                                       "doors",
+                                                       "house_numbers",
+                                                       "trees",
+                                                       "leaf_filters",
+                                                       "furniture",
+                                                       "region_items",
+                                                       "labels",
+                                                       "routes",
+                                                       "markers",
+                                                       "location",
+                                                       "frosted",
+                                                       "shadow_blur",
+                                                       "near_cells",
+                                                       "kept_cull",
+                                                       "plinths",
+                                                       "cornices",
+                                                       "quay_waterlines",
+                                                       "quay_tops",
+                                                       "shopfronts",
+                                                       "terraces",
+                                                       "open_glows",
+                                                       "sun"};
             for (std::size_t i = 0; i < each.size(); ++i) {
                 if (named.find(std::format(",{},", each.at(i))) != std::string::npos) always_off |= 1ULL << i;
             }
@@ -817,13 +888,18 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             most_shape_chunks = n;
             MESSAGE(std::format("at most {} chunks of the walls' and near cells' lists drawn from shape records", n));
         }
+        // the target moved from the place by this many metres east and north (ATLAS_PINCH_PAN's frames)
+        double moved_east = 0.0;
+        double moved_north = 0.0;
         // a frame at `d` with the parts `off` leaves out (style::camera_part), the pack named as MapController names
         // it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
             if (passes::Buildings* p = buildings(); p != nullptr) p->most_shape_chunks(most_shape_chunks);
-            style::CameraState c = camera(screen, lat, lon, bearing, pitch, d, rest);
+            const double at_lat = lat + (moved_north / 111'320.0);
+            const double at_lon = lon + (moved_east / (111'320.0 * pymath::strict::cos(pymath::radians(lat))));
+            style::CameraState c = camera(screen, at_lat, at_lon, bearing, pitch, d, rest);
             c.parts |= off | always_off;
-            held = choose(listed, lat, lon, d, held, rest ? 0.3 : 1e300);
+            held = choose(listed, at_lat, at_lon, d, held, rest ? 0.3 : 1e300);
             c.pack_id = held != nullptr ? held->pack.number : 0;
             passes::Ground* g = ground();
             if (g != nullptr) g->make_ripple_always(ripple_always);
@@ -1178,6 +1254,81 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 builds[{t->pack, t->key.packed()}].insert(t->published);
             }
         };
+        // ATLAS_PINCH_ARRIVE: ATLAS_PINCH_TILES' packs n a frame, nearest the target first (by their tiles' middles)
+        if (!arrive.empty()) {
+            const std::size_t per = std::max<std::size_t>(1, std::stoul(arrive));
+            const std::vector<Listed> all = listed;
+            std::vector<std::size_t> order;
+            for (std::size_t i = tiles_first; i < tiles_end; ++i) order.push_back(i);
+            const double cos_lat = pymath::cos(pymath::radians(lat));
+            std::ranges::stable_sort(order, {}, [&all, lat, lon, cos_lat](std::size_t i) {
+                const std::array<double, 4>& b = all[i].box; // south, west, north, east
+                return pymath::hypot(((b[0] + b[2]) / 2 - lat) * 110540.0,
+                                     ((b[1] + b[3]) / 2 - lon) * 111320.0 * cos_lat);
+            });
+            listed.erase(listed.begin() + static_cast<std::ptrdiff_t>(tiles_first), listed.end());
+            std::vector<frame::MapPack> now(packs.begin(), packs.begin() + static_cast<std::ptrdiff_t>(tiles_first));
+            const std::vector<frame::MapPack> after(packs.begin() + static_cast<std::ptrdiff_t>(tiles_end),
+                                                    packs.end());
+            std::vector<double> set_ms;
+            double scanned_ms = 0;
+            for (std::size_t k = 0; k < order.size(); k += per) {
+                held = nullptr; // the list grows: what it named is named again
+                for (std::size_t j = k; j < std::min(order.size(), k + per); ++j) {
+                    listed.push_back(all[order[j]]);
+                    now.push_back(packs[order[j]]);
+                }
+                std::vector<frame::MapPack> list = now;
+                list.insert(list.end(), after.begin(), after.end());
+                const auto at = std::chrono::steady_clock::now();
+                const std::string answer = map.set_packs(list);
+                set_ms.push_back(
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - at).count());
+                // what it opened, and any it could not
+                std::size_t opened = 0;
+                std::string refused;
+                {
+                    std::stringstream lines(answer);
+                    for (std::string line; std::getline(lines, line);) {
+                        if (line.ends_with(" opened") || line.ends_with(" listed")) {
+                            ++opened;
+                        } else if (!line.ends_with(" kept")) {
+                            refused += (refused.empty() ? "" : "; ") + line;
+                        }
+                    }
+                }
+                (void)draw(std::format("arrive {:3d}", k / per), from, true, true);
+                scene::World* w = map.world();
+                if (w == nullptr) continue;
+                w->residency().wait_idle();
+                w->pack_stage().wait_idle();
+                if (w->sun() != nullptr) w->sun()->wait_idle();
+                // the active pack's tallest solid at each of its zooms as a pack not seen before was scanned
+                double scan = 0;
+                if (const tiles::StorePack* a = w->active(); a != nullptr && a->pack.head() != nullptr) {
+                    for (const std::uint8_t z : a->pack.head()->levels) {
+                        const auto t0 = std::chrono::steady_clock::now();
+                        const tiles::Result<double> maxh = sun::scene_maxh(a->pack, 0, z);
+                        scan +=
+                            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                        CHECK(maxh.has_value());
+                    }
+                }
+                scanned_ms += scan;
+                MESSAGE(std::format("arrive {:3d}: {} packs, set_packs {:.2f} ms opening {}{}, active {}, its tallest "
+                                    "scanned whole in {:.1f} ms; {}",
+                                    k / per, list.size(), set_ms.back(), opened,
+                                    refused.empty() ? std::string() : " (refused: " + refused + ")",
+                                    w->active() != nullptr ? w->active()->id : "-", scan, map.tiles_line()));
+            }
+            listed = all;
+            held = nullptr;
+            MESSAGE(std::format("arrived: {} packs in {} lists, set_packs median {:.2f} ms, most {:.2f}, all {:.1f}; "
+                                "the active packs' tallest scanned whole in {:.1f} ms",
+                                order.size(), set_ms.size(), median(set_ms),
+                                set_ms.empty() ? 0.0 : *std::ranges::max_element(set_ms),
+                                std::accumulate(set_ms.begin(), set_ms.end(), 0.0), scanned_ms));
+        }
         for (int cycle = 1; cycle <= cycles; ++cycle) {
             parts.clear();
             builds.clear();
@@ -1391,6 +1542,78 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 }
                 for (int k = 0; k < 4; ++k) (void)draw("with every part", d, true, k == 3);
             }
+        }
+        // ATLAS_PINCH_PAN: at each of its distances, the frame settled at rest, then the map panned across the screen
+        // (the target moved to the bearing's right) by ATLAS_PINCH_PAN_STEP px a frame at the target (0.5) over
+        // ATLAS_PINCH_PAN_FRAMES moving frames (12), and at rest again where the pan ended, each frame written as
+        // pan_<d>_<k>.ppm (rest and end the two at rest), to compare frame after frame what a slow pan moves under
+        // a pixel; ATLAS_PINCH_PAN_KEEP=0 writes none (a long pan's frames, each logged: stage F, the tiles built
+        // and the places left without a tile as the map moves on)
+        const bool keep_frames = environment("ATLAS_PINCH_PAN_KEEP") != "0";
+        const bool pan_rest = environment("ATLAS_PINCH_PAN_REST") == "1";
+        for (const double d : numbers(environment("ATLAS_PINCH_PAN"))) {
+            const double step =
+                environment("ATLAS_PINCH_PAN_STEP").empty() ? 0.5 : std::stod(environment("ATLAS_PINCH_PAN_STEP"));
+            const int frames =
+                environment("ATLAS_PINCH_PAN_FRAMES").empty() ? 12 : std::stoi(environment("ATLAS_PINCH_PAN_FRAMES"));
+            const double focal = 1407.0 * screen.density; // the camera's focal length, px
+            const auto write = [&](const std::string& name) {
+                if (!keep_frames) return;
+                auto pixels = kept->kept->read(kept->kept->latest());
+                REQUIRE_MESSAGE(pixels.has_value(), pixels.error().text());
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("pan_{:.0f}_{}.ppm", d, name)).string()));
+            };
+            moved_east = 0.0;
+            moved_north = 0.0;
+            settle(d);
+            write("rest");
+            // what the pan cost: its frames' stage F, the tiles built meanwhile and each pass's stage T for them
+            REQUIRE(map.world() != nullptr);
+            const scene::Residency& residency = map.world()->residency();
+            const std::vector<std::pair<double, std::uint64_t>> times0 = residency.pass_times();
+            const scene::ResidencyStats stats0 = residency.stats();
+            std::vector<double> stage_f;
+            std::size_t holed = 0;
+            for (int k = 1; k <= frames; ++k) {
+                const double s = k * step * d / focal;
+                moved_east = s * pymath::strict::cos(pymath::radians(bearing));
+                moved_north = -s * pymath::strict::sin(pymath::radians(bearing));
+                (void)draw(std::format("pan {:2d}", k), d, pan_rest, true);
+                if (const frame::FrameBuilder* b = map.builder()) stage_f.push_back(b->stage_f_ms());
+                if (map.world()->cover() != nullptr && map.world()->cover()->holes() > 0) ++holed;
+                write(std::format("{:02d}", k));
+            }
+            {
+                const std::vector<std::pair<double, std::uint64_t>> times1 = residency.pass_times();
+                const scene::ResidencyStats stats1 = residency.stats();
+                std::ranges::sort(stage_f);
+                const std::size_t n = stage_f.size();
+                const double p95 = n == 0 ? 0.0 : stage_f.at(std::min(n - 1, ((95 * n) + 99) / 100 - 1));
+                const std::uint64_t built = stats1.built - stats0.built;
+                std::string by;
+                double total = 0.0;
+                for (std::size_t i = 0; i < times1.size() && i < times0.size(); ++i) {
+                    const double ms = times1[i].first - times0[i].first;
+                    total += ms;
+                    if (ms < 0.05) continue;
+                    const frame::FrameBuilder* b = map.builder();
+                    const std::string name = i == 0 ? std::string("decode")
+                                             : b != nullptr && i - 1 < b->passes().size()
+                                                 ? std::string(b->passes()[i - 1]->name())
+                                                 : std::format("pass {}", i - 1);
+                    by += std::format(", {} {:.0f} ms ({:.1f} a tile)", name, ms,
+                                      built > 0 ? ms / static_cast<double>(built) : 0.0);
+                }
+                MESSAGE(std::format("pan at {:.0f} m: {} frames, stage F median {:.1f} ms, p95 {:.1f}, most {:.1f}; "
+                                    "{} frames with a hole; {} tiles built ({} found no room, {} cancelled), the "
+                                    "workers' stage T {:.0f} ms{}",
+                                    d, n, median(stage_f), p95, n == 0 ? 0.0 : stage_f.back(), holed, built,
+                                    stats1.failed - stats0.failed, stats1.cancelled - stats0.cancelled, total, by));
+            }
+            (void)draw("pan end", d, true, true);
+            write("end");
+            moved_east = 0.0;
+            moved_north = 0.0;
         }
     }
     std::error_code ec;

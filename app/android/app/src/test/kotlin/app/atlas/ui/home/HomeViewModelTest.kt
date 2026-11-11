@@ -3,6 +3,7 @@ package app.atlas.ui.home
 import android.os.Looper
 import androidx.compose.ui.geometry.Rect
 import app.atlas.Services
+import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.HomeView
@@ -70,7 +71,24 @@ class HomeViewModelTest {
         val focus = LatLon(52.3600, 4.8852)
         val vm2 = HomeViewModel(s, focus, 18.0)
         assertEquals(CameraPosition(focus, 18.0, 0.0, HomeViewModel.DEFAULT_PITCH), vm2.map.camera)
-        assertEquals(focus, vm2.focus)
+        // the map under a link's screen pins nothing (the screen shows the point); a map view a link opened pins its point
+        assertNull(vm2.pin)
+        assertEquals(focus, HomeViewModel(s, focus, 18.0, pinned = true).pin)
+    }
+
+    @Test
+    fun aMapViewsPinGoesOnceTheMapIsMovedAwayFromIt() {
+        val p = LatLon(52.3745, 4.8838)
+        // zoomed in or panned a little, the point still in view
+        assertEquals(p, pinAfterMove(p, BBox(4.87, 52.37, 4.90, 52.38)))
+        // moved away: the point out of view
+        assertNull(pinAfterMove(p, BBox(4.89, 52.37, 4.92, 52.38)))
+        // before the view's first frame nothing is known to be out of view
+        assertEquals(p, pinAfterMove(p, null))
+        assertNull(pinAfterMove(null, BBox(4.87, 52.37, 4.90, 52.38)))
+        val vm = HomeViewModel(testServices(), p, 17.0, pinned = true)
+        vm.onCameraMove(vm.map.camera.copy(zoom = 18.0), byUser = true)
+        assertEquals(p, vm.pin)
     }
 
     @Test
@@ -145,21 +163,6 @@ class HomeViewModelTest {
         } finally {
             watcher.cancel()
         }
-    }
-
-    @Test
-    fun aCategoryShowsItsPlacesAndTappingItAgainClears() {
-        val vm = HomeViewModel(testServices(places = true), null, null)
-        vm.selectCategory("groceries")
-        // The sheet appears at once, loading; the store may answer before the next line runs, so do not insist on loading.
-        assertNotNull(vm.results.value)
-        until { vm.results.value?.loading == false }
-        val r = vm.results.value!!
-        assertEquals("groceries", r.categoryId)
-        assertEquals(PlaceOrigin.STORE, r.source)
-        assertTrue(r.places.isNotEmpty() && r.places.size <= HomeViewModel.MAX_RESULTS)
-        vm.selectCategory("groceries")
-        assertNull(vm.results.value)
     }
 
     @Test

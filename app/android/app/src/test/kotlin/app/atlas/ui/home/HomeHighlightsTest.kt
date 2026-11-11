@@ -3,6 +3,8 @@ package app.atlas.ui.home
 import app.atlas.geo.Geo
 import app.atlas.mapview.MarkerStyle
 import app.atlas.model.Place
+import app.atlas.places.PlaceFamily
+import app.atlas.places.Symbols
 import app.atlas.search.Regions
 import app.atlas.testing.Fixtures
 import org.junit.Assert.assertEquals
@@ -24,6 +26,26 @@ class HomeHighlightsTest {
     private val thursday = LocalDateTime.of(2026, 10, 15, 16, 0)
 
     private fun names(list: List<Highlight>, kind: HighlightKind) = list.filter { it.kind == kind }.map { it.place.tags["name"] }
+
+    /**
+     * A kind of place among the highlights wears the colour its pin has on every other screen, its family's: the Anne
+     * Frank Huis Culture & sights', the Westermarkt stop Getting around's, the chargers Charge's (the board's purple and
+     * blue had come to read as Fun and Water). The saved place, the landmark's star and a chain's tile keep the board's.
+     */
+    @Test
+    fun aKindOfPlaceWearsItsFamilysColour() {
+        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday)
+        val markers = HomeHighlights.markers(h)
+        fun argb(c: Int) = c.toLong() and 0xFFFFFFFFL
+        for ((hl, m) in h.zip(markers)) {
+            val want = hl.kind.colour ?: argb(Symbols.colourFor(hl.place.tags))
+            assertEquals("${hl.kind} ${hl.place.tags["name"]}", want, m.colour)
+        }
+        fun colourOf(kind: HighlightKind) = markers[h.indexOfFirst { it.kind == kind }].colour
+        assertEquals(argb(PlaceFamily.CULTURE.colour), colourOf(HighlightKind.MUSEUM))
+        assertEquals(argb(PlaceFamily.TRANSPORT.colour), colourOf(HighlightKind.TRANSIT))
+        assertEquals(argb(PlaceFamily.CHARGE.colour), colourOf(HighlightKind.CHARGER))
+    }
 
     @Test
     fun theWestermarktsHighlightsAreRealPlaces() {

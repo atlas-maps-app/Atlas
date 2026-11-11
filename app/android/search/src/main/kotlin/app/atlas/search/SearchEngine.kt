@@ -11,6 +11,7 @@ import app.atlas.model.Place
 import app.atlas.places.Brand
 import app.atlas.places.Brands
 import app.atlas.places.Categories
+import app.atlas.places.Kinds
 import app.atlas.places.Localise
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
@@ -26,6 +27,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.time.ZonedDateTime
 import java.util.concurrent.atomic.AtomicReference
@@ -41,6 +43,8 @@ data class SearchContext(
     val country: String? = null,
     val limit: Int = 20,
     val hours: OpeningHoursContext = OpeningHoursContext.Default,
+    /** The town the searcher is in, when the app knows its bounds ("how many bins in this town"). */
+    val town: BBox? = null,
 )
 
 /** A search the user made before. */
@@ -95,11 +99,37 @@ sealed interface SearchItem {
         val query: Query get() = goods.query
     }
 
-    /** A chain ("All 23 Albert Heijn"): its branches as a query, and how many there are. */
-    data class BrandResult(val brand: Brand, val symbol: String, val query: Query, val count: Int, override val score: Double) : SearchItem
+    /**
+     * A chain ("All 23 Albert Heijn"): its branches as a query, and how many there are; [named] where the words are its
+     * very name ("albert heijn", "hema", "appie"), the chain they clearly ask for, which then leads the answer.
+     */
+    data class BrandResult(val brand: Brand, val symbol: String, val query: Query, val count: Int, override val score: Double, val named: Boolean = false) : SearchItem
 
-    /** The text read as a query ("café 200 m from a bike dock"): its chips and its results, per step of a plan. */
-    data class Structured(val parsed: ParsedQuery, val results: List<QueryResult>, val online: Boolean, override val score: Double) : SearchItem
+    /**
+     * The text read as a query ("café 200 m from a bike dock"): its chips and its results, per step of a plan. When
+     * nothing matched as asked, [loosened] says what was let go of to find the results there are. [view] is the kind's
+     * own view with the query's filters chosen, when that is all the query asks ("vegan restaurant open now").
+     */
+    data class Structured(
+        val parsed: ParsedQuery,
+        val results: List<QueryResult>,
+        val online: Boolean,
+        override val score: Double,
+        val loosened: List<Loosened> = emptyList(),
+        val view: KindView? = null,
+    ) : SearchItem
+
+    /** The answer to "how many …": the count, of which kinds, and in which area ([area]: its name, or null around the searcher). */
+    data class Count(val parsed: ParsedQuery, val answer: CountAnswer, val area: String?, override val score: Double) : SearchItem
+
+    /** The answer to "… opening times": the places' hours side by side. */
+    data class Hours(val parsed: ParsedQuery, val answer: HoursAnswer, override val score: Double) : SearchItem
+
+    /** The answer to "how tall is …", "does … have toilets": what the places found say of [key], those that say it first. */
+    data class Fact(val parsed: ParsedQuery, val key: String, val answers: List<FactAnswer>, override val score: Double) : SearchItem
+
+    /** A way asked for ("from the station to the Westerkerk"): its ends as found; [from] null for the searcher's place (or a start not found). */
+    data class Route(val ask: RouteAsk, val from: RouteEnd?, val to: RouteEnd, override val score: Double, val via: List<RouteEnd> = emptyList()) : SearchItem
 
     /** A place found by the online geocoder, beyond the downloaded regions. */
     data class Online(val place: Place, val distance: Double?, val symbol: String, override val score: Double) : SearchItem
@@ -108,6 +138,9 @@ sealed interface SearchItem {
 }
 
 /** The search box's answer, best first. */
+/** One end of a way asked for: the words, the name found for them, where, and the place when it is one. */
+data class RouteEnd(val text: String, val name: String?, val location: LatLon, val place: Place?)
+
 data class SearchResults(
     val text: String,
     val items: List<SearchItem>,
@@ -151,6 +184,21 @@ class SearchEngine(
         }
     }
 
+    /**
+     * [text] read as a query and answered in full for the sheet that opens it over the map (decision 12): every place
+     * it finds up to [SearchContext.limit], as [search] finds them (areas resolved, online where the regions have
+     * none, loosened where nothing is as asked), without the field's lines. Null when the text is no query. It runs
+     * beside [search], cancelling nothing.
+     */
+    suspend fun answer(text: String, context: SearchContext): SearchResults? = withContext(Dispatchers.IO) {
+        val started = System.nanoTime()
+        val areas = Areas(context)
+        val parsed = known(QueryParser.parse(text.trim(), context.lang, context.now, context.country), context, areas)
+        if (parsed.steps.isEmpty() || parsed.route != null) return@withContext null
+        val eval = EvalContext(context.location, context.viewport, context.now, context.lang, context.limit, context.hours, areas = areas)
+        structured(text, parsed, context, eval, areas, started, lines = false)
+    }
+
     private suspend fun run(text: String, ctx: SearchContext): SearchResults {
         val started = System.nanoTime()
         val t = text.trim()
@@ -184,10 +232,10 @@ class SearchEngine(
         currentCoroutineContext().ensureActive()
 
         // A whole query: "café 200 m from a bike dock", "amenity=toilets wheelchair=yes open now"
-        val parsed = QueryParser.parse(t, ctx.lang, ctx.now)
-        if (parsed.steps.isNotEmpty() && (parsed.syntax == QuerySyntax.POWER || (parsed.structured && parsed.confidence >= 0.6))) {
-            return structured(text, parsed, ctx, eval, areas, started)
-        }
+        val parsed = known(QueryParser.parse(t, ctx.lang, ctx.now, ctx.country), ctx, areas)
+        // A way: its ends as the searcher would find them, the end's other candidates after
+        parsed.route?.let { r -> route(text, r, parsed, ctx, started)?.let { return it } }
+        if (parsed.isQuery) return structured(text, parsed, ctx, eval, areas, started)
 
         val words = SearchText.words(t)
         currentCoroutineContext().ensureActive()
@@ -221,14 +269,18 @@ class SearchEngine(
         }
         currentCoroutineContext().ensureActive()
 
-        // Brands: "albert heijn", typos forgiven, with how many branches there are
+        // Brands: "albert heijn", typos forgiven, with how many branches there are. The very name of one, not a kind's
+        // nor an ordinary word, asks for that chain: it leads, above the places it names, and the search key opens it
+        // (the owner, 6 November: "appears when you clearly search for a specific brand")
         if (t.length >= 3) {
+            val named = Lexicon.brand(words.joinToString(" "), ctx.country)?.takeIf { kindsNamed.isEmpty() && !(words.size == 1 && Lexicon.ordinary(words[0])) }
             for (b in brands(words, ctx.country)) {
                 val q = Query.Brand(b.id)
                 val count = count(q, eval)
                 if (count == 0) continue
                 val symbol = b.logoSlug?.let { "logo-$it" }?.takeIf { Symbols.has(it) } ?: Symbols.symbolFor(b.keyTags)
-                items += SearchItem.BrandResult(b, symbol, q, count, 0.45)
+                val clear = b.id == named?.id
+                items += SearchItem.BrandResult(b, symbol, q, count, if (clear) NAMED_BRAND else 0.45, named = clear)
                 if (refineFor == null) refineFor = q
                 for (h in nearest(q, eval)) {
                     items += placeResult(h.copy(why = listOf("brand:${b.id}")), MatchKind.BRAND, ctx, 0.9 * (0.3 + 0.7 * distanceFactor(h.distance)))
@@ -302,49 +354,233 @@ class SearchEngine(
         )
     }
 
-    private suspend fun structured(text: String, parsed: ParsedQuery, ctx: SearchContext, eval: EvalContext, areas: Areas, started: Long): SearchResults {
+    private suspend fun structured(text: String, parsed: ParsedQuery, ctx: SearchContext, eval: EvalContext, areas: Areas, started: Long, lines: Boolean = true): SearchResults {
+        // A count looks in the searcher's town unless the query says where.
+        val asked = if (parsed.ask == Ask.COUNT && !parsed.steps.any { spatial(it) }) {
+            parsed.copy(steps = parsed.steps.map { inTown(it) })
+        } else {
+            parsed
+        }
         // name areas resolve before the run: offline from the stores, else online
         var unresolved: String? = null
         val names = LinkedHashSet<String>()
-        for (s in parsed.steps) s.walk { q ->
+        for (s in asked.steps) s.walk { q ->
             if (q is Query.InArea && q.bbox == null && q.name != null && !q.name.equals("bbox", true)) names += q.name
         }
         for (n in names) {
+            // the searcher's own town, quarter and centre are looked for around them, not by name
+            if (n.startsWith("@")) continue
             if (areas.resolve(n) == null && ctx.online) areas.resolveOnline(n, geocoder)
             if (areas.resolve(n) == null) unresolved = n
         }
-        val results = if (parsed.isPlan) evaluator.plan(parsed.steps, eval) else listOf(evaluator.run(parsed.query, eval))
+        // "not in the centre": of the town the search names, else the searcher's
+        if (Query.InArea.CENTRE in names) areas.centreOf(names.firstOrNull { !it.startsWith("@") })
+        val steps = asked.steps.map { withBoxes(it, areas) }
+        val wide = when (asked.ask) {
+            Ask.COUNT -> eval.copy(limit = COUNT_LIMIT)
+            Ask.HOURS, Ask.FACT -> eval.copy(limit = HOURS_LIMIT)
+            Ask.LIST -> eval
+        }
+        val results = if (asked.isPlan) evaluator.plan(steps, wide) else listOf(evaluator.run(steps.first(), wide))
         var online = false
         var shown = results
-        if (results.all { it.hits.isEmpty() } && ctx.online && overpass != null && !parsed.isPlan) {
-            val area = searchArea(parsed.query, ctx, eval)
-            if (area != null) {
+        if (results.all { it.hits.isEmpty() } && ctx.online && overpass != null && !asked.isPlan) {
+            // around the searcher it looks farther while it finds none (the owner, 4 November: "Default should be no
+            // maximum distance pre set if there are no results")
+            for (area in searchAreas(steps.first(), ctx, eval)) {
                 try {
-                    shown = listOf(OnlineSearch(overpass).run(parsed.query, area, eval).result)
+                    shown = listOf(OnlineSearch(overpass).run(steps.first(), area, wide).result)
                     online = true
                 } catch (e: IOException) {
                     // the offline (empty) answer stands
+                    break
                 }
+                currentCoroutineContext().ensureActive()
+                if (shown.any { it.hits.isNotEmpty() }) break
             }
         }
+        // a count counts what is just as asked, even none; the places it shows may come closest instead
+        val asAsked = shown.first()
+        // Nothing as asked: the nearest thing to it, saying what was let go of, each place with what it misses; else
+        // the places that come closest, missing the fewest requirements (the owner: "Search should rarely not present
+        // any results").
+        var loosened = emptyList<Loosened>()
+        if (shown.all { it.hits.isEmpty() } && !asked.isPlan) {
+            val q = steps.first()
+            val relaxed = loosen(q, wide)?.let { (r, how) -> r.copy(hits = evaluator.withMisses(r.hits, how.map { it.from }, wide)) to how }
+                ?: closest(q, wide)
+            relaxed?.let { (r, how) -> shown = listOf(r); loosened = how }
+        }
         val items = ArrayList<SearchItem>()
-        items += SearchItem.Structured(parsed, shown, online, 5.0)
-        for ((i, h) in shown.first().hits.withIndex()) items += placeResult(h, MatchKind.QUERY, ctx, 4.0 - i * 0.001)
-        return SearchResults(text, items, parsed, unresolved, online, micros(started))
+        val first = shown.first()
+        when (asked.ask) {
+            Ask.COUNT -> {
+                val area = names.firstOrNull { !it.startsWith("@") }
+                val records = asAsked.hits.map { it.record }
+                // a place open only by guessed hours counts, as open perhaps, not for sure
+                val guessed = asAsked.hits.count { it.sure == Sure.YES && it.hoursInferred && "open" in it.why }
+                val counted = Overview.count(records, asAsked.sure - guessed, ctx.lang)
+                items += SearchItem.Count(asked, asked.per?.let { counted.copy(groups = groups(records, it, ctx.lang)) } ?: counted, area, 6.0)
+            }
+            Ask.HOURS -> {
+                val book = HoursBook(first.hits.map { it.record })
+                items += SearchItem.Hours(asked, Overview.hours(first.hits, ctx.now, ctx.hours, book), 6.0)
+            }
+            Ask.FACT -> asked.asked?.let { key -> items += SearchItem.Fact(asked, key, Overview.facts(first.hits, key), 6.0) }
+            Ask.LIST -> {}
+        }
+        // a loosened answer is the query it became, not the kind's view with the filters that found nothing
+        val view = if (loosened.isEmpty()) KindViews.of(asked, ctx.now) else null
+        items += SearchItem.Structured(asked, shown.map { it.copy(hits = it.hits.take(ctx.limit)) }, online, 5.0, loosened, view)
+        if (lines) for ((i, h) in first.hits.take(ctx.limit).withIndex()) items += placeResult(h, MatchKind.QUERY, ctx, 4.0 - i * 0.001)
+        return SearchResults(text, items, asked, unresolved, online, micros(started))
     }
 
-    /** Where an online query looks: its own circle or box, else the view, else 3 km around the searcher. */
-    private fun searchArea(q: Query, ctx: SearchContext, eval: EvalContext): OverpassArea? {
+    /**
+     * When [q] finds nothing as asked, the nearest query that finds something and how it was loosened: one hard part
+     * at a time first, the likeliest to be let go of first, then all of them at once. Null when nothing looser finds
+     * anything either.
+     */
+    private fun loosen(q: Query, eval: EvalContext): Pair<QueryResult, List<Loosened>>? {
+        val ways = Loosening.of(q)
+        for (w in ways.sortedBy { Loosening.rank(it) }) {
+            val r = evaluator.run(Loosening.apply(q, listOf(w)), eval)
+            if (r.hits.isNotEmpty()) return r to listOf(w)
+        }
+        if (ways.size < 2) return null
+        val r = evaluator.run(Loosening.apply(q, ways), eval)
+        return if (r.hits.isNotEmpty()) r to ways else null
+    }
+
+    /**
+     * When nothing looser finds anything either: the places of the kind [q] asks for that come closest to it
+     * ([OfflineEvaluator.closest]), each requirement let go of and every place saying what it misses. Where the
+     * kind has no place in the area asked, the nearest outside it, around the area. Null when the kind has no place
+     * anywhere.
+     */
+    private fun closest(q: Query, eval: EvalContext): Pair<QueryResult, List<Loosened>>? {
+        val (base, needs) = Closest.split(q) ?: (q to emptyList())
+        if (needs.isNotEmpty()) {
+            val r = evaluator.closest(base, needs, eval)
+            if (r.hits.isNotEmpty()) return r to needs.map { Loosened(it, null) }
+        }
+        val (rest, areas) = Closest.withoutAreas(base)
+        if (areas.isEmpty() || rest === Query.All) return null
+        val around = areas.firstNotNullOfOrNull { it.bbox?.center ?: it.name?.let { n -> eval.areas?.resolve(n)?.center } }
+        val r = evaluator.closest(rest, areas + needs, eval.copy(location = around ?: eval.location, viewport = null))
+        return if (r.hits.isNotEmpty()) r to (areas + needs).map { Loosened(it, null) } else null
+    }
+
+    /**
+     * "From A to B": each end found as a search for its words would find it (the start with its "van" or "de" too,
+     * as a name may begin with one), the end's other candidates after it.
+     */
+    private suspend fun route(text: String, r: RouteAsk, parsed: ParsedQuery, ctx: SearchContext, started: Long): SearchResults? {
+        // the stops in turn, each looked for around the one before ("Prinsengracht 263, 500, 1012"); one not found is no way
+        var near = ctx.location
+        val via = r.via.map { v ->
+            val stop = endOf(run(v, ctx.copy(location = near)), v) ?: return null
+            near = stop.location
+            stop
+        }
+        val to = run(r.to, ctx.copy(location = near))
+        // an end that leads nowhere ("bike to rent") was not a way: the words are searched as they are
+        val end = endOf(to, r.to) ?: return null
+        val from = r.from?.let { f ->
+            val plain = run(f, ctx)
+            val whole = r.fromWord?.let { w -> run("$w $f", ctx) }
+            listOfNotNull(whole, plain).maxByOrNull { endScore(it) }
+        }
+        val items = ArrayList<SearchItem>()
+        items += SearchItem.Route(r, from?.let { endOf(it, r.from) }, end, 7.0, via)
+        items += to.items.filter { it !is SearchItem.Route }
+        return SearchResults(text, items, parsed, usedOnline = to.usedOnline || from?.usedOnline == true, micros = micros(started))
+    }
+
+    /** Where a search for an end leads: its first place or point. */
+    private fun endOf(r: SearchResults, text: String): RouteEnd? {
+        for (item in r.items) when (item) {
+            is SearchItem.Coordinate -> return RouteEnd(text, null, item.location, null)
+            is SearchItem.PlaceResult -> return RouteEnd(text, item.title, item.hit.place.location, item.hit.place)
+            is SearchItem.Element -> return RouteEnd(text, item.hit.record.name(), item.hit.place.location, item.hit.place)
+            is SearchItem.Online -> return RouteEnd(text, item.place.extra["label"] ?: item.place.tags["name"], item.place.location, item.place)
+            else -> {}
+        }
+        return null
+    }
+
+    /** How surely a search found the place its words name: a name or an address match beats a kind's nearest. */
+    private fun endScore(r: SearchResults): Double = r.places.firstOrNull()?.let { p ->
+        p.hit.relevance + if (p.match == MatchKind.NAME || p.match == MatchKind.ADDRESS) 1.0 else 0.0
+    } ?: if (r.items.any { it is SearchItem.Coordinate }) 2.0 else 0.0
+
+    /** [q] in the searcher's town, inside its order and limit. */
+    private fun inTown(q: Query): Query = when (q) {
+        is Query.Sort -> Query.Sort(inTown(q.query), q.by)
+        is Query.Limit -> Query.Limit(inTown(q.query), q.count)
+        else -> Query.and(q, Query.InArea(null, Query.InArea.TOWN))
+    }
+
+    /**
+     * [p], or [p]'s text read again without its guessed area when no place of that name is known offline: "boulangerie
+     * amsterdam" is in Amsterdam, "bakker Jansen" a bakery of that name.
+     */
+    private fun known(p: ParsedQuery, ctx: SearchContext, areas: Areas): ParsedQuery {
+        val guess = p.guessedArea ?: return p
+        return if (areas.resolve(guess) != null) p else QueryParser.parse(p.text.trim(), ctx.lang, ctx.now, ctx.country, guessAreas = false)
+    }
+
+    /** True when [q] says where to look: a circle, a box or an area, a route. */
+    private fun spatial(q: Query): Boolean {
+        var found = false
+        q.walk { if (it is Query.Within || it is Query.InArea || it is Query.AlongRoute) found = true }
+        return found
+    }
+
+    /** [q] with the boxes of its named areas filled in where they resolve, so online search looks there too. */
+    private fun withBoxes(q: Query, areas: Areas): Query = when (q) {
+        is Query.InArea -> if (q.bbox == null && q.name != null) areas.resolve(q.name)?.let { Query.InArea(it, q.name) } ?: q else q
+        is Query.And -> Query.And(q.parts.map { withBoxes(it, areas) })
+        is Query.Or -> Query.Or(q.parts.map { withBoxes(it, areas) })
+        is Query.Sort -> Query.Sort(withBoxes(q.query, areas), q.by)
+        is Query.Limit -> Query.Limit(withBoxes(q.query, areas), q.count)
+        is Query.Not -> Query.Not(withBoxes(q.part, areas))
+        else -> q
+    }
+
+    /**
+     * [records] told by the quarter ([per] "neighbourhood") or the town ("town") each lies in, else lies nearest, the
+     * most first: by the finest quarters there are several of, where a city maps its districts and its neighbourhoods.
+     */
+    private fun groups(records: List<PlaceRecord>, per: String, lang: String): List<KindCount> {
+        val box = BBox.of(records.map { it.location })?.buffer(GROUP_REACH_M) ?: return emptyList()
+        val levels = if (per == "town") listOf(TOWN_PLACES) else listOf(setOf("neighbourhood"), setOf("quarter"), setOf("suburb", "borough"))
+        val named = places.byTag("place", null, box).filter { it.name(lang) != null }
+        val by = levels.map { l -> named.filter { it.tags["place"] in l } }.firstOrNull { it.size >= MIN_GROUPS } ?: return emptyList()
+        val of = records.mapNotNull { r ->
+            by.filter { q -> q.place.bbox?.let { r.location in it } == true }.minByOrNull { q -> q.place.bbox!!.let { it.width * it.height } }
+                ?: by.minByOrNull { Geo.distance(it.location, r.location) }?.takeIf { Geo.distance(it.location, r.location) <= GROUP_REACH_M }
+        }
+        return of.groupBy { it.place.key }.values
+            .map { list -> KindCount(list.first().name(lang).orEmpty(), "ui-map-pin", list.size) }
+            .sortedByDescending { it.count }
+    }
+
+    /**
+     * Where an online query looks: its own circle or box, else the view, else around the searcher, 3 km and then
+     * farther in turn while nothing is found ([ONLINE_RADII_M]).
+     */
+    private fun searchAreas(q: Query, ctx: SearchContext, eval: EvalContext): List<OverpassArea> {
         var within: Query.Within? = null
         var box: BBox? = null
         q.walk {
             if (it is Query.Within && within == null) within = it
             if (it is Query.InArea && box == null) box = it.bbox ?: it.name?.let { n -> eval.areas?.resolve(n) }
         }
-        within?.let { w -> (w.center ?: ctx.location)?.let { return OverpassArea.Around(it, w.radius) } }
-        box?.let { return OverpassArea.Box(it) }
-        ctx.viewport?.let { return OverpassArea.Box(it) }
-        return ctx.location?.let { OverpassArea.Around(it, 3_000.0) }
+        within?.let { w -> (w.center ?: ctx.location)?.let { return listOf(OverpassArea.Around(it, w.radius)) } }
+        box?.let { return listOf(OverpassArea.Box(it)) }
+        ctx.viewport?.let { return listOf(OverpassArea.Box(it)) }
+        return ctx.location?.let { at -> ONLINE_RADII_M.map { OverpassArea.Around(at, it) } }.orEmpty()
     }
 
     private suspend fun online(id: OsmId, ctx: SearchContext): Hit? {
@@ -406,7 +642,7 @@ class SearchEngine(
                 val filter = Lexicon.filterOf(h.preset.tags) ?: continue
                 // two presets that tag alike ("Restroom", "Toilets") are one kind
                 if (out.any { it.id == h.preset.id || (it.query as? Query.Tags)?.filter == filter }) continue
-                val symbol = Presets.iconOf(h.preset)?.takeIf { Symbols.has(it) } ?: Symbols.symbolFor(h.preset.tags)
+                val symbol = Kinds.symbolOf(h.preset) ?: Symbols.symbolFor(h.preset.tags)
                 out += KindMatch(h.preset.id, h.preset.name(lang), symbol, Query.Tags(filter), h.score / 100 * (if (i == 0) 1.0 else 0.95))
             }
             if (out.isNotEmpty()) break
@@ -448,9 +684,9 @@ class SearchEngine(
     /** Brands whose name the words spell (a typo allowed), widest first. */
     private fun brands(words: List<String>, country: String?): List<Brand> {
         val text = words.joinToString(" ")
-        val exact = Lexicon.brand(text, country)
-        val found = if (exact != null) listOf(exact) else Brands.search(text, country, 5)
-        return found.filter { b -> NameMatch.score(words, Text.fold(b.brand)) >= 0.6 }.take(2)
+        // its very name, or one people call it by ("appie"), is the brand; a near spelling must look like its name
+        Lexicon.brand(text, country)?.let { return listOf(it) }
+        return Brands.search(text, country, 5).filter { b -> NameMatch.score(words, Text.fold(b.brand)) >= 0.6 }.take(2)
     }
 
     private fun matchKind(words: List<String>, r: PlaceRecord): MatchKind {
@@ -477,10 +713,13 @@ class SearchEngine(
 
     private fun placeResult(h: Hit, kind: MatchKind, ctx: SearchContext, score: Double): SearchItem.PlaceResult {
         val r = h.record
-        val kindName = r.preset?.let { Presets.byId(it) }?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
+        val preset = r.preset?.let { Presets.byId(it) }
+        val kindName = preset?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
         val address = Localise.address(r.tags)
-        val title = r.name(ctx.lang) ?: address ?: kindName ?: r.place.key
-        val subtitle = listOfNotNull(kindName?.takeIf { it != title }, address?.takeIf { it != title && kind != MatchKind.STREET }).joinToString(" · ").ifEmpty { null }
+        // A place with no name nor address is titled by what it is ("Gift Shop"), and no line repeats it ("Gifts")
+        val title = r.name(ctx.lang) ?: address ?: preset?.fullName(ctx.lang) ?: kindName ?: r.place.key
+        val said = title == kindName || title == preset?.fullName(ctx.lang)
+        val subtitle = listOfNotNull(kindName?.takeIf { !said }, address?.takeIf { it != title && kind != MatchKind.STREET }).joinToString(" · ").ifEmpty { null }
         return SearchItem.PlaceResult(h, kind, title, subtitle, score)
     }
 
@@ -507,12 +746,60 @@ class SearchEngine(
     private inner class Areas(val ctx: SearchContext) : AreaResolver {
         private val known = HashMap<String, BBox?>()
 
-        override fun resolve(name: String): BBox? = known.getOrPut(name.lowercase()) { offline(name) }
+        override fun resolve(name: String): BBox? = when (name) {
+            Query.InArea.TOWN -> known.getOrPut(name) { town() }
+            Query.InArea.NEIGHBOURHOOD -> known.getOrPut(name) { neighbourhood() }
+            Query.InArea.CENTRE -> known.getOrPut(name) { centre(null) }
+            else -> known.getOrPut(name.lowercase()) { offline(name) }
+        }
+
+        /** "The centre" of the town called [town], where the search names one; else of the searcher's. */
+        fun centreOf(town: String?) {
+            known[Query.InArea.CENTRE] = centre(town?.let { resolve(it) })
+        }
+
+        /**
+         * A town's centre: its quarter called so (Centrum, Binnenstad, Innenstadt, Centre-ville), else a walk around its
+         * heart, where its place is marked or, failing that, the middle of its box.
+         */
+        private fun centre(town: BBox?): BBox? {
+            val box = town ?: town() ?: return null
+            val inTown = places.byTag("place", null, box)
+            val heart = inTown.filter { it.tags["place"] in TOWN_PLACES }
+                .maxByOrNull { placeRank(it.tags["place"]) * HEART_RANK - Geo.distance(it.location, box.center) }?.location ?: box.center
+            val quarter = inTown.filter { q -> q.tags["place"] in QUARTERS && SearchText.names(q.tags).any { Text.fold(it).replace('-', ' ') in CENTRE_NAMES } }
+                .minByOrNull { Geo.distance(it.location, heart) }
+            return quarter?.let { q -> q.place.bbox?.takeIf { it.width > 0 } ?: BBox.around(q.location, radiusOf(q.tags["place"])) } ?: BBox.around(heart, CENTRE_M)
+        }
+
+        /** The quarter the searcher is in: the smallest suburb, quarter or neighbourhood around them, else a walk around. */
+        private fun neighbourhood(): BBox? {
+            val at = ctx.location ?: return ctx.viewport
+            val around = places.byTag("place", null, BBox.around(at, NEIGHBOURHOOD_SEARCH_M)).filter { it.tags["place"] in QUARTERS }
+            val inside = around.filter { r -> r.place.bbox?.let { at in it } ?: (r.distanceTo(at) <= radiusOf(r.tags["place"])) }
+            val r = inside.minByOrNull { r -> r.place.bbox?.let { it.width * it.height } ?: radiusOf(r.tags["place"]).let { it * it } }
+                ?: return BBox.around(at, NEIGHBOURHOOD_FALLBACK_M)
+            return r.place.bbox?.takeIf { it.width > 0 } ?: BBox.around(r.location, radiusOf(r.tags["place"]))
+        }
+
+        /**
+         * The town the searcher is in: the app's, else the city, town or village of the stores whose reach takes in
+         * the searcher (the biggest), else the nearest, else a few kilometres around the searcher.
+         */
+        private fun town(): BBox? {
+            ctx.town?.let { return it }
+            val at = ctx.location ?: return ctx.viewport
+            val around = places.byTag("place", null, BBox.around(at, TOWN_SEARCH_M)).filter { it.tags["place"] in TOWN_PLACES }
+            val inside = around.filter { r -> r.place.bbox?.let { at in it } ?: (r.distanceTo(at) <= radiusOf(r.tags["place"])) }
+            val r = inside.maxByOrNull { placeRank(it.tags["place"]) } ?: around.minByOrNull { it.distanceTo(at) }
+                ?: return BBox.around(at, TOWN_FALLBACK_M)
+            return r.place.bbox?.takeIf { it.width > 0 } ?: BBox.around(r.location, radiusOf(r.tags["place"]))
+        }
 
         fun offline(name: String): BBox? {
             val words = SearchText.words(name)
             val r = places.text(name, ctx.location, null, 50)
-                .filter { it.tags["place"] != null || it.tags["boundary"] == "administrative" || it.tags["landuse"] == "residential" }
+                .filter { it.tags["place"] != null || it.tags["boundary"] in AREA_BOUNDARIES || it.tags["landuse"] == "residential" }
                 .map { it to (SearchText.names(it.tags).maxOfOrNull { n -> NameMatch.score(words, Text.fold(n), typing = false) } ?: 0.0) }
                 .filter { it.second >= 0.9 }
                 .maxByOrNull { it.second * 10 + placeRank(it.first.tags["place"]) }?.first ?: return null
@@ -552,10 +839,46 @@ class SearchEngine(
 
     companion object {
         private const val KIND_NEAREST = 3
+
+        /** A chain named outright: above any place (one at most), below what the words ask (a count, a way). */
+        private const val NAMED_BRAND = 2.0
+
+        /** A count counts up to this many places; an hours overview compares up to this many. */
+        private const val COUNT_LIMIT = 100_000
+        private const val HOURS_LIMIT = 200
+
+        /** "This town": a city, town or village within this far, else this far around the searcher. */
+        private const val TOWN_SEARCH_M = 15_000.0
+        private const val TOWN_FALLBACK_M = 3_000.0
+        private val TOWN_PLACES = setOf("city", "town", "village")
+
+        /** "This neighbourhood": the smallest of these around the searcher within this far, else this far around them. */
+        private const val NEIGHBOURHOOD_SEARCH_M = 3_000.0
+        private const val NEIGHBOURHOOD_FALLBACK_M = 800.0
+        private val QUARTERS = setOf("suburb", "quarter", "neighbourhood", "borough")
+
+        /** What a town's centre is called where it is mapped as a quarter; else this far around its heart. */
+        private val CENTRE_NAMES = setOf(
+            "centrum", "binnenstad", "stadscentrum", "historisch centrum", "oude stad", "centre", "center", "city centre", "city center",
+            "town centre", "downtown", "old town", "centre ville", "vieille ville", "hypercentre", "innenstadt", "altstadt", "zentrum",
+            "stadtzentrum", "stadtmitte", "mitte", "centro", "centro storico", "centro historico",
+        )
+        private const val CENTRE_M = 1_200.0
+        private const val HEART_RANK = 1e6
+
+        /** A count by place: the quarters at least this many of are mapped, each place given to one within this far. */
+        private const val MIN_GROUPS = 3
+        private const val GROUP_REACH_M = 2_500.0
+
+        /** Boundaries a name may be an area by: a municipality's, a postcode's ("cafés in 1017"). */
+        private val AREA_BOUNDARIES = setOf("administrative", "postal_code")
         private const val MAX_KINDS = 2
         private const val MIN_KIND_SCORE = 70.0
         private const val NAME_CANDIDATES = 40
         private const val ONLINE_BELOW = 3
+
+        /** How far around the searcher an online query looks, in turn while it finds nothing. */
+        private val ONLINE_RADII_M = listOf(3_000.0, 25_000.0, 100_000.0)
         private const val ONLINE_TOP = 0.3
         private const val ONLINE_ORDER_STEP = 0.03
         private const val ONLINE_OTHER_KIND = 0.6

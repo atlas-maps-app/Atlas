@@ -320,7 +320,7 @@ private fun ShopRow(p: ShopPlace, seller: FindSeller, area: ShopArea, now: java.
     val closed = p.openness(now, area.hours) == Open.CLOSED
     Row(Modifier.fillMaxWidth().height(64.dp).alpha(if (closed) 0.6f else 1f).tap(p.name, onClick), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         if (p.brand != null || p.tags["brand"] != null) {
-            ShopLogo(p.brand, p.tags["brand"] ?: p.name, 44.dp, key = p.tags["brand"])
+            ShopLogo(p.brand, p.tags["brand"] ?: p.name, 44.dp)
         } else {
             Box(Modifier.size(44.dp).boardBox(seller.colour, round(12f)), contentAlignment = Alignment.Center) { Sym(seller.symbol, 22f, 22f, 0xFF1A1A1A) }
         }

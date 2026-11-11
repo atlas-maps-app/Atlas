@@ -344,7 +344,7 @@ object Facts {
             t("rooms")?.let { add(FactKind.ROOMS, "rooms", FactState.YES, it) }
             for (s in t("sport")?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()) {
                 val preset = Presets.match(mapOf("leisure" to "pitch", "sport" to s))
-                val icon = preset?.takeIf { it.id.endsWith("/$s") }?.let { Presets.iconOf(it) }?.takeIf { Symbols.has(it) } ?: FactKind.SPORT.symbol
+                val icon = preset?.takeIf { it.id.endsWith("/$s") }?.let { Kinds.symbolOf(it) } ?: FactKind.SPORT.symbol
                 add(FactKind.SPORT, "sport", FactState.YES, s, option("sport", s) ?: readable(s), icon)
             }
             for ((k, v) in tags) {

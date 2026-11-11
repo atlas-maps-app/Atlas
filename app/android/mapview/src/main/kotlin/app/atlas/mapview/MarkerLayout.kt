@@ -30,6 +30,9 @@ class MarkerMetrics(val density: Float) {
     val valueChipGap = 3f * density
     val ring = 3f * density
     val border = 2f * density
+
+    /** The ring round a kind people come for most ([Marker.outlined]), outside its white ring: drawn, not placed by. */
+    val outline = 2f * density
     val badge = 20f * density
 
     /** The smallest a marker's touch target is, either way. */

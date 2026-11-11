@@ -48,7 +48,7 @@ on:
         required: false
         default: ''
       publish:
-        description: A checked draft world-YYYYMMDD or world-YYYYMMDD-planet to publish instead of building one (world-latest then points at it)
+        description: A checked draft world-YYYYMMDD, world-YYYYMMDD-planet or a re-run's world-YYYYMMDD-planet-N to publish instead of building one (world-latest then points at it)
         required: false
         default: ''
   # A run of the workflow's own branch before it lands, its inputs in .github/world-run.json
@@ -114,7 +114,7 @@ jobs:
     # null on a push, which builds
     if: ${{ github.event.inputs.publish == '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       tag: ${{ steps.day.outputs.tag }}
       land: ${{ steps.run.outputs.land }}
@@ -188,8 +188,10 @@ jobs:
           set -euo pipefail
           P="$RUNNER_TEMP/plan"
           mkdir -p "$P" "$RUNNER_TEMP/latest"
-          size() { curl -fsSIL --retry 5 --retry-delay 10 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
-          curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
+          # a file's size by a HEAD request, each try given 30 s (a request to Geofabrik can hang: 5 November's first
+          # planet plan, World run 42100882444, ran out of its job's 30 minutes with no limit on a request)
+          size() { curl -fsSIL --max-time 30 --retry 3 --retry-delay 10 --retry-max-time 150 -A "$USER_AGENT" "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'; }
+          curl -fsSL --max-time 120 --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$RUNNER_TEMP/index.json" https://download.geofabrik.de/index-v1.json
           NAME=${AREA//\//-}
           if [ "$AREA" = planet ]; then
             # the whole world: OpenStreetMap's planet file, whose -latest goes on to the dated one (planet-YYMMDD.osm.pbf)
@@ -242,10 +244,29 @@ jobs:
               jq -c --arg a "$AREA" '[.features[] | select(.properties.parent == $a)]' "$RUNNER_TEMP/index.json" > "$RUNNER_TEMP/children.json"
             fi
             if [ "$(jq length "$RUNNER_TEMP/children.json")" -gt 0 ]; then
-              # four at a time (the planet's 301 leaves of 4 November took one to four seconds each, one by one)
+              # eight at a time (the planet's 301 leaves of 4 November took one to four seconds each, one by one; on 5
+              # November, from a Mac, eight at a time took 319 s, eight leaves hanging through all their tries and then
+              # answering in 1.4 s one by one, and 69 s a second time), then each leaf whose size did not come asked
+              # again, one at a time
               export -f size
+              t0=$(date +%s)
               jq -r '.[].properties | .id, .urls.pbf' "$RUNNER_TEMP/children.json" |
-                xargs -P 4 -n 2 bash -c 'printf "%s\t%s\n" "$1" "$(size "$2")"' size > "$RUNNER_TEMP/sizes.tsv"
+                xargs -P 8 -n 2 bash -c 'printf "%s\t%s\n" "$1" "$(size "$2")"' size > "$RUNNER_TEMP/sizes.tsv"
+              awk -F '\t' '$2 == 0 { print $1 }' "$RUNNER_TEMP/sizes.tsv" > "$RUNNER_TEMP/again.txt"
+              if [ -s "$RUNNER_TEMP/again.txt" ]; then
+                echo "sizes: $(wc -l < "$RUNNER_TEMP/again.txt") leaves asked again, one at a time"
+                while read -r id; do
+                  u=$(jq -r --arg i "$id" '.[] | select(.properties.id == $i) | .properties.urls.pbf' "$RUNNER_TEMP/children.json")
+                  printf '%s\t%s\n' "$id" "$(size "$u" || true)"
+                done < "$RUNNER_TEMP/again.txt" > "$RUNNER_TEMP/again.tsv"
+                awk -F '\t' 'NR == FNR { again[$1] = $2; next } ($1 in again) { $2 = again[$1] } { print $1 "\t" $2 }' \
+                  "$RUNNER_TEMP/again.tsv" "$RUNNER_TEMP/sizes.tsv" > "$RUNNER_TEMP/sizes.again.tsv"
+                mv "$RUNNER_TEMP/sizes.again.tsv" "$RUNNER_TEMP/sizes.tsv"
+              fi
+              echo "sizes: $(awk -F '\t' '$2 > 0' "$RUNNER_TEMP/sizes.tsv" | wc -l) of $(jq length "$RUNNER_TEMP/children.json") leaves, in $(( $(date +%s) - t0 )) s"
+              # a leaf still without a size is left out of the weights, so its land weighs only what other extracts give it
+              missing=$(awk -F '\t' '$2 == 0 { printf "%s%s", s, $1; s = ", " }' "$RUNNER_TEMP/sizes.tsv")
+              [ -z "$missing" ] || echo "::warning::sizes: no size for $missing, left out of the weights"
               jq --rawfile s "$RUNNER_TEMP/sizes.tsv" '
                 ($s | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $b
                 | {type: "FeatureCollection", features: [.[] | select(($b[.properties.id] // 0) > 0) | .properties.bytes = $b[.properties.id]]}' \
@@ -446,8 +467,9 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     # Europe's 35 GB: its download (5 minutes on 4 November), osmium's filter (two reads of it, 21 minutes) and the
-    # filtered file's upload; the planet's 96 GB some 80 to 95 minutes by those
-    timeout-minutes: 180
+    # filtered file's upload; the planet's 96 GB some 80 to 95 minutes by those, its download in ranges from two copies
+    # (in one stream it took over 150 minutes on 5 November, World run 42109542071)
+    timeout-minutes: 240
     outputs:
       name: ${{ steps.extract.outputs.name }}
       md5: ${{ steps.extract.outputs.md5 }}
@@ -474,8 +496,9 @@ jobs:
             /usr/local/share/chromium /usr/share/swift /usr/local/julia* /opt/microsoft /opt/google /opt/az /usr/local/lib/node_modules
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends osmium-tool
+          sudo apt-get install -y -q --no-install-recommends osmium-tool aria2
           osmium --version | head -1
+          aria2c --version | head -1
           # the extract on the disk with more room, what is cut from it on the other
           ROOT="$RUNNER_TEMP/world"
           mkdir -p "$ROOT"
@@ -490,10 +513,33 @@ jobs:
         run: |
           set -euo pipefail
           RAW="$BIG/$NAME"
+          # the planet from both of the OSMF's copies on AWS at once, the same file at the same path (one stream from
+          # us-west-2, where planet-latest goes, ran past 150 minutes for its 96 GB on 5 November, World run 42109542071,
+          # where Europe's 35 GB came from Geofabrik's mirror in 5); a Geofabrik extract in one stream, as Geofabrik asks
+          FROMS=("$FROM")
+          if [[ $FROM =~ ^https://osm-planet-[a-z0-9-]+\.s3\.dualstack\.[a-z0-9-]+\.amazonaws\.com/(planet/.+)$ ]]; then
+            FROMS=("https://osm-planet-us-west-2.s3.dualstack.us-west-2.amazonaws.com/${BASH_REMATCH[1]}"
+              "https://osm-planet-eu-central-1.s3.dualstack.eu-central-1.amazonaws.com/${BASH_REMATCH[1]}")
+          fi
           for attempt in 1 2; do
-            rm -f "$RAW"
-            # taken up again where a connection drops; the MD5 says whether the whole is the extract the plan read
-            curl -fsSL -C - --retry 10 --retry-all-errors --retry-delay 30 -A "$USER_AGENT" -o "$RAW" "$FROM"
+            rm -f "$RAW" "$RAW.aria2"
+            t0=$(date +%s)
+            if [ "${#FROMS[@]}" -gt 1 ]; then
+              # in 16 ranges, 8 to a copy, a connection that stalls a minute tried again (a range whose connection is
+              # slow is shared out as the others finish theirs)
+              aria2c --console-log-level=warn --show-console-readout=false --summary-interval=600 --enable-color=false \
+                --split=16 --max-connection-per-server=8 --min-split-size=256M --uri-selector=adaptive \
+                --file-allocation=falloc --allow-overwrite=true --auto-file-renaming=false --disable-ipv6=true \
+                --max-tries=20 --retry-wait=10 --timeout=60 --connect-timeout=30 \
+                --user-agent="$USER_AGENT" -d "$BIG" -o "$NAME" "${FROMS[@]}"
+            else
+              # taken up again where a connection drops
+              curl -fsSL -C - --retry 10 --retry-all-errors --retry-delay 30 -A "$USER_AGENT" -o "$RAW" "$FROM"
+            fi
+            s=$(( $(date +%s) - t0 ))
+            GOT="$(stat -c %s "$RAW") bytes in $s s, $(( $(stat -c %s "$RAW") / (s > 0 ? s : 1) >> 20 )) MiB/s from ${#FROMS[@]} source(s)"
+            echo "$NAME: $GOT"
+            # the MD5 says whether the whole is the extract the plan read
             if [ "$MD5" = "$(md5sum "$RAW" | cut -d' ' -f1)" ]; then break; fi
             # a download gone wrong, or the extract replaced since the plan read it, its tag then not its data's day
             rm -f "$RAW"
@@ -505,7 +551,7 @@ jobs:
           echo "$NAME: MD5 $MD5, its data of $TS"
           { echo "name=$NAME"; echo "md5=$MD5"; echo "timestamp=$TS"; } >> "$GITHUB_OUTPUT"
           echo "RAW=$RAW" >> "$GITHUB_ENV"
-          echo "### $NAME: $(stat -c %s "$RAW") bytes, MD5 $MD5, its data of $TS" >> "$GITHUB_STEP_SUMMARY"
+          echo "### $NAME: $GOT, MD5 $MD5, its data of $TS" >> "$GITHUB_STEP_SUMMARY"
       - name: Filter, into the draft
         env:
           TS: ${{ steps.extract.outputs.timestamp }}
@@ -877,7 +923,7 @@ jobs:
       - name: Publish
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-planet)?$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD or world-YYYYMMDD-planet, not $TAG"; exit 1; fi
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-planet(-[0-9]+)?)?$ ]]; then echo "::error::publish takes a world's release world-YYYYMMDD, world-YYYYMMDD-planet or world-YYYYMMDD-planet-N, not $TAG"; exit 1; fi
           if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != true ]; then echo "::error::$TAG is not a draft"; exit 1; fi
           R="$RUNNER_TEMP/publish"
           mkdir -p "$R"
@@ -897,9 +943,10 @@ jobs:
             gh release create world-latest --title "World: the latest" --notes-file "$R/notes.md" --latest=false --target "$GITHUB_SHA"
           fi
           bash -c "$UPLOAD" upload world-latest "$R/world.json"
-          # every world but the last two goes; world-test and world-latest stay
+          # every world but the last two goes, by its day and then a planet's re-run by its number (-planet-10 after
+          # -planet-9); world-test, world-latest and every draft stay
           gh release list --limit 200 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName' |
-            { grep -E '^world-[0-9]{8}(-planet)?$' || true; } | LC_ALL=C sort -r | tail -n +3 | while read -r old; do
+            { grep -E '^world-[0-9]{8}(-planet(-[0-9]+)?)?$' || true; } | LC_ALL=C sort -r -V | tail -n +3 | while read -r old; do
             gh release delete "$old" --cleanup-tag --yes
           done
           echo "### $TAG published; world-latest names it" >> "$GITHUB_STEP_SUMMARY"

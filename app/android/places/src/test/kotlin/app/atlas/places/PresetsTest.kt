@@ -51,12 +51,33 @@ class PresetsTest {
     @Test
     fun namesInEveryLanguage() {
         val cafe = Presets.byId("amenity/pharmacy")!!
-        assertEquals("Pharmacy Counter", cafe.name("en"))
+        // what it is called is short (kind_names.tsv), id-tagging-schema's name its full one
+        assertEquals("Pharmacy", cafe.name("en"))
+        assertEquals("Pharmacy Counter", cafe.fullName("en"))
         assertEquals("Apotheek", cafe.name("nl"))
         assertEquals("Apotheke", cafe.name("de-AT"))
         for (lang in Langs.bundled) assertTrue(lang, cafe.name(lang).isNotBlank())
         assertEquals(cafe.name("en"), cafe.name("xx"))
         assertTrue(Presets.byId("amenity/cafe")!!.terms("nl").contains("koffie"))
+    }
+
+    /**
+     * Atlas says "bike" where the schema's English says "bicycle", as its own chips do (the owner, 6 November, of
+     * "Bicycle Rental" beside "Bike parking": "Yes, align them"), in a kind's name and a nameless place's title alike;
+     * the other languages and the paths' "Cycle" keep theirs, and the search finds the kind by either word.
+     */
+    @Test
+    fun aBikeIsABike() {
+        fun p(id: String) = Presets.byId(id)!!
+        assertEquals("Bike Rental", p("amenity/bicycle_rental").name("en"))
+        assertEquals("Bike Parking", p("amenity/bicycle_parking").fullName("en"))
+        assertEquals("Bike Repair Tool Stand", p("amenity/bicycle_repair_station").name("en"))
+        assertEquals("Bikes", p("shop/bicycle").name("en"))
+        assertEquals("Bike Shop", p("shop/bicycle").fullName("en"))
+        assertEquals("Fietsverhuur", p("amenity/bicycle_rental").name("nl"))
+        assertEquals("Cycle Path", p("highway/cycleway").name("en"))
+        for (typed in listOf("bike rental", "bicycle rental")) assertEquals(typed, "amenity/bicycle_rental", Presets.search(typed).first().preset.id)
+        assertEquals("Bike Rental", Presets.search("bicycle rental").first().name)
     }
 
     @Test

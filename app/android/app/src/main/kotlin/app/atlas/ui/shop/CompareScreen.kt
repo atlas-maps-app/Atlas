@@ -275,7 +275,7 @@ private fun Receipt(b: StoreBasket, best: Boolean, ringed: Boolean, marked: Set<
                     .padding(horizontal = 10.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ReceiptLogo(brand, b.store.name, b.store.key, Modifier.align(Alignment.CenterHorizontally))
+                ReceiptLogo(brand, b.store.name, Modifier.align(Alignment.CenterHorizontally))
                 Line(b.store.name.uppercase(), bt(12f, 700, 13.5f, COURIER, align = TextAlign.Center), PAPER_INK, Modifier.fillMaxWidth())
                 Dashes()
                 for (l in b.lines) {
@@ -315,15 +315,8 @@ private fun Receipt(b: StoreBasket, best: Boolean, ringed: Boolean, marked: Set<
 
 /** A receipt's shop mark, 34 round: the chain's own logo on its colour, else its first letter in Geist Black 18. */
 @Composable
-private fun ReceiptLogo(brand: app.atlas.places.Brand?, name: String, key: String, modifier: Modifier) {
-    val bg = brandColour(brand, key)
-    val fg = brand?.textColour?.let { Color(it) } ?: app.atlas.ui.kit.contentColourFor(bg)
-    Box(modifier.size(34.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
-        val slug = brand?.logoSlug
-        if (slug != null) Symbol("logo-$slug", tint = fg, size = 20.dp)
-        else Text(name.trim().take(1).uppercase(), style = bt(18f, 900, 23.5f), color = fg)
-    }
-}
+private fun ReceiptLogo(brand: app.atlas.places.Brand?, name: String, modifier: Modifier) =
+    app.atlas.ui.kit.BrandSign(brand, name, 34.dp, modifier, shape = CircleShape, logo = 20.dp, lettering = bt(18f, 900, 23.5f))
 
 /** A torn edge of [tooth] px teeth, as the boards' two gradient tiles (135° and 225°, white to the half). */
 @Composable

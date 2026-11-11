@@ -214,6 +214,7 @@ internal fun sentLine(id: String): String = stringResource(
         "osm-notes" -> R.string.mine_sent_notes
         "osm-edits" -> R.string.mine_sent_edits
         "atlas-packs" -> R.string.mine_sent_windows
+        "openaddresses" -> R.string.mine_sent_addresses
         "brouter" -> R.string.mine_sent_brouter
         "panoramax" -> R.string.mine_sent_photo
         "open-prices" -> R.string.mine_sent_prices

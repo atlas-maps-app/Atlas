@@ -56,6 +56,18 @@ class KitLogicTest {
     }
 
     @Test
+    fun aShopIsCalledWhatItSellsAndANamelessOneWhatItIs() {
+        // the owner, 6 November: "instead of clothing store and gift shop only show Clothes, Gifts?", "apply that everywhere"
+        val named = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en")
+        assertEquals("Gifts", named.kind)
+        assertEquals("Cadeaus", PlaceSummary.of(named.place, null, "nl").kind)
+        // a title says what the place is: a gift shop, and no line says "Gifts" under it
+        val nameless = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en")
+        assertEquals("Gift Shop", nameless.name)
+        assertNull(nameless.kind)
+    }
+
+    @Test
     fun appSymbolsAllParseAndThePlacesSetIsReachable() {
         for (id in AppSymbols.ids) {
             val icon = AppSymbols.icon(id)!!
@@ -132,6 +144,17 @@ class KitLogicTest {
         val monday = LocalDateTime.of(2026, 10, 19, 9, 0)
         assertEquals(OpenWords.Opens(monday, sameDay = false), OpenWords.of(summary(OpenStatus(false, monday, ChangeKind.OPENS, false)), now))
         assertEquals(OpenWords.Closed, OpenWords.of(summary(OpenStatus(false, null, null, false)), now))
+    }
+
+    /** A total of open places says those surely open, "≈" only where guessed hours alone keep any open; so does a time. */
+    @Test
+    fun aTotalOfOpenPlacesSaysTheSurelyOpen() {
+        assertEquals("254", openTotal(254, 0))
+        assertEquals("74", openTotal(254, 180))
+        assertEquals("≈254", openTotal(254, 254))
+        assertEquals("0", openTotal(0, 0))
+        assertEquals("4:00", guessedTime("4:00", false))
+        assertEquals("≈4:00", guessedTime("4:00", true))
     }
 
     @Test

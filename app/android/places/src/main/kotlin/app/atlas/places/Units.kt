@@ -1,10 +1,10 @@
 package app.atlas.places
 
-/** A measured tag value in its dimension's base unit: metres, tonnes, kilowatts, km/h, volts, amperes, kWh. */
+/** A measured tag value in its dimension's base unit: metres, tonnes, kilowatts, km/h, volts, amperes, kWh, money. */
 data class Measure(val value: Double, val dimension: Dimension)
 
 /** What a [Measure] measures, with its base unit. */
-enum class Dimension(val base: String) { LENGTH("m"), MASS("t"), POWER("kW"), SPEED("km/h"), VOLTAGE("V"), CURRENT("A"), ENERGY("kWh"), NONE("") }
+enum class Dimension(val base: String) { LENGTH("m"), MASS("t"), POWER("kW"), SPEED("km/h"), VOLTAGE("V"), CURRENT("A"), ENERGY("kWh"), MONEY(""), NONE("") }
 
 /** Reads OSM quantities such as "4.2 m", "3.5t", "11 kW", "12'6\"", "30 mph" and converts them to base units. */
 object Units {
@@ -37,9 +37,14 @@ object Units {
         put("kwh", Dimension.ENERGY, 1.0)
         put("wh", Dimension.ENERGY, 0.001)
         put("mwh", Dimension.ENERGY, 1000.0)
+        // money as it is said, not converted: a fee in euros against a price asked in euros
+        put("eur euro euros € usd dollar dollars $ gbp pound pounds £ chf", Dimension.MONEY, 1.0)
     }
 
-    private val plain = Regex("""^\s*([-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*([a-zA-Z/'"]*)\s*$""")
+    private val plain = Regex("""^\s*([-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*([a-zA-Z/'"€$£]*)\s*$""")
+
+    /** An amount with its currency first: "€2.50", "EUR 2", "$5". */
+    private val money = Regex("""^\s*(€|\$|£|EUR|USD|GBP|CHF)\s*(\d+(?:[.,]\d{1,2})?)\s*$""", RegexOption.IGNORE_CASE)
     private val feetInches = Regex("""^\s*(\d+(?:\.\d+)?)\s*'\s*(\d+(?:\.\d+)?)\s*"\s*$""")
 
     /** True when [word] names a unit Atlas reads ("m", "kW", "mph"…), in any case. */
@@ -53,6 +58,7 @@ object Units {
         feetInches.matchEntire(text)?.let { m ->
             return Measure(m.groupValues[1].toDouble() * 0.3048 + m.groupValues[2].toDouble() * 0.0254, Dimension.LENGTH)
         }
+        money.matchEntire(text)?.let { m -> return m.groupValues[2].replace(',', '.').toDoubleOrNull()?.let { Measure(it, Dimension.MONEY) } }
         val m = plain.matchEntire(text) ?: return null
         val n = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
         val u = m.groupValues[2]

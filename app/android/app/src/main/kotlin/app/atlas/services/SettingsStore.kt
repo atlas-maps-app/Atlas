@@ -231,4 +231,37 @@ object SettingsKeys {
 
     /** Providers the user switched off in Data sources. */
     val PROVIDERS_OFF = stringSetPreferencesKey("providers.off")
+
+    /** The search's filters kept on for every search, as facet ids ("wheelchair=~yes"). */
+    val SEARCH_STICKY = stringSetPreferencesKey("search.sticky")
+
+    /** The search grid's tiles say what is near (how many open, the nearest); off, only their names. On when unset. */
+    val SEARCH_SMART = booleanPreferencesKey("search.smart")
+
+    /** The search grid shows only the categories with places near. */
+    val SEARCH_NEARBY = booleanPreferencesKey("search.nearby")
+
+    /** The search grid keeps Atlas's order of the categories, not the moment's. */
+    val SEARCH_FIXED = booleanPreferencesKey("search.fixedOrder")
+
+    /** The search shows the places it finds as large cards to slide through, not as rows. Rows when unset. */
+    val SEARCH_CARDS = booleanPreferencesKey("search.cards")
+
+    /** The kinds whose view shows the places of the kinds that sell its goods too and belong with it, as node ids. */
+    val SEARCH_TOGETHER = stringSetPreferencesKey("search.together")
+
+    /** How often each kind was chosen in the search: "cat:restaurants=4". */
+    val SEARCH_PICKS = stringSetPreferencesKey("search.picks")
+
+    /** How the searcher gets about, for the results' times: a `search.TravelMode` name. */
+    val SEARCH_MODE = stringPreferencesKey("search.mode")
+
+    /** The kinds chosen lately in the search, newest first: node ids joined by "|". */
+    val SEARCH_RECENT = stringPreferencesKey("search.recent")
+
+    /**
+     * The home's own row of round buttons, as the searcher made it: its ids in order, joined by "|"
+     * ([app.atlas.ui.home.HomeRow]). Atlas's eight families while unset.
+     */
+    val HOME_ROW = stringPreferencesKey("home.row")
 }

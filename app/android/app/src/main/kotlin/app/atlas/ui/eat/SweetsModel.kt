@@ -44,14 +44,15 @@ enum class SweetPill {
 /** A sweet place: its first tub (the avatar's colour), state, closing time and whether it is all vegan. */
 data class SweetSpot(val place: EatPlace, val tub: Tub, val openness: Openness, val closes: LocalDateTime?, val vegan: Boolean, val allVegan: Boolean)
 
-/** What the sweets screen shows: the open count, the tubs' counts and the list. */
-data class SweetCase(val open: Int, val countsOpen: Boolean, val tubs: Map<Tub, Int>, val pills: Map<SweetPill, Int>, val spots: List<SweetSpot>)
+/** What the sweets screen shows: the open count ([guessed] of it by guessed hours), the tubs' counts and the list. */
+data class SweetCase(val open: Int, val countsOpen: Boolean, val tubs: Map<Tub, Int>, val pills: Map<SweetPill, Int>, val spots: List<SweetSpot>, val guessed: Int = 0)
 
 /** Ice cream, bakeries, pastry, chocolate and sweets, from real tags and opening hours. */
 object SweetsModel {
     fun case(area: EatArea, at: LocalDateTime, tub: Tub?, pills: Set<SweetPill>): SweetCase {
         val all = EatSets.sweets(area.places)
         val countsOpen = all.any { it.hasHours }
+        val open = all.filter { it.openness(at, area.hours).isOpen }
         val ofTub = if (tub == null) all else all.filter { tub.has(it) }
         val chosen = ofTub.filter { p -> pills.all { it.has(p, at, area) } }
         val rank = { o: Openness -> if (o.isOpen) 0 else if (o == Openness.UNKNOWN) 1 else 2 }
@@ -62,11 +63,12 @@ object SweetsModel {
             )
         }.sortedWith(compareBy<SweetSpot> { rank(it.openness) }.thenBy { it.place.distanceM })
         return SweetCase(
-            open = if (countsOpen) all.count { it.openness(at, area.hours).isOpen } else all.size,
+            open = if (countsOpen) open.size else all.size,
             countsOpen = countsOpen,
             tubs = Tub.entries.associateWith { t -> all.count { t.has(it) } },
             pills = SweetPill.entries.associateWith { s -> ofTub.count { s.has(it, at, area) } },
             spots = spots,
+            guessed = if (countsOpen) open.count { it.guessed } else 0,
         )
     }
 }

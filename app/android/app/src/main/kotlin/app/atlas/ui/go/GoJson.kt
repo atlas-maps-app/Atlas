@@ -137,6 +137,32 @@ object GoJson {
         put("quiet", p.quiet); put("green", p.green); put("flat", p.flat); put("shade", p.shade); put("lit", p.lit); put("fast", p.fast)
     }
 
+    /**
+     * The wishes typed with a way asked for ("a quiet route home", "to Utrecht avoiding motorways") as words for a link:
+     * what [p] asks beyond the defaults, comma-joined ("motorways,quiet"); null for none.
+     */
+    fun wishes(p: RoutePrefs): String? {
+        val d = RoutePrefs()
+        return buildList {
+            if (p.avoidTolls) add("tolls"); if (p.avoidMotorways) add("motorways"); if (p.avoidFerries) add("ferries")
+            if (p.avoidUnpaved) add("unpaved"); if (p.avoidSteps) add("steps")
+            if (p.quiet > d.quiet) add("quiet"); if (p.green > d.green) add("green"); if (p.flat > d.flat) add("flat")
+            if (p.shade > d.shade) add("shade"); if (p.lit > d.lit) add("lit"); if (p.fast > d.fast) add("fast")
+        }.joinToString(",").ifEmpty { null }
+    }
+
+    /** The wishes of [words] ([wishes]) over [base]: what they avoid avoided too, what they want wanted fully. */
+    fun wishes(words: String?, base: RoutePrefs): RoutePrefs {
+        val w = words?.split(',')?.map { it.trim() }?.toSet() ?: return base
+        fun want(k: String, v: Double) = if (k in w) 1.0 else v
+        return base.copy(
+            avoidTolls = base.avoidTolls || "tolls" in w, avoidMotorways = base.avoidMotorways || "motorways" in w,
+            avoidFerries = base.avoidFerries || "ferries" in w, avoidUnpaved = base.avoidUnpaved || "unpaved" in w, avoidSteps = base.avoidSteps || "steps" in w,
+            quiet = want("quiet", base.quiet), green = want("green", base.green), flat = want("flat", base.flat), shade = want("shade", base.shade),
+            lit = want("lit", base.lit), fast = want("fast", base.fast),
+        )
+    }
+
     fun prefs(e: JsonElement?): RoutePrefs? {
         val o = e as? JsonObject ?: return null
         fun w(k: String, d: Double) = o.double(k)?.coerceIn(0.0, 1.0) ?: d

@@ -41,6 +41,8 @@ data class Machine(
     val open: Int,
     val countsOpen: Boolean,
     val toggleCounts: Map<WorldToggle, Int>,
+    /** Of the [open] places, those open by guessed hours. */
+    val guessed: Int = 0,
 )
 
 /** A printed meal ticket: the shop, its number, closing time, how it takes money and the walk. */
@@ -75,14 +77,16 @@ object WorldModel {
             )
         }.sortedWith(compareBy<MachineButton> { rank(it.openness) }.thenBy { it.place.distanceM })
         val countsOpen = ofPlank.any { it.hasHours } || (ofPlank.isEmpty() && area.places.any { it.hasHours })
+        val open = ofPlank.filter { it.openness(at, area.hours).isOpen }
         return Machine(
             world = world,
             plank = plank,
             plankCounts = world.planks.associate { it.id to world.places(area, it).size },
             buttons = buttons,
-            open = if (countsOpen) ofPlank.count { it.openness(at, area.hours).isOpen } else ofPlank.size,
+            open = if (countsOpen) open.size else ofPlank.size,
             countsOpen = countsOpen,
             toggleCounts = WorldToggle.entries.associateWith { t -> ofPlank.count { t.has(it, at, area) } },
+            guessed = if (countsOpen) open.count { it.guessed } else 0,
         )
     }
 

@@ -59,6 +59,11 @@
     <string name="mine_offline_actions_delete">Supprimer</string>
     <string name="mine_offline_actions_cancel">Arrêter</string>
     <string name="mine_offline_actions_retry">Réessayer</string>
+    <string name="mine_offline_actions_again">Retélécharger</string>
+    <string name="mine_offline_unreadable">lieux illisibles</string>
+    <string name="mine_offline_unreadable_version">Ces lieux ont été enregistrés par une autre version d\'Atlas : la recherche hors ligne ne peut pas les lire ici.</string>
+    <string name="mine_offline_unreadable_damaged">Le fichier de ces lieux est endommagé : la recherche hors ligne ne peut pas le lire ici.</string>
+    <string name="mine_offline_orphan_text">Ces lieux n\'appartiennent à aucune région de ce téléphone et cette version d\'Atlas ne peut pas les lire. Les supprimer libère %1$s.</string>
     <string name="mine_offline_delete_title">Supprimer %1$s ?</string>
     <string name="mine_offline_delete_text">Cela libère %1$s. La carte, la recherche et les itinéraires y demandent alors une connexion.</string>
     <string name="mine_offline_delete_confirm">Supprimer</string>
@@ -181,6 +186,7 @@
     <string name="mine_sent_reverse">le point sur lequel vous interrogez, quand Photon ne répond pas</string>
     <string name="mine_sent_edits">les bâtiments que vous complétez ; vos modifications, publiques sous votre nom d\'utilisateur OpenStreetMap, seulement une fois connecté</string>
     <string name="mine_sent_windows">les parties de la carte que vous regardez : des octets d\'un paquet</string>
+    <string name="mine_sent_addresses">où se trouve une zone que vous téléchargez, rien sur vous</string>
     <string name="mine_sent_brouter">la tuile de 5° où vous planifiez, pour mesurer ses données d\'itinéraire</string>
     <string name="mine_sent_images">les noms des images d\'un lieu</string>
     <string name="mine_sent_photo">le point que vous regardez, pour y trouver une photo</string>
@@ -248,6 +254,7 @@
     <string name="mine_feeds_chargemap">prix et état en direct : partenaires seulement, pas d\'API publique</string>
     <string name="mine_feeds_fuel">prix des carburants en Allemagne, en direct</string>
     <string name="mine_feeds_packs">les fenêtres de la carte et les zones hors ligne, depuis OpenStreetMap</string>
+    <string name="mine_feeds_addresses">les numéros qui manquent à OpenStreetMap, avec une zone que vous téléchargez</string>
     <string name="mine_feeds_routing">données d\'itinéraire à pied, à vélo et en voiture</string>
     <string name="mine_feeds_images">images des lieux, chacune avec sa licence</string>
     <string name="mine_feeds_photos">photos de rue, ouvertes et partagées</string>
@@ -392,6 +399,7 @@
     <string name="mine_part_building_shadows">Ombres des bâtiments</string>
     <string name="mine_part_shadow_blur">Ombres douces</string>
     <string name="mine_part_park_shadows">Ombres des parcs</string>
+    <string name="mine_part_sun">Ensoleillement</string>
     <string name="mine_part_reflections">Reflets</string>
     <string name="mine_part_ripple">Ondulation</string>
     <string name="mine_part_glitter">Scintillement</string>

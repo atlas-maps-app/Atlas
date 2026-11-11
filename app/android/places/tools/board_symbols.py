@@ -13,7 +13,11 @@ polyline and polygon becomes path data with its element and group transforms app
 element with SVG's inheritance, so each path carries its own colour, opacity, stroke width, caps, joins, dashes, fill
 rule, and linear or radial gradient. currentColor means the tint. A symbol drawn in one colour only is written
 tintable, with that colour kept as its hue. Text inside a symbol (a price tag's "50", a sign's "OPEN") is kept as text
-items. Full drawings (maps, charts, gauges showing one reading, textures, instrument layers) are left out.
+items. Full drawings (maps, charts, gauges showing one reading, textures, instrument layers) are left out. A fault in a
+board's drawing is mended as Atlas draws it (board_symbol_names.MENDS: the woman's legs under her dress), not on the board,
+and a drawing that sits off its frame's middle gets its frame moved onto it (board_symbol_names.FRAMES: the speaker). A
+drawing that fails on its looks or does not resemble its thing is drawn anew in Atlas's one style (custom_icons.txt:
+the bicycle, the walker), under the board symbol's id, number and hue, so every screen and alias follows.
 
 Resource format (all lengths in viewBox units):
   {"symbols": [{"id", "n" (catalogue number), "h" (geometry hash), "vb", "k"? (hue #AARRGGBB),
@@ -38,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from svgpaths import NUM, fmt, format_path, parse_path  # noqa: E402
 import board_symbol_names as NAMES  # noqa: E402
+import own_icons  # noqa: E402
 
 OUT = os.path.join(HERE, '..', 'src', 'main', 'resources', 'atlas', 'places', 'board_symbols.json')
 PLACES = 3
@@ -793,6 +798,26 @@ def look(conv):
     return json.dumps([paths, texts], sort_keys=True), mono, colour_of, paths, texts
 
 
+def mended(e):
+    """[e] with the mends of its drawing (board_symbol_names.MENDS) applied to its SVG, a mend that no longer fits
+    reported and left out, and its frame moved onto the drawing (board_symbol_names.FRAMES)."""
+    svg = e['svg']
+    for old, new in NAMES.MENDS.get(e['id'], ()):
+        if old in svg:
+            svg = svg.replace(old, new, 1)
+        else:
+            print('mend of %s (%s) no longer fits its drawing: %s' % (e['id'], NAMES.NAMES.get(e['id'], '?'), old[:60]), file=sys.stderr)
+    if e['id'] in NAMES.FRAMES:
+        m = re.search(r'viewBox="([^"]*)"', svg)
+        if m:
+            dx, dy = NAMES.FRAMES[e['id']]
+            x, y, w, h = (float(v) for v in NUM.findall(m.group(1))[:4])
+            svg = svg[:m.start(1)] + ' '.join(fmt(v) for v in (x + dx, y + dy, w, h)) + svg[m.end(1):]
+        else:
+            print('frame of %s (%s): its drawing has no viewBox' % (e['id'], NAMES.NAMES.get(e['id'], '?')), file=sys.stderr)
+    return e if svg == e['svg'] else dict(e, svg=svg)
+
+
 def canonical(e):
     """The symbol as the catalogue keeps it: (paths, texts, hue, conv). A one-colour symbol is tintable, and hue is its
     colour on the boards (None when that is currentColor, the text colour)."""
@@ -819,7 +844,10 @@ def main():
     used = collections.Counter()
     records, kinds, notes = [], collections.Counter(), collections.Counter()
     coloured = set()
+    own = own_icons.board_drawings()
+    redrawn = set()
     for e in catalogue:
+        e = mended(e)
         paths, texts, hue, conv = canonical(e)
         f = features(e, conv)
         kind = kind_of(e, f)
@@ -834,6 +862,12 @@ def main():
         base = names.get(e['id']) or 'board.%d' % e['n']
         used[base] += 1
         sid = base if used[base] == 1 else '%s.%d' % (base, used[base])
+        if sid in own:
+            # Atlas's own drawing (custom_icons.txt); the board's hue stays, as the boards coloured this symbol
+            if e['id'] in NAMES.MENDS or e['id'] in NAMES.FRAMES:
+                print('mend or frame of %s (%s) is moot: Atlas draws it anew' % (e['id'], sid), file=sys.stderr)
+            paths, texts, _, conv = canonical(dict(e, svg=own[sid]))
+            redrawn.add(sid)
         rec = {'id': sid, 'n': e['n'], 'h': e['id'], 'vb': ' '.join(fmt(v) for v in conv.vb),
                'p': [p if p[2] else p[:2] for p in paths]}
         if hue:
@@ -846,6 +880,8 @@ def main():
             coloured.add(sid)
         records.append(rec)
 
+    for sid in sorted(set(own) - redrawn):
+        print('own drawing of %s: no such board symbol' % sid, file=sys.stderr)
     ids = {r['id'] for r in records}
     aliases = {}
     for old, new in NAMES.ALIASES.items():

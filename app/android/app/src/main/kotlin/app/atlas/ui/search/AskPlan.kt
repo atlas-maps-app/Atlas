@@ -19,7 +19,8 @@ import java.time.LocalDateTime
 
 /**
  * One stop of a plan: the step it answers, the place chosen for it (null when none fits), when you get there and how
- * long you are likely to stay, the walk from the stop before, and how many other places would have fitted.
+ * long you are likely to stay, the walk from the stop before, how many other places would have fitted, and the best of
+ * those ([options]) to swap it for.
  */
 data class AskStop(
     val step: Int,
@@ -35,6 +36,8 @@ data class AskStop(
     val matched: Int = 0,
     /** True when the place's hours say it is open from [arrive] for the whole [stay]; null when they are not mapped. */
     val openThen: Boolean? = null,
+    /** The next best matches, none closed when you would get there, each with the metres walked to it. */
+    val options: List<Pair<Hit, Double>> = emptyList(),
 ) {
     val place: Place? get() = hit?.place
     val leave: LocalDateTime get() = arrive.plus(stay)
@@ -58,12 +61,14 @@ enum class Refine { CLOSER, OPEN, STEP_FREE }
  * [Refine.OPEN], only one whose hours say it is open the whole stay). The stays are estimates, said as such.
  */
 object AskPlanner {
-    /** How many matches of a step are weighed for the time of arrival. */
+    /** How many matches of a step are weighed for the time of arrival, and how many of the rest it offers instead. */
     private const val CONSIDER = 12
+    private const val OPTIONS = 3
 
     /**
      * The plan of [parsed]'s steps, each run by [search] (the step's query, searched around a point) from [from] at
-     * [start]; [hours] reads opening hours with the country's holidays.
+     * [start]; [hours] reads opening hours with the country's holidays. [picks]: the place (its key) chosen by hand for
+     * a step, which stands where the step still finds it.
      */
     fun plan(
         parsed: ParsedQuery,
@@ -71,6 +76,7 @@ object AskPlanner {
         start: LocalDateTime,
         hours: OpeningHoursContext,
         refine: Set<Refine> = emptySet(),
+        picks: Map<Int, String> = emptyMap(),
         search: (Query, LatLon) -> QueryResult,
     ): AskPlan {
         var at = from
@@ -79,12 +85,17 @@ object AskPlanner {
         for ((i, step) in refined(parsed.steps, refine).withIndex()) {
             val main = mainChip(parsed, i)
             val result = search(step, at)
-            val chosen = choose(result.hits.take(CONSIDER), at, time, hours, strict = Refine.OPEN in refine)
+            val weighed = result.hits.take(CONSIDER)
+            val picked = picks[i]?.let { k -> result.hits.firstOrNull { it.place.key == k } }
+            val chosen = picked?.let { p -> p to openFor(p.tags, arrival(at, p, time), stayAt(p.tags), hours) }
+                ?: choose(weighed, at, time, hours, strict = Refine.OPEN in refine)
             val hit = chosen?.first
             val walk = hit?.let { Geo.distance(at, it.record.location) } ?: 0.0
             val arrive = time.plusSeconds(WalkTime.seconds(walk).toLong())
             val stay = hit?.let { stayAt(it.tags) } ?: Duration.ZERO
-            stops += AskStop(i, main?.label ?: parsed.text, main?.symbol ?: hit?.symbol ?: "ui-map-pin", hit, arrive, stay, walk, result.total, chosen?.second)
+            val options = weighed.filter { o -> o !== hit && openFor(o.tags, arrival(at, o, time), stayAt(o.tags), hours) != false }
+                .take(OPTIONS).map { o -> o to Geo.distance(at, o.record.location) }
+            stops += AskStop(i, main?.label ?: parsed.text, main?.symbol ?: hit?.symbol ?: "ui-map-pin", hit, arrive, stay, walk, result.total, chosen?.second, options)
             if (hit != null) {
                 at = hit.record.location
                 time = arrive.plus(stay)
@@ -109,6 +120,9 @@ object AskPlanner {
         }
         return if (strict) null else unknown?.let { it to null }
     }
+
+    /** When [h] is reached walking from [from] at [time]. */
+    private fun arrival(from: LatLon, h: Hit, time: LocalDateTime): LocalDateTime = time.plusSeconds(WalkTime.seconds(Geo.distance(from, h.record.location)).toLong())
 
     /** True when [tags]' hours say open from [arrive] for [stay], false when not, null when they are not mapped. */
     fun openFor(tags: Map<String, String>, arrive: LocalDateTime, stay: Duration, hours: OpeningHoursContext): Boolean? {

@@ -246,6 +246,25 @@ class SearchViewModelsTest {
     }
 
     @Test
+    fun aBranchWithoutAWebsiteLinksItsBrands() {
+        fun starbucks(n: Long, dLat: Double, site: String?) = app.atlas.model.Place(
+            OsmId.parse("n$n"),
+            app.atlas.geo.LatLon(Services.WESTERKERK.lat + dLat, Services.WESTERKERK.lon),
+            mapOf("amenity" to "cafe", "name" to "Starbucks", "brand" to "Starbucks", "brand:wikidata" to "Q37158") + listOfNotNull(site?.let { "website" to it }),
+        )
+        // two branches link their own pages on the brand's Dutch site, one links none
+        val stores = listOf(MemoryPlaces(listOf(starbucks(9001, 0.004, "https://www.starbucks.nl/store/1001"), starbucks(9002, -0.006, "https://www.starbucks.nl/store/1002"), starbucks(9003, 0.001, null))))
+        val bare = PlaceViewModel(testServices(stores = stores), null, "n9003", null, null, "en")
+        until { bare.state.value.brandSite != null }
+        assertEquals("https://www.starbucks.nl", bare.state.value.brandSite)
+        // a branch with its own page keeps it
+        val own = PlaceViewModel(testServices(stores = stores), null, "n9001", null, null, "en")
+        until { !own.state.value.looking }
+        idle(200)
+        assertNull(own.state.value.brandSite)
+    }
+
+    @Test
     fun aPlaceOnlyFromALinkStaysHonest() {
         val vm = PlaceViewModel(testServices(), null, "n123", app.atlas.geo.LatLon(52.37, 4.88), "Somewhere", "en")
         until { !vm.state.value.looking }

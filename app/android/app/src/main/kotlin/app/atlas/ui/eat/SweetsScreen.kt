@@ -57,6 +57,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.cssRadial
 import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.openTotal
 
 /* The Sweets board's pinks (`canvas/project/Sweets.dc.html`). */
 private val RASPBERRY = Color(0xFFB2345A)
@@ -95,7 +96,7 @@ fun SweetsScreen(nav: Navigator) {
                 // "Sweets" (46 on 46) at 132 px and its count 10 px on, on one baseline (the count's line 22.5 px down).
                 Row(Modifier.fillMaxWidth().padding(top = boardTop(132.dp)), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
                     CssLine(stringResource(R.string.eat_sweets), TITLE, Modifier.semantics { heading() })
-                    CssLine(case?.open?.toString() ?: "…", TITLE_COUNT, Modifier.padding(top = 22.5.dp))
+                    CssLine(case?.let { openTotal(it.open, it.guessed) } ?: "…", TITLE_COUNT, Modifier.padding(top = 22.5.dp))
                 }
             }
             item { GelatoCase(case?.tubs.orEmpty(), tub, Modifier.padding(top = 18.dp).bleed(2.dp)) { t -> tub = if (tub == t) null else t } }
@@ -360,9 +361,11 @@ private fun SweetRow(s: SweetSpot, ctx: EatContext, modifier: Modifier, onClick:
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CssLine("${s.place.walkMinutes}′", ROW_META)
                 when {
-                    s.place.alwaysOpen -> CssLine("24/7", ROW_META)
-                    s.closes != null -> CssLine("→ " + s.closes.format(HM_PADDED), ROW_META)
-                    closed -> s.place.opensAt(ctx.at, ctx.area.hours)?.let { CssLine(stringResource(R.string.eat_opens_at, opensText(OpenSay.Opens(it, it.toLocalDate() == ctx.at.toLocalDate()), ctx.lang)), ROW_META) }
+                    s.place.alwaysOpen -> CssLine(guessMark(s.place, "24/7"), ROW_META)
+                    s.closes != null -> CssLine(guessMark(s.place, "→ " + s.closes.format(HM_PADDED)), ROW_META)
+                    closed -> s.place.opensAt(ctx.at, ctx.area.hours)?.let {
+                        CssLine(guessMark(s.place, stringResource(R.string.eat_opens_at, opensText(OpenSay.Opens(it, it.toLocalDate() == ctx.at.toLocalDate()), ctx.lang))), ROW_META)
+                    }
                 }
                 if (s.vegan) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {

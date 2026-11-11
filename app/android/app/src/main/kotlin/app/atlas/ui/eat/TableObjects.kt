@@ -102,7 +102,7 @@ internal fun LeatherMenu(count: EatArea.Count?, label: String, u: Float) {
                         if (c.open) drawCircle(Color(0xFF7EE0A4)) else drawCircle(Color(0xFF7EE0A4), style = Stroke(1.2f * density))
                     }
                 }
-                CssLine(count?.value?.toString() ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
+                CssLine(count?.shown ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
             }
         }
     }
@@ -138,7 +138,7 @@ internal fun Chalkboard(count: EatArea.Count?, label: String, u: Float) {
             // At 92 % (on the ink and its glow rather than a layer, which would clip the script's overhang).
             CssLine(label, cssText("Caveat", 42 * u, 700, colour = 0xEBF2F0E6, lineHeight = 37.8f * u, shadow = CssShadow(0f, 0f, 1f, 0f, 0x75FFFFFF)))
             // The page loads Caveat at 600 and 700 only, so the count's 400 draws at 600.
-            CssLine(count?.value?.toString() ?: "…", cssText("Caveat", 20 * u, 600, colour = 0xFFCFE8C9, lineHeight = 25 * u, tnum = true))
+            CssLine(count?.shown ?: "…", cssText("Caveat", 20 * u, 600, colour = 0xFFCFE8C9, lineHeight = 25 * u, tnum = true))
         }
     }
 }
@@ -175,8 +175,8 @@ internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: F
                 count == null -> "…"
                 // Without mapped hours nobody can say who is open late; while a fuller answer may still come, say so.
                 !count.open -> if (loading) "…" else "?"
-                until != null -> "${count.value} · $until"
-                else -> count.value.toString()
+                until != null -> "${count.shown} · $until"
+                else -> count.shown
             }
             NeonText(line, (18 * u), Color(0xFFD6FBFF), listOf(4f to Color(0xFF36E3FF), 10f to Color(0xFF0FB8E0)), u, lineHeight = 24f, tnum = true)
         }
@@ -233,7 +233,7 @@ internal fun DecoCard(count: EatArea.Count?, label: String, u: Float) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((10 * u).dp)) {
             CssLine(label, cssText("Poiret One", 48 * u, lineHeight = 48 * u, spacing = 2.88f * u, brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.6f to Color(0xFFB98A36), 1f to Color(0xFFF1D38A))))
             Symbol("food.bar.4", tint = Color(0xFFC9A45C), size = (30 * u).dp)
-            CssLine(count?.value?.toString() ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
+            CssLine(count?.shown ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
         }
     }
 }
@@ -284,7 +284,7 @@ internal fun TicketStub(count: EatArea.Count?, label: String, u: Float) {
             }
             CssLine(label, cssText("Fredoka", 32 * u, 600, colour = 0xFFB2345A, lineHeight = 32 * u))
             // The page loads Fredoka at 500 and 600 only, so the count's 400 draws at 500.
-            CssLine(count?.value?.toString() ?: "…", cssText("Fredoka", 14 * u, 500, colour = 0xFF8F2A4A, lineHeight = 17 * u, tnum = true))
+            CssLine(count?.shown ?: "…", cssText("Fredoka", 14 * u, 500, colour = 0xFF8F2A4A, lineHeight = 17 * u, tnum = true))
         }
     }
 }
@@ -320,7 +320,7 @@ internal fun KraftTag(count: EatArea.Count?, label: String, u: Float) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((4 * u).dp)) {
             BoxSymbol("place.market", 32 * u, 30 * u, Color(0xFF3E2F1C))
             Text(label.uppercase(), style = cssText("Special Elite", 25 * u, colour = 0xFF2E2214, spacing = 1f * u))
-            Text(count?.value?.toString() ?: "…", style = cssText("Special Elite", 14 * u, colour = 0xFF5A4428, tnum = true))
+            Text(count?.shown ?: "…", style = cssText("Special Elite", 14 * u, colour = 0xFF5A4428, tnum = true))
         }
     }
 }

@@ -1,15 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="search_title">Recherche</string>
-    <string name="search_hint">Chercher ou demander</string>
     <string name="search_clear">Effacer</string>
     <string name="search_every">Tous les %1$s sur la carte</string>
     <string name="search_every_sub">tous les %1$d · en liste ou sur la carte</string>
     <string name="search_step_free">sans marche</string>
     <string name="search_offline_title">Fonctionne hors ligne</string>
     <string name="search_offline_text">chaque lieu de vos régions se trouve sans réseau</string>
-    <string name="search_recent">Récents · aussi des coordonnées ou des plus codes</string>
-    <string name="search_recent_clear">Effacer</string>
     <string name="search_say">Ou dites-le simplement</string>
     <string name="search_say_ask">café calme avec une prise, puis dîner</string>
     <string name="search_say_near">café à 200 m d’une station de vélos</string>
@@ -21,10 +18,12 @@
     <string name="query_title">A près de B</string>
     <string name="query_download">Télécharger cette zone</string>
     <string name="place_route">Itinéraire</string>
+    <string name="place_park_plan">Plan du parc</string>
     <string name="place_share">Partager</string>
     <string name="place_view_above">Vue d\'en haut</string>
     <string name="place_view_back">Retour à la vue précédente</string>
     <string name="place_web">Site web</string>
+    <string name="place_web_brand">Site de la marque</string>
     <string name="place_hours">Horaires</string>
     <string name="place_copy">Copier</string>
     <string name="place_sources">D’où cela vient</string>
@@ -39,13 +38,26 @@
     <string name="brands_title">Marques</string>
     <string name="brands_chains">Chaînes</string>
     <string name="brands_independent">Indépendants</string>
-    <string name="brands_all_on_map">Les %1$d sur la carte</string>
+    <plurals name="brands_n_chains">
+        <item quantity="one">%d chaîne</item>
+        <item quantity="other">%d chaînes</item>
+    </plurals>
     <string name="category_open_now">Ouvert</string>
     <string name="whatshere_title">Qu’y a-t-il ici</string>
     <string name="whatshere_coordinates">Coordonnées</string>
     <string name="whatshere_nearby">Au plus près</string>
     <string name="whatshere_at_spot">À cet endroit</string>
     <string name="whatshere_note">Laisser une note aux cartographes</string>
+    <string name="where_title">Où aller ?</string>
+    <string name="where_free">gratuit</string>
+    <string name="where_indoors">intérieur</string>
+    <string name="where_spin">Tourner</string>
+    <string name="where_tap">Faites tourner la roue : elle s\'arrête sur un vrai lieu près de vous.</string>
+    <string name="where_another">Une autre</string>
+    <string name="where_sunset">coucher du soleil %1$s</string>
+    <string name="where_nothing">Rien ne convient ici</string>
+    <string name="where_nothing_text">Essayez une marche plus longue, ou moins de filtres.</string>
+    <string name="where_footer">Des idées d\'OpenStreetMap autour de vous, aucune fermée en ce moment ; les parts grises n\'ont rien qui convienne.</string>
     <string name="where_w_water">Eau</string>
     <string name="where_w_views">Vues</string>
     <string name="where_w_food">Manger</string>
@@ -54,4 +66,47 @@
     <string name="where_w_nature">Nature</string>
     <string name="where_w_culture">Culture</string>
     <string name="where_w_odd">Insolite</string>
+    <string name="search_route_to">Itinéraire vers %1$s</string>
+    <string name="search_route_from">depuis %1$s</string>
+    <string name="search_route_here">d\'ici</string>
+    <string name="search_route_via">par %1$s</string>
+    <string name="ask_instead">ou</string>
+    <string name="ask_route_all">Itinéraire par chaque arrêt</string>
+    <string name="place_wiki_open">Lire l’article</string>
+    <string name="place_wiki_none">L’article ne peut pas être lu pour l’instant</string>
+    <string name="place_wiki_minutes">%1$d minutes de lecture</string>
+    <string name="place_wiki_licence">Texte de Wikipédia, CC BY-SA</string>
+    <string name="place_wiki_read">Lire sur Wikipédia</string>
+    <string name="place_source_addresses">Adresse : %1$s, via OpenAddresses · %2$s</string>
+    <string name="brand_today">Aujourd’hui</string>
+    <string name="brand_today_closed">Fermé aujourd’hui</string>
+    <string name="brand_today_latest">le dernier jusqu’à %1$s</string>
+    <string name="brand_week_show">Afficher les horaires de la semaine</string>
+    <string name="brand_week_hide">Masquer les horaires de la semaine</string>
+    <string name="brand_trades">Présent dans</string>
+    <string name="brand_worldwide">Dans le monde entier</string>
+    <plurals name="brand_countries">
+        <item quantity="one">%d pays</item>
+        <item quantity="other">%d pays</item>
+    </plurals>
+    <string name="brand_since">Depuis</string>
+    <string name="brand_part_of">Fait partie de</string>
+    <string name="brand_head_office">Siège</string>
+    <string name="brand_website">Site web</string>
+    <string name="brand_wikipedia">Wikipédia</string>
+    <string name="brand_also_near">D’autres du même genre près d’ici</string>
+    <string name="kind_also_sold">Aussi en vente chez</string>
+    <string name="place_hours_as_at">comme %1$s</string>
+    <string name="place_hours_as_branch">comme son autre magasin</string>
+    <plurals name="place_hours_as_branches">
+        <item quantity="one">comme %1$d de ses %2$d magasin proche</item>
+        <item quantity="other">comme %1$d de ses %2$d magasins proches</item>
+    </plurals>
+    <plurals name="place_hours_from_branches">
+        <item quantity="one">d’après %d magasin proche</item>
+        <item quantity="other">d’après %d magasins proches</item>
+    </plurals>
+    <string name="place_hours_as_kind">comme la plupart de ce genre ici</string>
+    <string name="kind_see_also">Voir aussi</string>
+    <string name="kind_together">Afficher ici aussi</string>
 </resources>

@@ -60,6 +60,7 @@ import app.atlas.nav.Navigator
 import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.openTotal
 
 /* The Street board's night (`canvas/project/Street.dc.html`). */
 private val NIGHT = Color(0xFF0E0C14)
@@ -105,8 +106,8 @@ fun LateScreen(nav: Navigator) {
                     val line = wall?.let { w ->
                         when {
                             !w.hoursKnown -> stringResource(R.string.eat_late_no_hours)
-                            w.till != null -> stringResource(R.string.eat_late_open_till, w.count, w.till.format(HM))
-                            else -> stringResource(R.string.eat_late_open, w.count)
+                            w.till != null -> stringResource(R.string.eat_late_open_till, openTotal(w.count, w.guessed), w.till.shown)
+                            else -> stringResource(R.string.eat_late_open, openTotal(w.count, w.guessed))
                         }
                     } ?: stringResource(R.string.kit_loading)
                     NeonText(line, 20f, Color(0xFFE2FCFF), listOf(4f to Color(0xFF36E3FF), 12f to Color(0xFF0FB8E0)), 1f, lineHeight = 25.5f, tnum = true)
@@ -316,8 +317,8 @@ private fun NeonCard(s: LateSpot, index: Int, ctx: EatContext, modifier: Modifie
             CssLine(s.place.name, CARD_NAME)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
-                    s.place.alwaysOpen -> CssLine("24/7", CARD_META_TEXT, color = Color(0xFF0A7A93))
-                    s.until != null -> CssLine("→ " + s.until.format(HM), CARD_META_TEXT, color = Color(0xFFB0147E))
+                    s.place.alwaysOpen -> CssLine(guessMark(s.place, "24/7"), CARD_META_TEXT, color = Color(0xFF0A7A93))
+                    s.until != null -> CssLine(guessMark(s.place, "→ " + s.until.format(HM)), CARD_META_TEXT, color = Color(0xFFB0147E))
                 }
                 CssLine("${s.place.walkMinutes}′", CARD_META_TEXT)
                 priceText(ctx.ratings[s.place.key]?.priceLevel)?.let { CssLine(it, CARD_META_TEXT) }

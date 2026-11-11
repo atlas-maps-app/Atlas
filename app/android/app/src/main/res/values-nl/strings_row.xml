@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="row_star">In je rij</string>
+    <string name="row_change">Je rij aanpassen</string>
+    <string name="row_move_left">Naar links</string>
+    <string name="row_move_right">Naar rechts</string>
+    <string name="row_take_out">%1$s uit je rij halen</string>
+    <string name="row_add">Aan je rij toevoegen</string>
+    <string name="row_reset">Je rij terugzetten</string>
+    <string name="row_done">Klaar</string>
+</resources>

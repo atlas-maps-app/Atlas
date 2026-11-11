@@ -59,6 +59,11 @@
     <string name="mine_offline_actions_delete">Verwijderen</string>
     <string name="mine_offline_actions_cancel">Stop</string>
     <string name="mine_offline_actions_retry">Opnieuw</string>
+    <string name="mine_offline_actions_again">Opnieuw downloaden</string>
+    <string name="mine_offline_unreadable">plaatsen onleesbaar</string>
+    <string name="mine_offline_unreadable_version">De plaatsen zijn opgeslagen door een andere versie van Atlas, dus offline zoeken kan ze hier niet lezen.</string>
+    <string name="mine_offline_unreadable_damaged">Het bestand met de plaatsen is beschadigd, dus offline zoeken kan het hier niet lezen.</string>
+    <string name="mine_offline_orphan_text">Deze plaatsen horen bij geen gebied op deze telefoon en deze Atlas kan ze niet lezen. Verwijderen maakt %1$s vrij.</string>
     <string name="mine_offline_delete_title">%1$s verwijderen?</string>
     <string name="mine_offline_delete_text">Dit maakt %1$s vrij. Kaart, zoeken en routes daar hebben dan verbinding nodig.</string>
     <string name="mine_offline_delete_confirm">Verwijder</string>
@@ -181,6 +186,7 @@
     <string name="mine_sent_reverse">de plek waar je naar vraagt, als Photon geen antwoord heeft</string>
     <string name="mine_sent_edits">de gebouwen die je aanvult; je bewerkingen, openbaar onder je OpenStreetMap-gebruikersnaam, alleen als je bent ingelogd</string>
     <string name="mine_sent_windows">welke delen van de kaart je bekijkt: bytes van een pakket</string>
+    <string name="mine_sent_addresses">waar een gebied ligt dat je downloadt, niets over jou</string>
     <string name="mine_sent_brouter">de 5°-tegel waarin je een route plant, om de routegegevens te meten</string>
     <string name="mine_sent_images">de namen van de afbeeldingen van een plek</string>
     <string name="mine_sent_photo">de plek waar je naar kijkt, om er een foto te vinden</string>
@@ -248,6 +254,7 @@
     <string name="mine_feeds_chargemap">prijzen en live status: alleen partners, geen publieke API</string>
     <string name="mine_feeds_fuel">brandstofprijzen in Duitsland, live</string>
     <string name="mine_feeds_packs">de vensters van de kaart en offline gebieden, uit OpenStreetMap</string>
+    <string name="mine_feeds_addresses">huisnummers die OpenStreetMap mist, bij een gebied dat je downloadt</string>
     <string name="mine_feeds_routing">routegegevens voor lopen, fietsen en rijden</string>
     <string name="mine_feeds_images">afbeeldingen van plekken, elk met zijn licentie</string>
     <string name="mine_feeds_photos">straatfoto\'s, open en gedeeld</string>
@@ -392,6 +399,7 @@
     <string name="mine_part_building_shadows">Gebouwschaduwen</string>
     <string name="mine_part_shadow_blur">Zachte schaduwen</string>
     <string name="mine_part_park_shadows">Parkschaduwen</string>
+    <string name="mine_part_sun">Zonlicht</string>
     <string name="mine_part_reflections">Weerspiegelingen</string>
     <string name="mine_part_ripple">Rimpeling</string>
     <string name="mine_part_glitter">Zonneglinstering</string>

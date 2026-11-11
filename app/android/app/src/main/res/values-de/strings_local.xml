@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A park's page in German: its plan, its kinds, rules, trails and season, and the words it shares with the field notes and the year. -->
+<resources>
+    <string name="park_playground">Spielplatz</string>
+    <string name="park_dogs">Hundeauslauf</string>
+    <string name="park_cafe">Café</string>
+    <string name="park_toilets">Toiletten</string>
+    <string name="park_water">Trinkwasser</string>
+    <string name="park_courts">Sportplätze</string>
+    <string name="park_fitness">Fitnessgerät</string>
+    <string name="park_picnic">Picknicktische</string>
+    <string name="park_you">DU</string>
+    <string name="park_unnamed">Park</string>
+    <string name="park_none">Kein Park in deiner Nähe kartiert</string>
+    <string name="park_none_text">Parks im Umkreis von 1,5 km erscheinen hier, sobald das Gebiet auf diesem Telefon ist oder du online bist.</string>
+    <string name="park_nothing_marked">In diesem Park ist auf der Karte noch nichts eingetragen.</string>
+    <string name="park_plan_desc">Plan von %1$s mit %2$d eingetragenen Orten</string>
+    <string name="park_ages">%1$s Jahre</string>
+    <string name="park_wc_at">WC %1$s</string>
+    <string name="park_water_at">Wasser %1$s</string>
+    <string name="park_visitor">Besucherzentrum</string>
+    <string name="park_sleep">Im Park übernachten</string>
+    <string name="park_details">Details</string>
+    <string name="park_now">%1$s, gerade jetzt</string>
+    <string name="park_notes_more">Alle Notizen</string>
+    <string name="park_rule_dogs_lead">Hunde an der Leine</string>
+    <string name="park_rule_no_dogs">keine Hunde</string>
+    <string name="park_rule_dogs">Hunde willkommen</string>
+    <string name="park_rule_no_drones">keine Drohnen</string>
+    <string name="park_rule_no_fires">kein Feuer</string>
+    <string name="park_rule_fire_rings">Feuer nur in Feuerstellen</string>
+    <string name="park_rule_fee">Eintritt</string>
+    <string name="park_sources">Umriss, Wege, Bäume und Regeln: OpenStreetMap</string>
+    <plurals name="park_trails">
+        <item quantity="one">%d Wanderweg</item>
+        <item quantity="other">%d Wanderwege</item>
+    </plurals>
+    <string name="parkland_walk_there">Hinlaufen, %1$s</string>
+    <string name="year_act_swim">Schwimmen</string>
+    <string name="year_act_foliage">Herbstlaub</string>
+    <string name="year_act_mushrooms">Pilze</string>
+    <string name="year_act_birds">Vögel</string>
+    <string name="year_act_stars">Sterne</string>
+    <string name="year_act_ski">Ski</string>
+    <string name="year_act_blossom">Blüte</string>
+    <string name="year_act_festivals">Festivals</string>
+    <string name="year_phase_last">letzte Gelegenheit · bis Ende %1$s</string>
+    <string name="year_phase_peak">am schönsten · bis %1$s</string>
+    <string name="year_phase_on">läuft · bis %1$s</string>
+    <string name="year_phase_soon">beginnt im %1$s</string>
+    <string name="nature_title">Feldnotizen</string>
+    <string name="picnic_step_free">stufenlos</string>
+    <string name="picnic_fenced">eingezäunt</string>
+    <string name="picnic_offline_text">Lade dieses Gebiet unter Meins › Offline herunter, dann erscheint das auch ohne Verbindung.</string>
+</resources>

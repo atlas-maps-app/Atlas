@@ -163,6 +163,17 @@ class RegionFiles(val regions: File, val places: File, val segments: File) {
         }
     }
 
+    /** Removes the place store of [id] with SQLite's files beside it; returns bytes freed. */
+    @Synchronized
+    fun deletePlaces(id: String): Long {
+        var freed = 0L
+        val db = places(id)
+        for (f in listOf(db, File(db.path + "-wal"), File(db.path + "-shm"), File(db.path + "-journal"))) {
+            if (f.isFile) { freed += f.length(); f.delete() }
+        }
+        return freed
+    }
+
     /** Removes the files of [id] that only it uses (the map's tiles or atlas pack, the place store); returns bytes freed. */
     @Synchronized
     fun deleteOwn(id: String): Long {

@@ -38,6 +38,7 @@ import app.atlas.nav.Navigator
 import app.atlas.places.Cuisine
 import app.atlas.ui.kit.HonestyFooter
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.openTotal
 import java.util.Locale
 
 /* The Carte board's type, which a cuisine's page keeps (the page has no board of its own). */
@@ -74,8 +75,8 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
                     CssLine(stringResource(familyName(family)).lowercase(), PAGE_FAMILY, color = Color(family.colour))
                     CssLine(title, PAGE_TITLE, Modifier.semantics { heading() })
                     if (worked.value != null) {
-                        val open = places.count { it.openness(ctx.at, ctx.area.hours).isOpen }
-                        CssLine(stringResource(R.string.eat_page_count, places.size, open, ctx.at.format(HM)).lowercase(Locale.forLanguageTag(ctx.lang)), PAGE_COUNT)
+                        val open = places.filter { it.openness(ctx.at, ctx.area.hours).isOpen }
+                        CssLine(stringResource(R.string.eat_page_count, places.size, openTotal(open.size, open.count { it.guessed }), ctx.at.format(HM)).lowercase(Locale.forLanguageTag(ctx.lang)), PAGE_COUNT)
                     }
                 }
             }

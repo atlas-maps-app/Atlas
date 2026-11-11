@@ -102,13 +102,39 @@ sealed class TagFilter {
     }
 
     /**
+     * A test on the keys [glob] stands for, each `*` one part of a key: `socket:*:output>=150` holds when some
+     * socket's output is 150 kW or more. [part] is the test written with the glob as its key.
+     */
+    data class AnyKey(val glob: String, val part: TagFilter) : TagFilter() {
+        /** The keys [glob] stands for, as a regex. */
+        val keyPattern: String get() = "^" + glob.split('*').joinToString("[^:]+") { regexLiteral(it) } + "$"
+        private val keyRegex by lazy { Regex(keyPattern) }
+        private val tests = java.util.concurrent.ConcurrentHashMap<String, TagFilter>()
+        override fun matches(tags: Map<String, String>) = tags.keys.any { k -> keyRegex.matches(k) && tests.getOrPut(k) { keyed(part, k) }.matches(tags) }
+        override fun toText() = part.toText()
+        override fun keys() = emptySet<String>()
+        override fun toOverpass(): String? = when (part) {
+            is Has -> "[~${ql(keyPattern)}~\".\"]"
+            is Equals -> "[~${ql(keyPattern)}~${ql("^" + regexLiteral(part.value) + "$")}]"
+            else -> null
+        }
+
+        companion object {
+            /** [f] on the keys [glob] stands for; no such key at all (`"socket:*:output"!=*`) is that none is there. */
+            fun of(glob: String, f: TagFilter): TagFilter = if (f is Not && f.part is Has) Not(AnyKey(glob, f.part)) else AnyKey(glob, f)
+        }
+    }
+
+    /**
      * A numeric test with units: `maxheight>=4 m`, `"socket:type2_combo:output">=150kW`. A tag value without a
-     * unit is read in [unit]'s base unit (metres, tonnes, kW…); with several `;` values, any may pass.
+     * unit is read in [unit]'s base unit (metres, tonnes, kW…); with several `;` values, any may pass. A date's
+     * value is read as its year ([Years]): `start_date<1900` takes "1890s", "C19" and "before 1900".
      */
     data class Compare(val key: String, val op: CompareOp, val value: Double, val unit: String? = null) : TagFilter() {
         private val target by lazy { Units.toBase(value, unit) }
         override fun matches(tags: Map<String, String>): Boolean {
             val v = tags[key] ?: return false
+            if (Years.isDateKey(key)) return Years.year(v)?.let { op.test(it, value) } ?: false
             val t = target
             for (q in Units.parseAll(v)) {
                 val ok = when {
@@ -175,6 +201,16 @@ sealed class TagFilter {
         fun parseOrNull(text: String): TagFilter? = try { parse(text) } catch (e: TagFilterException) { null }
 
         fun and(vararg parts: TagFilter): TagFilter = if (parts.size == 1) parts[0] else And(parts.toList())
+
+        /** [f], a test on one key, on the key [k] instead. */
+        internal fun keyed(f: TagFilter, k: String): TagFilter = when (f) {
+            is Has -> f.copy(key = k)
+            is Equals -> f.copy(key = k)
+            is NotEquals -> f.copy(key = k)
+            is Matches -> f.copy(key = k)
+            is Compare -> f.copy(key = k)
+            else -> f
+        }
         fun or(vararg parts: TagFilter): TagFilter = if (parts.size == 1) parts[0] else Or(parts.toList())
 
         internal inline fun anyPart(v: String, test: (String) -> Boolean): Boolean {
@@ -306,6 +342,13 @@ internal class TagFilterParser(private val s: String) {
             return TagFilter.KeyMatches(checkedRegex(kp), checkedRegex(value()))
         }
         val key = key()
+        val f = test(key)
+        // "socket:*:output>=150": a star stands for one part of a key
+        return if ('*' in key && key != "*") TagFilter.AnyKey.of(key, f) else f
+    }
+
+    /** The test after [key]: an operator and its value, or none (the key is there). */
+    private fun test(key: String): TagFilter {
         skip()
         val op = when {
             s.startsWith("!=", i) -> "!="

@@ -45,7 +45,8 @@ class ChargeRepository(private val services: Services) {
         // offline: the registers on the phone answer as they do online (online they were asked, and found nothing)
         val kept = if (online) emptyList() else ready.filter { it.answersOffline() }
         val registers = ChargerMerge.gather(kept, SOURCE_DEADLINE) { p -> p.near(centre, radiusM, ChargerFilters(maxResults = 120)) }
-        val near = runCatching { services.places.nearby("charge", centre, radiusM, 120).first { it.places.isNotEmpty() || it.error != null || it.source == PlaceOrigin.STORE } }.getOrNull()
+        // the chargers' own kind, not their family: Fuel holds the gas stations too since 6 November
+        val near = runCatching { services.places.nearby("charging", centre, radiusM, 120).first { it.places.isNotEmpty() || it.error != null || it.source == PlaceOrigin.STORE } }.getOrNull()
         val places = ChargerMerge.merge(registers + listOf(near?.places.orEmpty()))
         val sources = kept.filterIndexed { i, _ -> registers[i].isNotEmpty() }.map { it.id } + (near?.source?.name?.lowercase() ?: "none")
         ChargeResult(places, online, sources, failure ?: near?.error?.takeIf { places.isEmpty() })

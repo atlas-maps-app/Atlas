@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="row_star">In deiner Reihe</string>
+    <string name="row_change">Deine Reihe ändern</string>
+    <string name="row_move_left">Nach links</string>
+    <string name="row_move_right">Nach rechts</string>
+    <string name="row_take_out">%1$s aus deiner Reihe nehmen</string>
+    <string name="row_add">Zu deiner Reihe hinzufügen</string>
+    <string name="row_reset">Deine Reihe zurücksetzen</string>
+    <string name="row_done">Fertig</string>
+</resources>

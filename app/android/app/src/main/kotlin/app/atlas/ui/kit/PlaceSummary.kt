@@ -8,7 +8,10 @@ import app.atlas.R
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import app.atlas.places.Brand
+import app.atlas.places.Brands
 import app.atlas.places.ChangeKind
+import app.atlas.places.KindColours
 import app.atlas.places.Localise
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
@@ -17,11 +20,12 @@ import app.atlas.places.Symbols
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
 
 /**
- * What a list row says about a place: its name, its kind in the reader's language, its symbol and colour, whether it
- * is open at [now] (from `opening_hours`, null when not mapped) and how far it is from where you are.
+ * What a list row says about a place: its name, its kind in the reader's language, its mark and colour ([markOf]),
+ * whether it is open at [now] (from `opening_hours`, null when not mapped) and how far it is from where you are.
  */
 @Immutable
 data class PlaceSummary(
@@ -42,14 +46,17 @@ data class PlaceSummary(
             val tags = place.tags
             val preset = Presets.match(tags)
             val kind = preset?.name(lang)
-            val name = Localise.name(tags, lang) ?: kind ?: place.id?.toString() ?: ""
+            val own = Localise.name(tags, lang)
+            // A place with no name of its own is titled by what it is ("Gift Shop"), and no kind line repeats it ("Gifts")
+            val name = own ?: preset?.fullName(lang) ?: place.id?.toString() ?: ""
             val hours = OpeningHours.parseOrNull(tags["opening_hours"])
+            val (symbol, colour) = markOf(place)
             return PlaceSummary(
                 place = place,
                 name = name,
-                kind = kind?.takeIf { it != name },
-                symbol = Symbols.symbolFor(tags),
-                colour = Symbols.colourFor(tags),
+                kind = kind?.takeIf { own != null && it != name },
+                symbol = symbol,
+                colour = colour,
                 open = hours?.status(now),
                 alwaysOpen = hours?.isAlwaysOpen == true,
                 distanceM = from?.let { Geo.distance(it, place.location) },
@@ -57,6 +64,35 @@ data class PlaceSummary(
         }
     }
 }
+
+/**
+ * How [place] is marked wherever Atlas draws it, as a pin, a row's disc, a card's badge or its page's tile: its brand's
+ * logo where the brand has one, else its kind's symbol (kinds.tsv), on its family's colour ([Symbols.markFor],
+ * [Symbols.colourFor]) or its kind's own, its thing's ([KindColours]: a bakery's bread brown); the same mark on every
+ * screen, so a place seen once is known again, but on the search's pins and rows, where a chain with a colour of its
+ * own is on its sign ([signOf]). Kept by the place's key, for the maps and lists that ask on every frame.
+ */
+fun markOf(place: Place): Pair<String, Int> {
+    marks[place.key]?.let { (tags, mark) -> if (tags == place.tags) return mark }
+    val mark = Symbols.markFor(place.tags) to (KindColours.of(place.tags) ?: Symbols.colourFor(place.tags))
+    if (marks.size >= MARKS) marks.clear()
+    marks[place.key] = place.tags to mark
+    return mark
+}
+
+private val marks = ConcurrentHashMap<String, Pair<Map<String, String>, Pair<String, Int>>>()
+
+/**
+ * The brand whose own sign [place] wears on the search's pins and rows, as on the brand's page: one with a logo and a
+ * colour of its own, the Albert Heijn blue everyone knows from the street (the owner, 6 November, of a green Albert
+ * Heijn among the groceries: "Why doesnt albert heijn get its color on this image?"). Null for the rest, a brand whose
+ * colour is not known among them, which wear [markOf].
+ */
+fun signOf(place: Place): Brand? =
+    Brands.forTags(place.tags)?.takeIf { b -> b.colour != null && b.logoSlug?.let { Symbols.has("logo-$it") } == true }
+
+/** The most marks kept: a city's places in view and in the lists, a few times over. */
+private const val MARKS = 4096
 
 /** Walking times on foot in a city: 4.8 km/h along streets about 1.3 times longer than the straight line. */
 object WalkTime {

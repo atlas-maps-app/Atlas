@@ -85,7 +85,7 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
     const shaders::ItemWords w = shaders::item_words(words[0], words[1], words[2]);
     const geometry::RegionItem& it = items.items[item];
     shaders::ItemJob j{};
-    j.place = tile.place;
+    j.place = scene::bent_place(camera_, tile);
     j.flags = choice.flags;
     j.slot = shaders::rank_slot(rank);
     j.a = choice.a;

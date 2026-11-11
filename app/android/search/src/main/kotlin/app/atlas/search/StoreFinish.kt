@@ -13,6 +13,18 @@ internal class StoreFinish(private val store: PlaceStore, private val langs: Lis
         vocabulary()
     }
 
+    /**
+     * What filing places anew changes ([StoreRefile]): the categories' counts where places changed category ([counts]),
+     * and the typo vocabulary, which holds their names.
+     */
+    fun refiled(counts: Boolean = true) {
+        if (counts) {
+            store.exec("DELETE FROM stat WHERE k = ${StoreSchema.CATEGORY_KEY}")
+            store.exec("INSERT INTO stat(k, v, n) SELECT k, v, count(*) FROM lookup WHERE k = ${StoreSchema.CATEGORY_KEY} GROUP BY k, v")
+        }
+        vocabulary()
+    }
+
     private fun streets() {
         store.exec("DELETE FROM street_rt")
         store.exec("INSERT INTO street_fts(street_fts) VALUES ('delete-all')")
@@ -61,7 +73,7 @@ internal class StoreFinish(private val store: PlaceStore, private val langs: Lis
         }
     }
 
-    /** The text index again from every place, for a store whose index another version wrote. */
+    /** The counts of the lookup table's rows, of every key's places and of every preset's, with the place count and bounds. */
     private fun stats() {
         store.exec("DELETE FROM stat")
         store.exec("INSERT INTO stat(k, v, n) SELECT k, v, count(*) FROM lookup GROUP BY k, v")

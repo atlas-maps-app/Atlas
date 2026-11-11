@@ -230,7 +230,7 @@ private fun ListCard(list: SavedList, nav: Navigator, modifier: Modifier) {
         }
         Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             list.places.forEachIndexed { i, s ->
-                SavedRow(i + 1, s, colour, here, lang, now) { services.remember(s.place); nav.go(Dest.Place.of(s.place)) }
+                SavedRow(i + 1, s, colour, here, lang, now) { services.remember(s.place); nav.go(Dest.Place.page(s.place)) }
             }
         }
     }

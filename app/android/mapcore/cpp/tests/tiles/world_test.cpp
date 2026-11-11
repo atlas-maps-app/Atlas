@@ -11,7 +11,9 @@
 // ground leaves a piece of a cell bare or crosses a cell's edge is caught. With ATLAS_WORLD_DIR naming the packer's
 // output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
 // and bytes printed, a line a level: `world level <z> ...`.
+#include "base/pymath/PyMath.hpp"
 #include "passes/World.hpp"
+#include "scene/Cells.hpp"
 #include "scene/WorldTiles.hpp"
 #include "style/Theme.hpp"
 #include "tests/base/require.hpp"
@@ -20,6 +22,7 @@
 #include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/WorldIndex.hpp"
@@ -42,6 +45,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -798,6 +802,129 @@ TEST_CASE("scene: a world tile's geometry lies the land under everything, then t
     CHECK(atlas::scene::world_level_start(6) == 18'800.0 * 32);
     CHECK(atlas::scene::world_far(18'000.0, 1'000.0) == doctest::Approx(30'000.0));
     CHECK(atlas::scene::world_far(1e6, 1e6) == doctest::Approx(std::sqrt((2.0 * 6'371'000.0 * 1e6) + 1e12)));
+}
+
+TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
+          "the tile's winding, and the poles' caps are grids of it") {
+    // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km
+    TileBytes tile = world_tile(5, 16, 10);
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const atlas::scene::WorldGeometry g = atlas::scene::build_world_geometry(*decoded, nullptr);
+    const double limit = atlas::scene::world_split_length(5);
+    CHECK(limit == doctest::Approx(std::sqrt(8.0 * 6'371'000.0 * 3.0 * 64.0)));
+    const auto& h = decoded->header;
+    const double south = h.south * 1e-7;
+    const double west = h.west * 1e-7;
+    const double north = h.north * 1e-7;
+    const double east = h.east * 1e-7;
+    const auto lat_of = [&](std::uint32_t w) { return north - ((north - south) * (w >> 16U) / 65'535.0); };
+    const auto lon_of = [&](std::uint32_t w) { return west + ((east - west) * (w & 0xFFFFU) / 65'535.0); };
+    const auto length = [&](std::uint32_t a, std::uint32_t b) {
+        const double lat = (lat_of(a) + lat_of(b)) / 2.0;
+        const double dx = (lon_of(b) - lon_of(a)) * 111'320.0 * atlas::pymath::cos(lat * std::numbers::pi / 180.0);
+        const double dz = (lat_of(b) - lat_of(a)) * 110'540.0;
+        return atlas::pymath::hypot(dx, dz);
+    };
+    // twice the signed area in (u, −v): positive counter-clockwise with north up
+    const auto area = [](std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+        const auto u = [](std::uint32_t w) { return static_cast<double>(w & 0xFFFFU); };
+        const auto n = [](std::uint32_t w) { return -static_cast<double>(w >> 16U); };
+        return ((u(b) - u(a)) * (n(c) - n(a))) - ((u(c) - u(a)) * (n(b) - n(a)));
+    };
+    REQUIRE(g.triangles > 32);
+    double longest = 0;
+    double total = 0;
+    std::size_t backwards = 0;
+    for (std::size_t t = 0; t < g.triangles; ++t) {
+        const std::uint32_t a = g.words[3 * t];
+        const std::uint32_t b = g.words[(3 * t) + 1];
+        const std::uint32_t c = g.words[(3 * t) + 2];
+        longest = std::max({longest, length(a, b), length(b, c), length(c, a)});
+        const double twice = area(a, b, c);
+        if (twice < 0) ++backwards;
+        total += twice / 2.0;
+    }
+    MESSAGE(std::format("{} triangles, the longest edge {:.0f} m of {:.0f}", g.triangles, longest, limit));
+    CHECK(longest <= limit * 1.001);
+    CHECK(longest > limit / 2.0);
+    CHECK(backwards == 0);
+    // the land and the sea cover the tile once: its box's area, within the fractions' rounding
+    CHECK(total == doctest::Approx(65'535.0 * 65'535.0).epsilon(1e-3));
+    for (std::size_t s = 0; s < g.segments; ++s) {
+        const std::size_t at = (4 * std::size_t{g.triangles}) + (3 * s);
+        CHECK(length(g.words[at], g.words[at + 1]) <= limit * 1.001);
+    }
+    // the caps: 128 by 16 quads, every triangle of the tiles' winding, in its palette entry and cell 0
+    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::south_cap);
+    CHECK(cap.triangles == 4096U);
+    CHECK(cap.segments == 0U);
+    REQUIRE(cap.words.size() == 4U * 4096U);
+    double cap_total = 0;
+    std::size_t cap_backwards = 0;
+    std::size_t cap_looks = 0;
+    for (std::size_t t = 0; t < cap.triangles; ++t) {
+        const double twice = area(cap.words[3 * t], cap.words[(3 * t) + 1], cap.words[(3 * t) + 2]);
+        if (!(twice > 0)) ++cap_backwards;
+        cap_total += twice / 2.0;
+        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::south_cap) ++cap_looks;
+    }
+    CHECK(cap_backwards == 0);
+    CHECK(cap_looks == cap.triangles);
+    CHECK(cap_total == doctest::Approx(65'535.0 * 65'535.0));
+    // a cap's box follows the target's longitude
+    const atlas::scene::DegreeBox north_cap = atlas::scene::world_cap_box(1, 30.0);
+    CHECK(north_cap.north == 90.0);
+    CHECK(north_cap.south == atlas::scene::world_cap_from);
+    CHECK(north_cap.west == -150.0);
+    CHECK(north_cap.east == 210.0);
+    CHECK(atlas::scene::world_cap_box(-1, 0.0).south == -90.0);
+}
+
+TEST_CASE("scene: a world tile's cells over a descendant are the packer's, rows of equal latitude, not Mercator's") {
+    using atlas::scene::cells_overlapping;
+    using atlas::scene::world_cells_per_side;
+    const auto box = [](std::uint8_t z, std::uint32_t x, std::uint32_t y) {
+        return atlas::tiles::tile_box(atlas::tiles::TileKey(z, x, y));
+    };
+    // the globe's 3/4/2, 40.98° to 66.51° N and 0° to 45° E: its rows of cells end at 60.13°, 53.75° and 47.36° N
+    const std::array<std::int32_t, 4> l3 = box(3, 4, 2);
+    CHECK(cells_overlapping(world_cells_per_side, l3, l3) == 0xFFFFU);
+    // 6/32/20, 52.52° to 55.78° N and 0° to 5.6° E, lies under the first column's second and third rows; by its key
+    // it lies under the third alone, and the drawing ended at 53.75° N (the sweep's hole of 5 November)
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 32, 20)) == ((1U << 4U) | (1U << 8U)));
+    CHECK(atlas::scene::cells_over(world_cells_per_side, 3, 32, 20) == (1U << 8U));
+    // 6/32/21 (48.92° to 52.52° N) lies under the third row alone, and 6/33/20, whose east edge is the first column's,
+    // under the first column alone
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 32, 21)) == (1U << 8U));
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(6, 33, 20)) == ((1U << 4U) | (1U << 8U)));
+    // a child: its two columns, and the rows of the other half it reaches (4/8/5's 55.78° N, over the second row)
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(4, 8, 4)) == 0x0033U);
+    CHECK(cells_overlapping(world_cells_per_side, l3, box(4, 8, 5)) == 0x3330U);
+    // and every point of a descendant lies in one of the cells over it (tiles::cell_of, the packer's Cells.cellOf):
+    // 3/4/2's L6 tiles and 9/263/168's L11 (Amsterdam's, whose rows part from Mercator's by 3.7 m), at their corners,
+    // 32 units in, and middles
+    for (const auto& [ancestor, gap] :
+         {std::pair{atlas::tiles::TileKey(3, 4, 2), 3U}, std::pair{atlas::tiles::TileKey(9, 263, 168), 2U}}) {
+        const std::array<std::int32_t, 4> a = atlas::tiles::tile_box(ancestor);
+        const std::uint32_t side = 1U << gap;
+        for (std::uint32_t y = 0; y < side; ++y) {
+            for (std::uint32_t x = 0; x < side; ++x) {
+                const atlas::tiles::TileKey k(static_cast<std::uint8_t>(ancestor.z + gap), (ancestor.x << gap) + x,
+                                              (ancestor.y << gap) + y);
+                const std::array<std::int32_t, 4> b = atlas::tiles::tile_box(k);
+                const std::uint64_t over = cells_overlapping(world_cells_per_side, a, b);
+                for (const std::int32_t lat : {b[0] + 32, (b[0] / 2) + (b[2] / 2), b[2] - 32}) {
+                    for (const std::int32_t lon : {b[1] + 32, (b[1] / 2) + (b[3] / 2), b[3] - 32}) {
+                        CHECK(((over >> atlas::tiles::cell_of(ancestor, lat, lon)) & 1U) == 1U);
+                    }
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE("passes: the world's palette is the theme's land, water and roads, and its land where the style has none") {

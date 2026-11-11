@@ -1,6 +1,7 @@
 package app.atlas.search
 
 import app.atlas.geo.BBox
+import app.atlas.providers.OpenAddresses
 import app.atlas.providers.Overpass
 import app.atlas.providers.OverpassQl
 import kotlinx.coroutines.currentCoroutineContext
@@ -12,7 +13,8 @@ import kotlin.math.ceil
 /**
  * Builds a region's [PlaceStore] from Overpass when the user downloads a region: every point of interest and named
  * feature with full tags, stops and stations, addresses, and trees (see [Selection]). A big region is fetched in tiles
- * of about [tileDegrees], one transaction each, so a failed tile is retried alone and progress can be shown.
+ * of about [tileDegrees], one transaction each, so a failed tile is retried alone and progress can be shown. With
+ * [addresses], the house numbers OpenStreetMap lacks are then filled in from OpenAddresses ([AddressFill]).
  */
 class RegionImport(
     private val overpass: Overpass,
@@ -20,11 +22,21 @@ class RegionImport(
     private val retries: Int = 2,
     /** Also fetch when each element was last edited, so "newer:" works offline (a slightly bigger answer). */
     private val withEditTimes: Boolean = false,
+    /** Where the house numbers OpenStreetMap lacks are read once its places are in; none when null. */
+    private val addresses: OpenAddresses? = null,
 ) {
-    /** How far an import has got: tiles done of all, elements read and places kept so far. */
-    data class Progress(val tilesDone: Int, val tiles: Int, val elements: Long, val places: Int) {
-        val fraction: Double get() = if (tiles == 0) 1.0 else tilesDone.toDouble() / tiles
+    /**
+     * How far an import has got: tiles done of all, elements read and places kept so far, and how much of the address
+     * fill is done ([filled], 0 to 1), which takes [fillShare] of the whole.
+     */
+    data class Progress(val tilesDone: Int, val tiles: Int, val elements: Long, val places: Int, val filled: Double = 0.0, val fillShare: Double = 0.0) {
+        val fraction: Double get() = if (tiles == 0) 1.0 else (1 - fillShare) * tilesDone / tiles + fillShare * filled
     }
+
+    /** What the last [import]'s address fill did, if it ran. */
+    @Volatile
+    var fill: AddressFill.Stats? = null
+        private set
 
     /** Fills [store] with everything in [region]; returns what it did. Cancel the coroutine to stop between tiles. */
     suspend fun import(
@@ -36,8 +48,9 @@ class RegionImport(
     ): ImportStats {
         val tiles = tiles(region, tileDegrees)
         val writer = store.writer(langs, name)
+        val share = if (addresses != null) FILL_SHARE else 0.0
         writer.use { w ->
-            progress(Progress(0, tiles.size, 0, 0))
+            progress(Progress(0, tiles.size, 0, 0, fillShare = share))
             for ((i, tile) in tiles.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 var attempt = 0
@@ -51,7 +64,13 @@ class RegionImport(
                         if (++attempt > retries) throw e
                     }
                 }
-                progress(Progress(i + 1, tiles.size, w.elements, w.places))
+                progress(Progress(i + 1, tiles.size, w.elements, w.places, fillShare = share))
+            }
+            if (addresses != null) {
+                fill = AddressFill(addresses).fill(region, w) { done, of ->
+                    progress(Progress(tiles.size, tiles.size, w.elements, w.places, if (of == 0) 1.0 else done.toDouble() / of, share))
+                }
+                progress(Progress(tiles.size, tiles.size, w.elements, w.places, 1.0, share))
             }
             val stats = w.finish()
             // pages written tile by tile are part full: rewritten whole, the store is smaller and faster
@@ -61,6 +80,9 @@ class RegionImport(
     }
 
     companion object {
+        /** The share of an import's progress its address fill takes: the tiles are read faster than Overpass answers. */
+        const val FILL_SHARE = 0.1
+
         /**
          * The Overpass QL for a region's places in [box]: points of interest by their keys, the natural features and
          * railway stops worth finding, bus stops, addresses and anything named; with full tags and outline boxes.

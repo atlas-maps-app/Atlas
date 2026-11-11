@@ -34,6 +34,7 @@ object ThemeBlock {
     const val GOLDEN = 512
     const val TONE = 1024
     const val TONE_STRENGTH = 2048
+    const val DAYLIGHT = 4096
 
     /** The moment names the block numbers (`th['name']`); any other name (a region's own moment) is 0. */
     val MOMENTS: List<String> = listOf("", "sunny", "grey", "wet", "night", "golden", "noon", "truth")
@@ -94,12 +95,13 @@ object ThemeBlock {
      * sun vector the render takes (`_L`: toward the sun, straight down at night), [azimuth] and [elevation] the sun's
      * position at the moment in degrees, [golden] whether the moment is `THEMES`' golden one (the golden wash), [tone]
      * the profile's TONE and [toneStrength] the user's strength of it (the Map look's Tone, 0 to 2: 0 lights every pack
-     * without TONE; the renders' 1 writes no strength, so the block is the one the renders' light reads). Fails on a theme
-     * without a value the block needs.
+     * without TONE; the renders' 1 writes no strength, so the block is the one the renders' light reads), and [daylight]
+     * the renders' daylight (RenderOptions.daylight, amsterdam.py's ATLAS_DAYLIGHT: by day its dusk, at night the open
+     * places' pools), which the theme itself shows only at dusk. Fails on a theme without a value the block needs.
      */
     fun write(
         out: ByteBuffer, theme: Map<String, Any?>, sun: DoubleArray, azimuth: Double, elevation: Double, golden: Boolean, tone: Boolean,
-        at: Int = 0, toneStrength: Float = 1f,
+        at: Int = 0, toneStrength: Float = 1f, daylight: Boolean = false,
     ) {
         require(toneStrength in 0f..2f) { "a TONE strength of 0 to 2, not $toneStrength" }
         require(out.order() == ByteOrder.LITTLE_ENDIAN) { "the theme block is little-endian" }
@@ -120,6 +122,7 @@ object ThemeBlock {
         if (golden) flags = flags or GOLDEN
         if (tone) flags = flags or TONE
         if (toneStrength != 1f) flags = flags or TONE_STRENGTH
+        if (daylight) flags = flags or DAYLIGHT
         out.putInt(at + VERSION_AT, VERSION)
         out.putInt(at + FLAGS_AT, flags)
         out.putFloat(at + TONE_AT, if (toneStrength != 1f) toneStrength else 0f)

@@ -10,15 +10,17 @@ import app.atlas.geo.LatLon
 class Rings {
     private val outer = ArrayList<IntArray>()
     private val inner = ArrayList<IntArray>()
+    private var assembled: Pair<List<IntArray>, List<IntArray>>? = null
 
     /** Adds a member way's points ((lat, lon) pairs in 1e-7 degrees); [isInner] for role "inner". */
     fun add(points: IntArray, isInner: Boolean) {
         if (points.size < 4) return
         (if (isInner) inner else outer) += points
+        assembled = null
     }
 
-    /** The rings that close, outer and inner, each as (lat, lon) pairs ending on their first point. */
-    fun rings(): Pair<List<IntArray>, List<IntArray>> = assemble(outer) to assemble(inner)
+    /** The rings that close, outer and inner, each as (lat, lon) pairs ending on their first point; assembled once. */
+    fun rings(): Pair<List<IntArray>, List<IntArray>> = assembled ?: (assemble(outer) to assemble(inner)).also { assembled = it }
 
     /** The area-weighted centroid of the outer rings minus the holes, or null when no ring closes. */
     fun centroid(): LatLon? {

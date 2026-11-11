@@ -1,10 +1,13 @@
 package app.atlas.ui.local
 
 import app.atlas.geo.BBox
+import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
+import app.atlas.nav.Dest
+import app.atlas.places.TagFilter
 import app.atlas.providers.Sky
 import app.atlas.providers.WeatherDay
 import kotlinx.coroutines.runBlocking
@@ -16,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
+import java.util.Locale
 
 /** The data models of the local package, without a screen: seasons, the year, waste, building years, names, notes, tides, moments, parks. */
 class LocalModelsTest {
@@ -339,5 +343,190 @@ class LocalModelsTest {
         assertTrue(p.x(4.86) >= 15f && p.x(4.88) <= 348f - 15f)
         assertTrue(p.y(52.39) >= 15f && p.y(52.38) <= 200f - 15f)
         assertTrue(p.x(4.86) < p.x(4.88) && p.y(52.39) < p.y(52.38))
+    }
+
+    /** Amsterdam's canal ring as OpenStreetMap has it: a world heritage site, protected for its culture (class 22). */
+    private val canalRing = mapOf(
+        "boundary" to "protected_area", "protect_class" to "22", "heritage" to "1", "historic" to "heritage", "name" to "Grachtengordel van Amsterdam",
+    )
+
+    @Test
+    fun aParkAReserveAndANationalParkHaveTheirPageAndTheCanalRingNone() {
+        assertEquals(GreenKind.NATIONAL, GreenKind.of(mapOf("boundary" to "national_park")))
+        assertEquals(GreenKind.RESERVE, GreenKind.of(mapOf("leisure" to "nature_reserve")))
+        assertEquals(GreenKind.RESERVE, GreenKind.of(mapOf("boundary" to "protected_area", "protect_class" to "4")))
+        assertEquals(GreenKind.RESERVE, GreenKind.of(mapOf("boundary" to "protected_area", "protect_class" to "1b")))
+        assertEquals(GreenKind.RESERVE, GreenKind.of(mapOf("boundary" to "protected_area")))
+        assertEquals(GreenKind.PARK, GreenKind.of(mapOf("leisure" to "park")))
+        assertNull(GreenKind.of(mapOf("leisure" to "garden")))
+        // the canal ring, the same with no class given, and a water catchment (12) protect no nature
+        assertNull(GreenKind.of(canalRing))
+        assertNull(GreenKind.of(canalRing - "protect_class"))
+        assertNull(GreenKind.of(mapOf("boundary" to "protected_area", "protect_class" to "12")))
+        // the wild notes' filter and the reserves' words agree
+        val protectedNature = TagFilter.parse(GreenKind.NATURE_PROTECTED)
+        val wild = TagFilter.parse(NatureKind.WILD.filter)
+        assertFalse(protectedNature.matches(canalRing) || wild.matches(canalRing) || wild.matches(canalRing - "protect_class"))
+        assertTrue(protectedNature.matches(mapOf("boundary" to "protected_area", "protect_class" to "2")))
+        assertTrue(wild.matches(mapOf("boundary" to "protected_area")))
+        // what has a page is what a downloaded country's store keeps the outline of, for the page offline
+        val kinds = listOf(
+            mapOf("boundary" to "national_park"), mapOf("leisure" to "nature_reserve"), mapOf("leisure" to "park"),
+            mapOf("boundary" to "protected_area"), mapOf("boundary" to "protected_area", "protect_class" to "97"),
+            canalRing, canalRing - "protect_class", canalRing + ("leisure" to "park"), mapOf("leisure" to "garden"),
+            mapOf("boundary" to "protected_area", "protect_class" to "12"), mapOf("landuse" to "forest", "name" to "Amsterdamse Bos"),
+        )
+        for (t in kinds) assertEquals("$t", GreenKind.of(t) != null, app.atlas.search.Outlines.keeps(t))
+    }
+
+    @Test
+    fun theWildNotesTakeNationalParksAndDrawWhatEachPlaceIs() {
+        assertTrue(TagFilter.parse(NatureKind.WILD.filter).matches(mapOf("boundary" to "national_park", "name" to "De Hoge Veluwe")))
+        fun found(type: OsmType, id: Long, vararg tags: Pair<String, String>) = Found(Place(OsmId(type, id), LatLon(52.4, 4.9), tags.toMap()), 0.0)
+        val notes = NatureNotes.placeNotes(
+            NatureKind.WILD,
+            listOf(
+                found(OsmType.RELATION, 1, "boundary" to "national_park", "name" to "De Hoge Veluwe", "protect_class" to "2"),
+                found(OsmType.WAY, 2, "leisure" to "nature_reserve", "name" to "Ilperveld"),
+                found(OsmType.NODE, 3, "natural" to "peak", "name" to "Vaalserberg"),
+                found(OsmType.WAY, 4, "natural" to "wood", "name" to "Kraaijenbergse Bossen"),
+            ),
+        )
+        assertEquals(listOf("place.national-park", "pinhead-leaf", "nature.peak", "nature.tree"), notes.map { it.art })
+    }
+
+    @Test
+    fun aNationalParksSignSaysItsOwnName() {
+        val n = GreenKind.NATIONAL
+        assertEquals("De Hoge Veluwe", Parkland.shortName("Nationaal Park De Hoge Veluwe", n))
+        assertEquals("Bayerischer Wald", Parkland.shortName("Nationalpark Bayerischer Wald", n))
+        assertEquals("Écrins", Parkland.shortName("Parc national des Écrins", n))
+        assertEquals("Vanoise", Parkland.shortName("Parc national de la Vanoise", n))
+        assertEquals("Picos de Europa", Parkland.shortName("Parque Nacional de los Picos de Europa", n))
+        assertEquals("Sila", Parkland.shortName("Parco Nazionale della Sila", n))
+        assertEquals("Arcipelago di La Maddalena", Parkland.shortName("Parco Nazionale dell'Arcipelago di La Maddalena", n))
+        assertEquals("Yosemite", Parkland.shortName("Yosemite National Park", n))
+        // an article only as a whole word; too little left, or a town's park: the name as it is
+        assertEquals("Delta", Parkland.shortName("Parco Nazionale Delta", n))
+        assertEquals("Nationaal Park", Parkland.shortName("Nationaal Park", n))
+        assertEquals("Nationaal Park Zuid-Kennemerland", Parkland.shortName("Nationaal Park Zuid-Kennemerland", GreenKind.PARK))
+    }
+
+    @Test
+    fun aParksSizeReadsAsPeopleSayIt() {
+        // a pocket park as small as it is, never rounded up to a hectare
+        assertEquals("450 m²", Parkland.areaText(452.0, Locale.ENGLISH))
+        assertEquals("0.4 ha", Parkland.areaText(4_000.0, Locale.ENGLISH))
+        assertEquals("0,4 ha", Parkland.areaText(4_000.0, Locale.forLanguageTag("nl")))
+        assertEquals("45 ha", Parkland.areaText(452_000.0, Locale.ENGLISH))
+        assertEquals("2 km²", Parkland.areaText(2_000_000.0, Locale.ENGLISH))
+        assertEquals("3.1 km²", Parkland.areaText(3_140_000.0, Locale.ENGLISH))
+        assertEquals("3,1 km²", Parkland.areaText(3_140_000.0, Locale.forLanguageTag("nl")))
+        assertEquals("55 km²", Parkland.areaText(54_600_000.0, Locale.ENGLISH))
+    }
+
+    private fun square(south: Double, west: Double, side: Double) =
+        listOf(LatLon(south, west), LatLon(south, west + side), LatLon(south + side, west + side), LatLon(south + side, west))
+
+    @Test
+    fun aParksShapeKnowsItsAreaItsLakeAndItsEdge() {
+        // 0.01 degrees square at 52.4 N, a lake of a quarter of it left out
+        val shape = ParkShape(listOf(square(52.40, 4.90, 0.01), square(52.4025, 4.9025, 0.005)), emptyList(), emptyList(), outlined = true, holes = listOf(false, true))
+        val whole = Geo.distance(LatLon(52.405, 4.90), LatLon(52.405, 4.91)) * Geo.distance(LatLon(52.40, 4.905), LatLon(52.41, 4.905))
+        assertEquals(whole * 0.75, ParkShape.areaOf(shape.rings, shape.holes), whole * 0.01)
+        assertTrue(shape.contains(LatLon(52.401, 4.901)))
+        assertFalse(shape.contains(LatLon(52.405, 4.905)))
+        assertFalse(shape.contains(LatLon(52.42, 4.905)))
+        // a thousandth of a degree south of it is some 111 m from its edge: in reach of a gate's margin of 150, not of 50
+        assertEquals(111.3, shape.edgeDistance(LatLon(52.399, 4.905)), 1.0)
+        assertTrue(shape.reaches(LatLon(52.399, 4.905), 150.0))
+        assertFalse(shape.reaches(LatLon(52.399, 4.905), 50.0))
+    }
+
+    @Test
+    fun aParksPlanIsAsTallAsItsShape() {
+        // at the equator a degree is as wide as it is tall: a square park, a square plan
+        assertEquals(348f, ParkProjection.heightFor(BBox(0.0, -0.005, 0.01, 0.005), 348f, 16f, 200f, 440f), 0.5f)
+        // a long park (Vondelpark's box) a low sign, a tall one (Postzegelpark's) no taller than the screen allows
+        assertEquals(200f, ParkProjection.heightFor(BBox(4.8555, 52.3550, 4.8815, 52.3610), 348f, 16f, 200f, 440f), 0f)
+        assertEquals(440f, ParkProjection.heightFor(BBox(4.890113, 52.3706534, 4.8908224, 52.371604), 348f, 16f, 200f, 440f), 0f)
+    }
+
+    @Test
+    fun aParksTrailIsALoopFirstThenOneWithItsLength() {
+        assertEquals(12.5, trailKm(mapOf("distance" to "12.5"))!!, 1e-9)
+        assertEquals(7.2, trailKm(mapOf("distance" to "7,2 km"))!!, 1e-9)
+        assertEquals(8 * 1.609, trailKm(mapOf("distance" to "8 mi"))!!, 1e-9)
+        assertNull(trailKm(mapOf("distance" to "about an hour")))
+        assertNull(trailKm(emptyMap()))
+        // its length as its signpost says it
+        assertEquals("12.5 km", kmText(12.5, Locale.ENGLISH))
+        assertEquals("12,5 km", kmText(12.5, Locale.forLanguageTag("nl")))
+        assertEquals("7 km", kmText(7.0, Locale.ENGLISH))
+        assertEquals("112 km", kmText(112.4, Locale.ENGLISH))
+        val here = LatLon(52.37, 4.88)
+        fun trail(id: Long, name: String, lat: Double, vararg tags: Pair<String, String>) =
+            Place(OsmId(OsmType.RELATION, id), LatLon(lat, 4.88), mapOf("route" to "hiking", "name" to name) + tags)
+        val near = trail(1, "Near", 52.371)
+        val measured = trail(2, "Measured", 52.38, "distance" to "9")
+        val loop = trail(3, "The Loop", 52.40, "roundtrip" to "yes")
+        assertEquals("The Loop", featuredTrail(listOf(near, measured, loop), here)?.tags?.get("name"))
+        assertEquals("Measured", featuredTrail(listOf(near, measured), here)?.tags?.get("name"))
+        assertEquals("Near", featuredTrail(listOf(trail(4, "Far", 52.45), near), here)?.tags?.get("name"))
+        assertNull(featuredTrail(emptyList(), here))
+    }
+
+    private val wildBox = BBox(4.95, 52.43, 5.05, 52.47)
+
+    private fun park(kind: GreenKind, trees: List<Found> = emptyList(), birds: List<Found> = emptyList(), treeCrowns: Boolean = false) = Park(
+        Place(OsmId(OsmType.RELATION, 1), wildBox.center, mapOf("name" to "P"), wildBox), kind, "P", null, wildBox,
+        ParkShape(emptyList(), emptyList(), if (treeCrowns) listOf(wildBox.center) else emptyList(), outlined = false), emptyList(), trees = trees, birds = birds,
+    )
+
+    private val hide = Found(Place(OsmId(OsmType.NODE, 13), LatLon(52.455, 5.02), mapOf("leisure" to "bird_hide", "name" to "Reedbed Hide")), 0.0)
+
+    @Test
+    fun whatTheYearBringsAParkNow() {
+        val october = LocalDate.of(2026, 10, 13)
+        // in October a national park's birds pass at their peak; in March its winter stars have their last month
+        val birds = natureNow(park(GreenKind.NATIONAL), october)!!
+        assertEquals("birds", birds.activity.id)
+        assertEquals(Phase.PEAK, birds.phase)
+        val stars = natureNow(park(GreenKind.NATIONAL), LocalDate.of(2026, 3, 10))!!
+        assertEquals("stars", stars.activity.id)
+        assertEquals(Phase.LAST, stars.phase)
+        // a town park's leaves when it has trees, its birds when it has bird places, nothing with neither or out of season
+        assertEquals("foliage", natureNow(park(GreenKind.PARK, birds = listOf(hide), treeCrowns = true), october)?.activity?.id)
+        assertEquals("birds", natureNow(park(GreenKind.PARK, birds = listOf(hide)), october)?.activity?.id)
+        assertNull(natureNow(park(GreenKind.PARK), october))
+        assertNull(natureNow(park(GreenKind.PARK, treeCrowns = true), LocalDate.of(2026, 7, 10)))
+    }
+
+    @Test
+    fun aParksNotesPutItsTreesFirstAndAWildParksBirds() {
+        val oak = Found(Place(OsmId(OsmType.NODE, 11), LatLon(52.44, 4.99), mapOf("natural" to "tree", "name" to "Stonewood Oak", "species" to "Quercus robur", "denotation" to "natural_monument")), 0.0)
+        val plain = Found(Place(OsmId(OsmType.NODE, 12), LatLon(52.441, 4.99), mapOf("natural" to "tree")), 0.0)
+        val here = LatLon(52.3745, 4.884)
+        val today = LocalDate.of(2026, 10, 13)
+        assertEquals(listOf("Stonewood Oak", "Reedbed Hide"), NatureNotes.parkNotes(park(GreenKind.PARK, listOf(oak, plain), listOf(hide)), here, today).map { it.title })
+        assertEquals(listOf("Reedbed Hide", "Stonewood Oak"), NatureNotes.parkNotes(park(GreenKind.NATIONAL, listOf(oak, plain), listOf(hide)), here, today).map { it.title })
+        // measured from you, not from the search's centre
+        assertEquals(Geo.distance(here, hide.place.location), NatureNotes.parkNotes(park(GreenKind.NATIONAL, birds = listOf(hide)), here, today).single().distanceM, 1.0)
+        // unremarkable trees make no "trees mapped" note on a park's page
+        assertTrue(NatureNotes.parkNotes(park(GreenKind.PARK, listOf(plain)), here, today).isEmpty())
+    }
+
+    @Test
+    fun aGreensRowOpensItsParkPage() {
+        val box = BBox(4.8600, 52.3835, 4.8790, 52.3885)
+        val park = Place(OsmId(OsmType.WAY, 7), box.center, mapOf("leisure" to "park", "name" to "Westerpark"), box)
+        assertEquals(Dest.Parkland(osmId = "w7", key = "w7"), Parkland.destOf(park))
+        assertEquals(Dest.Parkland(osmId = "w7", key = "w7"), Dest.Place.page(park))
+        assertEquals(Dest.Parkland(osmId = "r8", key = "r8"), Dest.Place.page(park.copy(id = OsmId(OsmType.RELATION, 8), tags = mapOf("boundary" to "national_park"))))
+        // a park mapped as a point or without its box has no outline to draw; a café and the canal ring have a place page
+        assertTrue(Dest.Place.page(park.copy(id = OsmId(OsmType.NODE, 9))) is Dest.Place)
+        assertNull(Parkland.destOf(park.copy(bbox = null)))
+        assertTrue(Dest.Place.page(park.copy(tags = mapOf("amenity" to "cafe"))) is Dest.Place)
+        assertTrue(Dest.Place.page(park.copy(tags = canalRing)) is Dest.Place)
     }
 }

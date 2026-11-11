@@ -15,7 +15,8 @@
 //     reach (the near view as before the levels), then nearest first each other place the level its distance asks for
 //     where its tile's bytes fit what is left, else the next coarser that fits; a tile's
 //     bytes are its heap ranges' while resident, as they were when it was resident before, else its chunk's raw bytes
-//     times what its level's resident tiles take per raw byte (every level's before any of its own was resident). A
+//     times what its level's resident tiles take per raw byte (every level's before any of its own was resident),
+//     every pass's whatever the parts drawn (a pass not built of a tile by its share, Cover::estimate). A
 //     tile no place asks for is not drawn once the tile planned there is, and the world lets it go; so the near tiles
 //     are never starved by far ones drawn in their stead. Each place's coarsest tile is kept resident under it while it
 //     is in view (kept), so a finer tile drawn in its stead never holds the room the coarser ones wait for.
@@ -81,7 +82,19 @@ struct CoverTile {
     /// (`fade` is a tile's fade as the picture's completion reckons it; its place's scale.w the fade it is drawn at, 1
     /// for a tile that took over from nothing.)
     bool under = false;
+    /// The passes of a part come back on that fade in on it from nothing, a bit each in the registry's order: a
+    /// top-up's (Residency's), from the first frame that draws them, over the tile's fade time, the tile's own fade
+    /// as it was (ENGINE.md's parts). Each draws its share of the place's range (Cover::dither); 0: none.
+    std::uint64_t topped = 0;
 };
+
+/// The place a tile's tree and item jobs take where the ground bends (view::View::drop): its place lowered by the
+/// bend's drop at the middle of its drawn tile's reach, from the frame's camera as the vertex stages read it
+/// (camera.slang's bent: FrameCamera device.w and flags.z, flags.w). The ground bends by the vertex; what stands on a
+/// tile bends with its tile, as their stages place it without the bend (shaders/spirv.budget holds them at their
+/// bytes). Across a tile a few km wide the two part by a few metres at the countries' reach, a fraction of a pixel. The
+/// place itself, bit for bit, where nothing bends.
+[[nodiscard]] shaders::TilePlace bent_place(const shaders::FrameCamera& camera, const CoverTile& t) noexcept;
 
 /// Whether entry `c` of `tiles` (Cover::upright) draws its tile's items: a tile drawn for several tiles (a stand-in
 /// ancestor, its cells over each) draws them once, at its first entry, those under a tile fading in too (its entries
@@ -193,8 +206,16 @@ public:
     /// is seen (its features all beyond the view, or none): let go of as not drawn, it was asked for again the next
     /// frame and built again, again and again while the heaps were full (Alkmaar from 5 km, its finest tiles).
     [[nodiscard]] std::span<const std::uint32_t> kept() const noexcept { return kept_; }
-    /// Whether a tile drawn is still fading in (its fade below 1).
+    /// Whether a tile drawn is still fading in (its fade below 1), or a part come back on on one (CoverTile::topped).
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+    /// The range of the dither's levels pass `pass` (its place in the registry) draws entry `t` with
+    /// (shared/fade.slang, fade_word): its place's, offset.w to scale.w, or for a pass come back on that fades in on it
+    /// from nothing (CoverTile::topped) the first part of it, as far as its fade has gone (none at its first frame, all
+    /// at its end).
+    [[nodiscard]] std::array<float, 2> dither(const CoverTile& t, std::size_t pass) const noexcept;
+    /// How many tiles drawn lack a pass a part drawn wants (Residency::lacks: their top-ups not taken yet), which the
+    /// picture's completion waits for (MapFrame::complete).
+    [[nodiscard]] std::size_t lacking() const noexcept { return lacking_; }
     /// The active pack and the coarser one drawn this frame (their store ids; empty: none).
     [[nodiscard]] std::string_view active() const noexcept { return pack_id_; }
     [[nodiscard]] std::string_view coarser() const noexcept { return coarser_id_; }
@@ -271,16 +292,26 @@ private:
     /// `above` has a tile of its finest level), each with the level its distance asks for.
     void walk(const Drawn& drawn, const view::Frames& frames, const Frustum& frustum, const CoverInputs& in,
               const std::optional<tiles::GridBox>& mask, std::span<const tiles::StorePack* const> above);
-    /// What the resident tiles of the packs drawn take: each one's bytes remembered, and per zoom the heaps' bytes per
-    /// raw byte of their chunks (ratio_, any_).
+    /// What the resident tiles of the packs drawn take: each one's bytes and triangles remembered with the passes built
+    /// of it, and per zoom and pass the heaps' bytes and triangles per raw byte of their chunks of the tiles built with
+    /// it (shares_, any_).
     void measure(const Residency& residency);
-    /// The heaps' bytes tile `k` of pack `p` takes: its ranges' while resident, as they were when it was resident
-    /// before, else its chunk's raw bytes times its level's ratio (any level's before one of its own was resident).
+    /// The heaps' bytes tile `k` of pack `p` takes with every pass, whatever the parts drawn (so that the plan is the
+    /// same with a part left out as with it drawn, and comes back without a tile planned in the room its passes then
+    /// take): those built of it, its ranges' while resident, as they were when it was resident before; the others (a
+    /// tile not resident before: every pass) its chunk's raw bytes times their shares at its level (any level's before
+    /// one of its own was resident with it); a pass no tile was built with yet (its part left out since the world
+    /// began) nothing, until one is. Before any tile was measured: its raw bytes times first_ratio.
     [[nodiscard]] std::uint64_t estimate(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
     /// The levels within the budget (Spot::plan).
     void plan(const CoverInputs& in, const Residency& residency);
-    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it), and the places' sum of them.
+    /// The triangles tile `k` of pack `p` draws (triangles_'s estimate for it, every pass's as `estimate`'s bytes), and
+    /// the places' sum of them.
     [[nodiscard]] double estimate_triangles(const Drawn& p, const tiles::TileKey& k, const Residency& residency) const;
+    /// What tile `k` of pack `p` holds of every pass, the heaps' bytes or the triangles, as estimate and
+    /// estimate_triangles take it.
+    [[nodiscard]] double every_pass(const Drawn& p, const tiles::TileKey& k, const Residency& residency,
+                                    bool triangles) const;
     void count_triangles(const Residency& residency);
     /// Pack `p`'s places drawn at their planned levels, and what they lack asked for.
     void emit(std::size_t p, const view::View& view, const view::Frames& frames, const Frustum& frustum,
@@ -288,6 +319,14 @@ private:
     void draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
               const Frustum& frustum, tiles::TileKey wanted, double seconds);
 
+    /// A pass come back on that fades in on a tile (CoverTile::topped): its place in the registry, and since when (the
+    /// first frame that drew it); in tops_, how far it has faded this frame, and the tile's handle.
+    struct Top {
+        std::uint8_t pass = 0;
+        double since = 0;
+        float weight = 0;
+        std::uint32_t handle = 0;
+    };
     /// A resident tile drawn, and when it was first drawn (its fade).
     struct Shown {
         std::uint32_t handle = 0;
@@ -295,6 +334,8 @@ private:
         bool drawn = false; // this frame
         bool whole =
             false; // drawn whole from its first frame, the frame before having drawn nothing it takes over from
+        std::uint64_t built = 0; // the passes it was drawn with (ResidentTile::built), the frame before
+        std::vector<Top> tops;   // its passes come back on, fading in
     };
     /// An ancestor's cells to draw this frame over its missing descendants.
     struct Pending {
@@ -340,6 +381,8 @@ private:
     std::size_t missing_ = 0;
     double fade_seconds_ = 0.18;
     bool fading_ = false;
+    std::vector<Top> tops_; // this frame's passes come back on, fading in (each tile's once)
+    std::size_t lacking_ = 0;
     std::array<Drawn, 2 + max_neighbours> drawn_{};
     std::size_t drawn_count_ = 0;
     std::vector<Spot> spots_;
@@ -356,16 +399,30 @@ private:
     std::vector<std::uint32_t> standing_;        // the stand-ins' handles, as stand_ins_ (sort_out)
     std::vector<std::uint32_t> backing_;         // the stand-ins' backups' handles
     std::vector<std::uint32_t> planned_handles_; // the resident tiles the places in view plan
-    /// Per zoom, the heaps' bytes per raw byte of the resident tiles (0: none seen yet), the same over every zoom, and
-    /// the bytes of the tiles resident before (by tile_id), for when they are asked for again.
-    std::array<double, 32> ratio_{};
-    double any_ = first_ratio;
-    std::unordered_map<std::uint64_t, std::uint64_t> bytes_;
-    /// The same for the triangles the tiles draw (the governor's).
+    /// What one pass's ranges take of a tile per raw byte of its chunk: the heaps' bytes and the triangles drawn (the
+    /// governor's), learnt from the resident tiles built with it (`seen`: one was; a tile built without it, its part
+    /// left out, tells nothing of it).
+    struct Share {
+        double heap = 0;
+        double triangles = 0;
+        bool seen = false;
+    };
+    /// The passes reckoned apart (the registry's first; those past them are reckoned built with every tile).
+    static constexpr std::size_t share_passes = 16;
+    /// Per zoom and pass, the resident tiles' shares, and the same over every zoom (a zoom none of whose tiles was
+    /// resident with the pass yet).
+    std::array<std::array<Share, share_passes>, 32> shares_{};
+    std::array<Share, share_passes> any_{};
+    std::size_t passes_seen_ = 0; // the resident tiles' passes, as measured (0: none measured yet)
+    /// The tiles resident before (by tile_id), for when they are asked for again: the heaps' bytes and the triangles
+    /// their passes built held, and which passes those were.
+    struct Held {
+        std::uint64_t bytes = 0;
+        std::uint64_t triangles = 0;
+        std::uint64_t built = 0;
+    };
+    std::unordered_map<std::uint64_t, Held> held_;
     std::uint64_t triangles_ = 0;
-    std::array<double, 32> triangle_ratio_{};
-    double triangle_any_ = first_triangle_ratio;
-    std::unordered_map<std::uint64_t, std::uint64_t> triangles_of_;
 };
 
 } // namespace atlas::scene

@@ -2,6 +2,7 @@ package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -100,6 +101,8 @@ internal fun Modifier.lineBox(h: Float): Modifier = layout { m, c ->
 internal fun CssLine(
     text: String, style: TextStyle, modifier: Modifier = Modifier, color: Color = Color.Unspecified,
     overflow: TextOverflow = TextOverflow.Ellipsis, align: TextAlign? = null,
+    /** The smallest the words may shrink to before they are cut: a long name fits its line rather than losing its end. */
+    fit: TextUnit = TextUnit.Unspecified,
 ) {
     val h = if (style.lineHeight.isSp) style.lineHeight.value else style.fontSize.value * 1.2f
     val d = LocalDensity.current.density
@@ -112,6 +115,7 @@ internal fun CssLine(
         maxLines = 1,
         softWrap = false,
         overflow = overflow,
+        autoSize = if (fit.isSp) TextAutoSize.StepBased(minFontSize = fit, maxFontSize = style.fontSize) else null,
     )
 }
 

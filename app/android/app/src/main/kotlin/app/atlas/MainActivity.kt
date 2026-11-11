@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -21,15 +22,19 @@ import app.atlas.nav.BackStackNavigator
 import app.atlas.nav.CiScreens
 import app.atlas.nav.Dest
 import app.atlas.nav.Links
+import app.atlas.services.SettingsKeys
 import java.io.File
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
  * The one activity: edge to edge, a splash screen until the saved map view is read, the app's navigation, and the ways
- * in: `geo:` links, openstreetmap.org links, shared text, and CI's `atlas.screen` / `atlas.ci` extras.
+ * in: `geo:` links, openstreetmap.org links, shared text, and CI's `atlas.screen` / `atlas.ci` extras. A link opens the
+ * app on its screen over the map at its point; while the app runs, it lands on top of the screens open.
  */
 class MainActivity : ComponentActivity() {
-    private var navigator: BackStackNavigator? = null
+    internal var navigator: BackStackNavigator? = null
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // The core's first-frame line counts from here (`vk first frame`, plan-vector §3).
@@ -81,9 +86,17 @@ class MainActivity : ComponentActivity() {
         splash.setKeepOnScreenCondition { !camera.isCompleted }
         enableEdgeToEdge()
         val start = if (savedInstanceState != null) null else if (signingIn) listOf(Dest.Home(), Dest.OsmAccount) else stackFor(intent)
+        // The welcome (the Welcome board) once, over the map, on the first plain launch: not over a link, CI or a sign-in.
+        // Shown is seen, however it is left (back, or the app closed on it); Mine's Tour shows it again
+        val welcome = savedInstanceState == null && start == null && !services.ciDemo
         setContent {
             val nav = rememberSaveable(saver = BackStackNavigator.Saver) { BackStackNavigator(start ?: listOf(Dest.Home())) }
             SideEffect { navigator = nav }
+            if (welcome) LaunchedEffect(nav) {
+                if (services.settings.flow(SettingsKeys.ONBOARDED, false).first()) return@LaunchedEffect
+                nav.go(Dest.Onboarding())
+                services.settings.set(SettingsKeys.ONBOARDED, true)
+            }
             AtlasRoot(services, nav)
         }
     }
@@ -112,7 +125,9 @@ class MainActivity : ComponentActivity() {
         if (showVulkanScreen(intent)) return
         allowWorld(services, intent)
         if (finishOsmSignIn(intent)) return
-        stackFor(intent)?.let { navigator?.reset(it) }
+        // CI's screens replace the stack; a link lands on top of where the user is, and back returns there
+        val stack = stackFor(intent) ?: return
+        if (intent.getStringExtra(EXTRA_SCREEN) != null) navigator?.reset(stack) else navigator?.land(stack)
     }
 
     /**

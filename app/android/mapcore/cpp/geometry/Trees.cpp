@@ -148,7 +148,7 @@ TileTrees build_trees(const TreeInput& in) {
         // autumn: leaf_cycle=evergreen and needleleaved trees stay green
         const std::optional<std::string_view> cycle = layer->string(tl::tree::tag_leaf_cycle, i);
         t.evergreen = (cycle && *cycle == "evergreen") || (leaf_type && *leaf_type == "needleleaved");
-        t.clumps = tree_close_clumps(t.id, t.form, t.h, t.r, t.x, t.z);
+        if (!in.lean) t.clumps = tree_close_clumps(t.id, t.form, t.h, t.r, t.x, t.z);
         t.blobs = tree_generic_blobs(t.id, t.h, t.r, t.x, t.z);
         // its item: amsterdam.py's gather, c = cam.cam((n['x'], 1, n['z'])), from 2 m, the radius cut at the trunk; the
         // sphere about that point holds every circle it draws (a clump's centre within 1.08 r of the trunk and its

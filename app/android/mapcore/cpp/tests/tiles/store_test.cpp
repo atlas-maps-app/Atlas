@@ -2,23 +2,31 @@
 // range of a file (an APK asset), and remote ones read by ranges, online and then offline from the cache; chunks picked
 // by their reach, and tiles decoded and checked against their chunks; the cache's entries, budget, recency, damage and
 // leftovers; both used from several threads at once, with entries damaged meanwhile, after which the cache's index and
-// its folder still agree.
+// its folder still agree. Held, a listing's windows compose each frame cell once, as added one by one.
+#include "base/pymath/PyMath.hpp"
+#include "load/Window.hpp"
 #include "tests/base/require.hpp"
+#include "tests/load/corner.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Store.hpp"
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <fcntl.h>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <random>
+#include <span>
+#include <string>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -494,6 +502,106 @@ TEST_CASE("tiles: the store and the cache work from several threads at once") {
     }
     CHECK(files == (*cache)->entries());
     CHECK(bytes == (*cache)->bytes());
+}
+
+TEST_CASE("tiles: held, a listing's windows compose each frame cell once at release, the packs added one by one make; "
+          "a window its cell's pack would refuse is refused as it joins, and an untouched cell stays as it was") {
+    const TempDir dir;
+    atlas::test::CornerWindows at;
+    at.corner = TileKey(14, 526U << 4U, 337U << 4U);
+    const std::array<std::int32_t, 4> box = tile_box(at.corner);
+    at.lat0 = static_cast<double>(box[2]) / 1e7;
+    at.lon0 = static_cast<double>(box[1]) / 1e7;
+    at.kx = 111320.0 * atlas::pymath::cos(atlas::pymath::radians(at.lat0));
+    std::int64_t way = 1;
+    // window `k` named `id`, a house `east` and `north` metres of the corner, its place's frame `shift` degrees north
+    const auto window = [&](TileKey k, double east, double north, const std::string& id, double shift = 0.0) {
+        const std::string json =
+            std::format(R"({{"version":0.6,"elements":[{}]}})",
+                        atlas::test::made_building(way, R"("building":"yes","building:levels":"4")", east, north - 30.0,
+                                                   east + 30.0, north, at));
+        atlas::load::WindowPlace place = atlas::load::place_of(k);
+        place.frame.lat0 += shift;
+        const auto built = atlas::load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, place);
+        ATLAS_REQUIRE_OR_RETURN(PackRef{}, built.has_value(), built.error().what);
+        std::string file = dir.file(std::format("{}-{}-{}.atlas", k.x, k.y, way));
+        write_file(file, built->pack);
+        return PackRef{.id = id, .kind = PackKind::window, .path = std::move(file)};
+    };
+    const auto name = [](TileKey k) { return std::format("window/14/{}/{}", k.x, k.y); };
+    const TileKey a = at.corner;
+    const TileKey b(14, a.x + 1, a.y);
+    const TileKey c(14, a.x, a.y + 1);
+    const TileKey d(14, a.x - 1, a.y - 1); // the cell north-west's
+    const std::vector<PackRef> listed{window(a, 300, -300, name(a)), window(d, -300, 300, name(d)),
+                                      window(b, 1790, -300, name(b)), window(c, 300, -1790, name(c))};
+    for (const PackRef& r : listed) ATLAS_REQUIRE(!r.path.empty());
+    const PackRef other_frame = window(TileKey(14, a.x + 2, a.y), 3280, -300, "window/other-frame", 1e-4);
+    const PackRef twice = window(a, 500, -500, "window/twice"); // a's tile under another name
+    ATLAS_REQUIRE(!other_frame.path.empty() && !twice.path.empty());
+    // the same packs: their heads, styles and tiles to the byte, in the same order
+    const auto same = [](const Store& x, const Store& y) {
+        const auto xs = x.packs();
+        const auto ys = y.packs();
+        ATLAS_REQUIRE(xs.size() == ys.size());
+        Zstd zstd;
+        std::vector<std::byte> xr;
+        std::vector<std::byte> yr;
+        std::vector<std::byte> scratch;
+        for (std::size_t i = 0; i < xs.size(); ++i) {
+            const Pack& xp = xs[i]->pack;
+            const Pack& yp = ys[i]->pack;
+            CHECK(xs[i]->id == ys[i]->id);
+            ATLAS_REQUIRE(xp.head() != nullptr && yp.head() != nullptr);
+            CHECK(std::ranges::equal(xp.head()->bytes(), yp.head()->bytes()));
+            ATLAS_REQUIRE(xp.shared_style() != nullptr && yp.shared_style() != nullptr);
+            CHECK(std::ranges::equal(xp.shared_style()->tables.bytes(), yp.shared_style()->tables.bytes()));
+            const auto xc = xp.chunks().chunks();
+            const auto yc = yp.chunks().chunks();
+            ATLAS_REQUIRE(xc.size() == yc.size());
+            for (std::size_t k = 0; k < xc.size(); ++k) {
+                CHECK(xc[k].tile == yc[k].tile);
+                CHECK(xc[k].sha256 == yc[k].sha256);
+                ATLAS_REQUIRE(xp.unpack(xc[k], zstd, xr, scratch).has_value());
+                ATLAS_REQUIRE(yp.unpack(yc[k], zstd, yr, scratch).has_value());
+                CHECK(xr == yr);
+            }
+        }
+    };
+    Store one;
+    for (const PackRef& r : listed) ATLAS_REQUIRE(one.add(r).has_value());
+    CHECK_FALSE(one.add(other_frame).has_value());
+    CHECK_FALSE(one.add(twice).has_value());
+    Store held;
+    held.hold();
+    for (const PackRef& r : listed) ATLAS_REQUIRE(held.add(r).has_value());
+    CHECK_FALSE(held.add(other_frame).has_value());
+    CHECK_FALSE(held.add(twice).has_value());
+    CHECK(held.packs().empty()); // nothing composed until release
+    held.release();
+    ATLAS_REQUIRE(held.packs().size() == 2);
+    same(one, held);
+    CHECK(held.packs()[1]->pack.chunks().chunks().size() == 3);
+    // b built again: its cell composed again, the other cell's pack the same one
+    const std::shared_ptr<const StorePack> untouched = held.packs()[0];
+    const PackRef again = window(b, 1900, -400, name(b));
+    held.hold();
+    ATLAS_REQUIRE(held.add(again).has_value());
+    held.release();
+    ATLAS_REQUIRE(one.add(again).has_value());
+    same(one, held);
+    CHECK(held.packs()[0] == untouched);
+    // a listing without d and c: d's cell goes, a's and b's composed again
+    held.hold();
+    CHECK(held.remove(name(d)));
+    CHECK(held.remove(name(c)));
+    CHECK(held.packs().size() == 2); // as they were until release
+    held.release();
+    CHECK(one.remove(name(d)));
+    CHECK(one.remove(name(c)));
+    ATLAS_REQUIRE(held.packs().size() == 1);
+    same(one, held);
+    CHECK(held.packs()[0]->pack.chunks().chunks().size() == 2);
 }
 
 } // namespace

@@ -34,6 +34,15 @@ class PartsSettingsTest {
     }
 
     @Test
+    fun theSunIsDrawnUnsetAndLeftOutByItsName() {
+        assertFalse(MapPart.SUN in leftOutParts(preferencesOf()))
+        val p = mutablePreferencesOf(SettingsKeys.MAP_PARTS_OFF to setOf(MapPart.SUN.name))
+        assertEquals(setOf(MapPart.SUN), leftOutParts(p))
+        // its bit, the camera state's 55 (CameraWriter.PART_SUN), alone
+        assertEquals(1L shl 55, MapParts.bits(leftOutParts(p)))
+    }
+
+    @Test
     fun theFastRefreshIsOnUnsetAndAsSetOtherwise() {
         assertTrue(fastRefreshOn(preferencesOf()))
         val p = mutablePreferencesOf(SettingsKeys.MAP_FAST_REFRESH to false)

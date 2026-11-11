@@ -50,7 +50,7 @@ internal object Addresses {
     )
 
     /** Longest house number an address point keeps; a longer one (a list, a description) keeps its element a place. */
-    private const val MAX_HOUSENUMBER = 24
+    const val MAX_HOUSENUMBER = 24
 
     /** The address of [tags] when they are only an address (tags already filtered by [StoredTags]), else null. */
     fun parts(tags: Map<String, String>): AddressParts? {

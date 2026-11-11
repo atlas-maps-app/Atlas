@@ -8,8 +8,11 @@ import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.Brands
 import app.atlas.places.Categories
+import app.atlas.places.Category
 import app.atlas.places.Geometry
+import app.atlas.places.Kinds
 import app.atlas.places.Localise
+import app.atlas.places.Preset
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
 import kotlin.math.max
@@ -46,21 +49,28 @@ class PlaceRecord(
 
     companion object {
         /** Works out category, brand, preset and symbol for [place] drawn as [geometry]. */
-        fun of(place: Place, geometry: Geometry = geometryOf(place)): PlaceRecord {
+        fun of(place: Place, geometry: Geometry = geometryOf(place)): PlaceRecord = of(place, geometry, Categories.of(place.tags))
+
+        /** Like [of], with the [category] a store's rules gave the place ([Filing]). */
+        internal fun of(place: Place, geometry: Geometry, category: Category?): PlaceRecord {
             val tags = place.tags
             val preset = Presets.match(tags, geometry)
-            val category = Categories.of(tags)
             val brand = if ("brand" in tags || "brand:wikidata" in tags || "name" in tags) Brands.forTags(tags) else null
-            val symbol = preset?.let { Presets.iconOf(it) }?.takeIf { Symbols.has(it) }
-                ?: category?.symbol?.takeIf { Symbols.has(it) }
-                ?: Symbols.symbolFor(tags, geometry)
-            return PlaceRecord(place, category?.id, brand?.id, preset?.id, symbol)
+            return PlaceRecord(place, category?.id, brand?.id, preset?.id, symbolOf(preset, category, tags, geometry))
         }
 
+        /** The map symbol of a place: its kind's ([Kinds]), else its category's, else the one its tags draw. */
+        internal fun symbolOf(preset: Preset?, category: Category?, tags: Map<String, String>, geometry: Geometry): String =
+            preset?.let { Kinds.symbolOf(it) }
+                ?: category?.symbol?.takeIf { Symbols.has(it) }
+                ?: Symbols.symbolFor(tags, geometry)
+
         /** The geometry an element most likely has, judged from its type and tags (an extract with centres cannot tell). */
-        fun geometryOf(place: Place): Geometry {
-            val type = place.id?.type ?: return Geometry.POINT
-            val t = place.tags
+        fun geometryOf(place: Place): Geometry = geometryOf(place.id?.type, place.tags)
+
+        /** The geometry an element of [type] (null for a place from elsewhere, a point) with tags [t] most likely has. */
+        internal fun geometryOf(type: OsmType?, t: Map<String, String>): Geometry {
+            if (type == null) return Geometry.POINT
             return when (type) {
                 OsmType.NODE -> Geometry.POINT
                 OsmType.WAY -> when {

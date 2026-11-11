@@ -72,13 +72,6 @@ class MomentsTest {
     }
 
     @Test
-    fun searchRadiusFollowsTheZoom() {
-        assertEquals(800.0, HomeViewModel.radiusFor(16.0), 1e-9)
-        assertEquals(300.0, HomeViewModel.radiusFor(19.0), 1e-9)
-        assertEquals(5_000.0, HomeViewModel.radiusFor(10.0), 1e-9)
-    }
-
-    @Test
     fun theUvIndexIsTheOneForNowNotTheOneAtFetchTime() {
         // Fetched at noon with UV 6.4; five hours later the sun is low. A forecast without hours says nothing for now.
         val noon = Instant.parse("2026-06-13T10:00:00Z")

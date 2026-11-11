@@ -11,6 +11,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -251,6 +252,15 @@ class Windows(
     private val claimed: MutableSet<MapCore.Window> = ConcurrentHashMap.newKeySet()
 
     /**
+     * How many windows and levels' tiles the steps have worked on, each counted as its work is over (taken, built,
+     * refreshed, or tried and missed): a step that moved it did something, though it may have written no pack (a tile
+     * with nothing to draw, a miss), and the next may find more to do. The map asks for that one once the half second is
+     * over (MapController), as at rest no camera asks again.
+     */
+    val worked: Long get() = workedCount.get()
+    private val workedCount = AtomicLong()
+
+    /**
      * The windows whose country's tiles gave no pack lately, and when: [Failure.refused] where none holds them (or no
      * list of packs was to be had), else their bytes did not come. They are asked again after [tilesWait].
      */
@@ -399,6 +409,7 @@ class Windows(
     private fun release(w: MapCore.Window) {
         claimed.remove(w)
         budget?.wrote(w)
+        workedCount.incrementAndGet()
     }
 
     /**

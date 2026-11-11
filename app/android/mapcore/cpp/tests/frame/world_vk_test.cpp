@@ -14,10 +14,12 @@
 #include "load/PackStyle.hpp"
 #include "passes/Ground.hpp"
 #include "passes/World.hpp"
+#include "scene/Cells.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
+#include "scene/WorldBend.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -26,11 +28,14 @@
 #include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/TileBox.hpp"
 #include "tiles/WorldIndex.hpp"
+#include "view/Bend.hpp"
 #include "view/Camera.hpp"
+#include "view/Ladder.hpp"
 
 #include <doctest/doctest.h>
 
@@ -45,6 +50,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <set>
 #include <span>
@@ -507,6 +513,14 @@ namespace {
 /// The tests' clear colour: green, which no map colour is near, where nothing draws.
 constexpr std::array<float, 4> green_clear{0.0F, 1.0F, 0.0F, 1.0F};
 
+/// sunny()'s moment with a magenta sky, so a pixel no world covers shows (the ground pass shades it with the sky).
+[[nodiscard]] style::ThemeBlock magenta_sky() {
+    style::ThemeBlock b = sunny();
+    b.sky_top = {.r = 255, .g = 0, .b = 255, .a = 255};
+    b.sky_horizon = b.sky_top;
+    return b;
+}
+
 /// The pixels of `p` the clear colour shows in, alone or through what lies faded over it: green by at least 50 levels
 /// over red and blue (the map's greenest, the parks' #A9C38A, by 26).
 [[nodiscard]] std::size_t count_clear(const gpu::Pixels& p) {
@@ -690,7 +704,8 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
                 if (ak.z >= k.z) return false;
                 const auto gap = static_cast<std::uint32_t>(k.z - ak.z);
                 if ((k.x >> gap) != ak.x || (k.y >> gap) != ak.y) return false;
-                const std::uint64_t over = scene::cells_over(scene::world_cells_per_side, gap, k.x, k.y);
+                const std::uint64_t over =
+                    scene::cells_overlapping(scene::world_cells_per_side, tiles::tile_box(ak), tiles::tile_box(k));
                 return (a.cells & over) == over;
             });
             under += held ? 1 : 0;
@@ -717,7 +732,11 @@ TEST_CASE("the hand-over: a world tile fades in over 0.18 s over its ancestor's 
         MESSAGE(std::format("{} frames during the fade; then {} draws, fading {}", frames, f->draws.size(), f->fading));
         CHECK_FALSE(f->fading);
         CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) { return d.fade >= 1.0F; }));
-        CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11; }));
+        // the L11 alone, over the floor's L3 where the ground bends (from 18 km: scene/WorldTiles.hpp)
+        CHECK(std::ranges::all_of(f->draws, [](const scene::WorldDraw& d) {
+            return d.tile->key.z == 11 || d.tile->key.z == scene::world_floor;
+        }));
+        CHECK(std::ranges::any_of(f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11; }));
         CHECK(map.complete());
         CHECK_FALSE(map.animating());
     }
@@ -1166,6 +1185,263 @@ TEST_CASE("the standing fades: what stands up of a tile fading in trades pixels 
     fs::remove_all(guard, ec);
 }
 
+namespace {
+
+/// The frame's view of a camera state where no pack's ladder places it (frame/FrameBuilder.cpp's): its target at the
+/// origin of the frame centred on it.
+[[nodiscard]] view::View view_of(const style::CameraState& c) {
+    const view::CameraSpec spec{.target = {},
+                                .yaw = view::bearing_of(c.bearing),
+                                .pitch = view::engine_pitch(c.pitch),
+                                .dist = c.distance,
+                                .fov = view::field_of_view,
+                                .width = static_cast<double>(c.width_dp),
+                                .height = static_cast<double>(c.height_dp),
+                                .cx = std::nullopt,
+                                .cy = c.principal_y,
+                                .near = view::near_plane};
+    return {spec, {.density = c.density, .width_px = c.width_px, .height_px = c.height_px, .quarter_turns = 0}};
+}
+
+/// scene/World.cpp's frame centred on a camera state's place.
+[[nodiscard]] view::GroundFrame centred_on(const style::CameraState& c) {
+    return {.lat0 = c.latitude,
+            .lon0 = c.longitude,
+            .kx = 111'320.0 * pymath::cos(pymath::radians(c.latitude)),
+            .kz = 110'540.0};
+}
+
+/// The blank pixels within the disc of the sphere the ground bends to (its rays meet it more than 2 px inside its
+/// limb): the clear colour's (green) or the sky's (magenta, magenta_sky's: the ground pass shades whatever no world
+/// covers with the sky), and the disc's pixels.
+struct DiscCount {
+    std::size_t clear = 0;
+    std::size_t disc = 0;
+};
+
+[[nodiscard]] DiscCount blank_in_disc(const gpu::Pixels& p, const view::View& v) {
+    const view::Camera& c = v.camera();
+    const view::Vec3& e = c.eye();
+    const view::Vec3 to{-e.x, -view::earth_radius - e.y, -e.z}; // the sphere's centre from the eye
+    const double d = std::sqrt((to.x * to.x) + (to.y * to.y) + (to.z * to.z));
+    const double limb = d > view::earth_radius ? pymath::asin(view::earth_radius / d) : std::numbers::pi;
+    const double margin = 2.0 / (c.focal() * v.device().density);
+    DiscCount n;
+    for (std::uint32_t y = 0; y < p.height; ++y) {
+        for (std::uint32_t x = 0; x < p.width; ++x) {
+            const double kx = ((((x + 0.5) / v.device().density) - c.cx()) / c.focal());
+            const double ky = -((((y + 0.5) / v.device().density) - c.cy()) / c.focal());
+            const view::Vec3 r{(c.right().x * kx) + (c.up().x * ky) + c.forward().x,
+                               (c.right().y * kx) + (c.up().y * ky) + c.forward().y,
+                               (c.right().z * kx) + (c.up().z * ky) + c.forward().z};
+            const double len = std::sqrt((r.x * r.x) + (r.y * r.y) + (r.z * r.z));
+            const double cosine = ((r.x * to.x) + (r.y * to.y) + (r.z * to.z)) / (len * d);
+            if (pymath::acos(std::clamp(cosine, -1.0, 1.0)) >= limb - margin) continue;
+            ++n.disc;
+            const std::size_t i = 4 * ((std::size_t{y} * p.width) + x);
+            const int r8 = p.rgba[i];
+            const int g8 = p.rgba[i + 1];
+            const int b8 = p.rgba[i + 2];
+            if ((g8 > r8 + 50 && g8 > b8 + 50) || (r8 > g8 + 50 && b8 > g8 + 50)) ++n.clear;
+        }
+    }
+    return n;
+}
+
+/// Draws `cam` until the map is complete and the world wants nothing more (at most four minutes).
+void draw_world_complete(standin::Session& session, frame::MapFrame& map, const style::CameraState& cam) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+    int frames = 0;
+    while (std::chrono::steady_clock::now() < until) {
+        const standin::Drawn s = session.draw(cam, {});
+        if (s.stale) session.remake();
+        frames += s.drawn ? 1 : 0;
+        scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+        const scene::WorldFrame* f = tiles != nullptr ? tiles->frame() : nullptr;
+        if (map.complete() && f != nullptr && f->wanted == 0 && frames > 2) return;
+        if (tiles != nullptr) tiles->wait_idle();
+    }
+}
+
+} // namespace
+
+TEST_CASE("the bend: a sweep from 1 km to 60,000 km in 120 steps at Amsterdam, Tokyo, the open sea and 85 degrees "
+          "south, a frame a step once the globe is resident, leaves no pixel of the bent ground blank") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the sweep is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-sweep-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(magenta_sky());
+        struct Place {
+            const char* name;
+            double lat;
+            double lon;
+        };
+        constexpr int steps = 120;
+        for (const Place place :
+             {Place{.name = "amsterdam", .lat = 52.37, .lon = 4.89},
+              Place{.name = "tokyo", .lat = 35.68, .lon = 139.69}, Place{.name = "sea", .lat = 35.0, .lon = -40.0},
+              Place{.name = "south", .lat = -85.0, .lon = 0.0}}) {
+            // the globe resident and the place's tiles in at 20 km first, then out in a frame a step, moving
+            style::CameraState cam = camera(place.lat, place.lon, 0.0, 0.0, 20'000.0);
+            cam.pack_id = 0;
+            draw_world_complete(session, map, cam);
+            cam.flags = 0;
+            std::size_t clear = 0;
+            std::size_t disc = 0;
+            double worst_at = 0;
+            std::size_t worst = 0;
+            std::string worst_draws;
+            for (int i = 0; i <= steps; ++i) {
+                cam.distance = 1'000.0 * pymath::pow(60'000.0, static_cast<double>(i) / steps);
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                if (cam.distance <= scene::world_from) continue;
+                ATLAS_REQUIRE(kept->kept != nullptr);
+                auto pixels = kept->kept->read(kept->kept->latest());
+                ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+                const DiscCount n = blank_in_disc(*pixels, view_of(cam));
+                clear += n.clear;
+                disc += n.disc;
+                if (n.clear > worst) {
+                    worst = n.clear;
+                    worst_at = cam.distance;
+                    // what the world drew in the worst frame, to tell why
+                    const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+                    worst_draws.clear();
+                    if (f != nullptr) {
+                        for (const scene::WorldDraw& d : f->draws) {
+                            worst_draws +=
+                                std::format(" {}/{}/{}:{:x}{}{}", d.tile->key.z, d.tile->key.x, d.tile->key.y, d.cells,
+                                            d.fade < 1.0F ? "~" : "", d.tile->cap != 0 ? "c" : "");
+                        }
+                        worst_draws += std::format(" (wanted {}, bare {})", f->wanted, f->bare);
+                    }
+                    if (!out.empty()) {
+                        CHECK(gpu::write_ppm(*pixels,
+                                             (fs::path(out) / std::format("sweep_{}_worst.ppm", place.name)).string()));
+                    }
+                }
+                if (i % 12 == 0 && !out.empty()) {
+                    CHECK(gpu::write_ppm(
+                        *pixels,
+                        (fs::path(out) / std::format("sweep_{}_{:.0f}.ppm", place.name, cam.distance)).string()));
+                }
+            }
+            const scene::WorldStats st = map.world()->world_tiles()->stats();
+            MESSAGE(std::format("{}: {} px of the bent ground's disc in the sweep's frames, {} of them blank (most {} "
+                                "at {:.0f} m, drawing{}); {} tiles resident in {:.1f} MB",
+                                place.name, disc, clear, worst, worst_at, worst_draws, st.resident,
+                                static_cast<double>(st.bytes) / 1e6));
+            CHECK(disc > 0);
+            CHECK(clear == 0);
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE(
+    "the poles: from 2,500 km over 85 degrees north and south the caps beyond Mercator's 85.05 degrees are drawn, "
+    "the sea in the north and Antarctica's land in the south, the pole itself in view") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the poles are not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-poles-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        const style::ThemeBlock theme = magenta_sky();
+        map.set_theme(theme);
+        struct Pole {
+            const char* name;
+            double lat;
+            double pitch;
+            double bearing;
+        };
+        for (const Pole pole : {Pole{.name = "north", .lat = 85.0, .pitch = 0.0, .bearing = 0.0},
+                                Pole{.name = "south", .lat = -85.0, .pitch = 0.0, .bearing = 0.0},
+                                Pole{.name = "north_pitched", .lat = 85.0, .pitch = 45.0, .bearing = 0.0},
+                                Pole{.name = "south_pitched", .lat = -85.0, .pitch = 45.0, .bearing = 180.0}}) {
+            // 2,500 km: the pole, 5 degrees beyond the target, lies 12 degrees from the frame's middle (18 to its edge)
+            style::CameraState cam = camera(pole.lat, 20.0, pole.bearing, pole.pitch, 2'500'000.0);
+            cam.pack_id = 0;
+            draw_world_complete(session, map, cam);
+            CHECK(map.complete());
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            const view::View v = view_of(cam);
+            const DiscCount n = blank_in_disc(*pixels, v);
+            // the pole's own pixel: the cap's colour, the sea's in the north, the land's in the south (the style holds
+            // no glacier yet: step 8's ladder gives it its colour)
+            const scene::WorldBend bend = scene::world_bend(v, centred_on(cam));
+            const view::Vec3 at = scene::world_point(bend, centred_on(cam), pole.lat > 0 ? 90.0 : -90.0, 20.0);
+            const std::optional<view::Vec2> css = v.camera().proj(at); // on the bent ground already
+            ATLAS_REQUIRE(css.has_value());
+            const view::Vec2 s = v.device_point(*css);
+            const auto px = static_cast<std::uint32_t>(std::clamp(s.x, 0.0, pixels->width - 1.0));
+            const auto py = static_cast<std::uint32_t>(std::clamp(s.y, 0.0, pixels->height - 1.0));
+            const std::size_t i = 4 * ((std::size_t{py} * pixels->width) + px);
+            const style::Rgb8 want = pole.lat > 0 ? theme.water : theme.ground;
+            const auto near = [](std::uint8_t a, std::uint8_t b) { return std::abs(int{a} - int{b}) <= 40; };
+            const bool coloured =
+                near(pixels->rgba[i], want.r) && near(pixels->rgba[i + 1], want.g) && near(pixels->rgba[i + 2], want.b);
+            MESSAGE(std::format("{}: {} px of the disc, {} blank; the pole at ({:.0f}, {:.0f}) is #{:02X}{:02X}"
+                                "{:02X}",
+                                pole.name, n.disc, n.clear, s.x, s.y, pixels->rgba[i], pixels->rgba[i + 1],
+                                pixels->rgba[i + 2]));
+            CHECK(n.disc > 1000);
+            CHECK(n.clear == 0);
+            CHECK(coloured);
+            if (!out.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("pole_{}.ppm", pole.name)).string()));
+            }
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
 TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of the app, and drawn once their heads and "
           "chunks are kept in the world's cache") {
     if (!test::open_session()) return;
@@ -1294,6 +1570,92 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
                             asked.size(), kept, drawn.size(), f->draws.size(), f->bare));
         CHECK(std::ranges::includes(drawn, asked));
         CHECK(tiles->stats().failed == 0);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world's painter's order holds wherever the camera stands: from 45 km pitched 48 degrees, a camera moved "
+          "a centimetre at a time draws the same picture, the water over the land and the lines over the fills") {
+    const std::string world_dir = environment("ATLAS_WORLD_DIR");
+    if (world_dir.empty()) {
+        MESSAGE("ATLAS_WORLD_DIR is not set: the world is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    std::vector<frame::MapPack> packs = world_packs(world_dir);
+    ATLAS_REQUIRE(packs.size() > 1);
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-order-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        // a Vulkan without a window system (CI's arm64 lavapipe) skips, as the map's other sessions do
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // over the Westerkerk, the polders, the IJ and the railways west and north of it ahead, where the user saw the
+        // far shimmer; the cloud shadows, which drift with the clock, left out
+        style::CameraState cam = camera(52.3735, 4.8755, 22.0, 48.0, 45'000.0);
+        cam.parts = style::camera_part::cloud_shadows;
+        draw_complete(session, map, cam);
+        CHECK(map.complete());
+        const auto faded = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+        while (f != nullptr && f->fading && std::chrono::steady_clock::now() < faded) {
+            (void)session.draw(cam, {});
+            f = map.world()->world_tiles()->frame();
+        }
+        ATLAS_REQUIRE(f != nullptr);
+        CHECK_FALSE(f->fading);
+        ATLAS_REQUIRE(kept->kept != nullptr);
+        // the target a centimetre north a step: an edge moves about a ten-thousandth of a pixel, while the points'
+        // frame metres from the eye move a unit or two of their last place, and with them the rounding of the
+        // fills' z·w / w; drawn twice, the second read
+        const auto picture = [&](int step) {
+            style::CameraState c = cam;
+            c.latitude += static_cast<double>(step) * 0.01 / 111'320.0;
+            (void)session.draw(c, {});
+            (void)session.draw(c, {});
+            auto pixels = kept->kept->read(kept->kept->latest());
+            REQUIRE(pixels.has_value());
+            return *std::move(pixels);
+        };
+        gpu::Pixels last = picture(0);
+        const std::size_t all = std::size_t{last.width} * last.height;
+        std::size_t most = 0;
+        std::string steps;
+        for (int step = 1; step <= 8; ++step) {
+            gpu::Pixels p = picture(step);
+            REQUIRE(p.rgba.size() == last.rgba.size());
+            // the pixels changed from the picture a centimetre back: where an edge passed a pixel's centre, a few
+            // hundred at most; with the fills' depths as the rasteriser rounds them about half the picture
+            std::size_t changed = 0;
+            for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+                for (std::size_t c = 0; c < 3; ++c) {
+                    if (std::abs(int{p.rgba[i + c]} - int{last.rgba[i + c]}) > 8) {
+                        ++changed;
+                        break;
+                    }
+                }
+            }
+            most = std::max(most, changed);
+            steps += std::format(" {}", changed);
+            if (!out.empty()) CHECK(gpu::write_ppm(p, (fs::path(out) / std::format("order_{}.ppm", step)).string()));
+            last = std::move(p);
+        }
+        MESSAGE(std::format("{} draws; pixels changed from the picture a centimetre back:{} of {}", f->draws.size(),
+                            steps, all));
+        CHECK(most * 200 < all);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

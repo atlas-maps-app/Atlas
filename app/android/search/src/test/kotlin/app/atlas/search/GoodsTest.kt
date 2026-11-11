@@ -35,11 +35,12 @@ class GoodsTest {
 
     @Test
     fun goodsWordsTakeNoOtherWordsMeaning() {
-        // a goods phrase must not hide a word the lexicon already reads otherwise (a kind, a property, a cuisine)
+        // a goods phrase must not hide a word its language already reads otherwise (a kind, a property, a cuisine), or
+        // it is never read; another language's word gives way to it in its own ("pommes": apples in French, fries in German)
         val clashes = ArrayList<String>()
         for (g in GoodsCatalogue.all) for ((lang, phrases) in g.phrases) for (p in phrases) {
             val words = p.split(' ')
-            val same = Lexicon.lookup(words, 0, lang).filter { it.words == words }
+            val same = Lexicon.lookup(words, 0, lang).filter { it.words == words && it.lang == lang }
             val others = same.filter { e ->
                 val m = e.meaning
                 !(m is Meaning.Noun && m.id.startsWith("goods:")) && (m !is Meaning.Noun || m.rank <= 3)
@@ -75,7 +76,9 @@ class GoodsTest {
         for ((text, lang, id) in listOf(
             Triple("batteries", "en", "batteries"), Triple("where can I buy batteries", "en", "batteries"),
             Triple("baterries", "en", "batteries"), Triple("postzegels", "nl", "stamps"), Triple("Briefmarken kaufen", "de", "stamps"),
-            Triple("où acheter des piles", "fr", "batteries"), Triple("fietsenmaker", "nl", "bike_repair"), Triple("phone charger", "en", "phone_charger"),
+            Triple("où acheter des piles", "fr", "batteries"), Triple("lekke band", "nl", "bike_repair"), Triple("phone charger", "en", "phone_charger"),
+            // the frozen food shops' goods are the supermarkets' too (the owner, 6 November: "Supermarkets have frozen food")
+            Triple("frozen food", "en", "frozen_food"), Triple("diepvries", "nl", "frozen_food"), Triple("Tiefkühlkost", "de", "frozen_food"),
         )) {
             val g = search(text, lang).items.filterIsInstance<SearchItem.GoodsResult>().singleOrNull()
             assertEquals(text, id, g?.goods?.id)

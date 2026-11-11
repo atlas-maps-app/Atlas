@@ -7,7 +7,10 @@ import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.places.Brand
 import app.atlas.places.Brands
+import app.atlas.places.CategoryNode
+import app.atlas.places.CategoryTree
 import app.atlas.places.TagFilter
+import app.atlas.search.PlaceRecord
 import app.atlas.search.covers
 import app.atlas.services.PlaceOrigin
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +18,12 @@ import kotlinx.coroutines.withContext
 
 /** One chain around: the brand and its branches, nearest first. */
 data class BrandBranches(val brand: Brand, val branches: List<Place>)
+
+/** The chains around of one kind, [kind] (as the category tree files most of their branches), most branches first. */
+data class BrandStack(val kind: CategoryNode?, val chains: List<BrandBranches>) {
+    /** Its kind's id, or its one chain's brand's where it has no kind. */
+    val id: String get() = kind?.id ?: chains.first().brand.id
+}
 
 /** The places around a point split into chains (with their branches) and independents, and where they came from. */
 data class BrandsNearby(val chains: List<BrandBranches>, val independents: List<Place>, val origin: PlaceOrigin?)
@@ -47,13 +56,18 @@ object BrandsAround {
     }
 
     /**
-     * The branches of brand [id] within [radiusM] of [at], nearest first: from the regions' brand index, else the map's
-     * packs, else Overpass online ([app.atlas.services.LocalData.branches]). The origin says which.
+     * [chains] stacked by kind (the owner, 6 November: "Brands around stacks by kind?"): each chain on the kind most of
+     * its branches are, so that the pizza chains around share one stack and the shoe chains another; the stacks in the
+     * order their first chains come in [chains], the one with the most branches first.
      */
-    suspend fun branches(services: Services, id: String, at: LatLon, radiusM: Double): Pair<List<Place>, PlaceOrigin?> = withContext(Dispatchers.Default) {
-        val got = runCatching { services.localData.branches(id, at, radiusM) }.getOrNull() ?: return@withContext emptyList<Place>() to null
-        got.value to got.origin
-    }
+    fun stacks(chains: List<BrandBranches>): List<BrandStack> =
+        chains.map { c -> c to kindOf(c) }
+            .groupBy { (_, kind) -> kind?.id }
+            .values.map { stack -> BrandStack(stack.first().second, stack.map { it.first }) }
+
+    /** The kind most of [chain]'s branches are, as the category tree files them; of kinds as many, its nearest's. */
+    private fun kindOf(chain: BrandBranches): CategoryNode? =
+        chain.branches.map { CategoryTree.of(it.tags, PlaceRecord.geometryOf(it)) }.groupBy { it?.id }.values.maxByOrNull { it.size }?.first()
 
     /** Splits [places] within [radiusM] of [at] into chains (most branches first) and named independents (nearest first). */
     fun split(places: List<Place>, at: LatLon, radiusM: Double, origin: PlaceOrigin?): BrandsNearby {

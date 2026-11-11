@@ -64,6 +64,7 @@ import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.openTotal
 import java.util.Locale
 
 /* The Bar board's golds and blacks (`canvas/project/Bar.dc.html`). */
@@ -130,8 +131,8 @@ fun BarScreen(nav: Navigator) {
                 Column(Modifier.fillMaxWidth().padding(top = boardTop(156.dp)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     CssLine(stringResource(R.string.eat_bar_title), TITLE, Modifier.semantics { heading() })
                     val line = card?.let { c ->
-                        val open = if (c.countsOpen) stringResource(R.string.eat_bar_open, c.open) else stringResource(R.string.eat_carte_places, c.open)
-                        listOfNotNull(open, c.lastCall?.let { stringResource(R.string.eat_bar_last_call, it.format(HM)) }).joinToString(" · ")
+                        val open = if (c.countsOpen) stringResource(R.string.eat_bar_open, openTotal(c.open, c.guessed)) else stringResource(R.string.eat_carte_places, c.open)
+                        listOfNotNull(open, c.lastCall?.let { stringResource(R.string.eat_bar_last_call, it.shown) }).joinToString(" · ")
                     } ?: stringResource(R.string.kit_loading)
                     CssLine(line.lowercase(Locale.forLanguageTag(ctx.lang)), COUNT_LINE)
                 }
@@ -286,7 +287,7 @@ private fun VenueEntry(v: Venue, ctx: EatContext, inCrawl: Boolean, onOpen: () -
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(v.place.name, style = NAME, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        val hook = v.hooks.map { hookText(it) }.joinToString(", ")
+        val hook = v.hooks.map { h -> hookText(h).let { if (h is Hook.Until) guessMark(v.place, it) else it } }.joinToString(", ")
         CssLine(hook.ifEmpty { v.place.kindName(ctx.lang)?.lowercase().orEmpty() }, HOOK)
         val stars = ctx.ratings.stars(v.place.key)?.let { "★ " + starsText(it) }
         // Geist has no ★: the browser's fallback face for it makes the board's meta line 19.5 px, not 17.
@@ -297,7 +298,7 @@ private fun VenueEntry(v: Venue, ctx: EatContext, inCrawl: Boolean, onOpen: () -
                 v.place.alwaysOpen -> "24/7"
                 v.closes != null && v.hooks.none { it is Hook.Until } -> "→ " + v.closes.format(HM)
                 else -> null
-            }
+            }?.let { guessMark(v.place, it) }
             val price = priceText(ctx.ratings[v.place.key]?.priceLevel)
             CssLine(metaLine(v.place.walkMinutes, open, stars, price), META.copy(lineHeight = lineH.sp))
             val label = stringResource(if (inCrawl) R.string.eat_crawl_remove else R.string.eat_crawl_add)

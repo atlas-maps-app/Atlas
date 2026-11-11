@@ -24,6 +24,7 @@
     <string name="kit_closed_opens">closed · opens %1$s</string>
     <string name="kit_closed">closed</string>
     <string name="kit_hours_unknown">hours not mapped</string>
+    <string name="kit_about">about %1$d</string>
     <string name="kit_mic">Speak</string>
     <string name="kit_mic_unavailable">Voice search needs the phone\'s on-device speech recognition</string>
     <string name="kit_offline">Offline</string>

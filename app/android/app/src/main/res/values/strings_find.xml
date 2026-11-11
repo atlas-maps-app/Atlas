@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The one search (decision 12): the grid of every kind of place, a kind's places and its filters. -->
+<resources>
+    <string name="find_hint_in">Search in %s</string>
+    <string name="find_word_remove">Take it out</string>
+    <string name="find_clear">Clear the text</string>
+    <string name="find_up">Back</string>
+
+    <!-- Why a kind stands on the Now shelf. -->
+    <string name="find_why_time">for this time</string>
+    <string name="find_why_night">open at night</string>
+    <string name="find_why_season">in season</string>
+    <string name="find_why_sunset">before sunset</string>
+    <string name="find_why_sun">in the sun</string>
+    <string name="find_why_rain">out of the rain</string>
+    <string name="find_why_warm">a warm day</string>
+    <string name="find_why_cold">a cold day</string>
+    <string name="find_why_storm">storm: stay in</string>
+    <string name="find_why_history">you often look</string>
+    <string name="find_why_nearby">near you</string>
+
+    <!-- What a tile of the grid says. -->
+
+    <!-- The grid's switches. -->
+    <string name="find_smart">Smart tiles</string>
+    <string name="find_nearby">Only near</string>
+    <string name="find_fixed">Fixed order</string>
+    <string name="find_mode_walk">On foot</string>
+    <string name="find_mode_bike">By bike</string>
+    <string name="find_mode_car">By car</string>
+    <string name="find_mode_transit">By transit</string>
+
+    <!-- A kind's places. -->
+    <string name="find_counts">%1$s near · %2$s open</string>
+    <string name="find_count_near">%1$s near</string>
+    <string name="find_within">within %s</string>
+    <string name="find_reach_next">Count minutes %s</string>
+    <string name="find_screen_eat">Eat &amp; drink</string>
+    <string name="find_screen_groceries">Groceries</string>
+    <string name="find_screen_highstreet">High street</string>
+    <string name="find_screen_charge">Charge</string>
+    <string name="find_screen_fuel">Fuel</string>
+    <string name="find_screen_needs">Needs</string>
+    <string name="find_screen_swim">Swim</string>
+    <string name="find_screen_relax">Relax</string>
+    <string name="find_screen_parks">Parks</string>
+    <string name="find_screen_nature">Nature</string>
+    <string name="find_screen_peaks">Peaks &amp; views</string>
+    <string name="find_screen_picnic">Picnic</string>
+    <string name="find_screen_twowheel">Two wheels</string>
+    <string name="find_filters">All filters</string>
+    <string name="find_filters_title">Every tag of these places</string>
+    <string name="find_filters_hint">The numbers say how many of the places shown have it. Hold a filter to keep it on in every search.</string>
+    <string name="find_filters_done">Show %s</string>
+    <string name="find_filters_clear">Clear</string>
+    <string name="find_section_when">When</string>
+    <string name="find_section_kind">Kind</string>
+    <string name="find_section_food">Food &amp; diet</string>
+    <string name="find_section_access">Access</string>
+    <string name="find_section_cost">Cost</string>
+    <string name="find_section_payment">Payment</string>
+    <string name="find_section_services">Services</string>
+    <string name="find_section_contact">Contact</string>
+    <string name="find_section_address">Address</string>
+    <string name="find_section_names">Names</string>
+    <string name="find_section_mapping">On the map</string>
+    <string name="find_section_other">Everything else</string>
+    <string name="find_open_at_now">Now</string>
+    <string name="find_today">Today</string>
+    <string name="find_tomorrow">Tomorrow</string>
+    <string name="find_none_left">No place left with these filters</string>
+    <string name="find_brand_hours">≈ the brand\'s hours, as most of its branches keep them</string>
+    <string name="find_stale">not checked for a long time</string>
+
+    <!-- Holding a kind or a place. -->
+    <string name="find_explain_tags">On the map as</string>
+    <string name="find_explain_where">In</string>
+    <string name="find_explain_all">Every one near</string>
+    <string name="find_explain_hours">Correct the opening hours</string>
+    <string name="find_explain_ok">OK</string>
+
+    <!-- The search's sheet: the day's title, the collection of kinds, the words of the figures. -->
+    <string name="find_part_morning">This morning</string>
+    <string name="find_part_midday">At midday</string>
+    <string name="find_part_afternoon">This afternoon</string>
+    <string name="find_part_evening">This evening</string>
+    <string name="find_part_night">Tonight</string>
+    <string name="find_every_kind">Every kind</string>
+    <!-- Read aloud on a kind's row of narrower kinds, which a pull down unfolds into lines and a pull up folds -->
+    <string name="find_chips_unfold">Show all kinds at once</string>
+    <string name="find_chips_fold">Show kinds in one row</string>
+    <!-- the plain list of every kind (EveryKindList): how many, and its orders -->
+    <plurals name="find_kinds">
+        <item quantity="one">%d kind</item>
+        <item quantity="other">%d kinds</item>
+    </plurals>
+    <string name="find_kinds_most">Most</string>
+    <string name="find_kinds_az">A–Z</string>
+    <!-- a kind’s list holds the kinds none of which is near too: looking further finds the nearest of each, wherever it is -->
+    <string name="find_look_further">Look further</string>
+    <string name="find_looking_further">Looking further…</string>
+    <string name="find_none_near">none near</string>
+    <string name="find_found_nowhere">found nowhere</string>
+    <string name="find_not_on_phone">not on this phone</string>
+    <string name="find_unit_min">min</string>
+    <string name="find_unit_h">h</string>
+    <string name="find_unit_km">km</string>
+    <string name="find_word_open">open</string>
+    <string name="find_word_near">near</string>
+    <string name="find_word_of">of %d</string>
+    <string name="find_word_hides">hides %d</string>
+    <string name="find_word_opens">opens</string>
+    <string name="find_word_till">till</string>
+    <string name="find_word_free">free</string>
+    <string name="find_tune">How the kinds are shown</string>
+    <!-- The collection by what its kinds are doing: closing soon, there at any hour, asleep till they open. -->
+    <string name="find_closing">Before they close</string>
+    <string name="find_closing_line">The first at %s · go now, or tomorrow</string>
+    <string name="find_closes_at">Closes %s</string>
+    <string name="find_spare">%d′ spare</string>
+    <string name="find_anytime">Any time</string>
+    <string name="find_anytime_line">Always there when you need one</string>
+    <string name="find_asleep_night">Asleep till morning</string>
+    <string name="find_asleep_day">Closed for now</string>
+    <string name="find_asleep_line">%1$s first, at %2$s</string>
+    <string name="find_asleep_opens">Opens %s</string>
+    <string name="find_fan_out">Fan out</string>
+    <string name="find_fold_up">Fold up</string>
+    <string name="find_away">%1$s is %2$d min away</string>
+    <!-- How a place stands by the time one gets there. -->
+    <string name="find_arrive_closed">closed by the time you arrive</string>
+    <string name="find_arrive_closes">closes %d′ after you arrive</string>
+    <string name="find_arrive_opens">opens %1$s, %2$d′ after you arrive</string>
+    <string name="find_arrive_open">open by the time you arrive</string>
+    <string name="find_picked_all">of %d have everything you picked</string>
+    <!-- The kind's view and what typed words asked (rebuilt 4 November). -->
+    <string name="find_ql">As a query</string>
+    <string name="find_area_unknown">No map here knows “%1$s”: around you instead</string>
+    <string name="find_online">Found online: the maps on this phone have none here</string>
+    <string name="find_loosened">Nothing just as asked, so not as strict about %1$s</string>
+    <string name="find_loose_time">the time</string>
+    <string name="find_loose_far">how far</string>
+    <string name="find_loose_near">what it is near</string>
+    <string name="find_loose_inside">being inside</string>
+    <string name="find_sky_storm">Storm at %1$s</string>
+    <string name="find_sky_heavy">Heavy rain at %1$s</string>
+    <string name="find_sky_wet">Rain for hours</string>
+    <string name="find_sky_dry">Stays dry</string>
+    <string name="find_order_change">Change the order</string>
+    <string name="find_order_for">for %1$s</string>
+    <string name="find_sure_yes">Surely</string>
+    <string name="find_sure_likely">Likely</string>
+    <string name="find_sure_maybe">Not said</string>
+    <string name="find_sure_no">Not for this</string>
+    <string name="find_nearest">Nearest</string>
+    <string name="find_go">Route there</string>
+    <!-- The answers to how many, which hours, and a fact of a place. -->
+    <string name="find_count_found">found</string>
+    <string name="find_count_in">found in %1$s</string>
+    <string name="find_count_sure">%1$d for sure · %2$d perhaps</string>
+    <string name="find_hours_title">Opening hours this week</string>
+    <string name="find_hours_none">None of them say their hours</string>
+    <string name="find_hours_known">%1$d of %2$d say their hours</string>
+    <string name="find_hours_today">Today most open %1$s–%2$s; the first at %3$s, the last till %4$s</string>
+    <string name="find_hours_today_none">None open today</string>
+    <string name="find_fact_none">The map does not say</string>
+    <!-- A wish of a search that a place does not say, asked of the searcher ("Toilets?"). -->
+    <string name="find_unknown_ask">Answer: %1$s?</string>
+    <string name="find_unknown_title">%1$s?</string>
+    <string name="find_unknown_text">The map does not say this of %1$s yet. Do you know? Your answer leaves a note for the mappers nearby.</string>
+    <!-- The grid's own: clearing the searches (not the lists), the chains around, every brand, the quests around. -->
+    <string name="find_clear_recent">Clear recent</string>
+    <string name="find_brands_around">Brands around</string>
+    <string name="find_brands_all">All brands</string>
+    <!-- a kind's chains around on one stack: laid out at a tap, stacked again at its kind's disc -->
+    <string name="find_brands_deal">Show its brands side by side</string>
+    <string name="find_brands_gather">Stack its brands again</string>
+    <plurals name="find_quests_around">
+        <item quantity="one">%d question about places around</item>
+        <item quantity="other">%d questions about places around</item>
+    </plurals>
+    <!-- the places found as large cards to slide through, or as rows (ResultCards) -->
+    <string name="find_view_cards">Show as cards</string>
+    <string name="find_view_rows">Show as a list</string>
+    <!-- a brand's other branches near, on its nearest's card -->
+    <string name="find_cards_branches">+%d near</string>
+
+    <!-- A walk: a round from where one is, a park's own plan -->
+    <string name="walk_round">Round walk</string>
+    <string name="walk_through">Through %1$s</string>
+    <string name="walk_finding">Finding a way round…</string>
+    <string name="walk_none">No way round from here</string>
+    <string name="walk_start">Start the walk</string>
+    <string name="walk_plan">The park\'s plan</string>
+</resources>

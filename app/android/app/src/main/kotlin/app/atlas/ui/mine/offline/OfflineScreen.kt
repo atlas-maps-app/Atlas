@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
+import app.atlas.UnreadableStore
 import app.atlas.geo.BBox
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalBottomBarInset
@@ -105,12 +107,17 @@ private const val BODY = 0xFF464C5A
 /**
  * The Offline board: the regions on this phone, each a paper card with a map drawn from its own places, the total with
  * the five-colour storage bar, add buttons (draw an area, along a route, a whole country, automatic) and the voices.
+ * A region whose places this Atlas cannot read says so on its card and offers them again (`Services.unreadableStores`);
+ * such a store of no region gets a card of its own to delete it.
  */
 @Composable
 fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
     val services = LocalServices.current
     val manager = services.mine.offline
     val details by manager.details.collectAsStateWithLifecycle()
+    val unreadable by services.unreadableStores.collectAsStateWithLifecycle()
+    // the stores are opened on the first use of the places: the board asks for them, so one that cannot be read shows
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { runCatching { services.placeStores } } }
     val wifi by services.settings.flow(MineKeys.WIFI_ONLY, true).collectAsStateWithLifecycle(true)
     val auto by services.settings.flow(MineKeys.AUTO_REGIONS, false).collectAsStateWithLifecycle(false)
     val scope = rememberCoroutineScope()
@@ -146,11 +153,17 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
         }
         StorageCard(details, capacity, age)
         CountryCards(manager, details, nav)
-        if (details.isEmpty()) {
+        val orphans = unreadable.values.filter { u -> details.none { it.id == u.file.nameWithoutExtension } }.sortedBy { it.file.name }
+        if (details.isEmpty() && orphans.isEmpty()) {
             MineState("ui.offline", stringResource(R.string.mine_offline_none_title), text = stringResource(R.string.mine_offline_none_text), tint = Color(0xFF178A4E))
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                for (d in details) RegionCard(d, manager, onDelete = { asking = d })
+                for (d in details) RegionCard(
+                    d, manager, unreadable[services.mine.files.places(d.id)],
+                    onDelete = { asking = d },
+                    onAgain = { scope.launch { manager.downloadPlacesAgain(d.id) } },
+                )
+                for (u in orphans) UnreadableCard(u) { scope.launch { withContext(Dispatchers.IO) { manager.engine.dropPlaces(u.file.nameWithoutExtension) } } }
             }
         }
         AddRow(
@@ -313,10 +326,11 @@ private fun layerName(key: String): String = stringResource(
 /**
  * One region as the board's paper cards (radius 10, its white top edge and two shadows): the folded map 150 px wide on the
  * left, then 16 px in its name (serif 24 on 24), its size (13 on 17), what it holds (16 px symbols 7 apart) and its state.
+ * When this Atlas cannot read its places ([bad]) the card opens by itself, says why and offers them again ([onAgain]).
  */
 @Composable
-private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, onDelete: () -> Unit) {
-    var open by rememberSaveable(d.id) { mutableStateOf(false) }
+private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: UnreadableStore?, onDelete: () -> Unit, onAgain: () -> Unit) {
+    var open by rememberSaveable(d.id, bad != null) { mutableStateOf(bad != null) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -340,20 +354,47 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, onDelete: (
                     for (s in icons) MSy(s, 16f, INK)
                 }
                 Spacer(Modifier.weight(1f, fill = true).heightIn(min = 8.dp))
-                StateChip(d)
+                StateChip(d, bad)
             }
         }
         AnimatedVisibility(open) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 14.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val running = d.progress != null
-                if (running) ActionPill(stringResource(R.string.mine_offline_actions_cancel), "ui.close") { manager.cancel(d.id) }
-                else {
-                    if (!d.complete || d.error != null) ActionPill(stringResource(R.string.mine_offline_actions_retry), "ui.refresh") { manager.update(d.id) }
-                    else if (d.update != null) ActionPill(stringResource(R.string.mine_offline_actions_update), "ui.refresh") { manager.update(d.id) }
+            Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 14.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (bad != null) BText(
+                    stringResource(if (bad.otherVersion) R.string.mine_offline_unreadable_version else R.string.mine_offline_unreadable_damaged),
+                    bt(13f, 400, 17f), BODY, lines = 3,
+                )
+                // the longer names ("Opnieuw downloaden", "Verwijderen") go under each other on a narrow phone
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val running = d.progress != null
+                    if (running) ActionPill(stringResource(R.string.mine_offline_actions_cancel), "ui.close") { manager.cancel(d.id) }
+                    else {
+                        // the places come again with whatever else the region lacks
+                        if (bad != null) ActionPill(stringResource(R.string.mine_offline_actions_again), "ui.download", onClick = onAgain)
+                        else if (!d.complete || d.error != null) ActionPill(stringResource(R.string.mine_offline_actions_retry), "ui.refresh") { manager.update(d.id) }
+                        else if (d.update != null) ActionPill(stringResource(R.string.mine_offline_actions_update), "ui.refresh") { manager.update(d.id) }
+                    }
+                    ActionPill(stringResource(R.string.mine_offline_actions_delete), "ui.trash", danger = true, onClick = onDelete)
                 }
-                ActionPill(stringResource(R.string.mine_offline_actions_delete), "ui.trash", danger = true, onClick = onDelete)
             }
         }
+    }
+}
+
+/**
+ * A store in `places/` that this Atlas cannot read and no region holds (`Services.unreadableStores`): it searches nothing
+ * and takes room, so it shows as the board's paper card with what deleting it frees. There is no region to take again.
+ */
+@Composable
+private fun UnreadableCard(u: UnreadableStore, onDelete: () -> Unit) {
+    Column(Modifier.fillMaxWidth().bbox(0xFFF6F2EA, cr(22f)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MSy("ui.search", 18f, INK)
+            BText(u.file.nameWithoutExtension, bt(22f, 400, 26f, SERIF), INK, Modifier.weight(1f), lines = 1)
+            Chip("ui.warning", stringResource(R.string.mine_offline_unreadable), 0xFFFBE7E5, 0xFF9B2A24)
+        }
+        BText(stringResource(R.string.mine_offline_orphan_text, RegionEngine.size(u.bytes)), bt(13f, 400, 17f), BODY, lines = 3)
+        Spacer(Modifier.height(2.dp))
+        ActionPill(stringResource(R.string.mine_offline_actions_delete), "ui.trash", danger = true, onClick = onDelete)
     }
 }
 
@@ -363,9 +404,12 @@ private fun ActionPill(text: String, symbol: String, danger: Boolean = false, on
     TextPill(text, bt(12f, 700, 15.5f), WHITE, if (danger) 0xFFC8322A else INK, h = 34f, padH = 12f, symbol = symbol, symbolSize = 15f, gap = 6f, onClick = onClick)
 }
 
-/** The state at the foot of a card: progress with its percentage, waiting, a failure, an update, or the green check. */
+/**
+ * The state at the foot of a card: progress with its percentage, waiting, places this Atlas cannot read ([bad]), a
+ * failure, an update, or the green check.
+ */
 @Composable
-private fun StateChip(d: RegionDetail) {
+private fun StateChip(d: RegionDetail, bad: UnreadableStore?) {
     val p = d.progress
     when {
         p != null && p.waiting -> Chip("ui.clock", stringResource(R.string.mine_offline_waiting_wifi), 0xFFEFE8FF, 0xFF4B34B8)
@@ -376,6 +420,7 @@ private fun StateChip(d: RegionDetail) {
             }
             BText("${(p.fraction * 100).roundToInt()}%", bt(12f, 400, 15.5f, tnum = true), BODY)
         }
+        bad != null -> Chip("ui.warning", stringResource(R.string.mine_offline_unreadable), 0xFFFBE7E5, 0xFF9B2A24)
         d.error != null -> Chip("ui.warning", stringResource(R.string.mine_offline_stopped), 0xFFFBE7E5, 0xFF9B2A24)
         !d.complete -> Chip("ui.clock", stringResource(R.string.mine_offline_stopped), 0xFFFFF1D6, 0xFF8A5A00)
         d.update != null -> Chip("ui.refresh", d.update.bytes?.let { stringResource(R.string.mine_offline_update_chip, RegionEngine.size(it)) } ?: stringResource(R.string.mine_offline_actions_update), 0xFFE4EAFF, 0xFF1F3FC7)

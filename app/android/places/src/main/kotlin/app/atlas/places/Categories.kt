@@ -3,7 +3,7 @@ package app.atlas.places
 /**
  * A category of places: one of the Map home's groups (eat, groceries, shops, stay, charge, nature, fun, water), or a
  * leaf with the tag [rule] that puts a place in it. Leaves belong to a group ([parentId]) or to a colour [family]
- * (culture, health, service, sport, transport). [legacyId] is the plan's id (c00..c48, eat, heritage, other).
+ * (culture, sport, health, service, transport). [legacyId] is the plan's id (c00..c48, eat, heritage, other).
  */
 class Category internal constructor(
     val id: String,
@@ -18,6 +18,22 @@ class Category internal constructor(
     val rule: TagFilter?,
     val legacyId: String?,
     private val names: Map<String, String>,
+    /**
+     * The kinds people come to it for most (categories.py CORE): presets by id, which lead its row of kinds and are
+     * ringed on its map (the supermarkets and convenience stores among the groceries). Empty for most.
+     */
+    val core: Set<String> = emptySet(),
+    /**
+     * For a group or a family's shelf, the kinds of other shelves it holds too and the shelves it leads into
+     * (categories.py ALSO), as nodes of the [CategoryTree] by id: Fun's climbing halls and its way into Sport.
+     */
+    val also: List<String> = emptyList(),
+    /**
+     * The kinds that end its row after all its other kinds near (categories.py LAST), as nodes of the [CategoryTree] by
+     * id: a shelf's categories (the benches and offices among the services), a category's presets (the frozen food shops
+     * among the groceries). Empty for most.
+     */
+    val last: List<String> = emptyList(),
 ) {
     /** The name in [lang], else in English. */
     fun name(lang: String? = "en"): String = names[Langs.resolve(lang)] ?: names["en"] ?: id
@@ -27,6 +43,9 @@ class Category internal constructor(
     /** The group this category shows under on the Map home, if any: itself for a group. */
     val group: Category? get() = if (isGroup) this else parent
 
+    /** Where it stands in the search's category grid: its group on the Map home's row, else its family's shelf. */
+    val shelf: Category? get() = group ?: Categories.shelf(family)
+
     override fun toString() = id
 }
 
@@ -35,18 +54,25 @@ class Category internal constructor(
  * merged with the boards' categories. Loaded on first use from `categories.json`.
  */
 object Categories {
-    private class Data(val all: List<Category>, val leaves: List<Category>, val byId: Map<String, Category>, val notAPlace: TagFilter)
+    private class Data(
+        val all: List<Category>,
+        val leaves: List<Category>,
+        val byId: Map<String, Category>,
+        val shelves: Map<String, Category>,
+        val notAPlace: TagFilter,
+        val links: List<List<String>>,
+    )
 
     private val data: Data by lazy { load() }
 
     private fun load(): Data {
         val root = Resources.json("categories.json").obj ?: error("categories.json")
         val notAPlace = TagFilter.parse(root["notAPlace"]?.str ?: "")
-        val all = root["categories"]?.arr?.mapNotNull { e ->
+        val entries = root["categories"]?.arr?.mapNotNull { e ->
             val o = e.obj ?: return@mapNotNull null
-            Category(
+            val category = Category(
                 id = o["id"]?.str ?: return@mapNotNull null,
-                isGroup = o["group"] != null,
+                isGroup = o["group"] != null || o["shelf"] != null,
                 parentId = o["parent"]?.str,
                 family = o["family"]?.str ?: o["id"]?.str ?: "",
                 symbol = o["symbol"]?.str ?: "maki-marker",
@@ -54,10 +80,34 @@ object Categories {
                 rule = o["rule"]?.str?.let { TagFilter.parse(it) },
                 legacyId = o["legacy"]?.str,
                 names = o["names"].stringMap(),
+                core = o["core"]?.arr?.mapNotNull { it.str }?.toSet().orEmpty(),
+                also = o["also"]?.arr?.mapNotNull { it.str }.orEmpty(),
+                last = o["last"]?.arr?.mapNotNull { it.str }.orEmpty(),
             )
+            category to (o["shelf"] != null)
         } ?: emptyList()
-        return Data(all, all.filter { !it.isGroup }, all.associateBy { it.id }, notAPlace)
+        // A shelf is named after its family ("health"), which a leaf may share: shelves keep a map of their own.
+        val all = entries.filter { !it.second }.map { it.first }
+        val shelves = entries.filter { it.second }.map { it.first }.associateBy { it.family }
+        val links = root["links"]?.arr?.mapNotNull { g -> g.arr?.mapNotNull { it.str } }.orEmpty()
+        return Data(all, all.filter { !it.isGroup }, all.associateBy { it.id }, shelves, notAPlace, links)
     }
+
+    /**
+     * The search's shelves for the categories with no group on the Map home's row (culture and sights, sport, health,
+     * services, getting around), in grid order. A shelf is a group of its own family's leaves, kept out of [all] and [groups].
+     */
+    fun shelves(): List<Category> = data.shelves.values.toList()
+
+    /** The shelf of [family] ("culture", "sport", "health", "service", "transport"), or null. */
+    fun shelf(family: String): Category? = data.shelves[family]
+
+    /** The leaves on [shelf] (a group's or a family's), in rule order. */
+    fun onShelf(shelf: Category): List<Category> =
+        if (data.byId[shelf.id] === shelf) children(shelf.id) else data.leaves.filter { it.parentId == null && it.family == shelf.family }
+
+    /** The Map home's groups, then the shelves: the category grid's rows, in order. */
+    fun grid(): List<Category> = groups() + shelves()
 
     /** Groups first (in the Map home's order), then every leaf in rule order. */
     fun all(): List<Category> = data.all
@@ -75,6 +125,12 @@ object Categories {
 
     /** The leaves that carry the plan's id [legacy] ("c19" has two: food shops and other shops). */
     fun byLegacyId(legacy: String): List<Category> = data.leaves.filter { it.legacyId == legacy }
+
+    /**
+     * The kinds that belong to each other though each stands where it is (categories.py LINKS): groups of nodes of the
+     * [CategoryTree] by id, each kind of a group linked to every other (minigolf, golf courses, disc golf).
+     */
+    fun links(): List<List<String>> = data.links
 
     /** True unless the tags describe something that is not a place to go (a parking space, a vacant shop, a siren). */
     fun isPlace(tags: Map<String, String>): Boolean = tags.isNotEmpty() && !data.notAPlace.matches(tags)

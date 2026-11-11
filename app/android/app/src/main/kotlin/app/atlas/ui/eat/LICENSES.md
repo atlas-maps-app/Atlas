@@ -1,14 +1,14 @@
 # Licences of what the eat package bundles
 
-| What | Where | Licence |
-|---|---|---|
-| Caveat (variable font, The Caveat Project Authors), from github.com/google/fonts `ofl/caveat` | `app/src/main/res/font/eat_caveat.ttf` | SIL Open Font License 1.1 |
-| Cormorant, regular and italic (The Cormorant Project Authors), from github.com/google/fonts `ofl/cormorant` | `app/src/main/res/font/eat_cormorant.ttf`, `eat_cormorant_italic.ttf` | SIL Open Font License 1.1 |
-| Courier Prime, regular and bold (The Courier Prime Project Authors), from github.com/google/fonts `ofl/courierprime` | `app/src/main/res/font/eat_courier_prime.ttf`, `eat_courier_prime_bold.ttf` | SIL Open Font License 1.1 |
-| Fredoka (The Fredoka Project Authors), from github.com/google/fonts `ofl/fredoka` | `app/src/main/res/font/eat_fredoka.ttf` | SIL Open Font License 1.1 |
-| Poiret One (The Poiret One Project Authors), from github.com/google/fonts `ofl/poiretone` | `app/src/main/res/font/eat_poiret_one.ttf` | SIL Open Font License 1.1 |
-| Tilt Neon (The Tilt Project Authors), from github.com/google/fonts `ofl/tiltneon` | `app/src/main/res/font/eat_tilt_neon.ttf` | SIL Open Font License 1.1 |
-| Special Elite (Brian J. Bonislawsky, Astigmatic), from github.com/google/fonts `apache/specialelite` | `app/src/main/res/font/eat_special_elite.ttf` | Apache License 2.0 |
+| Font | Credit | Licence | Where | Source |
+|---|---|---|---|---|
+| Caveat | Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat) | SIL Open Font License 1.1 | `app/src/main/res/font/eat_caveat.ttf` | variable font, from github.com/google/fonts `ofl/caveat` |
+| Cormorant Garamond | Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant) | SIL Open Font License 1.1 | `app/src/main/res/font/eat_cormorant.ttf`, `eat_cormorant_italic.ttf` | upright and italic, from github.com/google/fonts `ofl/cormorantgaramond` |
+| Courier Prime | Copyright 2015 The Courier Prime Project Authors (https://github.com/quoteunquoteapps/CourierPrime). | SIL Open Font License 1.1 | `app/src/main/res/font/eat_courier_prime.ttf`, `eat_courier_prime_bold.ttf` | regular and bold, from github.com/google/fonts `ofl/courierprime` |
+| Fredoka | Copyright 2016 The Fredoka Project Authors (https://github.com/hafontia/Fredoka-One) | SIL Open Font License 1.1 | `app/src/main/res/font/eat_fredoka.ttf` | from github.com/google/fonts `ofl/fredoka` |
+| Poiret One | Copyright 2011 The Poiret One Project Authors (https://github.com/alexeiva/poiretone) | SIL Open Font License 1.1 | `app/src/main/res/font/eat_poiret_one.ttf` | from github.com/google/fonts `ofl/poiretone` |
+| Tilt Neon | Copyright 2019 The Tilt Project Authors (https://github.com/googlefonts/Tilt-Fonts) | SIL Open Font License 1.1 | `app/src/main/res/font/eat_tilt_neon.ttf` | from github.com/google/fonts `ofl/tiltneon` |
+| Special Elite | Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI). All rights reserved. | Apache License 2.0 | `app/src/main/res/font/eat_special_elite.ttf` | from github.com/google/fonts `apache/specialelite` |
 
 The places, their tags and opening hours are OpenStreetMap data (© OpenStreetMap contributors, ODbL); ratings come
 from Mangrove (reviews under CC BY 4.0) and the providers the user added keys for.

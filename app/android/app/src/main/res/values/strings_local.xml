@@ -462,6 +462,23 @@
     <string name="park_ages">ages %1$s</string>
     <string name="park_wc_at">WC %1$s</string>
     <string name="park_water_at">water %1$s</string>
+    <string name="park_visitor">Visitor centre</string>
+    <string name="park_sleep">Sleep in the park</string>
+    <string name="park_details">Details</string>
+    <string name="park_now">%1$s, right now</string>
+    <string name="park_notes_more">All notes</string>
+    <string name="park_rule_dogs_lead">dogs on lead</string>
+    <string name="park_rule_no_dogs">no dogs</string>
+    <string name="park_rule_dogs">dogs welcome</string>
+    <string name="park_rule_no_drones">no drones</string>
+    <string name="park_rule_no_fires">no fires</string>
+    <string name="park_rule_fire_rings">fires in rings</string>
+    <string name="park_rule_fee">entry fee</string>
+    <string name="park_sources">Outline, paths, trees and rules: OpenStreetMap</string>
+    <plurals name="park_trails">
+        <item quantity="one">%d trail</item>
+        <item quantity="other">%d trails</item>
+    </plurals>
     <string name="local_on">On</string>
     <string name="local_off">Off</string>
     <string name="nature_add_find">Add a find</string>

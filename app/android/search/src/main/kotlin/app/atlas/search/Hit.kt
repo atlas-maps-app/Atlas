@@ -57,6 +57,17 @@ data class Hit(
     val why: List<String> = emptyList(),
     /** The rating used for ranking, when there was one. */
     val rating: Double? = null,
+    /** How surely it meets the query's wants ([Query.Want]): yes when its tags say so, else likely or unsure. */
+    val sure: Sure = Sure.YES,
+    /** The keys of the wants its tags do not say ("toilets"), for the one-tap answers. */
+    val unknown: List<String> = emptyList(),
+    /**
+     * Its hours ([open]) are not its own but worked out from its brand's branches nearby, else from the places of its
+     * kind around it ([HoursBook]): unconfirmed.
+     */
+    val hoursInferred: Boolean = false,
+    /** When nothing was just as asked and it is among the closest matches: what it misses of the query, how far off. */
+    val misses: List<Miss> = emptyList(),
 ) {
     val place: Place get() = record.place
     val tags: Map<String, String> get() = record.tags
@@ -71,4 +82,6 @@ data class QueryResult(
     /** Places looked at. */
     val examined: Int,
     val micros: Long,
+    /** Matches whose tags say they meet every want, not only likely or maybe (of [total]). */
+    val sure: Int = total,
 )

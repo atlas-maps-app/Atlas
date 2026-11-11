@@ -118,7 +118,7 @@ fun RouteScreen(args: Dest.Route, nav: Navigator) {
     val vm = viewModel(key = "route:" + args.route) {
         val from = args.from?.let { Endpoint(args.fromName, it) } ?: Endpoint(null, here, here = true)
         val to = args.to?.let { Endpoint(args.toName, it) }
-        RouteViewModel(services, from, to, args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() }, viaStops(args.via))
+        RouteViewModel(services, from, to, args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() }, viaStops(args.via), args.wish)
     }
     val ui by vm.ui.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()

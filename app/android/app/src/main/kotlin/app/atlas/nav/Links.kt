@@ -11,6 +11,9 @@ import java.net.URLDecoder
  * openstreetmap.org links (a node, way or relation; a marker; a map view; a short link), a palette's QR code
  * (`app.atlas:AT1-…`), and shared text holding a palette's code, coordinates, a Plus Code or a map link (anything else
  * shared becomes a search).
+ *
+ * A stack is the Map home, at the link's point where it has one, with the link's screen over it (a map view has none):
+ * the app opens on it, and while the app runs it lands on top of the screens open ([Navigator.land]).
  */
 object Links {
     private val OSM_ELEMENT = Regex("""(?i)(?:openstreetmap|osm)\.org/(node|way|relation)/(\d+)""")

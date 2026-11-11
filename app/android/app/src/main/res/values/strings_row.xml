@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The home's own row of round buttons (ui/home/HomeRow.kt) -->
+    <string name="row_star">In your row</string>
+    <string name="row_change">Change your row</string>
+    <string name="row_move_left">Move left</string>
+    <string name="row_move_right">Move right</string>
+    <string name="row_take_out">Take %1$s out of your row</string>
+    <string name="row_add">Add to your row</string>
+    <string name="row_reset">Reset your row</string>
+    <string name="row_done">Done</string>
+</resources>

@@ -5,14 +5,18 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
+import app.atlas.places.OpenState
+import app.atlas.places.OpeningHours
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.DayOfWeek
 
 class SearchEngineTest {
     private val engine by lazy { SearchEngine(Fixtures.store) }
@@ -32,8 +36,22 @@ class SearchEngineTest {
             assertEquals(MatchKind.KIND, first.match)
             val kind = r.items.filterIsInstance<SearchItem.Kind>().first()
             assertEquals(1, kind.count)
-            assertEquals("maki-pharmacy", kind.symbol)
+            assertEquals("temaki-pharmacy", kind.symbol)
             assertTrue(first.hit.distance!! in 150.0..300.0)
+        }
+    }
+
+    @Test
+    fun aKindIsFoundByWhatItSellsAndByItsOwnName() {
+        // "Clothes" is what Atlas calls the kind (places KindNames); "clothing store" still finds it, and says it so
+        for ((text, lang, name) in listOf(
+            Triple("clothes", "en", "Clothes"), Triple("clothing store", "en", "Clothes"),
+            Triple("kleding", "nl", "Kleding"), Triple("kledingzaak", "nl", "Kleding"), Triple("gift shop", "en", "Gifts"),
+            Triple("gifts", "en", "Gifts"), Triple("cadeaus", "nl", "Cadeaus"),
+        )) {
+            val r = search(text, ctx.copy(lang = lang))
+            assertTrue("$text/$lang: ${r.items.filterIsInstance<SearchItem.Kind>().map { it.label }}", r.items.filterIsInstance<SearchItem.Kind>().any { it.label == name })
+            assertTrue("$text/$lang", r.places.take(5).any { it.hit.tags["shop"] in setOf("clothes", "gift") })
         }
     }
 
@@ -52,6 +70,11 @@ class SearchEngineTest {
         assertEquals(2, ah.places.count { it.hit.tags["brand"] == "Albert Heijn" })
         val exact = search("Albert Heijn")
         assertEquals(OsmId(OsmType.NODE, 34044750), exact.places.first().hit.place.id)
+        // its very name asks for the chain, which leads; a typo or a part of it lists it among the rest
+        assertTrue((exact.items.first() as SearchItem.BrandResult).named)
+        assertFalse(brand.named)
+        assertTrue(search("appie").items.first().let { it is SearchItem.BrandResult && it.named && it.brand.brand == "Albert Heijn" })
+        assertTrue(search("albert").items.none { it is SearchItem.BrandResult && it.named })
     }
 
     @Test
@@ -192,7 +215,8 @@ class SearchEngineTest {
         val r = search("cafe with wifi")
         for (p in r.places) {
             assertTrue(p.hit.why.toString(), "amenity=cafe" in p.hit.why)
-            assertTrue(p.hit.why.toString(), p.hit.why.any { it.startsWith("internet_access") })
+            // wifi is wanted: a café says it has it, or is shown unsure of it
+            assertTrue(p.hit.why.toString(), p.hit.why.any { it.startsWith("internet_access") } || p.hit.unknown.any { it.startsWith("internet_access") })
         }
         val open = search("bakery open now")
         assertTrue(open.places.all { "open" in it.hit.why && "shop=bakery" in it.hit.why })
@@ -254,4 +278,72 @@ class SearchEngineTest {
         assertEquals(westerkerk, search("westerkerk").places.first().hit.place.id)
         assertEquals(westerkerk, search("Westerkerk").places.first().hit.place.id)
     }
+
+    @Test
+    fun questionsGetAnswersNotOnlyPlaces() {
+        // "how many": the count first, all of them sure, of one kind, in the searcher's town; the places after
+        val bins = search("how many trashcans in this town")
+        val count = bins.items.first() as SearchItem.Count
+        assertTrue(count.answer.total > 0)
+        assertEquals(count.answer.total, count.answer.sure)
+        assertEquals(null, count.area)
+        assertEquals("Trash Can", count.answer.kinds.single().label)
+        assertEquals(count.answer.total, (bins.items[1] as SearchItem.Structured).results.single().total)
+        // asked in Dutch, the same count; asked with no area, the town all the same
+        assertEquals(count.answer.total, (search("hoeveel prullenbakken in deze stad", ctx.copy(lang = "nl")).items.first() as SearchItem.Count).answer.total)
+        assertEquals(count.answer.total, (search("how many trashcans").items.first() as SearchItem.Count).answer.total)
+        // a want splits the count into the sure ones and the rest
+        val loos = search("how many cafes with toilets").items.first() as SearchItem.Count
+        assertTrue(loos.answer.sure in 1 until loos.answer.total)
+        // asked for the open ones, a place open only by guessed hours counts, as open perhaps, not for sure
+        val open = search("how many restaurants open now").items.first() as SearchItem.Count
+        println("restaurants open now: ${open.answer.total}, ${open.answer.sure} of them for sure")
+        assertTrue(open.answer.sure in 1 until open.answer.total)
+        // "opening times": the week side by side, today hour by hour
+        val hours = search("overview of bakery opening times").items.first() as SearchItem.Hours
+        assertEquals(7, hours.answer.days.size)
+        assertEquals(24, hours.answer.byHour.size)
+        assertTrue(hours.answer.known > 0 && hours.answer.byHour[3] == 0 && hours.answer.byHour[12] > 0)
+        val sat = hours.answer.days[DayOfWeek.SATURDAY.ordinal]
+        assertTrue(sat.earliest!! <= sat.opensMiddle!! && sat.closesMiddle!! <= sat.latest!!)
+    }
+
+    @Test
+    fun nothingAsAskedLoosensAndSaysSo() {
+        // no bakery is open at 23:00: the ones that close latest, first
+        val late = search("bakery that opens late")
+        val l = (late.items.first() as SearchItem.Structured).loosened.single()
+        assertTrue(l.from is Query.OpenAt && l.to == null)
+        assertEquals(SortBy.CLOSES_LATEST, l.by)
+        val closes = late.places.mapNotNull { p -> p.hit.tags["opening_hours"]?.let { closingSaturday(it) } }
+        assertTrue(closes.size > 3)
+        assertEquals(closes.max(), closes.first())
+        // no Starbucks in a mall: the Starbucks, with what they say about toilets
+        val mall = search("starbucks with toilets near inside a mall")
+        assertTrue((mall.items.first() as SearchItem.Structured).loosened.single().from is Query.Inside)
+        assertTrue(mall.places.isNotEmpty() && mall.places.all { it.hit.tags["brand"] == "Starbucks" })
+        // at half past three in the morning: the supermarkets by when they open
+        val night = search("supermarket open now", ctx.copy(now = Fixtures.saturday.withHour(3)))
+        assertEquals(SortBy.OPENS_NEXT, (night.items.first() as SearchItem.Structured).loosened.single().by)
+        assertTrue(night.places.isNotEmpty())
+        // what is found as asked is not loosened
+        assertTrue((search("bakery open now").items.first() as SearchItem.Structured).loosened.isEmpty())
+    }
+
+    @Test
+    fun aWayAskedForFindsItsEnds() {
+        val r = search("from Westerkerk to Anne Frank Huis")
+        val way = r.items.first() as SearchItem.Route
+        assertEquals(westerkerk, way.from!!.place!!.id)
+        assertTrue(way.to.name!!.startsWith("Anne Frank"))
+        // the nearest of a kind is an end too, and the end's places follow
+        val pharmacy = search("route to the nearest pharmacy")
+        assertEquals(benu, (pharmacy.items.first() as SearchItem.Route).to.place!!.id)
+        assertEquals(benu, pharmacy.places.first().hit.place.id)
+        // an end that leads nowhere is no way
+        assertTrue(search("walk to qqqzzz").items.none { it is SearchItem.Route })
+    }
+
+    private fun closingSaturday(raw: String): Int? = OpeningHours.parseOrNull(raw)
+        ?.weekTable(Fixtures.saturday.toLocalDate())?.get(DayOfWeek.SATURDAY.ordinal)?.filter { it.state == OpenState.OPEN }?.maxOfOrNull { it.end }
 }

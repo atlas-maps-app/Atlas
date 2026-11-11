@@ -280,8 +280,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var coreLabels = false
     private var spritePainter: LabelPainter? = null
 
-    /** The markers last handed to the core: the list, the density, whether the core draws them. */
-    private class SentMarkers(val markers: List<Marker>, val density: Float, val draws: Boolean)
+    /** The markers last handed to the core: the list, the density, whether the core draws them, by night or day. */
+    private class SentMarkers(val markers: List<Marker>, val density: Float, val draws: Boolean, val night: Boolean)
     private var sentMarkers: SentMarkers? = null
     private var markersRevision = 0L
 
@@ -337,23 +337,47 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * The packs on the phone may have changed (a window taken from its country's tiles or built, the world's packs come):
-     * the core is handed them again off the main thread, and where they changed the map draws what it can draw now, and
-     * looks again at what it has at the camera's place. Nothing when the list is the same.
+     * the core is handed them again off the main thread, and where they changed the map draws what it can draw now,
+     * looks again at what it has at the camera's place, and the windows' next step is asked at once, at rest too, while
+     * the core wants more (a pack came, so the steps make progress). Where the list is the same, only the next step,
+     * once its half second is over.
      */
     private val repack = Runnable {
         val c = core ?: return@Runnable
         if (closed) return@Runnable
         scope.launch {
-            val said = withContext(Dispatchers.Default) { runCatching { c.handPacks() }.getOrDefault("") }
-            if (core !== c || closed || said.isEmpty()) return@launch
-            Log.i(MapEngine.TAG, "vk packs again: ${said.lines().filter { it.isNotBlank() }.joinToString(", ")}")
+            // what changed, and how many stayed (thousands of windows on a phone after a while), off the main thread
+            val changed = withContext(Dispatchers.Default) {
+                val lines = runCatching { c.handPacks() }.getOrDefault("").lines().filter { it.isNotBlank() }
+                val kept = lines.count { it.endsWith(" kept") }
+                lines.filterNot { it.endsWith(" kept") } + listOfNotNull("$kept kept".takeIf { kept > 0 })
+            }
+            if (core !== c || closed) return@launch
+            if (changed.isEmpty()) {
+                windowsLater()
+                return@launch
+            }
+            Log.i(MapEngine.TAG, "vk packs again: ${changed.joinToString(", ")}")
             publishCamera(force = true)
+            windowCheckedAt = 0L
             update()
         }
     }
 
     /** When the map last asked the core which windows it wants (SystemClock.uptimeMillis). */
     private var windowCheckedAt = 0L
+
+    /**
+     * The windows' next step, asked once the last one's half second is over, whatever the camera does: the last one
+     * worked on a tile or a window but wrote no pack the core takes (one with nothing to draw, a miss), so there may be
+     * more to do, and at rest no camera asks again (it waited for a touch or the minute's tick). Main thread.
+     */
+    private fun windowsLater() {
+        main.removeCallbacks(windowsAgain)
+        main.postDelayed(windowsAgain, (windowCheckedAt + WINDOWS_CHECK_MS - SystemClock.uptimeMillis()).coerceAtLeast(0L))
+    }
+
+    private val windowsAgain = Runnable { if (!closed) update() }
 
     /** The ground frame gestures and overlays take: the pack the core draws, kept while the camera names none. */
     private fun noteFrame() {
@@ -510,6 +534,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         MapEngine.unregister(engineChanged)
         main.removeCallbacks(coreChanged)
         main.removeCallbacks(settle)
+        main.removeCallbacks(windowsAgain)
         core?.let(::closeCore)
         core = null
     }
@@ -741,22 +766,23 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * The markers: the core draws them once its picture shows with nothing over it and nothing on the ground the canvas
      * draws over its picture (a route, an area: the canvas draws those, and the markers over them, until the core draws
      * them), so they move with the map in the same frame; the canvas until then. Handed over off the main thread when
-     * that, the markers or the density change; the canvas lets go of them once the core has them, so none are missing
-     * between.
+     * that, the markers, the density or the night (a closed place's look, [Marker.faded]) change; the canvas lets go of
+     * them once the core has them, so none are missing between.
      */
     private fun sendMarkers(c: CoreMap) {
         val draws = c.cover.started && (!overlays.onGround || coreRoutes)
         val markers = if (draws) overlays.markers else emptyList()
+        val night = c.night
         val sent = sentMarkers
-        if (sent != null && sent.draws == draws && sent.density == density) {
+        if (sent != null && sent.draws == draws && sent.density == density && sent.night == night) {
             if (sent.markers === markers) return
             // an equal list made anew (a recomposition): kept, so the next frames compare it by identity
             if (sent.markers == markers) {
-                sentMarkers = SentMarkers(markers, density, draws)
+                sentMarkers = SentMarkers(markers, density, draws, night)
                 return
             }
         }
-        sentMarkers = SentMarkers(markers, density, draws)
+        sentMarkers = SentMarkers(markers, density, draws, night)
         if (!draws && coreMarkers) {
             coreMarkers = false
             canvasTick.intValue++
@@ -767,7 +793,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             markerPainter = it
         }
         scope.launch(Dispatchers.Default) {
-            val why = c.markers(markers, painter, revision)
+            val why = c.markers(markers, painter, revision, night)
             if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk markers: $why")
             main.post {
                 if (core !== c || revision != markersRevision) return@post
@@ -930,13 +956,20 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 noteStatus()
             }
             // The windows the core wants (ENGINE.md step 3): the nearest taken from its country's tiles or built in the
-            // background, one at a time, and the core handed it when it is; asked twice a second.
+            // background, one at a time, and the core handed it when it is; asked twice a second, and after a step
+            // that wrote a pack at once ([repack]), after one that worked on a tile and wrote none at its half second's
+            // end ([windowsLater]), until a step finds nothing to do.
             val now = SystemClock.uptimeMillis()
             if (now - windowCheckedAt >= WINDOWS_CHECK_MS) {
                 windowCheckedAt = now
                 MapEngine.windows()?.let { w ->
                     scope.launch(Dispatchers.IO) {
-                        if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
+                        val before = w.worked
+                        if (runCatching { w.step(c.core) }.getOrDefault(false)) {
+                            main.post(repack)
+                        } else if (w.worked != before) {
+                            main.post { if (!closed) windowsLater() }
+                        }
                     }
                 }
                 // the world's packs the view wants (ENGINE.md step 6): a block's head, then its tiles' chunks by ranges
@@ -1052,6 +1085,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             c?.let(::sendMarkers)
             c?.let(::sendAsked)
             if (!coreLabels) pt.drawLabels(canvas, g, ov)
+            pt.markers.night = night
             if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }

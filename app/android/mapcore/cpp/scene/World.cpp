@@ -376,7 +376,7 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
             if (p->kind == tiles::PackKind::window || of_the_world(*p)) continue;
             if (const std::optional<tiles::GridBox> b = box_of(*p)) held.push_back(*b);
         }
-        const Frustum frustum(view.camera(), 40.0, options_.far);
+        const Frustum frustum(view.camera(), 40.0, options_.far, view.drop());
         const tiles::TileKey centre = tiles::tile_of(14, lat, lon);
         // the places within the finest level's reach: an L14 tile is 40,075 km · cos(lat) / 2^14 wide
         const double width = 40'075'016.686 * pymath::cos(pymath::radians(camera.latitude)) / 16384.0;
@@ -494,7 +494,7 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
 
 std::vector<tiles::TileKey> World::want_levels(const view::View& view, const style::CameraState& camera,
                                                const view::GroundFrame& frame) const {
-    const Frustum frustum(view.camera(), 40.0, far_);
+    const Frustum frustum(view.camera(), 40.0, far_, view.drop());
     const std::int32_t lat = tiles::grid_round(camera.latitude);
     const std::int32_t lon = tiles::grid_round(camera.longitude);
     std::vector<tiles::TileKey> keys;
@@ -649,14 +649,25 @@ void World::release_idle(double seconds, std::uint64_t frame) {
 }
 
 void World::take_packs() {
-    // The packs' own stage T: asked once per pack drawn, taken as it is built; what was built of a pack the store no
-    // longer holds (let go of, or added again) goes when the packs drawn change or a pack arrives.
-    pack_stage_->want(active_);
-    if (coarser_) pack_stage_->want(coarser_);
+    // The packs' own stage T: asked once per pack drawn for the passes the parts drawn want, and again for those a part
+    // come back wants, taken as it is built; what was built of a pack the store no longer holds (let go of, or added
+    // again) goes when the packs drawn change or a pack arrives. A pack is asked for with what was built of an earlier
+    // composition of its id (a frame cell's, before its newest windows or levels' tiles joined), which its passes may
+    // take again (PackBuild::before): the names of a cell a level's tile joins are the earlier ones, not built again.
+    const std::uint64_t wanted = residency_->wanted();
+    const auto want = [this, wanted](const std::shared_ptr<const tiles::StorePack>& pack) {
+        std::shared_ptr<const ResidentPack> before;
+        for (const std::shared_ptr<const ResidentPack>& p : packs_) {
+            if (p->id == pack->id && p->source != pack) before = p;
+        }
+        pack_stage_->want(pack, wanted, before);
+    };
+    if (active_) want(active_);
+    if (coarser_) want(coarser_);
     for (const std::shared_ptr<const tiles::StorePack>& n : neighbours_) {
-        if (n) pack_stage_->want(n);
+        if (n) want(n);
     }
-    if (incoming_) pack_stage_->want(incoming_);
+    if (incoming_) want(incoming_);
     pack_stage_->take(arrived_);
     if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbours_ == last_neighbours_) {
         return;
@@ -664,7 +675,24 @@ void World::take_packs() {
     last_active_ = active_;
     last_coarser_ = coarser_;
     last_neighbours_ = neighbours_;
-    for (std::shared_ptr<const ResidentPack>& b : arrived_) packs_.push_back(std::move(b));
+    for (std::shared_ptr<const ResidentPack>& b : arrived_) {
+        // passes built onto a pack built before (their parts come back): one ResidentPack of the pack holds them all,
+        // the others' data as it was
+        const auto before = std::ranges::find_if(
+            packs_, [&b](const std::shared_ptr<const ResidentPack>& p) { return p->source == b->source; });
+        if (before == packs_.end()) {
+            packs_.push_back(std::move(b));
+            continue;
+        }
+        auto joined = std::make_shared<ResidentPack>(**before);
+        joined->passes.resize(std::max(joined->passes.size(), b->passes.size()));
+        for (std::size_t p = 0; p < b->passes.size(); ++p) {
+            if (Residency::among(b->built, p)) joined->passes[p] = b->passes[p];
+        }
+        joined->built |= b->built;
+        joined->build_ms += b->build_ms;
+        *before = std::move(joined);
+    }
     arrived_.clear();
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
     std::erase_if(packs_, [&open](const std::shared_ptr<const ResidentPack>& p) {
@@ -699,7 +727,7 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
     // each level from its start moved nearer by the governor's bias
-    world_tiles_->update(state.view->camera(), frame, distance, state.number, seconds, governor_.near(1.0));
+    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0));
 }
 
 double World::reach_of(double distance) const noexcept {
@@ -725,6 +753,9 @@ void World::update(const frame::FrameState& state) {
                                        state.camera.pitch, state.camera.distance};
     const bool moved = last_camera_ != camera;
     last_camera_ = camera;
+    // the passes the frame's parts want built (ENGINE.md's parts: no stage T for a pass whose parts are all left out)
+    residency_->set_left_out(state.camera.parts);
+    const std::uint64_t wanted = residency_->wanted();
     // what the last frame's make_room let go of, before any cover of this frame can draw it
     for (const auto& [key, pack] : going_) {
         if (const ResidentTile* t = residency_->find(key, pack)) {
@@ -741,6 +772,9 @@ void World::update(const frame::FrameState& state) {
         const std::uint32_t place = place_of(t->frame);
         for (const std::uint32_t row : t->rows) items_.set_place(row, place);
     }
+    // a part left out: the passes it alone wanted let go of in every resident tile at this frame's fence, so the heaps
+    // and the cover hold each tile as it is drawn (a part back, its top-ups build them again)
+    residency_->retire_passes(~wanted, items_, state.number);
     if (!active_ || !state.view) {
         // nothing drawn: no coarser pack, and nothing kept of the packs' stage T but what the drawn ones would need
         choose_coarser();
@@ -771,7 +805,8 @@ void World::update(const frame::FrameState& state) {
     far_ = far_of(state.placed ? state.placed->dist() : state.camera.distance);
     // The items in the frame drawn: where it changed (a frame cell crossed) each frame's place moves, and no row. The
     // coarser pack's masked: every resident tile's of it and of the pack that was coarser when the coarser pack or the
-    // mask changed, else the tiles just taken.
+    // mask changed, else the tiles just taken (a part come back on, its top-ups with their items; a kind whose parts
+    // are all left out has let go of its items with its passes, retire_passes above).
     choose_coarser();
     choose_neighbours(state.camera);
     take_packs();
@@ -834,6 +869,34 @@ void World::update(const frame::FrameState& state) {
     // what stands up, from the tiles drawn and those kept under the fading ones, their sun filled
     cover_.lay_upright();
     asked_.assign(cover_.requests().begin(), cover_.requests().end());
+    // The tiles drawn and those kept under them that lack a pass a part come back wants: built again for those passes
+    // alone, onto the tile, which is drawn as it is until they are taken (Residency's top-ups), after every tile in
+    // view the frame asks for, the drawn ones in their lane, those kept under in the ancestors'. Those of the tiles a
+    // place in view plans or keeps are the frame's own requests with the cover's (make_room counts them: a top-up that
+    // finds no room waits for its bytes as a tile does), before a waiting switch's and the landing's, so a drawn
+    // tile's keeps its lane where the landing asks for the tile too; a stand-in's come after all of them, as before
+    // (moot once the tiles of its places come, it makes no room).
+    const std::span<const CoverTile> laid = cover_.with_under();
+    const std::size_t drawn_count = cover_.tiles().size();
+    const auto ask_top_ups = [&](bool of_stand_ins) {
+        for (std::size_t i = 0; i < laid.size(); ++i) {
+            const CoverTile& t = laid[i];
+            if (t.drawn == nullptr || !residency_->lacks(*t.drawn)) continue;
+            const ResidentTile& r = *t.drawn;
+            const bool stands_in = std::ranges::any_of(
+                cover_.stand_ins(), [&r](const Cover::StandIn& s) { return s.key == r.key && s.pack == r.pack; });
+            if (stands_in != of_stand_ins) continue;
+            if (std::ranges::any_of(asked_, [&r](const Request& w) { return w.key == r.key && w.pack == r.pack; }))
+                continue;
+            asked_.push_back({.key = r.key,
+                              .pack = r.pack,
+                              .lane = i < drawn_count ? Lane::visible : Lane::ancestor,
+                              .priority = t.share - 2.0,
+                              .level = r.level});
+        }
+    };
+    ask_top_ups(false);
+    const std::size_t own_requests = asked_.size();
     // A switch waiting (choose): the named pack's tiles in view wanted after the frame's own; once they are resident
     // and its own stage T is built, or after incoming_hold seconds, the next frame draws it.
     if (incoming_) {
@@ -890,7 +953,8 @@ void World::update(const frame::FrameState& state) {
             asked_.push_back(r);
         }
     }
-    make_room();
+    ask_top_ups(true);
+    make_room(own_requests);
     residency_->want(asked_);
     // the tiles drawn, those kept under the places in view (each place's coarsest), and a waiting switch's resident
     // ones, are not idle
@@ -914,25 +978,30 @@ void World::update(const frame::FrameState& state) {
                  world_fading() || governor_.changed();
 }
 
-void World::make_room() {
-    // The cover's own requests (a waiting switch's and the landing's follow them), in the order the residency builds
-    // them: by lane, then priority (Residency::want).
-    const std::size_t own = cover_.requests().size();
+void World::make_room(std::size_t own) {
+    // The frame's own requests, the first `own` of asked_: the cover's, then the top-ups of the tiles a place in view
+    // plans or keeps (a waiting switch's, the landing's and the stand-ins' top-ups follow them). In the order the
+    // residency builds them (by lane, then priority: Residency::want), but the top-ups after every one of the cover's,
+    // so a top-up that waits for room holds none of those back (the places' coarsest levels among them).
     if (own == 0 || own > asked_.size()) return;
+    const std::size_t of_cover = std::min(cover_.requests().size(), own);
     const std::span<Request> mine = std::span(asked_).first(own);
     std::vector<std::size_t> order(own);
     std::ranges::iota(order, std::size_t{0});
-    std::ranges::stable_sort(order, [&mine](std::size_t a, std::size_t b) {
+    std::ranges::stable_sort(order, [&mine, of_cover](std::size_t a, std::size_t b) {
+        if ((a < of_cover) != (b < of_cover)) return a < of_cover;
         return mine[a].lane != mine[b].lane ? mine[a].lane < mine[b].lane : mine[a].priority > mine[b].priority;
     });
     const std::vector<Residency::Wait> waits = residency_->waits(mine);
     // A tile resident already takes no more room: the cover asks for a place's coarser level while the place's own
     // comes, resident or not (Residency::want passes over it). Counted, the Westerkerk's L12 under its places' L13
-    // took the room first from 12 km and held back every other tile, while the residency built nothing.
+    // took the room first from 12 km and held back every other tile, while the residency built nothing. But for the
+    // passes a part come back wants (a top-up: of a tile drawn or kept, or of a place's coarsest level asked for as
+    // its ancestor): a build of them onto it that found no room waits for the bytes it asked for.
     std::vector<bool> resident(own, false);
     for (std::size_t i = 0; i < own; ++i) resident[i] = residency_->find(mine[i].key, mine[i].pack) != nullptr;
     const auto left = [&](std::size_t i) -> std::uint64_t {
-        if (resident[i]) return 0;
+        if (resident[i]) return waits[i].need;
         return std::max(mine[i].bytes > waits[i].placed ? mine[i].bytes - waits[i].placed : 0, waits[i].need);
     };
     // Each in turn while the heaps' free bytes hold what the cover expects of it and of those before it (less what a
@@ -961,6 +1030,10 @@ void World::make_room() {
     const std::uint64_t need = left(order[first]);
     // stuck, it waits for ranges to go back: the bytes free hold no piece for it
     const bool stuck = waits[order[first]].stuck;
+    // Resident, it is a top-up, and only what nothing draws goes for it: the spare tiles, and the tiles nothing draws,
+    // keeps or asks for that make it a piece; no stand-in, whose places would draw another level meanwhile (for a
+    // kept tile's top-up, that tile, without the part come back).
+    const bool top_up = resident[order[first]];
     const std::span<const Cover::StandIn> stand_ins = cover_.stand_ins();
     // the stand-ins' tiles, each with its places
     struct Standing {
@@ -1013,7 +1086,8 @@ void World::make_room() {
     if (stuck && waits[order[first]].refused > heaps_->largest_free(waits[order[first]].kind)) {
         std::vector<std::pair<tiles::TileKey, std::string_view>> backed;
         for (const Standing& t : standing) {
-            if (std::ranges::all_of(t.at, [&stand_ins](std::size_t i) { return stand_ins[i].backup.has_value(); }))
+            if (!top_up &&
+                std::ranges::all_of(t.at, [&stand_ins](std::size_t i) { return stand_ins[i].backup.has_value(); }))
                 backed.emplace_back(t.key, t.pack);
         }
         if (piece_for(waits[order[first]].refused, waits[order[first]].kind, backed)) {
@@ -1043,7 +1117,7 @@ void World::make_room() {
     const std::size_t stand_ins_from = going_.size();
     std::vector<bool> backed; // whether each stand-in let go of has another resident level at its places, at first's
     bool later = false;       // a stand-in left for the tiles asked for before it, whose coming fills its other places
-    while (coming() < need) {
+    while (!top_up && coming() < need) {
         Standing* best = nullptr;
         std::tuple<int, std::size_t, double> best_rank{};
         for (Standing& t : standing) {
@@ -1207,6 +1281,17 @@ std::string World::tiles_line() const {
     line += std::format(" governor bias {:.2f} most {:.2f} triangles {:.2f} of {:.2f}", frame_bias(), most_bias(),
                         static_cast<double>(planned_triangles_) / 1.0e6,
                         static_cast<double>(options_.triangle_budget) / 1.0e6);
+    // the sun (off while it or every part that reads its bits is left out: ENGINE.md's parts): its scenes and runs so
+    // far with their own milliseconds, the tiles their buckets computed, and the texels the last frame wrote; the
+    // scenes kept as built with tiles of their halo made whole, and the tallest solids' working out (its milliseconds
+    // and the tiles it decoded)
+    if (sun_) {
+        const SunStats s = sun_->stats();
+        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} texels {} wholes {} {:.0f} ms "
+                            "maxh {:.0f} ms decoded {}",
+                            s.on ? "on" : "off", s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.texels,
+                            s.wholes, s.wholes_ms, s.maxh_ms, s.maxh_tiles);
+    }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;
         for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));

@@ -20,15 +20,16 @@ fun familyOf(mode: Mode): Family = when {
 enum class GoMode(
     val mode: Mode,
     @StringRes val label: Int,
-    /** The Go board's symbol for the mode, and the stroke width that symbol is drawn with (the boards set 1.8 or 2.2). */
+    /** The Go board's symbol for the mode, and the stroke width that symbol is drawn with (the boards set 1.8 or 2.2;
+     *  Atlas's own walker, bicycles and motorbike, custom_icons.txt, 2). */
     val board: String,
     val stroke: Float,
 ) {
-    WALK(Mode.WALK, R.string.go_mode_walk, "mode.walk.2", 2.2f),
+    WALK(Mode.WALK, R.string.go_mode_walk, "mode.walk.2", 2f),
     BIKE(Mode.BIKE, R.string.go_mode_bike, "park.bike", 2f),
     EBIKE(Mode.EBIKE, R.string.go_mode_ebike, "mode.ebike", 2f),
-    CARGO(Mode.CARGO_BIKE, R.string.go_mode_cargo, "mode.cargo-bike", 1.9f),
-    MOTO(Mode.MOTORCYCLE, R.string.go_mode_moto, "mode.moto", 1.9f),
+    CARGO(Mode.CARGO_BIKE, R.string.go_mode_cargo, "mode.cargo-bike", 2f),
+    MOTO(Mode.MOTORCYCLE, R.string.go_mode_moto, "mode.moto", 2f),
     CAR(Mode.CAR, R.string.go_mode_car, "mode.car", 1.9f),
     CAMPER(Mode.CAMPER, R.string.go_mode_camper, "mode.camper", 1.9f),
     TRUCK(Mode.TRUCK, R.string.go_mode_truck, "mode.truck", 1.9f),

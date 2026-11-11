@@ -8,6 +8,7 @@ import app.atlas.mapcorecheck.frame.FrameHost
 import app.atlas.mapview.svg.SvgParser
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
+import app.atlas.render.RenderOptions
 import app.atlas.render.data.PackReader
 import app.atlas.render.live.EngineVersion
 import app.atlas.render.live.LiveCamera
@@ -70,7 +71,11 @@ class L1Test {
         "schiphol_close night S1 ground" to setOf("path; fill #ff24281d 1.000; stroke none passes path; fill #ff25291e 1.000; stroke none"),
     )
 
-    private class Case(val name: String, val pack: String, val file: () -> File, val region: () -> LiveRegion?, val view: (LiveRegion) -> LiveView, val moment: String)
+    private class Case(
+        val name: String, val pack: String, val file: () -> File, val region: () -> LiveRegion?, val view: (LiveRegion) -> LiveView, val moment: String,
+        /** RenderOptions.daylight (ATLAS_DAYLIGHT, the renders' day frames'), and the theme block's flag with it. */
+        val daylight: Boolean = false,
+    )
 
     /** The regions beyond the bundled packs, their views and moments. */
     private val regions = listOf(
@@ -130,6 +135,9 @@ class L1Test {
             Case("shops grey S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "grey"),
             Case("shops south sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "sunny"),
             Case("shops south wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, -330.23809, 160.29078, -0.925907, 0.377766, 60.0, 70.0) }, "wet"),
+            // with the daylight (amsterdam.py's DAYLIGHT) the wet night's open places' glows larger, each over its pool on
+            // the ground (`openpool`, after the lamps' pools)
+            Case("shops wet daylight S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> shopsView(r, 435.44818, 297.36354, 0.013287, 0.999912, 60.0, 70.0) }, "wet", daylight = true),
         )
         if (g.isFile) {
             out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
@@ -235,11 +243,15 @@ class L1Test {
             (LiveEngine.loadScene(region).S["woods"] as List<Dict>?) ?: emptyList()
         }
         Regions.woodsPlanting = { _ -> woods }
-        val r = LiveEngine.render(region, case.view(region), Moment.Named(case.moment)) ?: error("${case.name}: the render was cancelled")
+        val r = LiveEngine.render(region, case.view(region), Moment.Named(case.moment), RenderOptions(daylight = case.daylight))
+            ?: error("${case.name}: the render was cancelled")
         val th = Amsterdam.THEMES.getValue(r.themeKey)
+        // its scene's load built the moments with the daylight (Regions.resetPlace), which a later case's kept scene would
+        // draw: back to the renders' own
+        if (case.daylight) Amsterdam.resetThemes()
         val (az, el, sun) = Amsterdam.sunOf(th)
         val b = ThemeBlock.allocate()
-        ThemeBlock.write(b, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, r.themeKey == "golden", Amsterdam.TONE)
+        ThemeBlock.write(b, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, r.themeKey == "golden", Amsterdam.TONE, daylight = case.daylight)
         val ground = listOf(SvgParser.parse(r.g))
         val objects = listOfNotNull(r.o, r.o2).map { SvgParser.parse(it) }
         listOf(ground, objects) to b

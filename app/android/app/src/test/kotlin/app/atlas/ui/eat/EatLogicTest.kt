@@ -147,7 +147,8 @@ class EatLogicTest {
         val a = area(kebab, pizza, fries)
         val wall = LateModel.wall(a, evening, null, emptySet(), LateSort.NEAREST)
         assertEquals(listOf("Kebab", "Frites"), wall.spots.map { it.place.name })
-        assertEquals(LocalDateTime.of(2026, 10, 14, 3, 0), wall.till)
+        assertEquals(EatSets.LastCall(LocalDateTime.of(2026, 10, 14, 3, 0), guessed = false), wall.till)
+        assertEquals("3:00", wall.till?.shown)
         assertEquals(9, wall.tiles.size)
         assertEquals(1, wall.tiles.first { it.first == Bite.KEBAB }.second)
         val latest = LateModel.wall(a, evening, null, emptySet(), LateSort.LATEST)
@@ -156,6 +157,39 @@ class EatLogicTest {
         assertEquals(listOf("Frites"), always.spots.map { it.place.name })
         // After midnight it is still the same night.
         assertEquals(EatSets.nightOf(evening), EatSets.nightOf(evening.plusHours(6)))
+    }
+
+    /**
+     * A total says the places surely open, by hours of their own, those open by guessed hours left to the rows, and
+     * "≈1" where only those are; a last call is the own hours' where any says it, else "≈1:00" (the owner, 5 November:
+     * "Should it primarily show whats surely open only?").
+     */
+    @Test
+    fun aTotalSaysTheSurelyOpen() {
+        val mapped = (1..3).map { i -> place(0.001 * i, 0.0, "amenity" to "fast_food", "name" to "Snack $i", "cuisine" to "friture", "opening_hours" to "Mo-Su 11:00-01:00") }
+        val unmapped = place(0.0045, 0.0, "amenity" to "fast_food", "name" to "Snack 4", "cuisine" to "friture")
+        val a = area(*(mapped + unmapped).toTypedArray())
+        val guessed = a.places.single { it.name == "Snack 4" }
+        assertTrue("goes by the hours of the snack bars around it", guessed.guessed && guessed.openness(evening, a.hours).isOpen)
+        val count = a.count(EatSets.carte(a.places), evening)
+        assertEquals(EatArea.Count(4, open = true, guessed = 1), count)
+        assertEquals("3", count.shown)
+        assertEquals("≈1", a.count(listOf(guessed), evening).shown)
+        assertEquals("1:00", EatSets.lastCall(a.places, a, evening)?.shown)
+        assertEquals("≈1:00", EatSets.lastCall(listOf(guessed), a, evening)?.shown)
+        // a guess closing later than every place of its own hours does not move the last call
+        val early = place(0.001, 0.0, "amenity" to "fast_food", "name" to "Early", "cuisine" to "friture", "opening_hours" to "Mo-Su 11:00-23:00")
+        val b = area(*(mapped + unmapped + early).toTypedArray())
+        val late = listOf("Early", "Snack 4").map { n -> b.places.single { it.name == n } }
+        assertEquals(EatSets.LastCall(LocalDateTime.of(2026, 10, 13, 23, 0), guessed = false), EatSets.lastCall(late, b, evening))
+        val c = EatSets.counts(a, evening)
+        assertEquals(1, c.carte.guessed)
+        assertEquals(EatArea.Count(4, open = true, guessed = 1), c.late)
+        assertEquals(false, c.lateUntil?.guessed)
+        val carte = CarteModel.build(a, evening, CarteSort.NEAREST, emptySet(), AreaRatings.OFFLINE, "en")
+        assertEquals(4 to 1, carte.counted to carte.guessed)
+        val wall = LateModel.wall(a, evening, null, emptySet(), LateSort.NEAREST)
+        assertEquals(4 to 1, wall.count to wall.guessed)
     }
 
     @Test

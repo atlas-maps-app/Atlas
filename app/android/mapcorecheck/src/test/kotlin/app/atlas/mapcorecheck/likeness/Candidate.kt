@@ -303,7 +303,7 @@ internal object CaseState {
         }
         val (az, el, sun) = Amsterdam.sunOf(th)
         val b = ThemeBlock.allocate()
-        ThemeBlock.write(b, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, key == "golden", Amsterdam.TONE)
+        ThemeBlock.write(b, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, key == "golden", Amsterdam.TONE, daylight = RenderOptions().daylight)
         return b
     }
 }

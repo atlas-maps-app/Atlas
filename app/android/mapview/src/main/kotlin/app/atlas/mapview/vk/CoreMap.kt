@@ -222,16 +222,16 @@ internal class CoreMap(
     private var markerSprites: MarkerSprites? = null
 
     /**
-     * The markers the core draws for this map from now on: [markers] as sprites drawn by [painter] (none when empty),
-     * unless a later hand-over ([revision], counted by the caller) went already. Off the main thread. "" or why the
-     * core refused them.
+     * The markers the core draws for this map from now on: [markers] as sprites drawn by [painter] (none when empty), on
+     * the night's map where [night], unless a later hand-over ([revision], counted by the caller) went already. Off the
+     * main thread. "" or why the core refused them.
      */
-    fun markers(markers: List<Marker>, painter: MarkerPainter, revision: Long): String =
+    fun markers(markers: List<Marker>, painter: MarkerPainter, revision: Long, night: Boolean = false): String =
         synchronized(markerLock) {
             if (revision <= markersRevision) return ""
             markersRevision = revision
             val maker = markerSprites?.takeIf { it.painter === painter } ?: MarkerSprites(painter).also { markerSprites = it }
-            val block = if (markers.isEmpty()) MarkerBlock.write(painter.density, emptyList(), emptyList(), emptyList()) else maker.block(markers)
+            val block = if (markers.isEmpty()) MarkerBlock.write(painter.density, emptyList(), emptyList(), emptyList()) else maker.block(markers, night)
             core.markers(block, revision)
         }
 

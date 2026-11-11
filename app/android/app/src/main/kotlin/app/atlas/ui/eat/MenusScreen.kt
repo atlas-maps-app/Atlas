@@ -58,6 +58,7 @@ import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.SymbolButton
+import app.atlas.ui.kit.openTotalSaid
 import app.atlas.ui.kit.rememberSpeechInput
 import app.atlas.ui.kit.softShadow
 import app.atlas.ui.kit.walkMinutes
@@ -361,6 +362,14 @@ private fun WaiterCard(a: Waiter.Answer, ctx: EatContext, onPlace: (app.atlas.se
     }
 }
 
+/** An object as a screen reader says it: its name and count, the open ones as shown ("about 7" for "≈7"). */
+@Composable
+private fun said(name: String, c: EatArea.Count?): String = when {
+    c == null -> name
+    c.open -> "$name, ${openTotalSaid(c.value, c.guessed)} ${stringResource(R.string.eat_open_count)}"
+    else -> "$name, ${c.value}"
+}
+
 /**
  * The six objects on the table where the board puts them (left, top, width, height in board px on the 412-wide
  * frame, and each one's tilt), scaled to the screen's width; later objects lie on top, as on the board.
@@ -373,28 +382,26 @@ private fun TableTop(counts: EatSets.Counts?, loading: Boolean, onOpen: (String)
     val bar = stringResource(R.string.eat_bar)
     val sweets = stringResource(R.string.eat_sweets)
     val market = stringResource(R.string.eat_market)
-    val open = stringResource(R.string.eat_open_count)
-    fun say(name: String, c: EatArea.Count?) = if (c == null) name else if (c.open) "$name, ${c.value} $open" else "$name, ${c.value}"
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val u = maxWidth.value / 412f
         Box(Modifier.fillMaxWidth().height((648 * u).dp)) {
             Placed(u, 22f, 186f, 176f, 250f) {
-                TableObject(-3f, say(carte, counts?.carte), { onOpen("carte") }) { LeatherMenu(counts?.carte, carte, u) }
+                TableObject(-3f, said(carte, counts?.carte), { onOpen("carte") }) { LeatherMenu(counts?.carte, carte, u) }
             }
             Placed(u, 214f, 176f, 176f, 200f) {
-                TableObject(2.5f, say(cafe, counts?.cafe), { onOpen("cafe") }) { Chalkboard(counts?.cafe, cafe, u) }
+                TableObject(2.5f, said(cafe, counts?.cafe), { onOpen("cafe") }) { Chalkboard(counts?.cafe, cafe, u) }
             }
             Placed(u, 222f, 400f, 166f, 236f) {
-                TableObject(4f, say(bar, counts?.bar), { onOpen("bar") }) { DecoCard(counts?.bar, bar, u) }
+                TableObject(4f, said(bar, counts?.bar), { onOpen("bar") }) { DecoCard(counts?.bar, bar, u) }
             }
             Placed(u, 26f, 458f, 176f, 170f) {
-                TableObject(-2f, say(late, counts?.late), { onOpen("late") }) { NeonLate(counts?.late, counts?.lateUntil?.format(HM), late, u, loading) }
+                TableObject(-2f, said(late, counts?.late), { onOpen("late") }) { NeonLate(counts?.late, counts?.lateUntil?.shown, late, u, loading) }
             }
             Placed(u, 32f, 652f, 160f, 150f) {
-                TableObject(3f, say(sweets, counts?.sweets), { onOpen("sweets") }) { TicketStub(counts?.sweets, sweets, u) }
+                TableObject(3f, said(sweets, counts?.sweets), { onOpen("sweets") }) { TicketStub(counts?.sweets, sweets, u) }
             }
             Placed(u, 226f, 664f, 150f, 140f) {
-                TableObject(-4f, say(market, counts?.market), { onOpen("market") }) {
+                TableObject(-4f, said(market, counts?.market), { onOpen("market") }) {
                     Canvas(Modifier.fillMaxSize()) { tagString(Offset(-40f * u * density, -30f * u * density), u * density) }
                     KraftTag(counts?.market, market, u)
                 }

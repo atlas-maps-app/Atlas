@@ -41,7 +41,7 @@ object CuisineTaxonomy {
         "pancakes" to "pancake", "noodles" to "noodle", "italian_pizza" to "pizza", "crepes" to "crepe", "chips" to "fries",
         "tacos" to "mexican", "burgers" to "burger", "doner" to "kebab", "döner" to "kebab", "kebap" to "kebab", "gyros" to "greek",
         "dumplings" to "dumpling", "donuts" to "donut", "doughnut" to "donut", "teahouse" to "tea", "coffee" to "coffee_shop",
-        "fried_chicken" to "chicken", "bbq" to "barbecue", "wok" to "noodle", "sushi_bar" to "sushi", "pokè" to "poke",
+        "fried_chicken" to "chicken", "bbq" to "barbecue", "hot_pot" to "hotpot", "wok" to "noodle", "sushi_bar" to "sushi", "pokè" to "poke",
         "gelato" to "ice_cream", "frozen_yoghurt" to "frozen_yogurt", "bubbletea" to "bubble_tea",
     )
 

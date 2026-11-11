@@ -4,12 +4,19 @@ import android.content.Context
 import org.robolectric.RuntimeEnvironment
 import app.atlas.Services
 import app.atlas.ServicesConfig
+import app.atlas.search.PlaceSource
 import app.atlas.search.PlaceStore
 import java.io.File
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 
 /**
  * A [Services] for tests and screenshots: its own temporary folder, no network, the bundled pack of the Westerkerk (the
@@ -23,6 +30,10 @@ fun testServices(
     places: Boolean = false,
     /** The app's "now": by default a fixed autumn evening in Amsterdam, so screenshots come out the same each run. */
     clock: Clock = Fixtures.evening,
+    /** Place sources of a test's own, in place of the extract's store. */
+    stores: List<PlaceSource>? = null,
+    /** A router of a test's own, in place of the routing data's. */
+    router: app.atlas.route.Router? = null,
 ): Services = Services(
     context,
     ServicesConfig(
@@ -30,8 +41,9 @@ fun testServices(
         demoLocation = if (demo) Services.WESTERKERK else null,
         offline = true,
         mapEngine = false,
-        placeStores = if (places) listOf(Fixtures.amsStore) else emptyList(),
+        placeStores = stores ?: if (places) listOf(Fixtures.amsStore) else emptyList(),
         clock = clock,
+        router = router,
     ),
 )
 
@@ -83,14 +95,24 @@ object Fixtures {
 
 /**
  * Keeps a real Open-Meteo forecast (the providers' fixture) on the test phone for the Westerkerk, as if fetched now (by the app's clock),
- * so screens that show the weather offline have one. Returns false when the fixture is not there.
+ * so screens that show the weather offline have one; with [rainMm], that much rain in each of its quarters (the fixture's
+ * evening is dry). Returns false when the fixture is not there.
  */
-fun Services.keepFixtureForecast(): Boolean {
+fun Services.keepFixtureForecast(rainMm: Double = 0.0): Boolean {
     val repo = System.getProperty("atlas.repo") ?: return false
     val fixture = File(repo, "app/android/providers/src/test/resources/fixtures/meteo_forecast.json").takeIf { it.isFile } ?: return false
     val dir = File(dirs.providers, "weather").apply { mkdirs() }
     val at = Services.WESTERKERK
     val name = String.format(java.util.Locale.ROOT, "forecast_%.2f_%.2f.json", at.lat, at.lon)
-    File(dir, name).writeText("${clock.instant().epochSecond}\n${fixture.readText()}")
+    val json = fixture.readText().let { if (rainMm > 0) rained(it, rainMm) else it }
+    File(dir, name).writeText("${clock.instant().epochSecond}\n$json")
     return true
+}
+
+/** The forecast [json] with [mm] of rain in each of its quarters. */
+private fun rained(json: String, mm: Double): String {
+    val all = Json.parseToJsonElement(json).jsonObject
+    val quarters = all.getValue("minutely_15").jsonObject
+    val wet = JsonArray(quarters.getValue("precipitation").jsonArray.map { JsonPrimitive(mm) })
+    return JsonObject(all + ("minutely_15" to JsonObject(quarters + ("precipitation" to wet)))).toString()
 }

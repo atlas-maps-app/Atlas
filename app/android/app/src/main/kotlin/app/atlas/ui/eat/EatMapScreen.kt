@@ -68,7 +68,6 @@ import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.UserLocation
 import app.atlas.nav.Navigator
-import app.atlas.places.Symbols
 import app.atlas.providers.Rating
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.CssCorners
@@ -79,6 +78,7 @@ import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.frosted
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberSpeechInput
+import app.atlas.ui.kit.markOf
 import app.atlas.ui.search.OverStageMap
 import app.atlas.ui.search.bandBetween
 import app.atlas.ui.search.centre
@@ -101,6 +101,11 @@ private val PRICE = cssText("Geist", 14f, 700, lineHeight = 18f, spacing = 0.28f
 private val TAB_TEXT = cssText("Geist", 14f, 600, lineHeight = 18f)
 private val COUNT = cssText("Geist", 13f, colour = 0xFF464C5A, lineHeight = 17f, tnum = true)
 private val CARD_NAME = cssText("Instrument Serif", 25f, colour = 0xFF14161B, lineHeight = 25f)
+
+/** A name as each cuisine's house sets it on its card: its typeface, weight, slant and ink (the HouseCards board). */
+private val HOUSE_NAME = CuisineHouse.entries.associateWith { it.nameStyle(25f) }
+/** How small a card's name may shrink to fit its line before it is cut ("Thaise Afhaal Dong Son"). */
+private val NAME_FIT = 17.sp
 private val CARD_WALK = cssText("Geist", 13f, colour = 0xFF464C5A, lineHeight = 17f, tnum = true)
 private val CARD_SCORE = cssText("Geist", 26f, 700, colour = 0xFF14161B, lineHeight = 26f, tnum = true)
 private val CHIP = cssText("Geist", 11f, 600, colour = 0xFF14161B, lineHeight = 14f, tnum = true)
@@ -146,7 +151,7 @@ fun EatMapScreen(nav: Navigator) {
             Marker(
                 id = p.key,
                 at = p.location,
-                symbol = Symbols.symbolFor(p.tags),
+                symbol = markOf(p.place).first,
                 colour = 0xFF14161B,
                 style = MarkerStyle.PIN,
                 badge = when {
@@ -358,26 +363,34 @@ private fun TabBall(symbol: String, description: String, on: Boolean, tint: Colo
 
 /**
  * A card of the carousel (300 px): the plate, name and walk; the rating with each provider's chip, or "no ratings
- * yet" with a way to write one; the review sparkline; price, symbols and the open-until dial.
+ * yet" with a way to write one; the review sparkline; price, symbols and the open-until dial. A place in a cuisine's
+ * house wears it (the HouseCards board): the house's light tint, its motif where the plate would be (126 px), the name
+ * in its typeface and ink, and its symbols and rating chips in its colours.
  */
 @Composable
-private fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen: () -> Unit) {
+internal fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
     val area = ctx.area
     val single = ctx.ratings[p.key]
     val rated = (sources?.filter { it.stars != null } ?: listOfNotNull(single?.takeIf { it.stars != null }))
-    val dish = remember(p.key) { dishOf(p, area.country) }
+    val house = remember(p.key) { CuisineHouse.of(p) }
+    val ink = house?.let { Color(it.ink) } ?: MUTED
     Column(
         Modifier.width(300.dp)
-            .cssBox(bg = 0xFFFFFFFF, r = corners(24f), shadows = listOf(CssShadow(0f, 2f, 10f, 0f, 0x14181C30), CssShadow(0f, 0f, 0f, 1f, 0x0D14161B)))
+            .cssBox(bg = house?.tint ?: 0xFFFFFFFF, r = corners(24f), shadows = listOf(CssShadow(0f, 2f, 10f, 0f, 0x14181C30), CssShadow(0f, 0f, 0f, 1f, 0x0D14161B)))
             .clip(shape).clickable(onClick = onOpen),
     ) {
-        Canvas(Modifier.fillMaxWidth().height(116.dp)) { drawPlate(dish, p.key.hashCode()) }
+        if (house != null) {
+            Canvas(Modifier.fillMaxWidth().height(126.dp)) { houseMotif(house) }
+        } else {
+            val dish = remember(p.key) { dishOf(p, area.country) }
+            Canvas(Modifier.fillMaxWidth().height(116.dp)) { drawPlate(dish, p.key.hashCode()) }
+        }
         // 12 14 14 px in, 10 between the rows: the name on its 25 px line (the walk on its baseline, 6 px down), the
         // ratings (35 px, centred), the facts (22 px, centred).
         Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.height(25.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CssLine(p.name, CARD_NAME, Modifier.weight(1f))
+                CssLine(p.name, house?.let { HOUSE_NAME.getValue(it) } ?: CARD_NAME, Modifier.weight(1f), fit = NAME_FIT)
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Symbol("mode.walk", tint = MUTED, size = 13.dp)
                     CssLine("${p.walkMinutes}′", CARD_WALK)
@@ -388,24 +401,24 @@ private fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen
                     val score = rated.mapNotNull { it.stars }.average()
                     CssLine(starsText(score), CARD_SCORE)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { for (r in rated.take(3)) ProviderChip(r) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { for (r in rated.take(3)) ProviderChip(r, house?.chip ?: 0xFFF1EEE8) }
                         val count = rated.sumOf { it.count }
                         CssLine(stringResource(R.string.eat_card_sources, NumberFormat.getIntegerInstance(Locale.forLanguageTag(ctx.lang)).format(count), rated.size), SOURCES)
                     }
                 } else {
                     Column(Modifier.weight(1f)) {
                         CssLine(stringResource(R.string.eat_no_ratings_yet), CARD_NOTE)
-                        CssLine(stringResource(R.string.eat_card_write_one), CARD_NOTE, Modifier.clickable(onClick = onOpen), color = Color(0xFF2E5BFF))
+                        CssLine(stringResource(R.string.eat_card_write_one), CARD_NOTE, Modifier.clickable(onClick = onOpen), color = house?.let { ink } ?: Color(0xFF2E5BFF))
                     }
                 }
                 EatMapModel.sparkline(single?.trend)?.let { Sparkline(it, Modifier.size(width = 64.dp, height = 28.dp)) }
             }
             Row(Modifier.height(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PriceLevel(single?.priceLevel ?: sources?.firstNotNullOfOrNull { it.priceLevel })
-                if (p.outside) Symbol("fact.terrace", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_fact_terrace))
-                if (p.diet("vegan") || p.diet("vegetarian")) Symbol("fact.vegan", tint = Color(0xFF2F6B34), size = 18.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
-                if (p.stepFree) Symbol("fact.wheelchair", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_order_step_free))
-                if (EatFilter.RESERVE.has(p, ctx.at, area, ctx.ratings)) Symbol("ui.calendar", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_wish_reservable))
+                if (p.outside) Symbol("fact.terrace", tint = ink, size = 18.dp, contentDescription = stringResource(R.string.eat_fact_terrace))
+                if (p.diet("vegan") || p.diet("vegetarian")) Symbol("fact.vegan", tint = if (house != null) ink else Color(0xFF2F6B34), size = 18.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
+                if (p.stepFree) Symbol("fact.wheelchair", tint = ink, size = 18.dp, contentDescription = stringResource(R.string.eat_order_step_free))
+                if (EatFilter.RESERVE.has(p, ctx.at, area, ctx.ratings)) Symbol("ui.calendar", tint = ink, size = 18.dp, contentDescription = stringResource(R.string.eat_wish_reservable))
                 Spacer(Modifier.weight(1f))
                 OpenUntil(p, ctx)
             }
@@ -413,9 +426,9 @@ private fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen
     }
 }
 
-/** "G 4.6": a provider's letter in its colour and its stars on a #F1EEE8 chip (18 px). */
+/** "G 4.6": a provider's letter in its colour and its stars on a chip (18 px) of [bg], #F1EEE8 or the house's. */
 @Composable
-private fun ProviderChip(r: Rating) {
+private fun ProviderChip(r: Rating, bg: Long) {
     val colour = when (r.provider.lowercase()) {
         "mangrove" -> Color(0xFF2F6B34)
         "yelp" -> Color(0xFFB03A3A)
@@ -424,7 +437,7 @@ private fun ProviderChip(r: Rating) {
         else -> Color(0xFF1F5F99)
     }
     Row(
-        Modifier.height(18.dp).cssBox(bg = 0xFFF1EEE8, r = corners(5f)).padding(horizontal = 5.dp),
+        Modifier.height(18.dp).cssBox(bg = bg, r = corners(5f)).padding(horizontal = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {

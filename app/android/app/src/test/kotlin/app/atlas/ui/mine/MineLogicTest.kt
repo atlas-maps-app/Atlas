@@ -409,6 +409,7 @@ class SourcesModelTest {
         assertEquals("CC BY 4.0", SourcesModel.licenceLabel(" CC BY 4.0 "))
         assertEquals("open data", SourcesModel.licenceLabel("Open data licence of the Dutch government"))
         assertEquals("own terms", SourcesModel.licenceLabel("Free for non-commercial use under their terms of service"))
+        assertEquals("per source", SourcesModel.licenceLabel(app.atlas.providers.OpenAddresses.INFO.licence))
         assertTrue(SourcesModel.licenceLabel("Something entirely different and long").endsWith("…"))
     }
 

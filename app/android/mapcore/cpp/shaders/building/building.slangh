@@ -506,8 +506,8 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, uint mode
     bool outlined = (p.flags & BUILDING_POLYGON) != 0u;
     uint strokes = 0u;
     for (uint i = 0u; i < n; ++i) {
-        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(drawn, i)));
-        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(drawn, (i + 1u) % n)));
+        float3 a = camera_of(cam, placed(cam, place, building_prim_corner(drawn, i)));
+        float3 b = camera_of(cam, placed(cam, place, building_prim_corner(drawn, (i + 1u) % n)));
         bool ai = a.z >= near_z;
         bool bi = b.z >= near_z;
         bool along = stroked && (!outlined || (p.flags & building_outline_bit(i)) != 0u);
@@ -556,7 +556,7 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, uint mode
     if ((p.flags & BUILDING_POLYGON) != 0u) {
         // an n-gon: its projected area from its area in space, at its centre (a small polygon's, where it matters)
         float3 t = eye_relative(place, f.test);
-        float3 k = camera_of(cam, t);
+        float3 k = camera_of(cam, bent(cam, t));
         float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
         area = k.z > 0.0f ? (cam.forward.w * cam.forward.w) * f.area * abs(toward) / (k.z * k.z * k.z) : 1.0e30f;
     } else {
@@ -590,7 +590,7 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, uint mode
     // the face's plane in camera coordinates: its normal turned with the tile's place (x scaled, so the normal's x is
     // divided) and the camera, through its test point
     float3 nrm = {f.normal.x / place.scale.x, f.normal.y, f.normal.z};
-    float3 on_face = eye_relative(place, f.test);
+    float3 on_face = placed(cam, place, f.test);
     float3 nk = camera_of(cam, nrm);
     float4 plane = {nk.x, nk.y, nk.z, ((nrm.x * on_face.x) + (nrm.y * on_face.y)) + (nrm.z * on_face.z)};
     s.plane = plane;
