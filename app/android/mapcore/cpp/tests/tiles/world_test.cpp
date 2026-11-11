@@ -1182,8 +1182,8 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
          {std::size_t{atlas::scene::world_palette::land}, std::size_t{atlas::scene::world_palette::water},
           std::size_t{atlas::scene::world_palette::road}}) {
         for (unsigned shift = 0; shift < 24; shift += 8) {
-            const double a = static_cast<double>((flip[entry] >> shift) & 0xFFU);
-            const double b = static_cast<double>((own[entry] >> shift) & 0xFFU);
+            const auto a = static_cast<double>((flip[entry] >> shift) & 0xFFU);
+            const auto b = static_cast<double>((own[entry] >> shift) & 0xFFU);
             CHECK(std::abs(static_cast<double>((half[entry] >> shift) & 0xFFU) - ((a + b) / 2.0)) <= 0.5);
         }
     }
