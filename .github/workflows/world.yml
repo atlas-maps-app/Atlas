@@ -1,7 +1,9 @@
 # Builds the world's base map (ENGINE.md step 5, "The pipeline") into a draft release world-YYYYMMDD, named by the day
 # its OpenStreetMap data is current to: the packs of L6 to L11 of every L6 block an area of Geofabrik's meets (Europe
 # for now), the globe's L0 to L5, their index and world.json, the app's description of them. A run by hand with
-# publish=<tag> publishes a checked draft instead and points world-latest at it.
+# publish=<tag> publishes a checked draft instead and points world-latest at it; one with refs=<tag> draws a world
+# release's references again from its packs instead (the refs job alone: world-refs.tar goes up into it only while it
+# is a draft, and the run's artifact keeps it either way).
 # - plan: the area's polygon from Geofabrik's index, its L6 blocks split into regions of about equal weight (`packer
 #   world-plan`: by the last world's packs' bytes, or for the first by the sizes of the area's own extracts), the tags
 #   the world's profile draws (`packer world-tags`), the extract the run takes, its MD5 and its header's replication
@@ -12,15 +14,21 @@
 #   run's summary and the draft's notes naming the copy's date and SHA-256;
 # - filter: the extract the plan read, by its MD5 (a run whose extract changed since is refused), `osmium tags-filter`
 #   to the profile's tags (the raw file deleted), the filtered file into the draft in parts
-#   (scratch-filtered.osm.pbf.000, …), their SHA-256 sums beside them;
+#   (scratch-filtered.osm.pbf.000, …), their SHA-256 sums beside them, and OpenStreetMap's names of the places and
+#   waters it holds by their Wikidata ids (scratch-names.tsv.gz), read from the filtered stream as it goes up;
 # - cut, a job every two regions: the filtered file from the draft, `osmium extract` into the two regions, each region
 #   into the draft;
 # - blocks, a job a region: `packer world` over the region's blocks, its fine packs into its own parts
 #   (world-mid-<region>.000, …) and its coarse tiles, index and numbers handed on through the draft;
-# - globe: `packer globe`, world-globe.atlas;
+# - globe: `packer globe`, world-globe.atlas, its places and waters by OpenStreetMap's names where the filter found
+#   their Wikidata ids;
 # - assemble: `packer world-assemble`, the coarse packs from every region's coarse tiles (world-coarse.000, …), the
 #   index (world.idx), world.json and the numbers added up (world-stats.json); then every pack of the release fetched
 #   and checked against the index, each decoded by the core's stage P tool (`packer world-check`), and the globe;
+# - refs: the references around the world (mapcorecheck's likeness/world-refs.json): the tiles the core's walk draws
+#   in each view cut from the release's packs into packs of their own, fetched by their byte ranges (`packer
+#   world-refs`), with the globe in world-refs.tar, then drawn by the core's host build on lavapipe (WorldPackRefsTest);
+#   a frame that cannot be decoded or drawn whole fails the job;
 # - publish (only by hand): the draft's scratch deleted, the release published, world-latest's world.json replaced,
 #   and every world release but the last two deleted.
 # Hand-offs go through the draft's assets (scratch-*), as artifacts and the cache are too small; every upload goes
@@ -49,6 +57,10 @@ on:
         default: ''
       publish:
         description: A checked draft world-YYYYMMDD, world-YYYYMMDD-planet or a re-run's world-YYYYMMDD-planet-N to publish instead of building one (world-latest then points at it)
+        required: false
+        default: ''
+      refs:
+        description: A world release whose references to draw again from its packs instead of building one, by its tag (world-refs.tar goes up into it only while it is a draft)
         required: false
         default: ''
   # A run of the workflow's own branch before it lands, its inputs in .github/world-run.json
@@ -102,6 +114,8 @@ env:
     tiles), the globe's L0 to L5 (world-globe.atlas), their index (world.idx: each pack's block, levels, file, range,
     tiles, the box it was built for and its SHA-256) and world.json, which lists the files with their sizes and SHA-256
     checksums and the time the OpenStreetMap data is current to; world-latest always holds the newest world.json.
+    world-refs.tar holds the engine's references around the world: the tiles their views draw, cut from the packs, and
+    the globe.
 
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The world packs are derived databases and are themselves available under
@@ -112,7 +126,7 @@ env:
 jobs:
   plan:
     # null on a push, which builds
-    if: ${{ github.event.inputs.publish == '' }}
+    if: ${{ github.event.inputs.publish == '' && github.event.inputs.refs == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -432,11 +446,13 @@ jobs:
             # published (osmdata.openstreetmap.de took none for more than 13 hours from 3 November)
             for l in "${LANDS[@]}"; do gh release download "$LAND" --pattern "scratch-$l.zip" --dir "$S"; done
           fi
-          # the globe's: land at 1:110m and 1:50m, lakes, rivers, glaciers, ice shelves and populated places
+          # the globe's: land at 1:110m and 1:50m, lakes, rivers, glaciers, ice shelves, populated places and the
+          # marine polygons, whose labels name the oceans, seas, bays and straits
           for f in 110m/physical/ne_110m_land 110m/physical/ne_110m_lakes 110m/physical/ne_110m_rivers_lake_centerlines \
-            110m/physical/ne_110m_glaciated_areas 110m/cultural/ne_110m_populated_places 50m/physical/ne_50m_land \
-            50m/physical/ne_50m_lakes 50m/physical/ne_50m_rivers_lake_centerlines 50m/physical/ne_50m_glaciated_areas \
-            50m/physical/ne_50m_antarctic_ice_shelves_polys 50m/cultural/ne_50m_populated_places; do
+            110m/physical/ne_110m_glaciated_areas 110m/cultural/ne_110m_populated_places 110m/physical/ne_110m_geography_marine_polys \
+            50m/physical/ne_50m_land 50m/physical/ne_50m_lakes 50m/physical/ne_50m_rivers_lake_centerlines \
+            50m/physical/ne_50m_glaciated_areas 50m/physical/ne_50m_antarctic_ice_shelves_polys 50m/cultural/ne_50m_populated_places \
+            50m/physical/ne_50m_geography_marine_polys; do
             get "https://naciscdn.org/naturalearth/$f.zip" "$S/naturalearth/${f##*/}.zip"
           done
           for z in "$S"/*.zip "$S"/naturalearth/*.zip; do unzip -tq "$z" > /dev/null; done
@@ -562,9 +578,11 @@ jobs:
           # them, which names the parts a cut job joins (a part the draft keeps from an earlier attempt is not in it).
           # Each part goes up and is deleted once written, as the planet's raw file and its filtered copy do not fit
           # a runner's disk together (96 and some 27 GB of 112), and the job stops while under 5 GiB are free. Each
-          # object keeps its version and time, as Geofabrik's extracts have them, and no user or changeset.
+          # object keeps its version and time, as Geofabrik's extracts have them, and no user or changeset. Beside the
+          # parts, the filtered stream goes through a FIFO to a second osmium, which keeps its elements with a wikidata
+          # tag, of which names.py writes the places' and waters' names (scratch-names.tsv.gz, for the globe).
           cd "$SMALL"
-          rm -f scratch-filtered.sha256 scratch-filtered.osm.pbf.[0-9][0-9][0-9] filtered.head
+          rm -f scratch-filtered.sha256 scratch-filtered.osm.pbf.[0-9][0-9][0-9] filtered.head scratch-names.tsv.gz
           cat > "$RUNNER_TEMP/parts.py" << 'EOF'
           # standard input into parts of argv[2] bytes in the current folder, each one's SHA-256 into the list as it is
           # written, then put up into the draft argv[1] by UPLOAD and deleted; it stops while under argv[3] bytes are
@@ -606,14 +624,77 @@ jobs:
               sys.exit("nothing came to cut into parts")
           print("%d bytes in %d parts" % (total, n))
           EOF
+          cat > "$RUNNER_TEMP/names.py" << 'EOF'
+          # OpenStreetMap's names of places and waters by their Wikidata ids, for the globe (`packer globe --names`,
+          # OsmNames): standard input the OPL of elements with a wikidata tag (`osmium tags-filter -R … -f opl`),
+          # standard output a line for each place (place=*) and each water (natural=water, bay or strait; place=ocean
+          # and sea are places' values) of them with a name, tab-separated:
+          #     <wikidata> <n|w|r><id> <key=value> <lat> <lon> <name>
+          # the lat and lon a node's (empty for a way or a relation), the name OSM's own `name` (a tab or a line break in
+          # it a space); an element both a place and a water a line each. How many lines, into the file argv[1].
+          import io, re, sys
+
+          # OPL writes a character of a key or value that is not plain (space, comma, =, @, % and those past U+05FF
+          # among them) as its code point in hex between two %
+          ESCAPED = re.compile(r"%([0-9a-fA-F]+)%")
+          WATERS = {"water", "bay", "strait"}
+
+
+          def text(s):
+              return ESCAPED.sub(lambda m: chr(int(m.group(1), 16)), s)
+
+
+          src = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
+          out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n")
+          n = 0
+          for line in src:
+              fields = line.rstrip("\n").split(" ")
+              tags = {}
+              lat = lon = ""
+              for f in fields[1:]:
+                  if f[:1] == "T" and len(f) > 1:
+                      for kv in f[1:].split(","):
+                          k, _, v = kv.partition("=")
+                          tags[text(k)] = text(v)
+                  elif f[:1] == "x":
+                      lon = f[1:]
+                  elif f[:1] == "y":
+                      lat = f[1:]
+              wikidata = tags.get("wikidata", "")
+              name = re.sub(r"[\t\r\n]", " ", tags.get("name", "")).strip()
+              if not wikidata or not name:
+                  continue
+              kinds = []
+              if tags.get("place"):
+                  kinds.append("place=" + tags["place"])
+              if tags.get("natural") in WATERS:
+                  kinds.append("natural=" + tags["natural"])
+              for kind in kinds:
+                  out.write("\t".join((wikidata, fields[0], kind, lat, lon, name)) + "\n")
+                  n += 1
+          out.flush()
+          with open(sys.argv[1], "w") as counted:
+              counted.write("%d\n" % n)
+          EOF
+          mkfifo "$RUNNER_TEMP/names.fifo"
+          (
+            set -o pipefail
+            osmium tags-filter -R -F pbf -f opl,add_metadata=false -o - - nwr/wikidata < "$RUNNER_TEMP/names.fifo" |
+              python3 -I "$RUNNER_TEMP/names.py" "$RUNNER_TEMP/names.txt" | gzip -6 > scratch-names.tsv.gz
+          ) &
+          NAMES=$!
           time osmium tags-filter "$RAW" -e "$RUNNER_TEMP/plan/tags.txt" -f pbf,add_metadata=version+timestamp -o - |
+            tee "$RUNNER_TEMP/names.fifo" |
             python3 -I "$RUNNER_TEMP/parts.py" "$TAG" $((1900 << 20)) $((5 << 30)) | tee "$RUNNER_TEMP/parts.txt"
-          rm -f "$RAW"
+          if ! wait "$NAMES"; then echo "::error::The names of the places and waters were not read from the filtered stream"; exit 1; fi
+          rm -f "$RAW" "$RUNNER_TEMP/names.fifo"
           read -r FILTERED_TS _ <<< "$(python3 -I "$RUNNER_TEMP/plan/header.py" filtered.head)"
           if [ "$FILTERED_TS" != "$TS" ]; then echo "::error::The filtered file lost the data's time"; exit 1; fi
           cat scratch-filtered.sha256
-          bash -c "$UPLOAD" upload "$TAG" scratch-filtered.sha256
+          ls -l scratch-names.tsv.gz
+          bash -c "$UPLOAD" upload "$TAG" scratch-filtered.sha256 scratch-names.tsv.gz
           echo "- filtered to the world's tags: $(tail -1 "$RUNNER_TEMP/parts.txt")" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OpenStreetMap's names of places and waters by Wikidata id: $(cat "$RUNNER_TEMP/names.txt") lines, scratch-names.tsv.gz $(stat -c %s scratch-names.tsv.gz) bytes" >> "$GITHUB_STEP_SUMMARY"
           df -h / /mnt
 
   cut:
@@ -773,7 +854,8 @@ jobs:
           bash -c "$UPLOAD" upload "$TAG" "${FILES[@]}"
 
   globe:
-    needs: [plan, sources]
+    # the filter's names too (it ends well before the blocks, which the assemble waits for)
+    needs: [plan, sources, filter]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -798,13 +880,16 @@ jobs:
           set -euo pipefail
           G="$RUNNER_TEMP/globe"
           mkdir -p "$G/naturalearth" "$G/out"
-          gh release download "$TAG" --pattern scratch-naturalearth.tar --pattern scratch-simplified-land-polygons-complete-3857.zip --dir "$G"
+          gh release download "$TAG" --pattern scratch-naturalearth.tar --pattern scratch-simplified-land-polygons-complete-3857.zip \
+            --pattern scratch-names.tsv.gz --dir "$G"
           tar -xf "$G/scratch-naturalearth.tar" -C "$G/naturalearth"
           mv "$G/scratch-simplified-land-polygons-complete-3857.zip" "$G/simplified-land-polygons-complete-3857.zip"
-          "$PACKER" globe "$G/naturalearth" "$G/simplified-land-polygons-complete-3857.zip" "$G/out/world-globe.atlas" --threads 4 | tee "$RUNNER_TEMP/globe.txt"
+          gunzip "$G/scratch-names.tsv.gz"
+          "$PACKER" globe "$G/naturalearth" "$G/simplified-land-polygons-complete-3857.zip" "$G/out/world-globe.atlas" \
+            --names "$G/scratch-names.tsv" --threads 4 | tee "$RUNNER_TEMP/globe.txt"
           ls -l "$G/out"
           bash -c "$UPLOAD" upload "$TAG" "$G/out/world-globe.atlas"
-          { echo "### The globe"; tail -3 "$RUNNER_TEMP/globe.txt" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### The globe"; grep -E "^globe: OpenStreetMap's names" "$RUNNER_TEMP/globe.txt" | sed 's/^/- /'; tail -3 "$RUNNER_TEMP/globe.txt" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
 
   assemble:
     needs: [plan, blocks, globe]
@@ -910,6 +995,190 @@ jobs:
             sed 's/^/- /' "$RUNNER_TEMP/check.txt"
             jq -r '.regions | to_entries[] | "- \(.key): \(.value.blocks) blocks, " + ([.value.seconds | to_entries[] | "\(.key) \(.value) s"] | join(", "))' "$WORK/out/world-stats.json"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  refs:
+    needs: [plan, assemble]
+    # after a build's assemble, or by hand with refs=<tag> alone (the plan and the build skipped)
+    if: ${{ !cancelled() && github.event.inputs.publish == '' && (github.event.inputs.refs != '' || needs.assemble.result == 'success') }}
+    runs-on: ubuntu-latest
+    # the packs the references' views draw from, fetched by their ranges of the release's parts (some hundreds of MB of
+    # the planet's), cut to the tiles drawn (world-refs.tar, some 30 MB with the globe), then the core's host build
+    # and the frames on lavapipe
+    timeout-minutes: 90
+    env:
+      TAG: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      # apk's Gradle caches, read only, as android.yml's likeness job reads them
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
+      # the references' views, which WorldPackRefsTest draws
+      VIEWS: app/android/mapcorecheck/src/test/resources/likeness/world-refs.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Android SDK 37, the NDK and the SDK's CMake
+        run: |
+          pin() { grep "^$1=" app/android/mapcore/tools.properties | cut -d= -f2-; }
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: The references' packs, cut from the release's
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^world-[0-9]{8}(-[a-z0-9]+)*$ ]]; then echo "::error::refs takes a world's release world-YYYYMMDD or world-YYYYMMDD-<word>, not $TAG"; exit 1; fi
+          R="$RUNNER_TEMP/refs"
+          mkdir -p "$R/in" "$R/packs" "$R/out"
+          gh release download "$TAG" --pattern world.idx --pattern world-globe.atlas --dir "$R/in"
+          # the packs holding the tiles the core's walk draws in the views, a line each: its part, its offset and length
+          # there, its file
+          "$PACKER" world-refs "$R/in/world.idx" "$VIEWS" --needed > "$R/needed.txt"
+          cat "$R/needed.txt"
+          # each pack its range of its part, through the API, as a draft's assets have no public URL
+          ID=$(gh release view "$TAG" --json databaseId -q .databaseId)
+          gh api --paginate "repos/$GH_REPO/releases/$ID/assets?per_page=100" -q '.[] | select(.state == "uploaded") | "\(.name) \(.id)"' > "$R/assets.txt"
+          FETCHED=0
+          while read -r part offset length file; do
+            asset=$(awk -v n="$part" '$1 == n { print $2 }' "$R/assets.txt")
+            if [ -z "$asset" ]; then echo "::error::$TAG has no $part"; exit 1; fi
+            curl -fsSL --retry 10 --retry-delay 10 --retry-all-errors -A "$USER_AGENT" -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/octet-stream" -r "$offset-$((offset + length - 1))" -o "$R/packs/$file" \
+              "https://api.github.com/repos/$GH_REPO/releases/assets/$asset" < /dev/null
+            got=$(stat -c %s "$R/packs/$file")
+            if [ "$got" != "$length" ]; then echo "::error::$file: $got bytes of $part, not $length"; exit 1; fi
+            FETCHED=$((FETCHED + length))
+          done < "$R/needed.txt"
+          # each pack's tiles drawn into a pack of its own, held to the index's SHA-256, and the globe beside them
+          "$PACKER" world-refs "$R/in/world.idx" "$VIEWS" "$R/packs" "$R/out" 2>&1 | tee "$R/cut.txt"
+          rm -rf "${R:?}/packs"
+          cp "$R/in/world-globe.atlas" "$R/out/"
+          (cd "$R/out" && tar -cf "$R/world-refs.tar" -- *.atlas)
+          ls -l "$R/out" "$R/world-refs.tar"
+          # into the release while it is a draft (a published release's files stay as they were published)
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+            bash -c "$UPLOAD" upload "$TAG" "$R/world-refs.tar"
+          else
+            echo "::notice::$TAG is published: world-refs.tar stays in the run's artifact world-refs-tar"
+          fi
+          echo "ATLAS_WORLD_REFS=$R/out" >> "$GITHUB_ENV"
+          {
+            echo "### The references around the world"
+            echo "- world-refs.tar: $(stat -c %s "$R/world-refs.tar") bytes, $(find "$R/out" -name 'world-*-*-*.atlas' | wc -l) packs and the globe, cut from $(wc -l < "$R/needed.txt") packs' $FETCHED bytes"
+            { grep '^world-refs: ' "$R/cut.txt" || true; } | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: world-refs-tar
+          path: ${{ runner.temp }}/refs/world-refs.tar
+          retention-days: 14
+      - name: "Map core host build: LLVM's clang and libc++, and ccache"
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL --retry 20 --retry-delay 30 --retry-all-errors https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          # apt.llvm.org's name may not resolve on a runner for a while (3 November 2026, from about 14:07 UTC): the key's
+          # fetch and the update are tried again every 30 s for 10 minutes, until its clang is there
+          for try in $(seq 20); do
+            sudo apt-get update -q && apt-cache show "clang-$LLVM" > /dev/null 2>&1 && break
+            echo "::warning::apt.llvm.org's clang-$LLVM is not there (try $try of 20); again in 30 s"
+            sleep 30
+          done
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
+            libclang-rt-$LLVM-dev ccache
+          {
+            echo "ATLAS_HOST_CC=clang-$LLVM"
+            echo "ATLAS_HOST_CXX=clang++-$LLVM"
+            echo "ATLAS_HOST_CXXFLAGS=-stdlib=libc++"
+            echo "ATLAS_HOST_LDFLAGS=-stdlib=libc++"
+            echo "ATLAS_CCACHE=1"
+            echo "CCACHE_DIR=$HOME/.cache/ccache-host"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo "CCACHE_MAXSIZE=2G"
+            echo "CCACHE_COMPILERCHECK=mtime"
+            echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
+          } >> "$GITHUB_ENV"
+          clang++-$LLVM --version | head -1
+      # android.yml's likeness job's ccache and lavapipe, read only: this job saves no cache
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ccache-host
+          key: ccache-android-host-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-android-host-
+      - name: "Map core host build: the emulator package's pin"
+        run: echo "EMULATOR_SHA1=$(grep '^emulator.linux-x86_64.sha1=' app/android/mapcore/tools.properties | cut -d= -f2-)" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/emulator-vulkan
+          key: emulator-vulkan-${{ env.EMULATOR_SHA1 }}
+      - name: "Map core host build: lavapipe from the pinned emulator package"
+        working-directory: app/android
+        run: |
+          dir="$RUNNER_TEMP/emulator-vulkan"
+          if [ ! -e "$dir/lvp_icd.json" ]; then
+            file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
+            python3 -I ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$file" - "$EMULATOR_SHA1" "$RUNNER_TEMP/$file"
+            unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
+            rm "${RUNNER_TEMP:?}/${file:?}"
+            mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
+            rm -f "${dir:?}"/*swiftshader* "${dir:?}"/*MoltenVK* "${dir:?}"/*kosmickrisp* "${dir:?}"/glslangValidator
+          fi
+          ls -la "$dir" "$dir/layers" || true
+          echo "ATLAS_LAVAPIPE_DIR=$dir" >> "$GITHUB_ENV"
+          if [ ! -e "$dir/libvulkan.so.1" ] && [ ! -e "$dir/libvulkan.so" ]; then
+            sudo apt-get install -y -q libvulkan1 > /dev/null
+            echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
+          fi
+      # mapcorecheck's tests build the canal ring's render pack from it (bundledTiles)
+      - name: The canal ring's pack
+        uses: actions/cache/restore@v6
+        with:
+          path: cache/packs/regions/grachten.atlas
+          key: likeness-pack-grachten-3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec
+      - name: Fetch the canal ring's pack
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -A "$USER_AGENT" -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
+      - name: The references drawn
+        # each pack decoded by the core's stage P tool, then every view drawn by the host build from the cut packs and
+        # the globe: a pack not decoded or a frame not drawn whole (a tile of it wanted, or cells bare) fails the job;
+        # the frames and their proposal (world-refs/world-refs.json) in the report
+        working-directory: app/android
+        run: >-
+          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true
+          -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }}
+          -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace
+      - name: The frames
+        if: ${{ !cancelled() }}
+        run: |
+          f=likeness/world-refs/world-refs.json
+          if [ -f "$f" ]; then
+            {
+              echo "### The references' frames (lavapipe-x86_64)"
+              # the proposal: the frames' SHA-256 under its version and platform
+              jq -r '.version as $v | .versions[$v].platforms["lavapipe-x86_64"] // {} | to_entries[] | "- \(.key): \(.value)"' "$f"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: world-refs
+          path: likeness/
+          if-no-files-found: ignore
 
   publish:
     # only by hand, a checked draft named
