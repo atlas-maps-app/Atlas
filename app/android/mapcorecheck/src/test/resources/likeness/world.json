@@ -73,6 +73,23 @@
           "12000 km night": "50561c04329e0932e8d457bd9f1ca71b457398fa67ea67b8810f97cd326c4162",
           "the board sunny": "a06c00f4d06d35c03951a1e4c15ad997749c4e8053ab539a418723e2c6b0a813",
           "the board night": "6e5147dba9cb3c837d96a050003d9ce0e613d326a685dc49b40b16cf32a3dd25"
+        },
+        "lavapipe-x86_64": {
+          "18 km sunny": "91cc48213e6d60ea0baf1ec549ddc2607d12087ab316e48bd290b2ed0780fde9",
+          "18 km night": "9caa63ed6d85b99db2bbfbfc94a5039c9f709aef054e2e7b6d919f349dddf854",
+          "75 km sunny": "bf3c676dc50edb3cdecc2c7e82ebab8f795aa6199bfd13fd30abe3798ec4db14",
+          "75 km night": "7915cbaff7e59965d1058ea908c215a143327ed5b1782470fa38337cc3f22927",
+          "75 km pitched night": "aa91c6bc79e17c4c7ae2c0c345481c1a60ea298fe5fc6b3d28fcd186d1e6fad9",
+          "600 km sunny": "ee9d0ee18cdaab38b16a69ce8a5a9994ad9faaeb0fc9cb9a7ecdc843aa51f746",
+          "600 km night": "ea0e0a0eb01c2b0702a52c30ee32540df2db8271eeda0e1e7417e7ac66e6b444",
+          "600 km pitched sunny": "5d1c6eecf33a6798c6b5de61625c075a00c748247ac2f26f9467aeec6c60a19f",
+          "2000 km pitched sunny": "b34b07c746205214f458ae7a57b20aec623fde8602f642c1f677c0fdeca4ff78",
+          "6000 km sunny": "c1c912a93f5775f78aee7b2550c39e501147e2c1101c6a5ec0d7e7a3423b8bce",
+          "6000 km night": "7a640aefefc9ce5a77805dee06d9b3cb564c4ba770553aa644e1f7916022a961",
+          "12000 km sunny": "d3572de3f8e224a938c6beb1fadbaeb94951a919599b04d45f3f12f3a56d5bd8",
+          "12000 km night": "50561c04329e0932e8d457bd9f1ca71b457398fa67ea67b8810f97cd326c4162",
+          "the board sunny": "c10239dd2830f1d8451bb6657a35d525a6a366ee91b2d71145b90738b94bbe77",
+          "the board night": "c26997bdf14af986218650e5dbb87131e62a2e20a0a58d315094e53de245212f"
         }
       }
     }
