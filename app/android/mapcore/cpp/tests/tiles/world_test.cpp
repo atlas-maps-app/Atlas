@@ -901,6 +901,44 @@ TEST_CASE("scene: a world tile's lit places are its lights in the world's style,
     }
     CHECK(coasts(g9) == 0);
     CHECK(g9.coast == 0);
+    // nor is the world's own edge a coast: land that Mercator's square cuts beyond 85° south (Antarctica's), its last
+    // latitude a little off the tile's, has its three other edges for its coast
+    {
+        TileBytes tile = world_tile(0, 0, 0);
+        TileHeader header;
+        header.cells_per_side = tile.n;
+        const auto tb = tile.grid_box();
+        header.south = tb[0];
+        header.west = tb[1];
+        header.north = tb[2];
+        header.east = tb[3];
+        const auto b = atlas::test::cell_box(header, 13);
+        const std::int32_t last = b[0] + 500;
+        REQUIRE(last < -850'000'000);
+        const std::vector<atlas::test::Ring> land = {
+            {.lat = {last, last, b[2] - 100'000, b[2] - 100'000},
+             .lon = {b[1] + 100'000, b[3] - 100'000, b[3] - 100'000, b[1] + 100'000},
+             .keep = {}}};
+        LayerBytes land_layer{.id = static_cast<std::uint8_t>(LayerId::ground)};
+        land_layer.cells = {13};
+        land_layer.columns = {{"source", Codec::u8, col::u8({ground::source_land_base})},
+                              {"index", Codec::delta, col::delta({0})},
+                              {"ring", Codec::geom, col::geom(land)},
+                              {"kind", Codec::str, col::str(tile, {"land"})}};
+        tile.layers = {land_layer};
+        const auto raw = tile.encode();
+        auto decoded = decoder.decode(raw, arena);
+        ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+        const atlas::scene::WorldGeometry cut = atlas::scene::build_world_geometry(*decoded, world);
+        REQUIRE(cut.coast > 0);
+        const std::size_t lines = 4 * std::size_t{cut.triangles};
+        for (std::size_t i = 0; i < cut.segments; ++i) {
+            const std::uint32_t from = cut.words[lines + (3 * i)] >> 16U;
+            const std::uint32_t to = cut.words[lines + (3 * i) + 1] >> 16U;
+            // no segment along the tile's last row of the grid
+            CHECK_FALSE((from >= 65'530U && to >= 65'530U));
+        }
+    }
     CHECK(coasts(built(0, 0, 0, nullptr)) == 0);
     CHECK(atlas::scene::world_lights(6, "city"));
     CHECK(!atlas::scene::world_lights(9, "town"));

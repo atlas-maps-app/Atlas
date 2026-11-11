@@ -130,7 +130,9 @@ public:
     }
 
     /// The coast along a ring of the tile's land in cell `cell`: each of its edges that does not lie along the cell's
-    /// box, where the packer cut the land (WorldGeometry.cellBoxes: within the grid's rounding of an edge of it).
+    /// box, where the packer cut the land (WorldGeometry.cellBoxes: within the grid's rounding of an edge of it), nor
+    /// along the world's own edge beyond 85°, where Mercator's square cuts Antarctica (its land's last latitude is the
+    /// projection's, a vertex's rounding from the tile's).
     void coast(const tl::RingView& ring, std::uint32_t cell) {
         const std::size_t n = ring.size();
         if (n < 3) return;
@@ -153,11 +155,15 @@ public:
                 edges, [&](std::int64_t e) { return std::abs(a - e) <= rounding && std::abs(b - e) <= rounding; });
         };
         const std::uint32_t look = std::uint32_t{world_palette::coast} | (cell << 8U);
+        constexpr std::int32_t worlds_edge = 850'000'000; // 85°, the grid's 1e-7°
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t j = i + 1 < n ? i + 1 : 0;
             const Point a{.lat = ring.lat[i], .lon = ring.lon[i]};
             const Point b{.lat = ring.lat[j], .lon = ring.lon[j]};
             if ((a.lat == b.lat && a.lon == b.lon) || along(a.lat, b.lat, lats) || along(a.lon, b.lon, lons)) continue;
+            if ((a.lat <= -worlds_edge && b.lat <= -worlds_edge) || (a.lat >= worlds_edge && b.lat >= worlds_edge)) {
+                continue;
+            }
             // into the coast's own words, which follow the tile's other lines
             std::swap(segments_, coasts_);
             segment(a, b, look, split_depth);
