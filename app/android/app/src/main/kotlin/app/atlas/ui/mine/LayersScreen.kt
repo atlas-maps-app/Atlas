@@ -72,6 +72,7 @@ import app.atlas.mapview.UserLocation
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.DEFAULT_TONE_ON
 import app.atlas.services.SettingsKeys
 import app.atlas.services.screenEffectsOn
 import app.atlas.ui.kit.Atlas
@@ -109,7 +110,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
     val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
     val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
-    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, true).collectAsStateWithLifecycle(true)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, DEFAULT_TONE_ON).collectAsStateWithLifecycle(DEFAULT_TONE_ON)
     val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)

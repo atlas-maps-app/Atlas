@@ -7,7 +7,10 @@ import app.atlas.mapview.palette.PaletteCode
 import app.atlas.mapview.palette.PaletteFlags
 import app.atlas.mapview.palette.Preset
 import app.atlas.mapview.palette.Slot
+import app.atlas.services.DEFAULT_PALETTE
+import app.atlas.services.DEFAULT_TONE_ON
 import app.atlas.services.SettingsKeys
+import app.atlas.services.mapPalette
 
 /** A palette the user saved (the Map look board's Your palettes): its [name] and its [code] (PaletteCode, AT1-…). */
 internal data class SavedPalette(val name: String, val code: String) {
@@ -39,13 +42,13 @@ internal object MapLookModel {
     /** The palette [code] holds, or null for none or one this Atlas cannot read. */
     fun read(code: String?): Palette? = code?.let { (PaletteCode.read(it) as? PaletteCode.Read.Ok)?.palette }
 
-    /** The palette the map draws for MAP_PALETTE's [code]: today's when unset or unreadable. */
-    fun current(code: String?): Palette = read(code) ?: Palette()
+    /** The palette the map draws for MAP_PALETTE's [code]: the default look's when unset or unreadable (mapPalette). */
+    fun current(code: String?): Palette = mapPalette(code)
 
-    /** MAP_PALETTE for [p]: its code without the Tone, or null (unset) for today's look. */
+    /** MAP_PALETTE for [p]: its code without the Tone, or null (unset) for the default look's (DEFAULT_PALETTE). */
     fun keep(p: Palette): String? {
         val bare = p.copy(tone = null)
-        return if (bare == Palette()) null else PaletteCode.write(bare)
+        return if (bare == DEFAULT_PALETTE) null else PaletteCode.write(bare)
     }
 
     /** [p] with the switch [bit] (PaletteFlags) [on]: no switches of its own where they come out as its base's. */
@@ -203,7 +206,7 @@ internal object MapLookWrites {
 
     private fun current(p: Preferences): Palette = MapLookModel.current(p[SettingsKeys.MAP_PALETTE])
 
-    private fun tone(p: Preferences): Pair<Boolean, Float> = (p[SettingsKeys.MAP_TONE_ON] ?: true) to (p[SettingsKeys.MAP_TONE] ?: 1f)
+    private fun tone(p: Preferences): Pair<Boolean, Float> = (p[SettingsKeys.MAP_TONE_ON] ?: DEFAULT_TONE_ON) to (p[SettingsKeys.MAP_TONE] ?: 1f)
 
     /** The saved palette the map draws, or -1. */
     private fun savedAt(p: Preferences): Int = MapLookModel.savedIndex(MapLookModel.savedOf(p[SettingsKeys.MAP_PALETTES]), current(p))
