@@ -84,11 +84,12 @@ struct LookOut {
     [[vk::location(2)]] float3 normal : NORMAL0;
 };
 
-/// What palette entry `entry` is to the ladder: the land (the land, the south pole's cap and the land cover), the
-/// water, or another.
+/// What palette entry `entry` is to the ladder: the land (the land and the land cover), the water, or another (the
+/// lines, and the ice: glaciers, ice shelves and the south pole's cap).
 uint kind_of(uint entry) {
     if (entry == 1u) return GLOBE_WATER;
-    return entry == 0u || entry == 6u || entry > GLOBE_COAST_ENTRY ? GLOBE_LAND : GLOBE_OTHER;
+    // (entry 6, the ice, keeps its colour to the globe: it takes no ramp)
+    return entry == 0u || entry > GLOBE_COAST_ENTRY ? GLOBE_LAND : GLOBE_OTHER;
 }
 
 /// An 8-bit RGBA colour (r in the low byte) as 0-1 values.

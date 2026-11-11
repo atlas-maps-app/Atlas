@@ -14,6 +14,9 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import app.atlas.geo.LatLon
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteCode
+import app.atlas.mapview.palette.Preset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -127,6 +130,27 @@ fun fastRefreshOn(p: Preferences): Boolean = p[SettingsKeys.MAP_FAST_REFRESH] ?:
 fun screenEffectsOn(p: Preferences): Triple<Boolean, Boolean, Boolean> =
     Triple(p[SettingsKeys.MAP_HAZE] ?: true, p[SettingsKeys.MAP_VIGNETTE] ?: true, p[SettingsKeys.MAP_GRAIN] ?: true)
 
+/**
+ * The map's palette where the user has picked none: the Map look's Alpha 22 (the first New look: the Tone off, the red
+ * tiles as tiles_red, each guessed flat roof one of three mid greys). With [screenEffectsOn]'s effects and
+ * MapParts.byDefault's parts the map then draws alpha 22's look, for now (the user, 4 November 2026: "Alpha 22s look by
+ * default for now"; 94716e80 took its parts and effects, and its colours followed on 11 November: "Alpha 22 doesnt work
+ * as the default look?").
+ */
+val DEFAULT_PALETTE: Palette = Palette(Preset.ALPHA_22)
+
+/** Whether the Map look's Tone is on where SettingsKeys.MAP_TONE_ON is unset: as [DEFAULT_PALETTE] brings it, off. */
+val DEFAULT_TONE_ON: Boolean = DEFAULT_PALETTE.toneStrength > 0f
+
+/** The palette the map draws for SettingsKeys.MAP_PALETTE's [code]: [DEFAULT_PALETTE] when unset or unreadable. */
+fun mapPalette(code: String?): Palette = (code?.let(PaletteCode::read) as? PaletteCode.Read.Ok)?.palette ?: DEFAULT_PALETTE
+
+/**
+ * The Tone's strength the map draws with: SettingsKeys.MAP_TONE (the renders' 1 when unset) while MAP_TONE_ON is on
+ * ([DEFAULT_TONE_ON] when unset), else 0.
+ */
+fun mapTone(p: Preferences): Float = if (p[SettingsKeys.MAP_TONE_ON] ?: DEFAULT_TONE_ON) p[SettingsKeys.MAP_TONE] ?: 1f else 0f
+
 /** The shell's settings keys. Features add theirs in their own packages, prefixed with the package name. */
 object SettingsKeys {
     val CAMERA_LAT = doublePreferencesKey("camera.lat")
@@ -158,10 +182,16 @@ object SettingsKeys {
      */
     val MAP_TONE = floatPreferencesKey("map.tone")
 
-    /** The Map look's Tone switch: off draws no TONE and keeps [MAP_TONE] for when it is on again; on when unset. */
+    /**
+     * The Map look's Tone switch: off draws no TONE and keeps [MAP_TONE] for when it is on again; off when unset, as the
+     * default palette brings it (DEFAULT_TONE_ON, alpha 22's look for now; on when unset until 11 November).
+     */
     val MAP_TONE_ON = booleanPreferencesKey("map.tone.on")
 
-    /** The Map look's palette as its code (PaletteCode, AT1-...): today's look when unset or unreadable. */
+    /**
+     * The Map look's palette as its code (PaletteCode, AT1-...): the default look's when unset or unreadable
+     * (DEFAULT_PALETTE, mapPalette: Alpha 22's for now; today's until 11 November, which is now kept as its code).
+     */
     val MAP_PALETTE = stringPreferencesKey("map.palette")
 
     /** The Map look's saved palettes (Your palettes), in the order saved: a line each, the code, a tab and the name. */

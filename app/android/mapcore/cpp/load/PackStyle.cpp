@@ -310,6 +310,8 @@ tl::WorldLadder world_ladder() noexcept {
                {.colour = 0xE8EEF2, .at = 1.0}}};
     // the land's edge: #2F5A2A at 0x59 of 255, 0.6 wide
     l.coast = {.colour = 0x2F5A2A, .opacity = 0x59 / 255.0};
+    // the ice: the land ramp's last stop, the board's Antarctica
+    l.ice = 0xE8EEF2;
     l.coast_width = 0.6;
     // the night: #030712 where the sun is under the horizon, and under each twilight's line
     l.night = 0x030712;

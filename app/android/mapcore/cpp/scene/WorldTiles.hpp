@@ -136,11 +136,10 @@ inline constexpr std::uint8_t road = 2;    ///< the roads: the theme's road
 inline constexpr std::uint8_t rail = 3;    ///< the railways: the style's rails
 inline constexpr std::uint8_t asphalt = 4; ///< the big roads: the style's asphalt
 inline constexpr std::uint8_t runway = 5;  ///< the runways: the style's runway pavement
-inline constexpr std::uint8_t south_cap =
-    6;                                    ///< the south pole's cap: Antarctica's ice, the style's glacier (else land)
-inline constexpr std::uint8_t coast = 7;  ///< the coast: the ladder's line along the land's edge (the globe's tiles)
-inline constexpr std::uint8_t kinds = 8;  ///< the land cover: kinds + its LAND kind (the style's land table)
-inline constexpr std::uint32_t size = 64; ///< the palette's entries
+inline constexpr std::uint8_t ice = 6;     ///< glaciers, ice shelves and the south pole's cap: the ladder's ice
+inline constexpr std::uint8_t coast = 7;   ///< the coast: the ladder's line along the land's edge (the globe's tiles)
+inline constexpr std::uint8_t kinds = 8;   ///< the land cover: kinds + its LAND kind (the style's land table)
+inline constexpr std::uint32_t size = 64;  ///< the palette's entries
 } // namespace world_palette
 
 /// A world tile's geometry as the heap holds it: its fills' vertex words (three a triangle: its box's fractions, u in

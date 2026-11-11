@@ -75,6 +75,7 @@ import app.atlas.mapview.palette.Slot
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.DEFAULT_PALETTE
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.cssLinear
@@ -107,7 +108,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     // what the map drew as the screen opened, and the saved palette it was (its code), read once
     var original by remember { mutableStateOf<Palette?>(null) }
     var from by remember { mutableStateOf<String?>(null) }
-    var working by remember { mutableStateOf(Palette()) }
+    var working by remember { mutableStateOf(DEFAULT_PALETTE) }
     val undo = remember { mutableStateListOf<Palette>() }
     var family by remember { mutableStateOf(Family.GROUND) }
     var slot by remember { mutableStateOf(Slot.PAPER) }

@@ -1075,7 +1075,7 @@ TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its leve
         CHECK(length(g.words[at], g.words[at + 1]) <= limit * 1.001);
     }
     // the caps: 128 by 16 quads, every triangle of the tiles' winding, in its palette entry and cell 0
-    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::south_cap);
+    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::ice);
     CHECK(cap.triangles == 4096U);
     CHECK(cap.segments == 0U);
     REQUIRE(cap.words.size() == 4U * 4096U);
@@ -1086,7 +1086,7 @@ TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its leve
         const double twice = area(cap.words[3 * t], cap.words[(3 * t) + 1], cap.words[(3 * t) + 2]);
         if (!(twice > 0)) ++cap_backwards;
         cap_total += twice / 2.0;
-        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::south_cap) ++cap_looks;
+        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::ice) ++cap_looks;
     }
     CHECK(cap_backwards == 0);
     CHECK(cap_looks == cap.triangles);
@@ -1141,6 +1141,73 @@ TEST_CASE("scene: a world tile's cells over a descendant are the packer's, rows 
             }
         }
     }
+}
+
+TEST_CASE("scene: the globe's ice, its glaciers and its ice shelves, is the ice's entry in the world's style, and the "
+          "land's without it") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(3, 4, 2);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b = atlas::test::cell_box(header, 5);
+    const std::int32_t w = (b[3] - b[1]) / 4;
+    const auto square = [&](std::int32_t k) {
+        return atlas::test::Ring{.lat = {b[0], b[0], b[2], b[2]},
+                                 .lon = {b[1] + (k * w), b[1] + ((k + 1) * w), b[1] + ((k + 1) * w), b[1] + (k * w)},
+                                 .keep = {}};
+    };
+    // the land under everything, a glacier on it (land cover), and an ice shelf over the sea (an area)
+    LayerBytes ground{.id = static_cast<std::uint8_t>(LayerId::ground)};
+    ground.cells = {5, 5, 5};
+    ground.columns = {
+        {"source", Codec::u8, col::u8({ground::source_land_base, ground::source_land, ground::source_area})},
+        {"index", Codec::delta, col::delta({0, 1, 2})},
+        {"ring", Codec::geom, col::geom({square(0), square(1), square(2)})},
+        {"kind", Codec::str, col::str(tile, {"land", "glacier", "ice_shelf"})}};
+    tile.layers = {ground};
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const auto entries = [&](const atlas::tiles::Style* style) {
+        const atlas::scene::WorldGeometry g = atlas::scene::build_world_geometry(*decoded, style);
+        std::array<std::size_t, atlas::scene::world_palette::size> count{};
+        for (std::size_t t = 0; t < g.triangles; ++t) {
+            ++count.at(g.words[(3 * std::size_t{g.triangles}) + t] & 0xFFU);
+        }
+        return count;
+    };
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    const auto with = entries(world);
+    CHECK(with[atlas::scene::world_palette::land] > 0);
+    // the glacier and the shelf: as many triangles each as the land's square, all the ice's
+    CHECK(with[atlas::scene::world_palette::ice] == 2 * with[atlas::scene::world_palette::land]);
+    // without the world's style (no ladder) they are the land's, as before
+    const auto without = entries(nullptr);
+    CHECK(without[atlas::scene::world_palette::ice] == 0);
+    CHECK(without[atlas::scene::world_palette::land] == 3 * with[atlas::scene::world_palette::land]);
+    // the ice's colour: the ladder's #E8EEF2 by day, a fifth of it at night as the land cover's
+    atlas::style::ThemeBlock theme{};
+    theme.ground = {.r = 10, .g = 20, .b = 30, .a = 255};
+    const std::vector<std::uint32_t> day = atlas::passes::World::palette_of(theme, false, world);
+    const std::vector<std::uint32_t> night = atlas::passes::World::palette_of(theme, true, world);
+    CHECK(day[atlas::scene::world_palette::ice] == 0xFFF2EEE8U);
+    CHECK((night[atlas::scene::world_palette::ice] & 0xFFU) == doctest::Approx(0xE8 * 0.2).epsilon(0.02));
+    CHECK(((night[atlas::scene::world_palette::ice] >> 16U) & 0xFFU) == doctest::Approx(0xF2 * 0.2).epsilon(0.02));
+    // and under the night's caps the day's palette has it whole
+    theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_palette_of(theme, world)[atlas::scene::world_palette::ice] == 0xFFF2EEE8U);
+    // a style without the ladder leaves the entry the land's
+    CHECK(atlas::passes::World::palette_of(theme, false, nullptr)[atlas::scene::world_palette::ice] == 0xFF1E140AU);
 }
 
 TEST_CASE("passes: the world's palette is the theme's land, water and roads, and its land where the style has none") {
@@ -1198,7 +1265,7 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     theme.flags = 0;
     const std::vector<std::uint32_t> by_day = atlas::passes::World::palette_of(theme, false, world);
     for (std::size_t k = atlas::scene::world_palette::rail; k < day.size(); ++k) {
-        if (k != atlas::scene::world_palette::south_cap && k < atlas::scene::world_palette::kinds) {
+        if (k != atlas::scene::world_palette::ice && k < atlas::scene::world_palette::kinds) {
             CHECK(day[k] == by_day[k]);
         }
     }

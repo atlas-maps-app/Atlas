@@ -11,8 +11,6 @@ import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
-import app.atlas.mapview.palette.Palette
-import app.atlas.mapview.palette.PaletteCode
 import app.atlas.mapview.vk.WorldReads
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
@@ -286,19 +284,19 @@ class MapData(private val services: Services) {
         services.scope.launch {
             services.settings.screenEffects.collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
-        // the Map look's Tone, as the user set it (on at the renders' 1 when unset; off is 0)
+        // the Map look's Tone and palette, as the user set them; unset, alpha 22's look for now (the Tone off and the
+        // Alpha 22 palette: mapTone, mapPalette), handed to MapEngine before the settings are read, as the parts are
+        // below, so the first frame draws the defaults
+        MapEngine.tone(mapTone(emptyPreferences()))
+        MapEngine.palette(DEFAULT_PALETTE)
         services.scope.launch {
             services.settings.data
-                .map { if (it[SettingsKeys.MAP_TONE_ON] ?: true) it[SettingsKeys.MAP_TONE] ?: 1f else 0f }
+                .map { mapTone(it) }
                 .distinctUntilChanged()
                 .collect { s -> MapEngine.tone(s) }
         }
-        // the Map look's palette, as the user picked it (today's look when unset or unreadable)
         services.scope.launch {
-            services.settings.flow(SettingsKeys.MAP_PALETTE).collect { code ->
-                val read = code?.let(PaletteCode::read)
-                MapEngine.palette((read as? PaletteCode.Read.Ok)?.palette ?: Palette())
-            }
+            services.settings.flow(SettingsKeys.MAP_PALETTE).collect { code -> MapEngine.palette(mapPalette(code)) }
         }
         // a debug build's frame pacing, as the Look settings have it (off when unset)
         services.scope.launch {
