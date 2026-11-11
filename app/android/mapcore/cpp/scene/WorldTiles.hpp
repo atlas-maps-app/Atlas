@@ -325,7 +325,7 @@ private:
     std::unordered_set<std::uint64_t> open_blocks_;   ///< their blocks, packed (their ids, tiles::world_pack_id)
     bool pinned_asked_ = false;
 
-    mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats
+    mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats, style_pack_'s writes
     std::condition_variable wake_worker_;
     std::condition_variable idle_cv_;
     std::vector<tiles::TileKey> queue_;
