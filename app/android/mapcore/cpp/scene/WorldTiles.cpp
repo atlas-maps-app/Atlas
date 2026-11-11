@@ -158,7 +158,10 @@ public:
             const Point a{.lat = ring.lat[i], .lon = ring.lon[i]};
             const Point b{.lat = ring.lat[j], .lon = ring.lon[j]};
             if ((a.lat == b.lat && a.lon == b.lon) || along(a.lat, b.lat, lats) || along(a.lon, b.lon, lons)) continue;
+            // into the coast's own words, which follow the tile's other lines
+            std::swap(segments_, coasts_);
             segment(a, b, look, split_depth);
+            std::swap(segments_, coasts_);
         }
     }
 
@@ -171,12 +174,14 @@ public:
     [[nodiscard]] WorldGeometry finish() {
         WorldGeometry g;
         g.triangles = static_cast<std::uint32_t>(triangles_.size());
-        g.segments = static_cast<std::uint32_t>(segments_.size() / 3);
+        g.coast = static_cast<std::uint32_t>(coasts_.size() / 3);
+        g.segments = static_cast<std::uint32_t>(segments_.size() / 3) + g.coast;
         g.lights = static_cast<std::uint32_t>(lights_.size() / 2);
-        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size() + lights_.size());
+        g.words.reserve(vertices_.size() + triangles_.size() + segments_.size() + coasts_.size() + lights_.size());
         g.words.insert(g.words.end(), vertices_.begin(), vertices_.end());
         g.words.insert(g.words.end(), triangles_.begin(), triangles_.end());
         g.words.insert(g.words.end(), segments_.begin(), segments_.end());
+        g.words.insert(g.words.end(), coasts_.begin(), coasts_.end());
         g.words.insert(g.words.end(), lights_.begin(), lights_.end());
         return g;
     }
@@ -298,6 +303,7 @@ private:
     std::vector<std::uint32_t> vertices_;
     std::vector<std::uint32_t> triangles_;
     std::vector<std::uint32_t> segments_;
+    std::vector<std::uint32_t> coasts_;
     std::vector<std::uint32_t> lights_;
 };
 
@@ -471,7 +477,7 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
             }
         });
     }
-    // a globe's tile's coast, the ladder's line along its land's edge, under its other lines
+    // a globe's tile's coast, the ladder's line along its land's edge, the last of its lines
     constexpr std::uint8_t globe_last = 5;
     if (ground != nullptr && style != nullptr && style->ladder && tile.header.level <= globe_last) {
         each_row(*ground, cells, [&](std::uint32_t i, std::uint32_t c) {
@@ -721,6 +727,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->box = {tile->header.south, tile->header.west, tile->header.north, tile->header.east};
     out->triangles = g.triangles;
     out->segments = g.segments;
+    out->coast = g.coast;
     out->lights = g.lights;
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;

@@ -66,6 +66,11 @@ struct WorldLook {
     GeoPoint sun; ///< where the sun is overhead
     /// Whether the moment is night: the world's palette is the night's, handed over to the day's under the caps.
     bool night = false;
+    /// Whether the ladder leaves every fragment of the frame its moment's colour: by day, under the ramps' first knot,
+    /// with the sun up over all the ground the eye can see (its altitude under the eye less the horizon's angle, over
+    /// the caps' softness). The block's first weight is then 0, so no fragment does the look's work, and no light is
+    /// drawn (none shows by day); the pixels are the same.
+    bool plain = false;
     shaders::WorldLookBlock block{};
 };
 

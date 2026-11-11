@@ -17,11 +17,13 @@
 // dropped where either end faces away from the eye, beyond the horizon.
 //
 // Beyond 18 km the world's look follows the style ladder (ENGINE.md step 5, "The style ladder" and "The globe";
-// shared/globe.slang, scene/WorldLook.hpp): colour_fs shades each fragment by the frame's look block (set 2, binding 2)
+// shared/globe.slang, scene/WorldLook.hpp). A frame the ladder shades draws its fills and lines with the look's stages
+// (fill_look_vs, line_look_vs, look_fs): look_fs shades each fragment by the frame's look block (set 2, binding 2)
 // from its palette colours, the moment's and the day's (the palette's second half), what it is to the ladder (the
 // land, the water, another) and the ground's direction from the planet's centre, which gives the sun's altitude there
-// (the night's caps) and the surface's normal in the view (the board's ramps). With every weight 0 a fragment is its
-// moment's colour, bit for bit. Over the tiles:
+// (the night's caps) and the surface's normal in the view (the board's ramps). A frame it leaves its palette's
+// colours (every frame up to 18 km; by day under the ramps while the sun stands over all the eye sees: the look's
+// `plain`) draws with the plain stages, a colour a vertex and nothing a fragment. Over the tiles:
 //
 //   - light_vs and light_fs: a tile's cities' lights on the night side, a disc and its halo each (two words a light
 //     after the tile's segments: its place as a vertex word, then its size and its cell at bit 8);
@@ -64,18 +66,29 @@ struct WorldPush {
 
 [[vk::push_constant]] ConstantBuffer<WorldPush> push;
 
+/// The plain stages' (fill_vs, line_vs, colour_fs: a frame the ladder leaves its palette's colours, as every frame up
+/// to 18 km): a primitive's colour, premultiplied by its opacity.
 struct WorldOut {
     float4 position : SV_Position;
-    [[vk::location(0)]] nointerpolation float4 colour : COLOR0; // rgb: the moment's colour; a: the fragment's opacity
-    [[vk::location(1)]] nointerpolation float4 day : COLOR1;    // rgb: the day's colour; a: what it is (GLOBE_)
-    [[vk::location(2)]] float3 normal : NORMAL0; // the ground's direction from the planet's centre (frame axes)
+    [[vk::location(0)]] nointerpolation float4 colour : COLOR0;
+};
+
+/// The look's stages' (fill_look_vs, line_look_vs, look_fs: a frame the ladder shades): a primitive's palette entry
+/// and opacity, and the ground's direction from the planet's centre (frame axes), which the fragment shades by. Its
+/// colours are the fragment's to read, so a vertex carries five values, not eleven: the world's tiles hold two
+/// million triangles from 100 km.
+struct LookOut {
+    float4 position : SV_Position;
+    [[vk::location(0)]] nointerpolation uint entry : ENTRY0;
+    [[vk::location(1)]] nointerpolation float alpha : ALPHA0;
+    [[vk::location(2)]] float3 normal : NORMAL0;
 };
 
 /// What palette entry `entry` is to the ladder: the land (the land, the south pole's cap and the land cover), the
 /// water, or another.
-float kind_of(uint entry) {
-    if (entry == 1u) return float(GLOBE_WATER);
-    return entry == 0u || entry == 6u || entry > GLOBE_COAST_ENTRY ? float(GLOBE_LAND) : float(GLOBE_OTHER);
+uint kind_of(uint entry) {
+    if (entry == 1u) return GLOBE_WATER;
+    return entry == 0u || entry == 6u || entry > GLOBE_COAST_ENTRY ? GLOBE_LAND : GLOBE_OTHER;
 }
 
 /// An 8-bit RGBA colour (r in the low byte) as 0-1 values.
@@ -141,16 +154,22 @@ float4 clip_of_camera(FrameCamera c, float3 k, float depth) {
 /// Nothing drawn: every corner the same point.
 static const float4 nowhere = {0.0f, 0.0f, 0.0f, 1.0f};
 
-[shader("vertex")]
-WorldOut fill_vs(uint vertex : SV_VulkanVertexID) {
-    WorldOut o;
+/// A vertex of a fill or of a line's quad, as both sets of stages take it: its place, its primitive's palette entry
+/// and opacity, and the ground's direction from the planet's centre there.
+struct Placed {
+    float4 position;
+    uint entry;
+    float alpha;
+    float3 normal;
+};
+
+Placed fill_of(uint vertex) {
+    Placed o;
     // a fading tile's triangles top first, the last of its painter's order first
     uint v = push.scale.w != 0.0f ? push.at.z - 1u - vertex : vertex;
     uint what = world_words[push.at.x + push.at.z + v / 3u];
-    uint entry = what & 0xFFu;
-    float4 colour = unpack(world_palette[entry]);
-    o.colour = float4(colour.rgb, colour.a * push.scale.z);
-    o.day = float4(unpack(world_palette[PALETTE_DAY + entry]).rgb, kind_of(entry));
+    o.entry = what & 0xFFu;
+    o.alpha = push.scale.z;
     o.normal = float3(0.0f, 1.0f, 0.0f);
     if (!drawn((what >> 8u) & 0xFFu)) {
         o.position = nowhere;
@@ -163,6 +182,27 @@ WorldOut fill_vs(uint vertex : SV_VulkanVertexID) {
     return o;
 }
 
+[shader("vertex")]
+WorldOut fill_vs(uint vertex : SV_VulkanVertexID) {
+    WorldOut o;
+    Placed f = fill_of(vertex);
+    float4 colour = unpack(world_palette[f.entry]);
+    o.colour = float4(colour.rgb * f.alpha, colour.a * f.alpha);
+    o.position = f.position;
+    return o;
+}
+
+[shader("vertex")]
+LookOut fill_look_vs(uint vertex : SV_VulkanVertexID) {
+    LookOut o;
+    Placed f = fill_of(vertex);
+    o.entry = f.entry;
+    o.alpha = f.alpha;
+    o.normal = f.normal;
+    o.position = f.position;
+    return o;
+}
+
 /// A segment's quad: its corners (0 and 1 the first end's, 2 and 3 the second's), two triangles.
 static const uint line_corners[6] = {0u, 1u, 2u, 2u, 1u, 3u};
 
@@ -171,19 +211,18 @@ float terrain_px(FrameCamera c, float width, float d) {
     return min(7.0f, max(0.5f, width * c.forward.w / max(d, 600.0f)));
 }
 
-[shader("vertex")]
-WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstanceID) {
-    WorldOut o;
+Placed segment_of(uint vertex, uint segment) {
+    Placed o;
     FrameCamera c = frame.camera;
     uint base = push.at.x + push.at.w + segment * 3u;
     uint what = world_words[base + 2u];
     uint entry = what & 0xFFu;
-    o.day = float4(unpack(world_palette[PALETTE_DAY + entry]).rgb, kind_of(entry));
+    o.entry = entry;
+    o.alpha = 0.0f;
     o.normal = float3(0.0f, 1.0f, 0.0f);
     // the coast comes with the board's ramps, by the ladder's weight
     float coast = entry == GLOBE_COAST_ENTRY ? look.coast.a * look.weights.y : 1.0f;
     if (!drawn((what >> 8u) & 0xFFu) || coast <= 0.0f) {
-        o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
         o.position = nowhere;
         return o;
     }
@@ -193,7 +232,6 @@ WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstan
     float3 k1 = camera_of(c, g1.p);
     float near = c.frame.w;
     if ((k0.z < near && k1.z < near) || !faces_eye(g0) || !faces_eye(g1)) {
-        o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
         o.position = nowhere;
         return o;
     }
@@ -227,8 +265,28 @@ WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstan
     // a coast's segment by its own length's share of its quad, without its caps': where a detailed coast (a fjord's)
     // has many segments to a pixel their caps would pile up into a band
     if (entry == GLOBE_COAST_ENTRY) alpha *= length_px / (length_px + 2.0f * half_px);
-    float4 colour = unpack(world_palette[entry]);
-    o.colour = float4(colour.rgb, alpha);
+    o.alpha = alpha;
+    return o;
+}
+
+[shader("vertex")]
+WorldOut line_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstanceID) {
+    WorldOut o;
+    Placed l = segment_of(vertex, segment);
+    float4 colour = unpack(world_palette[l.entry]);
+    o.colour = float4(colour.rgb * l.alpha, l.alpha);
+    o.position = l.position;
+    return o;
+}
+
+[shader("vertex")]
+LookOut line_look_vs(uint vertex : SV_VulkanVertexID, uint segment : SV_VulkanInstanceID) {
+    LookOut o;
+    Placed l = segment_of(vertex, segment);
+    o.entry = l.entry;
+    o.alpha = l.alpha;
+    o.normal = l.normal;
+    o.position = l.position;
     return o;
 }
 
@@ -271,13 +329,22 @@ float graticule(float3 n) {
 [shader("fragment")]
 ColourOut colour_fs(WorldOut v) {
     ColourOut o;
-    float3 c = v.colour.rgb;
+    o.colour = v.colour;
+    return o;
+}
+
+[shader("fragment")]
+ColourOut look_fs(LookOut v) {
+    ColourOut o;
+    float4 moment = unpack(world_palette[v.entry]);
+    float3 c = moment.rgb;
+    float alpha = moment.a * v.alpha;
     float4 w = look.weights;
     if (w.x > 0.0f) {
         // the day's colour, toward the board's ramps, under the graticule and the night's caps
         float3 n = normalize(v.normal);
-        float3 d = v.day.rgb;
-        uint kind = uint(v.day.a);
+        float3 d = unpack(world_palette[PALETTE_DAY + v.entry]).rgb;
+        uint kind = kind_of(v.entry);
         if (w.y > 0.0f && kind != GLOBE_OTHER) {
             float2 on_disc = {dot(n, frame.camera.right.xyz), dot(n, frame.camera.up.xyz)};
             float3 ramp = globe_land(look, on_disc);
@@ -295,7 +362,7 @@ ColourOut colour_fs(WorldOut v) {
         d = d + (look.night.rgb - d) * globe_night(look, sine, soft);
         c = c + (d - c) * w.x;
     }
-    o.colour = float4(c * v.colour.a, v.colour.a);
+    o.colour = float4(c * alpha, alpha);
     return o;
 }
 

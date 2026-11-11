@@ -84,6 +84,19 @@ WorldLook world_look(const tiles::WorldLadder& ladder, double distance, const st
     shaders::WorldLookBlock& b = look.block;
     const LadderWeights& w = look.weights;
     b.weights = {f32(w.caps), f32(w.ramps), f32(w.ring), f32(w.space)};
+    // by day under the ramps the look changes a fragment only where a cap lies: nowhere while the sun stands over all
+    // the eye sees, the cap of the planet about the point under it out to its horizon
+    const view::Vec3 up{eye.x - bend.target.x, eye.y - bend.target.y + view::earth_radius, eye.z - bend.target.z};
+    const double from_centre = pymath::sqrt((up.x * up.x) + (up.y * up.y) + (up.z * up.z));
+    if (!look.night && w.caps > 0.0 && w.ramps == 0.0 && w.ring == 0.0 && from_centre > view::earth_radius) {
+        const view::Vec3 sun = direction_of(bend, look.sun.lat, look.sun.lon);
+        const double sine = ((up.x * sun.x) + (up.y * sun.y) + (up.z * sun.z)) / from_centre;
+        const double under_eye = pymath::degrees(pymath::asin(std::clamp(sine, -1.0, 1.0)));
+        const double horizon = pymath::degrees(pymath::acos(view::earth_radius / from_centre));
+        constexpr double margin = 0.5;
+        look.plain = under_eye - horizon > ladder.cap_soft + margin;
+        if (look.plain) b.weights.x = 0.0F;
+    }
     // the caps' edges a degree soft below the globe, the pixel's on it (globe_night takes the wider)
     b.sun = vec_of(direction_of(bend, look.sun.lat, look.sun.lon), sine_of_degrees(ladder.cap_soft) * (1.0 - w.ramps));
     b.pole = vec_of(direction_of(bend, 90.0, 0.0), sine_of_degrees(ladder.meridian_most));

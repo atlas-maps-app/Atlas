@@ -230,4 +230,39 @@ TEST_CASE("the globe's look: the board's ramps at their stops, the night's caps 
     CHECK(look.sun.lat == doctest::Approx(scene::moment_latitude - 50.0));
     CHECK(look.sun.lon == doctest::Approx(scene::moment_longitude));
     CHECK(!look.night);
+    CHECK(!look.plain);
+}
+
+TEST_CASE("the ladder leaves a frame plain where it cannot change a pixel: by day under the ramps, the sun up over all "
+          "the eye sees") {
+    const tiles::WorldLadder l = load::world_ladder();
+    const auto look_at = [&](double distance, double elevation, bool night) {
+        style::ThemeBlock theme{};
+        theme.sun_azimuth = 180.0;
+        theme.sun_elevation = elevation;
+        if (night) theme.flags |= style::theme_flag::night;
+        const scene::WorldBend b = bend_at(scene::moment_latitude, scene::moment_longitude, distance);
+        return scene::world_look(l, distance, theme, b, b.eye, 2.0, 824.0, 1830.0);
+    };
+    // from 72 km the eye sees 8.6° about the point under it: with the sun 40° up, or 14° on a winter's noon, no cap
+    // lies in view, and the block's first weight is 0 though the ladder's is not
+    for (const double elevation : {40.0, 14.0}) {
+        const scene::WorldLook plain = look_at(72'000.0, elevation, false);
+        CHECK(plain.plain);
+        CHECK(plain.weights.caps > 0.9);
+        CHECK(plain.block.weights.x == 0.0F);
+    }
+    // the sun 5° up: the terminator's softness may reach the view's far edge
+    CHECK(!look_at(72'000.0, 5.0, false).plain);
+    CHECK(look_at(72'000.0, 5.0, false).block.weights.x > 0.9F);
+    // a night hands its palette over, whatever the sun
+    CHECK(!look_at(72'000.0, -30.0, true).plain);
+    CHECK(!look_at(72'000.0, 40.0, true).plain);
+    // from 300 km the eye sees 17° about: plain at 40°, not at 14°; and never where the ramps have begun
+    CHECK(look_at(300'000.0, 40.0, false).plain);
+    CHECK(!look_at(300'000.0, 14.0, false).plain);
+    CHECK(!look_at(1'000'000.0, 80.0, false).plain);
+    CHECK(look_at(1'000'000.0, 80.0, false).block.weights.x == 1.0F);
+    // up to 18 km there is no look to leave out
+    CHECK(!look_at(18'000.0, 40.0, false).plain);
 }

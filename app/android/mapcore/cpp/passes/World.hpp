@@ -53,6 +53,7 @@ public:
         std::array<float, 4> target{};
         std::uint32_t triangles = 0;
         std::uint32_t segments = 0;
+        std::uint32_t coast = 0;       ///< the last of its segments, its coast's: drawn where the ramps have weight
         std::uint32_t lights = 0;      ///< its cities' lights, after its segments' words
         std::uint32_t light_cells = 0; ///< the cells whose lights it draws (scene::WorldDraw::light_cells)
         float fade = 1.0F;             ///< under 1 while the tile fades in (scene::WorldDraw::fade)
@@ -134,6 +135,11 @@ private:
     vk::raii::Pipeline fills_{nullptr};
     vk::raii::Pipeline fading_fills_{nullptr}; ///< a fading tile's fills: top first, GREATER, used only while one fades
     vk::raii::Pipeline lines_{nullptr};
+    /// The same three for a frame the ladder shades (world.slang's look stages): a frame it leaves plain draws with
+    /// the three above, as every frame up to 18 km does.
+    vk::raii::Pipeline look_fills_{nullptr};
+    vk::raii::Pipeline look_fading_fills_{nullptr};
+    vk::raii::Pipeline look_lines_{nullptr};
     vk::raii::Pipeline lights_{nullptr};
     vk::raii::Pipeline globe_{nullptr}; ///< space and the glass: a triangle over the frame
 };

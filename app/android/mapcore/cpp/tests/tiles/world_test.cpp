@@ -892,7 +892,15 @@ TEST_CASE("scene: a world tile's lit places are its lights in the world's style,
     };
     const atlas::scene::WorldGeometry g0 = built(0, 0, 0, world);
     CHECK(coasts(g0) >= 5);
+    // the coast's segments are the last of the tile's, and counted: a frame under the ramps leaves them out
+    CHECK(g0.coast == coasts(g0));
+    REQUIRE(g0.segments > g0.coast);
+    for (std::size_t i = 0; i < g0.segments; ++i) {
+        const std::uint32_t what = g0.words[(4 * std::size_t{g0.triangles}) + (3 * i) + 2];
+        CHECK(((what & 0xFFU) == atlas::scene::world_palette::coast) == (i >= g0.segments - g0.coast));
+    }
     CHECK(coasts(g9) == 0);
+    CHECK(g9.coast == 0);
     CHECK(coasts(built(0, 0, 0, nullptr)) == 0);
     CHECK(atlas::scene::world_lights(6, "city"));
     CHECK(!atlas::scene::world_lights(9, "town"));

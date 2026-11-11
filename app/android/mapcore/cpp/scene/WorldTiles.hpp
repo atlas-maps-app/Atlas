@@ -145,12 +145,14 @@ inline constexpr std::uint32_t size = 64; ///< the palette's entries
 /// the low half and v, from the north, in the high), a word a triangle (its colour, and its cell at bit 8), then three
 /// words a line's segment (its two ends, and its colour, its cell at bit 8 and its width in decimetres from bit 16),
 /// then two words a city's light (its place as a vertex word, and its size, 0 the largest, with its cell at bit 8).
-/// A globe's tile (L0 to L5) carries its land's edge among its lines, in the coast's palette entry with no width (the
-/// ladder's): each edge of its land's rings that is not its cells' cut.
+/// A globe's tile (L0 to L5) carries its land's edge as the last of its lines (`coast` of its `segments`), in the
+/// coast's palette entry with no width (the ladder's): each edge of its land's rings that is not its cells' cut. The
+/// world pass leaves them out of a frame under the ramps, where the coast has no weight.
 struct WorldGeometry {
     std::vector<std::uint32_t> words;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t coast = 0;
     std::uint32_t lights = 0;
 };
 
@@ -179,6 +181,7 @@ struct WorldTile {
     HeapRange range;
     std::uint32_t triangles = 0;
     std::uint32_t segments = 0;
+    std::uint32_t coast = 0; ///< the last of its segments: its coast's
     std::uint32_t lights = 0;
     std::uint64_t drawn = 0; ///< the last frame that drew it
     double shown = -1;       ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
