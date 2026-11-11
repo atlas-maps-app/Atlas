@@ -619,12 +619,17 @@ bool WorldTiles::take_style() {
     const std::vector<std::shared_ptr<const tl::StorePack>> open = store_.packs();
     if (open == seen_packs_) return false;
     seen_packs_ = open;
-    style_pack_.reset();
+    std::shared_ptr<const tl::StorePack> style;
     for (const std::shared_ptr<const tl::StorePack>& p : open) {
         if (is_world(*p) && p->pack.style() != nullptr) {
-            style_pack_ = p;
+            style = p;
             break;
         }
+    }
+    {
+        // the builders read it for each tile they build (build), under the mutex
+        const std::scoped_lock lock(mutex_);
+        style_pack_ = std::move(style);
     }
     std::vector<const tl::StorePack*> world;
     for (const std::shared_ptr<const tl::StorePack>& p : open) {
