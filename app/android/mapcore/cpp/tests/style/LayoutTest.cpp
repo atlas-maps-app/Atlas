@@ -74,6 +74,7 @@ TEST_CASE("the tables hold the documented offsets and numbers") {
     CHECK(value("CameraWriter.FOLLOW") == atlas::style::camera_flag::follow);
     CHECK(value("CameraWriter.LOCATION") == atlas::style::camera_flag::location);
     CHECK(value("CameraWriter.HEADING") == atlas::style::camera_flag::heading);
+    CHECK(value("CameraWriter.WORLD_UNDER") == atlas::style::camera_flag::world_under);
     CHECK(value("CameraWriter.PROFILE_WORLD_BASE") == 4U);
     // the parts by their bit numbers: the first, the rain, the last, and how many
     CHECK(value("CameraWriter.PART_GROUND") == 0U);

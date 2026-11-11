@@ -73,6 +73,8 @@ internal class MapCameraSource(
         val location: Location? = null,
         /** The parts of the picture the map leaves out (a bit `1L shl CameraWriter.PART_…` each: MapPart.bit). */
         val off: Long = 0L,
+        /** Whether the camera's place has no country's levels (MapEngine.worldUnder): the world draws under the cover. */
+        val worldUnder: Boolean = false,
     ) {
         /** Whether it carries motion beyond [t0]. */
         val moving: Boolean get() = t1 > t0
@@ -139,6 +141,7 @@ internal class MapCameraSource(
         var flags = 0
         if (s.rest && !moving) flags = flags or CameraWriter.REST
         if (s.follow) flags = flags or CameraWriter.FOLLOW
+        if (s.worldUnder) flags = flags or CameraWriter.WORLD_UNDER
         val where = s.location
         if (where != null) flags = flags or CameraWriter.locationFlags(where.heading)
         CameraWriter.header(out, ++sequence, flags)

@@ -123,11 +123,16 @@ internal class Transition(private val log: (String) -> Unit) {
          * where a window had not come: "looks different then the engine"). Within such a country whose tiles of this
          * phone's core are published the core's reach is its levels' ([PackList.LEVELS_REACH]: step 7, its frame cells'
          * L13 and L12 tiles, which come from those tiles alone), else its windows' ([PackList.CORE_REACH]). Today's map
-         * elsewhere: beyond the core's reach, and outside those countries where no window is on the phone.
+         * elsewhere: beyond the core's reach, and outside those countries where no window is on the phone. Where the
+         * place has no country's levels ([under], MapEngine.worldUnder) the world draws from the windows' reach on
+         * ([PackList.worldDraws]).
          */
-        fun pathOf(packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double): Path {
-            // the world on the phone: the core draws every camera beyond the countries' levels (ENGINE.md step 5)
-            if (packs.worldDraws(distance)) return Path.CORE
+        fun pathOf(
+            packs: PackList, countryAt: (Double, Double) -> CountryTiles?, lat: Double, lon: Double, distance: Double, under: Boolean = false,
+        ): Path {
+            // the world on the phone: the core draws every camera beyond the countries' levels (ENGINE.md step 5), and
+            // beyond the windows' reach where no country's levels are (step 3)
+            if (packs.worldDraws(lat, lon, distance, under)) return Path.CORE
             if (packs.covers(lat, lon, distance)) return Path.CORE
             val country = countryAt(lat, lon) ?: return Path.CANVAS
             return if (distance <= (if (country.levels) PackList.LEVELS_REACH else PackList.CORE_REACH)) Path.CORE else Path.CANVAS

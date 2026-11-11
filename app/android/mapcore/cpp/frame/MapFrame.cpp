@@ -387,11 +387,15 @@ bool MapFrame::complete() const noexcept {
     const bool world_draws = w != nullptr && !w->draws.empty();
     if (world_->active() == nullptr && world_->incoming() == nullptr) return world_draws && world_final;
     // a switch waiting for the named pack's tiles (scene::World::incoming) is not the camera's final picture yet
-    if (world_->active() == nullptr || world_->incoming() != nullptr || !world_final) return false;
+    if (world_->active() == nullptr || world_->incoming() != nullptr) return false;
     // a cover of no tile is final only where it wants none and the world draws the camera: beyond the countries' reach
     // (100 km over the canal ring, whose pack still holds the target) the world's picture is the whole one
     // (and a part come back on is drawn once its top-ups are taken and faded in: Cover::lacking, Cover::fading)
     const scene::Cover& cover = *world_->cover();
+    // where the world lies under the cover up to its start (no country's levels at the place), the cover's tiles are
+    // the picture, and the world under them holds it back no longer than they take: a place drawn before the world was
+    // fetched stays final offline
+    if (!world_final && (!w->under || cover.tiles().empty())) return false;
     if ((cover.tiles().empty() && !world_draws) || cover.missing() > 0 || cover.lacking() > 0 || cover.fading())
         return false;
     return world_->frames().weight(now()) >= 1.0;

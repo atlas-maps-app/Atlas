@@ -695,7 +695,7 @@ namespace {
         put(v);
     }
     k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
-                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U) | (f.plain_roofs ? 64U : 0U);
+                  (f.park_sun ? 16U : 0U) | (f.wet ? 32U : 0U) | (f.plain_roofs ? 64U : 0U) | (f.world ? 128U : 0U);
     k.bits[n++] = f.left_out;
     return k;
 }
@@ -751,7 +751,8 @@ bool Ground::decide(const frame::FrameState& state) {
     f.tile_plates.clear();
     // where the world draws beyond 18 km (ENGINE.md step 5), the plate under each wanted tile's box alone, placed by
     // the tile drawing it, so the countries' cover and the world's meet at tile edges and never inside a tile
-    const bool tile_plates = state.world != nullptr && !f.out(style::camera_part::ground);
+    f.world = state.world != nullptr;
+    const bool tile_plates = f.world && !f.out(style::camera_part::ground);
     if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->with_under()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;

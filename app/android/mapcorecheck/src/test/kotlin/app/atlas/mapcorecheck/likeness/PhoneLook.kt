@@ -15,6 +15,8 @@ import app.atlas.render.live.WxHour
 import app.atlas.render.py.PyJson
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowTiles
+import app.atlas.tiles.WorldFetch
+import app.atlas.tiles.WorldIndex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -109,7 +111,15 @@ internal object LookHost {
  *         -Datlas.phonelook.views='edge=52.3735,4.8745,900,60,50'
  *
  * with the views, `-Datlas.phonelook.moment` and `-Datlas.phonelook.size` as PhoneCanvas.kt takes them, and
- * optionally `-Datlas.phonelook.parts=default|all` (the parts the app leaves out by default, or none),
+ * optionally, for a place outside the countries (ENGINE.md step 3): `-Datlas.phonelook.world=<folder>` (the world on
+ * the phone: world-latest's `world.json` and `world.idx`, beside which the globe and each pack holding a view's target
+ * are fetched as the phone fetches them, a pack whole by its range of its part, held to the index's SHA-256, and
+ * listed as PackList lists the world), `-Datlas.phonelook.under=true` (the camera says its place has no country's
+ * levels, CameraWriter.WORLD_UNDER, as MapController does there: the world under the core's cover from every
+ * distance; written as `<name>-core<path>under.png`) and `-Datlas.phonelook.elements=<pack>,<pack>` (element packs on
+ * the phone: every window their boxes meet is built from their data before the first view, as the phone builds the
+ * places a user has looked at from near). Also
+ * `-Datlas.phonelook.parts=default|all` (the parts the app leaves out by default, or none),
  * `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
  * are taken by, else packs-latest's) and `-Datlas.phonelook.work=<folder>` (the windows and indexes, kept between runs;
  * `<out>/core-work` by default). It writes `<name>-core<path>.png` and `.txt` (what was drawn and how it settled, the
@@ -149,11 +159,15 @@ class PhoneLook {
             "all" -> 0L
             else -> error("the parts are the app's default (default) or every one (all), not '$parts'")
         }
-        val phone = PhoneCore(work, list, canal, off)
+        val world = System.getProperty("atlas.phonelook.world")?.takeIf { it.isNotBlank() }?.let(::File)
+        val under = System.getProperty("atlas.phonelook.under")?.toBoolean() == true
+        val elements = System.getProperty("atlas.phonelook.elements")?.split(',')?.filter { it.isNotBlank() }?.map { File(it.trim()) }.orEmpty()
+        val phone = PhoneCore(work, list, canal, off, world, under, elements)
+        val side = if (under) "under" else ""
         for ((name, spec) in views) {
             val f = phone.draw(spec, moment, w, h, density)
-            png(f.argb, w, h, File(out, "$name-core$path.png"))
-            File(out, "$name-core$path.txt").writeText(f.notes)
+            png(f.argb, w, h, File(out, "$name-core$path$side.png"))
+            File(out, "$name-core$path$side.txt").writeText(f.notes)
             println("phone look core $name (alpha $path): ${f.notes.lines().first()}")
         }
     }
@@ -243,13 +257,18 @@ class PhoneLook {
 /**
  * The core on the phone, here: the windows in [work] (taken from their country's tiles as the phone takes them, by the
  * published list [listText], else packs-latest's), and alpha 21's bundled [canal] ring beside them when given; the
- * parts [off] left out of its camera states.
+ * parts [off] left out of its camera states. With [world], the world's packs beside them (its folder: the globe and
+ * the packs holding each view's target, fetched there by world.idx's ranges); [under], the camera's word that its
+ * place has no country's levels; and the windows the [elements] packs' boxes meet, built from their data at the start.
  */
 internal class PhoneCore(
     private val work: File,
     listText: String?,
     private val canal: File?,
     private val off: Long = MapParts.bits(MapParts.byDefault),
+    private val world: File? = null,
+    private val under: Boolean = false,
+    elements: List<File> = emptyList(),
 ) {
     class Frame(val argb: IntArray, val notes: String)
 
@@ -265,11 +284,22 @@ internal class PhoneCore(
         WindowTiles({ parsed ?: kotlinx.coroutines.runBlocking { catalog.packs() } }, File(work, "index"))
     }
 
+    /** What the element packs gave: the windows built from them, for the notes. */
+    private val built = ArrayList<String>()
+
+    init {
+        for (pack in elements) {
+            require(pack.isFile) { "no element pack at $pack" }
+            ElementWindows.build(pack, windowsDir, built)
+        }
+    }
+
     /** [spec] at [moment] in a [w] × [h] px frame at [density], as the phone's core draws it. */
     fun draw(spec: PhoneLook.Spec.View, moment: String, w: Int, h: Int, density: Double): Frame {
         val widthDp = Math.round(w / density).toInt()
         val heightDp = Math.round(h / density).toInt()
         val view = spec.view(widthDp, heightDp)
+        val fetched = world?.let { WorldFolder.fetch(it, view.lat, view.lon) }.orEmpty()
         val handle = LookHost.open(w, h, File(work, "cache").path)
         check(handle != 0L) { "the host map: ${LookHost.lastError()}" }
         val notes = StringBuilder()
@@ -282,8 +312,10 @@ internal class PhoneCore(
             var rounds = 0
             while (true) {
                 listed = list()
-                val said = LookHost.packs(handle, listed.map { it.number }.toLongArray(), listed.map { it.kind }.toIntArray(),
-                    listed.map { it.id }.toTypedArray(), listed.map { it.file.path }.toTypedArray())
+                // PackList.refs: the packs, then the world's (none of them chosen or named)
+                val all = listed.map { Triple(it.id, it.kind, it.file) } + worldPacks()
+                val said = LookHost.packs(handle, all.map { numbers.getOrPut(it.first) { numbers.size + 1L } }.toLongArray(),
+                    all.map { it.second }.toIntArray(), all.map { it.first }.toTypedArray(), all.map { it.third.path }.toTypedArray())
                 val pack = choose(listed, view.lat, view.lon, view.distance)
                 // MapController.sendMoment: the moment for the drawn pack's zone (every pack here is Amsterdam's)
                 val zone = ZoneId.of("Europe/Amsterdam")
@@ -313,6 +345,11 @@ internal class PhoneCore(
             notes.insert(0, "$drew\n")
             notes.appendLine("camera names ${pack?.id ?: "none"} (#${pack?.number ?: 0}, profile ${pack?.profile ?: 0}); ${listed.size} packs listed after $rounds rounds")
             notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")})")
+            if (built.isNotEmpty()) notes.appendLine("windows built from the element packs: ${built.size} (${built.joinToString(" ")})")
+            if (world != null) {
+                notes.appendLine("the world: ${worldPacks().joinToString(" ") { it.first }}${if (fetched.isEmpty()) "" else "; fetched now: ${fetched.joinToString(" ")}"}")
+            }
+            notes.appendLine("the camera's flags: rest${if (under) ", world_under (no country's levels at its place)" else ""}")
             val leftOut = MapPart.entries.filter { it.bit and off != 0L }.joinToString(" ") { it.name.lowercase() }.ifEmpty { "none" }
             notes.appendLine("parts left out: $leftOut; screen: haze, vignette and grain; true depth")
             notes.appendLine("window version $version")
@@ -382,6 +419,18 @@ internal class PhoneCore(
         return out
     }
 
+    /** The world as PackList lists it: each pack of the world's folder (`world-<z>-<x>-<y>.atlas`) and the globe. */
+    private fun worldPacks(): List<Triple<String, Int, File>> {
+        val dir = world ?: return emptyList()
+        val out = ArrayList<Triple<String, Int, File>>()
+        for (f in dir.listFiles { f -> WorldFolder.PACK.matches(f.name) }.orEmpty().sortedBy { it.name }) {
+            val (z, x, y) = WorldFolder.PACK.matchEntire(f.name)!!.destructured
+            out += Triple("world/$z/$x/$y", WORLD_MID, f)
+        }
+        File(dir, WorldFetch.GLOBE).takeIf { it.isFile }?.let { out += Triple("world-globe", WORLD_BASE, it) }
+        return out
+    }
+
     private fun listed(id: String, kind: Int, file: File): Listed? {
         val head = head(file) ?: return null
         // a window that holds nothing, or of another version than a window built now, is not listed
@@ -445,7 +494,8 @@ internal class PhoneCore(
     /** The camera state MapCameraSource writes at rest for [view] in a [w] × [h] frame, naming [pack]. */
     private fun camera(view: LiveView, w: Int, h: Int, density: Double, pack: Listed?): ByteBuffer {
         val b = CameraWriter.allocate()
-        CameraWriter.header(b, ++sequence, CameraWriter.REST)
+        // MapController.publishCamera: at rest, and where no country's levels are, the world under the cover
+        CameraWriter.header(b, ++sequence, CameraWriter.REST or (if (under) CameraWriter.WORLD_UNDER else 0))
         // MapController.publishCamera: the style's trees and shadows are drawn, the app's default parts left out
         CameraWriter.parts(b, off)
         CameraWriter.view(b, view.lat, view.lon, view.bearing, view.pitch, view.distance, view.widthDp / 2.0, view.cyDp)
@@ -471,6 +521,8 @@ internal class PhoneCore(
         /** MapCore.PackRef's kinds. */
         const val BUNDLED = 0
         const val WINDOW = 2
+        const val WORLD_MID = 3
+        const val WORLD_BASE = 4
 
         val NAME = Regex("""(\d+)-(\d+)-(\d+)\.atlas""")
 
@@ -479,6 +531,103 @@ internal class PhoneCore(
 
         /** At most this many rounds of windows taken. */
         const val MAX_ROUNDS = 12
+    }
+}
+
+/**
+ * The world's folder as the tool keeps it: world-latest's `world.json` and `world.idx` (put there by hand), the globe
+ * and the packs fetched beside them, each pack a file of its own (`world-<z>-<x>-<y>.atlas`), which the phone keeps as
+ * heads and chunks in its cache.
+ */
+internal object WorldFolder {
+    val PACK = Regex("""world-(\d+)-(\d+)-(\d+)\.atlas""")
+
+    /** Fetches what the folder lacks for a view of [lat], [lon]: the globe, and the fine and coarse packs holding it; the files fetched. */
+    fun fetch(dir: File, lat: Double, lon: Double): List<String> {
+        val json = PyJson.loads(File(dir, "world.json").readText()) as Map<*, *>
+        val url = json["url"] as String
+        val index = WorldIndex.read(File(dir, WorldFetch.INDEX).readBytes())
+        val got = ArrayList<String>()
+        val globe = File(dir, WorldFetch.GLOBE)
+        if (!globe.isFile) {
+            write(globe, get(url + WorldFetch.GLOBE, null))
+            got += globe.name
+        }
+        for (e in WorldFetch.packsAt(index, lat, lon)) {
+            val file = File(dir, "world-${e.z}-${e.x}-${e.y}.atlas")
+            if (file.isFile) continue
+            val bytes = get(url + index.parts[e.part].name, e.offset until e.offset + e.length)
+            check(java.security.MessageDigest.getInstance("SHA-256").digest(bytes).contentEquals(e.sha256)) { "${file.name}: not the index's bytes" }
+            write(file, bytes)
+            got += file.name
+        }
+        return got
+    }
+
+    private fun write(file: File, bytes: ByteArray) {
+        val part = File(file.path + ".part")
+        part.writeBytes(bytes)
+        check(part.renameTo(file)) { "could not place $file" }
+    }
+
+    /** The bytes at [url], [range] of them where given; redirects followed (a release's files are stored elsewhere). */
+    private fun get(url: String, range: LongRange?): ByteArray {
+        val client = java.net.http.HttpClient.newBuilder().followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build()
+        val request = java.net.http.HttpRequest.newBuilder(java.net.URI(url)).timeout(java.time.Duration.ofMinutes(10))
+        if (range != null) request.header("Range", "bytes=${range.first}-${range.last}")
+        val response = client.send(request.build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray())
+        check(response.statusCode() == (if (range != null) 206 else 200)) { "$url: HTTP ${response.statusCode()}" }
+        return response.body()
+    }
+}
+
+/**
+ * Windows from an element pack, as the phone has them of a place the user looked at from near: every window the pack's
+ * box meets, built by the core from the pack's elements in its box (Overpass's answer as the pack holds it: each
+ * element once, by type and id, without the points the pack left null, which the core's reader refuses).
+ */
+internal object ElementWindows {
+    fun build(pack: File, windows: File, built: MutableList<String>) {
+        app.atlas.render.data.PackReader.open(pack).use { r ->
+            val b = r.manifest.bbox
+            val (x0, y0) = WorldFetch.tileOf(b.north, b.west, 14)
+            val (x1, y1) = WorldFetch.tileOf(b.south, b.east, 14)
+            for (y in y0..y1) for (x in x0..x1) {
+                val file = File(windows, "14-$x-$y.atlas")
+                if (file.isFile) continue
+                val q = app.atlas.mapcore.Native.windowBox(14, x, y)
+                val elements = r.query(BBox(q[1], q[0], q[3], q[2])).distinctBy { it.type to it.id }
+                    .sortedWith(compareBy({ it.type.ordinal }, { it.id }))
+                if (elements.isEmpty()) continue
+                val text = StringBuilder("{\"version\":0.6,\"osm3s\":{\"timestamp_osm_base\":\"${r.manifest.dataTime ?: "1970-01-01T00:00:00Z"}\"},\"elements\":[\n")
+                for ((i, e) in elements.withIndex()) {
+                    if (i > 0) text.append(",\n")
+                    text.append(solid(e).toJson())
+                }
+                text.append("\n]}\n")
+                val json = File(windows, "14-$x-$y.json")
+                json.writeText(text.toString())
+                val why = app.atlas.mapcore.Native.buildWindow(14, x, y, json.path, file.path)
+                json.delete()
+                check(why.isEmpty()) { "window 14/$x/$y of ${pack.name}: $why" }
+                built += "14/$x/$y"
+            }
+        }
+    }
+
+    private fun solid(e: app.atlas.render.data.OsmElement): app.atlas.render.data.OsmElement {
+        val g = e.geometry
+        val ms = e.members
+        if ((g == null || !g.hasNulls) && (ms == null || ms.none { it.geometry?.hasNulls == true })) return e
+        return app.atlas.render.data.OsmElement(
+            e.type, e.id, e.lat, e.lon, e.tags, e.bounds, e.nodes, g?.let(::solid),
+            ms?.map { m -> m.geometry?.takeIf { it.hasNulls }?.let { mg -> app.atlas.render.data.Member(m.type, m.ref, m.role, m.lat, m.lon, solid(mg)) } ?: m },
+        )
+    }
+
+    private fun solid(p: app.atlas.render.data.Points): app.atlas.render.data.Points {
+        val keep = (0 until p.size).filter { !p.isNull(it) }
+        return app.atlas.render.data.Points(DoubleArray(keep.size) { p.lat[keep[it]] }, DoubleArray(keep.size) { p.lon[keep[it]] })
     }
 }
 

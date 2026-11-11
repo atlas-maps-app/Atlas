@@ -32,12 +32,30 @@ class MapCameraSourceTest {
         draw: Boolean = true,
         location: MapCameraSource.Location? = null,
         off: Long = 0L,
+        worldUnder: Boolean = false,
     ) = MapCameraSource.Samples(
         revision = revision, t0 = t0, lat0 = lat0, lon0 = 4.88, distance0 = distance0, bearing0 = bearing0, pitch0 = 52.0, principalY0 = 440.0,
         t1 = t1, lat1 = lat1, lon1 = 4.88, distance1 = distance1, bearing1 = bearing1, pitch1 = 52.0, principalY1 = 440.0,
         principalXDp = 206.0, widthPx = 1080, heightPx = 2400, widthDp = 412, heightDp = 916, density = 1080.0 / 412.0,
         rest = rest, follow = false, pack = 2L, profile = CameraWriter.PROFILE_REGION, draw = draw, location = location, off = off,
+        worldUnder = worldUnder,
     )
+
+    @Test
+    fun whereThePlaceHasNoCountrysLevelsTheCameraSaysTheWorldDrawsUnderTheCover() {
+        val s = MapCameraSource()
+        s.publish(samples(1, t0 = 1_000L, worldUnder = true))
+        assertTrue(s.camera(2_000L, out))
+        assertEquals(CameraWriter.REST or CameraWriter.WORLD_UNDER, out.getInt(CameraWriter.FLAGS_AT))
+        // moving too: the flag is the place's, not the rest's
+        s.publish(samples(2, t0 = 3_000L, t1 = 3_016L, lat1 = 52.38, rest = false, worldUnder = true))
+        assertTrue(s.camera(3_008L, out))
+        assertEquals(CameraWriter.WORLD_UNDER, out.getInt(CameraWriter.FLAGS_AT))
+        // in a country with its levels: none
+        s.publish(samples(3, t0 = 5_000L))
+        assertTrue(s.camera(6_000L, out))
+        assertEquals(CameraWriter.REST, out.getInt(CameraWriter.FLAGS_AT))
+    }
 
     @Test
     fun thePartsTheMapLeavesOutGoWithEveryFrameAndAreClearedWithNone() {
