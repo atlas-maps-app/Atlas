@@ -1157,10 +1157,16 @@ jobs:
         # the globe: a pack not decoded or a frame not drawn whole (a tile of it wanted, or cells bare) fails the job;
         # the frames and their proposal (world-refs/world-refs.json) in the report
         working-directory: app/android
-        run: >-
-          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true
-          -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }}
-          -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace
+        run: |
+          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
+            -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+            -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace
+          # the test skips without ATLAS_WORLD_REFS, and writes the frames' proposal only once every frame is drawn
+          # whole: without the proposal nothing was drawn
+          if [ ! -f "${{ github.workspace }}/likeness/world-refs/world-refs.json" ]; then
+            echo "::error::WorldPackRefsTest drew no frames: no likeness/world-refs/world-refs.json"
+            exit 1
+          fi
       - name: The frames
         if: ${{ !cancelled() }}
         run: |
