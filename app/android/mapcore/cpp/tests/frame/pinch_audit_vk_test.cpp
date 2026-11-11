@@ -176,7 +176,7 @@ public:
 [[nodiscard]] style::ThemeBlock sunny() {
     namespace flag = style::theme_flag;
     style::ThemeBlock b{};
-    b.version = 1;
+    b.version = style::theme_block_version;
     b.flags = environment("ATLAS_PINCH_DRY").empty()
                   ? flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set
                   : 0U;

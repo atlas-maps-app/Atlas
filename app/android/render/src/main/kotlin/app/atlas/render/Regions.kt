@@ -148,7 +148,7 @@ object Regions {
     fun resetPlace(daylight: Boolean = false) {
         Amsterdam.LAT0 = 52.3746; Amsterdam.LON0 = 4.8840
         Amsterdam.KX = 111320 * PyMath.cos(PyMath.radians(Amsterdam.LAT0)); Amsterdam.KZ = 110540.0
-        Amsterdam.TZ_H = 2
+        Amsterdam.TZ_H = 2; Amsterdam.TZ_M = 0
         Amsterdam.WXD = (PyJson.loads(Amsterdam::class.java.getResourceAsStream("/wx/ams.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }) as Map<String, Any?>)["hourly"] as Map<String, Any?>
         Amsterdam.BRICK_OLD.clear(); Amsterdam.BRICK_OLD.addAll(listOf("#6E3B2E", "#7A4434", "#5C3A30", "#8A5040", "#6A4A3C", "#7E5242"))
         Amsterdam.PLASTER.clear(); Amsterdam.PLASTER.addAll(listOf("#E8E2D4", "#EFE9DC", "#D9D2C2"))
@@ -189,7 +189,7 @@ object Regions {
         Amsterdam.KX = 111320 * CrMath.cos(PyMath.radians(Amsterdam.LAT0))
         Amsterdam.WXD = (PyJson.load(File(File(root, name), "wx.json")) as Map<String, Any?>)["hourly"] as Map<String, Any?>
         val off = ZoneId.of((R["tz"] as String?) ?: "Europe/Amsterdam").rules.getOffset(LocalDateTime.of(2026, 10, 1, 12, 0)).totalSeconds
-        Amsterdam.TZ_H = Math.floorDiv(off, 3600)
+        Amsterdam.TZ_H = Math.floorDiv(off, 3600); Amsterdam.TZ_M = 0
         Amsterdam.THEMES["grey"] = Amsterdam.weatherTheme("grey", listOf(2026, 10, 1), listOf(13, 30), daylight)
         Amsterdam.THEMES["sunny"] = Amsterdam.weatherTheme("sunny", listOf(2026, 10, 1), listOf(16, 0), daylight)
         Amsterdam.THEMES["wet"] = Amsterdam.weatherTheme("wet", listOf(2026, 9, 30), listOf(21, 30), daylight)

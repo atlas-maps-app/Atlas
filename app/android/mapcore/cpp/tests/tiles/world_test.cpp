@@ -1155,12 +1155,40 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     CHECK(p[atlas::scene::world_palette::road] == 0xFF5A5046U);
     CHECK(p[atlas::scene::world_palette::rail] == 0xFF1E140AU);
     CHECK(p[atlas::scene::world_palette::kinds + 3] == 0xFF1E140AU);
-    // the day's palette under the ladder's caps: the moment's own by day; at night the ladder's ground, water and
-    // roads, and the style's colours by day
+    // the day's palette under the ladder's caps: the moment's own by day (the sun 5 degrees up or more); at night the
+    // ladder's ground, water and roads, and the style's colours by day
     const atlas::tiles::Style* world = atlas::load::world_style();
     REQUIRE(world != nullptr);
-    CHECK(atlas::passes::World::day_palette_of(theme, world) == atlas::passes::World::palette_of(theme, false, world));
+    for (const double elevation : {5.0, 30.0, 90.0}) {
+        theme.sun_elevation = elevation;
+        CHECK(atlas::passes::World::day_share(theme) == 1.0);
+        CHECK(atlas::passes::World::day_palette_of(theme, world) ==
+              atlas::passes::World::palette_of(theme, false, world));
+    }
+    // between the night's start and there, between the two, so the far world does not step when the night flag flips:
+    // at the flip (the sun 2 degrees under the horizon, still day) the ladder's own, half way (1.5 degrees up) the
+    // mean, a channel at a time
+    theme.sun_elevation = atlas::style::night_below;
+    CHECK(atlas::passes::World::day_share(theme) == 0.0);
+    const std::vector<std::uint32_t> flip = atlas::passes::World::day_palette_of(theme, world);
+    CHECK(flip[atlas::scene::world_palette::land] == 0xFFC2CFD6U);
+    CHECK(flip[atlas::scene::world_palette::water] == 0xFF90754FU);
+    CHECK(flip[atlas::scene::world_palette::road] == 0xFFB4C1C9U);
+    theme.sun_elevation = 1.5;
+    CHECK(atlas::passes::World::day_share(theme) == doctest::Approx(0.5));
+    const std::vector<std::uint32_t> half = atlas::passes::World::day_palette_of(theme, world);
+    const std::vector<std::uint32_t> own = atlas::passes::World::palette_of(theme, false, world);
+    for (const std::size_t entry :
+         {std::size_t{atlas::scene::world_palette::land}, std::size_t{atlas::scene::world_palette::water},
+          std::size_t{atlas::scene::world_palette::road}}) {
+        for (unsigned shift = 0; shift < 24; shift += 8) {
+            const double a = static_cast<double>((flip[entry] >> shift) & 0xFFU);
+            const double b = static_cast<double>((own[entry] >> shift) & 0xFFU);
+            CHECK(std::abs(static_cast<double>((half[entry] >> shift) & 0xFFU) - ((a + b) / 2.0)) <= 0.5);
+        }
+    }
     theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_share(theme) == 0.0);
     const std::vector<std::uint32_t> night = atlas::passes::World::palette_of(theme, true, world);
     const std::vector<std::uint32_t> day = atlas::passes::World::day_palette_of(theme, world);
     REQUIRE(day.size() == atlas::scene::world_palette::size);

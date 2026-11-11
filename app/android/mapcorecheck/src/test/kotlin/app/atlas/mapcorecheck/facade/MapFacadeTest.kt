@@ -91,7 +91,7 @@ class MapFacadeTest {
                 val block = ThemeBlock.allocate()
                 ThemeBlock.write(block, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, golden = false, tone = false)
                 assertEquals("", Native.moment(handle, block))
-                block.putInt(ThemeBlock.VERSION_AT, 2)
+                block.putInt(ThemeBlock.VERSION_AT, ThemeBlock.VERSION + 1)
                 assertEquals("the theme was refused: version", Native.moment(handle, block))
                 assertEquals("the theme must be a direct buffer of 256 bytes", Native.moment(handle, ByteBuffer.allocate(256)))
 

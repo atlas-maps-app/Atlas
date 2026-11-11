@@ -128,12 +128,32 @@ std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, boo
     return palette_from(word_of(theme.ground), word_of(theme.water), word_of(theme.road), night, style);
 }
 
+double World::day_share(const style::ThemeBlock& theme) noexcept {
+    if (theme.has(style::theme_flag::night)) return 0.0;
+    const double t =
+        std::clamp((theme.sun_elevation - style::night_below) / (day_share_whole - style::night_below), 0.0, 1.0);
+    return t * t * (3.0 - (2.0 * t));
+}
+
 std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme, const tiles::Style* style) {
     const bool night = theme.has(style::theme_flag::night);
-    if (!night || style == nullptr || !style->ladder) return palette_of(theme, night, style);
+    if (style == nullptr || !style->ladder) return palette_of(theme, night, style);
+    const double share = day_share(theme);
+    if (share >= 1.0) return palette_of(theme, false, style);
+    // a word between the ladder's day colour and the moment's own, a channel at a time, rounded
+    const auto between = [share](std::uint32_t ladder, const style::Rgb8& own) {
+        const geometry::Rgba a = geometry::rgba(ladder);
+        const auto channel = [share](std::uint8_t from, std::uint8_t to) {
+            const double v =
+                static_cast<double>(from) + ((static_cast<double>(to) - static_cast<double>(from)) * share);
+            return static_cast<std::uint8_t>(std::floor(v + 0.5));
+        };
+        return geometry::Rgba{.r = channel(a.r, own.r), .g = channel(a.g, own.g), .b = channel(a.b, own.b), .a = 255}
+            .packed();
+    };
     const tiles::WorldLadder& l = *style->ladder;
-    return palette_from(geometry::rgba(l.day_ground).packed(), geometry::rgba(l.day_water).packed(),
-                        geometry::rgba(l.day_road).packed(), false, style);
+    return palette_from(between(l.day_ground, theme.ground), between(l.day_water, theme.water),
+                        between(l.day_road, theme.road), false, style);
 }
 
 void World::update(const frame::FrameState& state) {

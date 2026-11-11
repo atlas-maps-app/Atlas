@@ -22,6 +22,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** The forecast the live moment is lit by, for a place: what is to hand now, without waiting for the network. */
 fun interface MapWeather {
     fun hours(at: LatLon): List<WxHour>?
+
+    /**
+     * The time zone of the place the forecast at [at] is of, where one is to hand (the forecast's own, which holds for
+     * any place on Earth); null where none is. The live moment's clock is in it: the hour the shops open by.
+     */
+    fun zone(at: LatLon): java.time.ZoneId? = null
 }
 
 /**

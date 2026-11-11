@@ -109,6 +109,8 @@ internal class CoreMap(
     private val paletteBlock = PaletteBlock.allocate()
     private var lastMoment: Moment? = null
     private var lastZone: ZoneId? = null
+    private var lastPlaceLat = Double.NaN
+    private var lastPlaceLon = Double.NaN
     private var lastTone = 1f
     private var lastPalette = Palette()
     private var packsRevision = -1
@@ -164,25 +166,27 @@ internal class CoreMap(
     }
 
     /**
-     * The moment the core lights the map by (CoreMoment's block for [moment] in the pack's [zone]), handed over when it
-     * changed (off the main thread). "" or why it was not.
+     * The moment the core lights the map by (CoreMoment's block for [moment] at the place [placeLat], [placeLon], its
+     * clock in [zone]), handed over when it changed (off the main thread). "" or why it was not.
      */
-    fun moment(moment: Moment, zone: ZoneId, daylight: Boolean): String {
+    fun moment(moment: Moment, zone: ZoneId, daylight: Boolean, placeLat: Double = ThemeBlock.PLACE_LAT, placeLon: Double = ThemeBlock.PLACE_LON): String {
         val tone = MapEngine.tone
         val palette = MapEngine.palette
-        if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette) return ""
+        if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette && placeLat == lastPlaceLat && placeLon == lastPlaceLon) return ""
         val why = runCatching {
             if (palette != lastPalette) {
                 // the colours the theme does not carry (buildings, trees, surfaces), drawn by the core's passes
                 PaletteBlock.write(paletteBlock, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
                 core.palette(paletteBlock).takeIf { it.isNotEmpty() }?.let { error(it) }
             }
-            CoreMoment.write(theme, moment, zone, daylight, tone, palette)
+            CoreMoment.write(theme, moment, zone, daylight, tone, palette, placeLat, placeLon)
             core.moment(theme)
         }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
         if (why.isEmpty()) {
             lastMoment = moment
             lastZone = zone
+            lastPlaceLat = placeLat
+            lastPlaceLon = placeLon
             lastTone = tone
             lastPalette = palette
             night = theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0

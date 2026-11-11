@@ -104,7 +104,7 @@ ThemeBlock random_theme(std::mt19937_64& rnd) {
     auto byte = [&rnd] { return static_cast<std::uint8_t>(rnd() % 256); };
     auto rgb = [&byte] { return atlas::style::Rgb8{.r = byte(), .g = byte(), .b = byte(), .a = 255}; };
     ThemeBlock b{};
-    b.version = 1;
+    b.version = atlas::style::theme_block_version;
     b.year = 2026;
     b.month = 10;
     b.day = 1;

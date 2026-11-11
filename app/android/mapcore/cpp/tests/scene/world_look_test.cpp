@@ -18,6 +18,10 @@ namespace {
 
 using namespace atlas;
 
+/// The place the tests' theme blocks are written for (the bundled packs', the Westerkerk).
+constexpr double place_latitude = 52.3746;
+constexpr double place_longitude = 4.8840;
+
 /// A colour's 8-bit levels of a 0-1 rgb.
 [[nodiscard]] std::uint32_t hex(hlsl::float3 c) {
     const auto level = [](float v) { return static_cast<std::uint32_t>(std::lround(v * 255.0F)); };
@@ -118,8 +122,8 @@ TEST_CASE("the ladder's sun: the point it is overhead of follows from its azimut
          {scene::GeoPoint{.lat = 10.0, .lon = -30.0}, scene::GeoPoint{.lat = -23.4, .lon = 4.884},
           scene::GeoPoint{.lat = 23.4, .lon = 170.0}, scene::GeoPoint{.lat = 0.0, .lon = -175.0},
           scene::GeoPoint{.lat = -5.0, .lon = 95.0}}) {
-        const std::array<double, 2> seen = seen_from(scene::moment_latitude, scene::moment_longitude, sun);
-        const scene::GeoPoint back = scene::sub_solar(seen[0], seen[1]);
+        const std::array<double, 2> seen = seen_from(place_latitude, place_longitude, sun);
+        const scene::GeoPoint back = scene::sub_solar(seen[0], seen[1], place_latitude, place_longitude);
         CHECK(back.lat == doctest::Approx(sun.lat).epsilon(1e-9));
         CHECK(pymath::cos(pymath::radians(back.lon - sun.lon)) == doctest::Approx(1.0).epsilon(1e-12));
         // and from another place
@@ -129,9 +133,9 @@ TEST_CASE("the ladder's sun: the point it is overhead of follows from its azimut
         CHECK(pymath::cos(pymath::radians(again.lon - sun.lon)) == doctest::Approx(1.0).epsilon(1e-12));
     }
     // the sun at the zenith is overhead of the place itself
-    const scene::GeoPoint here = scene::sub_solar(0.0, 90.0);
-    CHECK(here.lat == doctest::Approx(scene::moment_latitude));
-    CHECK(here.lon == doctest::Approx(scene::moment_longitude));
+    const scene::GeoPoint here = scene::sub_solar(0.0, 90.0, place_latitude, place_longitude);
+    CHECK(here.lat == doctest::Approx(place_latitude));
+    CHECK(here.lon == doctest::Approx(place_longitude));
 }
 
 TEST_CASE("the ladder's axes: a point's direction from the planet's centre in a frame is up at its target, and the "
@@ -169,6 +173,8 @@ TEST_CASE("the globe's look: the board's ramps at their stops, the night's caps 
     style::ThemeBlock theme{};
     theme.sun_azimuth = 180.0;
     theme.sun_elevation = 40.0;
+    theme.place_latitude = static_cast<float>(place_latitude);
+    theme.place_longitude = static_cast<float>(place_longitude);
     const scene::WorldBend b = bend_at(20.0, 10.0, 54'000'000.0);
     const scene::WorldLook look = scene::world_look(l, 54'000'000.0, theme, b, b.eye, 2.0, 824.0, 1830.0);
     const shaders::WorldLookBlock& k = look.block;
@@ -226,9 +232,15 @@ TEST_CASE("the globe's look: the board's ramps at their stops, the night's caps 
     CHECK(k.centre.w == doctest::Approx(view::earth_radius));
     CHECK(k.east.w == 6.0F);
     CHECK(k.parallels.x == doctest::Approx(0.5));
-    // the sun where the moment's place sees it at 40° in the south
-    CHECK(look.sun.lat == doctest::Approx(scene::moment_latitude - 50.0));
-    CHECK(look.sun.lon == doctest::Approx(scene::moment_longitude));
+    // the sun where the block's place sees it at 40° in the south (the place to a float's precision)
+    CHECK(look.sun.lat == doctest::Approx(place_latitude - 50.0).epsilon(1e-6));
+    CHECK(look.sun.lon == doctest::Approx(place_longitude).epsilon(1e-6));
+    // the same sun over another place is overhead of another point: a named moment follows the camera's place
+    theme.place_latitude = 35.68F;
+    theme.place_longitude = 139.77F;
+    const scene::WorldLook tokyo = scene::world_look(l, 54'000'000.0, theme, b, b.eye, 2.0, 824.0, 1830.0);
+    CHECK(tokyo.sun.lat == doctest::Approx(35.68 - 50.0).epsilon(1e-6));
+    CHECK(tokyo.sun.lon == doctest::Approx(139.77).epsilon(1e-6));
     CHECK(!look.night);
     CHECK(!look.plain);
 }
@@ -241,7 +253,9 @@ TEST_CASE("the ladder leaves a frame plain where it cannot change a pixel: by da
         theme.sun_azimuth = 180.0;
         theme.sun_elevation = elevation;
         if (night) theme.flags |= style::theme_flag::night;
-        const scene::WorldBend b = bend_at(scene::moment_latitude, scene::moment_longitude, distance);
+        theme.place_latitude = static_cast<float>(place_latitude);
+        theme.place_longitude = static_cast<float>(place_longitude);
+        const scene::WorldBend b = bend_at(place_latitude, place_longitude, distance);
         return scene::world_look(l, distance, theme, b, b.eye, 2.0, 824.0, 1830.0);
     };
     // from 72 km the eye sees 8.6° about the point under it: with the sun 40° up, or 14° on a winter's noon, no cap

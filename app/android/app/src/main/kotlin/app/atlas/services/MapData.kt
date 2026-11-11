@@ -380,6 +380,13 @@ class MapData(private val services: Services) {
             return if (near) f!!.hours.map(::hour) else null
         }
 
+        /** The kept forecast's own zone where it is of a place near [at] (Open-Meteo's `timezone`, else its offset). */
+        override fun zone(at: LatLon): java.time.ZoneId? {
+            val f = kept ?: return null
+            if (Geo.distance(f.location, at) >= NEAR_M) return null
+            return runCatching { java.time.ZoneId.of(f.timezone) }.getOrElse { java.time.ZoneOffset.ofTotalSeconds(f.utcOffsetSeconds) }
+        }
+
         private fun hour(h: app.atlas.providers.WeatherHour) = WxHour(
             h.time, h.cloudCover, h.precipitation, h.windSpeed, h.windDirection, h.windGusts, h.temperature, h.pressureMsl, h.visibility, h.code,
         )

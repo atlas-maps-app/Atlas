@@ -79,7 +79,8 @@ WorldLook world_look(const tiles::WorldLadder& ladder, double distance, const st
                      double height) noexcept {
     WorldLook look;
     look.weights = ladder_weights(ladder, distance);
-    look.sun = sub_solar(theme.sun_azimuth, theme.sun_elevation);
+    look.sun = sub_solar(theme.sun_azimuth, theme.sun_elevation, static_cast<double>(theme.place_latitude),
+                         static_cast<double>(theme.place_longitude));
     look.night = theme.has(style::theme_flag::night);
     shaders::WorldLookBlock& b = look.block;
     const LadderWeights& w = look.weights;

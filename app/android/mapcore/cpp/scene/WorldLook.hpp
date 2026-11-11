@@ -28,10 +28,6 @@ static_assert(sizeof(WorldLookBlock) == 608, "globe.slang's WorldLookBlock: thir
 
 namespace atlas::scene {
 
-/// Where the theme block's sun is seen from (Regions.resetPlace: amsterdam.py's LAT0 and LON0), degrees.
-inline constexpr double moment_latitude = 52.3746;
-inline constexpr double moment_longitude = 4.8840;
-
 /// A weight of the ladder: 0 up to a camera `from` metres from its target, 1 from `to`, smoothstep of log D between.
 [[nodiscard]] double ladder_weight(double distance, double from, double to) noexcept;
 
@@ -52,9 +48,8 @@ struct GeoPoint {
 };
 
 /// The point the sun is overhead of when it stands at `azimuth` (from north, clockwise) and `elevation` degrees over
-/// the place (`lat`, `lon`).
-[[nodiscard]] GeoPoint sub_solar(double azimuth, double elevation, double lat = moment_latitude,
-                                 double lon = moment_longitude) noexcept;
+/// the place (`lat`, `lon`): the theme block's place, where its sun is seen from.
+[[nodiscard]] GeoPoint sub_solar(double azimuth, double elevation, double lat, double lon) noexcept;
 
 /// The unit vector from the planet's centre through (`lat`, `lon`), in the axes of a frame whose camera's target lies
 /// at `bend`'s (x east, y up, z south there).

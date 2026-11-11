@@ -263,6 +263,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var startRevision = -1L
     private var coverJob: Job? = null
     private var sentMoment: Moment? = null
+    private var sentPlace: LitPlace? = null
 
     /** The user's Tone (MapEngine.tone) the core's theme was last sent with. */
     @Volatile
@@ -579,6 +580,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         place = MapPlace.DRAWN
         startRevision = -1L
         sentMoment = null
+        sentPlace = null
         sentTone = MapEngine.tone
         sentPalette = MapEngine.palette
         sentLabels = null
@@ -874,24 +876,53 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         scope.launch(Dispatchers.Default) { runCatching { c.ask(asked, revision) } }
     }
 
+    /** Where the moment lights the map, and the clock it goes by there. */
+    private data class LitPlace(val lat: Double, val lon: Double, val zone: java.time.ZoneId)
+
     /**
-     * The moment the core lights the map by, handed over off the main thread when it changed or the user's Tone or
-     * palette did (MapEngine.tone, MapEngine.palette). A moment's own step is drawn with the next frame (Bridge's moment()
-     * asks Kotlin's camera, which at rest has not moved); a new Tone or palette is the user's, so once the core has the
-     * theme the camera is published again and the map draws it at once, at rest too.
+     * The place the moment lights now, and its clock (the engine lead's and the reviewer's "the moment's place", 11
+     * November): the sun stands where it stands over the place the map draws, not over the bundled packs'.
+     * - Where a render pack holds the camera's target, its own origin, as its render is lit (the canal ring's is the
+     *   Westerkerk, so its pictures stay the renders').
+     * - Elsewhere the target itself, to a tenth of a degree: at most 8 km off, a fifteenth of a degree of the sun, where
+     *   its shadows step by half a degree, so the block is made again only as the camera moves on, a window's or none.
+     * The clock is the place's own zone: the forecast's where one is to hand (it holds for any place), else the zone of
+     * the pack that holds the target (a window's is its country's, a guess by a table), else, off every pack, the
+     * sun's own hour by the longitude. Never the nearest pack's, which may be a country away.
+     */
+    private fun litPlace(c: CoreMap): LitPlace? {
+        val v = viewport()
+        if (v.isEmpty) return null
+        val lv = liveView(state.camera, v)
+        val held = c.packs.choose(lv.lat, lv.lon)
+        val render = held?.takeIf { it.kind == app.atlas.mapcore.MapCore.PackRef.RENDER }
+        val lat = render?.frame?.lat0 ?: (Math.round(lv.lat * PLACE_STEPS) / PLACE_STEPS).coerceIn(-90.0, 90.0)
+        val lon = render?.frame?.lon0 ?: (Math.round(lv.lon * PLACE_STEPS) / PLACE_STEPS).coerceIn(-180.0, 180.0)
+        val zone = MapEngine.weather?.zone(LatLon(lv.lat, lv.lon)) ?: held?.zone
+            ?: java.time.ZoneOffset.ofHours(Math.round(lv.lon / 15.0).toInt().coerceIn(-12, 14))
+        return LitPlace(lat, lon, zone)
+    }
+
+    /**
+     * The moment the core lights the map by, handed over off the main thread when it changed, or the place it lights
+     * or its clock did ([litPlace]), or the user's Tone or palette (MapEngine.tone, MapEngine.palette). A moment's own
+     * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
+     * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
+     * at once, at rest too.
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         val tone = MapEngine.tone
         val palette = MapEngine.palette
-        if (moment == sentMoment && tone == sentTone && palette == sentPalette) return
+        val place = litPlace(c) ?: return
+        if (moment == sentMoment && tone == sentTone && palette == sentPalette && place == sentPlace) return
         val retoned = tone != sentTone || palette != sentPalette
         sentMoment = moment
         sentTone = tone
         sentPalette = palette
-        val zone = drawnPack()?.zone ?: java.time.ZoneId.of("Europe/Amsterdam")
+        sentPlace = place
         val daylight = MapEngine.DAYLIGHT
         scope.launch(Dispatchers.Default) {
-            c.moment(moment, zone, daylight)
+            c.moment(moment, place.zone, daylight, place.lat, place.lon)
             if (retoned) main.post { if (core === c && !closed) publishCamera(force = true) }
         }
     }
@@ -1612,6 +1643,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
         /** The least text size a label draws at, sp: Android's text size scales it (the core's readable floor). */
         const val READABLE_SP = 12f
+
+        /** The steps a degree of the place the moment lights is taken in, off the render packs ([litPlace]): tenths. */
+        const val PLACE_STEPS = 10.0
 
         /** The live moment moves on in steps of this many seconds (each step is a new frame). */
         const val MOMENT_STEP_S = 300L
