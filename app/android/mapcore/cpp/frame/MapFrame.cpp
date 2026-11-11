@@ -392,7 +392,7 @@ bool MapFrame::complete() const noexcept {
     // where the world lies under the cover up to its start (no country's levels at the place), the cover's tiles are
     // the picture, and the world under them holds it back no longer than they take: a place drawn before the world was
     // fetched stays final offline
-    if (!world_final && !(w->under && !cover.tiles().empty())) return false;
+    if (!world_final && (!w->under || cover.tiles().empty())) return false;
     if ((cover.tiles().empty() && !world_draws) || cover.missing() > 0 || cover.lacking() > 0 || cover.fading())
         return false;
     return world_->frames().weight(now()) >= 1.0;
