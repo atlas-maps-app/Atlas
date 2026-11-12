@@ -294,14 +294,14 @@ object Schema {
     )
 
     val LABEL: List<Column> = listOf(
-        c("source", Codec.U8, "0 a canal name candidate (S['labels'], kind canal); 1 a place node"),
-        c("index", Codec.DELTA, "source order: in S['labels'], or in S['nodes']"),
-        c("id", Codec.NVARZ, "a place node's id"),
+        c("source", Codec.U8, "0 a canal name candidate (S['labels'], kind canal); 1 a place node; in the world's packs also 2 a water's name at a point and 3 a river's name along its line (WorldCut.WATER_NAMES, RIVER_NAMES)"),
+        c("index", Codec.DELTA, "source order: in S['labels'], or in S['nodes']; a water's or a river's rank among its tile's rows of its source"),
+        c("id", Codec.NVARZ, "a place node's id; a water's OSM element (a relation's negated), null for Natural Earth's; null for a river"),
         c("name", Codec.STR, "the name"),
-        c("pos", Codec.POINT, "a canal: the way's middle vertex (pts[n / 2]); a place: the node"),
-        c("prev", Codec.POINT, "a canal: the vertex before it (pts[n / 2 − 1]), the baseline's direction"),
-        c("count", Codec.VARU, "a canal: the way's vertex count"),
-        c("kind", Codec.STR, "a place: its place=* value"),
+        c("pos", Codec.POINT, "a canal: the way's middle vertex (pts[n / 2]); a place: the node; a water: its name's point; a river: the middle of its longest piece in the tile"),
+        c("prev", Codec.POINT, "a canal: the vertex before it (pts[n / 2 − 1]), the baseline's direction; a river: its point 48 dp before pos, likewise; a water: pos"),
+        c("count", Codec.VARU, "a canal: the way's vertex count; a water: its area, m²; a river: its length in the tile, metres"),
+        c("kind", Codec.STR, "a place: its place=* value; a water: ocean, sea, bay, strait, lake or reservoir; a river: river"),
         c("ground_key", Codec.VARU, "a canal name: its slot among the marks (GroundKey.MARKS class 2); 0 for a place"),
     ) + tags(Layer.LABEL)
 
