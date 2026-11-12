@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "31",
+  "version": "32",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -548,6 +548,10 @@
           "board night": "895282b4a546351da9b01d7c0ef486fc7e7deafed0c6a38fe3d700105f1ca0bd"
         }
       }
+    },
+    "32": {
+      "note": "The glints by each pixel's footprint (the far flicker): the water's glints read their field at the octave of the pixel's footprint in it, so the Main board's frames with weather (its view from 2,300 m, where every pixel takes more than a field pixel) show them at the renders' size where they were a speckle finer than a pixel; the home's four frames are version 31's to the bit (every pixel there reads the field as it lies)",
+      "platforms": {}
     }
   }
 }
