@@ -81,6 +81,8 @@ public:
     /// texels, those taken, and how many buffers there have been.
     [[nodiscard]] std::span<const scene::PickedName> names() const noexcept { return picked_; }
     [[nodiscard]] std::uint32_t names_drawn() const noexcept { return names_drawn_; }
+    /// How many of the names drawn are waters' (and rivers').
+    [[nodiscard]] std::uint32_t waters_drawn() const noexcept { return waters_drawn_; }
     [[nodiscard]] std::uint32_t name_texels() const noexcept { return arena_capacity_; }
     [[nodiscard]] std::uint32_t name_texels_used() const noexcept { return arena_used_; }
     [[nodiscard]] std::uint64_t name_buffers() const noexcept { return arena_generation_; }
@@ -102,9 +104,11 @@ private:
     scene::WorldNames world_names_;
     std::vector<scene::PickedName> picked_;
     std::vector<const labels::NameSprite*> name_sprites_; // per name candidate, its sprite
+    std::vector<std::uint8_t> name_waters_;               // per name candidate, whether it is a water's
     std::vector<labels::Point> name_points_;              // per name candidate, its point
     std::array<double, 7> picked_camera_{};               // the camera the last frame saw
     std::uint32_t names_drawn_ = 0;
+    std::uint32_t waters_drawn_ = 0;
     float names_least_ = 0.0F; // the least size the frame's names are drawn at, a fraction of their own (0: none)
     std::array<std::uint32_t, 2> logged_names_{}; // the names picked and drawn the log last said
     double names_logged_at_ = -1e9;

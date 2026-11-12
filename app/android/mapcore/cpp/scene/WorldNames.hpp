@@ -1,8 +1,18 @@
-// The world's names (ENGINE.md step 5, "Names"; its step 9): the places a world tile names, and the pick of them a
-// frame shows.
+// The world's names (ENGINE.md step 5, "Names"; its step 9): the places and the waters a world tile names, and the
+// pick of them a frame shows.
 //
 //   - Stage T keeps a tile's places beside its geometry, in the tile's own order (the packer's rank): each with its
-//     kind, its people, whether it is a capital, its place and its `name`, the name in its own script.
+//     kind, its people, whether it is a capital, its place and its `name`, the name in its own script. After them its
+//     waters (an ocean, a sea, a bay, a strait, a lake, a reservoir: each at its name's point with its area) and its
+//     rivers (each at the middle of its longest piece in the tile, with its length there), in the packer's ranks.
+//   - A water is named as its size on the screen deserves, in one rank with the places (water_priority): an ocean or
+//     a sea with the countries; a lake, a reservoir, a bay or a strait by its area on the screen, with the cities
+//     from 32,000 dp², with the towns from 8,000 dp², else with the villages; a river after the towns. A water of a
+//     known area under 2,000 dp² on the screen (the packer's own least for a name's level) and a river shorter than
+//     96 dp on it have no name, so no place is lost to a pond or a brook. A river, which every tile it crosses names,
+//     is named once within water_apart_dp on the screen: where it was named before while that row is picked, else
+//     at its row nearest the camera's target. A water that two rows name (OpenStreetMap's node of a bay and its
+//     area) is named once within as much too: where it was named before, else at its row of the higher rank.
 //   - The pick takes the names of the tiles the frame draws, each from the tile that draws its ground (a place is
 //     named once, as a city is lit once), that stand in view on the bent ground and not behind the horizon, and
 //     takes the first `most` by rank: a country, a capital, then cities, towns, villages and suburbs, each kind by
@@ -37,11 +47,28 @@ namespace atlas::scene {
 
 struct WorldFrame; // scene/WorldTiles.hpp
 
-/// A place's kind as a world tile names it, by rank.
-enum class NameKind : std::uint8_t { country, city, town, village, suburb };
+/// A place's kind as a world tile names it, by rank; then a water's (the packer's kinds) and a river.
+enum class NameKind : std::uint8_t {
+    country,
+    city,
+    town,
+    village,
+    suburb,
+    ocean,
+    sea,
+    bay,
+    strait,
+    lake,
+    reservoir,
+    river
+};
 
 /// The kind of a place=* value, or nothing for one the world does not name.
 [[nodiscard]] std::optional<NameKind> name_kind(std::string_view place) noexcept;
+/// The kind of a water's row (the label layer's source 2: ocean, sea, bay, strait, lake, reservoir), or nothing.
+[[nodiscard]] std::optional<NameKind> water_kind(std::string_view kind) noexcept;
+/// Whether `kind` is a water's or a river's.
+[[nodiscard]] constexpr bool is_water(NameKind kind) noexcept { return kind >= NameKind::ocean; }
 
 /// A place a world tile names.
 struct WorldName {
@@ -55,19 +82,24 @@ struct WorldName {
     /// Its tile lights it at night (scene::world_lights of the tile's level: a city, a town from L10), where the
     /// world's style has the ladder.
     bool lit = false;
+    /// A water's area, m² (0: a node's, which says none), or a river's length in its tile, m.
+    double extent = 0;
 };
 
-/// A name's look, the app's to draw (Kotlin's LabelKind for a name, in this order).
-enum class NameStyle : std::uint8_t { city, town, village, globe };
+/// A name's look, the app's to draw (MapCore.NameWant's looks, in this order): a place's three, the globe's, and a
+/// water's (the Main board's one water label, the IJ's).
+enum class NameStyle : std::uint8_t { city, town, village, globe, water };
 
 /// A look's text size, dp, as the app draws it (LabelPainter's: the Main board's place style 17, a town 15, a village
-/// 13, the Globe board's 12): the readable floor over it is the least a name of the look is drawn at.
+/// 13, the Globe board's 12, the board's water 21): the readable floor over it is the least a name of the look is
+/// drawn at.
 [[nodiscard]] constexpr double name_size_dp(NameStyle style) noexcept {
     switch (style) {
     case NameStyle::city: return 17.0;
     case NameStyle::town: return 15.0;
     case NameStyle::village: return 13.0;
     case NameStyle::globe: return 12.0;
+    case NameStyle::water: return 21.0;
     }
     return 17.0;
 }
@@ -76,12 +108,36 @@ enum class NameStyle : std::uint8_t { city, town, village, globe };
 inline constexpr double names_globe_from = 6'000'000.0;
 inline constexpr double names_none_beyond = 20'000'000.0;
 
-/// The look of a name of `kind` from a camera `distance` metres from its target, or nothing beyond the last.
+/// The look of a name of `kind` from a camera `distance` metres from its target, or nothing beyond the last: a
+/// water's is the board's water look up to the globe's 6,000 km and none beyond, where the Globe board names no water.
 [[nodiscard]] std::optional<NameStyle> name_style(NameKind kind, double distance) noexcept;
 
-/// A name's priority among the labels: under every label of the boards' (theirs are 0 or more), a country first,
-/// then a capital, then by kind, each kind by its people.
+/// A place's priority among the labels: under every label of the boards' (theirs are 0 or more), a country first,
+/// then a capital, then by kind (the rivers' class between the towns and the villages), each kind by its people.
 [[nodiscard]] std::int32_t name_priority(const WorldName& name) noexcept;
+
+/// The least area on the screen a water of a known area is named from, dp² (the packer's own: nameLevel's 2,000 dp²
+/// at a level's start, about 45 by 45 dp), the areas from which it ranks with the towns and with the cities, the
+/// least length on the screen a river is named from, dp (the packer's name span, twice its NAME_HALF), and how far
+/// apart on the screen two rows of one name are both named, dp (a river's rows; a water's node and its area).
+inline constexpr double water_least_dp2 = 2'000.0;
+inline constexpr double water_town_dp2 = 8'000.0;
+inline constexpr double water_city_dp2 = 32'000.0;
+inline constexpr double river_least_dp = 96.0;
+inline constexpr double water_apart_dp = 400.0;
+
+/// A water's or a river's priority among the labels where a dp of the screen is `metres_a_dp` metres at the camera's
+/// target (0 or less: no scale known, every water as large as can be), in one rank with the places' (the file's
+/// head); nothing for one too small on the screen to name. Within its class the larger first.
+[[nodiscard]] std::optional<std::int32_t> water_priority(const WorldName& name, double metres_a_dp) noexcept;
+
+/// What the pick knows of the frame's camera beside its distance: the metres a dp of the screen is at its target (the
+/// distance over the camera's focal length, dp; 0: unknown), and its target, degrees.
+struct NameScale {
+    double metres_a_dp = 0;
+    double lat = 0;
+    double lon = 0;
+};
 
 /// The first bit of a name's id: the boards' labels' ids, the app's, stay under it.
 inline constexpr std::uint32_t name_id_bit = 0x8000'0000U;
@@ -122,9 +178,10 @@ public:
     /// The frame's names at `seconds`: picked again where a pick is due (the file's head; `rest`: the camera rests,
     /// `changed`: it is not where the last frame saw it), else the last pick's. `world` null, or a camera beyond the
     /// last distance: none (those shown leave). `extra` are names no tile holds (a test's), picked as a tile's are.
+    /// `scale` ranks the waters by their size on the screen and says where the camera looks.
     [[nodiscard]] std::span<const PickedName> update(const WorldFrame* world, std::span<const WorldName> extra,
                                                      double distance, const InView& in_view, double seconds, bool rest,
-                                                     bool changed);
+                                                     bool changed, const NameScale& scale = {});
 
     /// How many picks there were (for tests and logs).
     [[nodiscard]] std::uint64_t picks() const noexcept { return picks_; }
@@ -148,7 +205,10 @@ private:
     };
 
     void pick(const WorldFrame* world, std::span<const WorldName> extra, double distance, const InView& in_view,
-              double seconds);
+              double seconds, const NameScale& scale);
+    /// Of the candidates that are waters' and rivers' rows, those named this pick: one of a name within
+    /// water_apart_dp on the screen (the file's head); the others are dropped.
+    void pick_waters(const NameScale& scale);
     [[nodiscard]] Id& id_of(const WorldName& name, NameStyle style, double seconds);
 
     std::unordered_multimap<std::string, Id> ids_; // by text

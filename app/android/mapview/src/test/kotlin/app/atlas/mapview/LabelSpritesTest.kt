@@ -102,14 +102,27 @@ class LabelSpritesTest {
         assertTrue("a village's smaller than a town's", village.textHeight < town.textHeight && village.half < town.half)
         assertEquals(15f / 17f, town.textHeight / city.textHeight, 0.01f)
         assertEquals(13f / 17f, village.textHeight / city.textHeight, 0.01f)
+        fun opaque(image: LabelBlock.Image) = image.pixels.filter { it ushr 24 == 0xFF }
         // the sizes are the core's (scene::name_size_dp), by which it works out the readable floor of each look
         assertEquals(17f, LabelPainter.sizeOf(LabelKind.CITY))
         assertEquals(15f, LabelPainter.sizeOf(LabelKind.TOWN))
         assertEquals(13f, LabelPainter.sizeOf(LabelKind.VILLAGE))
         assertEquals(12f, LabelPainter.sizeOf(LabelKind.GLOBE))
+        // a water's and a river's name is the board's water label, the IJ's (the core's fifth look), at its 21 px
+        assertEquals(21f, LabelPainter.sizeOf(LabelKind.WATER))
+        assertEquals(LabelKind.WATER, app.atlas.mapview.vk.CoreNames.kindOf(app.atlas.mapcore.MapCore.NameWant.WATER))
+        assertEquals(LabelKind.CITY, app.atlas.mapview.vk.CoreNames.kindOf(app.atlas.mapcore.MapCore.NameWant.CITY))
+        assertEquals(LabelKind.TOWN, app.atlas.mapview.vk.CoreNames.kindOf(app.atlas.mapcore.MapCore.NameWant.TOWN))
+        assertEquals(LabelKind.VILLAGE, app.atlas.mapview.vk.CoreNames.kindOf(app.atlas.mapcore.MapCore.NameWant.VILLAGE))
+        assertEquals(LabelKind.GLOBE, app.atlas.mapview.vk.CoreNames.kindOf(app.atlas.mapcore.MapCore.NameWant.GLOBE))
+        // a name too long for a sprite the core takes is known before it is handed (the core refuses a whole hand-over for one)
+        assertTrue(app.atlas.mapview.vk.CoreNames.fits(LabelBlock.Image(LabelBlock.MAX_SIDE, 1, 0, 0, IntArray(LabelBlock.MAX_SIDE))))
+        assertFalse(app.atlas.mapview.vk.CoreNames.fits(LabelBlock.Image(LabelBlock.MAX_SIDE + 1, 1, 0, 0, IntArray(LabelBlock.MAX_SIDE + 1))))
+        assertFalse(app.atlas.mapview.vk.CoreNames.fits(LabelBlock.Image(1, LabelBlock.MAX_SIDE + 1, 0, 0, IntArray(LabelBlock.MAX_SIDE + 1))))
+        val water = sprite(LabelKind.WATER, "IJsselmeer")
+        assertTrue("a water's letters are the board's water blue", opaque(water.own).any { it and 0xFFFFFF == 0x845A2F })
         // the globe's: white letters on a dark glow (a city's: dark ink on white)
         val globe = sprite(LabelKind.GLOBE, "Amsterdam")
-        fun opaque(image: LabelBlock.Image) = image.pixels.filter { it ushr 24 == 0xFF }
         assertTrue("the globe's letters are white", opaque(globe.own).any { it and 0xFFFFFF == 0xFFFFFF })
         assertTrue("a city's letters are the board's ink", opaque(city.own).any { it and 0xFF < 0x60 })
         assertTrue("the globe's glow is dark", globe.own.pixels.any { (it ushr 24) in 0x20..0xE0 && (it and 0xFF) < 0x20 })

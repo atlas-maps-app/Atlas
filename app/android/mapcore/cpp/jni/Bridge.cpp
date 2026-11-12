@@ -1631,8 +1631,8 @@ jstring native_names(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, j
 }
 
 /// Names no tile holds, picked as a tile's are from now on (a test's: smoke's eight scripts): little-endian, their
-/// count (u32), then each one's kind (u32: scene::NameKind), latitude, longitude and people (f64 each) and its
-/// text's bytes (u32, then UTF-8). "" or why they were refused.
+/// count (u32), then each one's kind (u32: scene::NameKind), latitude, longitude and people (f64 each: a water's
+/// area in m², a river's length in m) and its text's bytes (u32, then UTF-8). "" or why they were refused.
 jstring native_test_names(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray block) {
     Core* core = core_of(handle);
     if (core == nullptr) return java(env, "no core");
@@ -1654,10 +1654,14 @@ jstring native_test_names(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray 
         scene::WorldName name;
         if (!take(&kind, 4) || !take(&name.lat, 8) || !take(&name.lon, 8) || !take(&name.people, 8) ||
             !take(&length, 4) || bytes.size() - at < length ||
-            kind > static_cast<std::uint32_t>(scene::NameKind::suburb)) {
+            kind > static_cast<std::uint32_t>(scene::NameKind::river)) {
             return java(env, std::format("the names were refused: name {} is cut short, or of no kind", i));
         }
         name.kind = static_cast<scene::NameKind>(kind);
+        if (scene::is_water(name.kind)) {
+            name.extent = name.people;
+            name.people = 0.0;
+        }
         name.text.assign(reinterpret_cast<const char*>(bytes.data() + at), length);
         at += length;
         names.push_back(std::move(name));
