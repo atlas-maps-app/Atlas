@@ -412,6 +412,7 @@
     <string name="mine_part_lamp_halos">Lamp halos</string>
     <string name="mine_part_lamp_streaks">Lamp streaks</string>
     <string name="mine_part_open_glows">Open places\' glow</string>
+    <string name="mine_part_light_cascades">Light cut by buildings (trial)</string>
     <string name="mine_part_rain">Rain</string>
     <string name="mine_part_golden_wash">Golden wash</string>
     <string name="mine_part_walls">Walls</string>

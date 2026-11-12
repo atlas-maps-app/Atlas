@@ -34,6 +34,7 @@
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
+#include "passes/LightMap.hpp"
 #include "scene/Pick.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
@@ -717,6 +718,15 @@ struct GroundFrame {
     std::vector<LitRun> lit_runs;
     std::vector<view::Vec2> lit_run_points;
     double lit_opacity = 0;
+    /// The night's light by the maps (passes/LightMap.hpp), where the camera's flag asks for it at night: the tiles of
+    /// `tiles` whose maps this frame draws, each with its map as the pass keeps it, and for every tile whether its
+    /// lamps' light is its map's (their ellipses left out).
+    struct LightDrawn {
+        std::uint32_t tile = 0;
+        LightEntry* entry = nullptr;
+    };
+    std::vector<LightDrawn> light_tiles;
+    std::vector<std::uint8_t> light_mapped;
     bool wet = false;
     /// The glints' rect this frame (with weather, where the water is drawn, at a map pitch, in full mode), and its
     /// opacity.
@@ -1052,6 +1062,17 @@ public:
     void draw_pools(bool draw) noexcept { no_pools_ = !draw; }
     /// The tests' look at the lit streets: from the next frame on, neither their glow nor their wet cores.
     void draw_lit(bool draw) noexcept { no_lit_ = !draw; }
+    /// The tests' look at the night's light by the maps: from the next frame on, none drawn (the lamps' ellipses as
+    /// without the camera's flag).
+    void draw_light(bool draw) noexcept { no_light_ = !draw; }
+    /// What the maps took (LightStats), and a wait until every bake asked for is done (a test's: the next frame takes
+    /// them).
+    [[nodiscard]] LightStats light_stats() const;
+    void wait_for_light() const;
+    /// The maps the frame draws.
+    [[nodiscard]] std::span<const GroundFrame::LightDrawn> light_drawn() const noexcept { return frame_.light_tiles; }
+    /// A bake of the night's light is under way: frames are due until its map is drawn.
+    [[nodiscard]] bool fading() const noexcept override;
     /// Whether the reflected trees take their leaf filter (where the ripple draws their layer).
     void draw_leaves(bool draw) noexcept { no_leaves_ = !draw; }
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
@@ -1374,6 +1395,13 @@ private:
     void record_pools(const frame::Recording& r);
     void emit_pools(twin::Stream& out) const;
     [[nodiscard]] gpu::Result<void> make_pool_pipelines(const frame::PassContext& context, Pipelines& p) const;
+    /// The night's light by the maps (LightMap.cpp): which tiles' maps the frame draws, asking the baker for those it
+    /// lacks; their words (each map's place on the screen and its blocks' slots) with their blocks into the buffer;
+    /// their one draw at the lamps' pools' slot.
+    void decide_light(const frame::FrameState& state);
+    void write_light(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    void record_light(const frame::Recording& r);
+    [[nodiscard]] gpu::Result<void> make_light_pipelines(const frame::PassContext& context, Pipelines& p) const;
     void record_rings(const frame::Recording& r);
     /// The rings' rects (`<rect fill="url(#rings)" opacity=".55">`) in the water's clip group `water`.
     void emit_rings(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
@@ -1443,6 +1471,8 @@ private:
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
     bool no_clouds_ = false;
+    bool no_light_ = false;
+    std::unique_ptr<LightMaps> light_; ///< the night's light's maps, from the first frame that asks for them
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
     bool ripple_always_ = false;
@@ -1564,6 +1594,11 @@ struct Ground::Pipelines {
     std::unique_ptr<GlowLayer> glow;
     // Glints.cpp
     vk::raii::Pipeline wind_glints{nullptr};
+    // LightMap.cpp: the maps' draw, the buffer of their blocks' slots (made the first time a frame draws a map) and
+    // whether each frame slot's set 3 holds it
+    vk::raii::Pipeline light{nullptr};
+    gpu::Buffer light_blocks;
+    std::array<bool, 2> light_bound{};
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -1722,6 +1757,8 @@ struct Ground::Words {
     std::uint32_t glint_lists = 0;
     std::uint32_t lamp_pools = 0; ///< the lamps' pools' ellipses (four floats each), and how many
     std::uint32_t lamp_pool_count = 0;
+    std::uint32_t light = 0; ///< the light maps' words (ground.slang's LIGHT_ layout), and how many maps
+    std::uint32_t light_count = 0;
     std::uint32_t lit_runs = 0;     ///< the lit streets' runs' records (ground.slang's LIT_RUN_WORDS each)
     std::uint32_t lit_segments = 0; ///< their segments' instance words (run << 14 | segment), and how many
     std::uint32_t lit_segment_count = 0;

@@ -30,6 +30,8 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace atlas::geometry {
 
@@ -847,6 +849,17 @@ private:
                 out_.lamps.push_back({.index = static_cast<std::uint32_t>(l->integer(tl::thing::index, i)),
                                       .at = {.x = f.x(p.lon), .z = f.z(p.lat)}});
             }
+            // S['pois'] with opening hours (geometry/Shopfronts.cpp's places), each distinct opening_hours once
+            std::unordered_map<std::string_view, std::uint32_t> hours_at;
+            for (std::uint32_t i = 0; i < l->count; ++i) {
+                if (!l->boolean(tl::thing::poi, i).value_or(false)) continue;
+                const std::optional<std::string_view> oh = l->string(tl::thing::tag_opening_hours, i);
+                if (!oh || oh->empty()) continue;
+                const auto [at, made] = hours_at.try_emplace(*oh, static_cast<std::uint32_t>(out_.open_hours.size()));
+                if (made) out_.open_hours.emplace_back(*oh);
+                const tl::GridPoint p = l->point(tl::thing::pos, i);
+                out_.open_spots.push_back({.at = {.x = f.x(p.lon), .z = f.z(p.lat)}, .hours = at->second});
+            }
         }
         const tl::Layer* l = tile_.layer(tl::LayerId::road);
         if (l == nullptr) return;
@@ -925,6 +938,7 @@ std::size_t GroundTile::bytes() const noexcept {
            (runways.capacity() * sizeof(RunwayRef)) + (quays.capacity() * sizeof(QuayEdge)) +
            (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
+           (open_spots.capacity() * sizeof(OpenSpot)) + (open_hours.capacity() * sizeof(std::string)) +
            (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
            (lit_lines.capacity() * sizeof(P2)) + (mirror_heads.capacity() * sizeof(MirrorHead)) +
            (mirror_walls.capacity() * sizeof(MirrorWall)) + (thin_chunks.capacity() * sizeof(ThinChunk));

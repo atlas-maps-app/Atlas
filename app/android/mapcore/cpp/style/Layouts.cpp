@@ -198,6 +198,7 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.LOCATION", .value = camera_flag::location},
     Constant{.name = "CameraWriter.HEADING", .value = camera_flag::heading},
     Constant{.name = "CameraWriter.WORLD_UNDER", .value = camera_flag::world_under},
+    Constant{.name = "CameraWriter.LIGHT_CASCADES", .value = camera_flag::light_cascades},
     Constant{.name = "CameraWriter.PART_GROUND", .value = part(camera_part::ground)},
     Constant{.name = "CameraWriter.PART_WATER", .value = part(camera_part::water)},
     Constant{.name = "CameraWriter.PART_CANOPY", .value = part(camera_part::canopy)},
@@ -380,7 +381,8 @@ static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme
                theme_flag::wet_set | theme_flag::golden | theme_flag::tone | theme_flag::tone_strength |
                theme_flag::daylight) == theme_flag::known);
 static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
-               camera_flag::location | camera_flag::heading | camera_flag::world_under) == camera_flag::known);
+               camera_flag::location | camera_flag::heading | camera_flag::world_under |
+               camera_flag::light_cascades) == camera_flag::known);
 // The parts are the known ones, each once, in the order of their bits.
 constexpr std::array part_bits{camera_part::ground,
                                camera_part::water,
