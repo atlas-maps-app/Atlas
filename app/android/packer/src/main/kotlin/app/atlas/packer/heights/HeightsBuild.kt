@@ -334,7 +334,7 @@ object HeightsBuild {
                         val src = from.source[i]
                         val k = Composite.index(src)
                         if (k < 0) flags = flags or Heights.FLAG_NODATA else shares[k]++
-                        if (k >= 0 && src.toInt() and Composite.FILLED != 0) flags = flags or Heights.FLAG_FILLED
+                        if (k >= 0 && (src.toInt() and Composite.FILLED) != 0) flags = flags or Heights.FLAG_FILLED
                         if (r in apron until width - apron && c in apron until width - apron && k >= 0) {
                             own[k]++
                             if (nationals[k]) held = true
@@ -358,7 +358,7 @@ object HeightsBuild {
     /** The tiles in packs of an L[BLOCK] tile each, end to end in [outDir]'s parts, and their index. */
     private fun packs(region: String, tiles: List<TileInfo>, sources: List<Read>, outDir: File, scratch: File, log: (String) -> Unit): WorldIndex {
         scratch.mkdirs()
-        val blocks = TreeMap<Pair<Int, Int>, MutableList<TileInfo>>(compareBy({ it.first }, { it.second }))
+        val blocks = TreeMap<Pair<Int, Int>, MutableList<TileInfo>>(compareBy<Pair<Int, Int>>({ it.first }, { it.second }))
         for (t in tiles) blocks.getOrPut((t.x shr (t.level - BLOCK)) to (t.y shr (t.level - BLOCK))) { ArrayList() } += t
         val credits = sources.map { "${it.source.name}: ${it.source.credit}" }
         val inputs = WorldPack.sha256(listOf(VERSION) + sources.map { "${it.source.id} ${it.source.date} ${it.source.read}" })

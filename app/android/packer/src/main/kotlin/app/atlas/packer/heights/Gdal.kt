@@ -17,28 +17,33 @@ import java.util.concurrent.TimeUnit
 class Gdal(private val bin: File? = null) {
     private fun tool(name: String): String = bin?.let { File(it, name).path } ?: name
 
-    /** Runs [name] with [args] (and [stdin]); its output, or an exception with what it said. */
+    /** Runs [name] with [args] (and [stdin]); what it wrote to its output, or an exception with what it said (its warnings are no part of its output). */
     fun run(name: String, args: List<String>, stdin: String? = null, minutes: Long = 120): String {
-        val p = try {
-            ProcessBuilder(listOf(tool(name)) + args).redirectErrorStream(true).also { b ->
-                // what GDAL reads from a host itself (the checks' windows) names the packer as the packer's own reads do
-                b.environment()["GDAL_HTTP_USERAGENT"] = Fetcher.USER_AGENT
-                b.environment()["GDAL_HTTP_MAX_RETRY"] = "5"
-                b.environment()["GDAL_HTTP_RETRY_DELAY"] = "5"
-                b.environment()["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
-                b.environment()["CPL_VSIL_CURL_ALLOWED_EXTENSIONS"] = ".tif"
-            }.start()
-        } catch (e: IOException) {
-            throw IOException("$name does not start (is GDAL installed? terrain.yml installs gdal-bin): ${e.message}")
+        val errors = File.createTempFile("gdal", ".err")
+        try {
+            val p = try {
+                ProcessBuilder(listOf(tool(name)) + args).redirectError(errors).also { b ->
+                    // what GDAL reads from a host itself (the checks' windows) names the packer as the packer's own reads do
+                    b.environment()["GDAL_HTTP_USERAGENT"] = Fetcher.USER_AGENT
+                    b.environment()["GDAL_HTTP_MAX_RETRY"] = "5"
+                    b.environment()["GDAL_HTTP_RETRY_DELAY"] = "5"
+                    b.environment()["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
+                    b.environment()["CPL_VSIL_CURL_ALLOWED_EXTENSIONS"] = ".tif"
+                }.start()
+            } catch (e: IOException) {
+                throw IOException("$name does not start (is GDAL installed? terrain.yml installs gdal-bin): ${e.message}")
+            }
+            if (stdin != null) p.outputStream.use { it.write(stdin.toByteArray()) } else p.outputStream.close()
+            val out = p.inputStream.bufferedReader().readText()
+            if (!p.waitFor(minutes, TimeUnit.MINUTES)) {
+                p.destroyForcibly()
+                throw IOException("$name ${args.joinToString(" ")} did not end in $minutes minutes")
+            }
+            if (p.exitValue() != 0) throw IOException("$name ${args.joinToString(" ")} failed (${p.exitValue()}): ${(out + errors.readText()).takeLast(2000)}")
+            return out
+        } finally {
+            errors.delete()
         }
-        if (stdin != null) p.outputStream.use { it.write(stdin.toByteArray()) } else p.outputStream.close()
-        val out = p.inputStream.bufferedReader().readText()
-        if (!p.waitFor(minutes, TimeUnit.MINUTES)) {
-            p.destroyForcibly()
-            throw IOException("$name ${args.joinToString(" ")} did not end in $minutes minutes")
-        }
-        if (p.exitValue() != 0) throw IOException("$name ${args.joinToString(" ")} failed (${p.exitValue()}): ${out.takeLast(2000)}")
-        return out
     }
 
     /**

@@ -237,11 +237,11 @@ object HeightsCodec {
         val max = read<Long>(Heights.MAX, null) { varU() }
         if (max < 0 || max > Heights.MAX_STEPS) throw TileFormatException("a highest sample of $max steps")
         val flags = read(Heights.FLAGS, 0L) { varU() }
-        val sources = read(Heights.SOURCES, emptyList()) {
+        val sources = read<List<String>>(Heights.SOURCES, emptyList()) {
             val k = varCount()
             if (k == 0) emptyList() else List(k - 1) { varCount().let { i -> if (i in strings.indices) strings[i] else throw TileFormatException("string $i of ${strings.size}") } }
         }
-        val shares = read(Heights.SHARES, emptyList()) {
+        val shares = read<List<Long>>(Heights.SHARES, emptyList()) {
             var prev = 0L
             List(varCount().also { if (it > remaining) throw TileFormatException("$it shares in $remaining bytes") }) { prev += varZ(); prev }
         }

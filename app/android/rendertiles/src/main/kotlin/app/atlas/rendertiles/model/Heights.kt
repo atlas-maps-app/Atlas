@@ -81,7 +81,7 @@ object Heights {
     const val SAMPLES = "samples"
 
     /** Whether [side] is one a reader allows: 2^k + 1, k from 1 to 8. */
-    fun sideAllowed(side: Int): Boolean = side in 3..257 && (side - 1) and (side - 2) == 0
+    fun sideAllowed(side: Int): Boolean = side in 3..257 && ((side - 1) and (side - 2)) == 0
 
     /** The longitude, degrees, of lattice column [c] of tile column [x] at [level] with [side] samples a side. */
     fun lonOf(level: Int, x: Int, c: Int, side: Int): Double = (x + c.toDouble() / (side - 1)) / (1 shl level) * 360.0 - 180.0

@@ -114,7 +114,7 @@ class HeightsBuildTest {
         // the pond is closed from its banks: near the hill's own height there, the national model's, and marked filled
         val (pondH, pondR, pondAt) = at(14, pond[0], pond[1])
         assertEquals(hill(pondAt.first, pondAt.second), pondH, 2.5)
-        assertTrue(pondR.flags and Heights.FLAG_FILLED != 0)
+        assertTrue((pondR.flags and Heights.FLAG_FILLED) != 0)
         // the lake's middle, beyond the fill and the feather, is the world model's; its shore meets the land without a step
         val (lakeH, _, lakeAt) = at(14, lake[0], lake[1])
         assertEquals(hill(lakeAt.first, lakeAt.second) + 30.0, lakeH, 0.1)
@@ -133,7 +133,7 @@ class HeightsBuildTest {
         val seaTile = built.tiles.filter { it.level == 14 }.maxBy { it.x }
         val sea = terrain.raster(14, seaTile.x, seaTile.y)!!
         assertTrue(Heights.lonOf(14, seaTile.x, 256, 257) > 4.61)
-        assertTrue(sea.flags and Heights.FLAG_NODATA != 0)
+        assertTrue((sea.flags and Heights.FLAG_NODATA) != 0)
         assertEquals(0.0, sea.metres(100, 256), 0.0)
         assertTrue(sea.shares.sum() < sea.samples.size)
         // the numbers: every tile's bytes, each source's megabytes per 1,000 km²
