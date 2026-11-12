@@ -1140,12 +1140,14 @@ jobs:
           fetch "$K/packs" "$K/whole.txt"
           "$PACKER" world-keep cut "$R/in/world.idx" "$K/world-keep.json" netherlands "$K/packs" "$K/out" 2>&1 | tee "$K/cut.txt"
           # the views' own walk: the packs it reaches that the Netherlands' keep does not are fetched too (none, where the
-          # keep holds what its views draw)
+          # keep holds what its views draw), and each tile of it a pack holds that the keep lacks is named (--kept: the
+          # step below fails on one, as its frames leave the world's names out)
           V=app/android/mapcorecheck/src/test/resources/likeness/world-keep.json
           "$PACKER" world-refs "$R/in/world.idx" "$V" --needed 2> "$K/walk.txt" > "$K/views.txt"
           awk 'NR == FNR { kept[$4] = 1; next } !($4 in kept) { print }' "$K/whole.txt" "$K/views.txt" > "$K/views-more.txt"
           fetch "$K/packs" "$K/views.txt"
-          "$PACKER" world-refs "$R/in/world.idx" "$V" "$K/packs" "$K/views" 2>&1 | tee "$K/views-cut.txt" | tail -1
+          "$PACKER" world-refs "$R/in/world.idx" "$V" "$K/packs" "$K/views" --kept "$K/world-keep.json" netherlands 2>&1 |
+            tee "$K/views-cut.txt" | grep -E '^world-refs: (not kept|kept) for netherlands: |^world-refs: [0-9]+ views, '
           rm -rf "${K:?}/packs"
           cp "$R/in/world-globe.atlas" "$K/out/"
           cp "$R/in/world-globe.atlas" "$K/views/"
@@ -1161,6 +1163,7 @@ jobs:
             echo "- the Netherlands' packs whole: $(awk '{ s += $3 } END { print s }' "$K/whole.txt") bytes of $(wc -l < "$K/whole.txt") packs"
             { grep '^world-keep: netherlands' "$K/cut.txt" || true; } | sed 's/^/- /'
             echo "- its views' own walk: $(wc -l < "$K/views.txt") packs, $(wc -l < "$K/views-more.txt") of them not kept; $(tail -1 "$K/views-cut.txt")"
+            { grep -E '^world-refs: (not kept|kept) for netherlands: ' "$K/views-cut.txt" || true; } | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"
         run: |
@@ -1258,17 +1261,29 @@ jobs:
         # the whole world draws there), then over the tiles world-keep keeps for it and the globe alone: a frame not
         # drawn whole, or one the kept tiles draw otherwise than the walk's, fails the job (a pack cut to its kept tiles
         # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
-        # A check of its own: it runs where the references' frames above moved too, once the kept tiles are cut
+        # The frames leave the world's names out (world-keep.json's names: a frame keeps the names it picked while its
+        # tiles came, so where more than 64 stand in reach two draws can name it otherwise): a tile of the walk the keep
+        # lacks, its names with it, is the step above's --kept line. A check of its own: it runs where the references'
+        # frames above moved too, once the kept tiles are cut
         if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
         working-directory: app/android
         env:
           ATLAS_WORLD_REFS_VIEWS: world-keep.json
         run: |
           L="${{ github.workspace }}/likeness"
+          # the references' report above, which these draws must leave as it is
+          before=$(sha256sum "$L/world-refs/world-refs.json" 2> /dev/null || true)
+          # without the configuration cache: the cache entry the references' draw stored keeps the test's environment of
+          # then (its ATLAS_WORLD_REFS, no ATLAS_WORLD_REFS_VIEWS), so with it the references were drawn once more here
+          # (World run 43247006004)
           draw() {
-            ATLAS_WORLD_REFS="$1" ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
+            ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
               -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
               -Datlas.likeness.report="$L" --rerun --stacktrace
+            if [ "$(sha256sum "$L/world-refs/world-refs.json" 2> /dev/null || true)" != "$before" ]; then
+              echo "::error::the kept country's draw over $1 drew the references' views again (likeness/world-refs/world-refs.json changed)"
+              exit 1
+            fi
             if [ ! -f "$L/world-keep/world-keep.json" ]; then
               echo "::error::WorldPackRefsTest drew none of the kept country's frames over $1: no likeness/world-keep/world-keep.json"
               exit 1
@@ -1290,8 +1305,14 @@ jobs:
             echo "::error::the Netherlands' kept tiles draw these views otherwise than the world does (frames in the artifact world-refs, world-keep and world-keep-walk): $differ"
             exit 1
           fi
+          # every tile of the views' walk a pack holds, kept (packer world-refs --kept, the step above)
+          C="$RUNNER_TEMP/keep/views-cut.txt"
+          if ! kept=$(grep -E '^world-refs: kept for netherlands: ' "$C"); then
+            echo "::error::the Netherlands' keep lacks tiles its views draw, the names in them with them: $(grep -E '^world-refs: (.+: )?not kept for netherlands: ' "$C" | tr '\n' ' ')"
+            exit 1
+          fi
           echo "### A kept country drawn offline" >> "$GITHUB_STEP_SUMMARY"
-          echo "- the Netherlands' $n views from 18.5 km to 20,000 km: each frame over its kept tiles as over its own walk's" >> "$GITHUB_STEP_SUMMARY"
+          echo "- the Netherlands' $n views from 18.5 km to 20,000 km: each frame over its kept tiles as over its own walk's (without the world's names); kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
       - name: The frames
         if: ${{ !cancelled() }}
         run: |
