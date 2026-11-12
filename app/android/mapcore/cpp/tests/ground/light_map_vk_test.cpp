@@ -233,9 +233,9 @@ TEST_CASE("ground: the night's light by the tiles' maps is the lamps' pools, cut
         if (d < 0) ++less;
     }
     MESSAGE("with the open places: " << open->stats.lights[fx::light_lamp] << " lamps and "
-                                     << open->stats.lights[fx::light_open] << " open places baked, "
-                                     << open->stats.lit << " blocks lit; " << more
-                                     << " pixels lighter than with the lamps alone, " << less << " darker");
+                                     << open->stats.lights[fx::light_open] << " open places baked, " << open->stats.lit
+                                     << " blocks lit; " << more << " pixels lighter than with the lamps alone, " << less
+                                     << " darker");
     CHECK(s.lights[fx::light_lamp] >= 22);
     CHECK(s.lights[fx::light_open] == 0);
     CHECK(open->stats.lights[fx::light_open] > 0);

@@ -241,8 +241,7 @@ void merge(Scene& s, std::size_t i, Cascade& c, const Cascade& up) {
                 }
                 if (!any) continue;
                 ++s.cost.rays;
-                if (!s.free(x, z, rays[k][0], rays[k][1], light_bounds[i] + ray_step, light_bounds[i + 1]))
-                    continue;
+                if (!s.free(x, z, rays[k][0], rays[k][1], light_bounds[i] + ray_step, light_bounds[i + 1])) continue;
                 const std::size_t at = c.at(px, pz, k);
                 for (std::size_t kind = 0; kind < light_kinds; ++kind) c.radiance[at + kind] += light[kind];
             }

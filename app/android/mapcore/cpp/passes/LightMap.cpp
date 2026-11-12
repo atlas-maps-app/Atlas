@@ -183,8 +183,8 @@ LightTile bake_light(const LightJob& job) {
             for (std::int32_t z = 0; z < light_slot; ++z) {
                 for (std::int32_t x = 0; x < light_slot; ++x) {
                     const std::uint32_t both = alpha_at((bx * light_block) + x - 1, (bz * light_block) + z - 1);
-                    const std::size_t texel =
-                        (static_cast<std::size_t>(z) * static_cast<std::size_t>(light_slot)) + static_cast<std::size_t>(x);
+                    const std::size_t texel = (static_cast<std::size_t>(z) * static_cast<std::size_t>(light_slot)) +
+                                              static_cast<std::size_t>(x);
                     words[texel / 2] |= both << ((texel % 2) * 16U);
                 }
             }
