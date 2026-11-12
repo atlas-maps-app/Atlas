@@ -350,17 +350,19 @@ void MapFrame::set_asked(std::optional<AskedBuilding> asked) {
 }
 
 void MapFrame::read_house() {
-    const std::string_view roof = scene::house_roof(asked_->roof);
-    if (roof.empty() || !world_) return;
-    const scene::ResidentTile* from = scene::house_tile(world_->residency().resident(), asked_->id);
+    if (!asked_ || !world_) return;
+    const AskedBuilding asked = *asked_;
+    const std::string_view roof = scene::house_roof(asked.roof);
+    if (roof.empty()) return;
+    const scene::ResidentTile* from = scene::house_tile(world_->residency().resident(), asked.id);
     if (from == nullptr) return;
     if (house_ && house_->key == from->key && house_->pack == from->pack) return;
     if (house_refused_ && house_refused_->first == from->key && house_refused_->second == from->pack) return;
-    house_ = scene::house_of(world_->store(), *from, asked_->id, asked_->relation, roof);
+    house_ = scene::house_of(world_->store(), *from, asked.id, asked.relation, roof);
     if (!house_) {
         house_refused_.emplace(from->key, from->pack);
         log::info("vk asked: no house of {} {} with a {} roof from tile {}/{}/{} of {} (not drawn as itself there)",
-                  asked_->relation ? "relation" : "way", asked_->id, roof, from->key.z, from->key.x, from->key.y,
+                  asked.relation ? "relation" : "way", asked.id, roof, from->key.z, from->key.x, from->key.y,
                   from->pack);
     }
 }
