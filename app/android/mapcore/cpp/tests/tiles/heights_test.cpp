@@ -195,6 +195,11 @@ TileBytes terrain_tile(std::uint8_t level, std::uint32_t x, std::uint32_t y, con
     return t;
 }
 
+/// A refusal of the raster's reader as outcome() words it: the fault in its column, with its detail.
+std::string refusal(Fault fault, std::string_view column, std::uint64_t detail = 0) {
+    return describe(column_error(fault, LayerId::heights, column, detail));
+}
+
 /// What reading `t` gives: the raster's error, described, or "ok".
 std::string outcome(TileBytes& t) {
     const std::vector<std::byte> raw = t.encode();
@@ -361,43 +366,43 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
     SUBCASE("lengths") {
         // a width that is not the side's and apron's, in the samples or in the side
         CHECK(with([](TileBytes&, Columns& c) { c["apron"].bytes = col::varu({7}); }) ==
-              "column heights.samples: bad_count (33)");
+              refusal(Fault::bad_count, "samples", 33));
         CHECK(with([](TileBytes&, Columns& c) { c["side"].bytes = col::varu({33}); }) ==
-              "column heights.samples: bad_count (33)");
+              refusal(Fault::bad_count, "samples", 33));
         // the samples cut short, and a byte after the last
         CHECK(with([](TileBytes&, Columns& c) {
                   c["samples"].bytes.resize(c["samples"].bytes.size() - 1);
-              }).starts_with("column heights.samples: truncated"));
+              }).starts_with(refusal(Fault::truncated, "samples")));
         CHECK(with([](TileBytes&, Columns& c) {
                   c["samples"].bytes.resize(600);
-              }).starts_with("column heights.samples: truncated"));
+              }).starts_with(refusal(Fault::truncated, "samples")));
         CHECK(with([](TileBytes&, Columns& c) { c["samples"].bytes.push_back(std::byte{0}); }) ==
-              "column heights.samples: left_over (1)");
+              refusal(Fault::left_over, "samples", 1));
         // a byte after a column's one number
         CHECK(with([](TileBytes&, Columns& c) { c["max"].bytes.push_back(std::byte{0}); }) ==
-              "column heights.max: left_over (1)");
-        CHECK(with([](TileBytes&, Columns& c) { c["step"].bytes.pop_back(); }) == "column heights.step: truncated");
+              refusal(Fault::left_over, "max", 1));
+        CHECK(with([](TileBytes&, Columns& c) { c["step"].bytes.pop_back(); }) == refusal(Fault::truncated, "step"));
         // two rasters in a tile
-        CHECK(with([](TileBytes&, Columns&) {}, 2) == "column heights: bad_count (2)");
+        CHECK(with([](TileBytes&, Columns&) {}, 2) == refusal(Fault::bad_count, "", 2));
     }
     SUBCASE("ranges") {
         CHECK(with([](TileBytes&, Columns& c) { c["side"].bytes = col::varu({18}); }) ==
-              "column heights.side: bad_value (18)");
+              refusal(Fault::bad_value, "side", 18));
         CHECK(with([](TileBytes&, Columns& c) { c["side"].bytes = col::varu({513}); }) ==
-              "column heights.side: bad_value (513)");
+              refusal(Fault::bad_value, "side", 513));
         CHECK(with([](TileBytes&, Columns& c) { c["side"].bytes = col::varu({2}); }) ==
-              "column heights.side: bad_value (2)");
+              refusal(Fault::bad_value, "side", 2));
         CHECK(with([](TileBytes&, Columns& c) { c["apron"].bytes = col::varu({33}); }) ==
-              "column heights.apron: too_big (33)");
+              refusal(Fault::too_big, "apron", 33));
         CHECK(with([](TileBytes&, Columns& c) { c["max"].bytes = col::varu({(1U << 28U) + 1U}); }) ==
-              "column heights.max: too_big (268435457)");
+              refusal(Fault::too_big, "max", 268435457));
         for (const double bad :
              {0.0, -0.5, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
             CHECK(with([bad](TileBytes&, Columns& c) {
                       Sink s;
                       s.f64(bad);
                       c["step"].bytes = s.bytes;
-                  }) == "column heights.step: bad_value");
+                  }) == refusal(Fault::bad_value, "step"));
         }
         // a sample below the base, and one above the highest the tile names: its place in the raster
         CHECK(with([&](TileBytes&, Columns& c) {
@@ -406,14 +411,14 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
                                          [&](std::int64_t s) { return s - raster.base(); });
                   above[40] = -1;
                   c["samples"].bytes = med_bytes(above, 33);
-              }) == "column heights.samples: bad_value (40)");
+              }) == refusal(Fault::bad_value, "samples", 40));
         CHECK(with([&](TileBytes&, Columns& c) {
                   std::vector<std::int64_t> above(raster.steps.size());
                   std::ranges::transform(raster.steps, above.begin(),
                                          [&](std::int64_t s) { return s - raster.base(); });
                   above[1000] = raster.max() + 1;
                   c["samples"].bytes = med_bytes(above, 33);
-              }) == "column heights.samples: bad_value (1000)");
+              }) == refusal(Fault::bad_value, "samples", 1000));
         // a residual that would wrap the sum
         const auto wrapping = [](TileBytes&, Columns& c) {
             Sink s;
@@ -422,16 +427,16 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
             for (int i = 0; i < 33 * 33; ++i) s.varz(std::numeric_limits<std::int64_t>::max());
             c["samples"].bytes = s.bytes;
         };
-        CHECK(with(wrapping) == "column heights.samples: bad_value");
+        CHECK(with(wrapping) == refusal(Fault::bad_value, "samples"));
     }
     SUBCASE("the lowest and the highest sample") {
         // the highest the tile names is not the samples'
         CHECK(with([&](TileBytes&, Columns& c) {
                   c["max"].bytes = col::varu({static_cast<std::uint64_t>(raster.max()) + 1});
-              }) == std::format("column heights.max: bad_value ({})", raster.max()));
+              }) == refusal(Fault::bad_value, "max", static_cast<std::uint64_t>(raster.max())));
         CHECK(with([&](TileBytes&, Columns& c) {
                   c["max"].bytes = col::varu({static_cast<std::uint64_t>(raster.max()) - 1});
-              }).starts_with("column heights.samples: bad_value"));
+              }).starts_with(refusal(Fault::bad_value, "samples")));
         // no sample stands at the base
         CHECK(with([&](TileBytes&, Columns& c) {
                   std::vector<std::int64_t> above(raster.steps.size());
@@ -439,21 +444,20 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
                                          [&](std::int64_t s) { return s - raster.base() + 1; });
                   c["samples"].bytes = med_bytes(above, 33);
                   c["max"].bytes = col::varu({static_cast<std::uint64_t>(raster.max()) + 1});
-              }) == "column heights.base: bad_value (1)");
+              }) == refusal(Fault::bad_value, "base", 1));
     }
     SUBCASE("columns missing, twice, or in another codec") {
         for (const char* name : {"side", "step", "max", "samples"}) {
-            CHECK(with([name](TileBytes&, Columns& c) { c.drop(name); }) ==
-                  std::format("column heights.{}: missing", name));
+            CHECK(with([name](TileBytes&, Columns& c) { c.drop(name); }) == refusal(Fault::missing, name));
         }
         CHECK(with([](TileBytes&, Columns& c) {
                   const atlas::test::ColumnBytes side = c["side"];
                   c.list.push_back(side);
-              }) == "column heights.side: duplicate");
+              }) == refusal(Fault::duplicate, "side"));
         CHECK(with([](TileBytes&, Columns& c) { c["samples"].codec = Codec::ids; }) ==
-              "column heights.samples: bad_value (13)");
+              refusal(Fault::bad_value, "samples", 13));
         CHECK(with([](TileBytes&, Columns& c) { c["base"].codec = Codec::varu; }) ==
-              "column heights.base: bad_value (2)");
+              refusal(Fault::bad_value, "base", 2));
     }
     SUBCASE("shares that do not add up") {
         const auto shares = [](const std::vector<std::int64_t>& v) {
@@ -467,19 +471,19 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
             return s.bytes;
         };
         CHECK(with([&](TileBytes&, Columns& c) { c["shares"].bytes = shares({1080}); }) ==
-              "column heights.shares: bad_count (1)");
-        CHECK(with([&](TileBytes&, Columns& c) { c.drop("shares"); }) == "column heights.shares: bad_count");
+              refusal(Fault::bad_count, "shares", 1));
+        CHECK(with([&](TileBytes&, Columns& c) { c.drop("shares"); }) == refusal(Fault::bad_count, "shares"));
         CHECK(with([&](TileBytes&, Columns& c) { c["shares"].bytes = shares({1080, 10}); }) ==
-              "column heights.shares: bad_count (1090)");
+              refusal(Fault::bad_count, "shares", 1090));
         CHECK(with([&](TileBytes&, Columns& c) { c["shares"].bytes = shares({-1, 4}); }) ==
-              "column heights.shares: bad_value");
+              refusal(Fault::bad_value, "shares"));
         CHECK(with([&](TileBytes& t, Columns& c) {
                   Sink s;
                   s.varu(3);
                   s.varu(t.string("ahn4"));
                   s.varu(9999);
                   c["sources"].bytes = s.bytes;
-              }) == "column heights.sources: bad_value (9999)");
+              }) == refusal(Fault::bad_value, "sources", 9999));
     }
 }
 

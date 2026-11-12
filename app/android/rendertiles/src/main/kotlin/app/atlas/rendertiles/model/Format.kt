@@ -75,6 +75,10 @@ package app.atlas.rendertiles.model
  * pads for both: shadows, which the sun casts beyond a feature by its top over the tangent of its elevation, and
  * reflections in the water, which mirror what stands within 16 m of a quay edge below the water's level.
  *
+ * **Terrain packs** ([Profile.TERRAIN], ENGINE.md part 6) are packs of this format whose tiles hold one layer,
+ * [Layer.HEIGHTS]: a height raster, specified in [Heights]. Their `style` holds no table, each chunk's reach is its
+ * tile's box and its raster's top, and the map's readers skip the layer by the rule above.
+ *
  * **Keep codes** ([Keep]): one byte per vertex of every simplified ring: how many of the ladder's positive tolerances
  * the vertex survives `regions.py`'s `simplify` at. At a view's or band's tolerance ([RenderHead]) the renders simplify
  * buildings, parts and areas only; land cover and water they draw whole at every tolerance, and their codes serve the
