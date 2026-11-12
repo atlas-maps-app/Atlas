@@ -71,6 +71,12 @@
 // active pack's tallest solid scanned whole at each of its zooms (sun::scene_maxh, as SunGlobals::maxh scanned a pack
 // it had not seen) logged with the tiles' line (the sun's scenes), and the `vk packs` lines say each composition's
 // stage T.
+// ATLAS_PINCH_LOOK=a22: the phone's default colours, the Map look's Alpha 22 (the red tiles as tiles_red, each guessed
+// flat roof one of three mid greys) with the Tone off, where the core's own default is today's palette with TONE; the
+// phone's default parts are ATLAS_PINCH_OFF's to name.
+// Each rest waits for the sun as well (settle): its workers idle, nothing published since the frame before and no
+// tile's bits cross-fading (SunGlobals::fading), as buildings_vk_test's draw does, since those fades run on the sun's
+// own clock and a rest captured while one runs differs run to run.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
@@ -125,6 +131,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <unistd.h>
 #include <vector>
@@ -740,6 +747,19 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 theme.humidity = 94.0;
             }
             REQUIRE((moment.empty() || moment == "sunny" || moment == "night" || moment == "wet-night"));
+            // ATLAS_PINCH_LOOK=a22: the phone's default colours (SettingsStore's DEFAULT_PALETTE and DEFAULT_TONE_ON:
+            // mapview's Preset.ALPHA_22, the Tone's strength 0 as ThemeBlock.kt writes it)
+            const std::string look = environment("ATLAS_PINCH_LOOK");
+            REQUIRE((look.empty() || look == "a22"));
+            if (look == "a22") {
+                style::PaletteBlock palette{};
+                palette.flags = style::palette_flag::flat_greys;
+                palette.colours.at(80) = 0x0100'0000U | 0x9E5038U; // mapview's Slot.RED_TILES, as 0x01RRGGBB
+                map.set_palette(palette);
+                theme.flags |= style::theme_flag::tone_strength;
+                theme.tone = 0.0F;
+                MESSAGE("the look: alpha 22's palette, the Tone off");
+            }
             map.set_theme(theme);
             shown = theme;
         }
@@ -965,7 +985,34 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             }
             MESSAGE(std::format("settled at {:.0f} m after {} frames{}", d, n,
                                 settled() ? "" : ", the cover still asking"));
+            // then until the sun has settled, as buildings_vk_test's draw does: bits the last frames asked for or a
+            // tile's first bits fade in over sun::fade_seconds of the sun's own clock, so frames 50 ms apart, at most
+            // 200 of them; the three rests after must leave the sun as it was, or the rest's capture is not settled
+            scene::SunGlobals* sun = map.world() != nullptr ? map.world()->sun() : nullptr;
+            const auto sun_work = [sun] {
+                const scene::SunStats st = sun != nullptr ? sun->stats() : scene::SunStats{};
+                return std::array<std::uint64_t, 4>{st.scenes, st.failed, st.runs, st.cached};
+            };
+            int more = 0;
+            bool sun_settled = sun == nullptr;
+            while (sun != nullptr && more < 200) {
+                const std::array<std::uint64_t, 4> before = sun_work();
+                (void)draw("settle", d, true, false);
+                ++more;
+                sun->wait_idle();
+                if (!sun->fading() && sun_work() == before && settled()) {
+                    sun_settled = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the fades' clock is the sun's own
+            }
+            const std::array<std::uint64_t, 4> at_rest = sun_work();
             for (int k = 0; k < 3; ++k) (void)draw("rest", d, true, k == 2);
+            if (sun != nullptr) sun->wait_idle();
+            const bool stayed = sun == nullptr || (!sun->fading() && sun_work() == at_rest);
+            MESSAGE(std::format("the sun at {:.0f} m: {} after {} more frames; over the three rests it {}", d,
+                                sun_settled ? "settled" : "NOT settled", more,
+                                stayed ? "stayed settled" : "MOVED (published or fading)"));
         };
         // the heaps' bytes the resident tiles hold, by level and pass (MB), and the places' plan
         const auto heaps_by_level = [&](double d) {
