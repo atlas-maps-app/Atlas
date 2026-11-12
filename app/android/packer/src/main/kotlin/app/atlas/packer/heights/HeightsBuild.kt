@@ -319,6 +319,8 @@ object HeightsBuild {
             return Stored(c.cx * span - apron, c.cy * span - apron, w, h, s)
         }
         val nationals = BooleanArray(sources.size) { sources[it].national }
+        // the height a national model gives the open sea, where it gives it one: such a sample is no land's
+        val seas = FloatArray(sources.size) { sources[it].source.sea?.toFloat() ?: Float.NaN }
         val t1 = System.nanoTime()
         pool.invokeAll(chunks.values.map { chunk ->
             Callable {
@@ -350,7 +352,7 @@ object HeightsBuild {
                         if (k >= 0 && (src.toInt() and Composite.FILLED) != 0) flags = flags or Heights.FLAG_FILLED
                         if (r in apron until width - apron && c in apron until width - apron && k >= 0) {
                             own[k]++
-                            if (nationals[k]) held = true
+                            if (nationals[k] && from.heights[i] != seas[k]) held = true
                         }
                     }
                     if (!held) continue
