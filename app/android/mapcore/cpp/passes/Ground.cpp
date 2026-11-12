@@ -879,6 +879,8 @@ bool Ground::decide(const frame::FrameState& state) {
         last_tiles_.emplace_back(t.ground, t.cells);
         last_suns_.push_back(sun_of(t));
     }
+    // (the night's light by the maps moves on its own: a bake done, the moment's open places)
+    same = same && !light_due(state);
     if (same) {
         // the same camera over the same tiles: every decision and slot as the last frame's, but the quays' faces where
         // what their colours are made of moved (the palette's quay walls, the moment's light), decided again and laid

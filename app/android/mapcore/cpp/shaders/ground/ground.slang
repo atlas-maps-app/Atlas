@@ -39,8 +39,8 @@
 //     lit_composite_fs: the glow (its filter's result) and the cores screened over the ground at night, after the quay
 //     walls (passes/LitGlow.cpp).
 //   - pool_vs and pool_fs: the street lamps' pools at night, after the lit streets (passes/Pools.cpp).
-//   - screen_vs with light_fs: the night's light from the tiles' maps, where the camera's flag asks for them
-//     (passes/LightMap.cpp).
+//   - light_vs and light_fs: the night's light from the tiles' maps, a quad a lit block, where the camera's flag asks
+//     for them (passes/LightDraw.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -100,7 +100,7 @@ uint lines_word(uint i) {
 [[vk::binding(5, 3)]] StructuredBuffer<uint> glow_result;
 [[vk::binding(6, 3)]] Texture2D<float4> glow_layer;
 [[vk::binding(7, 3)]] Texture2D<float4> core_layer;
-/// The night's light maps' blocks (passes/LightMap.cpp): a slot LIGHT_SLOT_WORDS words, a texel 16 bits (the lamps'
+/// The night's light maps' blocks (passes/LightDraw.cpp): a slot LIGHT_SLOT_WORDS words, a texel 16 bits (the lamps'
 /// alpha, then the open places'), two a word, row by row.
 [[vk::binding(8, 3)]] StructuredBuffer<uint> light_blocks;
 
@@ -2318,18 +2318,56 @@ ColourOut pool_fs(PoolOut v) {
     return o;
 }
 
-// ---------------------------------------------------------------- the night's light maps (passes/LightMap.cpp)
+// ---------------------------------------------------------------- the night's light maps (passes/LightDraw.cpp)
 //
-// The maps' words from push.mode.z: their count, the lamps' pool's three stops and the open places' (RGBA8, each
-// stop's opacity its alpha), a spare; then a map LIGHT_TILE_WORDS: the screen's CSS px to its grid's texels (nine
-// floats, row by row: (u, v, 1) / depth), its blocks across and down, and where its blocks' slots lie in `words`
-// (a block's slot in light_blocks plus one; 0 where no light reaches the block).
+// The maps' words from push.mode.z: the maps' count, the lamps' pool's three stops and the open places' (RGBA8, each
+// stop's opacity its alpha), and where the blocks' words begin; then a map LIGHT_TILE_WORDS: the camera coordinates of
+// its grid's corner and of a texel's step across and down (nine floats: k0, ku, kv), three spare; then a word a lit
+// block: its slot in light_blocks (12 bits), its column and row in its map's grid (6 bits each) and its map (from
+// bit 24). A block is a quad on the ground, an instance each.
 
 static const uint LIGHT_HEAD_WORDS = 8u;
 static const uint LIGHT_TILE_WORDS = 12u;
 static const int LIGHT_BLOCK = 32;
 static const int LIGHT_SLOT = 34;
 static const uint LIGHT_SLOT_WORDS = 578u;
+
+struct LightOut {
+    float4 position : SV_Position;
+    float2 at : LIGHT_AT;                    // among the slot's texels' centres: texel i's at i
+    nointerpolation uint slot : LIGHT_SLOT_; // the block's slot
+};
+
+/// The clip coordinates of camera coordinates k at depth `depth` (clip_of of css_of(k), without the division: a
+/// corner behind the eye is the rasteriser's to cut).
+float4 light_clip(FrameCamera c, float3 k, float depth) {
+    float sx = c.frame.z * c.device.x;
+    float sy = c.frame.z * c.device.y;
+    float2 n = {(c.right.w * sx - 1.0f) * k.z + c.forward.w * sx * k.x,
+                (c.up.w * sy - 1.0f) * k.z - c.forward.w * sy * k.y};
+    float2 t = {c.turn.x * n.x + c.turn.y * n.y, c.turn.z * n.x + c.turn.w * n.y};
+    float4 clip = {t.x, t.y, depth * k.z, k.z};
+    return clip;
+}
+
+/// A lit block of a map: instance i's quad on the ground at painter slot push.mode.y.
+[shader("vertex")]
+LightOut light_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint head = push.mode.z;
+    uint block = words[words[head + 7u] + instance];
+    uint t = head + LIGHT_HEAD_WORDS + (block >> 24u) * LIGHT_TILE_WORDS;
+    float2 corner = quad_corners[vertex] * 0.5f + 0.5f;
+    float2 uv = (float2(float((block >> 12u) & 63u), float((block >> 18u) & 63u)) + corner) * float(LIGHT_BLOCK);
+    float3 k = float3(asfloat(words[t]), asfloat(words[t + 1u]), asfloat(words[t + 2u])) +
+               float3(asfloat(words[t + 3u]), asfloat(words[t + 4u]), asfloat(words[t + 5u])) * uv.x +
+               float3(asfloat(words[t + 6u]), asfloat(words[t + 7u]), asfloat(words[t + 8u])) * uv.y;
+    LightOut o;
+    o.position = light_clip(frame.camera, k, painter_depth(frame.camera, push.mode.y));
+    // the block's own texels are the slot's from 1 to 32, so its edge lies half a texel past texel 0's centre
+    o.at = corner * float(LIGHT_BLOCK) + 0.5f;
+    o.slot = block & 0xFFFu;
+    return o;
+}
 
 /// Texel (x, z) of slot `slot` (the block's own from 1 to 32): the lamps' alpha and the open places'.
 float2 light_texel(uint slot, int2 at) {
@@ -2348,41 +2386,18 @@ float3 light_colour(float a, float4 foot, float4 mid, float4 edge) {
     return lerp(edge.rgb, mid.rgb, saturate(a / max(mid.a, 1.0e-6f)));
 }
 
-/// The night's light at the pixel's centre: where its ray meets the ground, each map's two alphas there (between its
-/// texels' centres), the maps over one another; the lamps' light in their pool's colours, then the open places' over
-/// it, premultiplied. Nothing where no light reaches.
+/// The night's light where the pixel's centre lies on the block: the two alphas between the four texel centres about
+/// it (the block's neighbours' texels among them); the lamps' light in their pool's colours, then the open places'
+/// over it, premultiplied. Nothing where no light reaches.
 [shader("fragment")]
-ColourOut light_fs(ScreenOut v) {
-    float3 css = float3(css_of_output(frame.camera, v.position.xy), 1.0f);
-    uint head = push.mode.z;
-    uint count = words[head];
-    float2 dark = float2(1.0f, 1.0f);
-    for (uint i = 0u; i < count; ++i) {
-        uint t = head + LIGHT_HEAD_WORDS + i * LIGHT_TILE_WORDS;
-        float3 g = float3(
-            dot(float3(asfloat(words[t]), asfloat(words[t + 1u]), asfloat(words[t + 2u])), css),
-            dot(float3(asfloat(words[t + 3u]), asfloat(words[t + 4u]), asfloat(words[t + 5u])), css),
-            dot(float3(asfloat(words[t + 6u]), asfloat(words[t + 7u]), asfloat(words[t + 8u])), css));
-        if (!(g.z > 0.0f)) continue; // over the horizon
-        float2 q = g.xy / g.z;
-        int2 blocks = int2(int(words[t + 9u]), int(words[t + 10u]));
-        if (!(q.x >= 0.0f && q.y >= 0.0f && q.x < float(blocks.x * LIGHT_BLOCK) && q.y < float(blocks.y * LIGHT_BLOCK))) {
-            continue;
-        }
-        int2 b = int2(q) / LIGHT_BLOCK;
-        uint place = words[words[t + 11u] + uint(b.y * blocks.x + b.x)];
-        if (place == 0u) continue;
-        // between the four texel centres about it, the block's neighbours' texels among them
-        float2 s = q - float2(b * LIGHT_BLOCK) + 0.5f;
-        int2 s0 = int2(floor(s));
-        float2 f = s - float2(s0);
-        float2 a = lerp(lerp(light_texel(place - 1u, s0), light_texel(place - 1u, s0 + int2(1, 0)), f.x),
-                        lerp(light_texel(place - 1u, s0 + int2(0, 1)), light_texel(place - 1u, s0 + int2(1, 1)), f.x),
-                        f.y);
-        dark *= 1.0f - a;
-    }
-    float2 a = 1.0f - dark;
+ColourOut light_fs(LightOut v) {
+    float2 s = clamp(v.at, 0.0f, float(LIGHT_SLOT) - 1.0f);
+    int2 s0 = min(int2(floor(s)), int2(LIGHT_SLOT - 2, LIGHT_SLOT - 2));
+    float2 f = s - float2(s0);
+    float2 a = lerp(lerp(light_texel(v.slot, s0), light_texel(v.slot, s0 + int2(1, 0)), f.x),
+                    lerp(light_texel(v.slot, s0 + int2(0, 1)), light_texel(v.slot, s0 + int2(1, 1)), f.x), f.y);
     if (!(a.x > 0.0f || a.y > 0.0f)) discard;
+    uint head = push.mode.z;
     float3 lamps = light_colour(a.x, unpack(words[head + 1u]), unpack(words[head + 2u]), unpack(words[head + 3u]));
     float3 open = light_colour(a.y, unpack(words[head + 4u]), unpack(words[head + 5u]), unpack(words[head + 6u]));
     ColourOut o;

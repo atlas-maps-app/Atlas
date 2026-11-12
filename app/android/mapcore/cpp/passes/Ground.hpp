@@ -1396,9 +1396,14 @@ private:
     void emit_pools(twin::Stream& out) const;
     [[nodiscard]] gpu::Result<void> make_pool_pipelines(const frame::PassContext& context, Pipelines& p) const;
     /// The night's light by the maps (LightMap.cpp): which tiles' maps the frame draws, asking the baker for those it
-    /// lacks; their words (each map's place on the screen and its blocks' slots) with their blocks into the buffer;
-    /// their one draw at the lamps' pools' slot.
+    /// lacks; their words (each map's grid in camera coordinates, a word a lit block) with their blocks into the buffer;
+    /// their draw at the lamps' pools' slot, a quad a lit block.
     void decide_light(const frame::FrameState& state);
+    /// Whether the frame asks for the maps (the camera's flag at night, a kind of light drawn), and whether a frame
+    /// that would keep the last one's decisions must decide the light again: the answer changed, a bake is done, a map
+    /// waits for room, or the moment the open places' hours were read at has passed.
+    [[nodiscard]] bool light_asked(const frame::FrameState& state) const noexcept;
+    [[nodiscard]] bool light_due(const frame::FrameState& state) const;
     void write_light(std::vector<std::uint32_t>& words, const frame::FrameState& state);
     void record_light(const frame::Recording& r);
     [[nodiscard]] gpu::Result<void> make_light_pipelines(const frame::PassContext& context, Pipelines& p) const;
@@ -1472,6 +1477,7 @@ private:
     bool no_wind_glints_ = false;
     bool no_clouds_ = false;
     bool no_light_ = false;
+    bool light_was_asked_ = false; ///< the last decision's light_asked
     std::unique_ptr<LightMaps> light_; ///< the night's light's maps, from the first frame that asks for them
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
@@ -1757,7 +1763,7 @@ struct Ground::Words {
     std::uint32_t glint_lists = 0;
     std::uint32_t lamp_pools = 0; ///< the lamps' pools' ellipses (four floats each), and how many
     std::uint32_t lamp_pool_count = 0;
-    std::uint32_t light = 0; ///< the light maps' words (ground.slang's LIGHT_ layout), and how many maps
+    std::uint32_t light = 0; ///< the light maps' words (ground.slang's LIGHT_ layout), and how many lit blocks
     std::uint32_t light_count = 0;
     std::uint32_t lit_runs = 0;     ///< the lit streets' runs' records (ground.slang's LIT_RUN_WORDS each)
     std::uint32_t lit_segments = 0; ///< their segments' instance words (run << 14 | segment), and how many

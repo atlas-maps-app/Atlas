@@ -18,7 +18,6 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
-#include <optional>
 #include <span>
 #include <vector>
 
@@ -61,26 +60,9 @@ struct Key {
         .packed();
 }
 
-/// A map's words in the frame's (ground.slang's LIGHT_TILE_WORDS): the screen's CSS px to its grid's texels (nine
-/// floats, row by row), its blocks across and down, and where its blocks' slots lie.
+/// A map's words in the frame's (ground.slang's LIGHT_TILE_WORDS): the camera coordinates of its grid's corner and of
+/// a texel's step across and down (nine floats), and three spare.
 constexpr std::uint32_t light_tile_words = 12;
-
-/// The inverse of 3 × 3 `m` (row by row), scaled so that its largest number is 1; nothing where it has none.
-[[nodiscard]] std::optional<std::array<double, 9>> inverse(const std::array<double, 9>& m) noexcept {
-    const std::array<double, 9> a{(m[4] * m[8]) - (m[5] * m[7]), (m[2] * m[7]) - (m[1] * m[8]),
-                                  (m[1] * m[5]) - (m[2] * m[4]), (m[5] * m[6]) - (m[3] * m[8]),
-                                  (m[0] * m[8]) - (m[2] * m[6]), (m[2] * m[3]) - (m[0] * m[5]),
-                                  (m[3] * m[7]) - (m[4] * m[6]), (m[1] * m[6]) - (m[0] * m[7]),
-                                  (m[0] * m[4]) - (m[1] * m[3])};
-    const double det = (m[0] * a[0]) + (m[1] * a[3]) + (m[2] * a[6]);
-    if (!(std::abs(det) > 0)) return std::nullopt;
-    double most = 0;
-    for (const double v : a) most = std::max(most, std::abs(v / det));
-    if (!(most > 0) || !std::isfinite(most)) return std::nullopt;
-    std::array<double, 9> out{};
-    for (std::size_t i = 0; i < 9; ++i) out[i] = (a[i] / det) / most;
-    return out;
-}
 
 } // namespace
 
@@ -112,19 +94,36 @@ bool Ground::fading() const noexcept {
     });
 }
 
+bool Ground::light_asked(const frame::FrameState& state) const noexcept {
+    const GroundFrame& f = frame_;
+    const bool lamps_on = !no_pools_ && !f.out(style::camera_part::lamp_pools);
+    const bool open_on = state.theme.has(style::theme_flag::daylight) && !f.out(style::camera_part::open_glows);
+    return f.night && !no_light_ && !only_setts_ && !f.tiles.empty() && state.view.has_value() &&
+           state.camera.has(style::camera_flag::light_cascades) && (lamps_on || open_on);
+}
+
+bool Ground::light_due(const frame::FrameState& state) const {
+    const bool asked = light_asked(state);
+    if (asked != light_was_asked_) return true;
+    if (!asked) return false;
+    if (light_ == nullptr || light_->waiting || light_->baker.ready() > 0) return true;
+    const style::ThemeBlock& th = state.theme;
+    return light_->moment != std::array<int, 5>{th.year, th.month, th.day, th.hour, th.minute};
+}
+
 void Ground::decide_light(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.light_tiles.clear();
     f.light_mapped.assign(f.tiles.size(), 0);
     const bool lamps_on = !no_pools_ && !f.out(style::camera_part::lamp_pools);
     const bool open_on = state.theme.has(style::theme_flag::daylight) && !f.out(style::camera_part::open_glows);
-    if (!f.night || no_light_ || only_setts_ || f.tiles.empty() || !state.view ||
-        !state.camera.has(style::camera_flag::light_cascades) || (!lamps_on && !open_on)) {
-        return;
-    }
+    light_was_asked_ = light_asked(state);
+    if (!light_was_asked_) return;
     if (light_ == nullptr) light_ = std::make_unique<LightMaps>();
     LightMaps& l = *light_;
     ++l.frame;
+    l.moment = {state.theme.year, state.theme.month, state.theme.day, state.theme.hour, state.theme.minute};
+    l.waiting = false;
     // the slots let go long enough ago are free again
     while (!l.resting.empty() && l.resting.front().first + light_slot_rest <= l.frame) {
         l.free.push_back(l.resting.front().second);
@@ -171,7 +170,10 @@ void Ground::decide_light(const frame::FrameState& state) {
         const double dx = std::max({box[0] - tx, 0.0, tx - box[2]});
         const double dz = std::max({box[1] - tz, 0.0, tz - box[3]});
         const double d = std::hypot(dx, dz);
-        if (d <= light_far) near.push_back({.distance = d, .tile = ti});
+        // (a block's word holds its column and row in six bits each, its map in eight)
+        const bool fits = box[2] - box[0] + (2.0 * light_margin) < 63.0 * light_block &&
+                          box[3] - box[1] + (2.0 * light_margin) < 63.0 * light_block;
+        if (d <= light_far && fits && near.size() < 255) near.push_back({.distance = d, .tile = ti});
     }
     std::ranges::stable_sort(near, {}, &Near::distance);
     for (const Near& n : near) {
@@ -267,7 +269,11 @@ void Ground::decide_light(const frame::FrameState& state) {
                     if (other->seen != l.frame && !other->slots.empty()) let_go(*other);
                 }
             }
-            if (l.free.size() < lit) continue; // none yet: its lamps keep their ellipses this frame
+            if (l.free.size() < lit) {
+                // none yet: its lamps keep their ellipses this frame
+                l.waiting = true;
+                continue;
+            }
             e.slots.assign(l.free.end() - lit, l.free.end());
             l.free.resize(l.free.size() - lit);
             e.uploaded = false;
@@ -323,7 +329,9 @@ void Ground::write_light(std::vector<std::uint32_t>& words, const frame::FrameSt
         wrote = true;
     }
     if (wrote) p.light_blocks.flush();
-    // the head, eight words (ground.slang's LIGHT_HEAD_WORDS): the count, the two pools' stops and a spare
+    // the head, eight words (ground.slang's LIGHT_HEAD_WORDS): the maps' count, the two pools' stops, and where the
+    // blocks' words begin
+    const std::size_t head = words.size();
     words.push_back(static_cast<std::uint32_t>(f.light_tiles.size()));
     const std::array<fx::LightPool, fx::light_kinds>& pools = fx::light_pools;
     words.push_back(folded(0xFFB45EU, pools[fx::light_lamp].foot));
@@ -333,50 +341,41 @@ void Ground::write_light(std::vector<std::uint32_t>& words, const frame::FrameSt
     words.push_back(folded(open_pool_colours[1], open_pool_opacities[1]));
     words.push_back(folded(open_pool_colours[2], open_pool_opacities[2]));
     words.push_back(0U);
-    const std::size_t tiles_at = words.size();
-    words.resize(words.size() + (f.light_tiles.size() * light_tile_words), 0U);
-    std::uint32_t drawn = 0;
+    // each map's grid in camera coordinates: texel (u, v) is the frame's point (x0 + u, 0, z0 + v), k0 + u ku + v kv
     for (const GroundFrame::LightDrawn& d : f.light_tiles) {
-        const DrawnTile& t = f.tiles[d.tile];
+        const view::Camera& cam = *f.tiles[d.tile].cam;
         const LightTile& map = *d.entry->map;
-        // the grid's texel (u, v) is the frame's point (x0 + u, 0, z0 + v): its camera coordinates are k0 + u ku +
-        // v kv, and the screen's CSS point of camera coordinates k is c + (k.x ex + k.y ey) / k.z
-        const view::Camera& cam = *t.cam;
         const view::Vec3 k0 = cam.cam({map.x0, 0.0, map.z0});
         const view::Vec3 k1 = cam.cam({map.x0 + 1.0, 0.0, map.z0});
         const view::Vec3 k2 = cam.cam({map.x0, 0.0, map.z0 + 1.0});
-        const view::Vec3 ku{k1.x - k0.x, k1.y - k0.y, k1.z - k0.z};
-        const view::Vec3 kv{k2.x - k0.x, k2.y - k0.y, k2.z - k0.z};
-        const view::Vec2 c = cam.pc({0.0, 0.0, 1.0});
-        const view::Vec2 px = cam.pc({1.0, 0.0, 1.0});
-        const view::Vec2 py = cam.pc({0.0, 1.0, 1.0});
-        const view::Vec2 ex{px.x - c.x, px.y - c.y};
-        const view::Vec2 ey{py.x - c.x, py.y - c.y};
-        const auto row = [&](const view::Vec3& k) {
-            return std::array<double, 3>{(c.x * k.z) + (ex.x * k.x) + (ey.x * k.y),
-                                         (c.y * k.z) + (ex.y * k.x) + (ey.y * k.y), k.z};
-        };
-        const std::array<double, 3> mu = row(ku);
-        const std::array<double, 3> mv = row(kv);
-        const std::array<double, 3> m0 = row(k0);
-        // (css · w, w) = M (u, v, 1), so (u, v, 1) / k.z = M⁻¹ (css, 1): its third number is over 0 ahead of the eye
-        const auto h = inverse({mu[0], mv[0], m0[0], mu[1], mv[1], m0[1], mu[2], mv[2], m0[2]});
-        if (!h) continue;
-        const std::size_t at = tiles_at + (std::size_t{drawn} * light_tile_words);
-        for (std::size_t i = 0; i < 9; ++i) words[at + i] = std::bit_cast<std::uint32_t>(static_cast<float>((*h)[i]));
-        words[at + 9] = static_cast<std::uint32_t>(map.blocks_x);
-        words[at + 10] = static_cast<std::uint32_t>(map.blocks_z);
-        words[at + 11] = static_cast<std::uint32_t>(words.size());
-        for (const std::uint16_t place : map.index)
-            words.push_back(place == 0 ? 0U : d.entry->slots[place - 1U] + 1U);
-        ++drawn;
+        for (const double v : {k0.x, k0.y, k0.z, k1.x - k0.x, k1.y - k0.y, k1.z - k0.z, k2.x - k0.x, k2.y - k0.y,
+                               k2.z - k0.z}) {
+            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(v)));
+        }
+        words.insert(words.end(), light_tile_words - 9, 0U);
     }
-    words[w.light] = drawn;
-    w.light_count = drawn;
+    // a word a lit block: its slot, its column and row, its map
+    words[head + 7] = static_cast<std::uint32_t>(words.size());
+    std::uint32_t blocks = 0;
+    for (std::uint32_t m = 0; m < f.light_tiles.size(); ++m) {
+        const LightEntry& e = *f.light_tiles[m].entry;
+        const LightTile& map = *e.map;
+        for (std::int32_t bz = 0; bz < map.blocks_z; ++bz) {
+            for (std::int32_t bx = 0; bx < map.blocks_x; ++bx) {
+                const std::uint16_t place = map.index[(static_cast<std::size_t>(bz) * static_cast<std::size_t>(map.blocks_x)) +
+                                                      static_cast<std::size_t>(bx)];
+                if (place == 0) continue;
+                words.push_back(e.slots[place - 1U] | (static_cast<std::uint32_t>(bx) << 12U) |
+                                (static_cast<std::uint32_t>(bz) << 18U) | (m << 24U));
+                ++blocks;
+            }
+        }
+    }
+    w.light_count = blocks;
 }
 
 gpu::Result<void> Ground::make_light_pipelines(const frame::PassContext& context, Pipelines& p) const {
-    gpu::GraphicsDesc light = ground_desc(context, p, "ground light maps", "screen_vs", "light_fs");
+    gpu::GraphicsDesc light = ground_desc(context, p, "ground light maps", "light_vs", "light_fs");
     translucent(light);
     ATLAS_GPU_LET(made, frame::make_pipeline(context, light, frame::Overdraw::translucent));
     p.light = std::move(made);
@@ -394,8 +393,8 @@ void Ground::record_light(const frame::Recording& r) {
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     pc.mode = {0U, slot(geo::group::pools, 0, geo::pools_sub::lamps), w.light, 0U};
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
-    cmd.draw(3, 1, 0, 0);
-    r.counters.draw("ground light maps", 1);
+    cmd.draw(6, w.light_count, 0, 0);
+    r.counters.draw("ground light maps", std::uint64_t{w.light_count} * 2, w.light_count);
 }
 
 } // namespace atlas::passes

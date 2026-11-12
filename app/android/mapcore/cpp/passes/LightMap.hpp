@@ -12,8 +12,8 @@
 // the map as blocks of 32 m, those some light reaches alone: each texel the two kinds' alphas, a byte each, with a
 // texel of its neighbours about it for the frame's bilinear read.
 //
-// The frame draws the maps of the tiles near its target in one pass at the lamps' pools' slot (light_fs), reading the
-// blocks from a buffer of slots the pass fills as bakes arrive (passes/Ground.hpp's LightMaps); the lamps of a tile
+// The frame draws the maps of the tiles near its target at the lamps' pools' slot, a quad on the ground a lit block
+// (light_vs, light_fs), reading the blocks from a buffer of slots the pass fills as bakes arrive (passes/Ground.hpp's LightMaps); the lamps of a tile
 // whose map is not there yet are drawn as the renders' ellipses meanwhile, and so are those farther than light_far.
 #pragma once
 
@@ -99,8 +99,9 @@ public:
     void submit(std::uint64_t ticket, LightJob job);
     /// The bakes done since the last call, each with its ticket.
     [[nodiscard]] std::vector<std::pair<std::uint64_t, std::shared_ptr<const LightTile>>> take();
-    /// The jobs asked for whose results have not been taken.
+    /// The jobs asked for whose results have not been taken, and those of them that are done.
     [[nodiscard]] std::size_t pending() const;
+    [[nodiscard]] std::size_t ready() const;
     /// Waits until every job asked for is baked (a test's).
     void wait() const;
 
@@ -163,6 +164,10 @@ struct LightMaps {
     std::deque<std::pair<std::uint64_t, std::uint32_t>> resting; ///< those let go, with the frame that let them go
     std::uint64_t frame = 0;
     std::uint64_t tickets = 0;
+    /// The moment the last decision read the open places' hours at (year, month, day, hour, minute), and whether it
+    /// left a map without room for its blocks: with a bake done, what makes a frame at rest decide the light again.
+    std::array<int, 5> moment{};
+    bool waiting = false;
     LightStats stats;
 
     LightMaps();

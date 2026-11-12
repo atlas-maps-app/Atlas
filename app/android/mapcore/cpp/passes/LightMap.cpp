@@ -214,6 +214,11 @@ std::size_t LightBaker::pending() const {
     return jobs_.size() + baking_ + done_.size();
 }
 
+std::size_t LightBaker::ready() const {
+    const std::scoped_lock lock(mutex_);
+    return done_.size();
+}
+
 void LightBaker::wait() const {
     std::unique_lock lock(mutex_);
     changed_.wait(lock, [this] { return jobs_.empty() && baking_ == 0; });
