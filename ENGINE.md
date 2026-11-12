@@ -1384,9 +1384,11 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
      - Left:
        - **The app's side (canvasgoes):** Maps keeps a country's world with its tiles (world-keep.json's heads and chunks, held out of the world cache's LRU while the country is kept, replaced with the next world).
        - **A country larger than the Netherlands** building its windows' step in shards of frame cells (none named yet).
-       - **The pitched views of the Netherlands from 60 to 1,000 km, drawn whole over the world alone** (the core's):
-         - In World run 43263209015, 16 of these 20 views stopped after 13 draws with 1 to 11 world tiles still wanted, while 9 to 22 drew.
-         - The likely cause: `WorldTiles::make_room` lets go only of tiles the frame did not draw. So where a frame's own tiles fill the world's heap (a sixth of the geometry heaps' budget: 42.7 MB on the host, 21 MB at 128 MB), the rest find no room, and coarser ancestors stand in for them on every frame.
+       - **The pitched views of the Netherlands from 60 to 1,000 km, drawn whole over the world alone** (the core's; an engine fix, as the phone would show it online as offline):
+         - In World run 43263209015, 16 of these 20 views stopped after 13 draws over each view's own walk (what the whole world draws there), with 1 to 11 world tiles still wanted while 9 to 22 drew: amersfoort, groningen east and maastricht at 60, 120, 250 and 500 km, maastricht at 1,000 km, and den helder at 120, 250 and 500 km.
+         - What the phone shows there: no hole, the horizon included (no cell bare in any of them), but a coarser ancestor in place of each tile still wanted, so 1 to 11 of the frame's tiles stay less detailed than in a whole frame. The host's budget is that of the user's PowerVR (256 MB, 128 MB a buffer), so the phone's world heap is the same 42.7 MB.
+         - And if those tiles find no room, the map never settles at rest: a build without room still wakes the next vsync (`WorldTiles`' wake, the bridge's `wake`), whose frame asks for the tile again. So the worker decodes and builds the same tiles over and over while the view holds still, with a frame drawn after each build.
+         - The likely cause: `WorldTiles::make_room` lets go only of tiles the frame did not draw. So where a frame's own tiles and the pinned L0 to L3 fill the world's heap (a sixth of the geometry heaps' budget, in one buffer that never grows: 42.7 MB at 256 MB, 21 MB at 128 MB), or no free piece of it is large enough for a tile, the rest find no room. This is not measured: the world's notes print neither its heap's fill nor its failed builds, so the fix begins by printing both.
          - Planet-2's coarse tiles are heavy (the Netherlands' L8 average 520 KB stored).
          - Once the core draws these views whole, their `pixels` go back to the frames' check.
   12. Tag an alpha.
