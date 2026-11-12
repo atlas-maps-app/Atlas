@@ -1025,6 +1025,9 @@ jobs:
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
       # the references' views, which WorldPackRefsTest draws
       VIEWS: app/android/mapcorecheck/src/test/resources/likeness/world-refs.json
+      # the world they are drawn over: a version's frames hold the engine over the world they are of alone (another
+      # month's data draws other pixels), so WorldPackRefsTest proposes another world's frames without holding them
+      ATLAS_WORLD_REFS_RELEASE: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -1254,7 +1257,9 @@ jobs:
         # three edges looking out of it, each as steep as the app allows there), first over each view's own walk (what
         # the whole world draws there), then over the tiles world-keep keeps for it and the globe alone: a frame not
         # drawn whole, or one the kept tiles draw otherwise than the walk's, fails the job (a pack cut to its kept tiles
-        # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell)
+        # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
+        # A check of its own: it runs where the references' frames above moved too, once the kept tiles are cut
+        if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
         working-directory: app/android
         env:
           ATLAS_WORLD_REFS_VIEWS: world-keep.json
