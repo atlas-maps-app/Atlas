@@ -58,6 +58,13 @@ constexpr double resident_share = 0.85;
 /// The bytes a piece holds past a tile's geometry, for its range's alignment (16): one that large holds it wherever
 /// its offset lies.
 constexpr vk::DeviceSize room_slack = 16;
+/// A tile no piece holds whole lies in at most this many parts (each a draw of its fills and one of its lines: a
+/// frame's draws stay few), each in a piece of part_least bytes or more, of which part_slack may stay free: its
+/// offset's alignment and the end of a list's last word that does not fit (a triangle's 16 bytes, a segment's 12, a
+/// light's 8).
+constexpr std::size_t parts_most = 16;
+constexpr vk::DeviceSize part_least = 256;
+constexpr vk::DeviceSize part_slack = 32;
 /// The widths of the lines the renders' terrain draws none of: a runway (its usual 45 m) and a river.
 constexpr double runway_width = 45.0;
 constexpr double river_width = 10.0;
@@ -66,6 +73,18 @@ constexpr double rail_width = 3.0;
 
 [[nodiscard]] double ms_since(std::chrono::steady_clock::time_point t) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+
+/// Whether the heap's pieces free (their sizes: Heaps::free_pieces, pieces_with) hold `bytes` of a tile's geometry as
+/// WorldTiles::place places it: whole in one, else in parts in the largest parts_most of them, each less part_slack.
+[[nodiscard]] bool holds(std::vector<vk::DeviceSize> pieces, std::uint32_t bytes) {
+    std::ranges::sort(pieces, std::greater<>{});
+    if (!pieces.empty() && pieces.front() >= vk::DeviceSize{bytes} + room_slack) return true;
+    vk::DeviceSize room = 0;
+    for (std::size_t i = 0; i < pieces.size() && i < parts_most && pieces[i] >= part_least + part_slack; ++i) {
+        room += pieces[i] - part_slack;
+    }
+    return room >= bytes;
 }
 
 [[nodiscard]] bool is_world(const tl::StorePack& p) noexcept {
@@ -629,10 +648,14 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
                                                             vk::DeviceSize initial, vk::DeviceSize budget) {
     // one buffer of `initial` bytes, doubled up to the budget once a tile's range lies beyond it (Heaps::allocate on
     // the worker); a frame binds it as it is when the frame begins (update), the one it replaced kept until the
-    // frames bound to it have finished
+    // frames bound to it have finished. Each doubling within the device's budget too: one it refuses (its memory, or
+    // the driver's budget where it reports one) ends the budget at the buffer, and the tiles that find no room then
+    // wait for the room it has, held back where none comes (update)
     const vk::DeviceSize bytes = std::max<vk::DeviceSize>(budget & ~vk::DeviceSize{15}, 16);
     const vk::DeviceSize first = std::clamp<vk::DeviceSize>(initial & ~vk::DeviceSize{15}, 16, bytes);
-    ATLAS_GPU_LET(heaps, Heaps::create(device, HeapBudget{.initial = first, .total = bytes, .binding = 0}));
+    ATLAS_GPU_LET(
+        heaps,
+        Heaps::create(device, HeapBudget{.initial = first, .total = bytes, .binding = 0, .within_device = true}));
     std::unique_ptr<WorldTiles> w(new WorldTiles(store, std::move(heaps))); // NOLINT(cppcoreguidelines-owning-memory)
     // the poles' caps, in the heap for good from the first frame on
     for (std::size_t c = 0; c < w->caps_.size(); ++c) {
@@ -645,7 +668,7 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
         }
         w->heaps_->write(*range, std::as_bytes(std::span(g.words)));
         auto cap = std::make_unique<WorldTile>();
-        cap->range = *range;
+        cap->parts.push_back({.range = *range, .triangles = g.triangles});
         cap->triangles = g.triangles;
         cap->pinned = true;
         cap->cap = c == 0 ? std::int8_t{1} : std::int8_t{-1};
@@ -658,7 +681,7 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
         if (const auto range = w->heaps_->allocate(HeapKind::ground, blank_bytes, 16, HeapEnd::low); range) {
             w->heaps_->write(*range, std::as_bytes(std::span(g.words)));
             auto blank = std::make_unique<WorldTile>();
-            blank->range = *range;
+            blank->parts.push_back({.range = *range, .triangles = g.triangles});
             blank->triangles = g.triangles;
             blank->pinned = true;
             blank->blank = true;
@@ -691,12 +714,14 @@ WorldStats WorldTiles::stats() const {
     WorldStats s = stats_;
     s.resident = resident_.size();
     for (const auto& [key, t] : resident_) {
-        s.bytes += t->range.size;
+        const vk::DeviceSize bytes = t->bytes();
+        s.parts += t->parts.size();
+        s.bytes += bytes;
         s.triangles += t->triangles;
-        if (t->drawn == number_) s.drawn_bytes += t->range.size;
-        if (t->pinned) s.pinned_bytes += t->range.size;
+        if (t->drawn == number_) s.drawn_bytes += bytes;
+        if (t->pinned) s.pinned_bytes += bytes;
     }
-    s.capacity = heaps_->budget().total;
+    s.capacity = heaps_->total();
     s.buffer = heaps_->capacity();
     s.free = heaps_->free_bytes();
     s.largest_free = heaps_->largest_free(HeapKind::ground);
@@ -710,6 +735,10 @@ void WorldTiles::wait_idle() {
     std::unique_lock lock(mutex_);
     idle_cv_.wait(lock, [this] { return queue_.empty() && building_ == ~std::uint64_t{0}; });
 }
+
+void WorldTiles::end_budget() { heaps_->end_budget(); }
+
+void WorldTiles::fragment_for_tests(vk::DeviceSize piece) { heaps_->fragment_for_tests(HeapKind::ground, piece, 16); }
 
 std::vector<WorldWant> WorldTiles::wants() const {
     const std::scoped_lock lock(mutex_);
@@ -853,23 +882,90 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
     bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
-    auto range = heaps_->allocate(HeapKind::ground, bytes, 16, HeapEnd::low);
-    if (!range) {
+    if (!place(g, *out)) {
         no_room = true;
         return nullptr;
     }
-    heaps_->write(*range, std::as_bytes(std::span(g.words)));
     heaps_->flush();
-    out->range = *range;
     return out;
 }
 
+bool WorldTiles::place(const WorldGeometry& g, WorldTile& t) {
+    // whole, where a piece holds it (first fit, as before parts)
+    const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
+    if (const auto range = heaps_->allocate(HeapKind::ground, bytes, 16, HeapEnd::low); range) {
+        heaps_->write(*range, std::as_bytes(std::span(g.words)));
+        t.parts.push_back(
+            {.range = *range, .triangles = g.triangles, .segments = g.segments, .coast = g.coast, .lights = g.lights});
+        return true;
+    }
+    // else in parts: each in the largest piece free now (the worker alone places the world's ranges, so it holds
+    // the part), as much of the tile's lists as it holds whatever its offset, in their order: its triangles (their
+    // vertices' three words and their own word), then its segments, then its lights, each whole. A growth the device
+    // refuses ends the budget at the buffer, whose pieces are then looked at again
+    const std::span<const std::uint32_t> words(g.words);
+    const std::size_t at_words = std::size_t{3} * g.triangles;
+    const std::size_t at_segments = std::size_t{4} * g.triangles;
+    const std::size_t at_lights = at_segments + (std::size_t{3} * g.segments);
+    const std::uint32_t coast_from = g.segments - g.coast;
+    std::uint32_t triangles = 0;
+    std::uint32_t segments = 0;
+    std::uint32_t lights = 0;
+    int refused = 0;
+    while ((triangles < g.triangles || segments < g.segments || lights < g.lights) && t.parts.size() < parts_most) {
+        const vk::DeviceSize largest = heaps_->largest_free(HeapKind::ground);
+        if (largest < part_least + part_slack) break;
+        vk::DeviceSize room = largest - (room_slack - 1);
+        const auto take = [&room](std::uint32_t left, vk::DeviceSize each) {
+            const auto n = static_cast<std::uint32_t>(std::min<vk::DeviceSize>(left, room / each));
+            room -= n * each;
+            return n;
+        };
+        const std::uint32_t t_n = take(g.triangles - triangles, 16);
+        const std::uint32_t s_n = take(g.segments - segments, 12);
+        const std::uint32_t l_n = take(g.lights - lights, 8);
+        const std::uint32_t part_bytes = (16 * t_n) + (12 * s_n) + (8 * l_n);
+        const auto range = heaps_->allocate(HeapKind::ground, part_bytes, 16, HeapEnd::low);
+        if (!range) {
+            if (++refused > 1) break;
+            continue;
+        }
+        {
+            const Heaps::Writer writer = heaps_->writer(*range);
+            const std::span<std::byte> to = writer.bytes();
+            std::size_t at = 0;
+            const auto copy = [&](std::size_t from, std::size_t count) {
+                const std::span<const std::byte> part = std::as_bytes(words.subspan(from, count));
+                std::ranges::copy(part, to.subspan(at).begin());
+                at += part.size();
+            };
+            copy(std::size_t{3} * triangles, std::size_t{3} * t_n); // its triangles' vertices
+            copy(at_words + triangles, t_n);                        // their words
+            copy(at_segments + (std::size_t{3} * segments), std::size_t{3} * s_n);
+            copy(at_lights + (std::size_t{2} * lights), std::size_t{2} * l_n);
+        }
+        // its coast's segments: those of the tile's last g.coast among its own, the last of them
+        const std::uint32_t end = segments + s_n;
+        const std::uint32_t coast = end > std::max(segments, coast_from) ? end - std::max(segments, coast_from) : 0;
+        t.parts.push_back({.range = *range, .triangles = t_n, .segments = s_n, .coast = coast, .lights = l_n});
+        triangles += t_n;
+        segments += s_n;
+        lights += l_n;
+    }
+    if (triangles == g.triangles && segments == g.segments && lights == g.lights) return true;
+    for (const WorldPart& p : t.parts) heaps_->give_back(p.range);
+    t.parts.clear();
+    return false;
+}
+
 void WorldTiles::let_go(const WorldTile& t) {
-    if (!t.range) return;
-    if (t.ever_drawn) {
-        heaps_->retire(t.range, t.drawn); // once the last frame that drew it has finished
-    } else {
-        heaps_->give_back(t.range);
+    for (const WorldPart& p : t.parts) {
+        if (!p.range) continue;
+        if (t.ever_drawn) {
+            heaps_->retire(p.range, t.drawn); // once the last frame that drew it has finished
+        } else {
+            heaps_->give_back(p.range);
+        }
     }
 }
 
@@ -884,52 +980,38 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
     vk::DeviceSize freed = 0;
     for (WorldTile* t : idle) {
         if (freed >= need) break;
-        freed += t->range.size;
+        freed += t->bytes();
         let_go(*t);
         resident_.erase(t->key.packed());
     }
 }
 
 WorldTiles::Piece WorldTiles::make_piece(std::uint32_t bytes, std::uint64_t number) {
-    const vk::DeviceSize need = vk::DeviceSize{bytes} + room_slack;
-    if (heaps_->largest_free(HeapKind::ground) >= need) return Piece::now;
+    if (holds(heaps_->free_pieces(HeapKind::ground), bytes)) return Piece::now;
     std::vector<HeapRange> back;
-    if (heaps_->largest_with(back, HeapKind::ground) >= need) return Piece::coming;
-    // the candidates: the tiles the frame does not draw, but the globe's pinned levels, in the keys' order
+    if (holds(heaps_->pieces_with(back, HeapKind::ground), bytes)) return Piece::coming;
+    // the candidates: the tiles the frame does not draw, but the globe's pinned levels, the least lately drawn first
+    // (in the keys' order on a tie), as make_room lets them go: in parts a tile takes the room their going makes
+    // wherever it lies
     std::vector<WorldTile*> idle;
     for (auto& [k, t] : resident_) {
         if (!t->pinned && t->drawn < number) idle.push_back(t.get());
     }
-    std::ranges::sort(idle, [](const WorldTile* a, const WorldTile* b) { return a->key.packed() < b->key.packed(); });
-    // each in turn the one that joins the largest piece (the fewest bytes of those as good), until a piece holds it
-    std::vector<bool> chosen(idle.size(), false);
-    std::vector<HeapRange> trial;
-    while (heaps_->largest_with(back, HeapKind::ground) < need) {
-        std::optional<std::size_t> best;
-        vk::DeviceSize best_piece = 0;
-        for (std::size_t i = 0; i < idle.size(); ++i) {
-            if (chosen[i]) continue;
-            trial = back;
-            trial.push_back(idle[i]->range);
-            const vk::DeviceSize piece = heaps_->joined_with(trial, HeapKind::ground);
-            if (!best || piece > best_piece || (piece == best_piece && idle[i]->range.size < idle[*best]->range.size)) {
-                best = i;
-                best_piece = piece;
-            }
-        }
-        if (!best) return Piece::none; // they cannot make one: none goes
-        chosen[*best] = true;
-        back.push_back(idle[*best]->range);
+    std::ranges::sort(idle, [](const WorldTile* a, const WorldTile* b) {
+        return a->drawn != b->drawn ? a->drawn < b->drawn : a->key.packed() < b->key.packed();
+    });
+    std::size_t chosen = 0;
+    while (!holds(heaps_->pieces_with(back, HeapKind::ground), bytes)) {
+        if (chosen == idle.size()) return Piece::none; // their going would not make it: none goes
+        for (const WorldPart& p : idle[chosen]->parts) back.push_back(p.range);
+        ++chosen;
     }
-    std::size_t gone = 0;
-    for (std::size_t i = 0; i < idle.size(); ++i) {
-        if (!chosen[i]) continue;
+    for (std::size_t i = 0; i < chosen; ++i) {
         const std::uint64_t k = idle[i]->key.packed();
         let_go(*idle[i]);
         resident_.erase(k);
-        ++gone;
     }
-    log::info("vk world: {} tiles let go for a piece of {} bytes, {} free in pieces of {} at most", gone, bytes,
+    log::info("vk world: {} tiles let go for room of {} bytes, {} free in pieces of {} at most", chosen, bytes,
               heaps_->free_bytes(), heaps_->largest_free(HeapKind::ground));
     return Piece::made;
 }
@@ -1167,7 +1249,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         }
         frame_.wanted = view_wanted.size();
         wanted.insert(wanted.begin(), view_wanted.begin(), view_wanted.end());
-        for (const std::uint64_t k : stand_ins) stand_in_bytes_ += resident_.at(k)->range.size;
+        for (const std::uint64_t k : stand_ins) stand_in_bytes_ += resident_.at(k)->bytes();
     }
     // a tile not drawn by this frame fades in again when it is next drawn
     for (auto& [k, t] : resident_) {
@@ -1177,15 +1259,16 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
     // share, so the tiles no frame draws go before it grows
     const vk::DeviceSize total = heaps_->capacity();
     vk::DeviceSize used = 0;
-    for (const auto& [k, t] : resident_) used += t->range.size;
+    for (const auto& [k, t] : resident_) used += t->bytes();
     const auto share = static_cast<vk::DeviceSize>(resident_share * static_cast<double>(total));
     if (used > share) make_room(used - share, number);
-    // and a tile whose build found no room is built again once a piece of the heap holds it, not before: built again
-    // each frame, each build asking for the next frame, the world's pitched views from 60 to 1,000 km over the
-    // Netherlands rebuilt their wanted tiles at rest (ENGINE.md step 11). Nearest first, the first that no piece holds
-    // has the tiles the frame does not draw let go of for one (make_piece) and waits while their bytes come back, the
-    // frames coming meanwhile, the others after it in their turn; where their going would not make one it is held
-    // back, its place drawn by its nearest resident ancestor, final, until the heap's pieces change
+    // and a tile whose build found no room is built again once the heap's pieces hold it, whole or in parts, not
+    // before: built again each frame, each build asking for the next frame, the world's pitched views from 60 to
+    // 1,000 km over the Netherlands rebuilt their wanted tiles at rest (ENGINE.md step 11). Nearest first, the first
+    // the pieces do not hold has the tiles the frame does not draw let go of for it (make_piece) and waits while their
+    // bytes come back, the frames coming meanwhile, the others after it in their turn; where their going would not
+    // make room it is held back, its place drawn by its nearest resident ancestor, final, until the heap's pieces
+    // change
     std::unordered_set<std::uint64_t> ready;
     const std::size_t view_count = frame_.wanted; // the view's of `wanted`, its first, those held back among them
     {
@@ -1210,7 +1293,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             const auto r = roomless.find(p);
             if (r == roomless.end()) continue; // never built, or built since: asked for as any
             const bool in_view = i < view_count;
-            if (heaps_->largest_free(HeapKind::ground) >= vk::DeviceSize{r->second} + room_slack) {
+            if (holds(heaps_->free_pieces(HeapKind::ground), r->second)) {
                 ready.insert(p);
                 room_waits_.erase(p);
                 continue;

@@ -43,7 +43,8 @@ namespace atlas::passes {
 /// The world pass.
 class World final : public frame::Pass {
 public:
-    /// One tile's draw: where its words lie and how it is placed (world.slang's WorldPush).
+    /// One tile's draw, or one part's of a tile in parts (scene::WorldPart): where its words lie and how it is placed
+    /// (world.slang's WorldPush). A tile's parts are drawn one after another, all their fills before their lines.
     struct Draw {
         std::array<float, 4> origin{};
         std::array<float, 4> scale{};
@@ -59,6 +60,7 @@ public:
         float fade = 1.0F;             ///< under 1 while the tile fades in (scene::WorldDraw::fade)
         std::uint8_t level = 0;        ///< its tile's level
         std::uint32_t lift = 0; ///< while it fades, its depth's lift above the world's (World.cpp's fading_depth)
+        std::uint32_t tile = 0; ///< its tile's place among the frame's: the same for each of a tile's parts
     };
 
     World() = default;
