@@ -56,7 +56,7 @@
       "model": "dtm",
       "resolution_m": 0.5,
       "read_m": 4,
-      "fill_m": 150,
+      "fill_m": 400,
       "feather_m": 1000,
       "licence": "CC0 1.0",
       "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/deed.nl",

@@ -6,7 +6,8 @@ package app.atlas.packer.heights
  * buildings, which a laser survey's terrain model leaves empty); beyond that the next source gives the sample, with the
  * offset between the two at the first one's edge feathered out over the feather distance (national datums differ by up
  * to a metre, and a surface model stands above a terrain model by tens of metres in forests); and where no source has a
- * sample it stands at 0 m (the open sea).
+ * sample it stands at 0 m (the open sea). The offset is taken where the fill ends: what the filled surface stands above
+ * the next source there, carried outward ring by ring and faded to nothing at the feather's end.
  *
  * Distances are counted in rings: a node's ring is how many steps, the diagonal ones too, lie between it and the first
  * source's nearest sample. A node of ring k takes the mean of its neighbours of ring k − 1, so a node's value depends
@@ -106,7 +107,9 @@ object Composite {
                     m++
                 }
                 filled[j] = (sum / m).toFloat()
-                offset[j] = (sumOffset / m).toFloat()
+                // within the fill the offset is the filled surface's own, so the next source meets it without a step
+                val under = if (k <= fill && nextSource != null && nextSource[j] >= 0) next?.get(j) ?: Float.NaN else Float.NaN
+                offset[j] = if (under.isNaN()) (sumOffset / m).toFloat() else filled[j] - under
             }
             val t = frontier
             frontier = nextFrontier

@@ -18,7 +18,7 @@ class Gdal(private val bin: File? = null) {
     private fun tool(name: String): String = bin?.let { File(it, name).path } ?: name
 
     /** Runs [name] with [args] (and [stdin]); what it wrote to its output, or an exception with what it said (its warnings are no part of its output). */
-    fun run(name: String, args: List<String>, stdin: String? = null, minutes: Long = 120): String {
+    fun run(name: String, args: List<String>, stdin: String? = null, minutes: Long = 120, env: Map<String, String> = emptyMap()): String {
         val errors = File.createTempFile("gdal", ".err")
         try {
             val p = try {
@@ -27,8 +27,7 @@ class Gdal(private val bin: File? = null) {
                     b.environment()["GDAL_HTTP_USERAGENT"] = Fetcher.USER_AGENT
                     b.environment()["GDAL_HTTP_MAX_RETRY"] = "5"
                     b.environment()["GDAL_HTTP_RETRY_DELAY"] = "5"
-                    b.environment()["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
-                    b.environment()["CPL_VSIL_CURL_ALLOWED_EXTENSIONS"] = ".tif"
+                    b.environment().putAll(env)
                 }.start()
             } catch (e: IOException) {
                 throw IOException("$name does not start (is GDAL installed? terrain.yml installs gdal-bin): ${e.message}")
@@ -39,7 +38,20 @@ class Gdal(private val bin: File? = null) {
                 p.destroyForcibly()
                 throw IOException("$name ${args.joinToString(" ")} did not end in $minutes minutes")
             }
-            if (p.exitValue() != 0) throw IOException("$name ${args.joinToString(" ")} failed (${p.exitValue()}): ${(out + errors.readText()).takeLast(2000)}")
+            if (p.exitValue() != 0) {
+                var said = (out + errors.readText()).trim()
+                // a tool that fails without a word is run once more with GDAL's own account of what it does
+                if (said.isEmpty() && stdin == null) {
+                    said = try {
+                        val again = ProcessBuilder(listOf(tool(name)) + args + listOf("--debug", "ON")).redirectErrorStream(true).also { it.environment().putAll(env) }.start()
+                        again.outputStream.close()
+                        again.inputStream.bufferedReader().readText().also { again.waitFor(minutes, TimeUnit.MINUTES) }
+                    } catch (e: IOException) {
+                        ""
+                    }
+                }
+                throw IOException("$name ${args.joinToString(" ")} failed (${p.exitValue()}): ${said.takeLast(3000)}")
+            }
             return out
         } finally {
             errors.delete()
@@ -55,7 +67,9 @@ class Gdal(private val bin: File? = null) {
         val args = ArrayList<String>(listOf("-q", "-of", "GTiff"))
         if (overview > 0) args += listOf("-ovr", "${overview - 1}") else args += listOf("-ovr", "NONE")
         args += listOf("-projwin", fmt(box[0]), fmt(box[3]), fmt(box[2]), fmt(box[1]), input, out.path)
-        run("gdal_translate", args)
+        // a host's folder is not listed for files beside the sheet; a local raster's folder is (ENVI's header lies there)
+        val remote = if (input.startsWith("/vsicurl/")) mapOf("GDAL_DISABLE_READDIR_ON_OPEN" to "EMPTY_DIR", "CPL_VSIL_CURL_ALLOWED_EXTENSIONS" to ".tif") else emptyMap()
+        run("gdal_translate", args, env = remote)
     }
 
     /** Whether the tools are there. */
