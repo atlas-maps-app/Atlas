@@ -91,7 +91,7 @@ class HeightsBuildTest {
         assertEquals(emptyList<String>(), HeightsCheck.tiles(terrain, null) {})
         val log = ArrayList<String>()
         assertEquals(emptyList<String>(), HeightsCheck.aprons(terrain, log::add))
-        assertTrue(log.single(), Regex("(\\d+) apron and edge samples of (\\d+) pairs").find(log.single())!!.groupValues.let { it[1].toLong() > 100_000 && it[2].toInt() >= 8 })
+        assertTrue(log.single(), Regex("(\\d+) apron and edge samples of (\\d+) pairs").find(log.single())!!.groupValues.let { it[1].toLong() > 10_000 && it[2].toInt() >= 4 })
 
         // a sample of the land, the pond, the lake's middle, its shore, and the sea
         fun at(level: Int, lat: Double, lon: Double): Triple<Double, app.atlas.rendertiles.model.HeightRaster, Pair<Double, Double>> {

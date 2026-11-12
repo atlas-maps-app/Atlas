@@ -142,11 +142,23 @@ object HeightsBuild {
                 val c = doubleArrayOf(maxOf(b[0], regionBox[0]), maxOf(b[1], regionBox[1]), minOf(b[2], regionBox[2]), minOf(b[3], regionBox[3]))
                 c.takeIf { it[0] < it[2] && it[1] < it[3] }
             }
-            for (z in l.levels) if (only == null || z in only) byLevel.getOrPut(z) { ArrayList() } += boxes
+            // each box grown to the edges of the level's tiles it meets: those are the tiles built, and what the sources are
+            // read over, so a tile at a box's edge holds its source's samples to its own edge
+            for (z in l.levels) if (only == null || z in only) byLevel.getOrPut(z) { ArrayList() } += boxes.map { b -> snapped(b, z) }
         }
         if (byLevel.isEmpty() || byLevel.values.all { it.isEmpty() }) throw UsageException("nothing to build for ${region.id}")
         require(registry.sources.isNotEmpty())
         return Plan(byLevel.map { (z, b) -> Level(z, b) })
+    }
+
+    /** [box] (west, south, east, north) grown to the edges of the tiles of [level] it meets. */
+    fun snapped(box: DoubleArray, level: Int): DoubleArray {
+        val t = Lattice(level, 2)
+        val n = (1L shl level).toDouble()
+        return doubleArrayOf(
+            t.lon(Math.floor(t.x(box[0])).coerceIn(0.0, n)), t.lat(Math.ceil(t.y(box[1])).coerceIn(0.0, n)),
+            t.lon(Math.ceil(t.x(box[2])).coerceIn(0.0, n)), t.lat(Math.floor(t.y(box[3])).coerceIn(0.0, n)),
+        )
     }
 
     /** A source as a build reads it: its registry entry, its heights over a window, and for a national model the boxes (degrees) its rasters lie in. */
@@ -244,9 +256,10 @@ object HeightsBuild {
         val span = CHUNK * per
         val n = 1L shl l.level
         // the tiles each box meets, and the windows that hold them
+        // a box's east and south edges are its last tiles' own, not the next tiles' (the plan's boxes end on tiles' edges)
         fun tileRange(b: DoubleArray): LongArray = longArrayOf(
-            Math.floor(lattice.x(b[0]) / per).toLong().coerceIn(0, n - 1), Math.floor(lattice.y(b[3]) / per).toLong().coerceIn(0, n - 1),
-            Math.floor(lattice.x(b[2]) / per).toLong().coerceIn(0, n - 1), Math.floor(lattice.y(b[1]) / per).toLong().coerceIn(0, n - 1),
+            Math.floor(lattice.x(b[0]) / per + 1e-9).toLong().coerceIn(0, n - 1), Math.floor(lattice.y(b[3]) / per + 1e-9).toLong().coerceIn(0, n - 1),
+            (Math.ceil(lattice.x(b[2]) / per - 1e-9).toLong() - 1).coerceIn(0, n - 1), (Math.ceil(lattice.y(b[1]) / per - 1e-9).toLong() - 1).coerceIn(0, n - 1),
         )
         val ranges = l.boxes.map(::tileRange)
         fun wanted(tx: Long, ty: Long): Boolean = ranges.any { tx in it[0]..it[2] && ty in it[1]..it[3] }
