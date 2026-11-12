@@ -12,7 +12,9 @@ import java.util.concurrent.TimeUnit
  * lattice, each node the average of the source's cells under it, never the nearest one (which aliases dikes and
  * ditches). Overviews are never read in a warp (`-ovr NONE`): a host's overviews may be nearest picks (Kartverket's
  * are). Every node's place in the source is computed exactly (`-et 0`): gdalwarp's own shortcut may put it an eighth of
- * a sample off, which on a dune's slope is several steps of height, and would differ from one window to the next.
+ * a sample off, which on a dune's slope is several steps of height, and would differ from one window to the next. And
+ * where a source's datum is its own, the operation to the lattice's CRS is chosen for the box the registry names
+ * (`AREA_OF_INTEREST`), not for the bounds of the raster at hand.
  */
 class Gdal(private val bin: File? = null) {
     private fun tool(name: String): String = bin?.let { File(it, name).path } ?: name
@@ -114,13 +116,15 @@ class Gdal(private val bin: File? = null) {
      * lattice (or, with [resampling], another of gdalwarp's methods); NaN where it has none; null where it has none in
      * the whole window. [scratch] is a file name of this call's own.
      */
-    fun warp(input: File, window: Window, scratch: File, resampling: String = "average"): FloatArray? {
+    fun warp(input: File, window: Window, scratch: File, resampling: String = "average", area: DoubleArray? = null): FloatArray? {
         val b = window.bounds()
         val hdr = File(scratch.path.removeSuffix(".bil") + ".hdr")
         try {
             run(
                 "gdalwarp",
-                listOf(
+                // the operation between the two CRSs chosen for the source's own box, where it names one: else GDAL chooses
+                // by the bounds of the raster it is given, and a mosaic and a cut of it may be warped a metre apart
+                (area?.let { listOf("-to", "AREA_OF_INTEREST=${it.joinToString(",")}") } ?: emptyList()) + listOf(
                     "-q", "-overwrite", "-ovr", "NONE", "-et", "0", "-t_srs", "EPSG:3857", "-te", fmt(b[0]), fmt(b[1]), fmt(b[2]), fmt(b[3]), "-ts", "${window.width}", "${window.height}",
                     "-r", resampling, "-ot", "Float32", "-of", "ENVI", "-dstnodata", "nan", "-wm", "256", input.path, scratch.path,
                 ),

@@ -58,6 +58,12 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
         /** How far into a hole its own samples fill it, and how far the offset to the next source is feathered out, metres. */
         val fill: Double,
         val feather: Double,
+        /**
+         * The box (west, south, east, north, degrees) the operation from its CRS to the lattice's is chosen for, where
+         * its datum is its own (the Dutch grid's Amersfoort): GDAL would else choose by the bounds of whichever raster
+         * it warps, a country's mosaic or a small cut of it, and the two may get operations a metre apart.
+         */
+        val operationArea: DoubleArray?,
         /** The height its rasters give the open sea, metres, where they give it one (TINITALY's 0): a tile whose every sample of it stands there is sea, and is not built. */
         val sea: Double?,
         val licence: String,
@@ -100,7 +106,9 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
                     (o["index"] as? JsonObject)?.let { Index(it.text("kind"), it.text("url"), it.textOrNull("file")) },
                     (o["wcs"] as? JsonObject)?.let { w -> Wcs(w.text("coverage"), w.getValue("axes").jsonArray.map { it.jsonPrimitive.content }, w.textOrNull("extra"), w.getValue("block").jsonPrimitive.int) },
                     o.number("overview", 0.0).toInt(), o.text("crs"), o.text("datum"), o.text("model"), o.number("resolution_m"), o.number("read_m"),
-                    o.number("fill_m", 0.0), o.number("feather_m", 0.0), (o["sea_m"] as? JsonPrimitive)?.double, o.text("licence"), o.textOrNull("licence_url"), o.text("credit"), o.textOrNull("notice"), o.text("read"),
+                    o.number("fill_m", 0.0), o.number("feather_m", 0.0),
+                    (o["operation_area"] as? JsonArray)?.map { it.jsonPrimitive.double }?.toDoubleArray()?.also { a -> require(a.size == 4 && a[0] < a[2] && a[1] < a[3]) { "source ${o.text("id")}: an operation area of ${a.toList()}" } },
+                    (o["sea_m"] as? JsonPrimitive)?.double, o.text("licence"), o.textOrNull("licence_url"), o.text("credit"), o.textOrNull("notice"), o.text("read"),
                 ).also { s ->
                     require(s.id.matches(Regex("[a-z0-9-]+"))) { "a source id of '${s.id}'" }
                     require(s.hosts.isNotEmpty()) { "source ${s.id} has no host" }

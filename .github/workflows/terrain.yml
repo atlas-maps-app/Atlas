@@ -197,6 +197,7 @@ jobs:
           app/android/packer/build/install/packer/bin/packer heights "$ID" "$WORK/out" --repo "$PWD" --work "$WORK/work" "${args[@]}" | tee "$WORK/build.log"
           rm -rf "$WORK/work"
           ls -l "$WORK/out"
+          cat "$WORK/out/$ID-terrain.stats.json"
           df -h "$WORK"
       - name: Check it
         env:

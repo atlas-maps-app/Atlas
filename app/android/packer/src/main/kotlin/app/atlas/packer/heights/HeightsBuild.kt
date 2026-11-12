@@ -192,7 +192,7 @@ object HeightsBuild {
                 doubleArrayOf(c.minOf { it[0] } - 0.01, c.minOf { it[1] } - 0.01, c.maxOf { it[0] } + 0.01, c.maxOf { it[1] } + 0.01)
             }
             File(dir, "scratch-${s.id}").mkdirs()
-            Read(s, GdalSource(gdal, vrt, File(dir, "scratch-${s.id}")), coverage)
+            Read(s, GdalSource(gdal, vrt, File(dir, "scratch-${s.id}"), s.operationArea), coverage)
         }
     }
 

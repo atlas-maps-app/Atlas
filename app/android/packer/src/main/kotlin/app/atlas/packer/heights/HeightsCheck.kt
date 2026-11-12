@@ -343,7 +343,7 @@ object HeightsCheck {
                         }
                         TerrainSources.Format.COG_TILES -> return listOf("${source.id} is no national source to check points against")
                     }
-                    val fresh = gdal.warp(file, window, File(work, "point-$tried.bil"))?.get(2 * 5 + 2) ?: Float.NaN
+                    val fresh = gdal.warp(file, window, File(work, "point-$tried.bil"), area = source.operationArea)?.get(2 * 5 + 2) ?: Float.NaN
                     if (fresh.isNaN()) continue
                     val pack = raster.metres(r, c)
                     val error = Math.abs(pack - fresh)

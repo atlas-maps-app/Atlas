@@ -145,10 +145,10 @@ object Sources {
 }
 
 /** A mosaic of a source's fetched rasters ([vrt]), warped onto a window's nodes by GDAL, each node the average of the cells under it. */
-class GdalSource(private val gdal: Gdal, private val vrt: File, private val scratch: File) : NodeSource {
+class GdalSource(private val gdal: Gdal, private val vrt: File, private val scratch: File, private val area: DoubleArray? = null) : NodeSource {
     private val serial = AtomicInteger()
 
-    override fun heights(window: Window): FloatArray? = gdal.warp(vrt, window, File(scratch, "warp-${serial.incrementAndGet()}.bil"))
+    override fun heights(window: Window): FloatArray? = gdal.warp(vrt, window, File(scratch, "warp-${serial.incrementAndGet()}.bil"), area = area)
 }
 
 /**
