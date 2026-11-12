@@ -391,7 +391,11 @@ TEST_CASE("the haze's stops over the bent ground run from its own horizon's row 
         const view::Vec3& eye = cam.eye();
         const double from_centre = pymath::sqrt(
             (eye.x * eye.x) + ((eye.y + view::earth_radius) * (eye.y + view::earth_radius)) + (eye.z * eye.z));
-        const double dip = pymath::acos(view::earth_radius / from_centre);
+        // the horizon seen from the eye lies acos(R / d) under the eye's own horizontal, which the eye's place behind
+        // the target tips up from the frame's by the arc between them
+        const double behind = pymath::sqrt((eye.x * eye.x) + (eye.z * eye.z));
+        const double dip =
+            pymath::acos(view::earth_radius / from_centre) - pymath::atan2(behind, eye.y + view::earth_radius);
         const double limb_row = cam.cy() - (cam.focal() * pymath::tan(down - dip));
         const scene::LadderWeights w = scene::ladder_weights(l, distance);
         CHECK(view::sphere_weight(distance) == 1.0);
