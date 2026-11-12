@@ -996,7 +996,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (c != null && c.packs.loaded) {
             placedCountries = MapEngine.countries
             val under = MapEngine.worldUnder(view.lat, view.lon)
-            val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance, under)
+            val at = MapPlace.of(c.packs, MapEngine::levelsAt, view.lat, view.lon, view.distance, under)
             if (at != place) {
                 place = at
                 canvasTick.intValue++
