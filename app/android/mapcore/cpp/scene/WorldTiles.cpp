@@ -571,20 +571,19 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
     each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
         const std::int64_t source = label->integer(tl::label::source, i);
-        if (source == tl::label::source_water || source == tl::label::source_river) {
+        const bool river = std::cmp_equal(source, tl::label::source_river);
+        if (river || std::cmp_equal(source, tl::label::source_water)) {
             // a water at its name's point with its area, a river at the middle of its longest piece in the tile with
             // its length there
-            const std::optional<NameKind> kind = source == tl::label::source_river
-                                                     ? std::optional(NameKind::river)
-                                                     : water_kind(label->string(tl::label::kind, i).value_or(""));
+            const std::optional<NameKind> kind =
+                river ? std::optional(NameKind::river) : water_kind(label->string(tl::label::kind, i).value_or(""));
             // a name of several languages' (OpenStreetMap's "North Sea / Nordsee / Noordzee" of a water no one
             // language names): its first part, until the packs hold each language's own (ENGINE.md step 5, "Names")
             std::string_view text = label->string(tl::label::name, i).value_or("");
             if (const std::size_t part = text.find(" / "); part != std::string_view::npos) text = text.substr(0, part);
             if (!kind || text.empty()) return;
             const tl::GridPoint at = label->point(tl::label::pos, i);
-            ranks.push_back(((source == tl::label::source_river ? 2 : 1) * group) +
-                            label->integer(tl::label::index, i));
+            ranks.push_back(((river ? 2 : 1) * group) + label->integer(tl::label::index, i));
             WorldName water{.kind = *kind,
                             .cell = static_cast<std::uint8_t>(c),
                             .lat = tl::Frame::degrees(at.lat),
@@ -594,7 +593,7 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
             names.push_back(std::move(water));
             return;
         }
-        if (source != tl::label::source_place) return;
+        if (!std::cmp_equal(source, tl::label::source_place)) return;
         const std::string_view place = label->string(tl::label::kind, i).value_or("");
         const std::optional<NameKind> kind = name_kind(place);
         const std::string_view text = label->string(tl::label::name, i).value_or("");

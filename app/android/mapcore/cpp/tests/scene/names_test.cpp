@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <vector>
@@ -336,6 +337,10 @@ TEST_CASE("scene: a water's name is in the board's water look up to 6,000 km and
 
     using scene::name_priority;
     using scene::water_priority;
+    // a water's rank where it has a name, under every rank where it has none
+    const auto rank = [](const WorldName& n, double metres_a_dp) {
+        return water_priority(n, metres_a_dp).value_or(std::numeric_limits<std::int32_t>::min());
+    };
     const WorldName country = name("Nederland", NameKind::country, 17e6, 52.2, 5.3);
     const WorldName small_country = name("Luxembourg", NameKind::country, 6.4e5, 49.8, 6.1);
     const WorldName capital = name("Amsterdam", NameKind::city, 9e5, 52.37, 4.89, 0, true);
@@ -347,49 +352,49 @@ TEST_CASE("scene: a water's name is in the board's water look up to 6,000 km and
     const WorldName lake = water("IJsselmeer", NameKind::lake, 1.125e9, 52.8, 5.4);
     // 71 m a dp (a camera 100 km out): 223,000 dp², with the cities, before them all but a capital
     ATLAS_REQUIRE(water_priority(lake, 71.0).has_value());
-    CHECK(*water_priority(lake, 71.0) < name_priority(capital));
-    CHECK(*water_priority(lake, 71.0) > name_priority(city));
+    CHECK(rank(lake, 71.0) < name_priority(capital));
+    CHECK(rank(lake, 71.0) > name_priority(city));
     // 300 m a dp: 12,500 dp², with the towns, after every city
-    CHECK(*water_priority(lake, 300.0) < name_priority(city));
-    CHECK(*water_priority(lake, 300.0) > name_priority(town));
+    CHECK(rank(lake, 300.0) < name_priority(city));
+    CHECK(rank(lake, 300.0) > name_priority(town));
     // 600 m a dp: 3,125 dp², with the villages, after every town and every river
     const WorldName river = water("Rijn", NameKind::river, 60'000.0, 51.9, 5.9);
-    CHECK(*water_priority(lake, 600.0) < name_priority(town));
-    CHECK(*water_priority(lake, 600.0) < *water_priority(river, 600.0));
-    CHECK(*water_priority(lake, 600.0) > name_priority(village));
+    CHECK(rank(lake, 600.0) < name_priority(town));
+    CHECK(rank(lake, 600.0) < rank(river, 600.0));
+    CHECK(rank(lake, 600.0) > name_priority(village));
     // 800 m a dp: 1,758 dp², under the least: no name (no place is lost to a pond)
     CHECK_FALSE(water_priority(lake, 800.0).has_value());
     CHECK(water_priority(lake, 750.0).has_value()); // 2,000 dp² exactly
     // the larger of two waters of a class first
     const WorldName smaller = water("Markermeer", NameKind::reservoir, 5.93e8, 52.5, 5.2);
-    CHECK(*water_priority(lake, 71.0) > *water_priority(smaller, 71.0));
+    CHECK(rank(lake, 71.0) > rank(smaller, 71.0));
     // a node's bay says no size: named, with the villages, after every water of a known size there
     const WorldName bay = water("Hoornse Hop", NameKind::bay, 0.0, 52.6, 5.1);
     for (const double m : {5.0, 71.0, 5'000.0}) {
         ATLAS_REQUIRE(water_priority(bay, m).has_value());
-        CHECK(*water_priority(bay, m) < name_priority(town));
-        CHECK(*water_priority(bay, m) > name_priority(suburb));
+        CHECK(rank(bay, m) < name_priority(town));
+        CHECK(rank(bay, m) > name_priority(suburb));
     }
-    CHECK(*water_priority(bay, 600.0) < *water_priority(lake, 600.0));
+    CHECK(rank(bay, 600.0) < rank(lake, 600.0));
     // an ocean and a sea with the countries, by their size: before the capitals; a sea too small on the screen none
     const WorldName ocean = water("Atlantic Ocean", NameKind::ocean, 8.5e13, 30.0, -40.0);
     const WorldName sea = water("Noordzee", NameKind::sea, 5.7e11, 56.0, 3.0);
     const WorldName wad = water("Waddenzee", NameKind::sea, 1.0e10, 53.3, 5.4);
-    CHECK(*water_priority(ocean, 4'266.0) > *water_priority(sea, 4'266.0));
-    CHECK(*water_priority(sea, 4'266.0) > name_priority(capital));
-    CHECK(*water_priority(sea, 4'266.0) < name_priority(country));                           // a country of 17 million
-    CHECK(*water_priority(sea, 4'266.0) > name_priority(small_country));                     // one of 640,000
+    CHECK(rank(ocean, 4'266.0) > rank(sea, 4'266.0));
+    CHECK(rank(sea, 4'266.0) > name_priority(capital));
+    CHECK(rank(sea, 4'266.0) < name_priority(country));                                      // a country of 17 million
+    CHECK(rank(sea, 4'266.0) > name_priority(small_country));                                // one of 640,000
     CHECK_FALSE(water_priority(wad, 4'266.0).has_value());                                   // 550 dp² from 6,000 km
     CHECK(water_priority(wad, 711.0).has_value());                                           // 19,800 dp² from 1,000 km
     CHECK(water_priority(water("Zee", NameKind::sea, 0.0, 53.0, 4.0), 4'266.0).has_value()); // a node's: no size
     // a river after the towns and before the villages, the longer in its tile first; under 96 dp on the screen none
-    CHECK(*water_priority(river, 71.0) < name_priority(town));
-    CHECK(*water_priority(river, 71.0) > name_priority(village));
-    CHECK(*water_priority(river, 71.0) > *water_priority(water("Linge", NameKind::river, 30'000.0, 51.9, 5.3), 71.0));
+    CHECK(rank(river, 71.0) < name_priority(town));
+    CHECK(rank(river, 71.0) > name_priority(village));
+    CHECK(rank(river, 71.0) > rank(water("Linge", NameKind::river, 30'000.0, 51.9, 5.3), 71.0));
     CHECK(water_priority(river, 625.0).has_value());       // 96 dp
     CHECK_FALSE(water_priority(river, 640.0).has_value()); // 94 dp
     // with no scale known every water is as large as can be
-    CHECK(*water_priority(lake, 0.0) > name_priority(city));
+    CHECK(rank(lake, 0.0) > name_priority(city));
     CHECK(water_priority(river, 0.0).has_value());
     // the places' order among themselves is as it was
     CHECK(name_priority(country) > name_priority(capital));
