@@ -1695,6 +1695,49 @@ TEST_CASE("the globe's look: from 54,000 km the engine draws the board's Earth, 
         CHECK(rim.z >= 140.0F / 255.0F);
         CHECK(outside.x < 60.0F / 255.0F);
         CHECK(outside.z > outside.x + 0.05F);
+        // The Globe board's backdrop behind the Earth (shared/backdrop.slang, the board's own): its stars where the
+        // board has them, fitted to the frame as the board's pictures are (by the lesser side's ratio, centred), and
+        // its Milky Way band; none of it over the disc.
+        {
+            const double width_dp = size.width / density;
+            const double height_dp = size.height / density;
+            const double fit = std::min(width_dp / 412.0, height_dp / 915.0);
+            const double left = (width_dp - (412.0 * fit)) / 2.0;
+            const double top = (height_dp - (915.0 * fit)) / 2.0;
+            const auto on_frame = [&](double x, double y) {
+                return view::Vec2{(left + (x * fit)) * density, (top + (y * fit)) * density};
+            };
+            // the table's star at (34.8, 876.2), 1.6 px in radius at .74: far from the disc, white over space
+            const view::Vec2 star = on_frame(34.8, 876.2);
+            const hlsl::float3 lit = pixel_at(*pixels, star.x, star.y);
+            const hlsl::float3 dark = space_at(star.x, star.y);
+            MESSAGE(std::format("the board's star at ({:.1f}, {:.1f}) px: #{:02X}{:02X}{:02X} over space's "
+                                "#{:02X}{:02X}{:02X}",
+                                star.x, star.y, std::lround(lit.x * 255.0F), std::lround(lit.y * 255.0F),
+                                std::lround(lit.z * 255.0F), std::lround(dark.x * 255.0F), std::lround(dark.y * 255.0F),
+                                std::lround(dark.z * 255.0F)));
+            CHECK(lit.x > dark.x + 0.4F);
+            CHECK(lit.y > dark.y + 0.4F);
+            CHECK(lit.z > dark.z + 0.4F);
+            // six pixels from it space is space again
+            CHECK(levels_apart(pixel_at(*pixels, star.x + 6.0, star.y), space_at(star.x + 6.0, star.y)) <= 2.0);
+            // the star at (213.6, 508.2) lies behind the Earth: the disc's own colour there, as beside it
+            const view::Vec2 hidden = on_frame(213.6, 508.2);
+            const double from_x = hidden.x - (c.cx() * density);
+            const double from_y = hidden.y - (c.cy() * density);
+            CHECK(pymath::sqrt((from_x * from_x) + (from_y * from_y)) < radius * density * 0.8);
+            CHECK(levels_apart(pixel_at(*pixels, hidden.x, hidden.y), pixel_at(*pixels, hidden.x + 4.0, hidden.y)) <=
+                  25.0);
+            // the band: at the board's (400, 706) a third of its 7 % of #A1A8FF over space; 40 px over its edge none
+            const view::Vec2 band = on_frame(400.0, 706.0);
+            const hlsl::float3 banded = pixel_at(*pixels, band.x, band.y);
+            const hlsl::float3 under = space_at(band.x, band.y);
+            CHECK(banded.z > under.z + (3.0F / 255.0F));
+            CHECK(banded.z < under.z + (10.0F / 255.0F));
+            CHECK(banded.z - under.z > banded.x - under.x);
+            const view::Vec2 beside = on_frame(400.0, 606.0);
+            CHECK(levels_apart(pixel_at(*pixels, beside.x, beside.y), space_at(beside.x, beside.y)) <= 2.0);
+        }
         // no pixel of the frame is the clear colour's or the sky's (magenta)
         CHECK(count_bare(*pixels) == 0);
         std::size_t sky = 0;
