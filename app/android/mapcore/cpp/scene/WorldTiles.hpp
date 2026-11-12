@@ -272,9 +272,10 @@ struct WorldStats {
     std::uint64_t built = 0;
     std::uint64_t failed = 0;
     double build_ms = 0; ///< the builds' time on the worker, all told
-    /// The heap's budget and its buffer's bytes now (the budget's once it has grown to it), the bytes of the resident
-    /// tiles the last frame drew and of the pinned ones (the globe's L0 to L3), and the budget's largest free piece: a
-    /// tile larger than that finds no room, whatever the bytes free.
+    /// The heap's budget now (the buffer's, once a doubling the device refused ended it there) and its buffer's bytes
+    /// now (the budget's once it has grown to it), the bytes of the resident tiles the last frame drew and of the
+    /// pinned ones (the globe's L0 to L3), and the budget's largest free piece: a tile larger than that finds no room,
+    /// whatever the bytes free.
     vk::DeviceSize capacity = 0;
     vk::DeviceSize buffer = 0;
     vk::DeviceSize free = 0; ///< the heap's bytes no range holds (a range let go of among those held until freed)
@@ -295,7 +296,8 @@ struct WorldStats {
 class WorldTiles {
 public:
     /// The world's tiles of `store`, in a heap on `device` of one buffer of `initial` bytes, doubled where a tile's
-    /// range lies beyond it up to `budget` (each frame binds it as it is when the frame begins).
+    /// range lies beyond it up to `budget` (each frame binds it as it is when the frame begins), each doubling within
+    /// the device's budget too (HeapBudget::within_device): one the device refuses ends the budget at the buffer.
     [[nodiscard]] static gpu::Result<std::unique_ptr<WorldTiles>>
     create(const gpu::Device& device, const tiles::Store& store, vk::DeviceSize initial, vk::DeviceSize budget);
     WorldTiles(const WorldTiles&) = delete;
@@ -335,6 +337,8 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> blocks() const;
     /// Waits until the worker has built every tile wanted so far (tests).
     void wait_idle();
+    /// Ends the heap's budget at its buffer as it is, as a doubling the device refuses does (tests: Heaps::end_budget).
+    void end_budget();
 
 private:
     /// The worker's decoder, its arena and buffers.

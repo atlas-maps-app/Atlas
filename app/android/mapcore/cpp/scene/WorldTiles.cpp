@@ -629,10 +629,14 @@ gpu::Result<std::unique_ptr<WorldTiles>> WorldTiles::create(const gpu::Device& d
                                                             vk::DeviceSize initial, vk::DeviceSize budget) {
     // one buffer of `initial` bytes, doubled up to the budget once a tile's range lies beyond it (Heaps::allocate on
     // the worker); a frame binds it as it is when the frame begins (update), the one it replaced kept until the
-    // frames bound to it have finished
+    // frames bound to it have finished. Each doubling within the device's budget too: one it refuses (its memory, or
+    // the driver's budget where it reports one) ends the budget at the buffer, and the tiles that find no room then
+    // wait for the room it has, held back where none comes (update)
     const vk::DeviceSize bytes = std::max<vk::DeviceSize>(budget & ~vk::DeviceSize{15}, 16);
     const vk::DeviceSize first = std::clamp<vk::DeviceSize>(initial & ~vk::DeviceSize{15}, 16, bytes);
-    ATLAS_GPU_LET(heaps, Heaps::create(device, HeapBudget{.initial = first, .total = bytes, .binding = 0}));
+    ATLAS_GPU_LET(
+        heaps,
+        Heaps::create(device, HeapBudget{.initial = first, .total = bytes, .binding = 0, .within_device = true}));
     std::unique_ptr<WorldTiles> w(new WorldTiles(store, std::move(heaps))); // NOLINT(cppcoreguidelines-owning-memory)
     // the poles' caps, in the heap for good from the first frame on
     for (std::size_t c = 0; c < w->caps_.size(); ++c) {
@@ -696,7 +700,7 @@ WorldStats WorldTiles::stats() const {
         if (t->drawn == number_) s.drawn_bytes += t->range.size;
         if (t->pinned) s.pinned_bytes += t->range.size;
     }
-    s.capacity = heaps_->budget().total;
+    s.capacity = heaps_->total();
     s.buffer = heaps_->capacity();
     s.free = heaps_->free_bytes();
     s.largest_free = heaps_->largest_free(HeapKind::ground);
@@ -710,6 +714,8 @@ void WorldTiles::wait_idle() {
     std::unique_lock lock(mutex_);
     idle_cv_.wait(lock, [this] { return queue_.empty() && building_ == ~std::uint64_t{0}; });
 }
+
+void WorldTiles::end_budget() { heaps_->end_budget(); }
 
 std::vector<WorldWant> WorldTiles::wants() const {
     const std::scoped_lock lock(mutex_);

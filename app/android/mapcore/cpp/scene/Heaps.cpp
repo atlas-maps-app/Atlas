@@ -2,6 +2,7 @@
 #include "scene/Heaps.hpp"
 
 #include "base/assert.hpp"
+#include "base/log.hpp"
 #include "base/trace.hpp"
 
 #include <algorithm>
@@ -82,8 +83,13 @@ gpu::Result<void> Heaps::grow(std::size_t which, vk::DeviceSize end) {
     const trace::Section traced("atlas heaps grow");
     gpu::Buffer& old = buffers_.at(which);
     const vk::DeviceSize old_size = old.size();
+    // a range reserved before the budget ended beyond the buffers (end_budget) has no growth to come
+    if (end > parts_.at(which)) {
+        return gpu::fail(std::format("a heap buffer of {} bytes to hold {}: its budget ends at {}", old_size, end,
+                                     parts_.at(which)));
+    }
     const vk::DeviceSize size = std::min(std::max(old_size * 2, end), parts_.at(which));
-    ATLAS_GPU_LET(buffer, device_.memory().buffer(size, heap_usage, gpu::MemoryUse::upload));
+    ATLAS_GPU_LET(buffer, device_.memory().buffer(size, heap_usage, gpu::MemoryUse::upload, budget_.within_device));
     // The old bytes at the same offsets, so every range keeps its place.
     std::memcpy(buffer.bytes().data(), old.bytes().data(), static_cast<std::size_t>(old_size));
     buffer.flush();
@@ -181,7 +187,7 @@ gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::
             vk::DeviceSize used = 0;
             for (const vk::DeviceSize u : used_) used += u;
             return gpu::fail(std::format("the heaps cannot grow by {} bytes for {}: {} of their {} bytes are used",
-                                         bytes, name_of(kind), used, budget_.total));
+                                         bytes, name_of(kind), used, parts_[0] + parts_[1]));
         }
         // The capacity from its atomic: buffers_ are a growth's to swap (under the exclusive lock, which this does not
         // hold). Seen too small, the range takes the slow path below, which looks again under that lock; seen grown,
@@ -220,10 +226,46 @@ gpu::Result<HeapRange> Heaps::hold(const HeapRange& range) {
         if (auto grown = grow(which, end); !grown) {
             const std::scoped_lock lock(blocks_lock_);
             unplace(range);
+            // the device would not give it (its memory, or the driver's budget): the budget ends at the buffers as
+            // they are, so what finds no room waits for the room they have, never for this growth again
+            if (budget_.within_device && parts_.at(which) > buffers_.at(which).size()) {
+                log::warn("vk heaps: a growth to hold {} bytes failed ({}): the budget ends at the buffers' {} bytes",
+                          end, grown.error().text(), capacity());
+                end_at_buffers();
+            }
             return std::unexpected(std::move(grown.error()));
         }
     }
     return range;
+}
+
+vk::DeviceSize Heaps::total() const {
+    const std::scoped_lock lock(blocks_lock_);
+    return parts_[0] + parts_[1];
+}
+
+void Heaps::end_budget() {
+    const std::unique_lock exclusive(lock_);
+    const std::scoped_lock lock(blocks_lock_);
+    end_at_buffers();
+}
+
+void Heaps::end_at_buffers() {
+    for (std::size_t i = 0; i < parts_.size(); ++i) {
+        if (parts_.at(i) == 0) continue;
+        const vk::DeviceSize base = i == 1 ? heap_high_base : 0;
+        const vk::DeviceSize end = base + buffers_.at(i).size();
+        // the pieces beyond the buffer go, the one across its end ending there
+        for (auto it = pieces_.lower_bound(base); it != pieces_.end() && it->first < base + parts_.at(i);) {
+            if (it->first >= end) {
+                it = pieces_.erase(it);
+                continue;
+            }
+            it->second = std::min(it->second, end - it->first);
+            ++it;
+        }
+        parts_.at(i) = buffers_.at(i).size();
+    }
 }
 
 Heaps::Writer Heaps::writer(const HeapRange& range) { return {lock_, buffers_, range.offset, range.size}; }
@@ -297,7 +339,8 @@ vk::DeviceSize Heaps::free_bytes() const {
     const std::scoped_lock lock(blocks_lock_);
     vk::DeviceSize used = 0;
     for (const vk::DeviceSize u : used_) used += u;
-    return used < budget_.total ? budget_.total - used : 0;
+    const vk::DeviceSize total = parts_[0] + parts_[1];
+    return used < total ? total - used : 0;
 }
 
 vk::DeviceSize Heaps::largest_free(HeapKind kind) const {

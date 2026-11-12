@@ -280,6 +280,40 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     (void)session->take_messages();
 }
 
+TEST_CASE("a heap whose budget ended at its buffer, as a growth the device refuses ends it, places nothing beyond it "
+          "and grows no more, its free bytes and its largest piece the buffer's") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{1} << 20U;
+    budget.within_device = true;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    // 100 KB in the 64 KB buffer: it doubles once, to 128 KB, within the device's budget
+    for (std::size_t i = 0; i < 100; ++i) {
+        auto r = h.allocate(scene::HeapKind::ground, 1000, 16);
+        ATLAS_REQUIRE(r.has_value(), r.error().text());
+    }
+    const vk::DeviceSize buffer = vk::DeviceSize{128} << 10U;
+    CHECK(h.capacity() == buffer);
+    CHECK(h.total() == vk::DeviceSize{1} << 20U);
+    CHECK(h.largest_free(scene::HeapKind::ground) > buffer);
+    h.end_budget();
+    CHECK(h.total() == buffer);
+    CHECK(h.free_bytes() == buffer - 100'000);
+    CHECK(h.largest_free(scene::HeapKind::ground) <= buffer - 100'000);
+    // what the buffer holds is placed in it; a range beyond finds no room, and the buffer is as it was
+    auto fits = h.allocate(scene::HeapKind::ground, 20'000, 16);
+    CHECK(fits.has_value());
+    auto beyond = h.allocate(scene::HeapKind::ground, 20'000, 16);
+    CHECK_FALSE(beyond.has_value());
+    CHECK(h.capacity() == buffer);
+    CHECK(h.stats().growths == 1);
+    (void)session->take_messages();
+}
+
 TEST_CASE("a range takes the free piece of the heaps nearest its end that holds it, a larger piece beyond left whole "
           "for its own") {
     auto session = test::open_session();

@@ -1944,7 +1944,8 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
 
 TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are held back, its picture final over their "
           "ancestors, and none is built again at rest; a view it can hold takes the room of the tiles a view before "
-          "it left; a heap that may grow grows for a view's tiles, its picture the same") {
+          "it left; a heap that may grow grows for a view's tiles, its picture the same, and one whose doubling the "
+          "device refuses holds them back as one that may not") {
     if (!test::open_session()) return;
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-room-{}", ::getpid());
     fs::create_directories(guard);
@@ -2158,6 +2159,39 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
             CHECK(draw(map, session, places[0], 30));
             CHECK(tiles.stats().built == st.built);
         }));
+    // A heap that may grow to twice the frame, whose doubling the device refuses: its budget ended at its buffer, as
+    // the refusal ends it (WorldTiles::end_budget), once the globe from 20,000 km has grown it to four times a quarter
+    // of the frame less half a tile, short of Amsterdam's tiles. The farthest finds no room and is held back, as in a
+    // heap that may not grow: no doubling, the frame final; at rest none is built again
+    const vk::DeviceSize short_quarter = ((took - smallest / 2) / 4) & ~vk::DeviceSize{15};
+    CHECK(with_map(short_quarter, ((2 * took) + 15) & ~vk::DeviceSize{15},
+                   [&](frame::MapFrame& map, standin::Session& session, KeptWindow& /*kept*/) {
+                       CHECK(draw(map, session, places[0], 0, 20'000'000.0));
+                       scene::WorldTiles& tiles = *map.world()->world_tiles();
+                       CHECK(tiles.stats().no_room == 0);
+                       tiles.end_budget();
+                       const scene::WorldStats ended = tiles.stats();
+                       CHECK(ended.capacity == ended.buffer);
+                       CHECK(ended.buffer < took);
+                       CHECK(draw(map, session, places[0], 0));
+                       const scene::WorldStats before = tiles.stats();
+                       const std::size_t held = tiles.frame()->held;
+                       CHECK(held >= 1);
+                       CHECK(before.no_room >= 1);
+                       CHECK(draw(map, session, places[0], 30));
+                       const scene::WorldStats after = tiles.stats();
+                       MESSAGE(std::format("a doubling refused at {} bytes: {} held, {} builds found no room, {} "
+                                           "built; 30 frames on: {} and {}, its buffer {}",
+                                           ended.buffer, held, before.no_room, before.built, after.no_room, after.built,
+                                           after.buffer));
+                       CHECK(after.no_room == before.no_room);
+                       CHECK(after.built == before.built);
+                       CHECK(after.buffer == ended.buffer);
+                       CHECK(after.capacity == ended.buffer);
+                       CHECK(tiles.frame()->held == held);
+                       CHECK(tiles.frame()->wanted == 0);
+                       CHECK(map.complete());
+                   }));
     std::error_code ec;
     fs::remove_all(guard, ec);
 }
