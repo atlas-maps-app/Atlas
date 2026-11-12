@@ -112,6 +112,8 @@ class WorldPackRefsTest {
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()
                 val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"), names)
+                // measurement only (branch worldmeasure, never lands): every frame's notes, whole or not, in the report
+                File(out, "notes.txt").appendText("$frameName (${(System.nanoTime() - t0) / 1_000_000} ms): $notes\n")
                 if (!whole(notes)) failed += "$frameName ($notes)"
                 val pixels = ByteBuffer.allocateDirect(w * h * 4)
                 check(LookHost.read(handle, pixels)) { LookHost.lastError() }
