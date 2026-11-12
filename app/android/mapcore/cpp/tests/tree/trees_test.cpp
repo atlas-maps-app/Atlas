@@ -177,9 +177,9 @@ TEST_CASE("trees: a crown's highlights come and go with its sun bit's swap as it
     };
     CHECK(amount(bit, bit, 0.25F) == 1.0F);
     CHECK(amount(0U, 0U, 0.25F) == 0.0F);
-    CHECK(amount(bit, 0U, 0.25F) == 0.25F);  // coming into the sun
-    CHECK(amount(0U, bit, 0.25F) == 0.75F);  // going into the shade
-    CHECK(amount(bit, bit, 1.0F, true) == 0.0F); // at night
+    CHECK(amount(bit, 0U, 0.25F) == 0.25F);                                                   // coming into the sun
+    CHECK(amount(0U, bit, 0.25F) == 0.75F);                                                   // going into the shade
+    CHECK(amount(bit, bit, 1.0F, true) == 0.0F);                                              // at night
     CHECK(sh::tree_sun_amount(5U, atlas::hlsl::uint2{bit, bit}, false, 1.0F, false) == 0.0F); // without bits
     // the highlight is drawn wherever the crown draws lit at all (draw.slang: amount > 0): at rest its own tone where
     // the crown is lit and nothing where it is not, as tree_close draws it; through a swap from the lit tone it lies

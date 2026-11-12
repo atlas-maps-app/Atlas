@@ -947,14 +947,14 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
                       .levels = 1};
     }
     to_read[image_count] = {.image = current_.images[canopy_image].handle(),
-                  .src_stage = vk::PipelineStageFlagBits2::eTransfer,
-                  .src_access = vk::AccessFlagBits2::eTransferRead,
-                  .dst_stage = reading_stages,
-                  .dst_access = vk::AccessFlagBits2::eShaderRead,
-                  .old_layout = vk::ImageLayout::eTransferSrcOptimal,
-                  .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                  .base_level = 0,
-                  .levels = levels - 1};
+                            .src_stage = vk::PipelineStageFlagBits2::eTransfer,
+                            .src_access = vk::AccessFlagBits2::eTransferRead,
+                            .dst_stage = reading_stages,
+                            .dst_access = vk::AccessFlagBits2::eShaderRead,
+                            .old_layout = vk::ImageLayout::eTransferSrcOptimal,
+                            .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                            .base_level = 0,
+                            .levels = levels - 1};
     sync.barrier(cmd, {}, to_copy);
     for (std::size_t i = 0; i < image_count; ++i) {
         const vk::BufferImageCopy region{

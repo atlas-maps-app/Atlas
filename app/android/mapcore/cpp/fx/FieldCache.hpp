@@ -1,22 +1,23 @@
 // The screen-wide noise fields and the byte tables on the GPU (plan-vector D5.5, D5.6, D10, K17a): set 1's noise_rgba,
 // noise_rg, noise_r, noise_canopy and noise_clouds (combined image samplers: three R8G8B8A8 UNORM, one R8 UNORM with
-// its mipmaps and one R8G8 UNORM, at the frame's upright device pixels, fx/Fields.hpp's five images) and byte_tables (a storage buffer: the to-linear
-// table, the to-sRGB table and `mat`'s opaque table, 64 KB each; fx/ByteTables.hpp, fx/Mat.hpp). The canopy's
-// mipmaps are made from its field on the GPU as it is uploaded, each level the mean of the one above, so the app's
-// map can read the canopy on the ground at any zoom (shaders/fx/mat.slang's fx_canopy_on_ground). FieldCache is their
-// provider (frame/Globals.hpp), which the world holds (World::add_globals): each frame it gives set 1 its bindings (an
-// unchanged one costs a comparison) and asks its worker for the fields of the frame's size (made on worker threads, or
-// mapped from cacheDir/fields); when they arrive it makes images of their size, binds them and records their upload
-// before the frame's passes. The effects that read them (mat, the grain) run once they are bound for the frame's size
-// (FRAME_FIELDS, which the frame keeps in full mode alone); until then, and for the moment a resize takes, they are
-// stubbed. Where its owner asks (FieldCacheOptions::gpu: the app's map on a GPU, standin/Session.hpp), a size the disk
-// does not hold is made on the GPU instead (fx/GpuFields.hpp), after its byte check, before the frame that wants it
-// (make_on_gpu, which the session runs behind the crash guard's noise stage): that frame waits for its fields and draws
-// with them, uploaded from the GPU's own buffer, and the worker keeps them on disk; where the check fails the worker
-// makes them, as elsewhere. A size's images live until the frames that read them have finished (D5.2's two frames in
-// flight), however often the size changes: what is let go is counted in the renderer's frame numbers, as each frame's
-// record gives them (FrameBuilder::emit runs the update alone), and a frame builder drawing the world finishes its
-// frames before another draws it. The shaders read the fields and the tables through shaders/fx/mat.slang.
+// its mipmaps and one R8G8 UNORM, at the frame's upright device pixels, fx/Fields.hpp's five images) and byte_tables (a
+// storage buffer: the to-linear table, the to-sRGB table and `mat`'s opaque table, 64 KB each; fx/ByteTables.hpp,
+// fx/Mat.hpp). The canopy's mipmaps are made from its field on the GPU as it is uploaded, each level the mean of the
+// one above, so the app's map can read the canopy on the ground at any zoom (shaders/fx/mat.slang's
+// fx_canopy_on_ground). FieldCache is their provider (frame/Globals.hpp), which the world holds (World::add_globals):
+// each frame it gives set 1 its bindings (an unchanged one costs a comparison) and asks its worker for the fields of
+// the frame's size (made on worker threads, or mapped from cacheDir/fields); when they arrive it makes images of their
+// size, binds them and records their upload before the frame's passes. The effects that read them (mat, the grain) run
+// once they are bound for the frame's size (FRAME_FIELDS, which the frame keeps in full mode alone); until then, and
+// for the moment a resize takes, they are stubbed. Where its owner asks (FieldCacheOptions::gpu: the app's map on a
+// GPU, standin/Session.hpp), a size the disk does not hold is made on the GPU instead (fx/GpuFields.hpp), after its
+// byte check, before the frame that wants it (make_on_gpu, which the session runs behind the crash guard's noise
+// stage): that frame waits for its fields and draws with them, uploaded from the GPU's own buffer, and the worker keeps
+// them on disk; where the check fails the worker makes them, as elsewhere. A size's images live until the frames that
+// read them have finished (D5.2's two frames in flight), however often the size changes: what is let go is counted in
+// the renderer's frame numbers, as each frame's record gives them (FrameBuilder::emit runs the update alone), and a
+// frame builder drawing the world finishes its frames before another draws it. The shaders read the fields and the
+// tables through shaders/fx/mat.slang.
 #pragma once
 
 #include "frame/Globals.hpp"
@@ -98,9 +99,9 @@ private:
     struct Images {
         FieldSize size;
         std::array<gpu::Image, image_count> images;
-        std::array<vk::raii::ImageView, image_count> views{
-            vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
-            vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}};
+        std::array<vk::raii::ImageView, image_count> views{vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
+                                                           vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
+                                                           vk::raii::ImageView{nullptr}};
     };
     /// What waits for the frames that read it to finish.
     struct Retired {

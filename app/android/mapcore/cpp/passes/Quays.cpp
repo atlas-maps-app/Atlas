@@ -337,8 +337,7 @@ std::uint32_t lit_mix(std::uint32_t lit, std::uint32_t unlit, double k) noexcept
     return out;
 }
 
-void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course,
-                  std::vector<QuayFace>& out) {
+void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course, std::vector<QuayFace>& out) {
     // coursing(cam, a, b, b[0] - a[0], b[1] - a[1], el_, n3, WY + 0.38, -0.2, QUAY_COURSE), `if el_ > 0.2`
     const double ex = wall.bx - wall.ax;
     const double ez = wall.bz - wall.az;
@@ -351,8 +350,9 @@ void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, doub
     for (std::uint32_t k = 0; k < n; ++k) {
         const double u0 = static_cast<double>(k) / n;
         const double u1 = static_cast<double>(k + 1) / n;
-        double dm = cam.depth({wall.ax + ((ex * (u0 + u1)) / 2), (y0 + top) / 2, wall.az + ((ez * (u0 + u1)) / 2)});
-        if (dm < cam.near()) dm = cam.near();
+        const double dm =
+            pm::max(cam.depth({wall.ax + ((ex * (u0 + u1)) / 2), (y0 + top) / 2, wall.az + ((ez * (u0 + u1)) / 2)}),
+                    cam.near());
         const double sp = (cam.focal() * course) / dm; // the course's height on the screen
         if (sp < 1.6) continue;
         const double op = pm::min(1.0, (sp - 1.6) / 2.2);
@@ -408,10 +408,10 @@ void course_lines(const view::Camera& cam, const QuayFace& f, double wy, double 
     while (y < top - 0.02) {
         CourseLine line;
         const bool ahead = seg({p0x, y, p0z}, {p1x, y, p1z}, line);
-        if (ahead && !(pm::max(line.pa.x, line.pb.x) < -5 || pm::min(line.pa.x, line.pb.x) > cam.width() + 5 ||
-                       pm::max(line.pa.y, line.pb.y) < -5 || pm::min(line.pa.y, line.pb.y) > cam.height() + 5)) {
-            out.push_back(line);
-        }
+        // the port leaves out a line wholly more than 5 px beside the frame
+        const bool beside = pm::max(line.pa.x, line.pb.x) < -5 || pm::min(line.pa.x, line.pb.x) > cam.width() + 5 ||
+                            pm::max(line.pa.y, line.pb.y) < -5 || pm::min(line.pa.y, line.pb.y) > cam.height() + 5;
+        if (ahead && !beside) out.push_back(line);
         y += course;
     }
     // cut stone: the blocks' head joints too, 2.1 courses long, staggered course by course (`if stone and segs`)

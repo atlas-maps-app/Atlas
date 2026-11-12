@@ -61,12 +61,11 @@ TEST_CASE("fx: the clouds' two filters' results over the sky's rows are SvgFilte
         CAPTURE(scale);
         // the filters' region is 120 rows of CSS px from the origin
         CHECK(cloud_rows(120.9, scale, 100'000U) == c.rows);
-        const std::shared_ptr<const ScreenFields> fields = make_block(
-            {.left = 0,
-             .top = 0,
-             .width = static_cast<std::int32_t>(c.width),
-             .height = static_cast<std::int32_t>(c.rows)},
-            scale);
+        const std::shared_ptr<const ScreenFields> fields = make_block({.left = 0,
+                                                                       .top = 0,
+                                                                       .width = static_cast<std::int32_t>(c.width),
+                                                                       .height = static_cast<std::int32_t>(c.rows)},
+                                                                      scale);
         const std::array<Argb, 256> shadow_table = cloud_table(cloud_shadow_matrix(c.red, c.green, c.blue, c.k, c.t));
         const std::array<Argb, 256> table = cloud_table(cloud_matrix(c.red, c.green, c.blue, c.k, c.t));
         const CloudOffset offset = cloud_offset(scale);

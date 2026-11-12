@@ -199,7 +199,8 @@ TEST_CASE("ground: the sky layer's sun, its glow and the city's glow lie over th
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
 }
 
-TEST_CASE("ground: the sky layer's clouds and their shadows are their filters' tables at the reds of the clouds' field") {
+TEST_CASE(
+    "ground: the sky layer's clouds and their shadows are their filters' tables at the reds of the clouds' field") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the clouds are not drawn over the bundled packs here");
@@ -224,8 +225,9 @@ TEST_CASE("ground: the sky layer's clouds and their shadows are their filters' t
         style::ThemeBlock theme;
         bool night;
     };
-    const std::array<Moment, 3> moments{
-        {{"day", day, false}, {"overcast", grey, false}, {"night", test::night_weather(), true}}};
+    const std::array<Moment, 3> moments{{{.name = "day", .theme = day, .night = false},
+                                         {.name = "overcast", .theme = grey, .night = false},
+                                         {.name = "night", .theme = test::night_weather(), .night = true}}};
     for (const Moment& m : moments) {
         CAPTURE(std::string(m.name));
         passes::GroundFrame f;
@@ -262,7 +264,8 @@ TEST_CASE("ground: the sky layer's clouds and their shadows are their filters' t
         // a premultiplied sRGB pixel over an opaque colour
         const auto under = [&](fx::Argb p, const Colour& d) {
             const double keep = 1.0 - (level(p, 24) / 255.0);
-            return Colour{.r = level(p, 16) + (d.r * keep), .g = level(p, 8) + (d.g * keep), .b = level(p, 0) + (d.b * keep)};
+            return Colour{
+                .r = level(p, 16) + (d.r * keep), .g = level(p, 8) + (d.g * keep), .b = level(p, 0) + (d.b * keep)};
         };
         const Colour g0 = of(0xFF9E5AU, folded(0.0F));
         const Colour g1 = of(0xFF9E5AU, folded(0.28F));
@@ -323,11 +326,12 @@ TEST_CASE("ground: the sky layer's clouds and their shadows are their filters' t
                             f.horizon, f.cloud_matrix.red, f.cloud_matrix.green, f.cloud_matrix.blue, f.cloud_matrix.k,
                             f.cloud_matrix.offset, f.cloud_shadow_matrix.red, f.cloud_shadow_matrix.green,
                             f.cloud_shadow_matrix.blue, f.cloud_shadow_matrix.k, f.cloud_shadow_matrix.offset));
-        MESSAGE(std::format("the clouds, {}: the region's {} rows, the offset {} rows and {}/2^24; {} pixels of sky, {} "
-                            "under a cloud, {} under a shadow alone or through a cloud, {} clear; the worst {:.2f} "
-                            "levels apart, {} not their composite, {} changed below the region",
-                            m.name, f.cloud_rows, f.cloud_offset.rows, f.cloud_offset.above, sky, clouded, shaded,
-                            clear, worst, wrong, beyond));
+        MESSAGE(
+            std::format("the clouds, {}: the region's {} rows, the offset {} rows and {}/2^24; {} pixels of sky, {} "
+                        "under a cloud, {} under a shadow alone or through a cloud, {} clear; the worst {:.2f} "
+                        "levels apart, {} not their composite, {} changed below the region",
+                        m.name, f.cloud_rows, f.cloud_offset.rows, f.cloud_offset.above, sky, clouded, shaded, clear,
+                        worst, wrong, beyond));
         CHECK(sky > 100'000U);
         CHECK(clouded > 10'000U);
         CHECK(shaded > 1'000U);
@@ -335,11 +339,10 @@ TEST_CASE("ground: the sky layer's clouds and their shadows are their filters' t
         CHECK_MESSAGE(wrong == 0, first);
         CHECK(beyond == 0);
         // structural mode draws none: the frame with them is the frame without
-        const auto plain = test::draw_ground(*session, camera, m.theme, dir, "amsterdam",
-                                             [&](passes::Ground& g, const frame::FrameState&) {
-                                                 CHECK_FALSE(g.decided().clouds);
-                                             },
-                                             40, {}, frame::Mode::structural, fields, settle);
+        const auto plain = test::draw_ground(
+            *session, camera, m.theme, dir, "amsterdam",
+            [&](passes::Ground& g, const frame::FrameState&) { CHECK_FALSE(g.decided().clouds); }, 40, {},
+            frame::Mode::structural, fields, settle);
         ATLAS_REQUIRE(plain.has_value(), "the frame was not drawn in structural mode");
     }
     for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);

@@ -51,8 +51,8 @@ struct RippleLook {
     double wgrad_y2 = 0;
     double opacity = 0;
     style::ThemeBlock th{};
-    passes::PixelBox out;   ///< the result's region (the buffers hold nothing beyond it)
-    passes::PixelBox drawn; ///< the layer's (the layer holds nothing beyond it)
+    passes::PixelBox out;            ///< the result's region (the buffers hold nothing beyond it)
+    passes::PixelBox drawn;          ///< the layer's (the layer holds nothing beyond it)
     std::uint32_t tiles = 0;         ///< the fused stages' tiles over the result's region
     std::uint32_t tiles_reached = 0; ///< those an element of the layer reaches: the others are not computed
 };

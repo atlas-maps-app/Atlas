@@ -10,11 +10,11 @@
 // 2.2 and .18; at night .17 .15 .19, 1.5 and -.1 (view/ScreenLayers.hpp's Clouds).
 //
 // The matrices read the noise's red alone (unpremultiplied, after the raster made it premultiplied, as MatrixNode
-// reads its input), so each filter's result at a pixel is one of 256, a table a moment made as the glints' (fx/Glints.hpp:
-// WebKit's float matrix, premultiplied, written back as premultiplied sRGB). cloudsh2's offset is 5 px at the filter's
-// scale: SvgFilterRaster's OffsetNode moves the premultiplied noise down whole rows and, where the scale leaves a
-// fraction, blends each pixel with the one a row above it (in doubles, rounded half up: here in whole numbers of
-// 1/2^24, the same sums); what lies above the region's first row is nothing, whose red reads 0.
+// reads its input), so each filter's result at a pixel is one of 256, a table a moment made as the glints'
+// (fx/Glints.hpp: WebKit's float matrix, premultiplied, written back as premultiplied sRGB). cloudsh2's offset is 5 px
+// at the filter's scale: SvgFilterRaster's OffsetNode moves the premultiplied noise down whole rows and, where the
+// scale leaves a fraction, blends each pixel with the one a row above it (in doubles, rounded half up: here in whole
+// numbers of 1/2^24, the same sums); what lies above the region's first row is nothing, whose red reads 0.
 #pragma once
 
 #include "fx/Fields.hpp"

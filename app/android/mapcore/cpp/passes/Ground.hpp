@@ -264,8 +264,7 @@ struct CourseLine {
 /// `course` (metres), as closeup.py's coursing decides them under `cam` (its tile's): the piece in chunks of 5 m at
 /// most, a path for each whose course is 1.6 px high or more at its middle's depth, its stroke's width and the path's
 /// opacity as printed. Appended to `out` (none for a piece 0.2 m long or less, or a wall under 0.3 m of courses).
-void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course,
-                  std::vector<QuayFace>& out);
+void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course, std::vector<QuayFace>& out);
 
 /// The lines of the courses' path `f` (QuayFace::Kind::courses) of a wall whose water lies at `wy`, facing (nx, nz),
 /// as closeup.py's coursing walks them under `cam` (its tile's): the bed joints, a course apart from the wall's foot
@@ -1711,10 +1710,10 @@ struct Ground::Words {
     std::uint32_t runs = 0;                   ///< the lines' runs'
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
-    std::uint32_t woods_split = 0; ///< the over phase's segments before the woods' shadows' slot
+    std::uint32_t woods_split = 0;      ///< the over phase's segments before the woods' shadows' slot
     std::uint32_t course_instances = 0; ///< the quay walls' courses' lines (their runs among the lines'), and how many
     std::uint32_t course_count = 0;
-    std::uint32_t quays = 0;       ///< the quay walls' faces' records (QUAY_WORDS each), and how many
+    std::uint32_t quays = 0; ///< the quay walls' faces' records (QUAY_WORDS each), and how many
     std::uint32_t quay_count = 0;
     std::uint32_t reflections = 0; ///< the reflections' records (QUAY_WORDS each), and how many
     std::uint32_t reflection_count = 0;

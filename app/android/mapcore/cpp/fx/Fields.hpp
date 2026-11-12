@@ -64,18 +64,7 @@
 namespace atlas::fx {
 
 /// The renders' screen-wide fields.
-enum class Field : std::uint8_t {
-    mat,
-    grain,
-    ripple,
-    glints,
-    cloud_shadows,
-    crown,
-    crown_tone,
-    leaf,
-    canopy,
-    clouds
-};
+enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone, leaf, canopy, clouds };
 
 /// The number of screen-wide fields.
 inline constexpr std::size_t field_count = 10;
@@ -161,9 +150,9 @@ inline constexpr std::uint32_t pixel_bytes = rgba_bytes + rg_bytes + r_bytes + c
 /// Where each image's plane begins among a frame's bytes (kept on disk, staged for the GPU, made on it), in bytes a
 /// pixel: rgba, rg, r, then the clouds' and last the canopy's, so each plane begins at a multiple of its pixel's
 /// bytes whatever the frame's size (a copy into an image needs its bytes there).
-inline constexpr std::array<std::uint32_t, image_count> plane_offsets{
-    0, rgba_bytes, rgba_bytes + rg_bytes, rgba_bytes + rg_bytes + r_bytes + clouds_bytes,
-    rgba_bytes + rg_bytes + r_bytes};
+inline constexpr std::array<std::uint32_t, image_count> plane_offsets{0, rgba_bytes, rgba_bytes + rg_bytes,
+                                                                      rgba_bytes + rg_bytes + r_bytes + clouds_bytes,
+                                                                      rgba_bytes + rg_bytes + r_bytes};
 
 /// Where field `f`'s bytes lie in the five images: the image (0 rgba, 1 rg, 2 r, 3 canopy, 4 clouds) and the first
 /// channel.
