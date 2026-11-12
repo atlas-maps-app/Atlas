@@ -776,9 +776,13 @@ jobs:
           for c in $N; do
             jq --arg ts "$TS" '.extracts[] |= . + {output_header: {osmosis_replication_timestamp: $ts}}' "$RUNNER_TEMP/plan/extract-$c.json" > "$WORK/extract.json"
             # each region's box and margin, with whole ways and multipolygons where they cross its edge (verbose: its
-            # passes' times and its peak memory in the log, the time and the peak in the summary too)
+            # passes' times and its peak memory in the log, the time and the peak in the summary too). The boundaries
+            # whole too (types: the smart strategy's default completes multipolygons alone): OpenStreetMap maps ten seas
+            # as boundary relations (the North Sea's 9051063: 218 ways), which a region would assemble from the ways it
+            # holds, so planet-3 named the North Sea in the middle of a part of it, with that part's 10,909,024 m² (the
+            # filter keeps no administrative boundary, so these waters' relations and the like)
             START=$SECONDS
-            time osmium extract -v -c "$WORK/extract.json" -s smart -d "$WORK/cut" -O "$WORK/filtered.osm.pbf" 2>&1 | tee "$RUNNER_TEMP/extract.txt"
+            time osmium extract -v -c "$WORK/extract.json" -s smart -S types=multipolygon,boundary -d "$WORK/cut" -O "$WORK/filtered.osm.pbf" 2>&1 | tee "$RUNNER_TEMP/extract.txt"
             echo "- osmium extract of extract-$c.json: $((SECONDS - START)) s, $(grep -o 'Peak memory used: .*' "$RUNNER_TEMP/extract.txt" || echo 'no peak memory given')" >> "$GITHUB_STEP_SUMMARY"
           done
           rm -f "$WORK/filtered.osm.pbf"
