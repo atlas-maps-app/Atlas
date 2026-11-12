@@ -18,10 +18,11 @@ import kotlin.math.ln
  * handed over a frame late, D18). A gesture publishes the camera of each event, with nothing beyond it.
  *
  * It answers false (nothing to draw, the core's frame loop rests) when nothing changed since the frame drawn last: no
- * new publication, no animation under way, the chrome's shapes still. The frame after the camera comes to rest carries
- * the rest flag, so the core snaps it (D4). The chrome's keep-out shapes ([chrome], K11b's ChromeShapes) are written
- * after the frame's size, as they read its density. Where the core draws the location's puck ([Samples.location]), the
- * location goes with the camera, so the puck moves with the map in the same frame (ENGINE.md step 6).
+ * new publication, no animation under way, nothing of the chrome's shapes to follow ([chromeMoved]). The frame after the
+ * camera comes to rest carries the rest flag, so the core snaps it (D4). The chrome's keep-out shapes ([chrome], K11b's
+ * ChromeShapes) are written after the frame's size, as they read its density. Where the core draws the location's puck
+ * ([Samples.location]), the location goes with the camera, so the puck moves with the map in the same frame (ENGINE.md
+ * step 6).
  */
 internal class MapCameraSource(
     /** Told on the render thread when a frame was presented, complete or not; it must allocate nothing. */
@@ -87,7 +88,10 @@ internal class MapCameraSource(
     @Volatile
     var chrome: ChromeShapes? = null
 
-    /** Bumped when the chrome's shapes moved ([chromeMoved]): the next vsync draws even with the camera still. */
+    /**
+     * Bumped when the core's picture must follow the chrome's shapes ([chromeMoved]: ChromeShapes.onChange): the next
+     * vsync draws even with the camera still.
+     */
     @Volatile
     private var chromeRevision = 0
 
@@ -107,7 +111,7 @@ internal class MapCameraSource(
         samples = s
     }
 
-    /** The chrome's shapes moved: the next frame writes them. */
+    /** The core's picture must follow the chrome's shapes, as they lie now: the next frame writes them. */
     fun chromeMoved() {
         chromeRevision++
     }
