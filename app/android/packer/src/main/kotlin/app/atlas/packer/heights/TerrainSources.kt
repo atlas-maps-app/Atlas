@@ -61,7 +61,7 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
         /**
          * The box (west, south, east, north, degrees) the operation from its CRS to the lattice's is chosen for, where
          * its datum is its own (the Dutch grid's Amersfoort): GDAL would else choose by the bounds of whichever raster
-         * it warps, a country's mosaic or a small cut of it, and the two may get operations a metre apart.
+         * it warps, a country's mosaic or a small cut of it. (On 12 November both got the same one; the box keeps it so.)
          */
         val operationArea: DoubleArray?,
         /** The height its rasters give the open sea, metres, where they give it one (TINITALY's 0): a tile whose every sample of it stands there is sea, and is not built. */

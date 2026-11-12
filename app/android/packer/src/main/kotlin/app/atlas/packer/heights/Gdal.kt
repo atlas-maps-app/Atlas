@@ -14,7 +14,8 @@ import java.util.concurrent.TimeUnit
  * are). Every node's place in the source is computed exactly (`-et 0`): gdalwarp's own shortcut may put it an eighth of
  * a sample off, which on a dune's slope is several steps of height, and would differ from one window to the next. And
  * where a source's datum is its own, the operation to the lattice's CRS is chosen for the box the registry names
- * (`AREA_OF_INTEREST`), not for the bounds of the raster at hand.
+ * (`AREA_OF_INTEREST`), not for the bounds of the raster at hand: one operation for every window and for the check's
+ * cuts, whichever GDAL would choose for each.
  */
 class Gdal(private val bin: File? = null) {
     private fun tool(name: String): String = bin?.let { File(it, name).path } ?: name
@@ -64,10 +65,16 @@ class Gdal(private val bin: File? = null) {
      * The box [box] (west, south, east, north in its own CRS) of raster [input] (a file, or `/vsicurl/` and a URL: GDAL
      * then reads the host by ranges) into [out] as a GeoTIFF: of its overview [overview] (1 the first), or of the
      * raster itself (0).
+     *
+     * An overview is opened as a raster of its own (the open option `OVERVIEW_LEVEL`), so the box is cut on the
+     * overview's own pixels. A cut made with gdal_translate's `-ovr` and `-projwin` (GDAL 3.8.4) lay up to half an
+     * overview pixel from where its georeferencing put it: the window is taken on the full raster's pixels and scaled
+     * down. On AHN's 4 m overview that is 2 m, which on a dune's slope put 10 of the Netherlands' 50 check points up
+     * to 0.43 m from the pack, where the same pixels averaged by hand gave the pack's heights.
      */
     fun cut(input: String, overview: Int, box: DoubleArray, out: File) {
         val args = ArrayList<String>(listOf("-q", "-of", "GTiff"))
-        if (overview > 0) args += listOf("-ovr", "${overview - 1}") else args += listOf("-ovr", "NONE")
+        if (overview > 0) args += listOf("-oo", "OVERVIEW_LEVEL=${overview - 1}only") else args += listOf("-ovr", "NONE")
         args += listOf("-projwin", fmt(box[0]), fmt(box[3]), fmt(box[2]), fmt(box[1]), input, out.path)
         // a host's folder is not listed for files beside the sheet; a local raster's folder is (ENVI's header lies there)
         val remote = if (input.startsWith("/vsicurl/")) mapOf("GDAL_DISABLE_READDIR_ON_OPEN" to "EMPTY_DIR", "CPL_VSIL_CURL_ALLOWED_EXTENSIONS" to ".tif") else emptyMap()
@@ -123,7 +130,7 @@ class Gdal(private val bin: File? = null) {
             run(
                 "gdalwarp",
                 // the operation between the two CRSs chosen for the source's own box, where it names one: else GDAL chooses
-                // by the bounds of the raster it is given, and a mosaic and a cut of it may be warped a metre apart
+                // by the bounds of the raster it is given, a mosaic's or a cut's
                 (area?.let { listOf("-to", "AREA_OF_INTEREST=${it.joinToString(",")}") } ?: emptyList()) + listOf(
                     "-q", "-overwrite", "-ovr", "NONE", "-et", "0", "-t_srs", "EPSG:3857", "-te", fmt(b[0]), fmt(b[1]), fmt(b[2]), fmt(b[3]), "-ts", "${window.width}", "${window.height}",
                     "-r", resampling, "-ot", "Float32", "-of", "ENVI", "-dstnodata", "nan", "-wm", "256", input.path, scratch.path,
