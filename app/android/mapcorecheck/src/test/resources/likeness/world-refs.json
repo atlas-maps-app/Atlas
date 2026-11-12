@@ -44,7 +44,27 @@
       }
     },
     "2": {
-      "note": "The waters' names (waternames, on app since fed36735): seas, lakes, bays and rivers named in the IJ's water label up to 6,000 km. Its frames come from the first refs job over world-20261102-planet-3 with them."
+      "note": "The waters' names (waternames, on app since fed36735): seas, lakes, bays and rivers named in the IJ's water label up to 6,000 km. Its frames: world-20261102-planet-3, drawn by World run 43287084503's refs job on worldv2 24546550 (worldkeep 11c9daab with app c8118578 merged in, as app will be once worldkeep lands): the 15 views whole over the planet's own packs (164 tiles walked, 140 of them in 14 packs, cut to 37,129,501 bytes), 8 of them other than version 1's.",
+      "world": "world-20261102-planet-3",
+      "platforms": {
+        "lavapipe-x86_64": {
+          "tokyo 30 km noon": "5c7e4970cf007dd4ae6f3ea0f6c5d77b2402171ead3dd1bef3e5f3e8627238fc",
+          "tokyo 30 km 22h": "31d649cf41169ae251373d84c683bd542120fb3ca95c84c0f1061f94a4dc333b",
+          "tokyo 300 km noon": "d4af5c6f6bec093b61084fb520a6cc23c521d9be43ee4c63dbda7ad9e60c22e9",
+          "tokyo 300 km 22h": "580af01902cfd8b901f36e198bbe869a37f2ce134d76fb5acb5de2a58c1cf799",
+          "zermatt 25 km pitched": "093b08a8daec15e9873c3791719c974f0e4b2edf70aa67a6a87d4caf0abb3492",
+          "tamanrasset 100 km": "6c669a06362f1789e887ae5827ebdd02178bfe9b27177b03a27ab163e098bc9e",
+          "bergen 75 km": "cdcacfb7b5cb239bebb2b15a833a089d4a9ea48e275624c3fbf6fc33444b0e1b",
+          "open sea 600 km dusk": "2d2aae99752e028b03cf1357aeb0103e287657583b7bd2c87f6b91f0564f0410",
+          "open sea 6000 km dusk": "b35b455cc85b630c1d42d1cfb40cf5a763c95b0ef2c7fd8903aabc2f55bfc5f4",
+          "85 n 1500 km": "292a8fa8d32fb7ace6216bc08a92199994da6e7c788bc39724e232d639457a74",
+          "85 s 1500 km": "03cafaa7b6f56fd2a5acd53d0ef2eb8c3d331d5b7f8e86f3640e8a8b4c98401c",
+          "netherlands 25 km": "454299b989af1a16e1a8f1c0ce99ae8defe6b07e9e734c12dce7eedd9f2b27fd",
+          "netherlands 100 km": "7b3386a311c8b713619e3dc41b2e0303697f9771afc2d23bfc6102147b3570b0",
+          "netherlands 1000 km": "7bf5335c18b43d30c56246602c9ebd5d94031a5fdc894d018b28fa47546bf165",
+          "the board": "a0b3c3a01fb20e32fed39267dad47c6136bfb5f53d2d308f28b12bb9bc42a481"
+        }
+      }
     }
   }
 }
