@@ -80,6 +80,37 @@ class PackWindowsTest {
     }
 
     @Test
+    fun theAnswerNamesThePartOfTheBoxItsPacksHoldWhereThatIsNotAllOfIt() {
+        fun grid(degrees: Double) = Math.round(degrees * 1e7)
+        val pack = PackReader.open(BundledPack.file).use { it.manifest.bbox }
+        // a box the pack holds whole names no part: its data is the box's
+        assertTrue(pack.west < box.west && pack.south < box.south && pack.east > box.east && pack.north > box.north)
+        val whole = Json.parseToJsonElement(text(PackWindows.answer(listOf(BundledPack.file), box)!!)).jsonObject
+        assertNull(whole["atlas"])
+        // a window's box that reaches beyond the pack's east and north: the part within the pack, on the grid
+        val wide = BBox(box.west, box.south, pack.east + 0.02, pack.north + 0.02)
+        val part = Json.parseToJsonElement(text(PackWindows.answer(listOf(BundledPack.file), wide)!!)).jsonObject
+        assertEquals(
+            "${grid(wide.south)},${grid(wide.west)},${grid(pack.north)},${grid(pack.east)}",
+            part.getValue("atlas").jsonObject.getValue("box").jsonPrimitive.content,
+        )
+        // still Overpass's answer, never fetched whole
+        assertEquals("1970-01-01T00:00:00Z", part.getValue("whole").jsonPrimitive.content)
+        assertTrue(elements(text(PackWindows.answer(listOf(BundledPack.file), wide)!!)).isNotEmpty())
+        // one pack over the box's south-west; two packs: the bounds of what each holds of it, here all of it, so no part
+        // is named; nor where a pack holds it all, or none of it
+        val window = BBox(4.0, 52.0, 4.1, 52.1)
+        val west = BBox(3.9, 51.9, 4.04, 52.05)
+        val east = BBox(4.06, 52.02, 4.2, 52.2)
+        assertEquals("520000000,40000000,520500000,40400000", PackWindows.held(listOf(west), window))
+        assertEquals("520200000,40600000,521000000,41000000", PackWindows.held(listOf(east), window))
+        assertNull(PackWindows.held(listOf(west, east), window))
+        assertNull(PackWindows.held(listOf(west, BBox(3.9, 51.9, 4.2, 52.2)), window))
+        assertNull(PackWindows.held(listOf(BBox(5.0, 53.0, 5.1, 53.1)), window))
+        assertNull(PackWindows.held(emptyList(), window))
+    }
+
+    @Test
     fun aBoxNoPackMeetsHasNoAnswer() {
         assertNull(PackWindows.answer(listOf(BundledPack.file), BBox(5.0, 53.0, 5.01, 53.01)))
         assertNull(PackWindows.answer(emptyList(), box))

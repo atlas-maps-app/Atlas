@@ -138,6 +138,37 @@ class MapData(private val services: Services) {
         })
     }
 
+    /** When each country's tiles' index was last asked for ([countryHolds]), by its id, ms of the uptime clock. */
+    private val indexAsked = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * Whether country [id]'s tiles hold the place at [lat], [lon] (MapEngine.countryHolds), from its tiles' index in
+     * memory; null until it is read. The first camera within a country's box has the index read in the background (from
+     * the windows' folder, from the country kept whole, else downloaded: the Netherlands' is 1.5 MB), and the maps
+     * drawn again once it is; where it does not come it is asked for again a minute on. CI's runs ask no server for it
+     * (`atlas.ci`), but for the world phase (`atlas.ci.world`). On the main thread at each camera: the answer from
+     * memory allocates nothing.
+     */
+    private fun countryHolds(id: String, lat: Double, lon: Double): Boolean? {
+        val version = MapEngine.windowVersion() ?: return null
+        windowTiles.holds(id, version, lat, lon)?.let { return it }
+        if (services.ciRun && !services.worldFetch.isCompleted) return null
+        val now = android.os.SystemClock.uptimeMillis()
+        val asked = indexAsked[id]
+        if (asked != null && now - asked < COUNTRIES_RETRY_MS) return null
+        indexAsked[id] = now
+        services.scope.launch(Dispatchers.IO) {
+            try {
+                val tiles = windowTiles.index(id, version) ?: return@launch
+                android.util.Log.i("AtlasMap", "vk windows: the tiles' index of $id on the phone, $tiles tiles: beyond them no levels, the world under the cover")
+                MapEngine.invalidate()
+            } catch (e: IOException) {
+                android.util.Log.w("AtlasMap", "vk windows: the tiles' index of $id did not come: ${e.message}")
+            }
+        }
+        return null
+    }
+
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
     private val regionFiles by lazy { RegionFiles(services.dirs.regions, services.dirs.places, services.dirs.segments) }
 
@@ -268,6 +299,9 @@ class MapData(private val services: Services) {
                 delay(COUNTRIES_RETRY_MS)
             }
         }
+        // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
+        // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and

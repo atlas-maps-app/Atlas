@@ -8,9 +8,12 @@ import app.atlas.model.Mode
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Route
+import app.atlas.places.Categories
 import app.atlas.places.TagFilter
 import app.atlas.providers.Http
 import app.atlas.providers.Overpass
+import app.atlas.render.data.ElementType
+import app.atlas.render.data.OsmElement
 import app.atlas.render.data.PackBoxes
 import app.atlas.render.data.PackFeatures
 import app.atlas.render.data.PackReader
@@ -278,6 +281,56 @@ class LocalDataTest {
         assertTrue(p.nearby.isNotEmpty())
         assertTrue(p.nearby.all { it.tags["name"] != null })
         assertEquals("Westermarkt 60A", p.address?.line)
+    }
+
+    @Test
+    fun aShortTapOnABuildingOpensThePlaceItIsOrTheOneInItUnderTheFinger() = runBlocking {
+        // the Westerkerk is its own place, from the store or the pack
+        val westerkerk = OsmId(OsmType.WAY, 99205257)
+        for (data in listOf(both(), packOnly(), storeOnly())) assertEquals(westerkerk, data.feature(westerkerk, here)?.id)
+        // the buildings about it that are no place themselves, from the pack: what stands listed in each one's outline
+        val data = packOnly()
+        val box = BBox.around(here, 250.0)
+        val listed = { e: OsmElement -> e.tags?.let { it["name"] != null && Categories.of(it) != null && LocalData.keeps(e, it) } == true }
+        // (the places from a wider box: a building at the box's edge holds places beyond it)
+        val places = pack.elements(BBox.around(here, 400.0), listed).mapNotNull { PackFeatures.place(it) }
+        var plain = 0
+        var opened = 0
+        var beyond = 0
+        for (b in pack.elements(box) { it.type == ElementType.WAY && it.tag("building") != null && !listed(it) }) {
+            val outline = PackFeatures.outlineOf(b) ?: continue
+            val id = PackFeatures.osmId(b)
+            val inside = places.filter { it.id != id && outline.contains(it.location) }
+            val middle = outline.label()
+            if (inside.isEmpty()) {
+                // a house: an empty tap
+                assertNull("building $id", data.feature(id, middle))
+                plain++
+                continue
+            }
+            // a tap where a place in it stands opens that place (or one at the same point)
+            for (p in inside) {
+                val got = data.feature(id, p.location)
+                assertNotNull("building $id at ${p.id}", got)
+                assertEquals("building $id at ${p.id}", 0.0, Geo.distance(got!!.location, p.location), 0.01)
+                opened++
+            }
+            // a tap on it farther than FEATURE_M from each of them opens none; nearer, the nearest
+            val nearest = inside.minBy { Geo.distance(middle, it.location) }
+            val got = data.feature(id, middle)
+            if (Geo.distance(middle, nearest.location) > LocalData.FEATURE_M) {
+                assertNull("building $id from its middle", got)
+                beyond++
+            } else {
+                assertEquals("building $id from its middle", Geo.distance(middle, nearest.location), Geo.distance(middle, got!!.location), 0.01)
+            }
+        }
+        assertTrue("houses with no place: $plain", plain > 10)
+        assertTrue("places opened in their buildings: $opened", opened > 3)
+        println("FEATURE taps about the Westerkerk: $plain houses empty, $opened places opened where they stand, $beyond buildings tapped beyond their places")
+        // a building the phone has nothing of opens none
+        assertNull(data.feature(OsmId(OsmType.WAY, 1), here))
+        assertNull(LocalData(stores = { null }, packs = { null }).feature(westerkerk, here))
     }
 
     @Test

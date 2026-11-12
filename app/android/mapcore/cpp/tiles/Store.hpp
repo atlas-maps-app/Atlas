@@ -18,6 +18,7 @@
 #include "tiles/Chunks.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
+#include "tiles/Sections.hpp"
 #include "tiles/Source.hpp"
 
 #include <cstdint>
@@ -27,6 +28,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::tiles {
@@ -68,6 +70,17 @@ struct StorePack {
     Sha256Digest identity{};
     bool remote = false;
     Pack pack;
+    /// For a frame cell's windows (PackKind::window): the tiles of the windows whose data holds part of their box
+    /// alone, each with that part (its window's head's, RenderHead::data); none for most cells.
+    std::vector<std::pair<TileKey, DataBox>> data;
+
+    /// The part of `tile`'s box its window's data holds, where that is not the whole box.
+    [[nodiscard]] std::optional<DataBox> data_of(TileKey tile) const noexcept {
+        for (const auto& [key, box] : data) {
+            if (key == tile) return box;
+        }
+        return std::nullopt;
+    }
 };
 
 /// A range of a remote pack's bytes the app fetched: its offset in the pack, and the bytes.
@@ -213,6 +226,7 @@ private:
         std::shared_ptr<const PackStyle> style;
         Frame frame;
         std::string style_version;
+        std::optional<DataBox> data; ///< its head's: the part of its box its data holds, where not the whole
     };
     /// A frame cell's windows, by id.
     struct Cell {

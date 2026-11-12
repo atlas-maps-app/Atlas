@@ -362,7 +362,8 @@ Result<void> Store::add_window(const PackRef& ref) {
              .head = std::vector<std::byte>(head.bytes().begin(), head.bytes().end()),
              .style = pack->shared_style(),
              .frame = head.frame,
-             .style_version = std::string(head.style_version)};
+             .style_version = std::string(head.style_version),
+             .data = head.data};
     const TileKey tile = w.chunk.tile;
     const auto shift = static_cast<std::uint32_t>(tile.z - cell_level);
     const TileKey cell(cell_level, tile.x >> shift, tile.y >> shift);
@@ -442,8 +443,17 @@ Result<std::shared_ptr<const StorePack>> Store::compose(const Cell& cell) const 
     // its style the first window's, read once (the section holds its bytes)
     auto pack = Pack::open(std::move(*source), nullptr, first.style);
     if (!pack) return std::unexpected(pack.error());
-    return std::make_shared<const StorePack>(
-        StorePack{.id = name, .kind = PackKind::window, .identity = {}, .remote = false, .pack = std::move(*pack)});
+    // the windows built from part of their box's data, each with that part (the cell's head is its first window's)
+    std::vector<std::pair<TileKey, DataBox>> data;
+    for (const Window& w : cell.windows) {
+        if (w.data) data.emplace_back(w.chunk.tile, *w.data);
+    }
+    return std::make_shared<const StorePack>(StorePack{.id = name,
+                                                       .kind = PackKind::window,
+                                                       .identity = {},
+                                                       .remote = false,
+                                                       .pack = std::move(*pack),
+                                                       .data = std::move(data)});
 }
 
 void Store::touch(TileKey cell) {

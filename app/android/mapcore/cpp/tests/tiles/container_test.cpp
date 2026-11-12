@@ -4,12 +4,16 @@
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
+#include "tiles/SectionWriter.hpp"
+#include "tiles/Sections.hpp"
 #include "tiles/Style.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -490,6 +494,48 @@ TEST_CASE("tiles: rhead and style refuse what they must") {
     SUBCASE("a byte left over") {
         head.push_back(std::byte{0});
         CHECK(read_head(head).error().fault == Fault::left_over);
+    }
+    SUBCASE("after the bands, a window's data's box or nothing") {
+        CHECK(!read_head(head)->data);
+        const auto put = [&head](std::int32_t v) {
+            for (unsigned i = 0; i < 4; ++i) {
+                head.push_back(static_cast<std::byte>((static_cast<std::uint32_t>(v) >> (8U * i)) & 0xFFU));
+            }
+        };
+        head.push_back(std::byte{1});
+        CHECK(read_head(head).error().fault == Fault::truncated);
+        put(523'700'000);
+        put(48'800'000);
+        put(523'750'000);
+        CHECK(read_head(head).error().fault == Fault::truncated);
+        put(48'850'000);
+        const auto h = read_head(head);
+        ATLAS_REQUIRE(h, describe(h.error()));
+        CHECK(h->data == DataBox{.south = 523'700'000, .west = 48'800'000, .north = 523'750'000, .east = 48'850'000});
+        // and encode_head writes it so
+        std::vector<HeadViewOut> views;
+        for (const HeadView& v : h->views()) {
+            views.push_back({.name = v.name, .camera = v.camera, .tolerance = v.tolerance});
+        }
+        const auto again = encode_head({.profile = h->profile,
+                                        .levels = h->levels,
+                                        .frame = h->frame,
+                                        .region = h->region,
+                                        .engine_version = h->engine_version,
+                                        .style_version = h->style_version,
+                                        .source = h->source,
+                                        .views = views,
+                                        .bands = h->bands(),
+                                        .data = h->data});
+        ATLAS_REQUIRE(again, describe(again.error()));
+        CHECK(std::ranges::equal(*again, head));
+        head.push_back(std::byte{0});
+        CHECK(read_head(head).error().fault == Fault::left_over);
+    }
+    SUBCASE("a data box without area") {
+        head.push_back(std::byte{1});
+        for (int i = 0; i < 16; ++i) head.push_back(std::byte{7}); // its south its north, its west its east
+        CHECK(read_head(head).error().fault == Fault::bad_value);
     }
     SUBCASE("a view's camera that is not a map") {
         ATLAS_REQUIRE(head[head.size() - tail] == std::byte{8});
