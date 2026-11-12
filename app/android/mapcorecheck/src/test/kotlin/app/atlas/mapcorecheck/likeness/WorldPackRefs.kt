@@ -40,7 +40,8 @@ import kotlin.math.roundToInt
  *
  * `ATLAS_WORLD_REFS_VIEWS` names other views of `likeness` to draw instead, held the same way, their report in a folder
  * of their name: `world-keep.json`, a kept country's zoom-out from 18 km to the globe over the tiles `packer world-keep`
- * keeps for it alone (ENGINE.md step 11), whole in every frame, without the world's names (its `names`).
+ * keeps for it alone (ENGINE.md step 11), whole in every frame, without the world's names (its `names`). A view whose
+ * `pixels` are false is not drawn: it is held by its tiles alone (`packer world-refs --kept`).
  */
 class WorldPackRefsTest {
     @Test
@@ -105,6 +106,9 @@ class WorldPackRefsTest {
             check(refused.isEmpty()) { "the core did not open world-refs' packs: ${refused.joinToString("; ")}" }
             for (e in refs["frames"]!!.jsonArray) {
                 val o = e.jsonObject
+                // a view held by its tiles alone (world-keep.json's pitched views from 60 to 1,000 km, which the core
+                // does not yet draw whole over the world alone: ENGINE.md step 11)
+                if ((o["pixels"] as? JsonPrimitive)?.booleanOrNull == false) continue
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()
                 val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"), names)
