@@ -95,7 +95,10 @@ internal class MapCameraSource(
     @Volatile
     private var chromeRevision = 0
 
-    /** A [redraw] asked: the next vsync writes the camera though nothing changed. */
+    /**
+     * A [redraw] asked, or the frame before carried a shape the core frosts on to its vsync (ChromeShapes.write): the
+     * next vsync writes the camera though nothing changed.
+     */
     @Volatile
     private var again = false
 
@@ -154,7 +157,13 @@ internal class MapCameraSource(
         CameraWriter.frame(out, s.widthPx, s.heightPx, s.widthDp, s.heightDp, s.density)
         CameraWriter.pack(out, s.pack, s.profile)
         val shapes = chrome
-        if (shapes != null) shapes.write(out, vsyncNanos) else CameraWriter.keepOuts(out, 0)
+        if (shapes == null) {
+            CameraWriter.keepOuts(out, 0)
+        } else if (shapes.write(out, vsyncNanos)) {
+            // A shape the core frosts was carried on to this vsync: one more frame, which finds it carried again or where
+            // it came to rest, so the glass never rests a frame's movement past its chrome.
+            again = true
+        }
         if (where != null) CameraWriter.location(out, where.lat, where.lon, where.accuracyM, where.heading) else CameraWriter.noLocation(out)
         drawnRevision = s.revision
         drawnChrome = chromeNow

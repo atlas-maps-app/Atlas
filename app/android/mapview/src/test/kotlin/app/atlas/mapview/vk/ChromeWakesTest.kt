@@ -110,9 +110,41 @@ class ChromeWakesTest {
         assertEquals("the glass follows its chrome: each shape's move asks for the frame", List(GLIDE) { 8 }, moving)
         assertEquals(GLIDE, home.drawn)
         val rest = List(6) { home.frame {} }
-        assertEquals("and nothing more at rest", List(6) { 0 }, rest)
-        assertEquals(GLIDE, home.drawn)
+        assertEquals("and no wake at rest", List(6) { 0 }, rest)
+        assertEquals("one frame more, the glass's at rest", GLIDE + 1, home.drawn)
+        assertEquals(FULL - 120f, home.writtenTop(), 0.01f)
         println("WAKES frosted, the core draws the glass: moving frames $moving (sum ${moving.sum()}), rest frames $rest, the core draws ${home.drawn} frames")
+    }
+
+    @Test
+    fun theCoresGlassRestsWhereItsChromeDoes() {
+        // The core's vsync comes before the UI's layout of it, so a moving shape is written a frame's movement on
+        // (ChromeShapes.write). The move's last frame is written so too, 30 px past where the chips stop, and nothing
+        // wakes the core after it: the source draws one frame more itself (MapCameraSource.camera), with them at rest.
+        val home = Home(frosted = true, coreDraws = true)
+        var top = HALF
+        repeat(5) {
+            home.frame {
+                top -= 30f
+                home.place(top)
+            }
+        }
+        assertEquals(5, home.drawn)
+        assertEquals("the last moving frame, carried on", top - 30f - 120f, home.writtenTop(), 0.01f)
+        assertEquals("no wake", 0, home.frame {})
+        assertEquals("and one frame more", 6, home.drawn)
+        assertEquals("the glass where its chrome stopped", top - 120f, home.writtenTop(), 0.01f)
+        assertEquals(0, (1..4).sumOf { home.frame {} })
+        assertEquals("then the core rests", 6, home.drawn)
+        // keep-outs alone are carried too and ask for no frame more: theirs is the one their rest wakes
+        val clear = Home(frosted = false, coreDraws = true)
+        repeat(5) { i ->
+            clear.frame {
+                clear.place(HALF - 30f * (i + 1))
+                if (i == 2) clear.source.publish(still(2))
+            }
+        }
+        assertEquals("the camera's own frame alone", 1, clear.drawn)
     }
 
     @Test

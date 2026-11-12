@@ -217,8 +217,9 @@ class ChromeShapes {
      * holds (so after CameraWriter.frame), each frosted only while [coreDraws]. Shapes the core's reader would refuse
      * (far off the frame, no area) are left out; a corner wider than half the shape and a blur past 256 dp are cut to
      * what the reader takes; each carries its chrome's alpha ([fade]). On the render thread at each paced vsync;
-     * allocates nothing. True when a moving shape was
-     * carried on to the vsync: the source asks for one more frame, so that the glass comes to rest where the shape does.
+     * allocates nothing. True when a moving shape the core frosts was carried on to the vsync: the source draws one more
+     * frame (MapCameraSource.camera), so that the glass comes to rest where the shape does. A keep-out alone is carried
+     * as well, and asks for nothing: it settles with the frame its rest wakes ([frame]).
      */
     fun write(out: ByteBuffer, vsyncNanos: Long = 0L): Boolean {
         read()
@@ -255,7 +256,7 @@ class ChromeShapes {
                     top += (top - second(seen[base + BOX0])) * k
                     right += (right - first(seen[base + BOX0 + 1])) * k
                     bottom += (bottom - second(seen[base + BOX0 + 1])) * k
-                    carried = true
+                    if (frosting && flags and FROSTED != 0L) carried = true
                 }
             }
             val l = (left - ox) / d
