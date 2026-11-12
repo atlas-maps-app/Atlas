@@ -1020,6 +1020,81 @@ TEST_CASE("scene: a world tile's names are its places of the kinds the world nam
     CHECK(name_priority(names[3]) > name_priority(names[4]));
 }
 
+TEST_CASE("scene: a world tile's names hold its waters and its rivers after its places, each by the packer's rank, a "
+          "water with its area and a river with its length in the tile") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(9, 262, 168);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b5 = atlas::test::cell_box(header, 5);
+    const auto b6 = atlas::test::cell_box(header, 6);
+    LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    // a cell's rows as the packer writes them: its places, then its waters, then its rivers, each by its rank in the
+    // tile. Cell 5: a town, the tile's second water, a water of no kind the world names, its first river; cell 6: a
+    // city, the tile's first water, a water without a name, a node's bay (no area), its second river
+    label.cells = {5, 5, 5, 5, 6, 6, 6, 6, 6};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {b5[0] + 10, b5[1] + 10}, {b5[0] + 20, b5[1] + 20}, {b5[0] + 30, b5[1] + 30},
+        {b5[0] + 40, b5[1] + 40}, {b6[0] + 10, b6[1] + 10}, {b6[0] + 20, b6[1] + 20},
+        {b6[0] + 30, b6[1] + 30}, {b6[0] + 40, b6[1] + 40}, {b6[0] + 50, b6[1] + 50}};
+    label.columns = {
+        {"source", Codec::u8, col::u8({1, 2, 2, 3, 1, 2, 2, 2, 3})},
+        {"index", Codec::delta, col::delta({1, 1, 3, 0, 0, 0, 2, 4, 1})},
+        {"name", Codec::str,
+         col::str(tile, {"Zaandam", "Markermeer", "Sluis", "Zaan", "Amsterdam", "IJsselmeer / Lake IJssel", "",
+                         "Hoornse Hop", "Maas / Meuse"})},
+        {"pos", Codec::point, col::point(at)},
+        {"prev", Codec::point, col::point(at)},
+        {"count", Codec::varu, col::varu({1, 593'000'000, 5'000, 12'400, 1, 1'125'000'000, 9'000'000, 0, 8'300})},
+        {"kind", Codec::str, col::str(tile, {"town", "lake", "lock", "river", "city", "lake", "lake", "bay", "river"})},
+        {"tag:population", Codec::str, col::str(tile, {"72000", "", "", "", "900000", "", "", "", ""})},
+        {"tag:capital", Codec::str, col::str(tile, {"", "", "", "", "yes", "", "", "", ""})}};
+    tile.layers.back() = label;
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const std::vector<atlas::scene::WorldName> names = atlas::scene::build_world_names(*decoded);
+    using atlas::scene::NameKind;
+    REQUIRE(names.size() == 7);
+    // the places by rank, as before
+    CHECK(names[0].text == "Amsterdam");
+    CHECK(names[1].text == "Zaandam");
+    CHECK(names[1].extent == 0.0);
+    // the waters by rank: each at its point with its area; the one of no kind and the nameless one are left out
+    CHECK(names[2].text == "IJsselmeer");
+    CHECK(names[2].kind == NameKind::lake);
+    CHECK(names[2].extent == 1'125'000'000.0);
+    CHECK(names[2].cell == 6);
+    CHECK(names[2].lat == doctest::Approx(Frame::degrees(b6[0] + 20)));
+    CHECK(names[2].lon == doctest::Approx(Frame::degrees(b6[1] + 20)));
+    CHECK(names[2].people == 0.0);
+    CHECK_FALSE(names[2].lit);
+    CHECK(names[3].text == "Markermeer");
+    CHECK(names[3].extent == 593'000'000.0);
+    CHECK(names[3].cell == 5);
+    CHECK(names[4].text == "Hoornse Hop");
+    CHECK(names[4].kind == NameKind::bay);
+    CHECK(names[4].extent == 0.0);
+    // the rivers by rank: each with its length in the tile
+    CHECK(names[5].text == "Zaan");
+    CHECK(names[5].kind == NameKind::river);
+    CHECK(names[5].extent == 12'400.0);
+    // a name of several languages' is its first part
+    CHECK(names[6].text == "Maas");
+    CHECK(names[6].extent == 8'300.0);
+    // no water is lit
+    for (const atlas::scene::WorldName& n : names) CHECK((!atlas::scene::is_water(n.kind) || !n.lit));
+}
+
 TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
           "the tile's winding, and the poles' caps are grids of it") {
     // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km
