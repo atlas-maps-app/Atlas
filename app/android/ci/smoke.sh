@@ -993,19 +993,20 @@ fi
 # world.idx (<n> packs) and world-globe.atlas of <release> on the phone`, the release world-latest's world.json names),
 # the heads of the packs the views reach (`vk world: the head of world/<z>/<x>/<y> …`) and the chunks of the tiles they
 # want by ranges (`vk world: <n> chunks (<k> kB) in <m> ranges on the phone`, n at least 1), and each view's picture be
-# final with the core's last rest there saying the world drew it (`vk tiles … world <n> drawn finest <z> wanted 0 bare
-# 0`: every tile it wants resident, no cell without one; at 100 km a level of the block's packs, 6 or finer, where the
-# globe holds L0 to L3), with no crash or ANR. Then 12 km over Lille, outside the countries (ENGINE.md step 3): no
-# country's levels are there, so the world draws under the core's cover within the levels' 18 km too, its picture final
-# and its last rest saying so (`… world <n> drawn finest <z> wanted 0 bare 0 under land <m>`, a fine pack's level, 9 to
-# 11). Then 12 km over Antwerp, within the Netherlands' box beyond its border: the country's tiles' index, read as the
-# first camera within the box asked (`vk windows: the tiles' index of netherlands on the phone, <n> tiles …`), lists no
-# window there, so no levels are counted (`vk script: beyond the border: levels at the start netherlands, at <lat>,<lon>
-# in the box of netherlands none`) and the world draws under the cover as over Lille. The lines go to world.txt, the
-# screens to world-25km.png, world-100km.png, world-under-12km.png and world-beyond-12km.png.
+# final with the core's last rest there saying the world drew it (`vk tiles … held 0 world <n> drawn finest <z> wanted 0
+# bare 0`: every tile it wants resident, none held back for room, no cell without one; at 100 km a level of the block's
+# packs, 6 or finer, where the globe holds L0 to L3), with no crash or ANR. Then 12 km over Lille, outside the countries
+# (ENGINE.md step 3): no country's levels are there, so the world draws under the core's cover within the levels' 18 km
+# too, its picture final and its last rest saying so (`… held 0 world <n> drawn finest <z> wanted 0 bare 0 under land
+# <m>`, a fine pack's level, 9 to 11). Then 12 km over Antwerp, within the Netherlands' box beyond its border: the
+# country's tiles' index, read as the first camera within the box asked (`vk windows: the tiles' index of netherlands on
+# the phone, <n> tiles …`), lists no window there, so no levels are counted (`vk script: beyond the border: levels at
+# the start netherlands, at <lat>,<lon> in the box of netherlands none`) and the world draws under the cover as over
+# Lille. The lines go to world.txt, the screens to world-25km.png, world-100km.png, world-under-12km.png and
+# world-beyond-12km.png.
 WORLD_LATEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-latest
 world_phase() {
-  local release km next line rest at drawn finest wanted bare land chunks n k r
+  local release km next line rest at drawn finest wanted bare land held chunks n k r
   release=$(curl -sfL --retry 5 --retry-all-errors --max-time 60 "$WORLD_LATEST/world.json" |
     python3 -I -c 'import json, sys; print(json.load(sys.stdin)["release"])' 2>/dev/null)
   if [ -z "$release" ]; then
@@ -1039,7 +1040,9 @@ world_phase() {
     echo "world: at $km km, the last rest: ${rest:-none}"
     at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\).*/\1 \2 \3 \4/p' <<< "$rest")
     read -r drawn finest wanted bare <<< "${at:-0 0 -1 -1}"
-    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$bare" != 0 ]; then
+    # the world's tiles held back for room (WorldFrame::held), its heap's words before its own
+    held=$(sed -n 's/.* held \([0-9]*\) world [0-9]* drawn .*/\1/p' <<< "$rest")
+    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$bare" != 0 ] || [ "${held:-0}" != 0 ]; then
       echo "WORLD FAILED: at $km km the core's last rest did not draw the world whole (${rest:-no rest line with the world})"; FAIL=1
     fi
     if [ "$km" = 100 ] && [ "$finest" -lt 6 ]; then
@@ -1058,7 +1061,8 @@ world_phase() {
     echo "world: under the cover at 12 km, the last rest: ${rest:-none}"
     at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\) under land \([0-9]*\).*/\1 \2 \3 \4 \5/p' <<< "$rest")
     read -r drawn finest wanted bare land <<< "${at:-0 0 -1 -1 -1}"
-    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$finest" -lt 9 ]; then
+    held=$(sed -n 's/.* held \([0-9]*\) world [0-9]* drawn .*/\1/p' <<< "$rest")
+    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$finest" -lt 9 ] || [ "${held:-0}" != 0 ]; then
       echo "WORLD FAILED: at 12 km over Lille the core's last rest did not draw the world under its cover (${rest:-no rest line with the world})"; FAIL=1
     fi
   else
@@ -1082,7 +1086,8 @@ world_phase() {
     echo "world: beyond the border at 12 km, the last rest: ${rest:-none}"
     at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\) under land \([0-9]*\).*/\1 \2 \3 \4 \5/p' <<< "$rest")
     read -r drawn finest wanted bare land <<< "${at:-0 0 -1 -1 -1}"
-    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$finest" -lt 9 ]; then
+    held=$(sed -n 's/.* held \([0-9]*\) world [0-9]* drawn .*/\1/p' <<< "$rest")
+    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$finest" -lt 9 ] || [ "${held:-0}" != 0 ]; then
       echo "WORLD FAILED: at 12 km over Antwerp the core's last rest did not draw the world under its cover (${rest:-no rest line with the world})"; FAIL=1
     fi
   else

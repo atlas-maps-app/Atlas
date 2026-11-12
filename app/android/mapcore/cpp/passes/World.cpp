@@ -180,12 +180,14 @@ void World::update(const frame::FrameState& state) {
     if (paint != 0) std::ranges::fill(palette_, paint);
     std::memcpy(palette_buffer_.bytes().data() + ((state.slot & 1U) * palette_bytes), palette_.data(), palette_bytes);
     palette_buffer_.flush();
-    if (s.bound != world->buffer) {
-        // the slot's last frame has finished with its set (the frame slots' fences)
+    if (s.bound != world->buffer || s.bound_bytes != world->buffer_bytes) {
+        // the slot's last frame has finished with its set (the frame slots' fences); the world's heap grown, a new
+        // buffer and its bytes
         gpu::SetWriter(*s.set)
             .buffer(wl::world_words.binding, vk::DescriptorType::eStorageBuffer, world->buffer, 0, world->buffer_bytes)
             .apply(device_->handle());
         s.bound = world->buffer;
+        s.bound_bytes = world->buffer_bytes;
     }
     const view::Camera& camera = state.view->camera();
     const view::Vec3& eye = camera.eye();
@@ -304,6 +306,7 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
                     palette_bytes)
             .apply(d);
         slots_.at(s).bound = palette_buffer_.handle();
+        slots_.at(s).bound_bytes = palette_bytes;
     }
     const std::array<vk::DescriptorSetLayout, 1> extra{*set_layout_};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
@@ -379,6 +382,7 @@ void World::release() noexcept {
     for (Slot& s : slots_) {
         s.set.clear();
         s.bound = vk::Buffer{};
+        s.bound_bytes = 0;
         s.drawing = false;
     }
     pool_.clear();

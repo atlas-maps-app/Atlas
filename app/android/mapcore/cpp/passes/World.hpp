@@ -123,10 +123,11 @@ private:
     bool space_ = false;
     bool glass_ = false;
 
-    /// A frame slot's own: its set, the heap buffer bound to it, and its draws.
+    /// A frame slot's own: its set, the heap buffer bound to it and the bytes bound, and its draws.
     struct Slot {
         vk::raii::DescriptorSet set{nullptr};
         vk::Buffer bound;
+        vk::DeviceSize bound_bytes = 0;
         bool drawing = false;
     };
     std::array<Slot, 2> slots_{};

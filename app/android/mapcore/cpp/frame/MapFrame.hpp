@@ -84,6 +84,11 @@ struct MapOptions {
     /// The triangle governor's budget instead of the device's (scene::triangle_budget): a test's, to set the bias to
     /// work or to measure a view's triangles with none (a budget no view reaches); 0 for the device's.
     std::uint64_t triangle_budget = 0;
+    /// The world's heap in bytes instead of the world's own (scene::WorldOptions::world_heap): a test's, to hold a
+    /// view's world tiles in less room than they take; 0 for the world's.
+    std::uint64_t world_heap = 0;
+    /// The bytes that heap may grow to (scene::WorldOptions::world_heap_budget): a test's; 0 for none past it.
+    std::uint64_t world_heap_budget = 0;
     /// The frame's clear colour instead of paper's (FrameOptions::clear): a test's, to tell where nothing draws.
     std::optional<std::array<float, 4>> clear;
 };
