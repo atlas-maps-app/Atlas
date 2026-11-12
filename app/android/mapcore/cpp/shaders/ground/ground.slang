@@ -1905,22 +1905,63 @@ StrokeOutput reflection_fs(QuayOut q) {
     return o;
 }
 
+/// The glints' filter's result (premultiplied sRGB bytes, r g b a) at the field's point `q`: the moment's table's
+/// entry (in `words` from push.mode.z) at the field's red there (fx_glints_red).
+float4 glints_entry(float2 q) {
+    uint s = words[push.mode.z + fx_glints_red(q)];
+    float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
+    return c;
+}
+
+/// The glints' field's point of octave `n` for the water's map's point `q`: halved n times about the map's own origin
+/// on the water, which the map left `periods` whole mirror periods of the fields from (passes::WaterOctaves): the
+/// octave's own period is 2^n of them, so those within it are put back first and its glints keep their places as the
+/// frame's middle crosses a period.
+float2 glints_octave(float2 q, int2 periods, uint n) {
+    uint w = 0u;
+    uint h = 0u;
+    noise_rgba.GetDimensions(w, h);
+    int mask = int((1u << n) - 1u);
+    float2 whole = {float(2u * w) * float(periods.x & mask), float(2u * h) * float(periods.y & mask)};
+    return (q + whole) * (1.0f / float(1u << n));
+}
+
 /// The water's glints inside its clip at their slot (screen_vs; passes/Glints.cpp): the glints' field's red where the
 /// water under the pixel reads it (the water's map after the table: passes::water_map, fixed to the water; between its
 /// pixels, fx_glints_red) picks the filter's result (premultiplied sRGB, a r g b) from the moment's table of 256 in
 /// `words` (from push.mode.z), at the rect's opacity (push.rows.z), premultiplied; nothing where no water lies.
+/// The field is read by the pixel's footprint in it (passes::WaterOctaves, the three words after the map; the far
+/// flicker): the longer of the map's derivatives along the screen's x and y, squared. Up to the first word the field
+/// as it lies, the one read (the home view's every pixel, to the bit); beyond it at octave L = half the log2 of their
+/// ratio, the results of octaves floor(L) and the next (glints_octave) blended by L's fraction, so a far view's pixel
+/// reads glints of its own size, the same ones as the map pans.
 [shader("fragment")]
 ColourOut glints_fs(ScreenOut v) {
     uint m = push.mode.z + 256u;
     float3 r0 = {asfloat(words[m]), asfloat(words[m + 1u]), asfloat(words[m + 2u])};
     float3 r1 = {asfloat(words[m + 3u]), asfloat(words[m + 4u]), asfloat(words[m + 5u])};
     float3 r2 = {asfloat(words[m + 6u]), asfloat(words[m + 7u]), asfloat(words[m + 8u])};
-    float3 q = fx_water_point(r0, r1, r2, css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z);
+    float2 p = css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z;
+    float3 q = fx_water_point(r0, r1, r2, p);
     if (q.z == 0.0f) {
         discard;
     }
-    uint s = words[push.mode.z + fx_glints_red(q.xy)];
-    float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
+    float w = ((r2.x * p.x) + (r2.y * p.y)) + r2.z;
+    float2 dx = {r0.x - (q.x * r2.x), r1.x - (q.y * r2.x)};
+    float2 dy = {r0.y - (q.x * r2.y), r1.y - (q.y * r2.y)};
+    float foot = max((dx.x * dx.x) + (dx.y * dx.y), (dy.x * dy.x) + (dy.y * dy.y)) / (w * w);
+    float lies = asfloat(words[m + 9u]);
+    float4 c;
+    if (!(foot > lies)) {
+        c = glints_entry(q.xy);
+    } else {
+        float l = min(0.5f * log2(foot / lies), 15.0f);
+        float n = floor(l);
+        int2 periods = {int(words[m + 10u]), int(words[m + 11u])};
+        float4 a = glints_entry(glints_octave(q.xy, periods, uint(n)));
+        float4 b = glints_entry(glints_octave(q.xy, periods, uint(n) + 1u));
+        c = lerp(a, b, l - n);
+    }
     ColourOut o;
     o.colour = (c * (1.0f / 255.0f)) * push.rows.z;
     return o;

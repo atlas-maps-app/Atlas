@@ -7,6 +7,10 @@
 // either side where the GPU's division rounds the point another way) composited at the rect's opacity over the frame
 // without them, within a level (one 8-bit store); in structural mode, whose references leave out an element of a
 // generator-only filter, nothing. And the map holds a ground point's place in the fields as the camera pans.
+// The octaves (the far flicker): the home reads the field as it lies at every pixel; a far view reads it at the octave
+// of each pixel's footprint, at most a field pixel of the coarser octave a device px, a point of the water keeping its
+// place in every octave as the frame's middle crosses the fields' periods; and on the GPU the canal ring's board view
+// is the two octaves' results blended, as passes::glints_read works them out.
 #include "fx/ByteTables.hpp"
 #include "fx/Glints.hpp"
 #include "passes/Ground.hpp"
@@ -17,8 +21,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <format>
+#include <numbers>
 #include <optional>
+#include <utility>
 
 using namespace atlas;
 
@@ -118,6 +126,135 @@ TEST_CASE("ground: the water's map keeps a point of the water where it reads the
     CHECK(std::abs(step(0.0, 10.0) - 10.0) < 0.6);
 }
 
+TEST_CASE("ground: the glints read the field as it lies at the home and by each pixel's footprint from afar") {
+    constexpr double density = 2.625;
+    constexpr std::uint32_t width = 1080;
+    constexpr std::uint32_t height = 2400;
+    constexpr double water_y = -1.5;
+    const auto spec = [&](double yaw, double pitch, double dist, double x = -10.0, double z = -30.0) {
+        return view::CameraSpec{.target = {x, 0.0, z},
+                                .yaw = yaw,
+                                .pitch = pitch,
+                                .dist = dist,
+                                .width = width / density,
+                                .height = height / density};
+    };
+    // what a frame's pixels read: those as the field lies and those by octaves, the largest footprint, and the most
+    // field pixels of its octave a read takes a device px (the footprint over 2^octave, the first read's)
+    struct Reads {
+        std::size_t lies = 0;
+        std::size_t octaves = 0;
+        double footprint = 0;
+        double most = 0;
+        float as_it_lies = 0;
+    };
+    const auto reads_of = [&](const view::CameraSpec& s) {
+        const view::Camera cam(s);
+        passes::WaterOctaves o;
+        const std::array<float, 9> m = passes::water_map(cam, water_y, density, width, height, &o);
+        Reads r;
+        r.as_it_lies = o.as_it_lies;
+        for (std::uint32_t y = 0; y < height; y += 8) {
+            for (std::uint32_t x = 0; x < width; x += 8) {
+                const passes::GlintsRead g = passes::glints_read(m, o, width, height, static_cast<float>(x) + 0.5F,
+                                                                 static_cast<float>(y) + 0.5F);
+                if (!g.first.on) continue;
+                const bool lies = !g.second.on;
+                r.lies += lies ? 1 : 0;
+                r.octaves += lies ? 0 : 1;
+                r.footprint = std::max(r.footprint, static_cast<double>(g.footprint));
+                r.most =
+                    std::max(r.most, static_cast<double>(g.footprint) / std::ldexp(1.0, static_cast<int>(g.octave)));
+                if (!lies) CHECK((g.blend >= 0.0F && g.blend < 1.0F));
+            }
+        }
+        return r;
+    };
+    // the home, its principal point at the frame's middle and where the phone's camera has it: every pixel as it lies
+    for (const double cy : {height / density / 2, 440.0}) {
+        view::CameraSpec home = spec(52.0, 38.0, 430.0);
+        home.cy = cy;
+        const Reads r = reads_of(home);
+        MESSAGE(std::format("the home (cy {:.0f}): as it lies up to {:.2f} field px a px, its most {:.2f}", cy,
+                            std::sqrt(static_cast<double>(r.as_it_lies)), r.footprint));
+        CHECK(r.octaves == 0);
+        CHECK(r.lies == std::size_t{135} * 300);
+        CHECK(r.as_it_lies > 15.0F);
+        CHECK(r.footprint < 3.1);
+    }
+    // from afar every pixel by its octaves, none taking more than two field pixels of its finer octave (so at most one
+    // of the coarser), from the audit's pans' 10 and 15 km down to where the frame's middle takes four
+    for (const double dist : {1800.0, 5000.0, 10000.0, 15000.0}) {
+        const Reads r = reads_of(spec(22.0, 42.0, dist));
+        MESSAGE(std::format(
+            "{:.0f} m: {} pixels by octaves, {} as the field lies; the most {:.1f} field px a px, {:.3f} of "
+            "its octave's",
+            dist, r.octaves, r.lies, r.footprint, r.most));
+        CHECK(r.as_it_lies == 1.0F);
+        CHECK(r.lies == 0);
+        CHECK(r.octaves > 40000U);
+        CHECK(r.most < 2.0 + 1e-3);
+    }
+    // between, the field as it lies up to fewer of its pixels the farther the camera: 4 over the middle's footprint
+    {
+        const Reads r = reads_of(spec(52.0, 38.0, 860.0));
+        CHECK(std::sqrt(static_cast<double>(r.as_it_lies)) == doctest::Approx(4.0 / 2.0).epsilon(0.05));
+        CHECK(r.lies > 0U);
+        CHECK(r.octaves > 0U);
+        CHECK(r.most < (2.0 * 2.1));
+    }
+    // a point of the water keeps its place in each octave as the camera pans across the fields' periods: the octave's
+    // point of the pixel that shows it, mirrored into the octave's field, from two cameras 40 km of water apart
+    const auto mirrored = [](double v, double n) {
+        double m = std::fmod(v, 2 * n);
+        if (m < 0) m += 2 * n;
+        return m < n ? m : (2 * n) - m;
+    };
+    const auto octave_point = [&](const view::CameraSpec& s, double x, double z, std::uint32_t octave) {
+        const view::Camera cam(s);
+        passes::WaterOctaves o;
+        const std::array<float, 9> m = passes::water_map(cam, water_y, density, width, height, &o);
+        // the octave asked for whatever the pixel's own: as_it_lies set so that the pixel's footprint is that octave's
+        const std::optional<view::Vec2> p = cam.proj({x, water_y, z});
+        REQUIRE(p.has_value());
+        const auto px = static_cast<float>(p->x * density);
+        const auto py = static_cast<float>(p->y * density);
+        const passes::GlintsRead own = passes::glints_read(m, o, width, height, px, py);
+        REQUIRE(own.first.on);
+        const double f =
+            static_cast<double>(own.footprint) / (std::ldexp(1.0, static_cast<int>(octave)) * std::numbers::sqrt2);
+        o.as_it_lies = static_cast<float>(f * f);
+        const passes::GlintsRead g = passes::glints_read(m, o, width, height, px, py);
+        REQUIRE(g.second.on);
+        REQUIRE(g.octave == octave);
+        return std::array<double, 5>{static_cast<double>(g.first.x), static_cast<double>(g.first.y),
+                                     static_cast<double>(g.second.x), static_cast<double>(g.second.y),
+                                     static_cast<double>(o.periods[0]) + (1000.0 * static_cast<double>(o.periods[1]))};
+    };
+    std::size_t held = 0;
+    std::size_t crossed = 0;
+    for (const std::uint32_t octave : {0U, 1U, 3U, 6U}) {
+        for (const auto& [x, z] : {std::pair{-900.0, 400.0}, std::pair{250.0, -1300.0}, std::pair{2100.0, 800.0}}) {
+            const std::array<double, 5> a = octave_point(spec(22.0, 42.0, 10000.0), x, z, octave);
+            for (const auto& [tx, tz] :
+                 {std::pair{1500.0, -700.0}, std::pair{-2300.0, 1900.0}, std::pair{600.0, 2500.0}}) {
+                const std::array<double, 5> b = octave_point(spec(22.0, 42.0, 10000.0, tx, tz), x, z, octave);
+                // a float's step at the map's points over the octave's scale, and the projection's own rounding
+                const double eps = (0.6 / std::ldexp(1.0, static_cast<int>(octave))) + 0.02;
+                CHECK(std::abs(mirrored(a[0], width) - mirrored(b[0], width)) < eps);
+                CHECK(std::abs(mirrored(a[1], height) - mirrored(b[1], height)) < eps);
+                CHECK(std::abs(mirrored(a[2], width) - mirrored(b[2], width)) < eps);
+                CHECK(std::abs(mirrored(a[3], height) - mirrored(b[3], height)) < eps);
+                ++held;
+                crossed += a[4] != b[4] ? 1 : 0;
+            }
+        }
+    }
+    CHECK(held == 36);
+    // the cameras' middles lay in other periods of the fields (else the case holds nothing of the periods put back)
+    CHECK(crossed >= 24U);
+}
+
 #if !defined(__ANDROID__)
 
 #include "fx/FieldCache.hpp"
@@ -125,9 +262,9 @@ TEST_CASE("ground: the water's map keeps a point of the water where it reads the
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
 
-#include <format>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -149,12 +286,15 @@ struct Count {
     std::size_t bare = 0;
     std::size_t glinted = 0;
     std::size_t wrong = 0;
+    std::size_t octaves = 0;         ///< bare pixels whose read is two octaves' blend
+    std::size_t glinted_octaves = 0; ///< of the glinted, those
     std::string first;
 };
 
 } // namespace
 
-TEST_CASE("ground: the glints are their filter's table at the field's red, over the water at the rect's opacity") {
+TEST_CASE("ground: the glints are their filter's table at the field's red, over the water at the rect's opacity, the "
+          "home as the field lies and the board's view by its pixels' octaves") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the glints are not drawn over the bundled packs here");
@@ -166,23 +306,36 @@ TEST_CASE("ground: the glints are their filter's table at the field's red, over 
     ATLAS_REQUIRE(made.has_value(), made.error().text());
     const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
     const auto settle = [&fields] { fields->worker().wait_idle(); };
-    const style::CameraState camera = test::home_camera();
     style::ThemeBlock day = test::sunny();
     day.shadow_opacity = 0.0;
-    for (const frame::Mode mode : {frame::Mode::full, frame::Mode::structural}) {
+    struct Seen {
+        const char* name;
+        const char* pack;
+        style::CameraState camera;
+        frame::Mode mode;
+    };
+    const std::vector<Seen> seen{
+        {"the home", "amsterdam", test::home_camera(), frame::Mode::full},
+        {"the home", "amsterdam", test::home_camera(), frame::Mode::structural},
+        {"the board", "grachten", test::view_camera(dir, "grachten", "grachten_home"), frame::Mode::full}};
+    for (const Seen& view : seen) {
+        const style::CameraState camera = view.camera;
+        const frame::Mode mode = view.mode;
         const bool full = mode == frame::Mode::full;
+        const bool home = std::string_view(view.name) == "the home";
         double opacity = 0;
         bool filtered = false;
         double wgrad_y1 = 0;
         double wgrad_y2 = 0;
         style::ThemeBlock th{};
         std::array<float, 9> map{};
+        passes::WaterOctaves octaves;
         const auto quiet = [](passes::Ground& g) {
             g.draw_reflections(false);
             g.draw_glitter(false);
         };
         const auto a = test::draw_ground(
-            *session, camera, day, dir, "amsterdam",
+            *session, camera, day, dir, view.pack,
             [&](passes::Ground& g, const frame::FrameState& state) {
                 const passes::GroundFrame& f = g.decided();
                 opacity = f.wind_glints ? f.wind_glints_opacity : 0;
@@ -192,22 +345,22 @@ TEST_CASE("ground: the glints are their filter's table at the field's red, over 
                 th = state.theme;
                 if (state.view) {
                     map = passes::water_map(state.view->camera(), passes::water_level(f), state.camera.density,
-                                            state.camera.width_px, state.camera.height_px);
+                                            state.camera.width_px, state.camera.height_px, &octaves);
                 }
             },
             40, quiet, mode, fields, settle);
-        ATLAS_REQUIRE(a.has_value(), "the home was not drawn with its glints");
+        ATLAS_REQUIRE(a.has_value(), std::format("{} was not drawn with its glints", view.name));
         for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
         CHECK(filtered == full);
         CHECK((opacity > 0) == full);
         const auto b = test::draw_ground(
-            *session, camera, day, dir, "amsterdam", {}, 40,
+            *session, camera, day, dir, view.pack, {}, 40,
             [&](passes::Ground& g) {
                 quiet(g);
                 g.draw_wind_glints(false);
             },
             mode, fields, settle);
-        ATLAS_REQUIRE(b.has_value(), "the home was not drawn without its glints");
+        ATLAS_REQUIRE(b.has_value(), std::format("{} was not drawn without its glints", view.name));
         if (!full) {
             CHECK_MESSAGE(a->pixels.rgba == b->pixels.rgba, "structural mode drew the glints");
             continue;
@@ -248,50 +401,66 @@ TEST_CASE("ground: the glints are their filter's table at the field's red, over 
                 if (!around) continue;
                 ++c.bare;
                 const std::size_t i = (row * w) + column;
-                // the field's red where the water under the pixel reads it, as fx_glints_red blends it
-                const passes::WaterPoint q =
-                    passes::water_point(map, static_cast<float>(column) + 0.5F, static_cast<float>(row) + 0.5F);
-                if (!q.on) continue;
-                const float fx0 = std::floor(q.x);
-                const float fy0 = std::floor(q.y);
-                const auto at = [&](std::int64_t x, std::int64_t y) {
-                    return static_cast<float>(red[(static_cast<std::size_t>(mirror(y, h)) * w) + mirror(x, w)]);
+                // the field's red where the water under the pixel reads it, as fx_glints_red blends it: the field as
+                // it lies, or its two octaves by the pixel's footprint (passes::glints_read, glints_fs's steps)
+                const passes::GlintsRead read = passes::glints_read(
+                    map, octaves, w, h, static_cast<float>(column) + 0.5F, static_cast<float>(row) + 0.5F);
+                if (!read.first.on) continue;
+                const auto red_of = [&](const passes::WaterPoint& q) {
+                    const float fx0 = std::floor(q.x);
+                    const float fy0 = std::floor(q.y);
+                    const auto at = [&](std::int64_t x, std::int64_t y) {
+                        return static_cast<float>(red[(static_cast<std::size_t>(mirror(y, h)) * w) + mirror(x, w)]);
+                    };
+                    const auto ix = static_cast<std::int64_t>(fx0);
+                    const auto iy = static_cast<std::int64_t>(fy0);
+                    const float tx = q.x - fx0;
+                    const float ty = q.y - fy0;
+                    const float upper = at(ix, iy) + ((at(ix + 1, iy) - at(ix, iy)) * tx);
+                    const float lower = at(ix, iy + 1) + ((at(ix + 1, iy + 1) - at(ix, iy + 1)) * tx);
+                    // fx_glints_red's uint(r + 0.5): the blend is never negative, so the floor is its truncation
+                    return static_cast<std::int64_t>(std::floor((upper + ((lower - upper) * ty)) + 0.5F));
                 };
-                const auto ix = static_cast<std::int64_t>(fx0);
-                const auto iy = static_cast<std::int64_t>(fy0);
-                const float tx = q.x - fx0;
-                const float ty = q.y - fy0;
-                const float upper = at(ix, iy) + ((at(ix + 1, iy) - at(ix, iy)) * tx);
-                const float lower = at(ix, iy + 1) + ((at(ix + 1, iy + 1) - at(ix, iy + 1)) * tx);
-                // fx_glints_red's uint(r + 0.5): the blend is never negative, so the floor is its truncation
-                const auto r = static_cast<std::int64_t>(std::floor((upper + ((lower - upper) * ty)) + 0.5F));
-                // the filter's result there, at the rect's opacity over the water: the red's, or a red either side
-                bool glinted = false;
+                const std::int64_t r = red_of(read.first);
+                const bool two = read.second.on;
+                const std::int64_t r2 = two ? red_of(read.second) : r;
+                c.octaves += two ? 1 : 0;
+                // the filter's result there (r g b a), at the rect's opacity over the water: the red's, or a red either
+                // side (each octave's), the two octaves' blended by the second's share
+                const auto entry = [&](std::int64_t red_at) {
+                    const fx::Argb f = table[static_cast<std::size_t>(std::clamp<std::int64_t>(red_at, 0, 255))];
+                    return std::array<double, 4>{static_cast<double>((f >> 16U) & 0xFFU),
+                                                 static_cast<double>((f >> 8U) & 0xFFU), static_cast<double>(f & 0xFFU),
+                                                 static_cast<double>(f >> 24U)};
+                };
+                const bool glinted = entry(r)[3] != 0 || (two && entry(r2)[3] != 0);
                 double worst = 1e9;
                 std::array<double, 3> want{};
-                for (const std::int64_t red_at : {r, r - 1, r + 1}) {
-                    if (red_at < 0 || red_at > 255) continue;
-                    const fx::Argb f = table[static_cast<std::size_t>(red_at)];
-                    const auto fa = static_cast<double>(f >> 24U);
-                    glinted = glinted || (fa != 0 && red_at == r);
-                    const std::array<double, 3> fc{static_cast<double>((f >> 16U) & 0xFFU),
-                                                   static_cast<double>((f >> 8U) & 0xFFU),
-                                                   static_cast<double>(f & 0xFFU)};
-                    double worst_here = 0;
-                    std::array<double, 3> here{};
-                    for (std::size_t k = 0; k < 3; ++k) {
-                        const auto under = static_cast<double>(b->pixels.rgba[(i * 4) + k]);
-                        here[k] = (fc[k] * opacity) + (under * (1 - (fa / 255.0 * opacity)));
-                        worst_here =
-                            std::max(worst_here, std::abs(static_cast<double>(a->pixels.rgba[(i * 4) + k]) - here[k]));
-                    }
-                    if (worst_here < worst) {
-                        worst = worst_here;
-                        want = here;
+                const auto share = static_cast<double>(read.blend);
+                for (const std::int64_t d1 : {0, -1, 1}) {
+                    for (const std::int64_t d2 : {0, -1, 1}) {
+                        if (!two && d2 != 0) continue;
+                        const std::array<double, 4> e1 = entry(r + d1);
+                        const std::array<double, 4> e2 = entry(r2 + d2);
+                        std::array<double, 4> f{};
+                        for (std::size_t k = 0; k < 4; ++k) f[k] = two ? e1[k] + ((e2[k] - e1[k]) * share) : e1[k];
+                        double worst_here = 0;
+                        std::array<double, 3> here{};
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            const auto under = static_cast<double>(b->pixels.rgba[(i * 4) + k]);
+                            here[k] = (f[k] * opacity) + (under * (1 - (f[3] / 255.0 * opacity)));
+                            worst_here = std::max(worst_here,
+                                                  std::abs(static_cast<double>(a->pixels.rgba[(i * 4) + k]) - here[k]));
+                        }
+                        if (worst_here < worst) {
+                            worst = worst_here;
+                            want = here;
+                        }
                     }
                 }
                 if (!glinted) continue;
                 ++c.glinted;
+                c.glinted_octaves += two ? 1 : 0;
                 if (worst <= 1) continue;
                 if (c.wrong == 0) {
                     c.first = std::format("pixel {} {}: {} {} {}, expected {:.1f} {:.1f} {:.1f}", column, row,
@@ -302,11 +471,19 @@ TEST_CASE("ground: the glints are their filter's table at the field's red, over 
             }
         }
         MESSAGE(
-            std::format("the glints at the home: opacity {:.2f}; {} pixels of bare water, {} under them, {} not their "
-                        "composite",
-                        opacity, c.bare, c.glinted, c.wrong));
+            std::format("the glints at {} ({:.0f} m): opacity {:.2f}; {} pixels of bare water, {} read by octaves "
+                        "(the field as it lies up to {:.2f} of its pixels a px); {} under the glints, {} of them by "
+                        "octaves, {} not their composite",
+                        view.name, camera.distance, opacity, c.bare, c.octaves,
+                        std::sqrt(static_cast<double>(octaves.as_it_lies)), c.glinted, c.glinted_octaves, c.wrong));
         CHECK(c.glinted > 2000U);
         CHECK_MESSAGE(c.wrong == 0, c.first);
+        // the home reads the field as it lies at every pixel (its pixels are what they were); the board by octaves
+        if (home) {
+            CHECK(c.octaves == 0U);
+        } else {
+            CHECK(c.glinted_octaves > 2000U);
+        }
     }
 }
 
