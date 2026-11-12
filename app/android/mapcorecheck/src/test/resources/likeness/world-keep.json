@@ -1,6 +1,7 @@
 {
-  "about": "A kept country drawn offline (ENGINE.md step 11): the Netherlands from 18.5 km, beyond where its own tiles hand over, out to the globe, from its middle (flat and pitched) and at three edges looking out of it (the German border, the south, the coast), each pitched as steeply as the app allows there, drawn by WorldPackRefsTest (ATLAS_WORLD_REFS_VIEWS) over the world's tiles packer world-keep keeps for it and the globe alone: every frame whole. world.yml's refs job draws them.",
+  "about": "A kept country drawn offline (ENGINE.md step 11): the Netherlands from 18.5 km, beyond where its own tiles hand over, out to the globe, from its middle (flat and pitched) and at three edges looking out of it (the German border, the south, the coast), each pitched as steeply as the app allows there, drawn by WorldPackRefsTest (ATLAS_WORLD_REFS_VIEWS) over the world's tiles packer world-keep keeps for it and the globe alone: every frame whole, and as over the views' own walk. Without the world's names (names): a frame keeps names it picked while its tiles came, so where more than 64 stand in reach they follow when the tiles came, and the keep holds them by their tiles (packer world-refs --kept). world.yml's refs job draws them.",
   "version": "1",
+  "names": false,
   "frame": {"width": 1080, "height": 2400, "density": 2.6213592233009706, "cy": 0.48},
   "frames": [
     {"name": "amersfoort 18.5 km", "lat": 52.1561, "lon": 5.3878, "distance": 18500, "pitch": 0, "moment": "sunny"},

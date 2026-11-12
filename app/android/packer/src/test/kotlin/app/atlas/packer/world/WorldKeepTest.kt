@@ -4,6 +4,9 @@ import app.atlas.packer.country.WindowPack
 import app.atlas.rendertiles.model.Format
 import app.atlas.tiles.WorldIndex
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -309,6 +312,41 @@ class WorldKeepTest {
             assertEquals(a.chunks.map { Triple(it.z, it.x, it.y) }, b.chunks.map { Triple(it.z, it.x, it.y) })
             for ((i, c) in b.chunks.withIndex()) assertArrayEquals(a.tile(a.chunks[i]), b.tile(c))
         }
+        // world-refs --kept: Monaco's view draws from its kept tiles alone, and a tile the keep lacks is named
+        val views = File(tmp.root, "views.json").apply {
+            writeText(
+                """{"frame": {"width": 1080, "height": 2400, "density": 2.6213592233009706, "cy": 0.48},
+                   "frames": [{"name": "monaco", "lat": 43.7384, "lon": 7.4246, "distance": 25000, "pitch": 0, "moment": "sunny"}]}""",
+            )
+        }
+        val viewsCut = tmp.newFolder("views-cut")
+        val all = ArrayList<String>()
+        assertEquals(0, WorldRefs.run(listOf("world-refs", indexFile.path, views.path, fetched.path, viewsCut.path, "--kept", keepFile.path, "monaco"), all::add))
+        val total = viewsCut.listFiles()!!.sumOf { WindowPack.read(it.readBytes()).chunks.size }
+        assertTrue(all.joinToString("\n"), "world-refs: kept for monaco: all $total of the views' tiles" in all)
+        assertTrue(all.joinToString("\n"), all.none { "not kept" in it })
+        // the keep without the first of the fine pack's tiles the view draws
+        val gone = WindowPack.read(File(viewsCut, WorldRefs.fileOf(fine)).readBytes()).chunks.first()
+        val keepJson = Json.parseToJsonElement(keepFile.readText()).jsonObject
+        fun without(p: JsonObject): JsonObject = if (p["z"]!!.jsonPrimitive.int != fine.z) p else JsonObject(
+            p + ("tiles" to JsonObject(p["tiles"]!!.jsonObject.mapValues { (z, xy) ->
+                val pairs = xy.jsonArray.map { it.jsonPrimitive.int }.chunked(2).filter { (x, y) -> Triple(z.toInt(), x, y) != Triple(gone.z, gone.x, gone.y) }
+                JsonArray(pairs.flatten().map { JsonPrimitive(it) })
+            })),
+        )
+        val lacking = JsonObject(
+            keepJson + ("countries" to JsonArray(keepJson["countries"]!!.jsonArray.map { c ->
+                JsonObject(c.jsonObject + ("packs" to JsonArray(c.jsonObject["packs"]!!.jsonArray.map { without(it.jsonObject) })))
+            })),
+        )
+        val lackingFile = File(tmp.root, "lacking.json").apply { writeText(lacking.toString()) }
+        val some = ArrayList<String>()
+        assertEquals(0, WorldRefs.run(listOf("world-refs", indexFile.path, views.path, fetched.path, tmp.newFolder("views-cut-2").path, "--kept", lackingFile.path, "monaco"), some::add))
+        assertTrue(some.joinToString("\n"), "world-refs: ${WorldRefs.fileOf(fine)}: not kept for monaco: 1 (${gone.z}/${gone.x}/${gone.y})" in some)
+        assertTrue(some.joinToString("\n"), "world-refs: not kept for monaco: 1 of the views' $total tiles" in some)
+        // --kept names a world-keep.json and a country, after the folders
+        assertTrue(runCatching { WorldRefs.run(listOf("world-refs", indexFile.path, views.path, fetched.path, tmp.newFolder("x").path, "--kept", keepFile.path)) {} }.isFailure)
+        assertTrue(runCatching { WorldRefs.run(listOf("world-refs", indexFile.path, views.path, "--needed", "--kept", keepFile.path, "monaco")) {} }.isFailure)
         // a world-keep.json of another world is refused
         indexFile.appendBytes(byteArrayOf(0))
         assertTrue(runCatching { WorldKeep.run(listOf("world-keep", "cut", indexFile.path, keepFile.path, "monaco", "--needed")) {} }.isFailure)

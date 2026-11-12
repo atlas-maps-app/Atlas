@@ -495,6 +495,14 @@ object WorldKeep {
         }
     }
 
+    /** [keepFile] read, refused unless it was made for [indexFile] (the index's SHA-256 it holds). */
+    fun madeFor(keepFile: File, indexFile: File): JsonObject {
+        val json = Json.parseToJsonElement(keepFile.readText()).jsonObject
+        val sha = MessageDigest.getInstance("SHA-256").digest(indexFile.readBytes()).joinToString("") { "%02x".format(it) }
+        if (json["index"]?.jsonObject?.get("sha256")?.jsonPrimitive?.content != sha) throw UsageException("$keepFile was not made for $indexFile")
+        return json
+    }
+
     fun run(args: List<String>, out: (String) -> Unit): Int {
         if (args.firstOrNull() != "world-keep") throw UsageException("usage: $USAGE")
         if (args.getOrNull(1) == "cut") return cut(args, out)
@@ -553,9 +561,7 @@ object WorldKeep {
         val keepFile = File(args[3]).also { if (!it.isFile) throw UsageException("no world-keep.json $it") }
         val id = args[4]
         val index = WorldIndex.read(indexFile.readBytes())
-        val json = Json.parseToJsonElement(keepFile.readText()).jsonObject
-        val sha = MessageDigest.getInstance("SHA-256").digest(indexFile.readBytes()).joinToString("") { "%02x".format(it) }
-        if (json["index"]?.jsonObject?.get("sha256")?.jsonPrimitive?.content != sha) throw UsageException("$keepFile was not made for $indexFile")
+        val json = madeFor(keepFile, indexFile)
         val kept = kept(json, id).mapKeys { (k, _) ->
             index.find(k.first, k.second, k.third) ?: throw IllegalStateException("$indexFile has no pack ${k.first}/${k.second}/${k.third}")
         }

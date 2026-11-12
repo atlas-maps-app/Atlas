@@ -7,6 +7,7 @@ import app.atlas.render.live.Moment
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,7 +40,7 @@ import kotlin.math.roundToInt
  *
  * `ATLAS_WORLD_REFS_VIEWS` names other views of `likeness` to draw instead, held the same way, their report in a folder
  * of their name: `world-keep.json`, a kept country's zoom-out from 18 km to the globe over the tiles `packer world-keep`
- * keeps for it alone (ENGINE.md step 11), whole in every frame.
+ * keeps for it alone (ENGINE.md step 11), whole in every frame, without the world's names (its `names`).
  */
 class WorldPackRefsTest {
     @Test
@@ -78,6 +79,12 @@ class WorldPackRefsTest {
         val w = frame.dbl("width").toInt()
         val h = frame.dbl("height").toInt()
         val density = frame.dbl("density")
+        // the world's names, handed their sprites, unless the views say "names": false: a frame keeps the names it
+        // picked while its tiles came that still rank among the first 96 beside the first 64, and the host draws on
+        // without waiting for tiles while a fade runs, so where more than 64 stand in reach a frame's names follow when
+        // its tiles came (world-keep.json's two draws, held to each other, leave them out: the keep holds its views'
+        // names by their tiles, packer world-refs --kept)
+        val names = (refs["names"] as? JsonPrimitive)?.booleanOrNull ?: true
         val widthDp = (w / density).roundToInt()
         val heightDp = (h / density).roundToInt()
         val drawn = LinkedHashMap<String, String>()
@@ -100,7 +107,7 @@ class WorldPackRefsTest {
                 val o = e.jsonObject
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()
-                val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"))
+                val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"), names)
                 val world = WORLD.find(notes)
                 val complete = notes.contains("complete yes")
                 val wanted = world?.groupValues?.get(3)?.toInt() ?: -1
@@ -158,8 +165,8 @@ class WorldPackRefsTest {
         )
     }
 
-    /** Frame [o] drawn: its moment, its camera, the world's names handed until it wants none; the last draw's notes. */
-    private fun draw(handle: Long, o: JsonObject, w: Int, h: Int, widthDp: Int, heightDp: Int, density: Double, cy: Double): String {
+    /** Frame [o] drawn: its moment, its camera, the world's names handed until it wants none (none with [names] false); the last draw's notes. */
+    private fun draw(handle: Long, o: JsonObject, w: Int, h: Int, widthDp: Int, heightDp: Int, density: Double, cy: Double, names: Boolean): String {
         val zone = ZoneId.of(o.strOrNull("zone") ?: "Europe/Amsterdam")
         val moment = o.strOrNull("time")?.let { Moment.Live(Instant.parse(it), null) } ?: Moment.Named(o.str("moment"))
         val theme = ThemeBlock.allocate()
@@ -180,7 +187,7 @@ class WorldPackRefsTest {
         // the world's names: those the frame shows without a sprite are handed (TestNames' sprites, the same pixels on
         // every platform) and the map drawn again, until it wants none
         var named = 0
-        for (round in 0 until NAME_ROUNDS) {
+        for (round in 0 until (if (names) NAME_ROUNDS else 0)) {
             val wants = TestNames.wants(LookHost.namesWanted(handle))
             if (wants.isEmpty()) break
             val why = LookHost.names(handle, TestNames.block(wants, density), TestNames.FLOOR_DP)
