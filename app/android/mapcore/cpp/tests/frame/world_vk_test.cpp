@@ -2022,10 +2022,11 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
         ATLAS_REQUIRE_OR_RETURN(Counts{}, pixels.has_value(), pixels.error().text());
         return Counts{count_near(*pixels, theme.ground, 40), count_near(*pixels, theme.water, 40)};
     };
-    // the frame drawn over place `i` until it is whole (its world final: no tile wanted, none fading or waiting for
-    // room), at most a minute; and on for `rest` frames more
-    const auto draw = [](frame::MapFrame& map, standin::Session& session, const Place& place, int rest) {
-        const style::CameraState cam = camera(place.lat, place.lon, 0.0, 0.0, 30'000.0);
+    // the frame drawn over place `i` from `distance` until it is whole (its world final: no tile wanted, none fading or
+    // waiting for room), at most a minute; and on for `rest` frames more
+    const auto draw = [](frame::MapFrame& map, standin::Session& session, const Place& place, int rest,
+                         double distance = 30'000.0) {
+        const style::CameraState cam = camera(place.lat, place.lon, 0.0, 0.0, distance);
         const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
         bool whole = false;
         while (!whole && std::chrono::steady_clock::now() < until) {
@@ -2088,9 +2089,13 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
     ATLAS_REQUIRE(!whole[1].empty());
     // A heap half a tile short of the frame: a tile it wants finds no room, and the going of no tile the frame leaves
     // out would make it, so it is held back and the picture is final over its ancestor; at rest, 30 frames on, none is
-    // built again (each frame built the tile again before, and each build asked for the next frame)
+    // built again (each frame built the tile again before, and each build asked for the next frame). The globe from
+    // 20,000 km first, so its pinned L0 is resident: the view's tiles are built before the globe's levels, so in a
+    // first frame over Amsterdam the L0 would be the one finding no room, a tile the view does not draw
     CHECK(with_map(((took - smallest / 2) + 15) & ~vk::DeviceSize{15}, 0,
                    [&](frame::MapFrame& map, standin::Session& session, KeptWindow& /*kept*/) {
+                       CHECK(draw(map, session, places[0], 0, 20'000'000.0));
+                       CHECK(map.world()->world_tiles()->stats().no_room == 0);
                        CHECK(draw(map, session, places[0], 0));
                        const scene::WorldTiles& tiles = *map.world()->world_tiles();
                        const scene::WorldStats before = tiles.stats();
