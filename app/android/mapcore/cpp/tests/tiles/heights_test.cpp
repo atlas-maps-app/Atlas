@@ -365,8 +365,14 @@ TEST_CASE("the raster's reader refuses a bad length, range, lowest and highest s
 
     SUBCASE("lengths") {
         // a width that is not the side's and apron's, in the samples or in the side
+        CHECK(with([](TileBytes&, Columns& c) {
+                  // without its shares, which a narrower raster could not hold either
+                  c.drop("sources");
+                  c.drop("shares");
+                  c["apron"].bytes = col::varu({7});
+              }) == refusal(Fault::bad_count, "samples", 33));
         CHECK(with([](TileBytes&, Columns& c) { c["apron"].bytes = col::varu({7}); }) ==
-              refusal(Fault::bad_count, "samples", 33));
+              refusal(Fault::bad_value, "shares"));
         CHECK(with([](TileBytes&, Columns& c) { c["side"].bytes = col::varu({33}); }) ==
               refusal(Fault::bad_count, "samples", 33));
         // the samples cut short, and a byte after the last
