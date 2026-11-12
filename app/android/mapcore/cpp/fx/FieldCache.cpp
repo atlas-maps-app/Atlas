@@ -73,14 +73,14 @@ struct KeepTables {
     return t;
 }
 
-/// The generators of the nine fields, made once.
+/// The generators of the ten fields, made once.
 [[nodiscard]] const std::array<Lattice, field_count>& lattices() noexcept {
     static const std::array<Lattice, field_count> l{
         Lattice(screen_fields[0].noise.seed), Lattice(screen_fields[1].noise.seed),
         Lattice(screen_fields[2].noise.seed), Lattice(screen_fields[3].noise.seed),
         Lattice(screen_fields[4].noise.seed), Lattice(screen_fields[5].noise.seed),
         Lattice(screen_fields[6].noise.seed), Lattice(screen_fields[7].noise.seed),
-        Lattice(screen_fields[8].noise.seed)};
+        Lattice(screen_fields[8].noise.seed), Lattice(screen_fields[9].noise.seed)};
     return l;
 }
 
@@ -170,16 +170,27 @@ void keep_band(Field f, std::span<const Argb> noise, std::uint32_t width, std::u
         }
         break;
     }
+    case Field::clouds: {
+        // the noise premultiplied (vImage's (c · a + 127) / 255, as bytes::premultiply): its red, and its alpha
+        std::uint8_t* dst = out.clouds_mut().data() + (first * clouds_bytes);
+        for (std::size_t i = 0; i < n; ++i) {
+            const Argb p = noise[i];
+            const std::uint32_t a = p >> 24U;
+            dst[i * clouds_bytes] = static_cast<std::uint8_t>(((bytes::channel(p, 16) * a) + 127U) / 255U);
+            dst[(i * clouds_bytes) + 1] = static_cast<std::uint8_t>(a);
+        }
+        break;
+    }
     }
 }
 
-// ---- the disk cache's file: a 64-byte head, then the four images.
+// ---- the disk cache's file: a 64-byte head, then the five images' planes (plane_offsets).
 
 constexpr std::uint32_t file_magic = 0x44465441; // "ATFD"
 constexpr std::uint32_t file_format = 1;
 constexpr std::size_t head_bytes = 64;
 
-/// The eight specs, so a file of other parameters is never read as these (FNV-1a 64 over their numbers' bits).
+/// The specs, so a file of other parameters is never read as these (FNV-1a 64 over their numbers' bits).
 [[nodiscard]] std::uint64_t specs_hash() noexcept {
     std::uint64_t h = 0xCBF29CE484222325ULL;
     auto add = [&h](std::uint32_t v) {
@@ -269,34 +280,56 @@ void keep(Field f, Argb p, std::span<std::uint8_t> out) noexcept {
         out[0] = static_cast<std::uint8_t>(bytes::channel(bytes::unpremultiply(bytes::premultiply(p)), 16));
         break;
     case Field::canopy: out[0] = canopy_alpha()[bytes::channel(bytes::unpremultiply(bytes::premultiply(p)), 16)]; break;
+    case Field::clouds: {
+        // the noise as the offset and the matrices read it: premultiplied
+        const Argb m = bytes::premultiply(p);
+        out[0] = static_cast<std::uint8_t>(bytes::channel(m, 16));
+        out[1] = static_cast<std::uint8_t>(m >> 24U);
+        break;
+    }
     }
 }
 
 ScreenFields::ScreenFields(FieldSize size)
     : size_(size), owned_rgba_(pixels_of(size) * rgba_bytes), owned_rg_(pixels_of(size) * rg_bytes),
-      owned_r_(pixels_of(size) * r_bytes), owned_canopy_(pixels_of(size) * canopy_bytes), rgba_(owned_rgba_),
-      rg_(owned_rg_), r_(owned_r_), canopy_(owned_canopy_) {}
+      owned_r_(pixels_of(size) * r_bytes), owned_canopy_(pixels_of(size) * canopy_bytes),
+      owned_clouds_(pixels_of(size) * clouds_bytes), rgba_(owned_rgba_), rg_(owned_rg_), r_(owned_r_),
+      canopy_(owned_canopy_), clouds_(owned_clouds_) {}
 
 ScreenFields::ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped,
                            std::span<const std::uint8_t> rgba, std::span<const std::uint8_t> rg,
-                           std::span<const std::uint8_t> r, std::span<const std::uint8_t> canopy)
-    : size_(size), owner_(std::move(owner)), mapped_(mapped), rgba_(rgba), rg_(rg), r_(r), canopy_(canopy) {}
+                           std::span<const std::uint8_t> r, std::span<const std::uint8_t> canopy,
+                           std::span<const std::uint8_t> clouds)
+    : size_(size), owner_(std::move(owner)), mapped_(mapped), rgba_(rgba), rg_(rg), r_(r), canopy_(canopy),
+      clouds_(clouds) {}
+
+ScreenFields::ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped,
+                           std::span<const std::uint8_t> bytes)
+    : size_(size), owner_(std::move(owner)), mapped_(mapped) {
+    const std::size_t n = pixels_of(size);
+    ATLAS_ASSERT(bytes.size() >= n * pixel_bytes, "a frame's planes hold its fields' bytes");
+    rgba_ = bytes.subspan(n * plane_offsets[0], n * rgba_bytes);
+    rg_ = bytes.subspan(n * plane_offsets[1], n * rg_bytes);
+    r_ = bytes.subspan(n * plane_offsets[2], n * r_bytes);
+    canopy_ = bytes.subspan(n * plane_offsets[3], n * canopy_bytes);
+    clouds_ = bytes.subspan(n * plane_offsets[4], n * clouds_bytes);
+}
+
+std::span<const std::uint8_t> ScreenFields::plane(std::size_t i) const noexcept {
+    switch (i) {
+    case 0: return rgba_;
+    case 1: return rg_;
+    case 2: return r_;
+    case 3: return canopy_;
+    default: return clouds_;
+    }
+}
 
 std::array<std::uint8_t, 2> ScreenFields::at(Field f, std::uint32_t x, std::uint32_t y) const noexcept {
     const std::size_t i = (static_cast<std::size_t>(y) * size_.width) + x;
     const Placement p = placement_of(f);
-    std::span<const std::uint8_t> image = canopy_;
-    std::size_t stride = canopy_bytes;
-    if (p.image == 0) {
-        image = rgba_;
-        stride = rgba_bytes;
-    } else if (p.image == 1) {
-        image = rg_;
-        stride = rg_bytes;
-    } else if (p.image == 2) {
-        image = r_;
-        stride = r_bytes;
-    }
+    const std::span<const std::uint8_t> image = plane(p.image);
+    const std::size_t stride = image_bytes[p.image];
     const std::size_t at = (i * stride) + p.channel;
     return {image[at], spec_of(f).bytes == 2 ? image[at + 1] : std::uint8_t{0}};
 }
@@ -415,14 +448,10 @@ std::shared_ptr<const ScreenFields> FieldDisk::read(FieldSize size) const {
         return nullptr;
     }
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(body.data());
-    const std::size_t n = pixels_of(size);
-    const std::span<const std::uint8_t> rgba(bytes, n * rgba_bytes);
-    const std::span<const std::uint8_t> rg(bytes + (n * rgba_bytes), n * rg_bytes);
-    const std::span<const std::uint8_t> r(bytes + (n * (rgba_bytes + rg_bytes)), n * r_bytes);
-    const std::span<const std::uint8_t> canopy(bytes + (n * (rgba_bytes + rg_bytes + r_bytes)), n * canopy_bytes);
     // touch the file, so the budget's trim drops the least recently used
     fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
-    return std::make_shared<const ScreenFields>(size, std::move(mapping), true, rgba, rg, r, canopy);
+    return std::make_shared<const ScreenFields>(size, std::move(mapping), true,
+                                                std::span<const std::uint8_t>(bytes, body.size()));
 }
 
 bool FieldDisk::holds(FieldSize size) const {
@@ -436,9 +465,11 @@ bool FieldDisk::write(const ScreenFields& fields) const {
     std::error_code ec;
     fs::create_directories(dir_, ec);
     if (ec) return false;
+    // the planes in the file's order (plane_offsets): rgba, rg, r, the clouds', the canopy's
     std::uint32_t crc = tiles::crc32(std::as_bytes(fields.rgba()));
     crc = tiles::crc32(std::as_bytes(fields.rg()), crc);
     crc = tiles::crc32(std::as_bytes(fields.r()), crc);
+    crc = tiles::crc32(std::as_bytes(fields.clouds()), crc);
     crc = tiles::crc32(std::as_bytes(fields.canopy()), crc);
     const auto head = head_of(s, crc);
     const fs::path p = path(s);
@@ -454,6 +485,7 @@ bool FieldDisk::write(const ScreenFields& fields) const {
         put(fields.rgba());
         put(fields.rg());
         put(fields.r());
+        put(fields.clouds());
         put(fields.canopy());
         if (!out) {
             out.close();
@@ -713,7 +745,9 @@ std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu) {
                                    static_cast<long long>(pymath::round(ms)), on_gpu, all);
     if (gpu.fields != nullptr &&
         (gpu.fields->size() != size || !std::ranges::equal(gpu.fields->rgba(), fields->rgba()) ||
-         !std::ranges::equal(gpu.fields->rg(), fields->rg()) || !std::ranges::equal(gpu.fields->r(), fields->r()))) {
+         !std::ranges::equal(gpu.fields->rg(), fields->rg()) || !std::ranges::equal(gpu.fields->r(), fields->r()) ||
+         !std::ranges::equal(gpu.fields->canopy(), fields->canopy()) ||
+         !std::ranges::equal(gpu.fields->clouds(), fields->clouds()))) {
         // The GPU's bytes are not the CPU's: the first field that differs.
         for (std::size_t f = 0; f < field_count; ++f) {
             const std::uint64_t h =
@@ -738,13 +772,14 @@ std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu) {
 
 namespace {
 
-/// The images' formats and bytes a pixel: rgba, rg and r, four bytes each since the crowns' and the leaves' fields,
-/// and the canopy's one (fx/Fields.hpp's placement_of).
-constexpr std::array<vk::Format, 4> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm,
-                                                  vk::Format::eR8G8B8A8Unorm, vk::Format::eR8Unorm};
-constexpr std::array<std::uint32_t, 4> image_bytes{rgba_bytes, rg_bytes, r_bytes, canopy_bytes};
-constexpr std::array<frame::Global, 4> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
-                                                     frame::Global::noise_r, frame::Global::noise_canopy};
+/// The images' formats (their bytes a pixel fx/Fields.hpp's image_bytes): rgba, rg and r, four bytes each since the
+/// crowns' and the leaves' fields, the canopy's one and the clouds' two (fx/Fields.hpp's placement_of).
+constexpr std::array<vk::Format, image_count> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm,
+                                                            vk::Format::eR8G8B8A8Unorm, vk::Format::eR8Unorm,
+                                                            vk::Format::eR8G8Unorm};
+constexpr std::array<frame::Global, image_count> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
+                                                               frame::Global::noise_r, frame::Global::noise_canopy,
+                                                               frame::Global::noise_clouds};
 /// The canopy's image, the one with mipmaps.
 constexpr std::size_t canopy_image = 3;
 /// The most the canopy's sampler takes of a footprint's length over its width (the device's limit may be less).
@@ -809,12 +844,12 @@ std::uint32_t FieldImages::canopy_levels(FieldSize size) noexcept {
 }
 
 vk::ImageView FieldImages::view(std::uint32_t image) const noexcept {
-    ATLAS_ASSERT(ready_ && image < 4, "the fields have four images once staged");
+    ATLAS_ASSERT(ready_ && image < image_count, "the fields have five images once staged");
     return *current_.views[image];
 }
 
 vk::Image FieldImages::image(std::uint32_t image) const noexcept {
-    ATLAS_ASSERT(ready_ && image < 4, "the fields have four images once staged");
+    ATLAS_ASSERT(ready_ && image < image_count, "the fields have five images once staged");
     return current_.images[image].handle();
 }
 
@@ -822,7 +857,7 @@ gpu::Result<void> FieldImages::images_for(FieldSize size) {
     if (!ready_ || current_.size != size) {
         Images next;
         next.size = size;
-        for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t i = 0; i < image_count; ++i) {
             const bool canopy = i == canopy_image;
             const std::uint32_t levels = canopy && canopy_mipmaps_ ? canopy_levels(size) : 1;
             vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst;
@@ -864,12 +899,10 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
     const std::size_t pixels = static_cast<std::size_t>(size.width) * size.height;
     ATLAS_GPU_LET(staging, device_.memory().buffer(pixels * pixel_bytes, vk::BufferUsageFlagBits::eTransferSrc,
                                                    gpu::MemoryUse::upload));
-    const std::array<std::span<const std::uint8_t>, 4> planes{fields.rgba(), fields.rg(), fields.r(), fields.canopy()};
-    std::size_t offset = 0;
-    for (std::size_t i = 0; i < 4; ++i) {
-        ATLAS_ASSERT(planes[i].size() == pixels * image_bytes[i], "a field's image holds its bytes a pixel");
-        std::memcpy(staging.bytes().subspan(offset).data(), planes[i].data(), planes[i].size());
-        offset += planes[i].size();
+    for (std::size_t i = 0; i < image_count; ++i) {
+        const std::span<const std::uint8_t> plane = fields.plane(i);
+        ATLAS_ASSERT(plane.size() == pixels * image_bytes[i], "a field's image holds its bytes a pixel");
+        std::memcpy(staging.bytes().subspan(pixels * plane_offsets[i]).data(), plane.data(), plane.size());
     }
     staging.flush();
     // Staged bytes no frame recorded are let go at once.
@@ -880,7 +913,7 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
 gpu::Result<void> FieldImages::stage(FieldSize size, std::shared_ptr<const gpu::Buffer> bytes) {
     ATLAS_ASSERT(bytes != nullptr &&
                      bytes->size() >= static_cast<vk::DeviceSize>(size.width) * size.height * pixel_bytes,
-                 "the GPU's fields hold the four images' bytes");
+                 "the GPU's fields hold the five images' bytes");
     ATLAS_GPU_CHECK(images_for(size));
     staging_ = std::move(bytes);
     return {};
@@ -891,9 +924,9 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
     const FieldSize size = current_.size;
     const vk::DeviceSize pixels = static_cast<vk::DeviceSize>(size.width) * size.height;
     const std::uint32_t levels = canopy_mipmaps_ ? canopy_levels(size) : 1;
-    std::array<gpu::ImageDependency, 4> to_copy{};
-    std::array<gpu::ImageDependency, 5> to_read{};
-    for (std::size_t i = 0; i < 4; ++i) {
+    std::array<gpu::ImageDependency, image_count> to_copy{};
+    std::array<gpu::ImageDependency, image_count + 1> to_read{};
+    for (std::size_t i = 0; i < image_count; ++i) {
         // Earlier frames' reads of the image come first; what it held is not kept.
         to_copy[i] = {.image = current_.images[i].handle(),
                       .src_stage = reading_stages,
@@ -913,7 +946,7 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
                       .base_level = i == canopy_image ? levels - 1 : 0,
                       .levels = 1};
     }
-    to_read[4] = {.image = current_.images[canopy_image].handle(),
+    to_read[image_count] = {.image = current_.images[canopy_image].handle(),
                   .src_stage = vk::PipelineStageFlagBits2::eTransfer,
                   .src_access = vk::AccessFlagBits2::eTransferRead,
                   .dst_stage = reading_stages,
@@ -923,15 +956,13 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
                   .base_level = 0,
                   .levels = levels - 1};
     sync.barrier(cmd, {}, to_copy);
-    vk::DeviceSize offset = 0;
-    for (std::size_t i = 0; i < 4; ++i) {
+    for (std::size_t i = 0; i < image_count; ++i) {
         const vk::BufferImageCopy region{
-            .bufferOffset = offset,
+            .bufferOffset = pixels * plane_offsets[i],
             .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
             .imageExtent = {.width = size.width, .height = size.height, .depth = 1}};
         cmd.copyBufferToImage(staging_->handle(), current_.images[i].handle(), vk::ImageLayout::eTransferDstOptimal,
                               region);
-        offset += pixels * image_bytes[i];
     }
     // the canopy's mipmaps: each level the mean of the one above, a filtered blit of it at half its size
     const vk::Image canopy = current_.images[canopy_image].handle();
@@ -959,7 +990,7 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
         w = half_w;
         h = half_h;
     }
-    sync.barrier(cmd, {}, std::span(to_read).first(levels > 1 ? 5 : 4));
+    sync.barrier(cmd, {}, std::span(to_read).first(levels > 1 ? image_count + 1 : image_count));
     for (Images& old : replaced_)
         retired_.push_back(Retired{.images = std::move(old), .last_frame = frame > 0 ? frame - 1 : 0});
     replaced_.clear();
@@ -1065,7 +1096,7 @@ void FieldCache::update(const frame::FrameState& state, frame::Globals& globals)
         take(size);
     }
     if (!images_->ready()) return;
-    for (std::size_t i = 0; i < 4; ++i) {
+    for (std::size_t i = 0; i < image_count; ++i) {
         globals.image(image_globals[i], images_->view(static_cast<std::uint32_t>(i)),
                       i == canopy_image ? images_->canopy_sampler() : images_->sampler());
     }

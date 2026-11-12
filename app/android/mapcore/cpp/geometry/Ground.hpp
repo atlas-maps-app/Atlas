@@ -630,6 +630,9 @@ struct GroundTile {
     tiles::StyleRgb quay_colour = 0;
     tiles::StyleRgb quay_coping = 0;
     tiles::DayNight quay_waterline;
+    /// The quay walls' course (the style's QUAY_COURSE: a brick's with its mortar, a cut stone's from 0.3 m; none for
+    /// concrete), metres: its joints show at eye level (passes/Quays.cpp).
+    std::optional<double> quay_course;
     bool tone = false;
     /// draw_over's park shadows: the coaster tracks' (their polylines' points' heights in `heights`), and the woods'
     /// trees', whose shadows are the last of `shadows`, after the casters'.

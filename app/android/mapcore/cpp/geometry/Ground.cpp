@@ -830,6 +830,7 @@ private:
         out_.quay_colour = style_.quay_colour;
         out_.quay_coping = style_.quay_coping;
         out_.quay_waterline = style_.quay_waterline;
+        out_.quay_course = style_.quay_course;
         out_.tone = style_.tone;
     }
 

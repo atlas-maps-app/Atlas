@@ -30,6 +30,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
 #include "frame/RenderThreads.hpp"
+#include "fx/Clouds.hpp"
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
@@ -117,6 +118,9 @@ inline constexpr std::uint32_t streets = 64;
 /// street_vs and fill_fading_vs: a street narrower on the screen than 1.5 device px drawn 1.5 px wide at the share of
 /// them it covers (ground.slang's least_point; the app's map, with `wide`)
 inline constexpr std::uint32_t least = 128;
+/// stroke_vs: the runs' points are the quay walls' courses', three f32 a point (x, y, z in the tile's metres) in the
+/// frame's words (Quays.cpp)
+inline constexpr std::uint32_t courses = 256;
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -220,7 +224,7 @@ struct DrawnTile {
 /// columns its sample lights or not, one path of them), the dark band at its waterline, its coping; its drawn tile, its
 /// edge there, its piece and samples (the sun's), its colour as drawn now.
 struct QuayFace {
-    enum class Kind : std::uint8_t { wall, lit_bands, dark_bands, waterline, coping };
+    enum class Kind : std::uint8_t { wall, lit_bands, dark_bands, waterline, coping, courses };
     Kind kind = Kind::wall;
     std::uint32_t tile = 0;
     std::uint32_t edge = 0;
@@ -237,7 +241,38 @@ struct QuayFace {
     std::uint32_t unlit = 0;
     std::uint32_t sample = 0;
     bool sampled = false;
+    /// A courses' path (closeup.py's coursing, at eye level by day): chunk `chunk` of the `chunks` its piece (a to b)
+    /// is walked in, its course (metres; a cut stone's from 0.3), and its stroke's width and the path's opacity as the
+    /// SVG prints them ('%.2f'); `colour` is its joints'.
+    std::uint32_t chunk = 0;
+    std::uint32_t chunks = 0;
+    double course = 0;
+    double width = 0;
+    double opacity = 0;
 };
+
+/// A line of a quay wall's courses that coursing keeps: its ends in its tile's metres, and on the screen as the port's
+/// _seg gives them (CSS px, unprinted): each clipped at the near plane.
+struct CourseLine {
+    view::Vec3 a;
+    view::Vec3 b;
+    view::Vec2 pa;
+    view::Vec2 pb;
+};
+
+/// The courses' paths of the wall piece `wall` (its tile, edge and ends) whose water lies at `wy`, with the region's
+/// `course` (metres), as closeup.py's coursing decides them under `cam` (its tile's): the piece in chunks of 5 m at
+/// most, a path for each whose course is 1.6 px high or more at its middle's depth, its stroke's width and the path's
+/// opacity as printed. Appended to `out` (none for a piece 0.2 m long or less, or a wall under 0.3 m of courses).
+void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course,
+                  std::vector<QuayFace>& out);
+
+/// The lines of the courses' path `f` (QuayFace::Kind::courses) of a wall whose water lies at `wy`, facing (nx, nz),
+/// as closeup.py's coursing walks them under `cam` (its tile's): the bed joints, a course apart from the wall's foot
+/// up, each kept where its ends lie within 5 px of the frame; then a cut stone's head joints, staggered a course to
+/// the next (only where a bed joint was kept). Appended to `out`.
+void course_lines(const view::Camera& cam, const QuayFace& f, double wy, double nx, double nz,
+                  std::vector<CourseLine>& out);
 
 /// One element of the water's reflections (Amsterdam.reflections, drawn far to near in `<g filter="url(#ripple)"
 /// opacity=".92">`, .95 at night), each its own path: a building's mirrored wall (its own .3 stroke edging it), a
@@ -702,6 +737,14 @@ struct GroundFrame {
     double glow_y = 0;
     double glow_r = 0;
     bool overcast = false;
+    /// sky_layer's clouds and their shadows (with weather and the horizon on the frame, in full mode: their rects
+    /// are all filter, as the glints'): the two filters' matrices as the render prints them, cloudsh2's offset at the
+    /// frame's density, and the rows of the filters' region (fx/Clouds.hpp).
+    bool clouds = false;
+    fx::CloudMatrix cloud_matrix;
+    fx::CloudMatrix cloud_shadow_matrix;
+    fx::CloudOffset cloud_offset;
+    std::uint32_t cloud_rows = 0;
     /// sky_layer's city glow at night: its gradient's rows (y1 and y2, '%.0f') and its rect's height (`hb`, '%.1f').
     bool city_glow = false;
     double city_y1 = 0;
@@ -872,6 +915,11 @@ struct RipplePlan {
     PixelBox out;
     std::int32_t rx = 0; ///< the blur passes' reaches summed along x
     std::int32_t ry = 0; ///< and along y: the fused stages take them where neither passes ripple.slang's RIPPLE_REACH
+    /// The fused stages' tiles over `out` (ripple.slang's RIPPLE_TILE result pixels a side), and how many of them some
+    /// element of the layer reaches (its box spread as `out` is): the others' result is nothing, and they are not
+    /// computed.
+    std::uint32_t tiles = 0;
+    std::uint32_t tiles_reached = 0;
 };
 
 /// What the lit streets' layers and the glow's filter cover this frame (LitGlow.cpp), in the layers' px (the view's
@@ -994,6 +1042,8 @@ public:
     /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
     /// the shadows do).
     void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
+    /// The tests' look at the quay walls: from the next frame on, no courses (coursing's paths at eye level).
+    void draw_courses(bool draw) noexcept { no_courses_ = !draw; }
     /// The tests' look at the water: from the next frame on, no reflections (or their light, which changes with the
     /// sun's).
     void draw_reflections(bool draw) noexcept { no_reflections_ = !draw; }
@@ -1010,6 +1060,8 @@ public:
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
     /// The tests' look at the water: from the next frame on, no glints (K17's rect after the tint).
     void draw_wind_glints(bool draw) noexcept { no_wind_glints_ = !draw; }
+    /// The tests' look at the sky: from the next frame on, no clouds (the sky layer's two filtered rects).
+    void draw_clouds(bool draw) noexcept { no_clouds_ = !draw; }
     /// The tests' look at the team: from the next frame on, the tiles and their mirrors decided on `helpers` threads
     /// beside the caller's (0: the caller's alone), so that a test holds the team's decisions to one thread's; the
     /// platform is told of the new team's threads at its first use, as of the first team's.
@@ -1038,6 +1090,8 @@ public:
     /// The tests' look at the ripple's kept result: how many results it has made (its layer drawn and its stages run)
     /// since the pass was made; a frame whose ripple is the last one's makes none.
     [[nodiscard]] std::uint64_t ripple_makes() const noexcept { return ripple_made_; }
+    /// The tests' look at the ripple's plan this frame: its regions, and its tiles reached of all.
+    [[nodiscard]] const RipplePlan& ripple_plan() const noexcept { return ripple_plan_; }
     /// And how many frames' keys took the reflections' records (the camera held still or at rest; a moving frame's key
     /// is its view's alone).
     [[nodiscard]] std::uint64_t ripple_keyed() const noexcept { return ripple_keyed_; }
@@ -1192,6 +1246,11 @@ private:
     void record_sky(const frame::Recording& r);
     void record_sky_layer(const frame::Recording& r);
     void emit_sky(const frame::FrameState& state, twin::Stream& out) const;
+    /// Whether this frame draws the clouds through their filters: the frame decided them (frame_.clouds, in full
+    /// mode) and the fields are bound (FRAME_FIELDS).
+    [[nodiscard]] bool clouds_filtered(const frame::FrameState& state) const noexcept;
+    /// The clouds' two tables into the frame's words (Words::clouds): cloudsh2's 256 results, then cloudf's.
+    void write_clouds(std::vector<std::uint32_t>& words, const frame::FrameState& state);
     // Lines.cpp
     void decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const;
     void write_lines(const frame::FrameState& state, std::vector<std::uint32_t>& words, std::uint32_t& runs,
@@ -1222,6 +1281,16 @@ private:
     /// and unlit mixed by their samples' bits and the tiles' fades.
     void write_quays(std::vector<std::uint32_t>& words);
     void record_quays(const frame::Recording& r);
+    /// The quay walls' courses (QuayFace::Kind::courses): their lines' ends into the words (three f32 a point, before
+    /// the lines' runs); `paths` gets each drawn path's face, its points' first word and its lines.
+    struct CoursePath {
+        std::uint32_t face = 0;
+        std::uint32_t first = 0;
+        std::uint32_t lines = 0;
+    };
+    void write_course_points(std::vector<std::uint32_t>& words, std::vector<CoursePath>& paths) const;
+    /// Their draw, after the walls' faces: the line stage's, each line at its path's slot, width and opacity.
+    void record_courses(const frame::Recording& r);
     // Reflections.cpp
     /// Amsterdam.reflections at the frame: each mirrored building's walls facing the camera, their gables and window
     /// rows, and the trees beside the water, as face() keeps them, far to near; then at night the streaks of the street
@@ -1248,8 +1317,10 @@ private:
     /// the leaf filter's, the water's map and the stages' plan; then whether the last result stands (key_ripple).
     void write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state);
     /// What the stages cover (ripple_plan_), the result's region spread by `moved` (the displacement's reach), into
-    /// the words: the plan, their last.
-    void plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved);
+    /// the words: the plan, their last, with the fused stages' tiles that an element of the layer reaches (a reflected
+    /// tree's circles through its leaf filter's reach, `leaf`).
+    void plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved,
+                     std::int32_t leaf);
     /// Whether this frame's ripple is made again (ripple_stale_): what the result is made of, in the words written,
     /// against the last frame's (ripple_key_).
     void key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state);
@@ -1363,6 +1434,7 @@ private:
     bool least_width_ = true;
     bool thin_water_ = true;
     bool no_quays_ = false;
+    bool no_courses_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
     bool no_rings_ = false;
@@ -1371,6 +1443,7 @@ private:
     bool no_leaves_ = false;
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
+    bool no_clouds_ = false;
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
     bool ripple_always_ = false;
@@ -1387,6 +1460,7 @@ private:
     std::vector<std::uint32_t> ripple_key_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
+    std::vector<PixelBox> ripple_boxes_; ///< each element's box in the layer this frame (plan_ripple's scratch)
     std::uint64_t ripple_made_ = 0;
     std::uint64_t ripple_keyed_ = 0;
     double select_ms_ = 0;
@@ -1468,6 +1542,7 @@ struct Ground::Pipelines {
     vk::raii::Pipeline sun_glow{nullptr};
     vk::raii::Pipeline sun_disc{nullptr};
     vk::raii::Pipeline city_glow{nullptr};
+    vk::raii::Pipeline clouds{nullptr};
     // Lines.cpp
     vk::raii::Pipeline line{nullptr};
     // Quays.cpp
@@ -1637,6 +1712,8 @@ struct Ground::Words {
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
     std::uint32_t woods_split = 0; ///< the over phase's segments before the woods' shadows' slot
+    std::uint32_t course_instances = 0; ///< the quay walls' courses' lines (their runs among the lines'), and how many
+    std::uint32_t course_count = 0;
     std::uint32_t quays = 0;       ///< the quay walls' faces' records (QUAY_WORDS each), and how many
     std::uint32_t quay_count = 0;
     std::uint32_t reflections = 0; ///< the reflections' records (QUAY_WORDS each), and how many
@@ -1656,6 +1733,7 @@ struct Ground::Words {
     std::uint32_t ripple_plan = 0;  ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
     std::uint32_t ripple_map = 0;   ///< the water's map the ripple reads its field by (the app's map), 0: the screen's
     std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results (glints_fs)
+    std::uint32_t clouds = 0;       ///< the clouds' filters' 256 results each: cloudsh2's, then cloudf's (clouds_fs)
     std::uint32_t canopy = 0;       ///< the canopy's filter's 256 results, then the ground's map (canopy_fs)
     std::uint32_t slot = 0;         ///< the frame slot whose buffer holds them
     bool ready = false;

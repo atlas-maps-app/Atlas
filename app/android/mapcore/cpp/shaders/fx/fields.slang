@@ -1,16 +1,17 @@
 // The screen-wide noise fields on the GPU (plan-vector D10, N17; CP/fx/Fields.hpp, CP/fx/GpuFields.hpp): a block of a
-// frame's nine fields, each pixel's noises fx/noise.slang's turbulence (every byte the CPU's where the device passes
+// frame's ten fields, each pixel's noises fx/noise.slang's turbulence (every byte the CPU's where the device passes
 // the byte check) and the bytes the core keeps of each as fx/FieldCache.cpp's make_fields keeps them, from the same
-// tables and with the same arithmetic, packed as the GPU's four images hold them.
+// tables and with the same arithmetic, packed as the GPU's five images hold them.
 //
 // fields_make_cs: pixel (x, y) of the block is the frame's filter pixel (left + x, top + y), its noises at the user point
 // ((left + x + 1) · inv_x, (top + y + 1) · inv_y). Its three words (rgba, rg, r) go to `fields` at y · width + x of
-// three planes of width · height words, one after the other, and its canopy byte into the fourth plane after them,
-// four bytes a word (zeroed before, each byte ORed in): the images' bytes as fx::ScreenFields holds them.
+// three planes of width · height words, one after the other; then its clouds' two bytes into the plane after them, two
+// bytes a pixel, and its canopy byte into the last plane, a byte a pixel (both zeroed before, each pixel's bytes ORed
+// into the word they lie in): the images' bytes as fx::ScreenFields holds them (CP/fx/Fields.hpp's plane_offsets).
 //
 // atlas: exact
 
-/// The nine fields' specs in fx/Fields.hpp's order, four words each (base_x's bits, base_y's bits, the octaves, the
+/// The ten fields' specs in fx/Fields.hpp's order, four words each (base_x's bits, base_y's bits, the octaves, the
 /// channels needed with fractal noise at bit 8), then their lattices one after the other, each fx/GpuNoise.hpp's
 /// lattice_words.
 [[vk::binding(0, 0)]] StructuredBuffer<uint> lattice;
@@ -18,7 +19,7 @@
 /// again at each alpha (entry a · 256 + c), then the grain's grey written as premultiplied sRGB at each alpha
 /// (65536 + a · 256 + grey), then the canopy's alpha for each red its matrix reads (131072 + red).
 [[vk::binding(1, 0)]] StructuredBuffer<uint> keep;
-/// The block's three planes of words and its plane of canopy bytes.
+/// The block's three planes of words, its plane of the clouds' bytes and its plane of canopy bytes.
 [[vk::binding(2, 0)]] RWStructuredBuffer<uint> fields;
 
 #define ATLAS_NOISE_FUNCTIONS
@@ -31,7 +32,7 @@ struct FieldsPush {
 
 [[vk::push_constant]] ConstantBuffer<FieldsPush> push;
 
-static const uint FIELDS_COUNT = 9u;
+static const uint FIELDS_COUNT = 10u;
 static const uint FIELDS_SPEC_WORDS = 4u;
 static const uint FIELDS_LATTICE_WORDS = 2562u; // a lattice's words: its selector's 514, its gradients' 2048
 static const uint FIELDS_GRAIN_SRGB = 65536u;   // the second keep table's first entry
@@ -57,6 +58,13 @@ uint fields_keep(uint i) {
 /// A noise pixel's channel at `shift` (16 red, 8 green, 0 blue) premultiplied and unpremultiplied again by its alpha.
 uint fields_round_trip(uint p, uint shift) {
     return fields_keep(((p >> 24u) << 8u) | ((p >> shift) & 255u));
+}
+
+/// The clouds' two bytes: the noise premultiplied, (c · a + 127) / 255 as vImage (fx::bytes::premultiply): its red, then
+/// its alpha.
+uint fields_clouds(uint p) {
+    uint a = p >> 24u;
+    return ((((p >> 16u) & 255u) * a + 127u) / 255u) | (a << 8u);
 }
 
 /// A noise pixel's channel at `shift` as it is: what the displacements read.
@@ -100,11 +108,13 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
     float x = float(push.block.x + int(id.x) + 1) * push.grid.x;
     float y = float(push.block.y + int(id.y) + 1) * push.grid.y;
     // rgba: mat's grey, the grain's grey and alpha, the cloud shadows' red; rg: the ripple's red and green, the
-    // crown's red and green; r: the glints' red, the crown tone's red, the leaf's red and green; the canopy's alpha.
+    // crown's red and green; r: the glints' red, the crown tone's red, the leaf's red and green; the canopy's alpha;
+    // the clouds' premultiplied red and alpha.
     uint rgba = 0u;
     uint rg = 0u;
     uint r = 0u;
     uint canopy = 0u;
+    uint clouds = 0u;
     // One field at a time, in fx/Fields.hpp's order (a loop, so the module holds the turbulence once).
     [loop]
     for (uint f = 0u; f < FIELDS_COUNT; ++f) {
@@ -125,8 +135,10 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
             r = r | (fields_round_trip(p, 16u) << 8u);
         } else if (f == 7u) { // the leaf
             r = r | (fields_channel(p, 16u) << 16u) | (fields_channel(p, 8u) << 24u);
-        } else { // the canopy: its matrix's alpha of the red it reads
+        } else if (f == 8u) { // the canopy: its matrix's alpha of the red it reads
             canopy = fields_keep(FIELDS_CANOPY + fields_round_trip(p, 16u));
+        } else { // the clouds
+            clouds = fields_clouds(p);
         }
     }
     uint plane = uint(push.block.z) * uint(push.block.w);
@@ -134,6 +146,9 @@ void fields_make_cs(uint3 id : SV_DispatchThreadID) {
     fields[at] = rgba;
     fields[plane + at] = rg;
     fields[2u * plane + at] = r;
+    // the clouds' plane begins at a whole word (12 bytes a pixel before it), the canopy's 14 bytes a pixel in
     uint unused = 0u;
-    InterlockedOr(fields[3u * plane + (at >> 2u)], canopy << ((at & 3u) * 8u), unused);
+    InterlockedOr(fields[3u * plane + (at >> 1u)], clouds << ((at & 1u) * 16u), unused);
+    uint b = 14u * plane + at;
+    InterlockedOr(fields[b >> 2u], canopy << ((b & 3u) * 8u), unused);
 }

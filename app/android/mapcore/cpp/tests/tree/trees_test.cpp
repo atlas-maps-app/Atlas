@@ -169,6 +169,45 @@ TEST_CASE("trees: the render thread's choices, as tree_close and draw_tree3d com
     CHECK(sh::tree_record_count(lean_mid.flags) == 2);
 }
 
+TEST_CASE("trees: a crown's highlights come and go with its sun bit's swap as its tones cross-fade") {
+    // a crown's sample 5 of its tile's bits: the newest, then those before the swap; the swap a quarter faded
+    constexpr std::uint32_t bit = 1U << 5U;
+    const auto amount = [&](std::uint32_t now, std::uint32_t before, float weight, bool night = false) {
+        return sh::tree_sun_amount(5U, atlas::hlsl::uint2{now, before}, true, weight, night);
+    };
+    CHECK(amount(bit, bit, 0.25F) == 1.0F);
+    CHECK(amount(0U, 0U, 0.25F) == 0.0F);
+    CHECK(amount(bit, 0U, 0.25F) == 0.25F);  // coming into the sun
+    CHECK(amount(0U, bit, 0.25F) == 0.75F);  // going into the shade
+    CHECK(amount(bit, bit, 1.0F, true) == 0.0F); // at night
+    CHECK(sh::tree_sun_amount(5U, atlas::hlsl::uint2{bit, bit}, false, 1.0F, false) == 0.0F); // without bits
+    // the highlight is drawn wherever the crown draws lit at all (draw.slang: amount > 0): at rest its own tone where
+    // the crown is lit and nothing where it is not, as tree_close draws it; through a swap from the lit tone it lies
+    // on (where it does not show) to its own, a channel at a time
+    constexpr std::uint32_t lit_unlit = 0x20'40'60U;
+    constexpr std::uint32_t lit_lit = 0x40'80'A0U;
+    constexpr std::uint32_t high_unlit = 0x30'50'70U;
+    constexpr std::uint32_t high_lit = 0x80'C0'FFU;
+    CHECK(sh::tree_highlight_tone(lit_lit, high_unlit, high_lit, 1.0F) == high_lit);
+    std::uint32_t before = 0;
+    for (const float w : {0.0F, 0.125F, 0.25F, 0.5F, 0.75F, 0.875F, 1.0F}) {
+        const std::uint32_t under = sh::tree_mix(lit_unlit, lit_lit, w);
+        const std::uint32_t tone = sh::tree_highlight_tone(under, high_unlit, high_lit, w);
+        if (w == 0.0F) CHECK(tone == under);
+        if (w == 1.0F) CHECK(tone == high_lit);
+        for (std::uint32_t c = 0; c < 3; ++c) {
+            const std::uint32_t level = (tone >> (8U * c)) & 0xFFU;
+            const std::uint32_t lo = (under >> (8U * c)) & 0xFFU;
+            const std::uint32_t hi = (high_lit >> (8U * c)) & 0xFFU;
+            CHECK(level >= lo);
+            CHECK(level <= hi);
+            // and it only brightens as the swap goes on
+            CHECK(level >= ((before >> (8U * c)) & 0xFFU));
+        }
+        before = tone;
+    }
+}
+
 TEST_CASE("trees: a frame cell's level's tree is its header and blobs alone, as the full record holds them") {
     // ENGINE.md one pack per country, step 7: a level's tile (L13, L12) keeps no clumps, which only a close tree reads
     gm::TileTrees g;

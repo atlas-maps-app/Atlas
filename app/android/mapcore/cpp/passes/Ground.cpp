@@ -1563,6 +1563,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_lit(v, state);
     write_ripple(v, state);
     write_wind_glints(v, state);
+    write_clouds(v, state);
     write_canopy(v, state);
     write_palette(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
@@ -1690,6 +1691,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         // plate, then the app's map's thin water's band and streets over what lies under them, and the sky; the
         // water's count before what lies above it, which the app's map's streets keep off
         record_quays(r);
+        record_courses(r);
         record_water_count(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);

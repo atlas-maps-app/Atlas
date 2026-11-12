@@ -32,6 +32,7 @@
 //     (passes/Reflections.cpp); glitter_vs and glitter_fs: the sun's glitter, the glints' layer screened over the
 //     water once a sample (passes/Glitter.cpp); screen_vs with rings_fs: the drizzle's rings, their pattern over the
 //     water (passes/Rings.cpp).
+//   - screen_vs with clouds_fs: the sky layer's clouds and their shadows, each filter's result from its table;
 //   - disc_vs with sunglow_fs and sundisc_fs, screen_vs with cityglow_fs: the sky layer's sun (its glow and its disc)
 //     and the city's glow at night, translucent at their slots over the sky (passes/Sky.cpp).
 //   - lit_vs and lit_fs: the lit streets' runs into the glow's and the wet cores' layers; screen_vs with
@@ -119,6 +120,7 @@ static const uint GROUND_WIDE = 16u;       // fill_vs: the ribbons' pavements as
 static const uint GROUND_NEAR_CLIP = 32u;  // stroke_vs: a line of a fixed width from the near plane on (the app's map)
 static const uint GROUND_STREETS = 64u;    // fill_vs: the streets' own draw, each off a bridge (with GROUND_WIDE)
 static const uint GROUND_LEAST = 128u;     // street_vs: a thin street LEAST_PX wide at its coverage (with GROUND_WIDE)
+static const uint GROUND_COURSES = 256u;   // stroke_vs: the runs' points the quay walls' courses', in `words` (x, y, z)
 
 /// The painter groups whose fills are ribbons as wide as their ways in the app's map (geometry::group): S['roads'], a
 /// group a class from road up to draw_over's; draw_over's big roads (over + 1), their asphalt its one fill; and its
@@ -1162,6 +1164,14 @@ float3 stroke_point(uint tile, uint first, uint k, float y, bool shadow, int mir
     return run_point(tile, first, k, y);
 }
 
+/// A quay wall's course's point k (passes/Quays.cpp, the draw's GROUND_COURSES): its place in its tile's metres, three
+/// f32 (x, y, z) in the frame's words from `first`; its camera coordinates.
+float3 course_point(uint tile, uint first, uint k) {
+    float3 p = {asfloat(words[first + 3u * k]), asfloat(words[first + 3u * k + 1u]),
+                asfloat(words[first + 3u * k + 2u])};
+    return local_camera(tile, p);
+}
+
 /// A point's device px in the view (unturned): its CSS point (snapped at rest) times the density.
 float2 device_of(float3 k) {
     return project_css(frame.camera, k) * frame.camera.frame.z;
@@ -1222,6 +1232,11 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow, mirror);
     float3 kb = post ? local_camera(tile, shadow_local(first, 0u, y, true))
                      : stroke_point(tile, first, ia + 1u, y, shadow, mirror);
+    if ((push.mode.x & GROUND_COURSES) != 0u) {
+        // a quay wall's courses: each line's two ends where the wall has them, in the words
+        ka = course_point(tile, first, ia);
+        kb = course_point(tile, first, ia + 1u);
+    }
     float near = frame.camera.frame.w;
     float focal = frame.camera.forward.w;
     // a run in metres: the part of the segment between the near plane and the depth where its px is its cut (none:
@@ -2087,6 +2102,49 @@ StrokeOutput cityglow_fs(ScreenOut v, uint given : SV_Coverage) {
     StrokeOutput o;
     o.colour = float4(g.rgb * g.a, g.a);
     o.coverage = mask;
+    return o;
+}
+
+/// The sky layer's clouds and their shadows (screen_vs; passes/Sky.cpp, CP/fx/Clouds.hpp): one of the two filters'
+/// results over the pixels of their region (the rows above push.colour.x), from its table of 256 in `words`
+/// (premultiplied sRGB, a r g b: cloudsh2's from push.mode.z, cloudf's after it) at the red its matrix reads of the
+/// clouds' field, premultiplied. cloudf (push.colour.w 1) reads the field at the pixel; cloudsh2 (0) the field moved
+/// down by its offset: the pixel push.colour.y rows up, blended with the one a row above it by push.colour.z of 2^24
+/// (CP/fx/Clouds.hpp's cloud_blend, whole numbers), nothing above the first row.
+[shader("fragment")]
+ColourOut clouds_fs(ScreenOut v) {
+    int2 p = fx_pixel(frame.camera, v.position.xy);
+    if (p.y >= int(push.colour.x)) {
+        discard;
+    }
+    uint table = push.mode.z;
+    uint2 n = uint2(0u, 0u);
+    if (push.colour.w == 0u) {
+        int row = p.y - int(push.colour.y);
+        if (row >= 0) {
+            n = fx_clouds(int2(p.x, row));
+        }
+        uint above = push.colour.z;
+        if (above != 0u) {
+            uint2 over = uint2(0u, 0u);
+            if (row >= 1) {
+                over = fx_clouds(int2(p.x, row - 1));
+            }
+            n = (((16777216u - above) * n) + (above * over) + 8388608u) >> 24u;
+        }
+    } else {
+        table += 256u;
+        n = fx_clouds(p);
+    }
+    // the red the matrix reads: the premultiplied red unpremultiplied as vImage does it
+    uint red = n.x;
+    if (n.y == 0u) {
+        red = 0u;
+    } else if (n.y != 255u) {
+        red = min((n.x * 255u + n.y / 2u) / n.y, 255u);
+    }
+    ColourOut o;
+    o.colour = levels_of(words[table + red]) * (1.0f / 255.0f);
     return o;
 }
 

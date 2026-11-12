@@ -98,12 +98,12 @@ struct Probe {
     std::uint32_t unused;
 };
 
-/// The four images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame` (every
+/// The five images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame` (every
 /// earlier one finished): mat.slang's fields_check at every pixel through set 1 of `layout` (fields_vk_test's way),
-/// rows from the top, four bytes a pixel an image (the canopy's one).
-[[nodiscard]] std::array<std::vector<std::uint8_t>, 4> read_back(const gpu::Device& device, fx::FieldImages& images,
-                                                                 frame::FrameLayout& layout, std::uint64_t frame) {
-    std::array<std::vector<std::uint8_t>, 4> out;
+/// rows from the top, four bytes a pixel an image (the canopy's one, the clouds' two).
+[[nodiscard]] std::array<std::vector<std::uint8_t>, fx::image_count>
+read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout& layout, std::uint64_t frame) {
+    std::array<std::vector<std::uint8_t>, fx::image_count> out;
     const gpu::Sync sync(device.enabled().synchronization2);
     run_once(device, [&](const vk::raii::CommandBuffer& cmd) { images.record_upload(cmd, sync, frame); });
     const vk::raii::Device& d = device.handle();
@@ -111,6 +111,7 @@ struct Probe {
     layout.set_image(frame::Global::noise_rg, images.view(1), images.sampler());
     layout.set_image(frame::Global::noise_r, images.view(2), images.sampler());
     layout.set_image(frame::Global::noise_canopy, images.view(3), images.canopy_sampler());
+    layout.set_image(frame::Global::noise_clouds, images.view(4), images.sampler());
     layout.set_buffer(frame::Global::byte_tables, images.tables());
     auto begun = layout.begin_frame(frame, frame - 1, 1, 1);
     ATLAS_REQUIRE_OR_RETURN(out, begun.has_value(), begun.error().text());
@@ -168,7 +169,7 @@ struct Probe {
                             {}, {});
     });
     results->invalidate();
-    // Each probe's answer: the rgba, rg and r images' words at its pixel, then the canopy's byte.
+    // Each probe's answer: the rgba, rg and r images' words at its pixel, then the canopy's byte and the clouds' two.
     const auto* words = reinterpret_cast<const std::uint32_t*>(results->bytes().data());
     for (std::size_t k = 0; k < 3; ++k) {
         out.at(k).resize(every.size() * 4);
@@ -178,7 +179,13 @@ struct Probe {
         }
     }
     out[3].resize(every.size());
-    for (std::size_t i = 0; i < every.size(); ++i) out[3][i] = static_cast<std::uint8_t>(words[(i * 4) + 3]);
+    out[4].resize(every.size() * fx::clouds_bytes);
+    for (std::size_t i = 0; i < every.size(); ++i) {
+        const std::uint32_t w = words[(i * 4) + 3];
+        out[3][i] = static_cast<std::uint8_t>(w);
+        out[4][i * 2] = static_cast<std::uint8_t>(w >> 8U);
+        out[4][(i * 2) + 1] = static_cast<std::uint8_t>(w >> 16U);
+    }
     return out;
 }
 
@@ -216,8 +223,8 @@ TEST_CASE("the GPU's byte check holds its noises and its fields' kept bytes to t
     const auto check = (*made)->check();
     ATLAS_REQUIRE(check.has_value(), check.error().text());
     CHECK_MESSAGE(check->exact, check->first);
-    // The eleven noises over two blocks of 64 × 64, then the eight fields over the same blocks.
-    CHECK(check->pixels == (std::size_t{11} * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
+    // The checked noises over two blocks of 64 × 64, then the fields over the same blocks.
+    CHECK(check->pixels == (fx::checked_noises().size() * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
     CHECK(check->differ == 0);
     MESSAGE("the byte check: " << check->pixels << " pixels in " << ms_since(started) << " ms");
     const auto messages = session->take_messages();
@@ -264,6 +271,7 @@ TEST_CASE("every field at S1 and at the Pixel 10 Pro's size made on the GPU is t
         CHECK(std::ranges::equal(g.rg(), cpu->rg()));
         CHECK(std::ranges::equal(g.r(), cpu->r()));
         CHECK(std::ranges::equal(g.canopy(), cpu->canopy()));
+        CHECK(std::ranges::equal(g.clouds(), cpu->clouds()));
         for (std::size_t f = 0; f < fx::field_count; ++f) {
             CAPTURE(std::string(fx::screen_fields[f].name));
             CHECK(fx::hash_of(g.bytes_of(static_cast<fx::Field>(f))) == ref.kept[f]);
@@ -278,10 +286,9 @@ TEST_CASE("every field at S1 and at the Pixel 10 Pro's size made on the GPU is t
         ATLAS_REQUIRE(staged.has_value(), staged.error().text());
         const auto cpu_images = read_back(device, **from_cpu, **layout, ++frame);
         const auto gpu_images = read_back(device, **from_gpu, **layout, ++frame);
-        const std::array<std::span<const std::uint8_t>, 4> planes{cpu->rgba(), cpu->rg(), cpu->r(), cpu->canopy()};
-        for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t i = 0; i < fx::image_count; ++i) {
             CAPTURE(i);
-            CHECK(std::ranges::equal(cpu_images.at(i), planes.at(i)));
+            CHECK(std::ranges::equal(cpu_images.at(i), cpu->plane(i)));
             CHECK(std::ranges::equal(gpu_images.at(i), cpu_images.at(i)));
         }
         MESSAGE(std::format("fields {}x{} at a first start: the CPU's {:.0f} ms on 3 threads; the GPU's {:.0f} ms "

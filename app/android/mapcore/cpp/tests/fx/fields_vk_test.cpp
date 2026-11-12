@@ -96,6 +96,7 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     layout.set_image(frame::Global::noise_rg, images.view(1), images.sampler());
     layout.set_image(frame::Global::noise_r, images.view(2), images.sampler());
     layout.set_image(frame::Global::noise_canopy, images.view(3), images.canopy_sampler());
+    layout.set_image(frame::Global::noise_clouds, images.view(4), images.sampler());
     layout.set_buffer(frame::Global::byte_tables, images.tables());
     auto begun = layout.begin_frame(frame, frame - 1, 1, 1);
     ATLAS_REQUIRE_OR_RETURN(out, begun.has_value(), begun.error().text());
@@ -152,7 +153,7 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     return out;
 }
 
-/// The thirteen bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
+/// The fifteen bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
 [[nodiscard]] std::array<std::uint32_t, 4> packed_at(const fx::ScreenFields& f, std::size_t at) {
     const auto word = [](std::span<const std::uint8_t> b) {
         std::uint32_t w = 0;
@@ -161,7 +162,8 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     };
     return {word(f.rgba().subspan(at * fx::rgba_bytes, fx::rgba_bytes)),
             word(f.rg().subspan(at * fx::rg_bytes, fx::rg_bytes)), word(f.r().subspan(at * fx::r_bytes, fx::r_bytes)),
-            f.canopy()[at]};
+            static_cast<std::uint32_t>(f.canopy()[at]) |
+                (word(f.clouds().subspan(at * fx::clouds_bytes, fx::clouds_bytes)) << 8U)};
 }
 
 #if !defined(__ANDROID__)

@@ -67,6 +67,7 @@ class FieldParityTest {
         Field("crown_tone", 2f, 0.42f, 0.42f, 2, 15),
         Field("leaf", 3f, 0.55f, 0.55f, 2, 3),
         Field("canopy", 17f, 0.55f, 0.55f, 2, 9),
+        Field("clouds", 31f, 0.0055f, 0.017f, 4, 9),
     )
 
     private val sizes: List<Size> = run {

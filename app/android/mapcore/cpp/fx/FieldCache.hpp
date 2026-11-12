@@ -1,6 +1,6 @@
 // The screen-wide noise fields and the byte tables on the GPU (plan-vector D5.5, D5.6, D10, K17a): set 1's noise_rgba,
-// noise_rg, noise_r and noise_canopy (combined image samplers: three R8G8B8A8 UNORM and one R8 UNORM with its mipmaps,
-// at the frame's upright device pixels, fx/Fields.hpp's four images) and byte_tables (a storage buffer: the to-linear
+// noise_rg, noise_r, noise_canopy and noise_clouds (combined image samplers: three R8G8B8A8 UNORM, one R8 UNORM with
+// its mipmaps and one R8G8 UNORM, at the frame's upright device pixels, fx/Fields.hpp's five images) and byte_tables (a storage buffer: the to-linear
 // table, the to-sRGB table and `mat`'s opaque table, 64 KB each; fx/ByteTables.hpp, fx/Mat.hpp). The canopy's
 // mipmaps are made from its field on the GPU as it is uploaded, each level the mean of the one above, so the app's
 // map can read the canopy on the ground at any zoom (shaders/fx/mat.slang's fx_canopy_on_ground). FieldCache is their
@@ -55,8 +55,8 @@ public:
     /// Makes images for `fields` (new ones when the size changed) and copies their bytes into a staging buffer;
     /// record_upload records the rest.
     [[nodiscard]] gpu::Result<void> stage(const ScreenFields& fields);
-    /// Makes images for `size` (new ones when the size changed) and takes `bytes`, the four images' bytes one after
-    /// the other that the GPU made (fx/GpuFields.hpp's), as what record_upload copies into them.
+    /// Makes images for `size` (new ones when the size changed) and takes `bytes`, the five images' planes
+    /// (fx/Fields.hpp's plane_offsets) that the GPU made (fx/GpuFields.hpp's), as what record_upload copies into them.
     [[nodiscard]] gpu::Result<void> stage(FieldSize size, std::shared_ptr<const gpu::Buffer> bytes);
     /// Whether staged bytes wait for record_upload.
     [[nodiscard]] bool staged() const noexcept { return staging_ != nullptr; }
@@ -70,7 +70,7 @@ public:
     /// Whether images are made, and their size.
     [[nodiscard]] bool ready() const noexcept { return ready_; }
     [[nodiscard]] FieldSize size() const noexcept { return current_.size; }
-    /// Image `image`'s view (0 rgba, 1 rg, 2 r, 3 canopy with its mipmaps; fx/Fields.hpp's placement_of).
+    /// Image `image`'s view (0 rgba, 1 rg, 2 r, 3 canopy with its mipmaps, 4 clouds; fx/Fields.hpp's placement_of).
     [[nodiscard]] vk::ImageView view(std::uint32_t image) const noexcept;
     /// Image `image` itself (the tests read it back).
     [[nodiscard]] vk::Image image(std::uint32_t image) const noexcept;
@@ -94,12 +94,13 @@ private:
     /// upload's.
     [[nodiscard]] gpu::Result<void> images_for(FieldSize size);
 
-    /// A size's four images and their views.
+    /// A size's five images and their views.
     struct Images {
         FieldSize size;
-        std::array<gpu::Image, 4> images;
-        std::array<vk::raii::ImageView, 4> views{vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
-                                                 vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}};
+        std::array<gpu::Image, image_count> images;
+        std::array<vk::raii::ImageView, image_count> views{
+            vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr},
+            vk::raii::ImageView{nullptr}, vk::raii::ImageView{nullptr}};
     };
     /// What waits for the frames that read it to finish.
     struct Retired {
@@ -136,7 +137,7 @@ struct FieldCacheOptions {
     gpu::PipelineWatch* watch = nullptr;
 };
 
-/// The provider of set 1's noise_rgba, noise_rg, noise_r, noise_canopy and byte_tables.
+/// The provider of set 1's noise_rgba, noise_rg, noise_r, noise_canopy, noise_clouds and byte_tables.
 class FieldCache final : public frame::GlobalProvider {
 public:
     [[nodiscard]] static gpu::Result<std::unique_ptr<FieldCache>> create(const gpu::Device& device,
@@ -182,9 +183,9 @@ private:
     /// device was lost.
     bool gpu_failed(std::string_view what, const gpu::Error& error);
 
-    static constexpr std::array<frame::Global, 5> bound{frame::Global::noise_rgba, frame::Global::noise_rg,
-                                                        frame::Global::noise_r, frame::Global::noise_canopy,
-                                                        frame::Global::byte_tables};
+    static constexpr std::array<frame::Global, 6> bound{frame::Global::noise_rgba,   frame::Global::noise_rg,
+                                                        frame::Global::noise_r,      frame::Global::noise_canopy,
+                                                        frame::Global::noise_clouds, frame::Global::byte_tables};
 
     std::unique_ptr<FieldImages> images_;
     std::shared_ptr<const FieldDisk> disk_;
