@@ -19,5 +19,29 @@
     {"name": "netherlands 1000 km", "lat": 52.3731, "lon": 4.8922, "distance": 1000000, "pitch": 0, "moment": "sunny"},
     {"name": "the board", "lat": 20, "lon": 10, "distance": 53773000, "pitch": 0, "moment": "sunny"}
   ],
-  "versions": {}
+  "versions": {
+    "1": {
+      "note": "world-20261102-planet-3, drawn by World run 43166722350's refs job on app 04989d68: the 15 views whole over the planet's own packs (164 tiles walked, 140 of them in 14 packs, cut to 37,129,501 bytes). The engine before the waters' names, which version 2 draws.",
+      "world": "world-20261102-planet-3",
+      "platforms": {
+        "lavapipe-x86_64": {
+          "tokyo 30 km noon": "ca7c4b259020498bc8ec3dfe541392f8e6b49c7a9e97918cef2974b05656303b",
+          "tokyo 30 km 22h": "ceae93b6740978c64c1b0abc042d2dd7bb6c6135216ee765dbc3d53155afe5d1",
+          "tokyo 300 km noon": "d4af5c6f6bec093b61084fb520a6cc23c521d9be43ee4c63dbda7ad9e60c22e9",
+          "tokyo 300 km 22h": "580af01902cfd8b901f36e198bbe869a37f2ce134d76fb5acb5de2a58c1cf799",
+          "zermatt 25 km pitched": "3accb94ee79a5f1f3b59d012347995e34ae60b4bfd8d6d92cee5380d0bfe7b25",
+          "tamanrasset 100 km": "f2c15d44ffba1f703b909bd811b2ab47b2e73524af58162338ef3c9fd461f453",
+          "bergen 75 km": "317eee767c5e2fbce5f9b4d902a6a8bee2df8da4e3d9e0a9938a62cc6bd4b1ce",
+          "open sea 600 km dusk": "2d2aae99752e028b03cf1357aeb0103e287657583b7bd2c87f6b91f0564f0410",
+          "open sea 6000 km dusk": "b35b455cc85b630c1d42d1cfb40cf5a763c95b0ef2c7fd8903aabc2f55bfc5f4",
+          "85 n 1500 km": "292a8fa8d32fb7ace6216bc08a92199994da6e7c788bc39724e232d639457a74",
+          "85 s 1500 km": "03cafaa7b6f56fd2a5acd53d0ef2eb8c3d331d5b7f8e86f3640e8a8b4c98401c",
+          "netherlands 25 km": "84d464ee192c88b020f2b45e06f3033666a131ee0abbc1790397fbe056f12a9c",
+          "netherlands 100 km": "38e178679c1fd91d814a8fb8b82d3084d7f73812e32881d8697f10c7694e57bc",
+          "netherlands 1000 km": "3783b6b924f16968b58ca8678de6545842cfa22672047fce7d5e09344a23f0b2",
+          "the board": "a0b3c3a01fb20e32fed39267dad47c6136bfb5f53d2d308f28b12bb9bc42a481"
+        }
+      }
+    }
+  }
 }
