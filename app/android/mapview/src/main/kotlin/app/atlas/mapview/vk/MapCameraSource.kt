@@ -18,10 +18,11 @@ import kotlin.math.ln
  * handed over a frame late, D18). A gesture publishes the camera of each event, with nothing beyond it.
  *
  * It answers false (nothing to draw, the core's frame loop rests) when nothing changed since the frame drawn last: no
- * new publication, no animation under way, the chrome's shapes still. The frame after the camera comes to rest carries
- * the rest flag, so the core snaps it (D4). The chrome's keep-out shapes ([chrome], K11b's ChromeShapes) are written
- * after the frame's size, as they read its density. Where the core draws the location's puck ([Samples.location]), the
- * location goes with the camera, so the puck moves with the map in the same frame (ENGINE.md step 6).
+ * new publication, no animation under way, nothing of the chrome's shapes to follow ([chromeMoved]). The frame after the
+ * camera comes to rest carries the rest flag, so the core snaps it (D4). The chrome's keep-out shapes ([chrome], K11b's
+ * ChromeShapes) are written after the frame's size, as they read its density. Where the core draws the location's puck
+ * ([Samples.location]), the location goes with the camera, so the puck moves with the map in the same frame (ENGINE.md
+ * step 6).
  */
 internal class MapCameraSource(
     /** Told on the render thread when a frame was presented, complete or not; it must allocate nothing. */
@@ -87,11 +88,17 @@ internal class MapCameraSource(
     @Volatile
     var chrome: ChromeShapes? = null
 
-    /** Bumped when the chrome's shapes moved ([chromeMoved]): the next vsync draws even with the camera still. */
+    /**
+     * Bumped when the core's picture must follow the chrome's shapes ([chromeMoved]: ChromeShapes.onChange): the next
+     * vsync draws even with the camera still.
+     */
     @Volatile
     private var chromeRevision = 0
 
-    /** A [redraw] asked: the next vsync writes the camera though nothing changed. */
+    /**
+     * A [redraw] asked, or the frame before carried a shape the core frosts on to its vsync (ChromeShapes.write): the
+     * next vsync writes the camera though nothing changed.
+     */
     @Volatile
     private var again = false
 
@@ -107,7 +114,7 @@ internal class MapCameraSource(
         samples = s
     }
 
-    /** The chrome's shapes moved: the next frame writes them. */
+    /** The core's picture must follow the chrome's shapes, as they lie now: the next frame writes them. */
     fun chromeMoved() {
         chromeRevision++
     }
@@ -150,7 +157,13 @@ internal class MapCameraSource(
         CameraWriter.frame(out, s.widthPx, s.heightPx, s.widthDp, s.heightDp, s.density)
         CameraWriter.pack(out, s.pack, s.profile)
         val shapes = chrome
-        if (shapes != null) shapes.write(out, vsyncNanos) else CameraWriter.keepOuts(out, 0)
+        if (shapes == null) {
+            CameraWriter.keepOuts(out, 0)
+        } else if (shapes.write(out, vsyncNanos)) {
+            // A shape the core frosts was carried on to this vsync: one more frame, which finds it carried again or where
+            // it came to rest, so the glass never rests a frame's movement past its chrome.
+            again = true
+        }
         if (where != null) CameraWriter.location(out, where.lat, where.lon, where.accuracyM, where.heading) else CameraWriter.noLocation(out)
         drawnRevision = s.revision
         drawnChrome = chromeNow
