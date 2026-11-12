@@ -304,6 +304,28 @@ struct Reflection {
 /// place (the user, 27 October: "The leafs and water streaks should be drawn with the object like buildings are").
 [[nodiscard]] std::uint32_t leaf_anchor(std::int64_t id) noexcept;
 
+/// The glints' octaves (the far flicker, 12 November). The water's map lays the glints' field on the water at the
+/// home's scale, so a view from 10 km puts 16 to 66 of the field's pixels along each of the screen's and from 15 km
+/// 24 to 99: each pixel took one read of a field far finer than itself, a pan of half a pixel moved that read a dozen
+/// field pixels on, and the water twinkled, where the renders' glints are one band over the frame at the screen's own
+/// pixels at any distance. So a pixel reads the field by its footprint, the field's pixels a device px along the
+/// longer of the map's two derivatives there: as it lies while that is at most `as_it_lies` (squared here, as the
+/// shader compares it), and beyond it at octave L = log2(footprint / as_it_lies), the field's point halved floor(L)
+/// times and once more, each read through the table and the two blended by L's fraction, so the coarser read takes
+/// at most `as_it_lies` of its octave's pixels a device px and the finer at most twice that (its share of the blend
+/// going to nothing as it nears twice), and a pan, which leaves each pixel's footprint as it was, slides the same
+/// glints under it. as_it_lies is 4 over the footprint at the frame's middle, within 1 and 4: 4 at the home (its
+/// own frame's most is 3.0, at the top corners, so the home's pixels are the same to the bit), 1 from where the
+/// middle takes 4 (1.7 km at the home's pitch, and wherever the middle lies at the horizon or above), so that from
+/// there on every pixel's glints are the renders' size or up to twice it. An octave's point is halved about the
+/// map's own origin on the water, not about the point the rows were reduced to: `periods` are the whole mirror
+/// periods the rows left out on each axis, of which octave n puts back those within 2^n (its own period is 2^n of
+/// them), so the glints of every octave keep their places on the water as the frame's middle crosses a period.
+struct WaterOctaves {
+    float as_it_lies = 16.0F;
+    std::array<std::int32_t, 2> periods{};
+};
+
 /// The water's streaks' map: where the glints and the ripple read their fields, fixed to the water as a building is
 /// fixed to its place (the user, 27 October: "The leafs and water streaks should be drawn with the object like
 /// buildings are"). The renders read them at the screen's own pixels, which a moving map slides under the water; the
@@ -314,8 +336,10 @@ struct Reflection {
 /// `density` the fields' point is (r0 · (x, y, 1), r1 · (x, y, 1)) / (r2 · (x, y, 1)), the rows' nine floats returned
 /// (r2's negative below the horizon, where alone the plane lies), reduced by whole mirror periods of the fields (twice
 /// their `width` and `height`, device px: fx_wrap) about the frame's middle so that the floats keep their precision.
+/// `octaves`, where given, takes what the glints' read by a pixel's footprint needs beside the rows (WaterOctaves).
 [[nodiscard]] std::array<float, 9> water_map(const view::Camera& cam, double water_y, double density,
-                                             std::uint32_t width, std::uint32_t height);
+                                             std::uint32_t width, std::uint32_t height,
+                                             WaterOctaves* octaves = nullptr);
 
 /// The fields' point (device px) of the water under upright device point (x, y) by map `m` (water_map's), in float as
 /// the shaders work it out (fx_water_point), and whether the water's plane lies there (below the horizon).
@@ -325,6 +349,19 @@ struct WaterPoint {
     bool on = false;
 };
 [[nodiscard]] WaterPoint water_point(const std::array<float, 9>& m, float x, float y) noexcept;
+
+/// The glints' read at upright device point (x, y) by map `m` and its octaves `o`, the fields `width` by `height`
+/// device px, in float as glints_fs works it out: the field's point of the first read and, where the pixel's
+/// footprint passes o.as_it_lies, the octave of the first, the next octave's point and its share of the blend.
+struct GlintsRead {
+    WaterPoint first;
+    WaterPoint second;
+    std::uint32_t octave = 0;
+    float blend = 0.0F;     ///< the second read's share; 0 where the field is read as it lies (no second read)
+    float footprint = 0.0F; ///< the field's pixels a device px at the point, along the longer derivative
+};
+[[nodiscard]] GlintsRead glints_read(const std::array<float, 9>& m, const WaterOctaves& o, std::uint32_t width,
+                                     std::uint32_t height, float x, float y) noexcept;
 
 struct GroundFrame;
 /// The water's height where frame `f` draws it (its first tile's water level; 0 without a tile), the streaks' map's
@@ -1731,7 +1768,7 @@ struct Ground::Words {
     std::uint32_t leaf_offsets = 0; ///< the leaf filter's 256 offsets, then its reach (reflection_fs), with the ripple
     std::uint32_t ripple_plan = 0;  ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
     std::uint32_t ripple_map = 0;   ///< the water's map the ripple reads its field by (the app's map), 0: the screen's
-    std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results (glints_fs)
+    std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results, the water's map and its octaves (glints_fs)
     std::uint32_t clouds = 0;       ///< the clouds' filters' 256 results each: cloudsh2's, then cloudf's (clouds_fs)
     std::uint32_t canopy = 0;       ///< the canopy's filter's 256 results, then the ground's map (canopy_fs)
     std::uint32_t slot = 0;         ///< the frame slot whose buffer holds them
