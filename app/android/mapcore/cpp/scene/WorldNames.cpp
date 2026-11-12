@@ -136,8 +136,14 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
         if (chosen[i] == 0) continue;
         const Candidate& c = candidates_[i];
         const Id& id = id_of(*c.name, c.style, seconds);
-        next_.push_back(
-            {.id = c.id, .style = c.style, .priority = c.priority, .lat = id.lat, .lon = id.lon, .text = id.text});
+        next_.push_back({.id = c.id,
+                         .style = c.style,
+                         .priority = c.priority,
+                         .lat = c.name->lat,
+                         .lon = c.name->lon,
+                         .text = id.text,
+                         .lit = c.name->lit,
+                         .people = c.name->people});
     }
     // Those no longer picked leave: handed on, leaving, for a fade's length from when they left.
     for (const PickedName& p : picked_) {

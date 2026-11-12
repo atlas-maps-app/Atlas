@@ -280,3 +280,66 @@ TEST_CASE("the ladder leaves a frame plain where it cannot change a pixel: by da
     // up to 18 km there is no look to leave out
     CHECK(!look_at(18'000.0, 40.0, false).plain);
 }
+
+TEST_CASE("a lit place's name rises off its light by what the light follows: not at all up to 18 km or by day, whole "
+          "from 29 km where the sun is a degree and a half under the horizon, and smoothly between") {
+    const tiles::WorldLadder l = load::world_ladder();
+    // the sun overhead of (0, 0): on the equator its altitude is 90 degrees less the longitude
+    const scene::GeoPoint sun{.lat = 0.0, .lon = 0.0};
+    const auto night = [&](double altitude) { return scene::light_night(l, sun, 0.0, 90.0 - altitude); };
+    CHECK(night(30.0) == 0.0);
+    CHECK(night(-0.5) == 0.0);
+    CHECK(night(-6.0) == doctest::Approx(0.5));
+    CHECK(night(-11.5) == 1.0);
+    CHECK(night(-70.0) == 1.0);
+    // the board's rule, from the ladder: none of the light a degree under the horizon, all of it ten deeper
+    CHECK(l.light_from == 1.0);
+    CHECK(l.light_over == 10.0);
+    const auto rise = [&](double distance, double altitude) {
+        return scene::name_rise(l, scene::ladder_weights(l, distance), sun, 0.0, 90.0 - altitude);
+    };
+    // up to 18 km no light is drawn, whatever the night; from where the caps' weight is a quarter the name is whole
+    CHECK(rise(9'000.0, -40.0) == 0.0);
+    CHECK(rise(18'000.0, -40.0) == 0.0);
+    CHECK(rise(22'000.0, -40.0) > 0.0);
+    CHECK(rise(22'000.0, -40.0) < 1.0);
+    CHECK(scene::ladder_weights(l, 28'000.0).caps < scene::name_rise_caps);
+    CHECK(scene::ladder_weights(l, 29'000.0).caps > scene::name_rise_caps);
+    CHECK(rise(29'000.0, -40.0) == 1.0);
+    CHECK(rise(600'000.0, -40.0) == 1.0);
+    CHECK(rise(12'000'000.0, -40.0) == 1.0);
+    // by day none; whole where the light begins to be drawn (the least of it the world pass draws)
+    CHECK(rise(600'000.0, 25.0) == 0.0);
+    CHECK(rise(600'000.0, -0.9) == 0.0);
+    CHECK(rise(600'000.0, -1.25) == doctest::Approx(0.5).epsilon(0.02));
+    CHECK(rise(600'000.0, -1.6) == 1.0);
+    for (int half = 3; half < 80; ++half) {
+        const double altitude = -0.5 * half;
+        if (night(altitude) >= scene::light_least_night) CHECK(rise(600'000.0, altitude - 0.001) == 1.0);
+    }
+    CHECK(scene::world_look(l, 600'000.0, style::ThemeBlock{}, bend_at(0.0, 0.0, 600'000.0), {0.0, 600'000.0, 0.0}, 2.0,
+                            824.0, 1830.0)
+              .block.light_least.y == static_cast<float>(scene::light_least_night));
+    // without a step: across the terminator and through the zoom the rise moves by little, and never back
+    double before = 0.0;
+    for (int i = 0; i <= 100; ++i) {
+        const double r = rise(600'000.0, -0.8 - (0.01 * i));
+        CHECK(r >= before);
+        CHECK(r - before < 0.04);
+        before = r;
+    }
+    CHECK(before == 1.0);
+    before = 0.0;
+    for (int i = 0; i <= 120; ++i) {
+        const double r = rise(18'000.0 + (100.0 * i), -40.0);
+        CHECK(r >= before);
+        CHECK(r - before < 0.04);
+        before = r;
+    }
+    CHECK(before == 1.0);
+    // the light's halo by its place's people, dp: the ladder's radii times its halo
+    CHECK(scene::light_halo_dp(l, 12e6) == doctest::Approx(2.6 * 2.2));
+    CHECK(scene::light_halo_dp(l, 5e6) == doctest::Approx(1.9 * 2.2));
+    CHECK(scene::light_halo_dp(l, 2e5) == doctest::Approx(1.3 * 2.2));
+    CHECK(scene::light_halo_dp(l, 0.0) == doctest::Approx(1.3 * 2.2));
+}

@@ -11,9 +11,11 @@
 //     handed on for a fade's length as leaving, and placement fades it out where it stands. Names are picked again at
 //     most ten times a second while the camera moves, and once at rest (again there when a tile that names places
 //     comes).
+//   - A name stands at its place in the tile that draws its ground, as that tile's light of it does; a lit place's
+//     name stands clear of its light at night (scene::name_rise, scene/WorldLook.hpp).
 //   - A name's look follows the camera's distance: a city's, a town's or a village's (a suburb's too) up to the
 //     globe's 6,000 km, the Globe board's beyond, none beyond 20,000 km, where the board has none. Its id holds for
-//     the map's life, so its place and its fades follow it; a name in another look is another id.
+//     the map's life, so its spot and its fades follow it; a name in another look is another id.
 //
 // The pick is pure: what stands in view is the caller's to say (the labels pass projects by scene::name_point).
 #pragma once
@@ -50,6 +52,9 @@ struct WorldName {
     double lat = 0;        ///< degrees
     double lon = 0;
     std::string text; ///< its `name`
+    /// Its tile lights it at night (scene::world_lights of the tile's level: a city, a town from L10), where the
+    /// world's style has the ladder.
+    bool lit = false;
 };
 
 /// A name's look, the app's to draw (Kotlin's LabelKind for a name, in this order).
@@ -86,11 +91,17 @@ struct PickedName {
     std::uint32_t id = 0;
     NameStyle style = NameStyle::city;
     std::int32_t priority = 0;
+    /// Its place in the tile that draws its ground this pick (where that tile's light of it is drawn; the globe's
+    /// place of a city and the base's lie apart), degrees.
     double lat = 0;
     double lon = 0;
     /// No longer picked: it fades out where it stands (labels::Candidate::hidden) until the fade's length has gone.
     bool leaving = false;
     std::string_view text; ///< the pick's own (it holds until the name's id is let go)
+    /// Its tile lights it at night, and its people (the light's size): its name stands clear of the light
+    /// (scene::name_rise).
+    bool lit = false;
+    double people = 0;
 };
 
 /// The pick of a map's names.

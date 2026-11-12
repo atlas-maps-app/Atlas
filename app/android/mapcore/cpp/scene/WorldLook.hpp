@@ -6,10 +6,13 @@
 // changes without a kink in a zoom. Up to the first knot (18 km) every weight is 0 and the world's colours are its
 // palette's.
 //
-// The sun is the moment's: the theme block's azimuth and elevation are the sun's as it stands over the bundled packs'
-// place (CoreMoment writes every moment's there: Regions.resetPlace's Westerkerk), so the point of the planet the sun
+// The sun is the moment's: the theme block's azimuth and elevation are the sun's as it stands over the block's own
+// place (the place the map draws: ThemeBlock::place_latitude and place_longitude), so the point of the planet the sun
 // is overhead of follows from them, and with it the sun's altitude anywhere: the true terminator. The live moment's is
 // the real sun's of its instant; a named moment's (the map's day and night styles) that of its own date and hour.
+//
+// A lit place's name stands clear of its light (ENGINE.md step 5, "Names"): name_rise is how far it has risen off its
+// place, by what the light itself follows (the caps' weight, the sun's depth under the horizon there).
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -54,6 +57,29 @@ struct GeoPoint {
 /// The unit vector from the planet's centre through (`lat`, `lon`), in the axes of a frame whose camera's target lies
 /// at `bend`'s (x east, y up, z south there).
 [[nodiscard]] view::Vec3 direction_of(const WorldBend& bend, double lat, double lon) noexcept;
+
+/// The least of a city's light that is drawn (globe.slang's globe_light: a place whose night is shallower has none).
+inline constexpr double light_least_night = 0.05;
+
+/// How much of a city's light at (`lat`, `lon`) shows by the sun alone, 0 to 1, the sun overhead of `sun`: the
+/// board's clamp((-altitude - 1) / 10) (globe.slang's globe_light without the facing's share).
+[[nodiscard]] double light_night(const tiles::WorldLadder& ladder, const GeoPoint& sun, double lat,
+                                 double lon) noexcept;
+
+/// The share of the caps' weight by which a lit place's name has risen whole (the light is a quarter in then).
+inline constexpr double name_rise_caps = 0.25;
+
+/// How far the name of a lit place at (`lat`, `lon`) has risen off its place to stand clear of its light, 0 to 1
+/// (labels::Candidate::rise): 0 where no light is drawn (up to 18 km, and by day), whole where one is, smooth
+/// between by what the light follows. With the camera's distance it follows the caps' weight, whole from
+/// name_rise_caps of it (29 km); with the sun, the light's own rule, whole where the light begins to be drawn
+/// (light_least_night: the sun 1.5 degrees under the horizon, from 1 degree under it). A light comes in at once
+/// there, so the name stands clear before it does.
+[[nodiscard]] double name_rise(const tiles::WorldLadder& ladder, const LadderWeights& weights, const GeoPoint& sun,
+                               double lat, double lon) noexcept;
+
+/// The radius of the light of a lit place of `people`, its halo's, dp (the ladder's sizes, as stage T sizes it).
+[[nodiscard]] double light_halo_dp(const tiles::WorldLadder& ladder, double people) noexcept;
 
 /// A frame's look.
 struct WorldLook {

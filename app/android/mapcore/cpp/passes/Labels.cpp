@@ -10,6 +10,7 @@
 #include "gpu/Descriptors.hpp"
 #include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
+#include "scene/WorldLook.hpp"
 #include "scene/WorldTiles.hpp"
 
 #include <algorithm>
@@ -43,7 +44,8 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
     names_least_ = 0.0F;
     labels::NameStore* store = state.names;
     if (store == nullptr) return;
-    // The bent ground the names stand on: the world's this frame; without it (up to 18 km) only a test's names.
+    // The bent ground the names stand on: the world's this frame (beyond 18 km, and under the cover where it is drawn
+    // there); without it only a test's names.
     const scene::WorldBend bend = state.world != nullptr ? state.world->bend : scene::world_bend(view, frame);
     const view::GroundFrame& ground = state.world != nullptr ? state.world->frame : frame;
     const auto width = static_cast<double>(state.camera.width_px);
@@ -67,6 +69,20 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
     const auto picked = world_names_.update(state.world, state.extra_names, state.camera.distance, in_view,
                                             state.seconds, state.rest, changed);
     picked_.assign(picked.begin(), picked.end());
+    // What a lit place's light follows this frame (the world pass's look of it): the ladder's weights at the camera's
+    // distance and the point the sun is overhead of. Its name stands clear of it (scene::name_rise).
+    const tiles::WorldLadder* ladder =
+        state.world != nullptr && state.world->style != nullptr && state.world->style->ladder
+            ? &*state.world->style->ladder
+            : nullptr;
+    scene::LadderWeights weights;
+    scene::GeoPoint sun;
+    if (ladder != nullptr) {
+        weights = scene::ladder_weights(*ladder, state.camera.distance);
+        sun = scene::sub_solar(state.theme.sun_azimuth, state.theme.sun_elevation,
+                               static_cast<double>(state.theme.place_latitude),
+                               static_cast<double>(state.theme.place_longitude));
+    }
     // Those with a sprite are candidates; the others, by rank, are what the app is asked for.
     std::vector<labels::NameWant> wanted;
     name_points_.reserve(picked_.size());
@@ -83,12 +99,18 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
         const std::optional<view::Vec2> p = point(name.lat, name.lon);
         name_points_.push_back(p ? labels::Point{.x = static_cast<float>(p->x), .y = static_cast<float>(p->y)}
                                  : labels::Point{.x = no_point, .y = no_point});
-        candidates_.push_back({.id = name.id,
-                               .label = static_cast<std::uint32_t>(first + name_sprites_.size()),
-                               .priority = name.priority,
-                               .measures = sprite->sprite.measures,
-                               .points = std::span<const labels::Point>(&name_points_.back(), 1),
-                               .hidden = name.leaving});
+        const double rise =
+            name.lit && ladder != nullptr ? scene::name_rise(*ladder, weights, sun, name.lat, name.lon) : 0.0;
+        candidates_.push_back(
+            {.id = name.id,
+             .label = static_cast<std::uint32_t>(first + name_sprites_.size()),
+             .priority = name.priority,
+             .measures = sprite->sprite.measures,
+             .points = std::span<const labels::Point>(&name_points_.back(), 1),
+             .hidden = name.leaving,
+             .rise = static_cast<float>(rise),
+             .mark = rise > 0.0 ? static_cast<float>(scene::light_halo_dp(*ladder, name.people) * state.camera.density)
+                                : 0.0F});
         name_sprites_.push_back(sprite);
         // the readable floor over the look's own size: the least a name of it is drawn at
         names_least_ = std::max(
