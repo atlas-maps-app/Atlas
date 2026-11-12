@@ -24,6 +24,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/Kept.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/WorldIndex.hpp"
@@ -1349,4 +1350,170 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     theme.flags |= atlas::style::theme_flag::night;
     CHECK(atlas::passes::World::day_palette_of(theme, nullptr) ==
           atlas::passes::World::palette_of(theme, true, nullptr));
+}
+
+TEST_CASE("tiles: the cache keeps its pinned entries whatever their age, out of its budget, across a restart") {
+    // ENGINE.md step 11: the world's tiles a kept country draws offline are pinned in the world's cache
+    TempDir dir;
+    const std::size_t entry = cache_header_bytes + 1000;
+    const auto key = [](int i) {
+        return CacheKey{.kind = CacheKind::chunk, .source = Sha256::of(as_bytes(std::format("chunk {}", i)))};
+    };
+    const std::string payload(1000, 'p');
+    {
+        auto opened = ExpandedCache::open(dir.path() + "/cache", 2 * entry);
+        ATLAS_REQUIRE(opened);
+        ExpandedCache& c = **opened;
+        // two pinned, one of them not there yet; the budget of two entries is the others'
+        const std::array<CacheKey, 2> pins{key(0), key(1)};
+        ATLAS_REQUIRE(c.set_pinned(pins));
+        CHECK(c.pins() == 2);
+        CHECK(c.pinned(key(0)));
+        CHECK(!c.pinned(key(2)));
+        CHECK(c.pinned_bytes() == 0);
+        ATLAS_REQUIRE(c.put(key(0), as_bytes(payload)));
+        CHECK(c.pinned_bytes() == entry);
+        for (int i = 2; i < 6; ++i) ATLAS_REQUIRE(c.put(key(i), as_bytes(payload)));
+        // the oldest of the others went, the pinned one stays though it is the oldest of all
+        CHECK(c.holds(key(0)));
+        CHECK(!c.holds(key(2)));
+        CHECK(!c.holds(key(3)));
+        CHECK(c.holds(key(4)));
+        CHECK(c.holds(key(5)));
+        CHECK(c.entries() == 3);
+        CHECK(c.bytes() == 3 * entry);
+        // an entry written under a pinned key is pinned from the start, whatever its size
+        ATLAS_REQUIRE(c.put(key(1), as_bytes(std::string(5 * entry, 'x'))));
+        CHECK(c.pinned_bytes() == entry + cache_header_bytes + (5 * entry));
+        auto too_big = c.put(key(9), as_bytes(std::string(5 * entry, 'x')));
+        ATLAS_REQUIRE(!too_big);
+        CHECK(too_big.error().fault == Fault::too_big);
+        // emptied down to nothing, the pinned ones stay
+        c.evict_to(0);
+        CHECK(c.entries() == 2);
+        CHECK(c.holds(key(0)));
+        CHECK(c.holds(key(1)));
+        // a pinned entry removed: its bytes off the pinned ones', its key pinned still
+        c.remove(key(1));
+        CHECK(c.pinned_bytes() == entry);
+        CHECK(c.pinned(key(1)));
+    }
+    {
+        // a restart: the pins from their file, so the open's eviction leaves the pinned entry
+        auto opened = ExpandedCache::open(dir.path() + "/cache", 1);
+        ATLAS_REQUIRE(opened);
+        ExpandedCache& c = **opened;
+        CHECK(c.pins() == 2);
+        CHECK(c.holds(key(0)));
+        CHECK(c.pinned_bytes() == entry);
+        CHECK(atlas::test::held(c.get(key(0))).payload.size() == 1000);
+        // no longer pinned: the others' again, and over the budget of one byte it goes
+        ATLAS_REQUIRE(c.set_pinned({}));
+        CHECK(c.pins() == 0);
+        CHECK(c.pinned_bytes() == 0);
+        CHECK(!c.holds(key(0)));
+        CHECK(c.entries() == 0);
+    }
+    auto opened = ExpandedCache::open(dir.path() + "/cache", 2 * entry);
+    ATLAS_REQUIRE(opened);
+    CHECK((*opened)->pins() == 0);
+}
+
+TEST_CASE("tiles: a kept country's world: its packs' heads and its tiles' chunks pinned, what is lacking said, a "
+          "fetched range kept") {
+    // ENGINE.md step 11 (tiles/Kept.hpp): the app reads world-keep.json's packs and tiles; the core says which heads
+    // and chunks the cache lacks, and pins them all
+    TempDir dir;
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    const auto bytes = world_pack({world_tile(9, 262, 168), world_tile(10, 525, 336), world_tile(11, 1050, 673)}, fine);
+    const auto other = world_pack({world_tile(9, 263, 168), world_tile(10, 527, 336)}, fine);
+    auto cache = ExpandedCache::open(dir.path() + "/cache", std::uint64_t{1} << 22U);
+    ATLAS_REQUIRE(cache);
+    ExpandedCache& c = **cache;
+    // a pack's head as the app fetches it: its bytes before its chunks and after them
+    const auto head_of = [](const std::vector<std::byte>& pack) {
+        auto whole = Pack::open(std::make_unique<MemorySource>(std::span<const std::byte>(pack)));
+        ATLAS_REQUIRE_OR_RETURN((std::array<PackBytes, 2>{}), whole.has_value(), "the pack opens");
+        const Section* section = find_section(whole->sections(), "chunks");
+        ATLAS_REQUIRE_OR_RETURN((std::array<PackBytes, 2>{}), section != nullptr, "its chunks");
+        const std::span<const std::byte> all(pack);
+        const std::uint64_t end = section->offset + section->stored;
+        return std::array<PackBytes, 2>{
+            {{.offset = 0, .bytes = all.first(section->offset)}, {.offset = end, .bytes = all.subspan(end)}}};
+    };
+    // the keep: two of the first pack's three tiles and one the pack does not hold; the other pack's two
+    const std::array<KeptPack, 2> keep{
+        KeptPack{.kind = PackKind::world_mid,
+                 .length = bytes.size(),
+                 .identity = Sha256::of(bytes),
+                 .tiles = {TileKey(11, 1050, 673), TileKey(9, 262, 168), TileKey(11, 1, 1)}},
+        KeptPack{.kind = PackKind::world_mid,
+                 .length = other.size(),
+                 .identity = Sha256::of(other),
+                 .tiles = {TileKey(9, 263, 168), TileKey(10, 527, 336)}}};
+    const auto ref_of = [](const KeptPack& p) {
+        return PackRef{.id = "p", .kind = p.kind, .length = p.length, .fetch = Store::absent(), .identity = p.identity};
+    };
+    // nothing on the phone: both heads lacking and pinned, no chunk known yet
+    auto first = keep_packs(c, keep);
+    ATLAS_REQUIRE(first);
+    CHECK(first->heads == std::vector<std::uint32_t>{0, 1});
+    CHECK(first->chunks.empty());
+    CHECK(c.pins() == 2);
+    CHECK(c.pinned({.kind = CacheKind::pack_head, .source = keep[0].identity}));
+    // a range before its head: refused
+    CHECK(!keep_range(c, keep[0], {.offset = 0, .bytes = std::span<const std::byte>(bytes)}));
+    // the first head came: its two tiles' chunks lacking, the tile it does not hold counted, the other head lacking
+    ATLAS_REQUIRE(Store::keep_head(c, ref_of(keep[0]), head_of(bytes)));
+    auto second = keep_packs(c, keep);
+    ATLAS_REQUIRE(second);
+    CHECK(second->heads == std::vector<std::uint32_t>{1});
+    ATLAS_REQUIRE(second->chunks.size() == 2);
+    CHECK(second->unknown == 1);
+    CHECK(second->held == 0);
+    CHECK(second->chunks[0].pack == 0);
+    CHECK(second->chunks[0].tile == TileKey(11, 1050, 673));
+    CHECK(second->chunks[1].tile == TileKey(9, 262, 168));
+    CHECK(c.pins() == 4); // two heads, two chunks
+    // the first chunk's bytes fetched and handed over: kept, pinned, and no longer lacking
+    const KeptChunk want = second->chunks[0];
+    const std::span<const std::byte> all(bytes);
+    auto kept = keep_range(c, keep[0], {.offset = want.offset, .bytes = all.subspan(want.offset, want.length)});
+    ATLAS_REQUIRE(kept);
+    CHECK(kept->kept == std::vector<TileKey>{TileKey(11, 1050, 673)});
+    CHECK(kept->refused.empty());
+    auto third = keep_packs(c, keep);
+    ATLAS_REQUIRE(third);
+    ATLAS_REQUIRE(third->chunks.size() == 1);
+    CHECK(third->chunks[0].tile == TileKey(9, 262, 168));
+    CHECK(third->held == 1);
+    CHECK(third->held_bytes == want.length);
+    CHECK(c.pinned_bytes() > want.length);
+    // the pack's whole bytes handed over: the tile not of the keep is kept in the cache too, but not pinned, so the
+    // cache emptied of the others keeps the head and the keep's two chunks
+    ATLAS_REQUIRE(keep_range(c, keep[0], {.offset = 0, .bytes = all}));
+    CHECK(c.entries() == 4);
+    c.evict_to(0);
+    CHECK(c.entries() == 3);
+    auto whole = keep_packs(c, keep);
+    ATLAS_REQUIRE(whole);
+    CHECK(whole->chunks.empty());
+    CHECK(whole->held == 2);
+    // offline, the map's store opens the pack and loads the kept tiles from the cache alone
+    {
+        Store store(&c);
+        ATLAS_REQUIRE(store.add(ref_of(keep[0])));
+        Zstd zstd;
+        std::vector<std::byte> raw;
+        ATLAS_REQUIRE(store.load(store.find(TileKey(11, 1050, 673))[0], zstd, raw));
+        ATLAS_REQUIRE(store.load(store.find(TileKey(9, 262, 168))[0], zstd, raw));
+        CHECK(!store.load(store.find(TileKey(10, 525, 336))[0], zstd, raw));
+    }
+    // the country no longer kept: nothing pinned, and the cache emptied holds nothing
+    auto none = keep_packs(c, {});
+    ATLAS_REQUIRE(none);
+    CHECK(none->heads.empty());
+    CHECK(c.pins() == 0);
+    c.evict_to(0);
+    CHECK(c.entries() == 0);
 }

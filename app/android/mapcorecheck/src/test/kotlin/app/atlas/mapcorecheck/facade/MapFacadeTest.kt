@@ -417,4 +417,32 @@ class MapFacadeTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun theWorldAKeptCountryKeepsIsPinnedThroughTheFacade() {
+        // ENGINE.md step 11 (tiles/Kept.hpp; world_test holds the cache's pins and the keep's chunks): the calls' shape
+        val dir = Files.createTempDirectory("atlas-worldkept").toFile()
+        try {
+            val budget = 1L shl 20
+            fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong()
+            // no country kept: nothing pinned, nothing lacking (unknown tiles, chunks held, their bytes, heads lacking)
+            assertTrue(longArrayOf(0, 0, 0, 0).contentEquals(Native.worldKept(dir.path, budget, LongArray(0), ByteArray(0), IntArray(0), LongArray(0))))
+            // a pack whose head is not on the phone: its head lacking (pack 0), its chunks not known yet; its head pinned
+            val identity = ByteArray(32) { it.toByte() }
+            val tiles = longArrayOf(key(9, 262, 168), key(11, 1050, 673))
+            assertTrue(longArrayOf(0, 0, 0, 1, 0).contentEquals(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(2), tiles)))
+            assertEquals(1, File(dir, "pinned").readLines().size)
+            // a range of it before its head: not kept
+            assertNull(Native.worldKeptRange(dir.path, budget, 4_000, identity, 0, ByteArray(100)))
+            // arrays that do not agree, a pack of no length: refused
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(3), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), ByteArray(31), intArrayOf(2), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(0), identity, intArrayOf(2), tiles))
+            // the world dropped (a new version): nothing pinned
+            assertEquals("", Native.worldDrop(dir.path, budget))
+            assertEquals(0, File(dir, "pinned").readLines().size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }
