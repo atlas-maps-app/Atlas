@@ -1945,7 +1945,8 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
 TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are held back, its picture final over their "
           "ancestors, and none is built again at rest; a view it can hold takes the room of the tiles a view before "
           "it left; a heap that may grow grows for a view's tiles, its picture the same, and one whose doubling the "
-          "device refuses holds them back as one that may not") {
+          "device refuses holds them back as one that may not; a tile no piece of the heap holds whole is built in "
+          "parts, its picture the same") {
     if (!test::open_session()) return;
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-room-{}", ::getpid());
     fs::create_directories(guard);
@@ -2060,7 +2061,9 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
     vk::DeviceSize took = 0;
     vk::DeviceSize fine_bytes = 0;
     vk::DeviceSize smallest = ~vk::DeviceSize{0};
-    Counts seen; // Amsterdam's whole picture: its land's and water's pixels
+    vk::DeviceSize ruhr_smallest = ~vk::DeviceSize{0}; // the Ruhr's smallest fine tile
+    Counts seen;                                       // Amsterdam's whole picture: its land's and water's pixels
+    Counts seen_ruhr;                                  // and the Ruhr's, drawn after it
     const bool presents = with_map(0, 0, [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
         CHECK(draw(map, session, places[0], 0));
         seen = land_and_water(kept);
@@ -2070,9 +2073,10 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
         CHECK(f.held == 0);
         whole[0] = drawn_of(f, 0);
         for (const scene::WorldDraw& w : f.draws) {
-            if (w.tile->pinned || w.tile->range.size == 0) continue;
-            smallest = std::min<vk::DeviceSize>(smallest, w.tile->range.size);
-            if (own[0].contains(w.tile->key.packed())) fine_bytes += w.tile->range.size;
+            if (w.tile->pinned || w.tile->bytes() == 0) continue;
+            CHECK(w.tile->parts.size() == 1); // the world's own heap holds each whole
+            smallest = std::min<vk::DeviceSize>(smallest, w.tile->bytes());
+            if (own[0].contains(w.tile->key.packed())) fine_bytes += w.tile->bytes();
         }
         took = st.capacity - st.free;
         MESSAGE(std::format("Amsterdam whole: {} bytes of the heap taken, {} of them its {} fine tiles', the smallest "
@@ -2082,6 +2086,11 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
         CHECK(draw(map, session, places[1], 0));
         CHECK(tiles.frame()->held == 0);
         whole[1] = drawn_of(*tiles.frame(), 1);
+        seen_ruhr = land_and_water(kept);
+        for (const scene::WorldDraw& w : tiles.frame()->draws) {
+            if (own[1].contains(w.tile->key.packed()))
+                ruhr_smallest = std::min<vk::DeviceSize>(ruhr_smallest, w.tile->bytes());
+        }
     });
     if (!presents) return;
     ATLAS_REQUIRE(took > 0);
@@ -2192,6 +2201,44 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
                        CHECK(tiles.frame()->wanted == 0);
                        CHECK(map.complete());
                    }));
+    // A heap of Amsterdam's frame and twice its fine tiles' bytes more, which may not grow, whose free bytes once
+    // Amsterdam is whole are cut into pieces of half the Ruhr's smallest fine tile, 16 bytes apart
+    // (WorldTiles::fragment_for_tests): no piece holds a fine tile of the Ruhr whole, so each is built in parts, and
+    // the Ruhr is whole, none held back, its picture the one the world's own heap drew; at rest none is built again.
+    // (A piece of half a tile holds a part: WorldTiles' parts are of 256 bytes or more, 32 of which may stay free.)
+    ATLAS_REQUIRE(ruhr_smallest != ~vk::DeviceSize{0});
+    const vk::DeviceSize piece = (ruhr_smallest / 2) & ~vk::DeviceSize{15};
+    ATLAS_REQUIRE(piece >= 288);
+    CHECK(with_map(
+        (took + (2 * fine_bytes) + 15) & ~vk::DeviceSize{15}, 0,
+        [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+            CHECK(draw(map, session, places[0], 0));
+            scene::WorldTiles& tiles = *map.world()->world_tiles();
+            tiles.fragment_for_tests(piece);
+            CHECK(tiles.stats().largest_free <= piece);
+            CHECK(draw(map, session, places[1], 0));
+            const scene::WorldFrame& f = *tiles.frame();
+            const scene::WorldStats st = tiles.stats();
+            const Counts split = land_and_water(kept);
+            std::size_t in_parts = 0; // the Ruhr's fine tiles drawn in parts
+            for (const scene::WorldDraw& w : f.draws) {
+                if (own[1].contains(w.tile->key.packed()) && w.tile->parts.size() > 1) ++in_parts;
+            }
+            MESSAGE(std::format("the Ruhr in pieces of {} bytes: {} held, {} fine tiles drawn, {} of them in parts; {} "
+                                "parts of {} resident tiles, {} builds found no room; land {} px, water {} px",
+                                piece, f.held, drawn_of(f, 1).size(), in_parts, st.parts, st.resident, st.no_room,
+                                split.first, split.second));
+            CHECK(f.held == 0);
+            CHECK(drawn_of(f, 1) == whole[1]);
+            CHECK(in_parts == whole[1].size());
+            CHECK(st.parts > st.resident);
+            const auto near = [](std::size_t a, std::size_t b) { return (a > b ? a - b : b - a) * 100 <= b; };
+            CHECK(near(split.first, seen_ruhr.first));
+            CHECK(near(split.second, seen_ruhr.second));
+            CHECK(draw(map, session, places[1], 30));
+            CHECK(tiles.stats().built == st.built);
+            CHECK(tiles.stats().no_room == st.no_room);
+        }));
     std::error_code ec;
     fs::remove_all(guard, ec);
 }

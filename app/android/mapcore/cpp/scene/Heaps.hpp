@@ -215,6 +215,18 @@ public:
     [[nodiscard]] vk::DeviceSize largest_with(std::span<const HeapRange> back, HeapKind kind = HeapKind::walls) const;
     /// The largest of those pieces that `back` joins: how near a tile's going comes to making room. Any thread.
     [[nodiscard]] vk::DeviceSize joined_with(std::span<const HeapRange> back, HeapKind kind = HeapKind::walls) const;
+    /// The sizes of the budget's pieces no range holds that a range of `kind` may take, by offset: the room a tile
+    /// placed in parts finds (scene/WorldTiles.hpp). Any thread; it walks the pieces.
+    [[nodiscard]] std::vector<vk::DeviceSize> free_pieces(HeapKind kind = HeapKind::walls) const;
+    /// The sizes of the pieces there would be with `back` and the retired ranges freed too, each joined to the pieces
+    /// beside it, of those a range of `kind` may take, by offset: which tiles' going makes room for a tile in parts.
+    /// Any thread.
+    [[nodiscard]] std::vector<vk::DeviceSize> pieces_with(std::span<const HeapRange> back,
+                                                          HeapKind kind = HeapKind::walls) const;
+    /// Cuts each piece no range holds into pieces of `piece` bytes with `gap` bytes between, which stay held as by a
+    /// range of `kind` for the heap's life (tests: a heap whose free bytes lie in pieces too small for a tile). Any
+    /// thread.
+    void fragment_for_tests(HeapKind kind, vk::DeviceSize piece, vk::DeviceSize gap);
     [[nodiscard]] HeapStats stats() const;
 
 private:

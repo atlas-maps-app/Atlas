@@ -15,17 +15,19 @@
 //
 // The resident tiles hold up to 85 % of the heap's buffer as it is, past which the least lately drawn go; where the
 // tiles a frame draws take more, a build's range lies beyond the buffer and it doubles, up to the heap's budget. A tile
-// whose build finds no room there is built again once a piece of the heap holds it, not before: the tiles the frame
-// does not draw are let go of for one, each in turn the one that joins the largest piece (as World::piece_for chooses
-// the countries'), and it waits while their bytes come back, the frames coming meanwhile; where their going would not
-// make one it is held back, its place drawn by its nearest resident ancestor, final, until the heap's pieces change. So
-// no tile is built again at rest: the pitched views from 60 to 1,000 km over the Netherlands rebuilt theirs every
-// frame, each build asking for the next (ENGINE.md step 11).
+// no piece of the heap holds whole is placed in parts, each in the largest piece free then (place): the tiles come
+// and go in their own sizes, so the heap's free bytes lie in pieces between those drawn, and at the pitched views from
+// 60 to 1,000 km over the Netherlands 13 to 28 MB were free in pieces of 2.2 to 5.6 MB while their farthest tiles of 5
+// to 8 MB found none (ENGINE.md step 11). A tile whose build finds no room even so is built again once the pieces hold
+// it, not before: the tiles the frame does not draw are let go of for it, least lately drawn first, and it waits while
+// their bytes come back, the frames coming meanwhile; where their going would not make it it is held back, its place
+// drawn by its nearest resident ancestor, final, until the heap's pieces change. So no tile is built again at rest:
+// those views rebuilt theirs every frame, each build asking for the next.
 //
 // A tile's geometry (stage T, on the worker) lies in the world's own heap, one buffer of a sixth of the geometry heaps'
 // budget (42.7 MB at the user's phone's 256 MB, 21 MB at 128 MB), grown up to a third of it, beside the heaps' two
-// buffers: its fills, three vertex words a triangle and
-// a word a triangle (its colour and cell), then its lines, three words a segment. Painter's order within a tile is the
+// buffers: its fills, three vertex words a triangle and a word a triangle (its colour and cell), then its lines, three
+// words a segment, then its lights, two words each; a part's lie as a tile's. Painter's order within a tile is the
 // world's: the land under everything (GROUND source 2), the land cover by LAND's order (source 1), the water (the sea,
 // then lakes, reservoirs and riverbanks), the areas over the water (source 0: the globe's ice shelves); then the
 // rivers, the roads by class, the railways, the big roads and the runways. Vertices are the tile's 16-bit fractions of
@@ -197,12 +199,25 @@ struct WorldGeometry {
 /// fine packs there yet, as the plate lay there before.
 [[nodiscard]] WorldGeometry world_blank_geometry();
 
+/// A part of a world tile's geometry in the world's heap: its words laid out as a tile's (its triangles' vertices,
+/// their words, its segments, its lights), so the world pass draws it as it draws a tile.
+struct WorldPart {
+    HeapRange range;
+    std::uint32_t triangles = 0;
+    std::uint32_t segments = 0;
+    std::uint32_t coast = 0; ///< the last of its segments: its coast's
+    std::uint32_t lights = 0;
+};
+
 /// A resident world tile.
 struct WorldTile {
     tiles::TileKey key;
     std::array<std::int32_t, 4> box{}; ///< south, west, north, east (the grid's 1e-7°)
-    HeapRange range;
-    std::uint32_t triangles = 0;
+    /// Its geometry: one part where a piece of the heap holds it whole, else in parts (WorldTiles::place), each list
+    /// in the tile's order across them: the first part's triangles before the second's, and so its segments and
+    /// lights. The world pass draws all its parts' fills, then their lines, so its pixels are those of one part.
+    std::vector<WorldPart> parts;
+    std::uint32_t triangles = 0; ///< its parts' all told, as the three below
     std::uint32_t segments = 0;
     std::uint32_t coast = 0; ///< the last of its segments: its coast's
     std::uint32_t lights = 0;
@@ -215,6 +230,13 @@ struct WorldTile {
     bool blank = false;  ///< the plain land (world_blank_geometry): its box each draw's own (WorldDraw::box)
     /// The pack it was built from: once the store no longer holds it (a new version of the world), the tile is let go.
     std::shared_ptr<const tiles::StorePack> pack;
+
+    /// Its parts' bytes in the heap.
+    [[nodiscard]] vk::DeviceSize bytes() const noexcept {
+        vk::DeviceSize n = 0;
+        for (const WorldPart& p : parts) n += p.range.size;
+        return n;
+    }
 };
 
 /// A pole's cap's box in a frame whose camera's target lies at longitude `lon` (degrees): from world_cap_from to the
@@ -267,6 +289,7 @@ struct WorldFrame {
 /// What the world holds: resident tiles, their heap bytes and triangles, builds done and failed.
 struct WorldStats {
     std::size_t resident = 0;
+    std::size_t parts = 0; ///< the resident tiles' parts: more than them where a tile lies in parts
     vk::DeviceSize bytes = 0;
     std::uint64_t triangles = 0;
     std::uint64_t built = 0;
@@ -339,6 +362,9 @@ public:
     void wait_idle();
     /// Ends the heap's budget at its buffer as it is, as a doubling the device refuses does (tests: Heaps::end_budget).
     void end_budget();
+    /// Cuts the heap's free bytes into pieces of `piece` bytes, 16 bytes apart, for good (tests: a heap no piece of
+    /// which holds a tile whole; Heaps::fragment_for_tests).
+    void fragment_for_tests(vk::DeviceSize piece);
 
 private:
     /// The worker's decoder, its arena and buffers.
@@ -355,20 +381,23 @@ private:
     /// chunk not on the phone, which `absent` then names). `bytes`: the heap bytes its geometry asked for.
     [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room,
                                                    std::uint32_t& bytes, std::optional<WorldWant>& absent);
-    /// Gives a resident tile's range back: once the last frame that drew it has finished.
+    /// Places `g` in the heap as `t`'s parts: whole where a piece holds it, else in parts, each in the largest piece
+    /// free then, as much of the tile's lists as it holds (its triangles, then its segments, then its lights, each
+    /// whole), up to parts_most of part_least bytes or more. False, its parts given back, where they do not hold it.
+    [[nodiscard]] bool place(const WorldGeometry& g, WorldTile& t);
+    /// Gives a resident tile's parts back: once the last frame that drew it has finished.
     void let_go(const WorldTile& t);
     /// Lets go of resident tiles not drawn by frame `number`, least lately drawn first, until `need` bytes are free.
     void make_room(vk::DeviceSize need, std::uint64_t number);
-    /// A piece of `bytes` for a wanted tile whose build found no room though the heap's bytes may hold it: the
-    /// ranges let go of already, once their frames have finished (Heaps::largest_with), else those of the tiles frame
-    /// `number` does not draw, each in turn the one that joins the largest piece (Heaps::joined_with; the fewest
-    /// bytes of those as good), let go of until one holds it, as World::piece_for chooses the countries'. Whether
-    /// the piece comes.
+    /// Room for `bytes` of a wanted tile whose build found none, whole or in parts (place): the ranges let go of
+    /// already, once their frames have finished (Heaps::pieces_with), else those of the tiles frame `number` does not
+    /// draw, least lately drawn first as make_room lets them go, let go of until their pieces hold it. Whether the
+    /// room comes.
     enum class Piece : std::uint8_t {
-        now,    ///< a piece holds it now
-        coming, ///< the ranges let go of already make one once their frames have finished
-        made,   ///< tiles were let go of for one, which comes once their frames have finished
-        none,   ///< the going of every tile the frame does not draw would not make one: none was let go of
+        now,    ///< the pieces hold it now
+        coming, ///< the ranges let go of already make room once their frames have finished
+        made,   ///< tiles were let go of for it, which comes once their frames have finished
+        none,   ///< the going of every tile the frame does not draw would not make it: none was let go of
     };
     [[nodiscard]] Piece make_piece(std::uint32_t bytes, std::uint64_t number);
     /// The world's style: the first world pack's. Returns whether the store's world packs changed.

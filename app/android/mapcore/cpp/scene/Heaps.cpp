@@ -415,6 +415,65 @@ vk::DeviceSize Heaps::runs(std::span<const HeapRange> back, bool joined, HeapKin
     return largest;
 }
 
+std::vector<vk::DeviceSize> Heaps::free_pieces(HeapKind kind) const {
+    const std::scoped_lock lock(blocks_lock_);
+    std::vector<vk::DeviceSize> sizes;
+    sizes.reserve(pieces_.size());
+    for (const auto& [first, size] : pieces_) {
+        if (in_both(kind) || first < heap_high_base) sizes.push_back(size);
+    }
+    return sizes;
+}
+
+std::vector<vk::DeviceSize> Heaps::pieces_with(std::span<const HeapRange> back, HeapKind kind) const {
+    // the pieces, the retired ranges and `back`, each as its first and last offset: those that touch make one piece
+    std::vector<std::pair<vk::DeviceSize, vk::DeviceSize>> spans;
+    {
+        const std::scoped_lock lock(render_lock_);
+        for (const Retired& r : retired_)
+            spans.emplace_back(r.range.offset, vk::DeviceSize{r.range.offset} + r.range.size);
+    }
+    for (const HeapRange& r : back) {
+        if (r) spans.emplace_back(r.offset, vk::DeviceSize{r.offset} + r.size);
+    }
+    {
+        const std::scoped_lock lock(blocks_lock_);
+        for (const auto& [first, size] : pieces_) spans.emplace_back(first, first + size);
+    }
+    // a range of the points kind takes the first buffer's pieces alone (no span reaches across the two buffers: no
+    // piece and no range lies between their offsets)
+    if (!in_both(kind)) std::erase_if(spans, [](const auto& s) { return s.first >= heap_high_base; });
+    std::ranges::sort(spans);
+    std::vector<vk::DeviceSize> sizes;
+    for (std::size_t i = 0; i < spans.size();) {
+        const vk::DeviceSize first = spans[i].first;
+        vk::DeviceSize last = spans[i].second;
+        for (++i; i < spans.size() && spans[i].first <= last; ++i) last = std::max(last, spans[i].second);
+        sizes.push_back(last - first);
+    }
+    return sizes;
+}
+
+void Heaps::fragment_for_tests(HeapKind kind, vk::DeviceSize piece, vk::DeviceSize gap) {
+    ATLAS_ASSERT(piece > 0, "a heap's pieces cut into pieces of no bytes");
+    const std::scoped_lock lock(blocks_lock_);
+    std::map<vk::DeviceSize, vk::DeviceSize> cut;
+    for (const auto& [first, size] : pieces_) {
+        const vk::DeviceSize last = first + size;
+        for (vk::DeviceSize at = first; at < last;) {
+            const vk::DeviceSize n = std::min(piece, last - at);
+            cut.emplace(at, n);
+            at += n;
+            const vk::DeviceSize g = std::min(gap, last - at);
+            if (g == 0) continue;
+            used_.at(static_cast<std::size_t>(kind)) += g;
+            ++ranges_.at(static_cast<std::size_t>(kind));
+            at += g;
+        }
+    }
+    pieces_ = std::move(cut);
+}
+
 HeapStats Heaps::stats() const {
     HeapStats s;
     s.capacity = capacity();

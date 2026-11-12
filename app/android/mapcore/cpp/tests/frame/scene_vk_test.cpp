@@ -314,6 +314,53 @@ TEST_CASE("a heap whose budget ended at its buffer, as a growth the device refus
     (void)session->take_messages();
 }
 
+TEST_CASE("a heap's free pieces by offset, and those there would be with ranges let go of and the retired ones freed, "
+          "each joined to the pieces beside it (the room of a world tile in parts); its free bytes cut into small "
+          "pieces for a test") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{64} << 10U;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    using Sizes = std::vector<vk::DeviceSize>;
+    constexpr vk::DeviceSize tail = vk::DeviceSize{48} << 10U;
+    // four ranges of 4 KB from the start: the 48 KB after them free in one piece
+    std::array<scene::HeapRange, 4> r{};
+    for (scene::HeapRange& range : r) {
+        auto placed = h.allocate(scene::HeapKind::ground, 4096, 16);
+        ATLAS_REQUIRE(placed.has_value(), placed.error().text());
+        range = *placed;
+    }
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{tail});
+    // the second given back is a piece of its own; with the third retired, the two would join, with the first too
+    // where it went, and with the fourth as well the whole heap would be one piece
+    h.give_back(r[1]);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{4096, tail});
+    h.retire(r[2], 1);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{4096, tail});
+    CHECK(h.pieces_with({}, scene::HeapKind::ground) == Sizes{8192, tail});
+    const std::array<scene::HeapRange, 1> first{r[0]};
+    CHECK(h.pieces_with(first, scene::HeapKind::ground) == Sizes{12'288, tail});
+    const std::array<scene::HeapRange, 2> both{r[0], r[3]};
+    CHECK(h.pieces_with(both, scene::HeapKind::ground) == Sizes{vk::DeviceSize{64} << 10U});
+    h.collect(1);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{8192, tail});
+    // cut into pieces of 1,008 bytes 16 apart: 8 and 48 of them, and the gaps' bytes taken
+    h.fragment_for_tests(scene::HeapKind::ground, 1008, 16);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes(56, 1008));
+    CHECK(h.free_bytes() == 56 * 1008);
+    CHECK(h.largest_free(scene::HeapKind::ground) == 1008);
+    CHECK(h.pieces_with(first, scene::HeapKind::ground).front() == 4096 + 1008);
+    auto fits = h.allocate(scene::HeapKind::ground, 1008, 16);
+    CHECK(fits.has_value());
+    auto larger = h.allocate(scene::HeapKind::ground, 1009, 16);
+    CHECK_FALSE(larger.has_value());
+    (void)session->take_messages();
+}
+
 TEST_CASE("a range takes the free piece of the heaps nearest its end that holds it, a larger piece beyond left whole "
           "for its own") {
     auto session = test::open_session();
