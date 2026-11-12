@@ -33,11 +33,17 @@ import kotlin.math.roundToInt
  * frame's pixels' SHA-256 goes to the report's `world-refs/world-refs.json` (to paste in as a version's frames on its
  * platform) and the frame to a PNG beside it; on a platform the current version holds frames of, every frame must come
  * out as stored, as WorldRefsTest holds the board's.
+ *
+ * `ATLAS_WORLD_REFS_VIEWS` names other views of `likeness` to draw instead, held the same way, their report in a folder
+ * of their name: `world-keep.json`, a kept country's zoom-out from 18 km to the globe over the tiles `packer world-keep`
+ * keeps for it alone (ENGINE.md step 11), whole in every frame.
  */
 class WorldPackRefsTest {
     @Test
     fun `the engine draws the world's references from the world's own packs`() {
         val dir = System.getenv("ATLAS_WORLD_REFS")?.takeIf { it.isNotBlank() }?.let(::File)
+        val views = System.getenv("ATLAS_WORLD_REFS_VIEWS")?.takeIf { it.isNotBlank() } ?: "world-refs.json"
+        val name = views.removeSuffix(".json")
         assumeTrue("the references around the world draw over world-refs only (ATLAS_WORLD_REFS=<folder>)", dir != null)
         check(dir!!.isDirectory) { "no world-refs folder at $dir" }
         if (HostCore.load() == null) {
@@ -47,7 +53,7 @@ class WorldPackRefsTest {
         val packs = dir.listFiles { f -> WorldFolder.PACK.matches(f.name) }.orEmpty().sortedBy { it.name }
         val globe = File(dir, GLOBE)
         check(globe.isFile) { "world-refs holds no $GLOBE" }
-        val out = File(Likeness.report, "world-refs").apply { mkdirs() }
+        val out = File(Likeness.report, name).apply { mkdirs() }
 
         // every tile decoded as the core's store decodes it
         val tool = System.getProperty("atlas.stagep")?.let(::File)?.takeIf { it.canExecute() }
@@ -61,9 +67,9 @@ class WorldPackRefsTest {
             check(p.exitValue() == 0) { "atlas_stagep check ${f.name}: exit ${p.exitValue()}: $why" }
             tiles += said.lines().count { it.startsWith("tile ") }
         }
-        println("world-refs: ${packs.size} packs and the globe, $tiles tiles decoded by atlas_stagep check")
+        println("$name: ${packs.size} packs and the globe, $tiles tiles decoded by atlas_stagep check")
 
-        val refs = Likeness.json(File(Likeness.cases, "world-refs.json"))
+        val refs = Likeness.json(File(Likeness.cases, views))
         val version = refs.str("version")
         val frame = refs["frame"]!!.jsonObject
         val w = frame.dbl("width").toInt()
@@ -89,28 +95,28 @@ class WorldPackRefsTest {
             check(refused.isEmpty()) { "the core did not open world-refs' packs: ${refused.joinToString("; ")}" }
             for (e in refs["frames"]!!.jsonArray) {
                 val o = e.jsonObject
-                val name = o.str("name")
+                val frameName = o.str("name")
                 val t0 = System.nanoTime()
                 val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"))
                 val world = WORLD.find(notes)
                 val complete = notes.contains("complete yes")
                 val wanted = world?.groupValues?.get(3)?.toInt() ?: -1
                 val bare = world?.groupValues?.get(4)?.toInt() ?: -1
-                if (!complete || wanted != 0 || bare != 0) failed += "$name ($notes)"
+                if (!complete || wanted != 0 || bare != 0) failed += "$frameName ($notes)"
                 val pixels = ByteBuffer.allocateDirect(w * h * 4)
                 check(LookHost.read(handle, pixels)) { LookHost.lastError() }
                 val rgb = ByteArray(w * h * 3)
                 for (i in 0 until w * h) {
                     rgb[i * 3] = pixels.get(i * 4); rgb[i * 3 + 1] = pixels.get(i * 4 + 1); rgb[i * 3 + 2] = pixels.get(i * 4 + 2)
                 }
-                ImageIO.write(WorldShot(w, h, density, rgb, notes).image(), "png", File(out, "${name.replace(' ', '-')}.png"))
-                drawn[name] = MessageDigest.getInstance("SHA-256").digest(rgb).joinToString("") { "%02x".format(it) }
-                println("world-refs $name: ${drawn[name]} (${(System.nanoTime() - t0) / 1_000_000} ms; ${notes.lines().first()})")
+                ImageIO.write(WorldShot(w, h, density, rgb, notes).image(), "png", File(out, "${frameName.replace(' ', '-')}.png"))
+                drawn[frameName] = MessageDigest.getInstance("SHA-256").digest(rgb).joinToString("") { "%02x".format(it) }
+                println("$name $frameName: ${drawn[frameName]} (${(System.nanoTime() - t0) / 1_000_000} ms; ${notes.lines().first()})")
             }
         } finally {
             LookHost.close(handle)
         }
-        assertTrue("world-refs' frames not drawn whole: ${failed.joinToString("; ")}", failed.isEmpty())
+        assertTrue("$name's frames not drawn whole: ${failed.joinToString("; ")}", failed.isEmpty())
 
         val platform = Likeness.platform
         val versions = refs["versions"]?.jsonObject ?: JsonObject(emptyMap())
@@ -120,16 +126,16 @@ class WorldPackRefsTest {
         val proposal = JsonObject(LinkedHashMap(refs).apply {
             this["versions"] = JsonObject(LinkedHashMap(versions).apply { this[version] = JsonObject(LinkedHashMap(entry).apply { this["platforms"] = JsonObject(platforms) }) })
         })
-        File(out, "world-refs.json").writeText(Ratchet.format(proposal) + "\n")
+        File(out, views).writeText(Ratchet.format(proposal) + "\n")
         if (stored == null) {
-            println("world-refs: version $version has no frames of $platform yet; this run's are in ${File(out, "world-refs.json")}")
+            println("$name: version $version has no frames of $platform yet; this run's are in ${File(out, views)}")
             return
         }
-        val changed = drawn.filter { (name, hash) -> stored[name]?.jsonPrimitive?.content != hash }.keys
-        println("world-refs: ${drawn.size - changed.size} of ${drawn.size} frames as version $version stored them on $platform")
+        val changed = drawn.filter { (frameName, hash) -> stored[frameName]?.jsonPrimitive?.content != hash }.keys
+        println("$name: ${drawn.size - changed.size} of ${drawn.size} frames as version $version stored them on $platform")
         assertTrue(
             "the engine no longer draws version $version's frames around the world on $platform: $changed (this run's frames: $out). A " +
-                "deliberate change is a new version (likeness/world-refs.json); any other is a bug",
+                "deliberate change is a new version (likeness/$views); any other is a bug",
             changed.isEmpty(),
         )
     }
