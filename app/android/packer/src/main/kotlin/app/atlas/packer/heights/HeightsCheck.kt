@@ -351,8 +351,10 @@ object HeightsCheck {
                     done++
                     sum += error
                     worst = maxOf(worst, error)
-                    lines += "point $done $view ${"%.6f".format(lat)} ${"%.6f".format(lon)}: the pack ${"%.3f".format(pack)} m, ${source.id} ${"%.3f".format(fresh)} m, apart ${"%.3f".format(error)} m of a step of ${raster.step} m"
-                    if (error > raster.step) problems += "$view ${"%.6f".format(lat)}, ${"%.6f".format(lon)}: the pack's ${"%.3f".format(pack)} m is ${"%.3f".format(error)} m from ${source.id}'s ${"%.3f".format(fresh)} m, more than its step of ${raster.step} m"
+                    // the sample's own place, to seven decimals (a centimetre): the node, not the point drawn near it
+                    val place = "${"%.7f".format(lattice.lat(ny.toDouble()))} ${"%.7f".format(lattice.lon(nx.toDouble()))}"
+                    lines += "point $done $view $place: the pack ${"%.3f".format(pack)} m, ${source.id} ${"%.3f".format(fresh)} m, apart ${"%.3f".format(error)} m of a step of ${raster.step} m"
+                    if (error > raster.step) problems += "$view $place: the pack's ${"%.3f".format(pack)} m is ${"%.3f".format(error)} m from ${source.id}'s ${"%.3f".format(fresh)} m, more than its step of ${raster.step} m"
                 } finally {
                     file.delete()
                 }
