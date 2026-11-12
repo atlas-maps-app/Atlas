@@ -5,6 +5,11 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.time.Instant
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.tan
 
 /**
  * A window's pack from its country's tiles (ENGINE.md step 3, one pack per country: the phone takes a place's tiles by
@@ -57,6 +62,13 @@ class WindowTiles(
     private val indexes = HashMap<String, Pair<String, TilesIndex>>()
 
     /**
+     * The indexes read, by pack id, for [holds]: read without [indexOf]'s lock, which a download holds for as long as it
+     * takes.
+     */
+    @Volatile
+    private var known: Map<String, TilesIndex> = emptyMap()
+
+    /**
      * Window ([x], [y]) of level [z]'s pack, or a frame cell's level's tile ([z] 13 or 12), as a core of window version
      * [version] (MapCore.Window.version: its stage P's and its style's) builds it, from the newest country's tiles that
      * hold it; null where none holds it (no pack with tiles of that version holds its place or lists it, or no list of
@@ -85,6 +97,39 @@ class WindowTiles(
             return Tiled(whole, index.date, pack.id)
         }
         return null
+    }
+
+    /**
+     * Whether pack [id]'s tiles of core version [version] hold the place at [lat], [lon]: its index lists the place's
+     * window, with a pack or with nothing to draw (the country's windows' data reaches it), or a level's tile over it
+     * (a frame cell's L13 or L12 tile, which reaches a little beyond its windows); where a country's box alone says
+     * little: the Netherlands' holds Antwerp and Aachen, which its tiles do not. Null where the pack's index of that
+     * version is not read yet ([index] reads it). Never blocks and allocates nothing: the map asks at each camera.
+     */
+    fun holds(id: String, version: String, lat: Double, lon: Double): Boolean? {
+        val index = known[id] ?: return null
+        if (index.level != LEVEL || index.version != version) return null
+        val n = 1 shl LEVEL
+        val la = lat.coerceIn(-MAX_LAT, MAX_LAT) * PI / 180.0
+        val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
+        val y = floor((1.0 - ln(tan(la) + 1.0 / cos(la)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
+        if (index.lists(LEVEL, x, y)) return true
+        for (i in 0 until TilesIndex.LEVELS.size) {
+            val z = TilesIndex.LEVELS[i]
+            if (index.lists(z, x shr (LEVEL - z), y shr (LEVEL - z))) return true
+        }
+        return false
+    }
+
+    /**
+     * Reads pack [id]'s tiles' index of core version [version] (from the phone's copy, else downloaded and kept), so
+     * that [holds] answers for it: how many tiles it lists; null where no list of packs is to be had or the pack has no
+     * tiles of that version. Blocks; throws IOException where the index did not come whole.
+     */
+    fun index(id: String, version: String): Int? {
+        val pack = reads.list()?.firstOrNull { it.id == id } ?: return null
+        val set = pack.tilesOf(version) ?: return null
+        return indexOf(pack, set, local(pack, set)).size
     }
 
     /**
@@ -129,6 +174,7 @@ class WindowTiles(
         val tiles = set.tiles.bytes
         if (read.tilesBytes != tiles) throw IOException("pack ${pack.id}: its tiles' index is of ${read.tilesBytes} bytes of tiles, its tiles are $tiles")
         indexes[pack.id] = sha to read
+        known = known + (pack.id to read)
         return read
     }
 
@@ -141,5 +187,8 @@ class WindowTiles(
          * its windows' data index ([WindowPacks]), which the same folder keeps.
          */
         private const val INDEX_SUFFIX = ".tiles.idx"
+
+        /** Web Mercator's last latitude. */
+        private const val MAX_LAT = 85.0511287798066
     }
 }

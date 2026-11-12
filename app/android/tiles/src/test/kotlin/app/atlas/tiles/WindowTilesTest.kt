@@ -280,6 +280,49 @@ class WindowTilesTest {
         assertNull(WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, "core-p6 s1.1-fedcba9876543210"))
     }
 
+    /** The middle of window 14/[x]/[y]: its latitude and longitude. */
+    private fun middle(x: Int, y: Int): Pair<Double, Double> {
+        val n = Math.PI * (1.0 - 2.0 * (y + 0.5) / (1 shl 14))
+        return Math.toDegrees(Math.atan(Math.sinh(n))) to (x + 0.5) / (1 shl 14) * 360.0 - 180.0
+    }
+
+    @Test
+    fun theIndexSaysWhichPlacesOfItsBoxACountrysTilesHold() {
+        val list = listOf(publish("netherlands", country(), date))
+        val tiles = WindowTiles({ list }, dir)
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        // nothing is known before the index is read, and asking reads nothing
+        assertNull(tiles.holds("netherlands", version, lat, lon))
+        assertEquals(0, gh.storageRequests.size)
+        // read once (here downloaded), it answers from memory
+        assertEquals(cells.size, tiles.index("netherlands", version))
+        assertEquals(1, gh.storageRequests.size)
+        assertEquals(true, tiles.holds("netherlands", version, lat, lon))
+        // a window listed with nothing to draw is the country's too: its data reaches it
+        assertEquals(true, middle(water.first, water.second).let { (a, o) -> tiles.holds("netherlands", version, a, o) })
+        // in the box, not in the index: beyond the country's border
+        assertEquals(false, middle(8414, 5386).let { (a, o) -> tiles.holds("netherlands", version, a, o) })
+        assertEquals(false, tiles.holds("netherlands", version, 51.2194, 4.4025))
+        assertEquals(1, gh.storageRequests.size)
+        // another core's tiles say nothing of this one's, and a pack not published has no index
+        assertNull(tiles.holds("netherlands", "core-p0 s0", lat, lon))
+        assertNull(tiles.index("netherlands", "core-p0 s0"))
+        assertNull(tiles.holds("belgium", version, lat, lon))
+        assertNull(tiles.index("belgium", version))
+        // a level's tile over the place holds it too: a frame cell's levels reach a little beyond its windows
+        val levelled = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693))), date))
+        val withLevels = WindowTiles({ levelled }, tempDir("levels"))
+        assertEquals(cells.size + 1, withLevels.index("levelled", version))
+        assertEquals(true, middle(8414, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        assertEquals(true, middle(8415, 5387).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        assertEquals(false, middle(8416, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        // a window taken reads the index as well
+        val other = WindowTiles({ list }, tempDir("other"))
+        assertNull(other.holds("netherlands", version, lat, lon))
+        other.window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals(true, other.holds("netherlands", version, lat, lon))
+    }
+
     @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))

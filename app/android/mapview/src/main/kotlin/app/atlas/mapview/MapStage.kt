@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
+import app.atlas.model.Place
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -94,6 +95,7 @@ internal data class StageArgs(
     val onLongPressBuilding: ((MapPick) -> Unit)?,
     val onTapBuilding: ((MapPick, Offset) -> Unit)?,
     val onTapGround: ((GroundPick, Offset) -> Unit)?,
+    val featureOf: (suspend (MapPick) -> Place?)?,
     val onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit,
     val debug: Boolean,
     val units: UnitSystem,
@@ -126,6 +128,7 @@ fun StageMap(
     onLongPressBuilding: ((MapPick) -> Unit)? = null,
     onTapBuilding: ((MapPick, Offset) -> Unit)? = null,
     onTapGround: ((GroundPick, Offset) -> Unit)? = null,
+    featureOf: (suspend (MapPick) -> Place?)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -142,7 +145,7 @@ fun StageMap(
                 state = state, modifier = Modifier.matchParentSize(), style = style, overlays = overlays,
                 contentPadding = contentPadding, onTap = onTap, onLongPress = onLongPress,
                 onLongPressBuilding = onLongPressBuilding, onTapBuilding = onTapBuilding, onTapGround = onTapGround,
-                onCameraMove = onCameraMove, debug = debug, units = units, labelTypeface = labelTypeface,
+                featureOf = featureOf, onCameraMove = onCameraMove, debug = debug, units = units, labelTypeface = labelTypeface,
             )
             above?.invoke(this)
         }
@@ -152,7 +155,7 @@ fun StageMap(
     SideEffect {
         request.args = StageArgs(
             state, style, overlays, contentPadding, onTap, onLongPress, onLongPressBuilding, onTapBuilding, onTapGround,
-            onCameraMove, debug, units, labelTypeface, background, hostModifier, above,
+            featureOf, onCameraMove, debug, units, labelTypeface, background, hostModifier, above,
         )
     }
     DisposableEffect(stage, request) {
@@ -189,7 +192,8 @@ fun MapStageHost(stage: MapStage, cover: Color, modifier: Modifier = Modifier) {
                 state = args.state, modifier = Modifier.matchParentSize(), style = args.style,
                 overlays = args.overlays, contentPadding = args.contentPadding, onTap = args.onTap,
                 onLongPress = args.onLongPress, onLongPressBuilding = args.onLongPressBuilding,
-                onTapBuilding = args.onTapBuilding, onTapGround = args.onTapGround, onCameraMove = args.onCameraMove,
+                onTapBuilding = args.onTapBuilding, onTapGround = args.onTapGround, featureOf = args.featureOf,
+                onCameraMove = args.onCameraMove,
                 debug = args.debug, units = args.units,
                 labelTypeface = args.labelTypeface,
             )

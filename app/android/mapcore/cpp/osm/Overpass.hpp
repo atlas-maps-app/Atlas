@@ -110,6 +110,7 @@ struct Values {
     std::vector<Member> members;
     std::optional<Text> osm_base;
     std::optional<Text> whole;
+    std::optional<Text> box;
 
     [[nodiscard]] std::string_view text(Text t) const noexcept {
         const std::span<const char> s =
@@ -229,6 +230,12 @@ public:
     /// For the data a window keeps (osm/Diff.hpp), the date it was last fetched whole: `atlas.whole` (else empty).
     [[nodiscard]] std::string_view whole() const noexcept {
         return values_ && values_->whole ? values_->text(*values_->whole) : std::string_view();
+    }
+
+    /// For a window's data that holds part of its box alone (the element packs on the phone, ENGINE.md step 3's local
+    /// lane), that part: `atlas.box`, "south,west,north,east" on OSM's grid (1e-7°; else empty: the whole box's).
+    [[nodiscard]] std::string_view box() const noexcept {
+        return values_ && values_->box ? values_->text(*values_->box) : std::string_view();
     }
 
 private:

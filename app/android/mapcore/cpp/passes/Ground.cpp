@@ -28,6 +28,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <tuple>
 
@@ -667,19 +668,29 @@ namespace {
 
 /// The plate under cover tile `c`'s wanted tile, placed by the tile drawing it (entry `tile` of the tile table): the
 /// wanted tile's box on OSM's grid in the drawing tile's metres about its south-west corner. A stand-in ancestor's
-/// plate is its wanted descendant's box, so neighbouring wanted tiles' plates share their edges exactly.
-[[nodiscard]] TilePlate tile_plate(const scene::CoverTile& c, std::uint32_t tile) noexcept {
+/// plate is its wanted descendant's box, so neighbouring wanted tiles' plates share their edges exactly. Under a
+/// window built from part of its box's data (ResidentTile::data: the element packs on the phone) the plate is that
+/// part's alone, so the world's map shows in the rest of its tile, where it would stand in a bare box; nothing where
+/// the wanted tile holds none of that part.
+[[nodiscard]] std::optional<TilePlate> tile_plate(const scene::CoverTile& c, std::uint32_t tile) noexcept {
     const tiles::TileKey k = c.key;
     const scene::ResidentTile& d = *c.drawn;
-    const double west = tiles::Frame::degrees(tiles::column_edge(k.z, k.x));
-    const double east = tiles::Frame::degrees(tiles::column_edge(k.z, k.x + 1));
-    const double north = tiles::Frame::degrees(tiles::row_edge(k.z, k.y));
-    const double south = tiles::Frame::degrees(tiles::row_edge(k.z, k.y + 1));
-    return {.tile = tile,
-            .x0 = static_cast<float>(d.frame.x(0, west) - d.origin.x),
-            .z0 = static_cast<float>(d.frame.z(north, 0) - d.origin.z),
-            .x1 = static_cast<float>(d.frame.x(0, east) - d.origin.x),
-            .z1 = static_cast<float>(d.frame.z(south, 0) - d.origin.z)};
+    std::int32_t west = tiles::column_edge(k.z, k.x);
+    std::int32_t east = tiles::column_edge(k.z, k.x + 1);
+    std::int32_t north = tiles::row_edge(k.z, k.y);
+    std::int32_t south = tiles::row_edge(k.z, k.y + 1);
+    if (d.data) {
+        west = std::max(west, d.data->west);
+        east = std::min(east, d.data->east);
+        north = std::min(north, d.data->north);
+        south = std::max(south, d.data->south);
+        if (west >= east || south >= north) return std::nullopt;
+    }
+    return TilePlate{.tile = tile,
+                     .x0 = static_cast<float>(d.frame.x(0, tiles::Frame::degrees(west)) - d.origin.x),
+                     .z0 = static_cast<float>(d.frame.z(tiles::Frame::degrees(north), 0) - d.origin.z),
+                     .x1 = static_cast<float>(d.frame.x(0, tiles::Frame::degrees(east)) - d.origin.x),
+                     .z1 = static_cast<float>(d.frame.z(tiles::Frame::degrees(south), 0) - d.origin.z)};
 }
 
 /// The decisions' key at camera `cam` with the frame's settings `f`.
@@ -768,7 +779,9 @@ bool Ground::decide(const frame::FrameState& state) {
             const std::uint64_t cells = !c.under && c.drawn->key == c.key ? ~std::uint64_t{0} : c.cells;
             const auto it = std::ranges::find(f.tiles, c.drawn, &DrawnTile::tile);
             if (tile_plates && !c.under) {
-                f.tile_plates.push_back(tile_plate(c, static_cast<std::uint32_t>(it - f.tiles.begin())));
+                if (const auto plate = tile_plate(c, static_cast<std::uint32_t>(it - f.tiles.begin()))) {
+                    f.tile_plates.push_back(*plate);
+                }
             }
             if (it != f.tiles.end()) {
                 it->cells |= cells;

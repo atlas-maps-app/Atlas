@@ -998,7 +998,11 @@ fi
 # globe holds L0 to L3), with no crash or ANR. Then 12 km over Lille, outside the countries (ENGINE.md step 3): no
 # country's levels are there, so the world draws under the core's cover within the levels' 18 km too, its picture final
 # and its last rest saying so (`… world <n> drawn finest <z> wanted 0 bare 0 under land <m>`, a fine pack's level, 9 to
-# 11). The lines go to world.txt, the screens to world-25km.png, world-100km.png and world-under-12km.png.
+# 11). Then 12 km over Antwerp, within the Netherlands' box beyond its border: the country's tiles' index, read as the
+# first camera within the box asked (`vk windows: the tiles' index of netherlands on the phone, <n> tiles …`), lists no
+# window there, so no levels are counted (`vk script: beyond the border: levels at the start netherlands, at <lat>,<lon>
+# in the box of netherlands none`) and the world draws under the cover as over Lille. The lines go to world.txt, the
+# screens to world-25km.png, world-100km.png, world-under-12km.png and world-beyond-12km.png.
 WORLD_LATEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-latest
 world_phase() {
   local release km next line rest at drawn finest wanted bare land chunks n k r
@@ -1048,8 +1052,8 @@ world_phase() {
     adb exec-out screencap -p > "$OUT/world-under-12km.png"
     echo "world: ${line#vk script: }"
     [[ $line == *" final" ]] || { echo "WORLD FAILED: the picture under the cover at 12 km was not final"; FAIL=1; }
-    wait_line world 60 "vk script: back\$" || echo "world: the script did not move on from Lille within 60 s"
-    rest=$(since_marker world | sed -n "/vk script: world under out to 12 km\$/,/vk script: back\$/p" |
+    wait_line world 60 "vk script: world beyond the border out to 12 km\$" || echo "world: the script did not move on from Lille within 60 s"
+    rest=$(since_marker world | sed -n "/vk script: world under out to 12 km\$/,/vk script: world beyond the border out to 12 km\$/p" |
       grep -o 'vk tiles .* world [0-9]* drawn .*' | tail -1)
     echo "world: under the cover at 12 km, the last rest: ${rest:-none}"
     at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\) under land \([0-9]*\).*/\1 \2 \3 \4 \5/p' <<< "$rest")
@@ -1060,8 +1064,32 @@ world_phase() {
   else
     echo "WORLD FAILED: the world script did not reach its view under the cover at 12 km"; FAIL=1
   fi
+  # within the Netherlands' box beyond its border: 12 km over Antwerp, where the country's tiles' index lists no window
+  if wait_line world 1000 "vk script: world beyond the border at 12 km "; then
+    line=$(since_marker world | grep -m1 -o "vk script: world beyond the border at 12 km .*")
+    adb exec-out screencap -p > "$OUT/world-beyond-12km.png"
+    echo "world: ${line#vk script: }"
+    [[ $line == *" final" ]] || { echo "WORLD FAILED: the picture beyond the border at 12 km was not final"; FAIL=1; }
+    levels=$(since_marker world | grep -m1 -o "vk script: beyond the border: .*")
+    echo "world: ${levels#vk script: }"
+    since_marker world | grep -m1 -o "vk windows: the tiles' index of netherlands .*" | sed 's/^/world: /'
+    if [[ $levels != *"levels at the start netherlands, at "*" in the box of netherlands none" ]]; then
+      echo "WORLD FAILED: the Netherlands' tiles' index did not say that its levels end before Antwerp (${levels:-no line})"; FAIL=1
+    fi
+    wait_line world 60 "vk script: back\$" || echo "world: the script did not move on from Antwerp within 60 s"
+    rest=$(since_marker world | sed -n "/vk script: world beyond the border out to 12 km\$/,/vk script: back\$/p" |
+      grep -o 'vk tiles .* world [0-9]* drawn .*' | tail -1)
+    echo "world: beyond the border at 12 km, the last rest: ${rest:-none}"
+    at=$(sed -n 's/.* world \([0-9]*\) drawn finest \([0-9]*\) wanted \([0-9]*\) bare \([0-9]*\) under land \([0-9]*\).*/\1 \2 \3 \4 \5/p' <<< "$rest")
+    read -r drawn finest wanted bare land <<< "${at:-0 0 -1 -1 -1}"
+    if [ "$drawn" -lt 1 ] || [ "$wanted" != 0 ] || [ "$finest" -lt 9 ]; then
+      echo "WORLD FAILED: at 12 km over Antwerp the core's last rest did not draw the world under its cover (${rest:-no rest line with the world})"; FAIL=1
+    fi
+  else
+    echo "WORLD FAILED: the world script did not reach its view beyond the border at 12 km"; FAIL=1
+  fi
   wait_line world 300 "vk script done" || { echo "WORLD FAILED: the world script did not finish"; FAIL=1; }
-  since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|cover)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
+  since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|windows|first frame|map|cover)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
   if grep -q '^vk world: the head of world/.* on the phone$' "$OUT/world.txt"; then
     echo "world: $(grep -c '^vk world: the head of world/.* on the phone$' "$OUT/world.txt") packs' heads, the first $(grep -m1 '^vk world: the head of ' "$OUT/world.txt" | sed 's/^vk world: the head of //')"
   else
