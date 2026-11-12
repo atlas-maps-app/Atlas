@@ -120,8 +120,9 @@ class LabelSpritesTest {
         assertFalse(app.atlas.mapview.vk.CoreNames.fits(LabelBlock.Image(LabelBlock.MAX_SIDE + 1, 1, 0, 0, IntArray(LabelBlock.MAX_SIDE + 1))))
         assertFalse(app.atlas.mapview.vk.CoreNames.fits(LabelBlock.Image(1, LabelBlock.MAX_SIDE + 1, 0, 0, IntArray(LabelBlock.MAX_SIDE + 1))))
         val water = sprite(LabelKind.WATER, "IJsselmeer")
-        // (premultiplied, R in the low byte: the water's ink #2F5A84 has 0x55 more blue than red, a place's #3A3F4B 0x11)
-        fun blue(image: LabelBlock.Image) = image.pixels.count { it ushr 24 > 0xC0 && ((it shr 16) and 0xFF) - (it and 0xFF) > 0x28 }
+        // (the water's ink #2F5A84 has 0x55 between its blue and its red, a place's #3A3F4B 0x11; whichever of the two the
+        // host's bitmaps keep in the low byte: Robolectric's are RGBA on a Mac and BGRA on Linux)
+        fun blue(image: LabelBlock.Image) = image.pixels.count { it ushr 24 > 0xC0 && kotlin.math.abs(((it shr 16) and 0xFF) - (it and 0xFF)) > 0x28 }
         assertTrue("a water's letters are the board's water blue", blue(water.own) > 20)
         assertEquals("a place's are not", 0, blue(city.own))
         // the globe's: white letters on a dark glow (a city's: dark ink on white)
