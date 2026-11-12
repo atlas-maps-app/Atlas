@@ -1268,8 +1268,10 @@ jobs:
         # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
         # The frames leave the world's names out (world-keep.json's names: a frame keeps the names it picked while its
         # tiles came, so where more than 64 stand in reach two draws can name it otherwise): a tile of the walk the keep
-        # lacks, its names with it, is the step above's --kept line. A check of its own: it runs where the references'
-        # frames above moved too, once the kept tiles are cut
+        # lacks, its names with it, is the step above's --kept line. The views whose pixels are false (the pitched ones
+        # from 60 to 1,000 km, which the core does not yet draw whole over the world alone: ENGINE.md step 11's Left) are
+        # held by that line alone. A check of its own: it runs where the references' frames above moved too, once the
+        # kept tiles are cut
         if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
         working-directory: app/android
         env:
@@ -1304,7 +1306,8 @@ jobs:
           draw "$ATLAS_WORLD_KEEP"
           # each frame's SHA-256 over the walk's tiles and over the kept ones
           frames() { jq -c '.version as $v | .versions[$v].platforms["lavapipe-x86_64"] // {}' "$1"; }
-          n=$(jq '.frames | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
+          all=$(jq '.frames | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
+          n=$(jq '[.frames[] | select(.pixels != false)] | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
           for f in "$L/world-keep-walk/world-keep.json" "$L/world-keep/world-keep.json"; do
             if [ "$(frames "$f" | jq length)" != "$n" ]; then echo "::error::$f holds $(frames "$f" | jq length) frames, not $n"; exit 1; fi
           done
@@ -1321,7 +1324,7 @@ jobs:
             exit 1
           fi
           echo "### A kept country drawn offline" >> "$GITHUB_STEP_SUMMARY"
-          echo "- the Netherlands' $n views from 18.5 km to 20,000 km: each frame over its kept tiles as over its own walk's (without the world's names); kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
+          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names), the other $((all - n)) (pitched, from 60 to 1,000 km) by their tiles alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
       - name: The frames
         if: ${{ !cancelled() }}
         run: |
