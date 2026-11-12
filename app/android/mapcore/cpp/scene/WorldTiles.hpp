@@ -13,8 +13,18 @@
 // worker of the world's own decodes, triangulates and places each wanted tile, nearest first, and a frame draws what is
 // resident.
 //
+// The resident tiles hold up to 85 % of the heap's buffer as it is, past which the least lately drawn go; where the
+// tiles a frame draws take more, a build's range lies beyond the buffer and it doubles, up to the heap's budget. A tile
+// whose build finds no room there is built again once a piece of the heap holds it, not before: the tiles the frame
+// does not draw are let go of for one, each in turn the one that joins the largest piece (as World::piece_for chooses
+// the countries'), and it waits while their bytes come back, the frames coming meanwhile; where their going would not
+// make one it is held back, its place drawn by its nearest resident ancestor, final, until the heap's pieces change. So
+// no tile is built again at rest: the pitched views from 60 to 1,000 km over the Netherlands rebuilt theirs every
+// frame, each build asking for the next (ENGINE.md step 11).
+//
 // A tile's geometry (stage T, on the worker) lies in the world's own heap, one buffer of a sixth of the geometry heaps'
-// budget (21 MB at 128 MB, 10 MB at 64 MB), beside the heaps' two buffers: its fills, three vertex words a triangle and
+// budget (42.7 MB at the user's phone's 256 MB, 21 MB at 128 MB), grown up to a third of it, beside the heaps' two
+// buffers: its fills, three vertex words a triangle and
 // a word a triangle (its colour and cell), then its lines, three words a segment. Painter's order within a tile is the
 // world's: the land under everything (GROUND source 2), the land cover by LAND's order (source 1), the water (the sea,
 // then lakes, reservoirs and riverbanks), the areas over the water (source 0: the globe's ice shelves); then the
@@ -234,10 +244,18 @@ struct WorldFrame {
     WorldBend bend;
     /// The world's style (its packs'), for the palette; null where the packs carry none.
     const tiles::Style* style = nullptr;
-    /// The tiles the cover wants that are not resident yet: 0 once every tile in view draws itself.
+    /// The tiles the cover wants that are not resident yet, but those held back: 0 once every tile in view draws
+    /// itself or is held back.
     std::size_t wanted = 0;
+    /// The tiles in view held back for room: their builds found none, and the going of no tile the frame leaves out
+    /// makes a piece of the heap that holds them, so their places are drawn by their nearest resident ancestors, final
+    /// (a world heap too small for the view), until the heap's pieces change.
+    std::size_t held = 0;
     /// Whether a tile drawn is still fading in (a later frame draws it otherwise).
     bool fading = false;
+    /// Whether a wanted tile waits for the bytes let go of for it, which come back once the frames that may read them
+    /// have finished: the frames keep coming until it is built (World::world_fading).
+    bool settling = false;
     /// The cells in view no resident tile draws (no ancestor down to the globe's L0 holds them): 0 once the globe's
     /// coarse levels are resident, so a zoom out never shows the frame's clear colour.
     std::size_t bare = 0;
@@ -254,9 +272,12 @@ struct WorldStats {
     std::uint64_t built = 0;
     std::uint64_t failed = 0;
     double build_ms = 0; ///< the builds' time on the worker, all told
-    /// The heap's bytes, those of the resident tiles the last frame drew and of the pinned ones (the globe's L0 to
-    /// L3), and its largest free piece: a tile larger than that finds no room, whatever the bytes free.
+    /// The heap's budget and its buffer's bytes now (the budget's once it has grown to it), the bytes of the resident
+    /// tiles the last frame drew and of the pinned ones (the globe's L0 to L3), and the budget's largest free piece: a
+    /// tile larger than that finds no room, whatever the bytes free.
     vk::DeviceSize capacity = 0;
+    vk::DeviceSize buffer = 0;
+    vk::DeviceSize free = 0; ///< the heap's bytes no range holds (a range let go of among those held until freed)
     vk::DeviceSize drawn_bytes = 0;
     vk::DeviceSize pinned_bytes = 0;
     vk::DeviceSize largest_free = 0;
@@ -273,9 +294,10 @@ struct WorldStats {
 
 class WorldTiles {
 public:
-    /// The world's tiles of `store`, in a heap of `budget` bytes on `device`.
+    /// The world's tiles of `store`, in a heap on `device` of one buffer of `initial` bytes, doubled where a tile's
+    /// range lies beyond it up to `budget` (each frame binds it as it is when the frame begins).
     [[nodiscard]] static gpu::Result<std::unique_ptr<WorldTiles>>
-    create(const gpu::Device& device, const tiles::Store& store, vk::DeviceSize budget);
+    create(const gpu::Device& device, const tiles::Store& store, vk::DeviceSize initial, vk::DeviceSize budget);
     WorldTiles(const WorldTiles&) = delete;
     WorldTiles& operator=(const WorldTiles&) = delete;
     WorldTiles(WorldTiles&&) = delete;
@@ -333,6 +355,18 @@ private:
     void let_go(const WorldTile& t);
     /// Lets go of resident tiles not drawn by frame `number`, least lately drawn first, until `need` bytes are free.
     void make_room(vk::DeviceSize need, std::uint64_t number);
+    /// A piece of `bytes` for a wanted tile whose build found no room though the heap's bytes may hold it: the
+    /// ranges let go of already, once their frames have finished (Heaps::largest_with), else those of the tiles frame
+    /// `number` does not draw, each in turn the one that joins the largest piece (Heaps::joined_with; the fewest
+    /// bytes of those as good), let go of until one holds it, as World::piece_for chooses the countries'. Whether
+    /// the piece comes.
+    enum class Piece : std::uint8_t {
+        now,    ///< a piece holds it now
+        coming, ///< the ranges let go of already make one once their frames have finished
+        made,   ///< tiles were let go of for one, which comes once their frames have finished
+        none,   ///< the going of every tile the frame does not draw would not make one: none was let go of
+    };
+    [[nodiscard]] Piece make_piece(std::uint32_t bytes, std::uint64_t number);
     /// The world's style: the first world pack's. Returns whether the store's world packs changed.
     bool take_style();
     /// Lets go of the resident tiles whose packs the store no longer holds (render thread).
@@ -355,14 +389,16 @@ private:
     std::unordered_set<std::uint64_t> open_blocks_;   ///< their blocks, packed (their ids, tiles::world_pack_id)
     bool pinned_asked_ = false;
 
-    mutable std::mutex mutex_; // queue_, building_, built_, no_room_, idle_, the stats, style_pack_'s writes
+    mutable std::mutex mutex_; // queue_, building_, built_, roomless_, idle_, the stats, style_pack_'s writes
     std::condition_variable wake_worker_;
     std::condition_variable idle_cv_;
     std::vector<tiles::TileKey> queue_;
     std::uint64_t building_ = ~std::uint64_t{0};
     std::vector<std::unique_ptr<WorldTile>> built_;
-    std::vector<tiles::TileKey> no_room_;
     std::unordered_map<std::uint64_t, std::uint32_t> roomless_; ///< the bytes a build that found no room asked for
+    /// The wanted tiles waiting for the bytes let go of for them: the heap's frees() then (render thread). Each is
+    /// built again once a piece holds it, which the heap's frees having changed may bring.
+    std::unordered_map<std::uint64_t, std::uint64_t> room_waits_;
     std::vector<std::uint64_t> failed_keys_;
     /// A tile built without its chunk on the phone, and the cache's writes as its build began.
     struct Absent {
