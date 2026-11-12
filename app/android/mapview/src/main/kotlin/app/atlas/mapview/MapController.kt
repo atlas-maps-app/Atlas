@@ -622,7 +622,10 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             noteChrome()
         }
 
-    /** The chrome's shapes over the map moved: the core draws a frame with them where they are. */
+    /**
+     * The core's picture must follow the chrome's shapes (ChromeShapes.onChange): the glass under a frosted shape that
+     * moved, or the keep-outs alone come to rest. The core draws a frame with them where they are.
+     */
     fun chromeMoved() {
         val c = core ?: return
         c.source.chromeMoved()
