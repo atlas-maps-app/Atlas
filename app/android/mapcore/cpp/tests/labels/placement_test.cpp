@@ -331,6 +331,71 @@ TEST_CASE("a placed label stays where it is on the map, growing and shrinking wi
     CHECK(unfloored.size() == 0.85F);
 }
 
+TEST_CASE("a label risen over a mark at its point stands above it at every spot, its box down over the mark; at no "
+          "rise its stand is LabelPainter's, and a kept label follows its rise where it stands") {
+    const Measures m = measures(40, 20); // a text 40 by 20 px
+    const Point p{.x = 200.0F, .y = 150.0F};
+    constexpr float mark = 9.0F;
+    for (std::size_t spot = 0; spot < spot_count; ++spot) {
+        const Stand flat = stand_at(m, p, spot);
+        // no rise: the same stand to the bit, whatever the mark
+        const Stand none = stand_at(m, p, spot, 0.0F, mark);
+        CHECK(none.x == flat.x);
+        CHECK(none.y == flat.y);
+        CHECK(none.box.l == flat.box.l);
+        CHECK(none.box.t == flat.box.t);
+        CHECK(none.box.r == flat.box.r);
+        CHECK(none.box.b == flat.box.b);
+        // risen whole: up by half the text's height and the mark's radius, so the text's lower edge is at least the
+        // mark's radius over the point at every spot; the box keeps its sides and its top's pad, and reaches down to
+        // the mark's lower edge
+        const Stand up = stand_at(m, p, spot, 1.0F, mark);
+        CHECK(up.x == flat.x);
+        CHECK(up.y == flat.y - ((m.text_height / 2.0F) + mark));
+        CHECK(up.y + (m.text_height / 2.0F) <= p.y - mark);
+        CHECK(up.box.l == flat.box.l);
+        CHECK(up.box.r == flat.box.r);
+        CHECK(up.box.t == up.y - ((m.text_height / 2.0F) + m.pad));
+        CHECK(up.box.b == p.y + mark);
+        // and half way, half of it
+        const Stand half = stand_at(m, p, spot, 0.5F, mark);
+        CHECK(half.y == flat.y - (0.5F * ((m.text_height / 2.0F) + mark)));
+        CHECK(half.box.b >= half.y + (m.text_height / 2.0F) + m.pad);
+    }
+    // On a frame: a risen label at its point, and a label of lower priority whose first point lies 25 px under it,
+    // where centred or beside it would stand clear of the first's text and its pad but on the mark. The first's box
+    // holds the mark, so the second stands at its second point and nothing stands on the mark.
+    std::array<Point, 1> p0{{p}};
+    std::array<Point, 2> p1{{{.x = 200.0F, .y = 175.0F}, {.x = 60.0F, .y = 60.0F}}};
+    std::vector<Candidate> c{
+        {.id = 7, .label = 0, .priority = 5, .measures = m, .points = p0, .rise = 1.0F, .mark = mark},
+        {.id = 9, .label = 1, .priority = 1, .measures = measures(30, 20), .points = p1},
+    };
+    const Frame frame{.width = 400, .height = 300};
+    const double at = 1.0 / 400.0;
+    Placement placement;
+    auto drawn = placement.update(c, frame, at, 0.0);
+    ATLAS_REQUIRE(drawn.size() == 2);
+    CHECK(drawn[0].stand.x == 200.0F);
+    CHECK(drawn[0].stand.y == 150.0F - ((m.text_height / 2.0F) + mark));
+    // (clear of the first's text and pad, but for the mark)
+    CHECK(stand_at(c[1].measures, p1[0], 0).box.t > drawn[0].stand.y + (m.text_height / 2.0F) + m.pad);
+    CHECK(stand_at(c[1].measures, p1[0], 0).box.t < drawn[0].stand.box.b);
+    CHECK(drawn[1].stand.x == 60.0F);
+    const Box over{.l = p.x - mark, .t = p.y - mark, .r = p.x + mark, .b = p.y + mark};
+    const Box& second = drawn[1].stand.box;
+    CHECK((second.r <= over.l || second.l >= over.r || second.b <= over.t || second.t >= over.b));
+    // the rise ebbs (the light fades as the camera nears 18 km): the kept label comes down where it stands, at its
+    // spot, without a fade
+    c[0].rise = 0.5F;
+    drawn = placement.update(c, frame, at, 0.1);
+    ATLAS_REQUIRE(!drawn.empty());
+    CHECK(drawn[0].candidate == 0);
+    CHECK(drawn[0].stand.x == 200.0F);
+    CHECK(drawn[0].stand.y == 150.0F - (0.5F * ((m.text_height / 2.0F) + mark)));
+    CHECK(drawn[0].alpha == 1.0F);
+}
+
 TEST_CASE("placed labels that the map's turn brings together: the one of lower priority fades out, neither moves") {
     // Two labels side by side, then the map turns a quarter about the frame's centre: their points come one above the
     // other, close enough for their boxes to meet.

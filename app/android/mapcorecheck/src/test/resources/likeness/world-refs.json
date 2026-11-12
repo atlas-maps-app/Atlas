@@ -1,0 +1,23 @@
+{
+  "about": "The references around the world (ENGINE.md step 5, \"References around the world\"): the app's map over the world's own packs alone, world-refs (the tiles of these frames cut from a world release's parts by `packer world-refs`, and its globe), where no country has levels (the camera's WORLD_UNDER), as the phone draws it (every effect) at the frame below: the target at cy of its height from the top, straight down unless pitched, north up unless a bearing is given. A frame with a time is drawn at that instant in its zone (CoreMoment's live moment), the others at a moment of the port's. likeness/WorldPackRefs.kt's WorldPackRefsTest draws them on lavapipe in world.yml's refs job (a frame that cannot be decoded or drawn fails it) and holds the engine to the current version's frames once a version holds them; a deliberate change is a new version, recorded with -Datlas.engine.record=true.",
+  "version": "1",
+  "frame": {"width": 1080, "height": 2400, "density": 2.6213592233009706, "cy": 0.48},
+  "frames": [
+    {"name": "tokyo 30 km noon", "lat": 35.6812, "lon": 139.7671, "distance": 30000, "pitch": 0, "time": "2026-03-20T03:00:00Z", "zone": "Asia/Tokyo"},
+    {"name": "tokyo 30 km 22h", "lat": 35.6812, "lon": 139.7671, "distance": 30000, "pitch": 0, "time": "2026-03-20T13:00:00Z", "zone": "Asia/Tokyo"},
+    {"name": "tokyo 300 km noon", "lat": 35.6812, "lon": 139.7671, "distance": 300000, "pitch": 0, "time": "2026-03-20T03:00:00Z", "zone": "Asia/Tokyo"},
+    {"name": "tokyo 300 km 22h", "lat": 35.6812, "lon": 139.7671, "distance": 300000, "pitch": 0, "time": "2026-03-20T13:00:00Z", "zone": "Asia/Tokyo"},
+    {"name": "zermatt 25 km pitched", "lat": 46.0207, "lon": 7.7491, "distance": 25000, "pitch": 60, "bearing": 225, "moment": "sunny"},
+    {"name": "tamanrasset 100 km", "lat": 22.7850, "lon": 5.5228, "distance": 100000, "pitch": 0, "moment": "sunny"},
+    {"name": "bergen 75 km", "lat": 60.3913, "lon": 5.3221, "distance": 75000, "pitch": 0, "moment": "sunny"},
+    {"name": "open sea 600 km dusk", "lat": 35.0, "lon": -40.0, "distance": 600000, "pitch": 0, "time": "2026-03-20T21:05:00Z", "zone": "Etc/GMT+3"},
+    {"name": "open sea 6000 km dusk", "lat": 35.0, "lon": -40.0, "distance": 6000000, "pitch": 0, "time": "2026-03-20T21:05:00Z", "zone": "Etc/GMT+3"},
+    {"name": "85 n 1500 km", "lat": 85.0, "lon": -40.0, "distance": 1500000, "pitch": 0, "moment": "sunny"},
+    {"name": "85 s 1500 km", "lat": -85.0, "lon": 175.0, "distance": 1500000, "pitch": 0, "moment": "sunny"},
+    {"name": "netherlands 25 km", "lat": 52.3731, "lon": 4.8922, "distance": 25000, "pitch": 0, "moment": "sunny"},
+    {"name": "netherlands 100 km", "lat": 52.3731, "lon": 4.8922, "distance": 100000, "pitch": 0, "moment": "sunny"},
+    {"name": "netherlands 1000 km", "lat": 52.3731, "lon": 4.8922, "distance": 1000000, "pitch": 0, "moment": "sunny"},
+    {"name": "the board", "lat": 20, "lon": 10, "distance": 53773000, "pitch": 0, "moment": "sunny"}
+  ],
+  "versions": {}
+}

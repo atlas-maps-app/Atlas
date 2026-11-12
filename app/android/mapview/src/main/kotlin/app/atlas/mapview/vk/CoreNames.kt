@@ -5,10 +5,10 @@ import android.os.Handler
 import android.util.Log
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.LabelKind
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -19,7 +19,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * which it has no sprite of ([MapCore.namesWanted]: id, look, text); each is drawn here with Android's own text stack,
  * as the boards' labels are ([LabelSprites]: at its own size and at the band's top, in the boards' faces where they
  * hold the glyphs and the system's fonts where they do not), and handed back ([MapCore.names]). A name the device has
- * no glyphs for goes back without an image, and the core leaves it out.
+ * no glyphs for goes back without an image, and the core leaves it out; so does one too long for a sprite at its own
+ * size ([LabelBlock.MAX_SIDE]: the core would refuse the whole hand-over), and one too long at the band's top alone
+ * goes back with its own image, which the core grows.
  *
  * A step follows a presented frame ([framePresented], at most every [STEP_MS]): a frame is what can make the core want
  * a name, and the sprites handed back make it draw another, so the steps go on while names come and end with them, at
@@ -70,7 +72,7 @@ internal class CoreNames(
             try {
                 hand()
             } catch (e: RuntimeException) {
-                Log.w(EngineFrames.TAG, "vk names: ${e.message ?: e}")
+                Log.w(MapEngine.TAG, "vk names: ${e.message ?: e}")
             } finally {
                 busy.set(false)
                 if (again) {
@@ -111,17 +113,22 @@ internal class CoreNames(
                 LabelBlock.Sprite(want.id, 0, 0f, 0f, 0f, 0f, EMPTY, null, NO_POINTS)
             } else {
                 val s = maker.sprite(MapLabel("", want.text, kind, emptyList()), want.id)
-                LabelBlock.Sprite(s.id, 0, s.half, s.pad, s.textHeight, s.baseline, s.own, s.large, NO_POINTS)
+                if (!fits(s.own)) {
+                    none++
+                    LabelBlock.Sprite(want.id, 0, 0f, 0f, 0f, 0f, EMPTY, null, NO_POINTS)
+                } else {
+                    LabelBlock.Sprite(s.id, 0, s.half, s.pad, s.textHeight, s.baseline, s.own, s.large.takeIf(::fits), NO_POINTS)
+                }
             }
         })
         val why = core.names(block, look.floorDp)
         if (why.isNotEmpty()) {
-            Log.w(EngineFrames.TAG, "vk names: $why")
+            Log.w(MapEngine.TAG, "vk names: $why")
             return 0
         }
         handed += wants.size - none
         skipped += none
-        Log.i(EngineFrames.TAG, "vk names: ${wants.size - none} handed${if (none > 0) ", $none without glyphs" else ""} ($handed in all)")
+        Log.i(MapEngine.TAG, "vk names: ${wants.size - none} handed${if (none > 0) ", $none without glyphs or too long" else ""} ($handed in all)")
         return wants.size
     }
 
@@ -138,11 +145,15 @@ internal class CoreNames(
         /** The names' one drawing thread (the process's: one map draws through the core at a time). */
         private val shared: Executor = Executors.newSingleThreadExecutor { r -> Thread(r, "atlas-names").apply { isDaemon = true } }
 
+        /** Whether [image] is one the core takes: no side over [LabelBlock.MAX_SIDE]. */
+        fun fits(image: LabelBlock.Image): Boolean = image.width <= LabelBlock.MAX_SIDE && image.height <= LabelBlock.MAX_SIDE
+
         /** The label kind of a look the core names (`MapCore.NameWant`). */
         fun kindOf(look: Int): LabelKind = when (look) {
             MapCore.NameWant.TOWN -> LabelKind.TOWN
             MapCore.NameWant.VILLAGE -> LabelKind.VILLAGE
             MapCore.NameWant.GLOBE -> LabelKind.GLOBE
+            MapCore.NameWant.WATER -> LabelKind.WATER
             else -> LabelKind.CITY
         }
     }

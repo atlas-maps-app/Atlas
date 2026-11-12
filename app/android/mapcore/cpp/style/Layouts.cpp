@@ -69,7 +69,8 @@ constexpr std::array theme_block_table = {
     ATLAS_FIELD("wx.pressure", ThemeBlock, pressure),
     ATLAS_FIELD("wx.vis", ThemeBlock, visibility),
     ATLAS_FIELD("wx.hum", ThemeBlock, humidity),
-    ATLAS_FIELD("reserved1", ThemeBlock, reserved1),
+    ATLAS_FIELD("place_lat", ThemeBlock, place_latitude),
+    ATLAS_FIELD("place_lon", ThemeBlock, place_longitude),
 };
 
 constexpr std::uint32_t keep_out_at = static_cast<std::uint32_t>(offsetof(CameraState, keep_out));

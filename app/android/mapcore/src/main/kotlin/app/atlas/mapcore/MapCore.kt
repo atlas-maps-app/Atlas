@@ -357,6 +357,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             const val TOWN = 1
             const val VILLAGE = 2
             const val GLOBE = 3
+
+            /** A water's or a river's name: the Main board's water label (the IJ's). */
+            const val WATER = 4
         }
     }
 
@@ -385,7 +388,10 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun names(block: ByteBuffer, floorDp: Float): String = core.call("the core is closed") { Native.names(it, block, floorDp) }
 
-    /** A name for [testNames]: its [kind] (`TestName.COUNTRY` and on), its place, its people and its [text]. */
+    /**
+     * A name for [testNames]: its [kind] (`TestName.COUNTRY` and on, the core's `scene::NameKind`), its place, its
+     * people (a water's area in m², 0 for none known; a river's length in m) and its [text].
+     */
     class TestName(val kind: Int, val lat: Double, val lon: Double, val people: Double, val text: String) {
         companion object {
             const val COUNTRY = 0
@@ -393,6 +399,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             const val TOWN = 2
             const val VILLAGE = 3
             const val SUBURB = 4
+            const val OCEAN = 5
+            const val SEA = 6
+            const val BAY = 7
+            const val STRAIT = 8
+            const val LAKE = 9
+            const val RESERVOIR = 10
+            const val RIVER = 11
         }
     }
 

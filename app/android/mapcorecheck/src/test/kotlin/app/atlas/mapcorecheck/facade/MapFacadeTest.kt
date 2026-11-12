@@ -91,7 +91,7 @@ class MapFacadeTest {
                 val block = ThemeBlock.allocate()
                 ThemeBlock.write(block, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, golden = false, tone = false)
                 assertEquals("", Native.moment(handle, block))
-                block.putInt(ThemeBlock.VERSION_AT, 2)
+                block.putInt(ThemeBlock.VERSION_AT, ThemeBlock.VERSION + 1)
                 assertEquals("the theme was refused: version", Native.moment(handle, block))
                 assertEquals("the theme must be a direct buffer of 256 bytes", Native.moment(handle, ByteBuffer.allocate(256)))
 
@@ -151,7 +151,10 @@ class MapFacadeTest {
                     .putInt(1).putInt(1).putDouble(35.68).putDouble(139.77).putDouble(3.7e7).putInt(tokyo.size).put(tokyo)
                 assertEquals("", Native.testNames(handle, given.array()))
                 assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array().copyOf(20)))
+                // a water's kind is a name's kind too (a lake's, with its area where a place has its people); past the river's none
                 given.putInt(4, 9)
+                assertEquals("", Native.testNames(handle, given.array()))
+                given.putInt(4, 12)
                 assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array()))
                 assertEquals("", Native.testNames(handle, ByteArray(4)))
 

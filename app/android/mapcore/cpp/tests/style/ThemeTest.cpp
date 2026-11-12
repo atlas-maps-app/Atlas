@@ -26,7 +26,7 @@ namespace flag = atlas::style::theme_flag;
 /// amsterdam.py's sunny moment of 1 October 2026, 16:00, as Kotlin writes it (values from the port's dict).
 ThemeBlock sunny() {
     ThemeBlock b{};
-    b.version = 1;
+    b.version = atlas::style::theme_block_version;
     b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
     b.year = 2026;
     b.month = 10;
@@ -145,7 +145,9 @@ TEST_CASE("a theme block the port could not have made is refused, with the reaso
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double inf = std::numeric_limits<double>::infinity();
     const std::vector<Breakage> breakages = {
-        {"version 2", [](ThemeBlock& b) { b.version = 2; }, ThemeError::version},
+        {"another version", [](ThemeBlock& b) { b.version = atlas::style::theme_block_version + 1; },
+         ThemeError::version},
+        {"version 1, which carried no place", [](ThemeBlock& b) { b.version = 1; }, ThemeError::version},
         {"an unknown flag", [](ThemeBlock& b) { b.flags |= 1U << 13U; }, ThemeError::flags},
         {"wet without wet_set", [](ThemeBlock& b) { b.flags = (b.flags | flag::wet) & ~flag::wet_set; },
          ThemeError::flags},
@@ -168,7 +170,10 @@ TEST_CASE("a theme block the port could not have made is refused, with the reaso
              b.tone = std::numeric_limits<float>::quiet_NaN();
          },
          ThemeError::value},
-        {"reserved1", [](ThemeBlock& b) { b.reserved1 = 1; }, ThemeError::reserved},
+        {"a place north of the pole", [](ThemeBlock& b) { b.place_latitude = 90.5F; }, ThemeError::value},
+        {"a place past the antimeridian", [](ThemeBlock& b) { b.place_longitude = -180.5F; }, ThemeError::value},
+        {"a place that is no number", [](ThemeBlock& b) { b.place_latitude = std::numeric_limits<float>::quiet_NaN(); },
+         ThemeError::value},
         {"month 0", [](ThemeBlock& b) { b.month = 0; }, ThemeError::date},
         {"month 13", [](ThemeBlock& b) { b.month = 13; }, ThemeError::date},
         {"day 0", [](ThemeBlock& b) { b.day = 0; }, ThemeError::date},

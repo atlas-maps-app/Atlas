@@ -561,6 +561,8 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
 
 std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     std::vector<WorldName> names;
+    // each row's place in the tile's order: the places, then the waters, then the rivers, each by the packer's rank
+    constexpr std::int64_t group = std::int64_t{1} << 40U;
     std::vector<std::int64_t> ranks;
     const tl::Layer* label = tile.layer(tl::LayerId::label);
     if (label == nullptr) return names;
@@ -568,8 +570,32 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     constexpr std::uint8_t capital = tl::slot_of(tl::label::columns, "tag:capital");
     const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
     each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
-        if (label->integer(tl::label::source, i) != tl::label::source_place) return;
-        const std::optional<NameKind> kind = name_kind(label->string(tl::label::kind, i).value_or(""));
+        const std::int64_t source = label->integer(tl::label::source, i);
+        const bool river = std::cmp_equal(source, tl::label::source_river);
+        if (river || std::cmp_equal(source, tl::label::source_water)) {
+            // a water at its name's point with its area, a river at the middle of its longest piece in the tile with
+            // its length there
+            const std::optional<NameKind> kind =
+                river ? std::optional(NameKind::river) : water_kind(label->string(tl::label::kind, i).value_or(""));
+            // a name of several languages' (OpenStreetMap's "North Sea / Nordsee / Noordzee" of a water no one
+            // language names): its first part, until the packs hold each language's own (ENGINE.md step 5, "Names")
+            std::string_view text = label->string(tl::label::name, i).value_or("");
+            if (const std::size_t part = text.find(" / "); part != std::string_view::npos) text = text.substr(0, part);
+            if (!kind || text.empty()) return;
+            const tl::GridPoint at = label->point(tl::label::pos, i);
+            ranks.push_back(((river ? 2 : 1) * group) + label->integer(tl::label::index, i));
+            WorldName water{.kind = *kind,
+                            .cell = static_cast<std::uint8_t>(c),
+                            .lat = tl::Frame::degrees(at.lat),
+                            .lon = tl::Frame::degrees(at.lon),
+                            .text = std::string(text)};
+            water.extent = static_cast<double>(label->integer(tl::label::count, i));
+            names.push_back(std::move(water));
+            return;
+        }
+        if (!std::cmp_equal(source, tl::label::source_place)) return;
+        const std::string_view place = label->string(tl::label::kind, i).value_or("");
+        const std::optional<NameKind> kind = name_kind(place);
         const std::string_view text = label->string(tl::label::name, i).value_or("");
         if (!kind || text.empty()) return;
         const tl::GridPoint at = label->point(tl::label::pos, i);
@@ -580,7 +606,8 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
                          .people = load::num(label->string(population, i)).value_or(0.0),
                          .lat = tl::Frame::degrees(at.lat),
                          .lon = tl::Frame::degrees(at.lon),
-                         .text = std::string(text)});
+                         .text = std::string(text),
+                         .lit = world_lights(tile.header.level, place)});
     });
     // the tile's order, the packer's rank, which each cell's rows are in: the cells' rows merged by it
     std::vector<std::uint32_t> order(names.size());
@@ -972,8 +999,9 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         // 9,600 km out, their seam has an L2 tile under it, whose edge is its L2 neighbour's)
         const bool floored = bend.drop > 0.0;
         // under the cover, a place is drawn by the fine packs' tiles alone (the tile holding it, or while that comes
-        // its nearest resident ancestor of theirs), and has the plain land at its box until one has faded in; no
-        // tile lights its cities there (the ladder's lights begin beyond world_from)
+        // its nearest resident ancestor of theirs), and has the plain land at its box until one has faded in; the
+        // first of them names its places, as a leaf's own drawer does beyond world_from (no light is drawn there: the
+        // ladder's lights begin beyond world_from)
         std::vector<DegreeBox> blanks;
         const auto fine = [](const tl::TileKey& key) { return key.z >= world_fine_first; };
         for (const WorldLeaf& leaf : leaves) {
@@ -990,8 +1018,12 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 }
             }
             bool floor = false; // a tile faded in lies under the place
+            bool own = true;    // the first: the place's own drawer
             for (; t != nullptr && fine(t->key) && !floor; t = ancestor(t->key, t->key.z)) {
-                cells[t->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+                const std::uint64_t over = cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
+                cells[t->key.packed()] |= over;
+                if (own) lit[t->key.packed()] |= over;
+                own = false;
                 floor = fade_of(*t) >= 1.0;
             }
             if (!floor) blanks.push_back(degrees_of(grid_of(leaf.key)));

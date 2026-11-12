@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <vector>
@@ -143,6 +144,27 @@ TEST_CASE("scene: the pick takes the names of the tiles a frame draws by rank, e
     const std::vector<WorldName> more = {name("\xe6\x9d\xb1\xe4\xba\xac", NameKind::city, 3.7e7, 35.68, 139.77)};
     CHECK(texts(extra.update(nullptr, more, 100'000.0, everywhere, 0.0, true, true)) ==
           std::vector<std::string>{"\xe6\x9d\xb1\xe4\xba\xac"});
+    // a name stands at its place in the tile that draws it, as that tile's light of it does: once the fine tile
+    // alone draws Amsterdam, the name (the same one, by its id) is at the fine tile's place, and says it is lit there
+    // and of how many people (its light's size)
+    scene::WorldNames moved;
+    std::uint32_t amsterdam = 0;
+    {
+        const auto coarse = moved.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true);
+        REQUIRE(coarse.size() == 8);
+        CHECK(coarse[1].lat == 52.37);
+        CHECK_FALSE(coarse[1].lit);
+        amsterdam = coarse[1].id;
+    }
+    tiles[1].names[0].lit = true;
+    scene::WorldFrame fine_alone = frame_of(std::span<const scene::WorldTile>(tiles).subspan(1), 0b011);
+    const auto fine = moved.update(&fine_alone, {}, 100'000.0, everywhere, 0.5, false, true);
+    REQUIRE(!fine.empty());
+    CHECK(fine[0].id == amsterdam);
+    CHECK(fine[0].lat == 52.3731);
+    CHECK(fine[0].lon == 4.8924);
+    CHECK(fine[0].lit);
+    CHECK(fine[0].people == 9e5);
 }
 
 TEST_CASE("scene: a name picked keeps its id and stays picked while it stands among the first by rank; one that "
@@ -279,4 +301,239 @@ TEST_CASE("scene: a place stands where the world pass draws its ground, and nowh
         CHECK(a->x == doctest::Approx(b->x));
         CHECK(a->x > 1079.0 / 2.0);
     }
+}
+
+namespace {
+
+/// A water of `kind` and `area` m² (a river: its length in the tile, m) at (`lat`, `lon`).
+[[nodiscard]] WorldName water(std::string text, NameKind kind, double extent, double lat, double lon,
+                              std::uint8_t cell = 0) {
+    WorldName n{.kind = kind, .cell = cell, .lat = lat, .lon = lon, .text = std::move(text)};
+    n.extent = extent;
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("scene: a water's name is in the board's water look up to 6,000 km and has none beyond; its rank is its size "
+          "on the screen's, in one rank with the places") {
+    for (const NameKind kind : {NameKind::ocean, NameKind::sea, NameKind::bay, NameKind::strait, NameKind::lake,
+                                NameKind::reservoir, NameKind::river}) {
+        CHECK(scene::is_water(kind));
+        CHECK(name_style(kind, 25'000.0) == NameStyle::water);
+        CHECK(name_style(kind, 6'000'000.0) == NameStyle::water);
+        CHECK_FALSE(name_style(kind, 6'000'001.0).has_value());
+    }
+    CHECK_FALSE(scene::is_water(NameKind::suburb));
+    CHECK(scene::name_size_dp(NameStyle::water) == 21.0);
+    CHECK(scene::water_kind("lake") == NameKind::lake);
+    CHECK(scene::water_kind("reservoir") == NameKind::reservoir);
+    CHECK(scene::water_kind("bay") == NameKind::bay);
+    CHECK(scene::water_kind("strait") == NameKind::strait);
+    CHECK(scene::water_kind("sea") == NameKind::sea);
+    CHECK(scene::water_kind("ocean") == NameKind::ocean);
+    CHECK_FALSE(scene::water_kind("river").has_value());
+    CHECK_FALSE(scene::water_kind("pond").has_value());
+
+    using scene::name_priority;
+    using scene::water_priority;
+    // a water's rank where it has a name, under every rank where it has none
+    const auto rank = [](const WorldName& n, double metres_a_dp) {
+        return water_priority(n, metres_a_dp).value_or(std::numeric_limits<std::int32_t>::min());
+    };
+    const WorldName country = name("Nederland", NameKind::country, 17e6, 52.2, 5.3);
+    const WorldName small_country = name("Luxembourg", NameKind::country, 6.4e5, 49.8, 6.1);
+    const WorldName capital = name("Amsterdam", NameKind::city, 9e5, 52.37, 4.89, 0, true);
+    const WorldName city = name("Almere", NameKind::city, 2.2e5, 52.37, 5.22);
+    const WorldName town = name("Hoorn", NameKind::town, 7.3e4, 52.64, 5.06);
+    const WorldName village = name("Marken", NameKind::village, 1.8e3, 52.46, 5.10);
+    const WorldName suburb = name("Jordaan", NameKind::suburb, 0.0, 52.37, 4.88);
+    // the IJsselmeer, 1,125 km²: 33.5 km a side
+    const WorldName lake = water("IJsselmeer", NameKind::lake, 1.125e9, 52.8, 5.4);
+    // 71 m a dp (a camera 100 km out): 223,000 dp², with the cities, before them all but a capital
+    ATLAS_REQUIRE(water_priority(lake, 71.0).has_value());
+    CHECK(rank(lake, 71.0) < name_priority(capital));
+    CHECK(rank(lake, 71.0) > name_priority(city));
+    // 300 m a dp: 12,500 dp², with the towns, after every city
+    CHECK(rank(lake, 300.0) < name_priority(city));
+    CHECK(rank(lake, 300.0) > name_priority(town));
+    // 600 m a dp: 3,125 dp², with the villages, after every town and every river
+    const WorldName river = water("Rijn", NameKind::river, 60'000.0, 51.9, 5.9);
+    CHECK(rank(lake, 600.0) < name_priority(town));
+    CHECK(rank(lake, 600.0) < rank(river, 600.0));
+    CHECK(rank(lake, 600.0) > name_priority(village));
+    // 800 m a dp: 1,758 dp², under the least: no name (no place is lost to a pond)
+    CHECK_FALSE(water_priority(lake, 800.0).has_value());
+    CHECK(water_priority(lake, 750.0).has_value()); // 2,000 dp² exactly
+    // the larger of two waters of a class first
+    const WorldName smaller = water("Markermeer", NameKind::reservoir, 5.93e8, 52.5, 5.2);
+    CHECK(rank(lake, 71.0) > rank(smaller, 71.0));
+    // a node's bay says no size: named, with the villages, after every water of a known size there
+    const WorldName bay = water("Hoornse Hop", NameKind::bay, 0.0, 52.6, 5.1);
+    for (const double m : {5.0, 71.0, 5'000.0}) {
+        ATLAS_REQUIRE(water_priority(bay, m).has_value());
+        CHECK(rank(bay, m) < name_priority(town));
+        CHECK(rank(bay, m) > name_priority(suburb));
+    }
+    CHECK(rank(bay, 600.0) < rank(lake, 600.0));
+    // an ocean and a sea with the countries, by their size: before the capitals; a sea too small on the screen none
+    const WorldName ocean = water("Atlantic Ocean", NameKind::ocean, 8.5e13, 30.0, -40.0);
+    const WorldName sea = water("Noordzee", NameKind::sea, 5.7e11, 56.0, 3.0);
+    const WorldName wad = water("Waddenzee", NameKind::sea, 1.0e10, 53.3, 5.4);
+    CHECK(rank(ocean, 4'266.0) > rank(sea, 4'266.0));
+    CHECK(rank(sea, 4'266.0) > name_priority(capital));
+    CHECK(rank(sea, 4'266.0) < name_priority(country));                                      // a country of 17 million
+    CHECK(rank(sea, 4'266.0) > name_priority(small_country));                                // one of 640,000
+    CHECK_FALSE(water_priority(wad, 4'266.0).has_value());                                   // 550 dp² from 6,000 km
+    CHECK(water_priority(wad, 711.0).has_value());                                           // 19,800 dp² from 1,000 km
+    CHECK(water_priority(water("Zee", NameKind::sea, 0.0, 53.0, 4.0), 4'266.0).has_value()); // a node's: no size
+    // a river after the towns and before the villages, the longer in its tile first; under 96 dp on the screen none
+    CHECK(rank(river, 71.0) < name_priority(town));
+    CHECK(rank(river, 71.0) > name_priority(village));
+    CHECK(rank(river, 71.0) > rank(water("Linge", NameKind::river, 30'000.0, 51.9, 5.3), 71.0));
+    CHECK(water_priority(river, 625.0).has_value());       // 96 dp
+    CHECK_FALSE(water_priority(river, 640.0).has_value()); // 94 dp
+    // with no scale known every water is as large as can be
+    CHECK(rank(lake, 0.0) > name_priority(city));
+    CHECK(water_priority(river, 0.0).has_value());
+    // the places' order among themselves is as it was
+    CHECK(name_priority(country) > name_priority(capital));
+    CHECK(name_priority(capital) > name_priority(city));
+    CHECK(name_priority(city) > name_priority(town));
+    CHECK(name_priority(town) > name_priority(village));
+    CHECK(name_priority(village) > name_priority(suburb));
+}
+
+TEST_CASE("scene: the pick names a frame's waters among its places by their size on the screen, leaves a pond out, "
+          "and names the same places where no water stands") {
+    std::vector<scene::WorldTile> tiles(1);
+    const std::vector<WorldName> places = {name("Amsterdam", NameKind::city, 9e5, 52.37, 4.89, 0, true),
+                                           name("Almere", NameKind::city, 2.2e5, 52.37, 5.22),
+                                           name("Hoorn", NameKind::town, 7.3e4, 52.64, 5.06),
+                                           name("Marken", NameKind::village, 1.8e3, 52.46, 5.10)};
+    tiles[0].names = places;
+    scene::WorldFrame frame = frame_of(tiles);
+    const scene::NameScale scale{.metres_a_dp = 71.0, .lat = 52.5, .lon = 5.1};
+    scene::WorldNames before;
+    const std::vector<std::string> named =
+        texts(before.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true, scale));
+    CHECK(named == std::vector<std::string>{"Amsterdam", "Almere", "Hoorn", "Marken"});
+    // with the tile's waters after its places: the lakes by their size, a pond none, the places as they were
+    tiles[0].names.push_back(water("IJsselmeer", NameKind::lake, 1.125e9, 52.8, 5.4));
+    tiles[0].names.push_back(water("Markermeer", NameKind::lake, 5.93e8, 52.5, 5.2));
+    tiles[0].names.push_back(water("Gouwzee", NameKind::bay, 2.0e7, 52.44, 5.07));     // 3,970 dp²: with the villages
+    tiles[0].names.push_back(water("Kinselmeer", NameKind::lake, 7.0e5, 52.42, 4.99)); // 139 dp²: a pond here
+    scene::WorldFrame with = frame_of(tiles);
+    scene::WorldNames names;
+    const auto picked = names.update(&with, {}, 100'000.0, everywhere, 0.0, false, true, scale);
+    CHECK(texts(picked) ==
+          std::vector<std::string>{"Amsterdam", "IJsselmeer", "Markermeer", "Almere", "Hoorn", "Gouwzee", "Marken"});
+    CHECK(picked[1].style == NameStyle::water);
+    CHECK_FALSE(picked[1].lit);
+    CHECK((picked[1].id & scene::name_id_bit) != 0);
+    CHECK(picked[1].priority < picked[0].priority);
+    CHECK(picked[1].priority > picked[3].priority);
+    // the places among themselves stand in the order they had
+    std::vector<std::string> only;
+    for (const PickedName& p : picked) {
+        if (p.style != NameStyle::water) only.emplace_back(p.text);
+    }
+    CHECK(only == named);
+    // nearer, the pond is a lake on the screen and has its name; from 7,000 km no water has one
+    const scene::NameScale near_by{.metres_a_dp = 17.8, .lat = 52.42, .lon = 4.99};
+    const std::vector<std::string> close =
+        texts(names.update(&with, {}, 25'000.0, everywhere, 1.0, false, true, near_by));
+    CHECK(std::ranges::find(close, "Kinselmeer") != close.end());
+    scene::WorldNames far;
+    for (const PickedName& p : far.update(&with, {}, 7'000'000.0, everywhere, 0.0, false, true,
+                                          {.metres_a_dp = 4'977.0, .lat = 52.5, .lon = 5.1})) {
+        CHECK(p.style == NameStyle::globe);
+    }
+    // a water two rows name (a bay's node and its area, as OpenStreetMap holds some) is named once: at the row of the
+    // higher rank, and there still when the other's rank passes it; two waters of one name far apart are both named
+    std::vector<scene::WorldTile> twice(1);
+    twice[0].names = {water("Gouwzee", NameKind::bay, 0.0, 52.45, 5.06),    // the node: with the villages
+                      water("Gouwzee", NameKind::lake, 2.0e7, 52.44, 5.07), // the area, 1.3 km from it
+                      water("Grote Meer", NameKind::lake, 3.0e8, 52.9, 5.3),
+                      water("Grote Meer", NameKind::lake, 2.0e8, 51.5, 5.3)}; // 155 km south of its namesake
+    scene::WorldFrame doubled = frame_of(twice);
+    scene::WorldNames once;
+    const auto count_of = [](std::span<const PickedName> p, std::string_view text) {
+        return std::ranges::count_if(p, [text](const PickedName& n) { return !n.leaving && n.text == text; });
+    };
+    const auto lat_of = [](std::span<const PickedName> p, std::string_view text) {
+        const auto at = std::ranges::find_if(p, [text](const PickedName& n) { return !n.leaving && n.text == text; });
+        return at != p.end() ? at->lat : 0.0;
+    };
+    // 300 m a dp: the area is 222 dp² on the screen, no name; the node's stands
+    auto one = once.update(&doubled, {}, 400'000.0, everywhere, 0.0, false, true, {.metres_a_dp = 300.0});
+    CHECK(count_of(one, "Gouwzee") == 1);
+    CHECK(lat_of(one, "Gouwzee") == 52.45);
+    CHECK(count_of(one, "Grote Meer") == 2);
+    // 20 m a dp: the area ranks with the cities now, over the node's row; the name stays where it stands
+    one = once.update(&doubled, {}, 28'000.0, everywhere, 0.2, false, true, {.metres_a_dp = 20.0});
+    CHECK(count_of(one, "Gouwzee") == 1);
+    CHECK(lat_of(one, "Gouwzee") == 52.45);
+    // a fresh pick there takes the area's row
+    scene::WorldNames anew;
+    one = anew.update(&doubled, {}, 28'000.0, everywhere, 0.0, false, true, {.metres_a_dp = 20.0});
+    CHECK(count_of(one, "Gouwzee") == 1);
+    CHECK(lat_of(one, "Gouwzee") == 52.44);
+    // a water's name keeps its id, as a place's does
+    scene::WorldNames again;
+    const std::uint32_t id = [&] {
+        const auto first = again.update(&with, {}, 100'000.0, everywhere, 0.0, false, true, scale);
+        return first[1].id;
+    }();
+    CHECK(again.update(&with, {}, 100'000.0, everywhere, 0.5, false, true, scale)[1].id == id);
+}
+
+TEST_CASE("scene: a river, which every tile it crosses names, is named once within 400 dp on the screen: where it was "
+          "named while that row stays picked, else at its row nearest the camera's target") {
+    // three tiles along the Rijn, each with its row at the middle of its piece, 20 km apart; another river of the same
+    // name far off; a short piece
+    std::vector<scene::WorldTile> tiles(4);
+    tiles[0].names = {water("Rijn", NameKind::river, 21'000.0, 51.95, 5.60)};
+    tiles[1].names = {water("Rijn", NameKind::river, 24'000.0, 51.95, 5.90), // 20.6 km east of the first
+                      water("Linge", NameKind::river, 30'000.0, 51.90, 5.90)};
+    tiles[2].names = {water("Rijn", NameKind::river, 19'000.0, 51.95, 6.20)};
+    tiles[3].names = {water("Rijn", NameKind::river, 15'000.0, 47.60, 8.20), // the Hochrhein, 500 km on
+                      water("Beek", NameKind::river, 3'000.0, 51.94, 5.88)}; // 42 dp at 71 m a dp: none
+    scene::WorldFrame frame = frame_of(tiles);
+    const auto rijn_at = [](std::span<const PickedName> picked) {
+        std::vector<double> lons;
+        for (const PickedName& p : picked) {
+            if (!p.leaving && p.text == "Rijn") lons.push_back(p.lon);
+        }
+        std::ranges::sort(lons);
+        return lons;
+    };
+    // 100 km out (71 m a dp: 400 dp are 28.4 km), the camera over the middle row: the Rijn once near, at the row
+    // nearest the target, and once far off; the other river; the short piece not
+    scene::WorldNames names;
+    scene::NameScale scale{.metres_a_dp = 71.0, .lat = 51.95, .lon = 5.92};
+    auto picked = names.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true, scale);
+    CHECK(rijn_at(picked) == std::vector<double>{5.90, 8.20});
+    CHECK(std::ranges::count(texts(picked), "Linge") == 1);
+    CHECK(std::ranges::count(texts(picked), "Beek") == 0);
+    for (const PickedName& p : picked) CHECK(p.style == NameStyle::water);
+    // the camera moves west, nearer the first row: the name stays where it stands
+    scale.lon = 5.70;
+    picked = names.update(&frame, {}, 100'000.0, everywhere, 0.2, false, true, scale);
+    CHECK(rijn_at(picked) == std::vector<double>{5.90, 8.20});
+    // its row leaves the view: the river is named at the row nearest the target that is left, the old one leaving
+    const scene::WorldNames::InView west = [](double, double lon) { return lon < 5.8 || lon > 8.0; };
+    picked = names.update(&frame, {}, 100'000.0, west, 0.4, false, true, scale);
+    CHECK(rijn_at(picked) == std::vector<double>{5.60, 8.20});
+    CHECK(std::ranges::count(texts(picked, true), "Rijn") == 1);
+    // nearer (17.8 m a dp: 400 dp are 7.1 km) the rows are farther apart than that on the screen: each is named
+    scene::WorldNames close;
+    picked = close.update(&frame, {}, 25'000.0, everywhere, 0.0, false, true,
+                          {.metres_a_dp = 17.8, .lat = 51.95, .lon = 5.92});
+    CHECK(rijn_at(picked) == std::vector<double>{5.60, 5.90, 6.20, 8.20});
+    // a fresh pick from the west takes the western row
+    scene::WorldNames fresh;
+    picked = fresh.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true,
+                          {.metres_a_dp = 71.0, .lat = 51.95, .lon = 5.55});
+    CHECK(rijn_at(picked) == std::vector<double>{5.60, 6.20, 8.20});
 }

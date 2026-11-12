@@ -67,12 +67,14 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${app.atlas.packer.world.WorldAssemble.USAGE}
 
-  ${app.atlas.packer.world.WorldCheck.USAGE}"""
+  ${app.atlas.packer.world.WorldCheck.USAGE}
+
+  ${app.atlas.packer.world.WorldRefs.USAGE}"""
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
  * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
- * `world-tags`, `world-assemble` and `world-check`).
+ * `world-tags`, `world-assemble`, `world-check` and `world-refs`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -208,6 +210,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "world-tags" -> return app.atlas.packer.world.WorldFilter.run(args, out)
         "world-assemble" -> return app.atlas.packer.world.WorldAssemble.run(args, out)
         "world-check" -> return app.atlas.packer.world.WorldCheck.run(args, out)
+        "world-refs" -> return app.atlas.packer.world.WorldRefs.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

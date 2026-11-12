@@ -70,7 +70,6 @@ import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapcore.state.ThemeBlock
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.MapEngine
 import app.atlas.render.live.Moment
 import app.atlas.render.live.RegionFrame
@@ -179,8 +178,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             val facts = withContext(Dispatchers.Default) { MapCore.facts(config) }
             val said = listOf("vkbench refused: $refused") + facts.map { "vkfacts $it" }
             lines += said
-            for (l in said) Log.i(EngineFrames.TAG, l)
-            Log.i(EngineFrames.TAG, "vkbench done")
+            for (l in said) Log.i(MapEngine.TAG, l)
+            Log.i(MapEngine.TAG, "vkbench done")
         } else {
             status = keptNote + "Ready. Quick takes about 4 minutes, Full about 20 (keep the phone unplugged for the battery figure). " +
                 "Pills: start the phone's screen recorder first; 20 s of moving pills to film."
@@ -215,7 +214,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         val plan = chosen ?: return@LaunchedEffect
         val run = BenchRun(context, c, source, metrics, plan) { line ->
             lines += line
-            Log.i(EngineFrames.TAG, line)
+            Log.i(MapEngine.TAG, line)
         }
         activeRun = run
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) run.pause()
@@ -236,7 +235,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
                 // each second (VkSurface's WindowNudge).
                 withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) { waiter.await() }
                     ?: VkSurfaceState(false, 0, 0, VkBench.windowTimedOut(h.label)).also {
-                        Log.w(EngineFrames.TAG, "vkbench ${h.label}: ${it.error}")
+                        Log.w(MapEngine.TAG, "vkbench ${h.label}: ${it.error}")
                     }
             }
         }
@@ -260,7 +259,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             activeRun = null
         }
         status = "Done. Copy the report and paste it back."
-        Log.i(EngineFrames.TAG, "vkbench done")
+        Log.i(MapEngine.TAG, "vkbench done")
     }
 
     Column(modifier.fillMaxSize().background(Color.White)) {
@@ -965,7 +964,7 @@ private class BenchRun(
             val opened = core.packs(packs.refs())
             val theme = ThemeBlock.allocate()
             val lit = runCatching {
-                CoreMoment.write(theme, Moment.Named(moment), zone, MapEngine.options.daylight)
+                CoreMoment.write(theme, Moment.Named(moment), zone, MapEngine.DAYLIGHT)
                 core.moment(theme)
             }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
             opened to lit
@@ -1442,7 +1441,7 @@ private object BenchReport {
                 out.fd.sync()
             }
             if (!tmp.renameTo(f)) tmp.delete()
-        }.onFailure { Log.w(EngineFrames.TAG, "vkbench report not recorded: $it") }
+        }.onFailure { Log.w(MapEngine.TAG, "vkbench report not recorded: $it") }
     }
 }
 

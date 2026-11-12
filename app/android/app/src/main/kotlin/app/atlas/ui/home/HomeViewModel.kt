@@ -97,13 +97,13 @@ class HomeViewModel(
     ).apply { time = clock() }
 
     /**
-     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a window on the
-     * phone holds the place (else the first look is the Main board's view of the canal ring, whose windows the
-     * Netherlands' tiles give); today's map alone counts every place, as it always has (it fetches what it needs). The
-     * list is read as the core starts (MapEngine.warmPacks); only if that has not finished is it read here.
+     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): a window on the phone holds the place (else the
+     * first look is the Main board's view of the canal ring, whose windows the Netherlands' tiles give); with no core in
+     * this process (the JVM's tests) every place counts. The list is read as the core starts (MapEngine.warmPacks); only
+     * if that has not finished is it read here.
      */
     private fun coveredByMap(p: LatLon): Boolean {
-        if (MapEngine.core is CoreState.Canvas) return true
+        if (MapEngine.core is CoreState.None) return true
         val list = runCatching { MapEngine.packs() }.getOrNull() ?: return true
         if (!list.loaded) runCatching { list.load() }
         return list.packs.any { p in it.box }
@@ -230,12 +230,12 @@ class HomeViewModel(
         }
         // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
         viewModelScope.launch { minutes.collect { map.time = it } }
-        // CI's scripted runs of the core (MainActivity's atlas.vk.script; debug and bench builds): the transitional rule,
-        // and the world beyond the countries
+        // CI's scripted runs of the core (MainActivity's atlas.vk.script; debug and bench builds): away from its tiles and
+        // back, and the world beyond the countries
         when (MapEngine.script) {
-            TRANSITION_SCRIPT -> {
+            AWAY_SCRIPT -> {
                 MapEngine.script = null
-                viewModelScope.launch { transitionScript() }
+                viewModelScope.launch { awayScript() }
             }
             WORLD_SCRIPT -> {
                 MapEngine.script = null
@@ -249,12 +249,13 @@ class HomeViewModel(
     }
 
     /**
-     * CI's scripted switch of the transitional rule (plan-vector K11): once the core's first picture is final, the camera
-     * jumps to a place the core has no tiles for ([AWAY]: today's map there, or its own honest state offline), and
-     * once today's map has its picture there and the cross-fade is done, back to the start; `vk script …` lines mark
-     * each step for smoke.sh, which reads the rule's own `vk transition` lines between them.
+     * CI's scripted jump away from the core's tiles (plan-vector K11, ENGINE.md step 3): once the core's first picture is
+     * final, the camera jumps to a place no pack on the phone holds ([AWAY]), where the core draws its own cover and the
+     * map says why (CI's runs build no windows: no map data there), and back to the start, where its picture is complete
+     * again; `vk script …` lines mark each step with the map's status for smoke.sh. Until 5 November the script switched
+     * the transitional rule to today's map and back.
      */
-    private suspend fun transitionScript() {
+    private suspend fun awayScript() {
         val log = { line: String -> android.util.Log.i("AtlasMap", line) }
         val start = map.camera
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
@@ -263,13 +264,23 @@ class HomeViewModel(
         map.camera = start.copy(target = AWAY)
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it !is MapStatus.Loading }
+        log("vk script: away ${said(map.status)}")
         delay(SCRIPT_SETTLE_MS)
         log("vk script: back")
         map.camera = start
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: back ${said(map.status)}")
         delay(SCRIPT_SETTLE_MS)
         log("vk script done")
+    }
+
+    /** What the map says of its picture, for a script's line. */
+    private fun said(s: MapStatus): String = when (s) {
+        is MapStatus.Ready -> "ready"
+        is MapStatus.Loading -> "loading"
+        is MapStatus.Downloading -> "downloading ${s.region}"
+        is MapStatus.NoData -> "no map data: ${s.reason}"
     }
 
     /**
@@ -515,13 +526,12 @@ class HomeViewModel(
         private const val WEATHER_MAX_AGE_MS = 30 * 60_000L
         private const val WEATHER_RETRY_MS = 2 * 60_000L
 
-        /** CI's script of the core's transitional rule (MainActivity's `atlas.vk.script transition`). */
-        const val TRANSITION_SCRIPT = "transition"
+        /** CI's script away from the core's tiles and back (MainActivity's `atlas.vk.script away`). */
+        const val AWAY_SCRIPT = "away"
 
         /**
-         * Where the script goes: Lille's centre, which no pack of the core holds and no country's tiles the core draws
-         * (within the Netherlands' the core keeps the place while its window comes: Transition.pathOf), so today's map
-         * takes it over (its honest state there: no region covers it).
+         * Where the script goes: Lille's centre, which no pack on the phone holds and no country's tiles the core draws, so
+         * the core draws its own cover there (the canal ring's pack, the nearest) and the map says it has no data.
          */
         val AWAY = LatLon(50.6292, 3.0573)
         private const val SCRIPT_WAIT_MS = 180_000L

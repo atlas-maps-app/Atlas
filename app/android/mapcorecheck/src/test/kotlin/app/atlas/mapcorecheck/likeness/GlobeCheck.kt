@@ -198,7 +198,8 @@ internal class WorldHost(private val w: Int, private val h: Int, private val den
      */
     fun draw(lat: Double, lon: Double, distance: Double, bearing: Double, pitch: Double, moment: Moment, cyDp: Double): WorldShot {
         val theme = ThemeBlock.allocate()
-        CoreMoment.write(theme, moment, ZoneId.of("Europe/Amsterdam"), daylight = false)
+        // lit as the app lights a place off the render packs: by the camera's own target
+        CoreMoment.write(theme, moment, ZoneId.of("Europe/Amsterdam"), daylight = false, placeLat = lat, placeLon = lon)
         check(LookHost.theme(handle, theme)) { LookHost.lastError() }
         val widthDp = (w / density).roundToInt()
         val heightDp = (h / density).roundToInt()
@@ -533,5 +534,74 @@ class WorldRefsTest {
                 "change is a new version (likeness/world.json, recorded with -Datlas.engine.record=true); any other is a bug",
             changed.isEmpty(),
         )
+    }
+}
+
+/**
+ * The far world across the night flag's flip (ENGINE.md, the moment's place; the settling measurement of 11 November):
+ * the live moment over the Westerkerk a minute before the sun passes `ThemeBlock.NIGHT_BELOW` and a minute after, from
+ * 75 to 600 km, straight down and pitched. Until the far day palette was tied to the flag's threshold
+ * (`passes::World::day_share`) these frames stepped 5 to 7 levels over the whole frame at the flip, where the two
+ * minutes before it moved them 0 to 0.6: the far day colours were the moment's own by day and the ladder's at night.
+ * Now the flip moves a frame no more than the two minutes before it did, but for a level's rounding. The moment's sky
+ * strip at a pitched view's top is the moment's own day or night and stays outside (the top twentieth of the frame).
+ */
+class WorldFlipTest {
+    @Test
+    fun `the far world does not step when the night flag flips`() {
+        val required = System.getProperty("atlas.likeness.require") == "true"
+        if (HostCore.load() == null) {
+            check(!required) { "the flip's frames need the host core: ${HostCore.unavailable}" }
+            assumeTrue("the host core: ${HostCore.unavailable}", false)
+        }
+        // the minute the flag flips at over the Westerkerk on 11 November 2026 (16:03 UTC), found as the port finds it
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val start = Instant.parse("2026-11-11T15:30:00Z")
+        val theme = ThemeBlock.allocate()
+        fun night(at: Instant): Boolean {
+            CoreMoment.write(theme, Moment.Live(at, null), zone, daylight = false)
+            return theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0
+        }
+        val flip = (1 until 90).map { start.plusSeconds(60L * it) }.first { night(it) }
+        assertTrue("the minute before the flip is day", !night(flip.minusSeconds(60)))
+        val instants = listOf(flip.minusSeconds(180), flip.minusSeconds(60), flip.plusSeconds(60))
+        val views = listOf(
+            Triple("75 km", 75_000.0, 0.0), Triple("150 km", 150_000.0, 0.0), Triple("300 km", 300_000.0, 0.0), Triple("600 km", 600_000.0, 0.0),
+            Triple("75 km pitched", 75_000.0, 60.0), Triple("600 km pitched", 600_000.0, 60.0),
+        )
+        val out = File(Likeness.report, "flip").apply { mkdirs() }
+        val (w, h, density) = Triple(540, 1200, 540.0 / 412.0)
+        val failures = ArrayList<String>()
+        WorldHost(w, h, density, screen = false, work = File(out, "work")).use { host ->
+            for ((name, distance, pitch) in views) {
+                val shots = instants.map { host.draw(52.3746, 4.8840, distance, 0.0, pitch, Moment.Live(it, null), (h / density) * 0.48) }
+                shots.forEachIndexed { i, s -> ImageIO.write(s.image(), "png", File(out, "${name.replace(' ', '-')}-$i.png")) }
+                // below a pitched view's sky strip
+                val from = if (pitch > 0.0) h / 20 else 0
+                fun moved(a: WorldShot, b: WorldShot): Pair<Double, Int> {
+                    var sum = 0L
+                    var most = 0
+                    for (i in from * w * 3 until a.rgb.size) {
+                        val d = abs((a.rgb[i].toInt() and 0xFF) - (b.rgb[i].toInt() and 0xFF))
+                        sum += d
+                        most = max(most, d)
+                    }
+                    return sum / (3.0 * w * (h - from)) to most
+                }
+                val (before, beforeMost) = moved(shots[0], shots[1])
+                val (across, acrossMost) = moved(shots[1], shots[2])
+                println("world flip $name: the two minutes before moved it %.2f levels (most %d), the flip %.2f (most %d)".format(before, beforeMost, across, acrossMost))
+                if (across > before + FLIP_MEAN || acrossMost > beforeMost + FLIP_MOST) {
+                    failures += "$name: %.2f levels (most %d) across the flip, %.2f (most %d) in the two minutes before".format(across, acrossMost, before, beforeMost)
+                }
+            }
+        }
+        assertTrue("the far world steps when the night flag flips: $failures (the frames: $out)", failures.isEmpty())
+    }
+
+    private companion object {
+        /** How much more than the two minutes before it the flip may move a frame: a level's rounding in the mean, four in a pixel. */
+        const val FLIP_MEAN = 1.0
+        const val FLIP_MOST = 4
     }
 }

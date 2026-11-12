@@ -173,7 +173,9 @@ struct WorldGeometry {
 
 /// The places a world tile names (scene/WorldNames.hpp), in the tile's order, the packer's rank: its label layer's
 /// place nodes of a kind the world names, each with its `name`, its people (the number its population's text starts
-/// with) and whether it is a capital.
+/// with) and whether it is a capital. After them its waters (the layer's source 2: each at its name's point, with its
+/// area) and its rivers (source 3: each at the middle of its longest piece in the tile, with its length there), each
+/// by the packer's rank.
 [[nodiscard]] std::vector<WorldName> build_world_names(const tiles::Tile& tile);
 
 /// A pole's cap: a grid of 128 by 16 quads over its box, two triangles each in the tiles' winding, in palette entry
@@ -194,7 +196,7 @@ struct WorldTile {
     std::uint32_t segments = 0;
     std::uint32_t coast = 0; ///< the last of its segments: its coast's
     std::uint32_t lights = 0;
-    std::vector<WorldName> names; ///< the places it names, by rank (build_world_names)
+    std::vector<WorldName> names; ///< the places and the waters it names, by rank (build_world_names)
     std::uint64_t drawn = 0;      ///< the last frame that drew it
     double shown = -1;   ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
     bool pinned = false; ///< the globe's L0 to L3: never let go of

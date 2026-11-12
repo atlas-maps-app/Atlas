@@ -60,8 +60,12 @@ struct Stand {
     Box box;
 };
 
-/// The stand of a label of measures `m` at spot `spot` about point `p`, in LabelPainter's float arithmetic.
-[[nodiscard]] Stand stand_at(const Measures& m, Point p, std::size_t spot) noexcept;
+/// The stand of a label of measures `m` at spot `spot` about point `p`, in LabelPainter's float arithmetic. A label
+/// risen over a mark at its point (Candidate::rise, Candidate::mark) stands `rise` of the way up to where its text's
+/// lower edge lies `mark` px over the point, and its box reaches down over the mark by as much, so no other label
+/// stands on the mark; at a rise of 0 the stand is LabelPainter's to the bit.
+[[nodiscard]] Stand stand_at(const Measures& m, Point p, std::size_t spot, float rise = 0.0F,
+                             float mark = 0.0F) noexcept;
 
 /// What a frame's labels stand within and clear of: the frame, the chrome's keep-out boxes, the markers' boxes; and the
 /// least size a label may draw at, a fraction of its own (the readable floor: 0, none).
@@ -84,6 +88,11 @@ struct Candidate {
     /// A label on its way out (a name the frame no longer picks): one placed fades out where it stands, as one that
     /// meets another does, and one not placed is not placed.
     bool hidden = false;
+    /// A label that stands clear of a mark drawn at its point (a city's name over its light at night, as on a map of
+    /// dots and labels): how far it has risen, 0 (about its point, as every other label) to 1, and the mark's radius,
+    /// device px, which does not grow with the set's size. Each of the six spots is then above the mark.
+    float rise = 0.0F;
+    float mark = 0.0F;
 };
 
 /// A label's place: its candidate (index into the frame's candidates), the point and the spot it took, its stand.

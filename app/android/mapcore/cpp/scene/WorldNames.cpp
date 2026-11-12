@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace atlas::scene {
 
@@ -24,6 +25,38 @@ constexpr double id_seconds = 60.0;
     return std::abs(lat0 - lat1) <= same_place(kind) && dlon <= same_place(kind);
 }
 
+/// The classes of the one rank, each 2^24 apart: a kind's (a capital a class of its own over the cities, the rivers'
+/// between the towns and the villages).
+constexpr std::int32_t class_step = 1 << 24;
+constexpr std::int32_t class_country = 0;
+constexpr std::int32_t class_capital = 1;
+constexpr std::int32_t class_city = 2;
+constexpr std::int32_t class_town = 3;
+constexpr std::int32_t class_river = 4;
+constexpr std::int32_t class_village = 5;
+constexpr std::int32_t class_suburb = 6;
+
+/// The priority of a name of class `rank` whose worth within it is `value` (0 to 2^24 - 1, the more the higher).
+[[nodiscard]] std::int32_t priority_of(std::int32_t rank, double value) noexcept {
+    const double within = std::clamp(value, 0.0, static_cast<double>(class_step - 1));
+    return -1 - (rank * class_step) - (class_step - 1 - static_cast<std::int32_t>(within));
+}
+
+/// A water's worth within its class: its size on a log scale (an ocean's 1.6e14 m² is 47 doublings, under 2^24 at
+/// 2^18 a doubling), so the larger is first and no size is past the class.
+[[nodiscard]] double size_worth(double extent) noexcept {
+    return extent > 1.0 ? pymath::log(extent) / pymath::log(2.0) * static_cast<double>(1 << 18) : 0.0;
+}
+
+/// The metres between two places near each other (the rivers' rows of a frame).
+[[nodiscard]] double metres_between(double lat0, double lon0, double lat1, double lon1) noexcept {
+    double dlon = std::abs(lon0 - lon1);
+    if (dlon > 180.0) dlon = 360.0 - dlon;
+    const double x = dlon * 111'320.0 * pymath::cos(pymath::radians((lat0 + lat1) / 2.0));
+    const double y = (lat0 - lat1) * 110'540.0;
+    return pymath::sqrt((x * x) + (y * y));
+}
+
 } // namespace
 
 std::optional<NameKind> name_kind(std::string_view place) noexcept {
@@ -35,32 +68,64 @@ std::optional<NameKind> name_kind(std::string_view place) noexcept {
     return std::nullopt;
 }
 
+std::optional<NameKind> water_kind(std::string_view kind) noexcept {
+    if (kind == "lake") return NameKind::lake;
+    if (kind == "reservoir") return NameKind::reservoir;
+    if (kind == "bay") return NameKind::bay;
+    if (kind == "strait") return NameKind::strait;
+    if (kind == "sea") return NameKind::sea;
+    if (kind == "ocean") return NameKind::ocean;
+    return std::nullopt;
+}
+
 std::optional<NameStyle> name_style(NameKind kind, double distance) noexcept {
     if (!(distance <= names_none_beyond)) return std::nullopt;
+    if (is_water(kind)) {
+        // the Globe board names no water
+        if (distance > names_globe_from) return std::nullopt;
+        return NameStyle::water;
+    }
     if (distance > names_globe_from) return NameStyle::globe;
     switch (kind) {
-    case NameKind::country:
-    case NameKind::city: return NameStyle::city;
     case NameKind::town: return NameStyle::town;
     case NameKind::village:
     case NameKind::suburb: return NameStyle::village;
+    default: return NameStyle::city;
     }
-    return NameStyle::city;
 }
 
 std::int32_t name_priority(const WorldName& name) noexcept {
-    // a class a kind (a capital a class of its own over the cities), 2^24 apart; within it by its people
-    constexpr std::int32_t step = 1 << 24;
-    std::int32_t rank = 0;
+    // within its class a place by its people
+    std::int32_t rank = class_city;
     switch (name.kind) {
-    case NameKind::country: rank = 0; break;
-    case NameKind::city: rank = name.capital ? 1 : 2; break;
-    case NameKind::town: rank = 3; break;
-    case NameKind::village: rank = 4; break;
-    case NameKind::suburb: rank = 5; break;
+    case NameKind::country: rank = class_country; break;
+    case NameKind::city: rank = name.capital ? class_capital : class_city; break;
+    case NameKind::town: rank = class_town; break;
+    case NameKind::village: rank = class_village; break;
+    case NameKind::suburb: rank = class_suburb; break;
+    default: break;
     }
-    const double people = std::clamp(name.people, 0.0, static_cast<double>(step - 1));
-    return -1 - (rank * step) - (step - 1 - static_cast<std::int32_t>(people));
+    return priority_of(rank, name.people);
+}
+
+std::optional<std::int32_t> water_priority(const WorldName& name, double metres_a_dp) noexcept {
+    const bool scaled = metres_a_dp > 0.0;
+    if (name.kind == NameKind::river) {
+        if (scaled && name.extent / metres_a_dp < river_least_dp) return std::nullopt;
+        return priority_of(class_river, size_worth(name.extent));
+    }
+    // its area on the screen, dp²: a node's, which says none, is taken as a name's least
+    const bool known = name.extent > 0.0;
+    const double on_screen =
+        !known ? water_least_dp2
+               : (scaled ? name.extent / (metres_a_dp * metres_a_dp) : std::numeric_limits<double>::infinity());
+    if (on_screen < water_least_dp2) return std::nullopt;
+    if (name.kind == NameKind::ocean || name.kind == NameKind::sea) {
+        return priority_of(class_country, size_worth(name.extent));
+    }
+    const std::int32_t rank =
+        on_screen >= water_city_dp2 ? class_city : (on_screen >= water_town_dp2 ? class_town : class_village);
+    return priority_of(rank, size_worth(name.extent));
 }
 
 void WorldNames::reset() noexcept {
@@ -87,15 +152,73 @@ WorldNames::Id& WorldNames::id_of(const WorldName& name, NameStyle style, double
     return ids_.emplace(name.text, std::move(made))->second;
 }
 
+void WorldNames::pick_waters(const NameScale& scale) {
+    struct Row {
+        std::size_t at = 0;
+        bool river = false;
+        bool shown = false;
+        double from = 0;
+        std::int32_t priority = 0;
+    };
+    std::vector<Row> rows;
+    for (std::size_t i = 0; i < candidates_.size(); ++i) {
+        const WorldName& n = *candidates_[i].name;
+        if (!is_water(n.kind)) continue;
+        // named there before, and still picked
+        const bool shown = std::ranges::any_of(picked_, [&n](const PickedName& p) {
+            return !p.leaving && p.text == n.text && near(n.kind, p.lat, p.lon, n.lat, n.lon);
+        });
+        rows.push_back({.at = i,
+                        .river = n.kind == NameKind::river,
+                        .shown = shown,
+                        .from = metres_between(n.lat, n.lon, scale.lat, scale.lon),
+                        .priority = candidates_[i].priority});
+    }
+    if (rows.empty()) return;
+    // Where it was named first; then a river's row nearest the camera's target, another water's row of the highest
+    // rank (stable: a tie in the tiles' order).
+    std::ranges::stable_sort(rows, [](const Row& a, const Row& b) {
+        if (a.shown != b.shown) return a.shown;
+        if (a.river != b.river) return a.river;
+        return a.river ? a.from < b.from : a.priority > b.priority;
+    });
+    const double apart =
+        scale.metres_a_dp > 0.0 ? water_apart_dp * scale.metres_a_dp : std::numeric_limits<double>::infinity();
+    std::vector<std::uint8_t> dropped(candidates_.size(), 0);
+    std::vector<std::size_t> kept;
+    for (const Row& row : rows) {
+        const WorldName& n = *candidates_[row.at].name;
+        const bool twice = std::ranges::any_of(kept, [&](std::size_t k) {
+            const WorldName& o = *candidates_[k].name;
+            return (o.kind == NameKind::river) == row.river && o.text == n.text &&
+                   metres_between(o.lat, o.lon, n.lat, n.lon) < apart;
+        });
+        if (twice) {
+            dropped[row.at] = 1;
+        } else {
+            kept.push_back(row.at);
+        }
+    }
+    std::size_t to = 0;
+    for (std::size_t i = 0; i < candidates_.size(); ++i) {
+        if (dropped[i] == 0) candidates_[to++] = candidates_[i];
+    }
+    candidates_.resize(to);
+}
+
 void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra, double distance, const InView& in_view,
-                      double seconds) {
+                      double seconds, const NameScale& scale) {
     ++picks_;
     candidates_.clear();
     const auto take = [&](const WorldName& name) {
         if (name.text.empty()) return;
         const std::optional<NameStyle> style = name_style(name.kind, distance);
-        if (!style || !in_view(name.lat, name.lon)) return;
-        candidates_.push_back({.name = &name, .style = *style, .priority = name_priority(name)});
+        if (!style) return;
+        // a water by its size on the screen, or not at all
+        const std::optional<std::int32_t> priority =
+            is_water(name.kind) ? water_priority(name, scale.metres_a_dp) : name_priority(name);
+        if (!priority || !in_view(name.lat, name.lon)) return;
+        candidates_.push_back({.name = &name, .style = *style, .priority = *priority});
     };
     if (world != nullptr) {
         for (const WorldDraw& draw : world->draws) {
@@ -106,6 +229,7 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
         }
     }
     for (const WorldName& name : extra) take(name);
+    pick_waters(scale);
     // by rank (stable: a tie in the tiles' order), each place once
     std::ranges::stable_sort(candidates_,
                              [](const Candidate& a, const Candidate& b) { return a.priority > b.priority; });
@@ -136,8 +260,14 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
         if (chosen[i] == 0) continue;
         const Candidate& c = candidates_[i];
         const Id& id = id_of(*c.name, c.style, seconds);
-        next_.push_back(
-            {.id = c.id, .style = c.style, .priority = c.priority, .lat = id.lat, .lon = id.lon, .text = id.text});
+        next_.push_back({.id = c.id,
+                         .style = c.style,
+                         .priority = c.priority,
+                         .lat = c.name->lat,
+                         .lon = c.name->lon,
+                         .text = id.text,
+                         .lit = c.name->lit,
+                         .people = c.name->people});
     }
     // Those no longer picked leave: handed on, leaving, for a fade's length from when they left.
     for (const PickedName& p : picked_) {
@@ -165,7 +295,7 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
 
 std::span<const PickedName> WorldNames::update(const WorldFrame* world, std::span<const WorldName> extra,
                                                double distance, const InView& in_view, double seconds, bool rest,
-                                               bool changed) {
+                                               bool changed, const NameScale& scale) {
     // What the frame draws of the world's names: its tiles, each with the cells it names, and the test's names.
     std::uint64_t drawn = 0xCBF2'9CE4'8422'2325ULL;
     const auto mix = [&drawn](std::uint64_t v) { drawn = (drawn ^ v) * 0x0000'0100'0000'01B3ULL; };
@@ -191,7 +321,7 @@ std::span<const PickedName> WorldNames::update(const WorldFrame* world, std::spa
         now = due;
     }
     if (now) {
-        pick(world, extra, distance, in_view, seconds);
+        pick(world, extra, distance, in_view, seconds, scale);
         drawn_ = drawn;
     }
     return picked_;

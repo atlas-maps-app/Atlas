@@ -4,14 +4,14 @@
 #
 # With the bench APK (the non-debuggable, profileable build with the timings overlay, see app/build.gradle.kts) it then
 # measures the engine the way a phone runs it, and keeps what the plan's stage S0 asks for:
-#   home.atlasmap.txt, filters.atlasmap.txt  a table of each run's first frame (load, render, parse, raster; the time to the
-#                                            frame on screen; CPU at rest; memory peaks), then every run's AtlasMap lines.
+#   home.atlasmap.txt                        a table of each run's first frame (the core's first complete picture; the
+#                                            time to the frame on screen; CPU at rest; memory peaks), then every run's AtlasMap lines.
 #                                            Runs: the debug build at its first launch, then debug and bench, each as
 #                                            installed and after `cmd package compile -m speed -f app.atlas`
 #   <screen>.<run>.mem.txt                   that run's memory (polled dumpsys meminfo, ART's GC lines, the kernel's
 #                                            VmHWM) and, for the home, what the app does at rest after its first frame
-#   home.simpleperf.txt                      a simpleperf profile of the bench build's first home frame, split into Skia,
-#                                            filter primitives and Turbulence (ci/perfsplit.py)
+#   home.simpleperf.txt                      a simpleperf profile of the bench build's first home frame (ci/perfsplit.py's
+#                                            split; Skia's filters and Turbulence were today's map's, which left the phone on 5 November)
 #   glcaps.txt                               the device's facts and OpenGL ES capabilities (the glcaps screen)
 #   pills-*.png, pills*.txt                  the core's frosted pills (K11b): VK bench's still pills with the core's glass
 #                                            and with their tint alone, judged by ci/pillcheck.py; the home on both hosts
@@ -33,10 +33,10 @@
 #                                            must read `twin $ATLAS_TWIN_HASH ok`; and in vkfacts.txt the core's shaping held
 #                                            to the guest's own (K13), `text.glyphs: <n> runs, <m> glyphs equal
 #                                            Android's (rule <rule>)`
-#   map.txt, map-transition.txt, map-*.png   the map drawn by the core (K11): its first frame from a cleared state and
-#                                            warm, a swipe and the rest after it, the Java heap at the canal ring, the
-#                                            transitional rule's switch away from the core's tiles and back, and the
-#                                            honest state under atlas.vk.off
+#   map.txt, map-away.txt, map-*.png         the map drawn by the core (K11): its first frame from a cleared state and
+#                                            warm, a swipe and the rest after it, the Java heap at the canal ring, a jump
+#                                            away from the core's tiles (its own cover and the map's line) and back, and
+#                                            the honest state under atlas.vk.off
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
@@ -58,10 +58,10 @@
 # with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a home that does not rest within 60 s of its first frame, a map frame from three of the emulator's
-# frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a transitional
-# switch without its lines, a script of the eight scripts' names without its glyphs, its eight sprites handed or six of
-# them drawn, no honest state under atlas.vk.off, or a world that does not come from world-latest or draw
-# whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
+# frames (4 s at the least) after a swipe, a Java heap above 96 MB at the canal ring, a jump away from the
+# core's tiles and back without its lines, a script of the eight scripts' names without its glyphs, its eight sprites
+# handed or six of them drawn, no honest state under atlas.vk.off, or a world that does not come from
+# world-latest or draw whole at 25 and 100 km ("WORLD FAILED", world_phase). A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -184,13 +184,13 @@ since_marker() { logcat_dump -v threadtime -s AtlasMap:I | sed -n "/run-marker $
 # every tag since the marker (the system's ANR lines are not under AtlasMap)
 since_marker_all() { logcat_dump -v threadtime | sed -n "/run-marker $1\$/,\$p"; }
 
-# How many finished frames (or the last filter probe) are logged since marker $1: today's map's, or the core's first.
-frames_since() { since_marker "$1" | grep -c -e "drawn in" -e "filter probe sblur" -e "vk first frame"; }
+# How many of the core's first complete pictures are logged since marker $1 (one, once it has drawn).
+frames_since() { since_marker "$1" | grep -c -e "vk first frame"; }
 
-# Seconds from marker $1 (logged just before the app is started) to the first frame on screen (the filters: the last probe).
+# Seconds from marker $1 (logged just before the app is started) to the core's first complete picture on screen.
 drawn_after() {
   since_marker "$1" | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
-    NR == 1 { t0 = t($2) } / drawn in |filter probe sblur|vk first frame/ { d = t($2) - t0; if (d < 0) d += 86400; printf "%.1f", d; exit }'
+    NR == 1 { t0 = t($2) } /vk first frame/ { d = t($2) - t0; if (d < 0) d += 86400; printf "%.1f", d; exit }'
 }
 
 # The larger of two numbers; a non-number counts as 0.
@@ -243,11 +243,11 @@ rest_check() {
   local pid=$1 label=$2 a b f0 f1 busy
   REST_CPU="?"; REST_FRAMES="?"; REST_LINE="at rest: no process"
   [ -n "$pid" ] || return
-  f0=$(since_marker "$label" | grep -c -E ': load [0-9]+ ms, render')
+  f0=$(since_marker "$label" | grep -c 'AtlasMap: vk frame ')
   a=$(cpu_ticks "$pid"); thread_ticks "$pid" > "$OUT/.threads0"
   sleep "$IDLE"
   b=$(cpu_ticks "$pid"); thread_ticks "$pid" > "$OUT/.threads1"
-  f1=$(since_marker "$label" | grep -c -E ': load [0-9]+ ms, render')
+  f1=$(since_marker "$label" | grep -c 'AtlasMap: vk frame ')
   [[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ ]] || { REST_LINE="at rest: the process's CPU time could not be read"; return; }
   REST_CPU=$(awk -v d=$((b - a)) -v hz=$CLK_TCK -v s="$IDLE" 'BEGIN { printf "%.1f%%", 100 * d / hz / s }')
   REST_FRAMES=$((f1 - f0))
@@ -258,10 +258,9 @@ rest_check() {
 }
 
 # Opens screen $1 as run $2 (such as "bench-speed"), waits for it, and keeps its logcat lines, screenshot and memory: files
-# <screen>.<run>.atlasmap.txt, .png, .gfxinfo.txt and (home, filters) .mem.txt. $3 = "fresh" starts from the installed
-# state. The home's map is the Westerkerk, drawn from the canal ring put on the device (ATLAS_PACKS), and the filters
-# screen runs the SVG filter probes through AGSL: those two wait until the frame is drawn or the last probe is done. The
-# logcat marker is "<run>-<screen>", which must be unique to this call.
+# <screen>.<run>.atlasmap.txt, .png, .gfxinfo.txt and (home) .mem.txt. $3 = "fresh" starts from the installed state.
+# The home's map is the Westerkerk, drawn by the core from the canal ring put on the device (ATLAS_PACKS): it waits
+# until the core's first picture is complete. The logcat marker is "<run>-<screen>", which must be unique to this call.
 measure() {
   local s=$1 run=$2 label="$2-$1" pid drawn
   adb shell am force-stop $PKG
@@ -271,18 +270,18 @@ measure() {
   PEAK_PSS=0; PEAK_JAVA=0; PEAK_ALLOC=0; PEAK_NATIVE=0; PEAK_GFX=0
   adb shell am start -W -n $PKG/.MainActivity --es atlas.screen "$s" --ez atlas.ci true > "$OUT/$s.start.txt"
   sleep 12
-  if [ "$s" = "home" ] || [ "$s" = "filters" ]; then
+  if [ "$s" = "home" ]; then
     wait_frame "$label"
     [ "$FRAME_DONE" = 1 ] || echo "NO FRAME on $s ($run) within ${WAIT}s"
     sleep 2
     pid=$(adb shell pidof $PKG | tr -d '\r' | awk '{print $1}')
     REST_CPU="-"; REST_FRAMES="-"; REST_LINE=""
-    [ "$s" = home ] && [ "$FRAME_DONE" = 1 ] && rest_check "$pid" "$label"
+    [ "$FRAME_DONE" = 1 ] && rest_check "$pid" "$label"
     drawn=$(drawn_after "$label")
     {
       echo "run: $run, screen: $s, pid: ${pid:-none}"
       echo "summary: drawn_s=${drawn:-none} rest_cpu=$REST_CPU rest_frames=$REST_FRAMES heap_mb=$((PEAK_ALLOC / 1024)) pss_mb=$((PEAK_PSS / 1024)) hwm_mb=$(adb shell cat /proc/${pid:-0}/status 2>/dev/null | awk '/^VmHWM/ {printf "%d", $2 / 1024}')"
-      echo "first frame on screen (filters: the last probe done) ${drawn:-never} s after the start"
+      echo "first frame on screen ${drawn:-never} s after the start"
       [ -n "$REST_LINE" ] && echo "$REST_LINE"
       echo "polled peaks (KB, every ~6 s): dalvik heap alloc $PEAK_ALLOC, java heap pss $PEAK_JAVA, native heap pss $PEAK_NATIVE, graphics $PEAK_GFX, total pss $PEAK_PSS"
       [ -n "$pid" ] && echo "ART: $(gc_summary "$pid")"
@@ -421,12 +420,12 @@ echo "Screens: $SCREENS ($(grep -c . "$OUT/screens.txt") of the app's $(grep -c 
 
 for s in $SCREENS; do
   measure "$s" debug-first
-  # Per screen, as before: the lines, the screenshot, the gfxinfo (home and filters also keep the run's own files).
+  # Per screen, as before: the lines, the screenshot, the gfxinfo (the home also keeps the run's own files).
   cp "$OUT/$s.debug-first.atlasmap.txt" "$OUT/$s.atlasmap.txt"
   mv "$OUT/$s.debug-first.png" "$OUT/$s.png"
   mv "$OUT/$s.debug-first.gfxinfo.txt" "$OUT/$s.gfxinfo.txt"
   [ -f "$OUT/$s.debug-first.crash.txt" ] && mv "$OUT/$s.debug-first.crash.txt" "$OUT/$s.crash.txt"
-  if [ "$s" != home ] && [ "$s" != filters ]; then rm -f "$OUT/$s.debug-first.atlasmap.txt"; fi
+  if [ "$s" != home ]; then rm -f "$OUT/$s.debug-first.atlasmap.txt"; fi
 done
 adb logcat -d > "$OUT/logcat.txt"
 
@@ -794,7 +793,7 @@ pills_phase() {
     fresh_state
     vk_launch "$l" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true "$@"
     for i in $(seq 1 90); do
-      since_marker "$l" | grep -q -e 'vk first frame' -e 'drawn in' && break
+      since_marker "$l" | grep -q -e 'vk first frame' && break
       sleep 2
     done
     sleep 8
@@ -852,9 +851,10 @@ first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*'
 # 60 s of its first frame, no frame from three of the emulator's frames after a swipe on it, 4 s at the least (CI's `vk
 # frame` lines: the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25
 # October; lavapipe's frames take about 2 s with the water's light on by default, 30 October), the Java
-# heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
-# back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
-# fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
+# heap at the canal ring at most 96 MB, a jump from the core's tiles to a place without them and back (the away script:
+# at Lille the core draws its own cover and the map says it has no data there, CI's runs building no windows; back at
+# the start its picture is complete again: `vk script: away no map data: …` and `vk script: back ready`; until 5
+# November the transitional rule's switch to today's map and back), and T2's honest state under atlas.vk.off.
 map_phase() {
   local run line ms kind limit before after heap frame_ms tail script handed drawn
   for run in mapfirst mapwarm; do
@@ -896,16 +896,16 @@ map_phase() {
   [ "$heap" -le 96 ] || { echo "MAP FAILED: the Java heap at the canal ring is ${heap} MB (at most 96)"; FAIL=1; }
   adb exec-out screencap -p > "$OUT/map-swipe.png"
   since_marker mapwarm | grep -E 'AtlasMap: (vk (first frame|map|tiles|config|path|surface|window|honest|swipe)|vk frame )' | sed 's/.*AtlasMap: //' > "$OUT/map.txt"
-  # The transitional rule: away from the core's tiles (today's map, or its own honest state offline) and back.
-  vk_launch maptrans --es atlas.screen home --ez atlas.ci true --es atlas.vk.script transition
-  wait_line maptrans 420 "vk script done" || { echo "MAP FAILED: the transitional script did not finish within 420 s"; FAIL=1; }
-  since_marker maptrans | grep -E 'AtlasMap: vk (script|transition|transitional|first frame|map)' | sed 's/.*AtlasMap: //' > "$OUT/map-transition.txt"
-  cat "$OUT/map-transition.txt"
-  for line in '^vk transitional ' '^vk transition core>canvas ' '^vk transition canvas>core '; do
-    grep -q "$line" "$OUT/map-transition.txt" || { echo "MAP FAILED: no '${line#^}' line"; FAIL=1; }
+  # Away from the core's tiles (its own cover, and the map's line) and back to its picture.
+  vk_launch mapaway --es atlas.screen home --ez atlas.ci true --es atlas.vk.script away
+  wait_line mapaway 420 "vk script done" || { echo "MAP FAILED: the away script did not finish within 420 s"; FAIL=1; }
+  since_marker mapaway | grep -E 'AtlasMap: vk (script|cover|first frame|map)' | sed 's/.*AtlasMap: //' > "$OUT/map-away.txt"
+  cat "$OUT/map-away.txt"
+  for line in '^vk cover gone: ' '^vk script: away no map data: ' '^vk script: back ready$'; do
+    grep -q "$line" "$OUT/map-away.txt" || { echo "MAP FAILED: no '${line#^}' line"; FAIL=1; }
   done
-  adb exec-out screencap -p > "$OUT/map-transition.png"
-  vk_crashes maptrans; vk_anr maptrans
+  adb exec-out screencap -p > "$OUT/map-away.png"
+  vk_crashes mapaway; vk_anr mapaway
   # The world's names in eight scripts (ENGINE.md step 5, "Names"): the core is given a city's own name in each (the
   # names script), asks the app for their sprites, which Android's text stack draws, and places and draws them. Each
   # script's letters must be in the device's fonts (`vk script: names <script> glyphs`), all eight sprites handed with
@@ -1061,7 +1061,7 @@ world_phase() {
     echo "WORLD FAILED: the world script did not reach its view under the cover at 12 km"; FAIL=1
   fi
   wait_line world 300 "vk script done" || { echo "WORLD FAILED: the world script did not finish"; FAIL=1; }
-  since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|transition)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
+  since_marker world | grep -E 'AtlasMap: vk (world|script|tiles|first frame|map|cover)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
   if grep -q '^vk world: the head of world/.* on the phone$' "$OUT/world.txt"; then
     echo "world: $(grep -c '^vk world: the head of world/.* on the phone$' "$OUT/world.txt") packs' heads, the first $(grep -m1 '^vk world: the head of ' "$OUT/world.txt" | sed 's/^vk world: the head of //')"
   else
@@ -1086,7 +1086,7 @@ fi
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 
-# One build's home and filters runs, each from the installed state: as installed, then after ART has compiled the app
+# One build's home runs, each from the installed state: as installed, then after ART has compiled the app
 # (`speed`, about what a phone reaches after its background dexopt). $1 is the build's name, $2 its APK.
 truth_runs() {
   local build=$1 s
@@ -1094,11 +1094,11 @@ truth_runs() {
   read_perms
   [ "$build" = bench ] && adb shell dumpsys package $PKG | grep -q "DEBUGGABLE" && echo "WARNING: the bench build is debuggable"
   [ "$build" = bench ] && glcaps
-  for s in home filters; do measure "$s" "$build-installed" fresh; done
+  measure home "$build-installed" fresh
   adb shell am force-stop $PKG
   adb shell cmd package compile -m speed -f $PKG > "$OUT/compile-$build.txt" 2>&1
   echo "compile $build: $(tr -d '\r' < "$OUT/compile-$build.txt" | tail -1)"
-  for s in home filters; do measure "$s" "$build-speed" fresh; done
+  measure home "$build-speed" fresh
 }
 
 # The device's facts and GL capabilities: the glcaps screen logs them as "glcaps name: value".
@@ -1148,7 +1148,7 @@ profile_home() {
   adb pull /data/local/tmp/home.samples.txt "$OUT/home.samples.tmp" >/dev/null 2>&1
   {
     echo "simpleperf profile of the bench build's first home frame (installed state, speed-compiled), frame drawn: $FRAME_DONE (1 = yes)"
-    since_marker "$label" | grep -m1 -o "frame [0-9]* .*: load [0-9]* ms, render.*"
+    since_marker "$label" | grep -m1 -o "vk first frame .*"
     echo "(250 Hz with dwarf call graphs on every thread of the app: the frame's times include simpleperf's overhead)"
     grep -i -e "samples recorded" -e "samples lost" -e "error" "$OUT/home.simpleperf.record.txt" | head -5
     echo
@@ -1158,34 +1158,26 @@ profile_home() {
   adb shell rm -f /data/local/tmp/home.perf.data /data/local/tmp/home.samples.txt
 }
 
-# The first-frame table of screen $1 over its runs, then each run's lines, in <screen>.atlasmap.txt.
+# The first-frame table of the home over its runs, then each run's lines, in home.atlasmap.txt.
 RUNS="debug-first debug-installed debug-speed bench-installed bench-speed"
 compose() {
-  local s=$1 run f m line nums sum
+  local s=$1 run f m line sum
   {
     echo "Atlas on $(adb shell getprop ro.product.model | tr -d '\r') (API $(adb shell getprop ro.build.version.sdk | tr -d '\r'), $(adb shell getprop ro.product.cpu.abi | tr -d '\r')), first frame of each run."
-    if [ "$s" = home ]; then
-      echo "Engine times (ms) from its frame line; drawn = seconds from the start to the frame on screen; rest = CPU of one core"
-      echo "in the ${IDLE} s after it; heap = peak Java heap in use (dumpsys, polled); hwm = the process's peak resident memory."
-      printf '  %-16s %-10s %-7s %7s %7s %6s %7s %7s %7s %6s %7s %6s\n' run region moment load render parse raster total drawn rest heapMB hwmMB
-    else
-      echo "Filter probes: their count and summed CPU and AGSL (GPU) times."
-    fi
+    echo "first = the core's first complete picture (ms from the process's start, its vk first frame line); drawn = seconds from"
+    echo "the start to it on screen; rest = CPU of one core in the ${IDLE} s after it; heap = peak Java heap in use (dumpsys,"
+    echo "polled); hwm = the process's peak resident memory."
+    printf '  %-16s %7s %-5s %7s %7s %7s %6s\n' run first kind drawn rest heapMB hwmMB
     for run in $RUNS; do
       f="$OUT/$s.$run.atlasmap.txt"; m="$OUT/$s.$run.mem.txt"
       [ -f "$f" ] || continue
-      if [ "$s" = home ]; then
-        line=$(grep -m1 -E ': load [0-9]+ ms, render' "$f")
-        sum=$(grep -m1 '^summary:' "$m" 2>/dev/null)
-        if [ -z "$line" ]; then printf '  %-16s %s\n' "$run" "no frame"; continue; fi
-        nums=$(echo "$line" | sed -E 's/.*AtlasMap: frame [0-9]+ ([^ ]+) view=[^ ]+ moment=([^ ]+) band=[^ ]+ [^ ]+: load ([0-9]+) ms, render ([0-9]+) ms, parse ([0-9]+) ms, raster ([0-9]+) ms, total ([0-9]+) ms.*/\1 \2 \3 \4 \5 \6 \7/')
-        # shellcheck disable=SC2086
-        printf '  %-16s %-10s %-7s %7s %7s %6s %7s %7s %7s %6s %7s %6s\n' "$run" $nums \
-          "$(echo "$sum" | grep -o 'drawn_s=[^ ]*' | cut -d= -f2)" "$(echo "$sum" | grep -o 'rest_cpu=[^ ]*' | cut -d= -f2)" \
-          "$(echo "$sum" | grep -o 'heap_mb=[^ ]*' | cut -d= -f2)" "$(echo "$sum" | grep -o 'hwm_mb=[^ ]*' | cut -d= -f2)"
-      else
-        printf '  %-16s %s\n' "$run" "$(grep -o 'CPU [0-9]* ms, GPU [0-9]* ms' "$f" | awk '{ c += $2; g += $5; n++ } END { printf "%d probes, CPU %d ms, GPU %d ms", n, c, g }')"
-      fi
+      line=$(grep -m1 -o 'vk first frame -*[0-9]* [a-z]*' "$f")
+      sum=$(grep -m1 '^summary:' "$m" 2>/dev/null)
+      if [ -z "$line" ]; then printf '  %-16s %s\n' "$run" "no frame"; continue; fi
+      # shellcheck disable=SC2086
+      printf '  %-16s %7s %-5s %7s %7s %7s %6s\n' "$run" $(echo "$line" | awk '{print $4, $5}') \
+        "$(echo "$sum" | grep -o 'drawn_s=[^ ]*' | cut -d= -f2)" "$(echo "$sum" | grep -o 'rest_cpu=[^ ]*' | cut -d= -f2)" \
+        "$(echo "$sum" | grep -o 'heap_mb=[^ ]*' | cut -d= -f2)" "$(echo "$sum" | grep -o 'hwm_mb=[^ ]*' | cut -d= -f2)"
     done
     for run in $RUNS; do
       f="$OUT/$s.$run.atlasmap.txt"
@@ -1203,18 +1195,17 @@ if has_phase truth && [ -n "$BENCH_APK" ] && [ "${ATLAS_BENCH:-1}" != 0 ]; then
   truth_runs debug "$APK"
   truth_runs bench "$BENCH_APK"
   [ "${ATLAS_PROFILE:-1}" != 0 ] && profile_home
-  for s in home filters; do compose "$s"; done
+  compose home
   adb logcat -d > "$OUT/logcat.bench.txt"
   # The numbers in the job's log too, so a run can be read without its artifacts.
-  echo; sed -n '1,9p' "$OUT/home.atlasmap.txt"
-  echo; sed -n '1,7p' "$OUT/filters.atlasmap.txt"
+  echo; sed -n '1,10p' "$OUT/home.atlasmap.txt"
   echo; grep -E '^(device\.(model|soc|cores|cpu|heap|thermal)|app\.|gl\.(version|renderer|highp\.fragment|EXT_multisampled_render_to_texture|KHR_blend_equation_advanced|EXT_shader_framebuffer_fetch|max\.samples):|gl:)' "$OUT/glcaps.txt"
   [ -f "$OUT/home.simpleperf.txt" ] && { echo; sed -n '/^RASTER split/,/^$/p' "$OUT/home.simpleperf.txt"; sed -n '1,3p' "$OUT/home.simpleperf.txt"; }
 else
   # No truth phase here: phases.txt says so, for emulator-coverage.
   grep -v -x truth "$OUT/phases.txt" > "$OUT/phases.new"; mv "$OUT/phases.new" "$OUT/phases.txt"
   RUNS="debug-first"
-  for s in home filters; do [ -f "$OUT/$s.debug-first.atlasmap.txt" ] && compose "$s"; done
+  [ -f "$OUT/home.debug-first.atlasmap.txt" ] && compose home
 fi
 if [ -s "$OUT/.dumps-failed" ]; then
   echo "DUMP FAILED: $(wc -l < "$OUT/.dumps-failed") dumps of the device's log were not had whole:"; sort "$OUT/.dumps-failed" | uniq -c

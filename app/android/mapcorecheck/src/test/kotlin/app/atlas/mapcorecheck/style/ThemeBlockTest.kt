@@ -65,7 +65,7 @@ class ThemeBlockTest {
             val (az, el, L) = Amsterdam.sunOf(th)
             assertTrue("$what: the core refused the block: $got", "error" !in got)
             val want = LinkedHashMap<String, String>()
-            want["version"] = "1"
+            want["version"] = "${ThemeBlock.VERSION}"
             var flags = 0
             val carried = HashSet<String>()
             for ((k, v) in th) {
@@ -108,6 +108,9 @@ class ThemeBlockTest {
             }
             want["L0"] = bits(L.x); want["L1"] = bits(L.y); want["L2"] = bits(L.z)
             want["az"] = bits(az); want["el"] = bits(el)
+            // the place the block is written for unless its writer names another: the port's own (the Westerkerk)
+            want["place_lat"] = "%08x".format(java.lang.Float.floatToRawIntBits(ThemeBlock.PLACE_LAT.toFloat()))
+            want["place_lon"] = "%08x".format(java.lang.Float.floatToRawIntBits(ThemeBlock.PLACE_LON.toFloat()))
             assertEquals("$what: every field", want.toSortedMap(), got.toSortedMap())
         }
     }
@@ -154,7 +157,7 @@ class ThemeBlockTest {
         val (az, el, L) = Amsterdam.sunOf(th)
         val b = ThemeBlock.allocate()
         fun fresh() = ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, false)
-        fresh(); b.putInt(ThemeBlock.VERSION_AT, 2)
+        fresh(); b.putInt(ThemeBlock.VERSION_AT, ThemeBlock.VERSION + 1)
         assertEquals("version", parse(StyleHost.themeDump(b))["error"])
         // the first flag past the core's own (DAYLIGHT is 1 shl 12)
         fresh(); b.putInt(ThemeBlock.FLAGS_AT, 1 shl 13)
@@ -172,8 +175,19 @@ class ThemeBlockTest {
         assertEquals("sun", parse(StyleHost.themeDump(b))["error"])
         fresh(); b.putDouble(ThemeBlock.WEATHER_AT + 8 * ThemeBlock.WEATHER_KEYS.indexOf("pressure"), 0.0)
         assertEquals("weather", parse(StyleHost.themeDump(b))["error"])
+        // the place: on the planet
+        fresh(); b.putFloat(ThemeBlock.PLACE_LAT_AT, 91f)
+        assertEquals("value", parse(StyleHost.themeDump(b))["error"])
+        fresh(); b.putFloat(ThemeBlock.PLACE_LON_AT, Float.NaN)
+        assertEquals("value", parse(StyleHost.themeDump(b))["error"])
         fresh()
         assertTrue("error" !in parse(StyleHost.themeDump(b)))
+        // a block written for another place carries it (to a float's precision)
+        ThemeBlock.write(b, th, doubleArrayOf(L.x, L.y, L.z), az, el, false, false, placeLat = 35.6812, placeLon = 139.7671)
+        val tokyo = parse(StyleHost.themeDump(b))
+        assertTrue(tokyo.toString(), "error" !in tokyo)
+        assertEquals("%08x".format(java.lang.Float.floatToRawIntBits(35.6812f)), tokyo["place_lat"])
+        assertEquals("%08x".format(java.lang.Float.floatToRawIntBits(139.7671f)), tokyo["place_lon"])
     }
 
     @Test
