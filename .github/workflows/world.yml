@@ -1246,9 +1246,14 @@ jobs:
         # the frames and their proposal (world-refs/world-refs.json) in the report
         working-directory: app/android
         run: |
-          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
+          # on a failure the test's message too (the frames not drawn whole, with their notes), which Gradle's log gives
+          # as its class and line alone
+          if ! ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
             -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
-            -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace
+            -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace; then
+            grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
+            exit 1
+          fi
           # the test skips without ATLAS_WORLD_REFS, and writes the frames' proposal only once every frame is drawn
           # whole: without the proposal nothing was drawn
           if [ ! -f "${{ github.workspace }}/likeness/world-refs/world-refs.json" ]; then
@@ -1277,9 +1282,13 @@ jobs:
           # then (its ATLAS_WORLD_REFS, no ATLAS_WORLD_REFS_VIEWS), so with it the references were drawn once more here
           # (World run 43247006004)
           draw() {
-            ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
+            # on a failure the test's message too (the frames not drawn whole, with their notes), as above
+            if ! ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
               -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
-              -Datlas.likeness.report="$L" --rerun --stacktrace
+              -Datlas.likeness.report="$L" --rerun --stacktrace; then
+              grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
+              exit 1
+            fi
             if [ "$(sha256sum "$L/world-refs/world-refs.json" 2> /dev/null || true)" != "$before" ]; then
               echo "::error::the kept country's draw over $1 drew the references' views again (likeness/world-refs/world-refs.json changed)"
               exit 1
