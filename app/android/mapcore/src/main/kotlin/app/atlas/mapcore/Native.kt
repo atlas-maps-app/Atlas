@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 29
+    const val ABI = 30
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -410,9 +410,11 @@ object Native {
 
     /**
      * The building the app asks about (FillIn's question): way or [relation] [id] (0: none, the question closed), its
-     * walls' flat colour [wall] (0xRRGGBB), drawn [hatched] while the question is open.
+     * walls' flat colour [wall] (0xRRGGBB; negative: their colour is not asked about), drawn [hatched] while the
+     * question is open, and the roof it is asked about in ([roof]: 0 its own, 1 flat, 2 gabled, 3 hipped), which the
+     * core draws as the board's house in the building's place.
      */
-    @JvmStatic external fun ask(handle: Long, relation: Boolean, id: Long, wall: Int, hatched: Boolean)
+    @JvmStatic external fun ask(handle: Long, relation: Boolean, id: Long, wall: Int, hatched: Boolean, roof: Int)
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)

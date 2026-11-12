@@ -1717,9 +1717,11 @@ jstring native_routes(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
 }
 
 /// The building the app asks about (FillIn's question; frame/Asked.hpp): way or relation `id` (0: none, the question
-/// closed), its walls' flat colour `wall` (0xRRGGBB) and whether it is drawn hatched (the question still open).
-void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation, jlong id, jint wall,
-                jboolean hatched) {
+/// closed), its walls' flat colour `wall` (0xRRGGBB; negative: their colour is not asked about, and they keep the
+/// colour its tile gives them), whether it is drawn hatched (the question still open), and the roof it is asked about
+/// in (`roof`: 0 its own, 1 flat, 2 gabled, 3 hipped: scene::house_roof).
+void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation, jlong id, jint wall, jboolean hatched,
+                jint roof) {
     Core* core = core_of(handle);
     if (core == nullptr) return;
     if (id == 0) {
@@ -1728,8 +1730,10 @@ void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation
     }
     core->ask(frame::AskedBuilding{.id = id,
                                    .relation = relation == JNI_TRUE,
-                                   .wall = static_cast<std::uint32_t>(wall) & 0xFF'FFFFU,
-                                   .hatched = hatched == JNI_TRUE});
+                                   .wall = wall < 0 ? 0U : static_cast<std::uint32_t>(wall) & 0xFF'FFFFU,
+                                   .hatched = wall >= 0 && hatched == JNI_TRUE,
+                                   .roof = static_cast<std::uint8_t>(roof >= 0 && roof <= 3 ? roof : 0),
+                                   .own_wall = wall < 0});
 }
 
 /// The building under the view's device point (`x`, `y`) as the map's last frame drew it (frame/MapFrame.hpp's pick):
@@ -1967,7 +1971,7 @@ const std::array<JNINativeMethod, 66>& methods() {
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
         method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
-        method("ask", "(JZJIZ)V", fn(&native_ask)),
+        method("ask", "(JZJIZI)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),

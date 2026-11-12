@@ -458,10 +458,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * The building the app asks about from now on (FillIn's question): way or [relation] [id] (0: none), drawn plain in
-     * its walls' flat colour [wall] (0xRRGGBB, the board's), hatched while the question is open ([hatched]). Off the main
-     * thread.
+     * its walls' flat colour [wall] (0xRRGGBB, the board's; negative: their colour is not asked about, and they keep
+     * their own), hatched while the question is open ([hatched]); and, where its roof's shape is asked about, in the roof
+     * [roof] (0 its own, 1 flat, 2 gabled, 3 hipped) as the board's house. Off the main thread.
      */
-    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean) = core.call(Unit) { Native.ask(it, relation, id, wall, hatched) }
+    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean, roof: Int = 0) =
+        core.call(Unit) { Native.ask(it, relation, id, wall, hatched, roof) }
 
     /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,

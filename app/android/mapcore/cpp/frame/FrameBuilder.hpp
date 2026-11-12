@@ -52,6 +52,7 @@
 namespace atlas::scene {
 class Cover;         // scene/Cover.hpp
 class Heaps;         // scene/Heaps.hpp
+struct House;        // scene/House.hpp
 class ItemTable;     // scene/ItemTable.hpp
 struct ResidentPack; // scene/Packs.hpp
 struct WorldFrame;   // scene/WorldTiles.hpp
@@ -138,8 +139,18 @@ struct FrameState {
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas for this frame (FrameInputs::routes; null: none).
     const routes::RouteSet* routes = nullptr;
-    /// The building the app asks about this frame (FrameInputs::asked), if any.
+    /// The building the app asks about this frame (FrameInputs::asked), if any, where it asks about its walls' colour
+    /// (not AskedBuilding::own_wall): the buildings pass draws the tile's own building as asked.
     std::optional<AskedBuilding> asked;
+    /// The house the frame draws in that building's place (FrameInputs::house, while the cover draws the tile it was
+    /// read from, at their true depth: not under the painter switch), and that tile's place; null: none, the tile's
+    /// own building is drawn. The ranks leave the building's own items out while it is set (RankOptions::replaced).
+    const scene::House* house = nullptr;
+    shaders::TilePlace house_place{};
+    /// The house's walls: their flat colour (0xRRGGBB: the answer's or the board's grey, or the colour its tile gives
+    /// them where the app does not ask about it) and whether the board's hatch lies over them.
+    std::uint32_t house_wall = 0;
+    bool house_hatched = false;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
     /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
@@ -250,6 +261,9 @@ struct FrameInputs {
     const routes::RouteSet* routes = nullptr;
     /// The building the app asks about (MapCore.ask), if any: the ranks and the buildings pass draw it as asked.
     std::optional<AskedBuilding> asked;
+    /// That building's house in the roof asked about (scene/House.hpp; null: none), drawn by the house's pass in the
+    /// building's place.
+    const scene::House* house = nullptr;
     /// The user's palette (MapCore.palette; null: today's).
     const style::PaletteBlock* palette = nullptr;
 };
