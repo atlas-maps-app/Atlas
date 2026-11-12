@@ -561,6 +561,8 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
 
 std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     std::vector<WorldName> names;
+    // each row's place in the tile's order: the places, then the waters, then the rivers, each by the packer's rank
+    constexpr std::int64_t group = std::int64_t{1} << 40U;
     std::vector<std::int64_t> ranks;
     const tl::Layer* label = tile.layer(tl::LayerId::label);
     if (label == nullptr) return names;
@@ -568,7 +570,30 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     constexpr std::uint8_t capital = tl::slot_of(tl::label::columns, "tag:capital");
     const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
     each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
-        if (label->integer(tl::label::source, i) != tl::label::source_place) return;
+        const std::int64_t source = label->integer(tl::label::source, i);
+        const bool river = std::cmp_equal(source, tl::label::source_river);
+        if (river || std::cmp_equal(source, tl::label::source_water)) {
+            // a water at its name's point with its area, a river at the middle of its longest piece in the tile with
+            // its length there
+            const std::optional<NameKind> kind =
+                river ? std::optional(NameKind::river) : water_kind(label->string(tl::label::kind, i).value_or(""));
+            // a name of several languages' (OpenStreetMap's "North Sea / Nordsee / Noordzee" of a water no one
+            // language names): its first part, until the packs hold each language's own (ENGINE.md step 5, "Names")
+            std::string_view text = label->string(tl::label::name, i).value_or("");
+            if (const std::size_t part = text.find(" / "); part != std::string_view::npos) text = text.substr(0, part);
+            if (!kind || text.empty()) return;
+            const tl::GridPoint at = label->point(tl::label::pos, i);
+            ranks.push_back(((river ? 2 : 1) * group) + label->integer(tl::label::index, i));
+            WorldName water{.kind = *kind,
+                            .cell = static_cast<std::uint8_t>(c),
+                            .lat = tl::Frame::degrees(at.lat),
+                            .lon = tl::Frame::degrees(at.lon),
+                            .text = std::string(text)};
+            water.extent = static_cast<double>(label->integer(tl::label::count, i));
+            names.push_back(std::move(water));
+            return;
+        }
+        if (!std::cmp_equal(source, tl::label::source_place)) return;
         const std::string_view place = label->string(tl::label::kind, i).value_or("");
         const std::optional<NameKind> kind = name_kind(place);
         const std::string_view text = label->string(tl::label::name, i).value_or("");
@@ -662,7 +687,14 @@ WorldStats WorldTiles::stats() const {
     for (const auto& [key, t] : resident_) {
         s.bytes += t->range.size;
         s.triangles += t->triangles;
+        if (t->drawn == number_) s.drawn_bytes += t->range.size;
+        if (t->pinned) s.pinned_bytes += t->range.size;
     }
+    s.capacity = heaps_->budget().total;
+    s.largest_free = heaps_->largest_free(HeapKind::ground);
+    s.stand_in_bytes = stand_in_bytes_;
+    s.wanted_bytes = wanted_bytes_;
+    s.wanted_unsized = wanted_unsized_;
     return s;
 }
 
@@ -742,11 +774,12 @@ void WorldTiles::run(const std::stop_token& stop) {
         const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
         const std::uint64_t writes = cache != nullptr ? cache->writes() : 0;
         bool no_room = false;
+        std::uint32_t bytes = 0;
         std::optional<WorldWant> absent;
         std::unique_ptr<WorldTile> tile;
         {
             const trace::Section traced("atlas world tile");
-            tile = build(key, scratch, no_room, absent);
+            tile = build(key, scratch, no_room, bytes, absent);
         }
         std::function<void()> wake;
         {
@@ -756,6 +789,9 @@ void WorldTiles::run(const std::stop_token& stop) {
                 ++stats_.built;
                 built_.push_back(std::move(tile));
             } else if (no_room) {
+                ++stats_.no_room;
+                stats_.no_room_bytes = bytes;
+                roomless_[key.packed()] = bytes;
                 no_room_.push_back(key);
             } else if (absent) {
                 // its chunk not on the phone yet: wanted from the app, and built once the cache has changed
@@ -775,7 +811,7 @@ void WorldTiles::run(const std::stop_token& stop) {
 }
 
 std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room,
-                                             std::optional<WorldWant>& absent) {
+                                             std::uint32_t& bytes, std::optional<WorldWant>& absent) {
     const std::optional<tl::StoreHit> hit = world_hit(store_, key);
     if (!hit) return nullptr;
     scratch.arena.reset();
@@ -809,7 +845,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->names = build_world_names(*tile);
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
-    const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
+    bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
     auto range = heaps_->allocate(HeapKind::ground, bytes, 16, HeapEnd::low);
     if (!range) {
         no_room = true;
@@ -850,6 +886,10 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
 void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
                         double seconds, double reach, double under_far) {
     const view::Camera& camera = view.camera();
+    number_ = number;
+    stand_in_bytes_ = 0;
+    wanted_bytes_ = 0;
+    wanted_unsized_ = 0;
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
     const bool world_changed = take_style();
@@ -862,10 +902,12 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             const std::uint64_t k = t->key.packed();
             if (auto it = resident_.find(k); it != resident_.end()) let_go(*it->second);
             resident_[k] = std::move(t);
+            roomless_.erase(k);
         }
         built_.clear();
         again.swap(no_room_);
         if (world_changed) {
+            roomless_.clear();
             // other world packs (a new version of the world, a block's head come): what failed or was absent is tried
             // again from them, and the globe's levels are asked for again where its pack changed
             failed_keys_.clear();
@@ -951,6 +993,8 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         std::map<std::uint64_t, std::uint64_t> cells;         // by packed key: coarse to fine, then by column and row
         std::unordered_map<std::uint64_t, std::uint64_t> lit; // the cells each tile draws as a leaf's own drawer
         std::vector<std::pair<double, tl::TileKey>> asked;
+        // the resident ancestors drawn for tiles not resident (their stand-ins), but the pinned
+        std::unordered_set<std::uint64_t> stand_ins;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
         // globe's resident levels are the floor every fade lies over, drawn whole from the first frame, so a zoom out
         // never shows the frame's clear colour
@@ -990,6 +1034,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 } else {
                     asked.emplace_back(leaf.distance, h);
                     t = ancestor(h, h.z);
+                    if (t != nullptr && fine(t->key) && !t->pinned) stand_ins.insert(t->key.packed());
                 }
             }
             bool floor = false; // a tile faded in lies under the place
@@ -1021,6 +1066,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 asked.emplace_back(leaf.distance, h);
                 // meanwhile its nearest resident ancestor, its cells over the tile
                 drawer = ancestor(h, h.z);
+                if (drawer != nullptr && !drawer->pinned) stand_ins.insert(drawer->key.packed());
             }
             if (drawer == nullptr) {
                 ++frame_.bare;
@@ -1068,6 +1114,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         }
         frame_.wanted = view_wanted.size();
         wanted.insert(wanted.begin(), view_wanted.begin(), view_wanted.end());
+        for (const std::uint64_t k : stand_ins) stand_in_bytes_ += resident_.at(k)->range.size;
     }
     // a tile not drawn by this frame fades in again when it is next drawn
     for (auto& [k, t] : resident_) {
@@ -1097,6 +1144,15 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             queue_.push_back(k);
         }
         queued = !queue_.empty();
+        // the bytes the frame's wanted tiles asked for where their builds found no room (the first of `wanted`)
+        for (std::size_t i = 0; i < frame_.wanted && i < wanted.size(); ++i) {
+            const auto it = roomless_.find(wanted[i].packed());
+            if (it != roomless_.end()) {
+                wanted_bytes_ += it->second;
+            } else {
+                ++wanted_unsized_;
+            }
+        }
         // what is wanted of the app: the chunks absent, in the frame's order, and the blocks reached without a pack
         wants_.clear();
         std::unordered_set<std::uint64_t> listed;

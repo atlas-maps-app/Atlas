@@ -118,7 +118,8 @@ internal object LookHost {
  * levels, CameraWriter.WORLD_UNDER, as MapController does there: the world under the core's cover from every
  * distance; written as `<name>-core<path>under.png`) and `-Datlas.phonelook.elements=<pack>,<pack>` (element packs on
  * the phone: every window their boxes meet is built from their data before the first view, as the phone builds the
- * places a user has looked at from near). Also
+ * places a user has looked at from near, each naming the part of its box its pack holds; with
+ * `-Datlas.phonelook.part=false` none names it, as until 12 November). Also
  * `-Datlas.phonelook.parts=default|all` (the parts the app leaves out by default, or none),
  * `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
  * are taken by, else packs-latest's) and `-Datlas.phonelook.work=<folder>` (the windows and indexes, kept between runs;
@@ -584,9 +585,13 @@ internal object WorldFolder {
 /**
  * Windows from an element pack, as the phone has them of a place the user looked at from near: every window the pack's
  * box meets, built by the core from the pack's elements in its box (Overpass's answer as the pack holds it: each
- * element once, by type and id, without the points the pack left null, which the core's reader refuses).
+ * element once, by type and id, without the points the pack left null, which the core's reader refuses), naming the
+ * part of its box the pack holds where that is not all of it.
  */
 internal object ElementWindows {
+    /** `-Datlas.phonelook.part=false`: the windows as built until 12 November, none naming the part its pack holds. */
+    private val PART = System.getProperty("atlas.phonelook.part") != "false"
+
     fun build(pack: File, windows: File, built: MutableList<String>) {
         app.atlas.render.data.PackReader.open(pack).use { r ->
             val b = r.manifest.bbox
@@ -599,7 +604,15 @@ internal object ElementWindows {
                 val elements = r.query(BBox(q[1], q[0], q[3], q[2])).distinctBy { it.type to it.id }
                     .sortedWith(compareBy({ it.type.ordinal }, { it.id }))
                 if (elements.isEmpty()) continue
-                val text = StringBuilder("{\"version\":0.6,\"osm3s\":{\"timestamp_osm_base\":\"${r.manifest.dataTime ?: "1970-01-01T00:00:00Z"}\"},\"elements\":[\n")
+                // the part of the window's box the pack holds, where not all of it, as the app's answer names it
+                // (PackWindows.held): the core lays the window's plate under it alone
+                val south = maxOf(b.south, q[0])
+                val west = maxOf(b.west, q[1])
+                val north = minOf(b.north, q[2])
+                val east = minOf(b.east, q[3])
+                val all = south <= q[0] && west <= q[1] && north >= q[2] && east >= q[3]
+                val part = if (all || !PART) "" else "\"atlas\":{\"box\":\"${listOf(south, west, north, east).joinToString(",") { Math.round(it * 1e7).toString() }}\"},"
+                val text = StringBuilder("{\"version\":0.6,\"osm3s\":{\"timestamp_osm_base\":\"${r.manifest.dataTime ?: "1970-01-01T00:00:00Z"}\"},$part\"elements\":[\n")
                 for ((i, e) in elements.withIndex()) {
                     if (i > 0) text.append(",\n")
                     text.append(solid(e).toJson())

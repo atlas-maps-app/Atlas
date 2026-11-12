@@ -24,6 +24,7 @@ Result<std::vector<std::byte>> encode_head(const HeadOut& head) {
         if (v.tolerance >= keep::tolerances.size()) return bad(v.tolerance);
         if (v.camera.type() != ValueType::map) return bad();
     }
+    if (head.data && (head.data->south >= head.data->north || head.data->west >= head.data->east)) return bad();
     Sink out;
     out.u32(head_magic);
     out.u16(payload_version);
@@ -49,6 +50,13 @@ Result<std::vector<std::byte>> encode_head(const HeadOut& head) {
     for (const HeadBand& b : head.bands) out.u8(b.tolerance);
     for (const HeadBand& b : head.bands) {
         if (b.up_to) out.f64(*b.up_to);
+    }
+    if (head.data) {
+        out.u8(1);
+        out.i32(head.data->south);
+        out.i32(head.data->west);
+        out.i32(head.data->north);
+        out.i32(head.data->east);
     }
     return out.take();
 }
