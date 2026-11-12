@@ -1302,15 +1302,17 @@ std::string World::tiles_line() const {
             finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
             if (d.tile->blank) ++land;
         }
-        // the world's heap (MB): its resident tiles' bytes of its budget, those the frame drew and the pinned ones',
-        // its largest free piece, and the builds that found no room with the bytes the last asked for; before the
+        // the world's heap (MB): its resident tiles' bytes of its budget, those the frame drew (of them its
+        // stand-ins') and the pinned ones', its largest free piece, the builds that found no room with the bytes the
+        // last asked for, and the bytes the frame's wanted tiles asked for (with those of no build yet); before the
         // world's own words, which end the line (ci/smoke.sh reads them there)
         const WorldStats ws = world_tiles_->stats();
         const auto mb = [](vk::DeviceSize b) { return static_cast<double>(b) / 1.0e6; };
         line +=
-            std::format(" world heap {:.1f} of {:.1f} drawn {:.1f} pinned {:.1f} piece {:.1f} no room {} last {:.2f}",
-                        mb(ws.bytes), mb(ws.capacity), mb(ws.drawn_bytes), mb(ws.pinned_bytes), mb(ws.largest_free),
-                        ws.no_room, mb(ws.no_room_bytes));
+            std::format(" world heap {:.1f} of {:.1f} drawn {:.1f} stand-ins {:.1f} pinned {:.1f} piece {:.1f} no "
+                        "room {} last {:.2f} wanted {:.1f} unsized {}",
+                        mb(ws.bytes), mb(ws.capacity), mb(ws.drawn_bytes), mb(ws.stand_in_bytes), mb(ws.pinned_bytes),
+                        mb(ws.largest_free), ws.no_room, mb(ws.no_room_bytes), mb(ws.wanted_bytes), ws.wanted_unsized);
         line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size() - land, finest, w->wanted,
                             w->bare);
         if (w->under) line += std::format(" under land {}", land);

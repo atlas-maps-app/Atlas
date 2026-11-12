@@ -263,6 +263,12 @@ struct WorldStats {
     /// The builds that found no room in the heap, all told, and the bytes the last of them asked for.
     std::uint64_t no_room = 0;
     std::uint32_t no_room_bytes = 0;
+    /// Of the last frame: the bytes of the resident ancestors it drew for tiles not resident (their stand-ins, but the
+    /// pinned), and of the tiles it wanted that found no room (the bytes their builds asked for), with the wanted
+    /// tiles of no such build yet. Drawn less stand-ins plus wanted: the room the frame takes whole.
+    vk::DeviceSize stand_in_bytes = 0;
+    vk::DeviceSize wanted_bytes = 0;
+    std::size_t wanted_unsized = 0;
 };
 
 class WorldTiles {
@@ -338,7 +344,10 @@ private:
     std::array<std::unique_ptr<WorldTile>, 2> caps_; // the north's and the south's, built with the heap
     std::unique_ptr<WorldTile> blank_;               // the plain land, built with the heap
     WorldFrame frame_;
-    std::uint64_t number_ = 0; ///< the last update's frame
+    std::uint64_t number_ = 0;          ///< the last update's frame
+    vk::DeviceSize stand_in_bytes_ = 0; ///< the last frame's stand-ins' bytes (WorldStats::stand_in_bytes)
+    vk::DeviceSize wanted_bytes_ = 0;   ///< the bytes its wanted tiles' builds asked for (WorldStats)
+    std::size_t wanted_unsized_ = 0;    ///< its wanted tiles of no build yet (WorldStats)
     bool drawing_ = false;
     std::shared_ptr<const tiles::StorePack> style_pack_;
     std::vector<std::shared_ptr<const tiles::StorePack>> seen_packs_;
@@ -353,6 +362,7 @@ private:
     std::uint64_t building_ = ~std::uint64_t{0};
     std::vector<std::unique_ptr<WorldTile>> built_;
     std::vector<tiles::TileKey> no_room_;
+    std::unordered_map<std::uint64_t, std::uint32_t> roomless_; ///< the bytes a build that found no room asked for
     std::vector<std::uint64_t> failed_keys_;
     /// A tile built without its chunk on the phone, and the cache's writes as its build began.
     struct Absent {

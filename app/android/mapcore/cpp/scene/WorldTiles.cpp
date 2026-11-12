@@ -692,6 +692,9 @@ WorldStats WorldTiles::stats() const {
     }
     s.capacity = heaps_->budget().total;
     s.largest_free = heaps_->largest_free(HeapKind::ground);
+    s.stand_in_bytes = stand_in_bytes_;
+    s.wanted_bytes = wanted_bytes_;
+    s.wanted_unsized = wanted_unsized_;
     return s;
 }
 
@@ -788,6 +791,7 @@ void WorldTiles::run(const std::stop_token& stop) {
             } else if (no_room) {
                 ++stats_.no_room;
                 stats_.no_room_bytes = bytes;
+                roomless_[key.packed()] = bytes;
                 no_room_.push_back(key);
             } else if (absent) {
                 // its chunk not on the phone yet: wanted from the app, and built once the cache has changed
@@ -883,6 +887,9 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                         double seconds, double reach, double under_far) {
     const view::Camera& camera = view.camera();
     number_ = number;
+    stand_in_bytes_ = 0;
+    wanted_bytes_ = 0;
+    wanted_unsized_ = 0;
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
     const bool world_changed = take_style();
@@ -895,10 +902,12 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             const std::uint64_t k = t->key.packed();
             if (auto it = resident_.find(k); it != resident_.end()) let_go(*it->second);
             resident_[k] = std::move(t);
+            roomless_.erase(k);
         }
         built_.clear();
         again.swap(no_room_);
         if (world_changed) {
+            roomless_.clear();
             // other world packs (a new version of the world, a block's head come): what failed or was absent is tried
             // again from them, and the globe's levels are asked for again where its pack changed
             failed_keys_.clear();
@@ -984,6 +993,8 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         std::map<std::uint64_t, std::uint64_t> cells;         // by packed key: coarse to fine, then by column and row
         std::unordered_map<std::uint64_t, std::uint64_t> lit; // the cells each tile draws as a leaf's own drawer
         std::vector<std::pair<double, tl::TileKey>> asked;
+        // the resident ancestors drawn for tiles not resident (their stand-ins), but the pinned
+        std::unordered_set<std::uint64_t> stand_ins;
         // a tile's fade: from the first of the frames drawing it without a break (one just built, or back in view); the
         // globe's resident levels are the floor every fade lies over, drawn whole from the first frame, so a zoom out
         // never shows the frame's clear colour
@@ -1023,6 +1034,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 } else {
                     asked.emplace_back(leaf.distance, h);
                     t = ancestor(h, h.z);
+                    if (t != nullptr && fine(t->key) && !t->pinned) stand_ins.insert(t->key.packed());
                 }
             }
             bool floor = false; // a tile faded in lies under the place
@@ -1054,6 +1066,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 asked.emplace_back(leaf.distance, h);
                 // meanwhile its nearest resident ancestor, its cells over the tile
                 drawer = ancestor(h, h.z);
+                if (drawer != nullptr && !drawer->pinned) stand_ins.insert(drawer->key.packed());
             }
             if (drawer == nullptr) {
                 ++frame_.bare;
@@ -1101,6 +1114,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         }
         frame_.wanted = view_wanted.size();
         wanted.insert(wanted.begin(), view_wanted.begin(), view_wanted.end());
+        for (const std::uint64_t k : stand_ins) stand_in_bytes_ += resident_.at(k)->range.size;
     }
     // a tile not drawn by this frame fades in again when it is next drawn
     for (auto& [k, t] : resident_) {
@@ -1130,6 +1144,15 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             queue_.push_back(k);
         }
         queued = !queue_.empty();
+        // the bytes the frame's wanted tiles asked for where their builds found no room (the first of `wanted`)
+        for (std::size_t i = 0; i < frame_.wanted && i < wanted.size(); ++i) {
+            const auto it = roomless_.find(wanted[i].packed());
+            if (it != roomless_.end()) {
+                wanted_bytes_ += it->second;
+            } else {
+                ++wanted_unsized_;
+            }
+        }
         // what is wanted of the app: the chunks absent, in the frame's order, and the blocks reached without a pack
         wants_.clear();
         std::unordered_set<std::uint64_t> listed;
