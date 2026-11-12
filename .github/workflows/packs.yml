@@ -32,8 +32,10 @@ on:
         default: also
   # The monthly run (ENGINE.md step 11), the 2nd at 02:17 UTC, once Geofabrik's extracts of the 1st are out: the
   # regions regions.json marks monthly (the Netherlands), published as a run by hand publishes them; no render packs.
-  schedule:
-    - cron: '17 2 2 * *'
+  # It is off until the user says go (21 October 2026), as it publishes those regions' packs by itself. To turn it on,
+  # restore:
+  # schedule:
+  #   - cron: '17 2 2 * *'
 
 permissions:
   contents: write
