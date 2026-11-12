@@ -114,7 +114,8 @@ class WorldPackRefsTest {
                 val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"), names)
                 // measurement only (branch worldmeasure, never lands): every frame's notes, whole or not, in the report
                 File(out, "notes.txt").appendText("$frameName (${(System.nanoTime() - t0) / 1_000_000} ms): $notes\n")
-                if (!whole(notes)) failed += "$frameName ($notes)"
+                // and none of its tiles in view held back for room (measurement only: worldroom's fix)
+                if (!whole(notes) || held(notes) != 0) failed += "$frameName ($notes)"
                 val pixels = ByteBuffer.allocateDirect(w * h * 4)
                 check(LookHost.read(handle, pixels)) { LookHost.lastError() }
                 val rgb = ByteArray(w * h * 3)
@@ -219,6 +220,9 @@ class WorldPackRefsTest {
         return notes.contains("complete yes") && world.groupValues[3] == "0" && world.groupValues[4] == "0"
     }
 
+    /** The world's tiles in view held back for room (WorldFrame::held): the heap's last word before the world's own. */
+    private fun held(notes: String): Int = HELD.find(notes)?.groupValues?.get(1)?.toInt() ?: 0
+
     private companion object {
         var sequence = 0L
 
@@ -241,5 +245,8 @@ class WorldPackRefsTest {
 
         /** The world's part of the tiles line (scene::World::tiles_line). */
         val WORLD = Regex("""world (\d+) drawn finest (\d+) wanted (\d+) bare (\d+)""")
+
+        /** The heap's tiles held back, before the world's words (scene::World::tiles_line). */
+        val HELD = Regex(""" held (\d+) world \d+ drawn finest""")
     }
 }
