@@ -4,6 +4,8 @@
 // (at most ten times a second while the camera moves, once at rest), and where a place stands on the bent ground,
 // none behind the horizon.
 #include "base/pymath/PyMath.hpp"
+#include "frame/FrameBuilder.hpp"
+#include "passes/PlacePoint.hpp"
 #include "scene/WorldNames.hpp"
 #include "scene/WorldTiles.hpp"
 #include "tests/base/require.hpp"
@@ -14,7 +16,9 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <numbers>
 #include <string>
@@ -536,4 +540,86 @@ TEST_CASE("scene: a river, which every tile it crosses names, is named once with
     picked = fresh.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true,
                           {.metres_a_dp = 71.0, .lat = 51.95, .lon = 5.55});
     CHECK(rijn_at(picked) == std::vector<double>{5.60, 6.20, 8.20});
+}
+
+TEST_CASE("passes: a place the app marks stands on the street up to 150 km and on the world's bent ground from there, "
+          "none behind the horizon, in the world's frame where no pack is drawn") {
+    // the camera over Amsterdam, straight down; a marker in each of four cities
+    const view::GroundFrame frame = centred(52.3731, 4.8922);
+    struct Place {
+        const char* name;
+        double lat;
+        double lon;
+    };
+    const std::array<Place, 4> places{Place{.name = "Utrecht", .lat = 52.0907, .lon = 5.1214},
+                                      Place{.name = "Paris", .lat = 48.8566, .lon = 2.3522},
+                                      Place{.name = "København", .lat = 55.6761, .lon = 12.5683},
+                                      Place{.name = "Madrid", .lat = 40.4168, .lon = -3.7038}};
+    const auto off = [](const view::Vec2& a, const view::Vec2& b) {
+        return pymath::sqrt(((a.x - b.x) * (a.x - b.x)) + ((a.y - b.y) * (a.y - b.y)));
+    };
+    double most = 0.0;
+    for (const double distance : {9'000.0, 100'000.0, 150'000.0, 600'000.0, 2'000'000.0, 6'000'000.0}) {
+        const view::View view(spec_of(90.0, distance), device);
+        scene::WorldFrame world;
+        world.frame = frame;
+        world.bend = scene::world_bend(view, frame);
+        frame::FrameState state;
+        state.ground_frame = frame;
+        state.world = &world;
+        CHECK(passes::places_on_sphere(state) == (distance > 150'000.0));
+        for (const Place& p : places) {
+            const auto flat = view.device_proj({frame.x(p.lat, p.lon), 0.0, frame.z(p.lat, p.lon)});
+            const auto at = passes::place_point(state, view, frame, p.lat, p.lon);
+            ATLAS_REQUIRE(flat.has_value());
+            ATLAS_REQUIRE(at.has_value());
+            if (distance <= 150'000.0) {
+                // the street's projection, to the bit
+                CHECK(at->x == flat->x);
+                CHECK(at->y == flat->y);
+                continue;
+            }
+            // where the world pass draws the place's ground, as its name stands
+            const auto ground = scene::name_point(world.bend, frame, view, p.lat, p.lon);
+            ATLAS_REQUIRE(ground.has_value());
+            CHECK(at->x == ground->x);
+            CHECK(at->y == ground->y);
+            const bool on_frame = at->x >= 0.0 && at->y >= 0.0 && at->x <= 1079.0 && at->y <= 2399.0;
+            MESSAGE(std::format("{} from {:.0f} km: {:.1f} px from where the street's projection had it{}", p.name,
+                                distance / 1000.0, off(*at, *flat), on_frame ? "" : " (off the frame)"));
+            if (on_frame) most = std::max(most, off(*at, *flat));
+        }
+    }
+    // on the frame, the street's projection had a marker tens of pixels off its ground (Madrid from 6,000 km: the
+    // meridians it drew parallel meet toward the pole, 140 km at Madrid's latitude)
+    CHECK(most > 40.0);
+    // without the world (no world pack): the street, at every distance
+    {
+        const view::View view(spec_of(90.0, 2'000'000.0), device);
+        frame::FrameState state;
+        state.ground_frame = frame;
+        CHECK_FALSE(passes::places_on_sphere(state));
+        const auto flat = view.device_proj({frame.x(48.8566, 2.3522), 0.0, frame.z(48.8566, 2.3522)});
+        const auto at = passes::place_point(state, view, frame, 48.8566, 2.3522);
+        ATLAS_REQUIRE(flat.has_value());
+        ATLAS_REQUIRE(at.has_value());
+        CHECK(at->x == flat->x);
+        CHECK(at->y == flat->y);
+        CHECK(passes::place_frame(state) == &*state.ground_frame);
+    }
+    // behind the horizon none: from 6,000 km the eye sees 59 degrees of arc; Tokyo is 84 away
+    {
+        const view::View view(spec_of(90.0, 6'000'000.0), device);
+        scene::WorldFrame world;
+        world.frame = frame;
+        world.bend = scene::world_bend(view, frame);
+        frame::FrameState state;
+        state.world = &world;
+        // (no pack's frame: the world's own is the places')
+        CHECK(passes::place_frame(state) == &world.frame);
+        CHECK_FALSE(passes::place_point(state, view, world.frame, 35.6812, 139.7671).has_value());
+        CHECK(passes::place_point(state, view, world.frame, 48.8566, 2.3522).has_value());
+        state.world = nullptr;
+        CHECK(passes::place_frame(state) == nullptr);
+    }
 }
