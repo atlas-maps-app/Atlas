@@ -170,6 +170,45 @@
           "the board night": "7544579cde11175d41712cea79110357937b098791e9fac743f6ef40d8d01816"
         }
       }
+    },
+    "5": {
+      "note": "The bent haze (ENGINE.md): beyond 18 km the haze's stops lie over the bent ground, from its own horizon's row by its own depth, and off the space over it. From version 4 the two pitched frames under 2,000 km move, 75 km pitched night (by a level) and 600 km pitched sunny (more haze toward the horizon, less over space); the other 13 are version 4's pixels.",
+      "platforms": {
+        "lavapipe-macos": {
+          "18 km sunny": "7c37589ec7dbe70851fd24952c3eeb7e2dd6198063b510e48aefa1fe96e1c304",
+          "18 km night": "9caa63ed6d85b99db2bbfbfc94a5039c9f709aef054e2e7b6d919f349dddf854",
+          "75 km sunny": "bf3c676dc50edb3cdecc2c7e82ebab8f795aa6199bfd13fd30abe3798ec4db14",
+          "75 km night": "7915cbaff7e59965d1058ea908c215a143327ed5b1782470fa38337cc3f22927",
+          "75 km pitched night": "c6085b77cdc1e23ca16b06be058fd0e1d943feeef8b9861eebff662ca97d69ec",
+          "600 km sunny": "ee9d0ee18cdaab38b16a69ce8a5a9994ad9faaeb0fc9cb9a7ecdc843aa51f746",
+          "600 km night": "ea0e0a0eb01c2b0702a52c30ee32540df2db8271eeda0e1e7417e7ac66e6b444",
+          "600 km pitched sunny": "4cfafad66e8083505d0cf31f46bbf2d7f6c69886a622cff4cb1ea402206a4f41",
+          "2000 km pitched sunny": "b34b07c746205214f458ae7a57b20aec623fde8602f642c1f677c0fdeca4ff78",
+          "6000 km sunny": "c1c912a93f5775f78aee7b2550c39e501147e2c1101c6a5ec0d7e7a3423b8bce",
+          "6000 km night": "7179eab9fedc0c320c0f39c0d8c9671dd3a6f9e5f20a2a9b8e9c201d99d1b336",
+          "12000 km sunny": "145120e30075fa3e42313bbf08c6d2b3e789162d0775446398e3118a8d35eefb",
+          "12000 km night": "f539d7d2adc25fc13c7f843f625152bc5b1f1582b22f4f84a2ab8c764550c4af",
+          "the board sunny": "df5832903d9f7b11026522f112abeb799d774745c8a2e46e2773350241f41871",
+          "the board night": "c4a99a999de7ae88ae501fda3968a443d1c30d477513ee9de1897c3aaf7df03d"
+        },
+        "lavapipe-x86_64": {
+          "18 km sunny": "91cc48213e6d60ea0baf1ec549ddc2607d12087ab316e48bd290b2ed0780fde9",
+          "18 km night": "9caa63ed6d85b99db2bbfbfc94a5039c9f709aef054e2e7b6d919f349dddf854",
+          "75 km sunny": "bf3c676dc50edb3cdecc2c7e82ebab8f795aa6199bfd13fd30abe3798ec4db14",
+          "75 km night": "7915cbaff7e59965d1058ea908c215a143327ed5b1782470fa38337cc3f22927",
+          "75 km pitched night": "c6085b77cdc1e23ca16b06be058fd0e1d943feeef8b9861eebff662ca97d69ec",
+          "600 km sunny": "ee9d0ee18cdaab38b16a69ce8a5a9994ad9faaeb0fc9cb9a7ecdc843aa51f746",
+          "600 km night": "ea0e0a0eb01c2b0702a52c30ee32540df2db8271eeda0e1e7417e7ac66e6b444",
+          "600 km pitched sunny": "4cfafad66e8083505d0cf31f46bbf2d7f6c69886a622cff4cb1ea402206a4f41",
+          "2000 km pitched sunny": "b34b07c746205214f458ae7a57b20aec623fde8602f642c1f677c0fdeca4ff78",
+          "6000 km sunny": "c1c912a93f5775f78aee7b2550c39e501147e2c1101c6a5ec0d7e7a3423b8bce",
+          "6000 km night": "7179eab9fedc0c320c0f39c0d8c9671dd3a6f9e5f20a2a9b8e9c201d99d1b336",
+          "12000 km sunny": "daf366352e374c1237b9855719dde66f43ccef811274390370c914037e54427d",
+          "12000 km night": "f539d7d2adc25fc13c7f843f625152bc5b1f1582b22f4f84a2ab8c764550c4af",
+          "the board sunny": "f76acf8e867b6fea212a1881250d9c4ad0b60165a7f5e6b7be9da1fe836a1961",
+          "the board night": "7544579cde11175d41712cea79110357937b098791e9fac743f6ef40d8d01816"
+        }
+      }
     }
   }
 }
