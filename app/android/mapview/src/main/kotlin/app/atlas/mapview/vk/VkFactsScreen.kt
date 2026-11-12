@@ -38,7 +38,7 @@ import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.Native
 import app.atlas.mapview.DeviceFacts
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.GlCaps
 import app.atlas.mapview.TextRounding
 import app.atlas.mapview.VkFactsLines
@@ -116,36 +116,36 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                 add("core.build: ${MapCore.buildInfo()}")
                 addAll(GlCaps.probe().lines())
             }
-            for (l in lines) Log.i(EngineFrames.TAG, "vkfacts $l")
+            for (l in lines) Log.i(MapEngine.TAG, "vkfacts $l")
             // The core's numerics (K3b): `pymath <hash> ok`, which smoke.sh holds to the host build's hash. Logged before
             // "vkfacts done", which smoke.sh waits for; it needs no Vulkan, so the honest state has it too.
             val pymath = runCatching { MapCore.numericsLine() }.getOrElse { "pymath unavailable: $it" }
-            Log.i(EngineFrames.TAG, pymath)
+            Log.i(MapEngine.TAG, pymath)
             // The core's sun bits on the bundled Westerkerk (K8): `sun <hash> ok`, held by smoke.sh to the host build's.
             val sun = runCatching { MapCore.sunLine(context.assets) }.getOrElse { "sun unavailable: $it" }
-            Log.i(EngineFrames.TAG, sun)
+            Log.i(MapEngine.TAG, sun)
             // The core's noise fields at S1 (K17a): `fields 1080x2400 cpu <ms> gpu <ms> hash <h> ok`, each of the eight
             // equal to the port's (the hashes the host build's tests hold) and the GPU's to the CPU's, or `gpu off
             // (<why>)` where the core's device takes the CPU's (and `gpu off (no Vulkan)` without a core); smoke.sh
             // fails on any other ending.
             val fields = runCatching { core?.fieldsLine() ?: MapCore.fieldsLine() }.getOrElse { "fields unavailable: $it" }
-            Log.i(EngineFrames.TAG, fields)
+            Log.i(MapEngine.TAG, fields)
             // The ground's stage T on the bundled Westerkerk (K9): `ground <hash> ok`, held by smoke.sh to the host build's.
             val ground = runCatching { MapCore.groundLine(context.assets) }.getOrElse { "ground unavailable: $it" }
-            Log.i(EngineFrames.TAG, ground)
+            Log.i(MapEngine.TAG, ground)
             // The core's twin on the bundled Westerkerk (the app's frame at the engine references' home, settled
             // without drawing, on the core's device): `twin <hash> ok`, held by smoke.sh to the host build's.
             val twin = core?.let { c -> runCatching { c.twinLine(context.assets) }.getOrElse { "twin unavailable: $it" } }
                 ?: "twin unavailable: no Vulkan"
-            Log.i(EngineFrames.TAG, twin)
+            Log.i(MapEngine.TAG, twin)
             // The platform's kerning rule, measured with Android's Paint and told to the core, and the core's shaping
             // against Android's under it (K13): `text.rounding: …`, `text.glyphs: …`.
             val text = runCatching {
                 Native.load()?.let { listOf("text.rounding: unavailable: the core did not load ($it)") }
                     ?: TextRounding.factsLines(context.assets)
             }.getOrElse { listOf("text.rounding: unavailable: $it") }
-            for (l in text) Log.i(EngineFrames.TAG, "vkfacts $l")
-            Log.i(EngineFrames.TAG, "vkfacts done")
+            for (l in text) Log.i(MapEngine.TAG, "vkfacts $l")
+            Log.i(MapEngine.TAG, "vkfacts done")
             lines + pymath + sun + fields + ground + twin + text
         }
         status = if (core == null) VK_HONEST else "Done: ${report.size} lines."
@@ -168,7 +168,7 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                             surfaceDone = false
                             core = null
                             reset = withContext(Dispatchers.Default) { MapCore.resetGuard(config) }
-                            Log.i(EngineFrames.TAG, "vkfacts $reset")
+                            Log.i(MapEngine.TAG, "vkfacts $reset")
                             status = "Reading the device again…"
                             reading++
                         }
@@ -191,7 +191,7 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             Box(Modifier.size(96.dp)) {
                 VkSurface(c, VkHost.SURFACE, IdleSource, camera, Modifier.fillMaxSize()) { s ->
                     if (s.attached || s.error.isNotEmpty()) {
-                        if (s.error.isNotEmpty()) Log.w(EngineFrames.TAG, "vkfacts surface: ${s.error}")
+                        if (s.error.isNotEmpty()) Log.w(MapEngine.TAG, "vkfacts surface: ${s.error}")
                         surfaceDone = true
                     }
                 }

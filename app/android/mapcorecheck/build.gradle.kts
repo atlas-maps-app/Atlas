@@ -217,9 +217,14 @@ sourceSets {
         // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
         // parts with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
         val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
-        val mapviewShared = listOf("svg/Turbulence.kt", "MapParts.kt", "vk/CoreMoment.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
+        val mapviewShared = listOf("MapParts.kt", "vk/CoreMoment.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
         kotlin.srcDir(mapviewKotlin)
         kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
+        // The port's Turbulence, in mapview's raster sources (src/raster: in tests alone, ENGINE.md step 3).
+        val rasterKotlin = rootProject.layout.projectDirectory.dir("mapview/src/raster/kotlin/app/atlas/mapview").asFile
+        val rasterShared = listOf("svg/Turbulence.kt").map(rasterKotlin::resolve).toSet()
+        kotlin.srcDir(rasterKotlin)
+        kotlin.exclude { it.file.isFile && it.file.startsWith(rasterKotlin) && it.file !in rasterShared }
     }
 }
 

@@ -13,7 +13,6 @@ import app.atlas.mapcore.state.MarkerBlock
 import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.AskedBuilding
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.GroundPick
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
@@ -39,10 +38,10 @@ import java.util.concurrent.TimeoutException
 
 /**
  * One map's side of the core (plan-vector K11): the camera it hands the core at each vsync ([source], written into
- * [camera]'s buffer), the packs it hands over ([bind], [handPacks]), the moment ([moment]), the transitional rule's
- * state ([transition]), what the core said of the frames it presented (complete or not), the first frame's line, and
- * the debug panel's numbers ([panelLine]). The map (`MapController`) makes one while `MapEngine.core` is ready and
- * draws today's map over the core as [transition] says.
+ * [camera]'s buffer), the packs it hands over ([bind], [handPacks]), the moment ([moment]), the paper over it at the
+ * start ([cover]), what the core said of the frames it presented (complete or not), the first frame's line, and the
+ * debug panel's numbers ([panelLine]). The map (`MapController`) makes one while `MapEngine.core` is ready; the core
+ * draws every place through it.
  *
  * One map draws through the core at a time (the core has one window): the one bound last ([bind]); a map that goes
  * turns the core's map off only if it is still that one ([close]).
@@ -56,7 +55,7 @@ internal class CoreMap(
     private val onChange: Runnable,
 ) {
     val camera = CameraState()
-    val transition = Transition { Log.i(EngineFrames.TAG, it) }
+    val cover = StartCover()
 
     /** Whether the last frame the core presented was complete. */
     @Volatile
@@ -110,6 +109,8 @@ internal class CoreMap(
     private val paletteBlock = PaletteBlock.allocate()
     private var lastMoment: Moment? = null
     private var lastZone: ZoneId? = null
+    private var lastPlaceLat = Double.NaN
+    private var lastPlaceLon = Double.NaN
     private var lastTone = 1f
     private var lastPalette = Palette()
     private var packsRevision = -1
@@ -142,7 +143,7 @@ internal class CoreMap(
             core.map(true, texture)
         }
         val packs = said.lines().filter { it.isNotBlank() }.joinToString(", ")
-        Log.i(EngineFrames.TAG, "vk map on (${if (texture) "texture" else "surface"}): ${packs.ifEmpty { "no packs" }}" + (if (on.isEmpty()) "" else "; $on"))
+        Log.i(MapEngine.TAG, "vk map on (${if (texture) "texture" else "surface"}): ${packs.ifEmpty { "no packs" }}" + (if (on.isEmpty()) "" else "; $on"))
         return on
     }
 
@@ -158,37 +159,39 @@ internal class CoreMap(
         if (packs.worldRefs.any { it.identity != null }) {
             MapEngine.worldCacheDir()?.let { dir ->
                 val why = core.worldCache(dir.path, MapEngine.worldCacheBytes)
-                if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk world: the world's cache not opened: $why")
+                if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk world: the world's cache not opened: $why")
             }
         }
         return core.packs(packs.refs())
     }
 
     /**
-     * The moment the core lights the map by (CoreMoment's block for [moment] in the pack's [zone]), handed over when it
-     * changed (off the main thread). "" or why it was not.
+     * The moment the core lights the map by (CoreMoment's block for [moment] at the place [placeLat], [placeLon], its
+     * clock in [zone]), handed over when it changed (off the main thread). "" or why it was not.
      */
-    fun moment(moment: Moment, zone: ZoneId, daylight: Boolean): String {
+    fun moment(moment: Moment, zone: ZoneId, daylight: Boolean, placeLat: Double = ThemeBlock.PLACE_LAT, placeLon: Double = ThemeBlock.PLACE_LON): String {
         val tone = MapEngine.tone
         val palette = MapEngine.palette
-        if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette) return ""
+        if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette && placeLat == lastPlaceLat && placeLon == lastPlaceLon) return ""
         val why = runCatching {
             if (palette != lastPalette) {
                 // the colours the theme does not carry (buildings, trees, surfaces), drawn by the core's passes
                 PaletteBlock.write(paletteBlock, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
                 core.palette(paletteBlock).takeIf { it.isNotEmpty() }?.let { error(it) }
             }
-            CoreMoment.write(theme, moment, zone, daylight, tone, palette)
+            CoreMoment.write(theme, moment, zone, daylight, tone, palette, placeLat, placeLon)
             core.moment(theme)
         }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
         if (why.isEmpty()) {
             lastMoment = moment
             lastZone = zone
+            lastPlaceLat = placeLat
+            lastPlaceLon = placeLon
             lastTone = tone
             lastPalette = palette
             night = theme.getInt(ThemeBlock.FLAGS_AT) and ThemeBlock.NIGHT != 0
         } else {
-            Log.w(EngineFrames.TAG, "vk moment: $why")
+            Log.w(MapEngine.TAG, "vk moment: $why")
         }
         return why
     }

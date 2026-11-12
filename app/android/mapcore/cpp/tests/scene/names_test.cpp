@@ -143,6 +143,27 @@ TEST_CASE("scene: the pick takes the names of the tiles a frame draws by rank, e
     const std::vector<WorldName> more = {name("\xe6\x9d\xb1\xe4\xba\xac", NameKind::city, 3.7e7, 35.68, 139.77)};
     CHECK(texts(extra.update(nullptr, more, 100'000.0, everywhere, 0.0, true, true)) ==
           std::vector<std::string>{"\xe6\x9d\xb1\xe4\xba\xac"});
+    // a name stands at its place in the tile that draws it, as that tile's light of it does: once the fine tile
+    // alone draws Amsterdam, the name (the same one, by its id) is at the fine tile's place, and says it is lit there
+    // and of how many people (its light's size)
+    scene::WorldNames moved;
+    std::uint32_t amsterdam = 0;
+    {
+        const auto coarse = moved.update(&frame, {}, 100'000.0, everywhere, 0.0, false, true);
+        REQUIRE(coarse.size() == 8);
+        CHECK(coarse[1].lat == 52.37);
+        CHECK_FALSE(coarse[1].lit);
+        amsterdam = coarse[1].id;
+    }
+    tiles[1].names[0].lit = true;
+    scene::WorldFrame fine_alone = frame_of(std::span<const scene::WorldTile>(tiles).subspan(1), 0b011);
+    const auto fine = moved.update(&fine_alone, {}, 100'000.0, everywhere, 0.5, false, true);
+    REQUIRE(!fine.empty());
+    CHECK(fine[0].id == amsterdam);
+    CHECK(fine[0].lat == 52.3731);
+    CHECK(fine[0].lon == 4.8924);
+    CHECK(fine[0].lit);
+    CHECK(fine[0].people == 9e5);
 }
 
 TEST_CASE("scene: a name picked keeps its id and stays picked while it stands among the first by rank; one that "

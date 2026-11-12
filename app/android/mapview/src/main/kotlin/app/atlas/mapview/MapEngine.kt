@@ -1,8 +1,6 @@
 package app.atlas.mapview
 
 import android.content.res.AssetManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
 import android.view.Display
 import androidx.compose.runtime.getValue
@@ -17,21 +15,19 @@ import app.atlas.mapview.palette.Palette
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.VkHost
-import app.atlas.mapview.svg.TurbulenceCache
-import app.atlas.render.JpegEncoder
-import app.atlas.render.Relief
-import app.atlas.render.RenderOptions
-import app.atlas.render.data.Countries
-import app.atlas.render.live.LiveRegion
-import app.atlas.render.live.LiveRegions
 import app.atlas.render.live.WxHour
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** The forecast the live moment is lit by, for a place: what is to hand now, without waiting for the network. */
 fun interface MapWeather {
     fun hours(at: LatLon): List<WxHour>?
+
+    /**
+     * The time zone of the place the forecast at [at] is of, where one is to hand (the forecast's own, which holds for
+     * any place on Earth); null where none is. The live moment's clock is in it: the hour the shops open by.
+     */
+    fun zone(at: LatLon): java.time.ZoneId? = null
 }
 
 /**
@@ -46,15 +42,15 @@ data class CountryTiles(val id: String, val name: String, val box: BBox, val lev
     fun holds(lat: Double, lon: Double): Boolean = lat in box.south..box.north && lon in box.west..box.east
 }
 
-/** What draws the maps (plan-vector K11, T2): the app's Vulkan core where it has tiles, today's map alone, or neither. */
+/** What draws the maps (plan-vector K11, T2): the app's Vulkan core, or T2's honest state. */
 sealed interface CoreState {
-    /** Today's map alone: no core in this process (the JVM's tests, previews). */
-    data object Canvas : CoreState
+    /** No core in this process (the JVM's tests, previews): the maps draw their paper and overlays alone. */
+    data object None : CoreState
 
     /** The core is starting (its device and pipeline cache, behind the crash guard). */
     data object Starting : CoreState
 
-    /** The core draws the maps where it has tiles, today's map elsewhere (the transitional rule, until A5). */
+    /** The core draws every map, every place (ENGINE.md step 3: today's map has left the phone). */
     class Ready(val core: MapCore) : CoreState
 
     /** T2's honest state instead of a map: the phone's graphics driver cannot draw it ([reason]); the rest works. */
@@ -62,63 +58,28 @@ sealed interface CoreState {
 }
 
 /**
- * The map engine's process-wide wiring, set once by the app: where region data comes from ([regions]), the forecast
- * for the live moment ([weather]), the engine's flags ([options]). Every [AtlasMap] draws through it. Changes reach the
- * maps on screen through [invalidate].
+ * The map engine's process-wide wiring, set once by the app: the forecast for the live moment ([weather]), the core
+ * ([core]), the windows' sources and the user's Look settings. Every [AtlasMap] draws through it. Changes reach the maps
+ * on screen through [invalidate].
  */
 object MapEngine {
-    /** The regions the maps draw; null draws "no map data" (tests that only exercise gestures). */
-    @Volatile
-    var regions: LiveRegions? = null
-        set(value) {
-            field = value
-            invalidate()
-        }
+    /** The maps' log tag: every line the map and the core's Kotlin side write goes to logcat under it. */
+    const val TAG = "AtlasMap"
 
     @Volatile
     var weather: MapWeather? = null
 
     /**
-     * The engine's flags (amsterdam.py's ATLAS_AO, ATLAS_DAYLIGHT, …): the renders' defaults, but for the Look settings'
-     * haze, vignette and grain, off until the app's settings say otherwise ([screenEffects]), and the cloud shadows, off:
-     * today's map warps its last frame under the finger, and they would ride on it ([RenderOptions.cloudShadows]).
+     * The renders' dusk (amsterdam.py's ATLAS_DAYLIGHT, the port's RenderOptions.daylight) the core's moments are made
+     * with: off, as the renders draw and the app always drew.
      */
-    @Volatile
-    var options: RenderOptions = RenderOptions(haze = false, vignette = false, grain = false, cloudShadows = false)
+    const val DAYLIGHT = false
 
     /**
-     * The options today's map draws [region] with ([opts], [options] by default): where it still draws in a country whose
-     * tiles the core draws ([countryAt]: beyond the core's reach), the core's light for that country, which in the
-     * Netherlands is TONE's whatever the region's profile (RenderOptions.tone on), as the core lights every pack there
-     * (frame/MapFrame.hpp's with_pack, by the country of the pack's frame), so a region is lit as the core's map around
-     * it (the user, 30 October: "Its colors are slightly warmer", then of the renders' light: "I think it was tone what I
-     * liked"). Elsewhere, and before the published list is read, the renders' own light.
+     * What draws the maps (K11): nothing ([CoreState.None]) until the app starts the core ([startCore]); then the core,
+     * or T2's honest state where the phone cannot run it. Compose state: the maps on screen follow it.
      */
-    fun optionsFor(region: LiveRegion, opts: RenderOptions = options): RenderOptions =
-        if (coreLight(region.frame.lat0, region.frame.lon0)) opts.copy(tone = true) else opts
-
-    /**
-     * Whether today's map lights a region framed at [lat], [lon] as the core lights the Netherlands ([optionsFor]): a
-     * country's whose tiles the core draws, and the Netherlands (the core's load::draws_new_looks).
-     */
-    internal fun coreLight(lat: Double, lon: Double): Boolean = countryAt(lat, lon) != null && Countries.of(LatLon(lat, lon)) == NETHERLANDS
-
-    private const val NETHERLANDS = "NL"
-
-    /**
-     * Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. The frames are drawn
-     * at the screen's own pixels, as sharp as the boards' vectors: a phone 1080 px wide shows the 412 dp board at 2.62
-     * device pixels per dp, and a frame drawn at 2 and stretched there was visibly soft beside the board.
-     */
-    @Volatile
-    var maxRasterScale: Float = 4f
-
-    /**
-     * What draws the maps (K11): today's map alone ([CoreState.Canvas]) until the app starts the core ([startCore]);
-     * then the core under today's map where it has tiles, or T2's honest state where the phone cannot run it. Compose
-     * state: the maps on screen follow it.
-     */
-    var core: CoreState by mutableStateOf<CoreState>(CoreState.Canvas)
+    var core: CoreState by mutableStateOf<CoreState>(CoreState.None)
         private set
 
     /** The core's window: a SurfaceView (D5.1), or the TextureView where the debug switch `atlas.vk.host` asks. */
@@ -128,9 +89,7 @@ object MapEngine {
     /**
      * The screen's haze, vignette and grain (the app's Look settings; off by default, as each costs frame time: the user,
      * 27 October; on, the renders' look): off, the core draws the map without them, its own colours there and less work
-     * a pixel. Each map binding hands them to the
-     * core; [screenEffects] hands them to the core at once, and to today's map (the renderer's port, where the core has
-     * no tiles) through [options], whose frames are drawn again.
+     * a pixel. Each map binding hands them to the core; [screenEffects] hands them to the running core at once.
      */
     @Volatile
     var haze: Boolean = false
@@ -154,17 +113,10 @@ object MapEngine {
     var leftOut: Long = 0L
         private set
 
-    /**
-     * Sets [leftOut] to [parts] and draws every map again with it; today's map (the renderer's port, where the core has no
-     * tiles) leaves out the rain and the golden wash with them, which its screen layers draw ([options]).
-     */
+    /** Sets [leftOut] to [parts] and draws every map again with it. */
     fun leaveOut(parts: Set<MapPart>) {
         val off = MapParts.bits(parts)
-        val o = options
-        val rain = MapPart.RAIN !in parts
-        val wash = MapPart.GOLDEN_WASH !in parts
-        if (o.rain != rain || o.wash != wash) options = o.copy(rain = rain, wash = wash)
-        if (off == leftOut && o.rain == rain && o.wash == wash) return
+        if (off == leftOut) return
         leftOut = off
         invalidate()
     }
@@ -240,7 +192,7 @@ object MapEngine {
 
     /**
      * The user's strength of TONE (the Map look's Tone: 0 off, 1 the renders', up to 2): the core lights by it from the
-     * next moment it is handed (CoreMap.moment), today's map from its next frame ([options]); [tone] sets it.
+     * next moment it is handed (CoreMap.moment); [tone] sets it.
      */
     @Volatile
     var tone: Float = 1f
@@ -251,8 +203,6 @@ object MapEngine {
         val s = strength.coerceIn(0f, 2f)
         if (s == tone) return
         tone = s
-        val o = options
-        if (o.toneStrength != s.toDouble()) options = o.copy(toneStrength = s.toDouble())
         invalidate()
     }
 
@@ -277,11 +227,6 @@ object MapEngine {
         this.vignette = vignette
         this.grain = grain
         (core as? CoreState.Ready)?.core?.screenEffects(haze, vignette, grain)
-        val o = options
-        if (o.haze != haze || o.vignette != vignette || o.grain != grain) {
-            options = o.copy(haze = haze, vignette = vignette, grain = grain)
-            invalidate()
-        }
     }
 
     /** When the app's first screen began (SystemClock.uptimeMillis): the core's first-frame line counts from it. */
@@ -346,8 +291,8 @@ object MapEngine {
             made?.setFastRefresh(fast)
             core = when {
                 made != null -> CoreState.Ready(made)
-                // No core's library in this process at all (the JVM's tests): today's map alone, as without a start.
-                !MapCore.present() -> CoreState.Canvas
+                // No core's library in this process at all (the JVM's tests): no core, as without a start.
+                !MapCore.present() -> CoreState.None
                 else -> CoreState.Off(MapCore.lastError())
             }
             if (made != null && compressed != handed) made.setCompression(compressed)
@@ -412,11 +357,23 @@ object MapEngine {
     var windowTiles: ((app.atlas.mapcore.MapCore.Window) -> app.atlas.mapview.vk.Windows.Tiled?)? = null
 
     /**
+     * A window's data from the element packs on the phone (ENGINE.md step 3: an offline region's map, a place's published
+     * pack), for a window the phone has nothing of, before Overpass and offline too; the app sets it with its packs.
+     * Null: none.
+     */
+    @Volatile
+    var windowLocal: ((app.atlas.mapcore.MapCore.Window) -> app.atlas.mapview.vk.Windows.Packed?)? = null
+
+    /** Whether the phone keeps element packs ([windowLocal]): offline, the windows take theirs too. */
+    @Volatile
+    var localKept: () -> Boolean = { false }
+
+    /**
      * The countries whose published tiles the core draws (ENGINE.md step 3, one pack per country), from Atlas's published
      * list as last read (packs-latest's, its copy kept for offline); the app sets it once the list is read. Within one
-     * of them the map never hands a place to today's map while its window comes: the core draws its own cover there and
-     * the windows say what they are doing ([countryAt]; the user, 30 October, on today's map at the edge: "looks
-     * different then the engine"). Empty until the list is read.
+     * of them the windows come from the country's tiles and the core draws to the levels' reach where they are
+     * published ([CountryTiles.levels]); while a place's window comes the core draws its own cover there, as anywhere,
+     * and the windows say what they are doing ([countryAt]). Empty until the list is read.
      */
     @Volatile
     var countries: List<CountryTiles> = emptyList()
@@ -498,15 +455,16 @@ object MapEngine {
 
     /**
      * The windows the phone builds, once the app gave a cache and their data's source: online, or offline where it keeps
-     * a country's tiles ([tilesKept], the only windows it then takes); else null.
+     * a country's tiles or element packs ([tilesKept], [localKept]: the only windows it then takes); else null.
      */
     fun windows(): app.atlas.mapview.vk.Windows? {
-        if (!windowsAllowed() || !online() && !tilesKept()) return null
+        if (!windowsAllowed() || !online() && !tilesKept() && !localKept()) return null
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
             windowsBuilder ?: app.atlas.mapview.vk.Windows(
-                dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles, online = { online() },
+                dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks, tiles = windowTiles, local = windowLocal,
+                online = { online() },
                 budget = app.atlas.mapview.vk.WindowsBudget(dir, keptPacks = { windowsKept() }),
             ).also { windowsBuilder = it }
         }
@@ -543,34 +501,10 @@ object MapEngine {
     @Volatile
     private var fonts: SvgFonts? = null
 
-    /** Where the engine keeps what it computes once for many frames and launches (the filters' noise, in `noise/`); null keeps nothing. */
-    @Volatile
-    var cacheDir: File? = null
-        private set
-
     /**
-     * Keeps the CPU filters' noise in [dir]`/noise` from now on ([TurbulenceCache]: mapped files, at most about 60 MB
-     * held and 160 MB on disk), and warms it up in the background for a full-screen map on this device ([warmUp] with the
-     * display's size). The app calls it once at start; the same directory again does nothing.
-     */
-    fun useCacheDir(dir: File, warm: Boolean = true) {
-        synchronized(this) {
-            if (cacheDir == dir) return
-            cacheDir = dir
-            // the cache before (if any) is let go, not closed: a frame being made may still read it
-            TurbulenceCache.shared = TurbulenceCache(File(dir, "noise"))
-        }
-        if (!warm) return
-        val m = runCatching { android.content.res.Resources.getSystem().displayMetrics }.getOrNull() ?: return
-        if (m.density <= 0f || m.widthPixels <= 0 || m.heightPixels <= 0) return
-        // the map's frame is the view's size in whole dp (MapController.liveView)
-        warmUp(Math.round(m.widthPixels / m.density).toFloat(), Math.round(m.heightPixels / m.density).toFloat(), m.density)
-    }
-
-    /**
-     * Where the engine keeps what offline use depends on: the windows the phone took or built ([windowsDir]). The app
-     * gives its files, which Android never clears to free space; until 30 October the windows lived in the cache
-     * ([cacheDir]), which it may clear. Null keeps no window.
+     * Where the engine keeps what offline use depends on: the windows the phone took or built ([windowsDir]) and the
+     * world ([worldDir]). The app gives its files, which Android never clears to free space; until 30 October the
+     * windows lived in the cache, which it may clear. Null keeps no window.
      */
     @Volatile
     var keptDir: File? = null
@@ -582,47 +516,11 @@ object MapEngine {
     }
 
     /** Keeps nothing again (tests: the next test class must not write into a deleted directory). */
-    internal fun forgetCacheDir() = synchronized(this) {
-        cacheDir = null
+    internal fun forgetKeptDir() {
         keptDir = null
-        TurbulenceCache.shared = null
-    }
-
-    /**
-     * Readies the noise of the screen-wide filters (paper grain, material grain, cloud shadows, water) for frames of
-     * [widthDp] × [heightDp] at [density], on a background thread: the fields kept from earlier launches are mapped and
-     * their tiles checked before the first frame needs them. A first launch has nothing kept yet; its first frame makes
-     * the noise and keeps it. Returns the thread (null without a cache).
-     */
-    fun warmUp(widthDp: Float, heightDp: Float, density: Float): Thread? {
-        val cache = TurbulenceCache.shared ?: return null
-        val scale = minOf(density, maxRasterScale)
-        val s = EngineFrame.filterScale(widthDp, heightDp, scale)
-        val w = EngineFrame.pixels(widthDp, scale)
-        val h = EngineFrame.pixels(heightDp, scale)
-        val t = Thread({
-            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
-            try {
-                cache.warmUp(w, h, s, s)
-            } catch (e: Exception) {
-                // a damaged cache is no reason to stop: frames make their noise as they go
-                android.util.Log.w(EngineFrames.TAG, "noise warm-up failed: $e")
-            }
-        }, "atlas-noise-warmup")
-        t.isDaemon = true
-        t.start()
-        return t
     }
 
     private val maps = CopyOnWriteArrayList<() -> Unit>()
-
-    init {
-        // relief.py writes the lit ground as a JPEG through macOS's sips; on the phone, Android's encoder at the same quality
-        Relief.jpeg = JpegEncoder { png ->
-            val b = BitmapFactory.decodeByteArray(png, 0, png.size) ?: error("the relief image did not decode")
-            ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.JPEG, 80, it); b.recycle() }.toByteArray()
-        }
-    }
 
     /** The engine's typefaces, from this library's assets. */
     fun fonts(assets: AssetManager): SvgFonts = fonts ?: synchronized(this) { fonts ?: SvgFonts.fromAssets(assets).also { fonts = it } }
@@ -632,7 +530,7 @@ object MapEngine {
         fonts = f
     }
 
-    /** Asks every map on screen for a new frame: region data, the forecast or the options changed. */
+    /** Asks every map on screen for a new frame: the packs, the forecast or the Look settings changed. */
     fun invalidate() {
         for (m in maps) m()
     }

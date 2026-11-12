@@ -18,6 +18,10 @@ namespace {
 
 using namespace atlas;
 
+/// The place the tests' theme blocks are written for (the bundled packs', the Westerkerk).
+constexpr double place_latitude = 52.3746;
+constexpr double place_longitude = 4.8840;
+
 /// A colour's 8-bit levels of a 0-1 rgb.
 [[nodiscard]] std::uint32_t hex(hlsl::float3 c) {
     const auto level = [](float v) { return static_cast<std::uint32_t>(std::lround(v * 255.0F)); };
@@ -118,8 +122,8 @@ TEST_CASE("the ladder's sun: the point it is overhead of follows from its azimut
          {scene::GeoPoint{.lat = 10.0, .lon = -30.0}, scene::GeoPoint{.lat = -23.4, .lon = 4.884},
           scene::GeoPoint{.lat = 23.4, .lon = 170.0}, scene::GeoPoint{.lat = 0.0, .lon = -175.0},
           scene::GeoPoint{.lat = -5.0, .lon = 95.0}}) {
-        const std::array<double, 2> seen = seen_from(scene::moment_latitude, scene::moment_longitude, sun);
-        const scene::GeoPoint back = scene::sub_solar(seen[0], seen[1]);
+        const std::array<double, 2> seen = seen_from(place_latitude, place_longitude, sun);
+        const scene::GeoPoint back = scene::sub_solar(seen[0], seen[1], place_latitude, place_longitude);
         CHECK(back.lat == doctest::Approx(sun.lat).epsilon(1e-9));
         CHECK(pymath::cos(pymath::radians(back.lon - sun.lon)) == doctest::Approx(1.0).epsilon(1e-12));
         // and from another place
@@ -129,9 +133,9 @@ TEST_CASE("the ladder's sun: the point it is overhead of follows from its azimut
         CHECK(pymath::cos(pymath::radians(again.lon - sun.lon)) == doctest::Approx(1.0).epsilon(1e-12));
     }
     // the sun at the zenith is overhead of the place itself
-    const scene::GeoPoint here = scene::sub_solar(0.0, 90.0);
-    CHECK(here.lat == doctest::Approx(scene::moment_latitude));
-    CHECK(here.lon == doctest::Approx(scene::moment_longitude));
+    const scene::GeoPoint here = scene::sub_solar(0.0, 90.0, place_latitude, place_longitude);
+    CHECK(here.lat == doctest::Approx(place_latitude));
+    CHECK(here.lon == doctest::Approx(place_longitude));
 }
 
 TEST_CASE("the ladder's axes: a point's direction from the planet's centre in a frame is up at its target, and the "
@@ -169,6 +173,8 @@ TEST_CASE("the globe's look: the board's ramps at their stops, the night's caps 
     style::ThemeBlock theme{};
     theme.sun_azimuth = 180.0;
     theme.sun_elevation = 40.0;
+    theme.place_latitude = static_cast<float>(place_latitude);
+    theme.place_longitude = static_cast<float>(place_longitude);
     const scene::WorldBend b = bend_at(20.0, 10.0, 54'000'000.0);
     const scene::WorldLook look = scene::world_look(l, 54'000'000.0, theme, b, b.eye, 2.0, 824.0, 1830.0);
     const shaders::WorldLookBlock& k = look.block;
@@ -226,9 +232,15 @@ TEST_CASE("the globe's look: the board's ramps at their stops, the night's caps 
     CHECK(k.centre.w == doctest::Approx(view::earth_radius));
     CHECK(k.east.w == 6.0F);
     CHECK(k.parallels.x == doctest::Approx(0.5));
-    // the sun where the moment's place sees it at 40° in the south
-    CHECK(look.sun.lat == doctest::Approx(scene::moment_latitude - 50.0));
-    CHECK(look.sun.lon == doctest::Approx(scene::moment_longitude));
+    // the sun where the block's place sees it at 40° in the south (the place to a float's precision)
+    CHECK(look.sun.lat == doctest::Approx(place_latitude - 50.0).epsilon(1e-6));
+    CHECK(look.sun.lon == doctest::Approx(place_longitude).epsilon(1e-6));
+    // the same sun over another place is overhead of another point: a named moment follows the camera's place
+    theme.place_latitude = 35.68F;
+    theme.place_longitude = 139.77F;
+    const scene::WorldLook tokyo = scene::world_look(l, 54'000'000.0, theme, b, b.eye, 2.0, 824.0, 1830.0);
+    CHECK(tokyo.sun.lat == doctest::Approx(35.68 - 50.0).epsilon(1e-6));
+    CHECK(tokyo.sun.lon == doctest::Approx(139.77).epsilon(1e-6));
     CHECK(!look.night);
     CHECK(!look.plain);
 }
@@ -241,7 +253,9 @@ TEST_CASE("the ladder leaves a frame plain where it cannot change a pixel: by da
         theme.sun_azimuth = 180.0;
         theme.sun_elevation = elevation;
         if (night) theme.flags |= style::theme_flag::night;
-        const scene::WorldBend b = bend_at(scene::moment_latitude, scene::moment_longitude, distance);
+        theme.place_latitude = static_cast<float>(place_latitude);
+        theme.place_longitude = static_cast<float>(place_longitude);
+        const scene::WorldBend b = bend_at(place_latitude, place_longitude, distance);
         return scene::world_look(l, distance, theme, b, b.eye, 2.0, 824.0, 1830.0);
     };
     // from 72 km the eye sees 8.6° about the point under it: with the sun 40° up, or 14° on a winter's noon, no cap
@@ -265,4 +279,67 @@ TEST_CASE("the ladder leaves a frame plain where it cannot change a pixel: by da
     CHECK(look_at(1'000'000.0, 80.0, false).block.weights.x == 1.0F);
     // up to 18 km there is no look to leave out
     CHECK(!look_at(18'000.0, 40.0, false).plain);
+}
+
+TEST_CASE("a lit place's name rises off its light by what the light follows: not at all up to 18 km or by day, whole "
+          "from 29 km where the sun is a degree and a half under the horizon, and smoothly between") {
+    const tiles::WorldLadder l = load::world_ladder();
+    // the sun overhead of (0, 0): on the equator its altitude is 90 degrees less the longitude
+    const scene::GeoPoint sun{.lat = 0.0, .lon = 0.0};
+    const auto night = [&](double altitude) { return scene::light_night(l, sun, 0.0, 90.0 - altitude); };
+    CHECK(night(30.0) == 0.0);
+    CHECK(night(-0.5) == 0.0);
+    CHECK(night(-6.0) == doctest::Approx(0.5));
+    CHECK(night(-11.5) == 1.0);
+    CHECK(night(-70.0) == 1.0);
+    // the board's rule, from the ladder: none of the light a degree under the horizon, all of it ten deeper
+    CHECK(l.light_from == 1.0);
+    CHECK(l.light_over == 10.0);
+    const auto rise = [&](double distance, double altitude) {
+        return scene::name_rise(l, scene::ladder_weights(l, distance), sun, 0.0, 90.0 - altitude);
+    };
+    // up to 18 km no light is drawn, whatever the night; from where the caps' weight is a quarter the name is whole
+    CHECK(rise(9'000.0, -40.0) == 0.0);
+    CHECK(rise(18'000.0, -40.0) == 0.0);
+    CHECK(rise(22'000.0, -40.0) > 0.0);
+    CHECK(rise(22'000.0, -40.0) < 1.0);
+    CHECK(scene::ladder_weights(l, 28'000.0).caps < scene::name_rise_caps);
+    CHECK(scene::ladder_weights(l, 29'000.0).caps > scene::name_rise_caps);
+    CHECK(rise(29'000.0, -40.0) == 1.0);
+    CHECK(rise(600'000.0, -40.0) == 1.0);
+    CHECK(rise(12'000'000.0, -40.0) == 1.0);
+    // by day none; whole where the light begins to be drawn (the least of it the world pass draws)
+    CHECK(rise(600'000.0, 25.0) == 0.0);
+    CHECK(rise(600'000.0, -0.9) == 0.0);
+    CHECK(rise(600'000.0, -1.25) == doctest::Approx(0.5).epsilon(0.02));
+    CHECK(rise(600'000.0, -1.6) == 1.0);
+    for (int half = 3; half < 80; ++half) {
+        const double altitude = -0.5 * half;
+        if (night(altitude) >= scene::light_least_night) CHECK(rise(600'000.0, altitude - 0.001) == 1.0);
+    }
+    CHECK(scene::world_look(l, 600'000.0, style::ThemeBlock{}, bend_at(0.0, 0.0, 600'000.0), {0.0, 600'000.0, 0.0}, 2.0,
+                            824.0, 1830.0)
+              .block.light_least.y == static_cast<float>(scene::light_least_night));
+    // without a step: across the terminator and through the zoom the rise moves by little, and never back
+    double before = 0.0;
+    for (int i = 0; i <= 100; ++i) {
+        const double r = rise(600'000.0, -0.8 - (0.01 * i));
+        CHECK(r >= before);
+        CHECK(r - before < 0.04);
+        before = r;
+    }
+    CHECK(before == 1.0);
+    before = 0.0;
+    for (int i = 0; i <= 120; ++i) {
+        const double r = rise(18'000.0 + (100.0 * i), -40.0);
+        CHECK(r >= before);
+        CHECK(r - before < 0.04);
+        before = r;
+    }
+    CHECK(before == 1.0);
+    // the light's halo by its place's people, dp: the ladder's radii times its halo
+    CHECK(scene::light_halo_dp(l, 12e6) == doctest::Approx(2.6 * 2.2));
+    CHECK(scene::light_halo_dp(l, 5e6) == doctest::Approx(1.9 * 2.2));
+    CHECK(scene::light_halo_dp(l, 2e5) == doctest::Approx(1.3 * 2.2));
+    CHECK(scene::light_halo_dp(l, 0.0) == doctest::Approx(1.3 * 2.2));
 }

@@ -27,12 +27,23 @@ constexpr std::uint32_t none = UINT32_MAX;
 
 } // namespace
 
-Stand stand_at(const Measures& m, Point p, std::size_t spot) noexcept {
+Stand stand_at(const Measures& m, Point p, std::size_t spot, float rise, float mark) noexcept {
     const float cx = p.x + (spots[2 * spot] * (m.half - m.pad));
-    const float cy = p.y + (spots[(2 * spot) + 1] * m.text_height);
+    float cy = p.y + (spots[(2 * spot) + 1] * m.text_height);
     const float half_height = (m.text_height / 2.0F) + m.pad;
-    return {
-        .x = cx, .y = cy, .box = {.l = cx - m.half, .t = cy - half_height, .r = cx + m.half, .b = cy + half_height}};
+    if (!(rise > 0.0F)) {
+        return {.x = cx,
+                .y = cy,
+                .box = {.l = cx - m.half, .t = cy - half_height, .r = cx + m.half, .b = cy + half_height}};
+    }
+    // risen: the text's lower edge `mark` over the point at a rise of 1, the box down to the mark's own lower edge
+    cy -= rise * ((m.text_height / 2.0F) + mark);
+    return {.x = cx,
+            .y = cy,
+            .box = {.l = cx - m.half,
+                    .t = cy - half_height,
+                    .r = cx + m.half,
+                    .b = std::max(cy + half_height, p.y + (rise * mark))}};
 }
 
 void priority_order(std::span<const Candidate> candidates, std::vector<std::uint32_t>& order) {
@@ -66,7 +77,7 @@ void place(std::span<const Candidate> candidates, std::span<const std::uint32_t>
         for (std::size_t p = 0; p < label.points.size() && !placed; ++p) {
             if (!projected(label.points[p])) continue;
             for (std::size_t k = 0; k < spot_count; ++k) {
-                const Stand s = stand_at(label.measures, label.points[p], k);
+                const Stand s = stand_at(label.measures, label.points[p], k, label.rise, label.mark);
                 if (!fits(s.box, frame, index)) continue;
                 index.insert(s.box);
                 out.push_back({.candidate = c,
@@ -140,7 +151,8 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
         const State& st = states_[s];
         const Candidate& label = scaled_[c];
         const bool has = st.point < label.points.size() && projected(label.points[st.point]);
-        const Stand stand = has ? stand_at(label.measures, label.points[st.point], st.spot) : Stand{};
+        const Stand stand =
+            has ? stand_at(label.measures, label.points[st.point], st.spot, label.rise, label.mark) : Stand{};
         const bool clear =
             has && !label.hidden && clear_of(st.shown ? stand.box : grown(stand.box, margin), frame, index_);
         if (clear) index_.insert(stand.box);
@@ -201,7 +213,7 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
             if (alpha > 0.0F && st.left_point < label.points.size() && projected(label.points[st.left_point])) {
                 const auto was = static_cast<float>(scale / st.left_reference);
                 const Measures m = scaled(label.measures, was);
-                const Stand stand = stand_at(m, label.points[st.left_point], st.left_spot);
+                const Stand stand = stand_at(m, label.points[st.left_point], st.left_spot, label.rise, label.mark);
                 drawn_.push_back({.candidate = c,
                                   .stand = stand,
                                   .baseline = stand.y - m.baseline,

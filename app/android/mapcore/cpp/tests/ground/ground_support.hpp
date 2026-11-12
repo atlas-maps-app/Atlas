@@ -72,7 +72,7 @@ namespace atlas::test {
 [[nodiscard]] inline style::ThemeBlock sunny() {
     namespace flag = style::theme_flag;
     style::ThemeBlock b{};
-    b.version = 1;
+    b.version = atlas::style::theme_block_version;
     b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
     b.year = 2026;
     b.month = 10;

@@ -5,10 +5,10 @@ import android.os.Handler
 import android.util.Log
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
-import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.LabelKind
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -70,7 +70,7 @@ internal class CoreNames(
             try {
                 hand()
             } catch (e: RuntimeException) {
-                Log.w(EngineFrames.TAG, "vk names: ${e.message ?: e}")
+                Log.w(MapEngine.TAG, "vk names: ${e.message ?: e}")
             } finally {
                 busy.set(false)
                 if (again) {
@@ -116,12 +116,12 @@ internal class CoreNames(
         })
         val why = core.names(block, look.floorDp)
         if (why.isNotEmpty()) {
-            Log.w(EngineFrames.TAG, "vk names: $why")
+            Log.w(MapEngine.TAG, "vk names: $why")
             return 0
         }
         handed += wants.size - none
         skipped += none
-        Log.i(EngineFrames.TAG, "vk names: ${wants.size - none} handed${if (none > 0) ", $none without glyphs" else ""} ($handed in all)")
+        Log.i(MapEngine.TAG, "vk names: ${wants.size - none} handed${if (none > 0) ", $none without glyphs" else ""} ($handed in all)")
         return wants.size
     }
 

@@ -3,7 +3,7 @@ package app.atlas.mapview.vk
 import android.util.Log
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import java.io.File
 import java.nio.ByteBuffer
 import java.time.Instant
@@ -74,6 +74,12 @@ import java.util.zip.GZIPOutputStream
  * a pack's data only when it is newer than the data it keeps. Data from a pack counts as fetched when it came, so the
  * window is asked for Overpass's changes since the pack's date a week later, as any other.
  *
+ * A window the phone has nothing of, where neither gives its data, comes from the element packs on the phone before
+ * Overpass, and offline too ([local]: an offline region's map, a place's published pack; until 5 November today's map
+ * drew them itself): built at once from what they hold of its box, its data kept as due and as never fetched whole, so
+ * online the window's own whole answer comes next and the packs' picture stands until it has. Where the core refuses
+ * their data, the window goes on as if they held none of it.
+ *
  * A frame cell's levels' tiles (ENGINE.md one pack per country, step 7: the L12 and L13 tiles the core derives from a
  * cell's windows and draws beyond their reach) come from the country's tiles alone, as the core asks for them
  * ([MapCore.wantedLevels]: the L12 tiles in view first, so a far view is whole soon, then the L13 tiles nearer): before
@@ -122,8 +128,14 @@ class Windows(
      */
     private val tiles: ((MapCore.Window) -> Tiled?)? = null,
     /**
+     * A window's data from the element packs on the phone ([Packed]: Overpass's answer for its box as they hold it,
+     * gzipped), for a window the phone has nothing of; null where none holds any of it. Asked offline too. Null: none.
+     */
+    private val local: ((MapCore.Window) -> Packed?)? = null,
+    /**
      * Whether the phone may use the network now. Offline, a window comes only from a country's tiles the phone keeps
-     * whole (an offline region's map): no data is fetched, and no window refreshed.
+     * whole (an offline region's map) or from the element packs on the phone ([local]): no data is fetched, and no
+     * window refreshed.
      */
     private val online: () -> Boolean = { true },
     /**
@@ -417,7 +429,7 @@ class Windows(
             }
             val gone = b.trim(keep, claim = { claimed.add(it) }, release = { claimed.remove(it) })
             if (gone.isNotEmpty()) {
-                Log.i(EngineFrames.TAG, "vk windows: ${gone.size} evicted, least lately drawn first; the folder holds ${b.bytes shr 20} MB")
+                Log.i(MapEngine.TAG, "vk windows: ${gone.size} evicted, least lately drawn first; the folder holds ${b.bytes shr 20} MB")
             }
             gone.isNotEmpty()
         }
@@ -432,8 +444,10 @@ class Windows(
             dataStatus = Status.Waiting(f.at + waitAfter(f.refused, f.times), f.refused)
             return false
         }
-        // offline: no data to fetch; the window waits for the network, not asked of the kept tiles again
+        // offline: no data to fetch; the element packs on the phone, else the window waits for the network, not asked of
+        // the kept tiles again
         if (!net) {
+            if (none(w)) fromLocal(core, w, now, keptBase(w))?.let { return it }
             missedOffline += w
             dataStatus = Status.Idle
             return false
@@ -572,10 +586,10 @@ class Windows(
             val t0 = clock()
             val why = if (read) core.build(w, withEdits(core, w, kept, edited), fileOf(w)) else "it keeps no data that reads"
             if (why.isEmpty()) {
-                Log.i(EngineFrames.TAG, "vk window ${w.id}: for the user's edits, built again from its kept data in ${clock() - t0} ms")
+                Log.i(MapEngine.TAG, "vk window ${w.id}: for the user's edits, built again from its kept data in ${clock() - t0} ms")
                 return true
             }
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: for the user's edits, not built again ($why)")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: for the user's edits, not built again ($why)")
             return false
         } finally {
             kept.delete()
@@ -593,7 +607,7 @@ class Windows(
         return try {
             if (core.edit(w, json, UserEdit.json(list), edited)) edited else json
         } catch (e: IllegalStateException) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: the user's edits are left out: ${e.message}")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: the user's edits are left out: ${e.message}")
             json
         }
     }
@@ -611,7 +625,7 @@ class Windows(
         val got = try {
             source(w)
         } catch (e: Exception) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: no pack from the tiles: ${e.message}; fetching its data")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: no pack from the tiles: ${e.message}; fetching its data")
             tilesProblem = e.message ?: e.toString()
             missedTiles(w, now, none = false)
             return null
@@ -627,7 +641,7 @@ class Windows(
             write(tiledOf(w), "${got.date} ${got.from}\n".toByteArray())
             tiledOf(w).setLastModified(now)
         } catch (e: java.io.IOException) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: the pack from the tiles of ${got.from} was not written: ${e.message}")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: the pack from the tiles of ${got.from} was not written: ${e.message}")
             missedTiles(w, now, none = false)
             return null
         }
@@ -636,7 +650,7 @@ class Windows(
         report(Status.Idle)
         tilesProblem = null
         val what = if (got.pack.isNotEmpty()) "${got.pack.size} bytes" else "nothing to draw"
-        Log.i(EngineFrames.TAG, "vk window ${w.id}: $what from the tiles of ${got.from} (their data of ${got.date}) in ${clock() - t0} ms")
+        Log.i(MapEngine.TAG, "vk window ${w.id}: $what from the tiles of ${got.from} (their data of ${got.date}) in ${clock() - t0} ms")
         return got.pack.isNotEmpty()
     }
 
@@ -656,7 +670,7 @@ class Windows(
         return try {
             source(w, after)
         } catch (e: Exception) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: no data from the packs: ${e.message}")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: no data from the packs: ${e.message}")
             null
         }
     }
@@ -675,12 +689,12 @@ class Windows(
             if (headOf(data)?.base != date) throw java.io.IOException("it says another date than its pack's")
         } catch (e: java.io.IOException) {
             data.delete()
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: the data of pack ${got.from} does not read: ${e.message}")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: the data of pack ${got.from} does not read: ${e.message}")
             return false
         }
         data.setLastModified(came)
         tiledOf(w).delete()
-        Log.i(EngineFrames.TAG, "vk window ${w.id}: the data its pack from the tiles was built from kept (${got.gz.size} bytes of the pack ${got.from})")
+        Log.i(MapEngine.TAG, "vk window ${w.id}: the data its pack from the tiles was built from kept (${got.gz.size} bytes of the pack ${got.from})")
         return true
     }
 
@@ -697,20 +711,53 @@ class Windows(
             packed(w, kept, answer, if (asked) got else ask(w, if (dataOf(w).exists()) kept else null), t0)?.let { how ->
                 return build(core, w, answer, now, how)
             }
+            // nothing of it on the phone: the element packs on the phone first, at once; its own whole answer comes next
+            if (none(w)) fromLocal(core, w, now, kept)?.let { return it }
+            dataStatus = Status.Fetching(clock())
             try {
                 fetch(core.box(w), answer)
             } catch (e: Exception) {
                 fail(w, now, refused = false)
-                Log.w(EngineFrames.TAG, "vk window ${w.id}: no data: ${e.message}")
+                Log.w(MapEngine.TAG, "vk window ${w.id}: no data: ${e.message}")
                 return false
             }
             val date = runCatching { headOf(answer, false) }.getOrNull()?.base
             if (kept != null && (date == null || date.isBefore(kept))) {
                 fail(w, now, refused = false)
-                Log.w(EngineFrames.TAG, "vk window ${w.id}: the data that came is from $date, older than the window's $kept")
+                Log.w(MapEngine.TAG, "vk window ${w.id}: the data that came is from $date, older than the window's $kept")
                 return false
             }
             return build(core, w, answer, now, "${answer.length()} bytes fetched in ${clock() - t0} ms")
+        } finally {
+            answer.delete()
+        }
+    }
+
+    /**
+     * Builds window [w], which the phone has nothing of, from the element packs on the phone ([local]): true when built,
+     * null where they hold none of it, none no older than [kept], or the core refused their data (the window goes on as
+     * if they held none: its refusal holds back no network answer). Its data is kept as due at once, so online the
+     * window's own whole answer comes next ([aged]; the data says it was never fetched whole).
+     */
+    private fun fromLocal(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean? {
+        val source = local ?: return null
+        dir.mkdirs()
+        val answer = workOf(w, "local")
+        try {
+            val t0 = clock()
+            val got = try {
+                source(w)
+            } catch (e: Exception) {
+                Log.w(MapEngine.TAG, "vk window ${w.id}: no data from the packs on the phone: ${e.message}")
+                null
+            } ?: return null
+            val how = packed(w, kept, answer, got, t0) ?: return null
+            if (!build(core, w, answer, now, "$how, on the phone")) {
+                failed.remove(w)
+                return null
+            }
+            dataOf(w).setLastModified(now - REFRESH_MS - 1)
+            return true
         } finally {
             answer.delete()
         }
@@ -730,7 +777,7 @@ class Windows(
                 answer.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
             }
         } catch (e: java.io.IOException) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: the data of pack ${data.from} does not read: ${e.message}; asking Overpass")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: the data of pack ${data.from} does not read: ${e.message}; asking Overpass")
             return null
         }
         return "${data.gz.size} bytes of the pack ${data.from} (its data of ${data.date}) in ${clock() - t0} ms"
@@ -748,7 +795,7 @@ class Windows(
         }
         if (why.isNotEmpty()) {
             fail(w, now, refused = true)
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: $why; tried again in a day")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: $why; tried again in a day")
             return false
         }
         val built = clock() - t1
@@ -761,7 +808,7 @@ class Windows(
         failed.remove(w)
         dataStatus = Status.Idle
         Log.i(
-            EngineFrames.TAG,
+            MapEngine.TAG,
             "vk window ${w.id}: $how, built in $built ms" +
                 (kept.exceptionOrNull()?.let { ", its data not kept: ${it.message}" } ?: ", its data kept"),
         )
@@ -787,7 +834,7 @@ class Windows(
         val head = if (data.exists()) runCatching { headOf(data, true) }.getOrNull() else null
         if (diffs == null || head == null) return whole(core, w, now, head?.base)
         if (now - head.whole.toEpochMilli() > WHOLE_MS) {
-            Log.i(EngineFrames.TAG, "vk window ${w.id}: its data was fetched whole on ${head.whole}: fetched whole again")
+            Log.i(MapEngine.TAG, "vk window ${w.id}: its data was fetched whole on ${head.whole}: fetched whole again")
             return whole(core, w, now, head.base)
         }
         val since = head.base.minusMillis(MARGIN_MS).toString()
@@ -795,7 +842,7 @@ class Windows(
         val diff = try {
             diffs(core.box(w), since, head.base.toString())
         } catch (e: Exception) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: no changes since $since: ${e.message}; fetched whole")
+            Log.w(MapEngine.TAG, "vk window ${w.id}: no changes since $since: ${e.message}; fetched whole")
             return whole(core, w, now, head.base)
         }
         val fetched = clock() - t0
@@ -803,19 +850,19 @@ class Windows(
         val merged = workOf(w, "merged")
         try {
             runCatching { unzip(data, kept) }.onFailure {
-                Log.w(EngineFrames.TAG, "vk window ${w.id}: its data does not read: ${it.message}; fetched whole")
+                Log.w(MapEngine.TAG, "vk window ${w.id}: its data does not read: ${it.message}; fetched whole")
                 return whole(core, w, now, head.base)
             }
             val changed = try {
                 core.merge(w, kept, direct(diff), merged)
             } catch (e: IllegalStateException) {
-                Log.w(EngineFrames.TAG, "vk window ${w.id}: ${e.message}; fetched whole")
+                Log.w(MapEngine.TAG, "vk window ${w.id}: ${e.message}; fetched whole")
                 return whole(core, w, now, head.base)
             }
             if (!changed) {
                 data.setLastModified(now)
                 failed.remove(w)
-                Log.i(EngineFrames.TAG, "vk window ${w.id}: nothing changed since $since (${diff.size} bytes in $fetched ms)")
+                Log.i(MapEngine.TAG, "vk window ${w.id}: nothing changed since $since (${diff.size} bytes in $fetched ms)")
                 return false
             }
             return build(core, w, merged, now, "the changes since $since fetched (${diff.size} bytes) in $fetched ms, merged")

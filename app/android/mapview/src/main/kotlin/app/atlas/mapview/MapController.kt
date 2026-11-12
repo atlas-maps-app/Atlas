@@ -23,14 +23,12 @@ import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.CameraWriter
-import app.atlas.mapview.svg.SvgCamera
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.CoreMap
 import app.atlas.mapview.vk.MapCameraSource
+import app.atlas.mapview.vk.MapPlace
 import app.atlas.mapview.vk.PackList
-import app.atlas.mapview.vk.Transition
 import app.atlas.mapview.vk.Windows
-import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
 import app.atlas.render.live.RegionFrame
@@ -55,17 +53,18 @@ import kotlin.math.roundToInt
 data class Insets(val left: Float = 0f, val top: Float = 0f, val right: Float = 0f, val bottom: Float = 0f)
 
 /**
- * The map view's engine room, one per [AtlasMap]: the camera to the 1:1 engine's exact frames on a thread of their own
- * ([EngineFrames]), the newest frame warped to the camera at once and cross-faded into the next, the overlays on top
- * (projected with the engine's camera, in the region's own frame), gestures to camera moves, and the camera's animations
- * (fly-to, zoom steps, flings, the snap to north, following the phone).
+ * The map view's engine room, one per [AtlasMap]: the camera to the core (plan-vector K11, [core]: MapEngine.core
+ * ready), which draws every place under all of this from the camera this publishes for each vsync ([publishCamera]:
+ * during an animation, the animation a frame on too); the overlays the core does not draw, on top (projected with the
+ * core's camera, in the drawn pack's own frame); gestures to camera moves, and the camera's animations (fly-to, zoom
+ * steps, flings, the snap to north, following the phone).
  *
- * With the core (plan-vector K11, [core]: MapEngine.core ready), the core draws the map under all of it, from the
- * camera this publishes for each vsync ([publishCamera]: during an animation, the animation a frame on too), and today's
- * map is drawn over it only where the transitional rule wants it ([CoreMap.transition]): its frames are asked for only
- * there, so at the core's places no scene of today's map is ever loaded.
+ * Until the core's first picture is complete its paper covers the map ([CoreMap.cover]). Where the core has no tiles
+ * at the camera's place it draws its own cover, the windows it has around it, and the map says why ([MapPlace]): the
+ * windows on their way, the way to the map, the world's on its way. Until 5 November today's map (the renderer's port,
+ * rasterised on the canvas) drew the places the core had no tiles for; it has left the phone (ENGINE.md step 3).
  *
- * Everything here runs on the main thread except what the frame thread does.
+ * Everything here runs on the main thread.
  */
 internal class MapController(initial: MapState, private val scope: CoroutineScope) : GestureListener, RememberObserver {
     private val main = Handler(Looper.getMainLooper())
@@ -82,15 +81,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /** The labels' face (the boards' Instrument Serif italic), given by the app. */
     var labelTypeface: android.graphics.Typeface? = null
-    val frames: EngineFrames = EngineFrames(fonts = { fonts ?: SvgFonts.system() }, onChange = { main.post(published) })
     private val engineChanged: () -> Unit = {
-        frames.invalidate()
         main.post(repack)
         // what the core's camera carries may have changed with it (the parts the app's diagnostics leave out,
         // MapEngine.leftOut): published again, at rest too, so the core draws it at once rather than at the next touch
         main.post(republish)
-        // the countries whose tiles the core draws came to be known (or changed): the rule places the camera again, at
-        // rest too, so a place of theirs leaves today's map at once rather than at the next touch
+        // the countries whose tiles the core draws came to be known (or changed): the map looks again at what the core
+        // has at the camera's place, at rest too, so its line is the place's at once rather than at the next touch
         if (MapEngine.countries !== placedCountries) main.post(placeAgain)
         // the user's Tone or palette changed (the Map look): the core's theme is sent again with them, and drawn at once,
         // at rest too
@@ -106,7 +103,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** The core's camera published again where what it carries changed (nothing otherwise: the map stays at rest). */
     private val republish = Runnable { if (!closed) publishCamera() }
 
-    /** The countries the rule last placed the camera with ([update]); written on the main thread. */
+    /** The countries the map last looked at the camera's place with ([update]); written on the main thread. */
     @Volatile
     private var placedCountries: List<CountryTiles> = emptyList()
 
@@ -134,7 +131,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     var size by mutableStateOf(0 to 0)
     var insets by mutableStateOf(Insets())
 
-    /** The ground frame of the region drawn: gestures and overlays use the engine's own. */
+    /** The ground frame of the pack the core draws: gestures and overlays use the core's own. */
     var frame by mutableStateOf<RegionFrame?>(null)
         private set
 
@@ -186,7 +183,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var animation: Job? = null
     private var lookAheadJob: Job? = null
     private var tapeJob: Job? = null
-    private var fadeJob: Job? = null
 
     // The tilt readout: its linger and fade, its painter, where the tilting fingers are.
     private var readoutJob: Job? = null
@@ -206,31 +202,27 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var lastReported: CameraPosition? = null
     private var lastFix: LatLon? = null
     private var course: Double? = null
-    private var lastRequest: EngineFrames.Request? = null
 
-    /** The core's side of this map (K11): the core draws under today's map. Null: today's map alone, as before. */
+    /**
+     * The core's side of this map (K11), which draws every place. Null: no core, while it starts or where none runs in
+     * this process (the paper and the overlays alone).
+     */
     var core by mutableStateOf<CoreMap?>(null)
         private set
 
     /**
      * The app runs the core (MapEngine.core starting or ready): until this map's [core] is made, it waits for it with
-     * the paper alone, today's map not asked (no scene of it loaded where the core will draw, no "Loading").
+     * the paper alone (no "Loading").
      */
     var coreExpected = false
         set(value) {
             if (value == field) return
             field = value
-            // No core after all (none in this process): today's map is asked for this map's frame now.
-            if (!value && core == null && !closed) {
-                lastRequest = null
-                update()
-            }
+            // No core after all (none in this process), or one on its way: the map says what it is.
+            if (core == null && !closed) noteStatus()
         }
 
-    /**
-     * T2's honest state's reason while the phone cannot draw the map (MapEngine.core is off): no map is drawn and
-     * today's map is not asked either (it is no fallback, T2). Null otherwise.
-     */
+    /** T2's honest state's reason while the phone cannot draw the map (MapEngine.core is off): no map is drawn. Null otherwise. */
     var honest: String? = null
         set(value) {
             if (value == field) return
@@ -248,35 +240,30 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     private fun noteHonest() {
         val why = honestReason ?: return
-        lastRequest = null
         if (state.status != MapStatus.NoData(why)) state.status = MapStatus.NoData(why)
         if (state.loading) state.loading = false
     }
 
-    // The core's camera as last published, and the transitional rule's inputs.
+    // The core's camera as last published.
     private var cameraRevision = 0L
     private var publishedCamera: CameraPosition? = null
     private var publishedViewport: Viewport? = null
     private var publishedRest = false
-    private var publishedDraw = false
     private var publishedLocation: UserLocation? = null
     private var publishedOff = 0L
     private var publishedUnder = false
 
     /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
     private var coreLocation = false
-    private var coreWanted: Transition.Path? = null
 
-    /**
-     * The core draws its own cover for a place whose window has not come (the place a country's whose tiles it draws,
-     * no window of it on the phone yet: Transition.pathOf): today's map's frame is not drawn, and the windows' line says
-     * what they are doing.
-     */
-    private var coreWaits = false
-    private var wantRevision = 0L
-    private var canvasFrameAtWant = 0L
-    private var transitionJob: Job? = null
+    /** What the core has at the camera's place, as [update] last found it. */
+    private var place = MapPlace.DRAWN
+
+    /** The camera's publication whose complete picture the start's paper waits for: the first once the packs are known (-1 until then). */
+    private var startRevision = -1L
+    private var coverJob: Job? = null
     private var sentMoment: Moment? = null
+    private var sentPlace: LitPlace? = null
 
     /** The user's Tone (MapEngine.tone) the core's theme was last sent with. */
     @Volatile
@@ -323,41 +310,18 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var movedAt = 0L
     private var panelLine = ""
     private var panelJob: Job? = null
-    private var idleJob: Job? = null
 
     @Volatile
     private var warming = false
     private val warmNames = HashSet<String>()
     private val warmLogos = HashSet<String>()
 
-    // The frame shown and the one it fades from.
-    private var shown: EngineFrame? = null
-    private var previous: EngineFrame? = null
-    private var fade = 1f
-    private var lastDrawnNumber = 0L
-
     // Debug figures.
-    private var drawMillis = 0.0
     private val debugText = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; color = Color.WHITE }
     private val debugPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xB0141619.toInt() }
     private val debugRect = RectF()
     private val statusText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
     private val statusPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xD0141619.toInt() }
-
-    private val published = Runnable {
-        // posted before the close: a closed map takes nothing more from its frames (the state may have a new map)
-        if (closed) return@Runnable
-        frameTick.intValue++
-        val f = frames.latest
-        if (f != null && f !== shown) {
-            previous = shown
-            shown = f
-            startFade()
-        }
-        noteFrame()
-        noteStatus()
-        stepTransition()
-    }
 
     /** The core said something new of its frames (a picture complete, or no longer): the map looks again. */
     private val coreChanged = Runnable {
@@ -366,7 +330,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         core?.offReason?.let { if (coreRefused == null) coreRefused = "the core turned the map off: $it" }
         frameTick.intValue++
         logFirstFrame()
-        stepTransition()
+        stepCover()
         noteStatus()
     }
 
@@ -374,10 +338,11 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private val settle = Runnable { if (!closed) publishCamera(force = true) }
 
     /**
-     * The packs on the phone may have changed (a window taken from its country's tiles or built): the core is handed
-     * them again off the main thread, and where they changed the map draws what it can draw now, the transitional rule
-     * asked again, and the windows' next step is asked at once, at rest too, while the core wants more (a pack came, so
-     * the steps make progress). Where the list is the same, only the next step, once its half second is over.
+     * The packs on the phone may have changed (a window taken from its country's tiles or built, the world's packs come):
+     * the core is handed them again off the main thread, and where they changed the map draws what it can draw now,
+     * looks again at what it has at the camera's place, and the windows' next step is asked at once, at rest too, while
+     * the core wants more (a pack came, so the steps make progress). Where the list is the same, only the next step,
+     * once its half second is over.
      */
     private val repack = Runnable {
         val c = core ?: return@Runnable
@@ -394,7 +359,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 windowsLater()
                 return@launch
             }
-            Log.i(EngineFrames.TAG, "vk packs again: ${changed.joinToString(", ")}")
+            Log.i(MapEngine.TAG, "vk packs again: ${changed.joinToString(", ")}")
             publishCamera(force = true)
             windowCheckedAt = 0L
             update()
@@ -416,13 +381,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     private val windowsAgain = Runnable { if (!closed) update() }
 
-    /**
-     * The ground frame gestures and overlays take: the region today's map draws, or, where the core's picture is the
-     * one seen, the pack the core draws.
-     */
+    /** The ground frame gestures and overlays take: the pack the core draws, kept while the camera names none. */
     private fun noteFrame() {
-        val c = core
-        val want = if (c == null || c.transition.canvas >= 0.5f) frames.frame else drawnPack()?.frame ?: frames.frame
+        val want = drawnPack()?.frame ?: return
         if (frame != want) frame = want
     }
 
@@ -435,28 +396,41 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         return c.packs.named(lv.lat, lv.lon)
     }
 
-    /** What the map says of its picture: the core's (complete and shown) where it draws, else today's map's. */
+    /**
+     * What the map says of its picture: the core's, complete and shown; or where it has no tiles at the camera's place,
+     * why ([placeStatus]). With no core in this process, that none runs.
+     */
     private fun noteStatus() {
-        // T2's honest state says what the map is, whatever the core or today's map says of their frames.
+        // T2's honest state says what the map is, whatever the core says of its frames.
         if (honestReason != null) return noteHonest()
         val c = core
-        val coreDraws = (c == null && coreExpected) || (c != null && coreWanted != Transition.Path.CANVAS)
-        val status = if (coreDraws) {
-            windowStatus() ?: if (c != null && c.complete && c.transition.canvas == 0f) MapStatus.Ready else MapStatus.Loading(null)
-        } else {
-            frames.status
+        val status = when {
+            c == null -> if (coreExpected) MapStatus.Loading(null) else MapStatus.NoData(NO_CORE)
+            else -> placeStatus() ?: if (c.complete && c.cover.started) MapStatus.Ready else MapStatus.Loading(null)
         }
         if (state.status != status) state.status = status
-        val loading = if (coreDraws) status !is MapStatus.Ready else status !is MapStatus.Ready && status !is MapStatus.NoData || frames.busy
+        val loading = status is MapStatus.Loading || status is MapStatus.Downloading
         if (state.loading != loading) state.loading = loading
     }
 
     /**
-     * What the map is where the core draws a place whose window has not come yet ([coreWaits]): not on the phone, offline;
-     * on its way while the windows take it from its country's tiles, fetch its data or build it; null otherwise.
+     * What the map is where the core has no tiles at the camera's place ([place]): within the windows' reach what they
+     * do ([windowStatus]), or no map data where none will come; beyond it the way to the map; beyond the levels' reach
+     * the world on its way, or to come with the first connection. Null where the core draws the place.
+     */
+    private fun placeStatus(): MapStatus? = when (place) {
+        MapPlace.DRAWN -> null
+        MapPlace.WINDOWS -> windowStatus() ?: if (MapEngine.windows() == null) MapStatus.NoData(NO_DATA) else null
+        MapPlace.NEAR -> MapStatus.NoData(ZOOM_IN)
+        MapPlace.WORLD -> if (MapEngine.online()) MapStatus.Downloading(WORLD, -1, -1) else MapStatus.NoData(WORLD_OFFLINE)
+    }
+
+    /**
+     * What the map is where the core draws a place whose window has not come yet ([MapPlace.WINDOWS]): not on the phone,
+     * offline; on its way while the windows take it from its country's tiles, fetch its data or build it; null otherwise.
      */
     private fun windowStatus(): MapStatus? {
-        if (!coreWaits) return null
+        if (place != MapPlace.WINDOWS) return null
         if (!MapEngine.online()) return MapStatus.NoData("offline, and this area is not on the phone yet")
         val target = state.camera.target
         val where = MapEngine.countryAt(target.lat, target.lon)?.name ?: "this area"
@@ -483,7 +457,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /**
      * Draws [next] from now on, in place of the state drawn: a screen's map with a camera of its own, over the one map
      * (the user, 1 November: "There is too much re loading the map"). Nothing is rebuilt: the core's map, its surface and
-     * tiles, and today's frames stay; the state left keeps its camera for when it is drawn again, and the new camera is
+     * tiles stay; the state left keeps its camera for when it is drawn again, and the new camera is
      * drawn at once.
      */
     fun take(next: MapState) {
@@ -533,7 +507,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     fun detach() {
-        main.removeCallbacks(published)
         stopAnimation()
         unhook(state)
         close()
@@ -561,8 +534,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (closed) return
         closed = true
         MapEngine.unregister(engineChanged)
-        frames.close()
-        main.removeCallbacks(published)
         main.removeCallbacks(coreChanged)
         main.removeCallbacks(settle)
         main.removeCallbacks(windowsAgain)
@@ -575,9 +546,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * Draws through [mapCore] from now on, from the packs [packs], into a TextureView where [texture] (else a
-     * SurfaceView); null for either: today's map alone again. The core is handed its packs and the moment, and its map
-     * turned on, off the main thread; until its first picture is complete, today's map's paper covers it (no
-     * "Loading").
+     * SurfaceView); null for either: no core again (the paper and the overlays alone). The core is handed its packs and
+     * the moment, and its map turned on, off the main thread; until its first picture is complete, the paper covers it
+     * (no "Loading").
      */
     fun useCore(mapCore: MapCore?, packs: PackList?, texture: Boolean) {
         val old = core
@@ -596,8 +567,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 canvasTick.intValue++
                 closeCore(old)
                 noteChrome()
-                lastRequest = null
                 update()
+                noteStatus()
             }
             return
         }
@@ -606,8 +577,10 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val c = CoreMap(mapCore, packs, texture, coreChanged)
         core = c
         canvasTick.intValue++
-        coreWanted = null
+        place = MapPlace.DRAWN
+        startRevision = -1L
         sentMoment = null
+        sentPlace = null
         sentTone = MapEngine.tone
         sentPalette = MapEngine.palette
         sentLabels = null
@@ -625,13 +598,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             val refused = withContext(Dispatchers.Default) { c.bind() }
             if (core !== c) return@launch
             if (refused.isNotEmpty()) {
-                // A core that cannot make the map's frame: T2's honest state, never today's map in its place.
+                // A core that cannot make the map's frame: T2's honest state.
                 coreRefused = "the core could not draw the map: $refused"
                 noteHonest()
                 return@launch
             }
-            // The packs are known now: the camera names the pack drawn, then the rule decides the place, so the picture
-            // it waits for is one of that pack.
+            // The packs are known now: the camera names the pack drawn, so the picture the start's paper waits for is one
+            // of that pack.
             publishCamera(force = true)
             update()
             noteFrame()
@@ -649,7 +622,10 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             noteChrome()
         }
 
-    /** The chrome's shapes over the map moved: the core draws a frame with them where they are. */
+    /**
+     * The core's picture must follow the chrome's shapes (ChromeShapes.onChange): the glass under a frosted shape that
+     * moved, or the keep-outs alone come to rest. The core draws a frame with them where they are.
+     */
     fun chromeMoved() {
         val c = core ?: return
         c.source.chromeMoved()
@@ -660,7 +636,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private fun noteChrome() {
         val c = core
         c?.source?.chrome = chrome
-        val coreSeen = c != null && !c.texture && c.transition.canvas < 0.5f
+        val coreSeen = c != null && !c.texture && c.cover.canvas < 0.5f
         chrome?.let { if (it.coreDraws != coreSeen) it.coreDraws = coreSeen }
     }
 
@@ -671,8 +647,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * Publishes the core's camera ([CoreMap.source]): the camera now and, during an animation, the same animation a frame
-     * on ([next] at [nextNs]), with the view, the pack the core draws and whether it draws at all; and asks the core for
-     * a frame. Nothing when nothing changed since the last publication, unless [force] (the rest flag after a motion).
+     * on ([next] at [nextNs]), with the view and the pack the core draws; and asks the core for a frame. Nothing when
+     * nothing changed since the last publication, unless [force] (the rest flag after a motion).
      */
     private fun publishCamera(next: CameraPosition? = null, nowNs: Long = System.nanoTime(), nextNs: Long = 0L, force: Boolean = false) {
         val c = core ?: return
@@ -680,15 +656,10 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (v.isEmpty) return
         val cam = state.camera
         val rest = !touching && animation?.isActive != true && lookAheadJob?.isActive != true
-        // Where today's map is wanted and none of the core's packs reaches the ground in view (a jump away from them),
-        // the core holds its last picture until today's map has its own: a frame of nothing would be a blank one.
-        val holds = coreWanted == Transition.Path.CANVAS && CameraOps.visibleBounds(cam, v)?.let { !c.packs.meets(it) } != false
-        val draw = !c.transition.coreHidden && !holds
-        // the location's puck where the core draws the map with nothing of today's map over it, as its labels, and nothing
-        // on the ground that the canvas draws over the core's picture (a route ribbon, an area: until the core has them)
-        val location = overlays.location.takeIf {
-            draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
-        }
+        // the location's puck once the core's picture shows with nothing over it (the start's paper gone), as its labels,
+        // and nothing on the ground that the canvas draws over the core's picture (a route ribbon, an area: until the
+        // core has them)
+        val location = overlays.location.takeIf { c.cover.started && (!overlays.onGround || coreRoutes) }
         // the parts the core leaves out: the style's trees and soft shadows where its layers have none, and what the app's
         // diagnostics switch off (MapEngine.leftOut)
         val off = (if (MapLayer.TREES in style.layers) 0L else MapPart.TREES.bit) or
@@ -696,7 +667,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val lv = liveView(cam, v)
         // where no country's levels are, the world under the core's cover from every distance
         val under = MapEngine.worldUnder(lv.lat, lv.lon)
-        if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw &&
+        if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest &&
             location == publishedLocation && off == publishedOff && under == publishedUnder
         ) {
             return
@@ -713,7 +684,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 bearing1 = n?.bearing ?: lv.bearing, pitch1 = n?.pitch ?: lv.pitch, principalY1 = n?.cyDp ?: lv.cyDp,
                 principalXDp = lv.widthDp / 2.0, widthPx = v.width, heightPx = v.height, widthDp = lv.widthDp, heightDp = lv.heightDp,
                 density = v.density.toDouble(), rest = rest, follow = state.follow != Follow.NONE,
-                pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = draw,
+                pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = true,
                 location = location?.let { MapCameraSource.Location(it.at.lat, it.at.lon, it.accuracyM.toFloat(), it.heading?.toFloat()) },
                 off = off, worldUnder = under,
             ),
@@ -723,7 +694,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         publishedUnder = under
         publishedViewport = v
         publishedRest = rest
-        publishedDraw = draw
         publishedLocation = location
         if (coreLocation != (location != null)) {
             coreLocation = location != null
@@ -735,73 +705,36 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * The transitional rule now: the core where it has tiles, today's map elsewhere ([CoreMap.transition]), stepped
-     * each frame while a switch waits for its picture or fades.
+     * The start's paper over the core ([CoreMap.cover]), stepped each frame from the core's first complete picture until
+     * it has faded out; nothing covers the core's picture after.
      */
-    private fun stepTransition() {
+    private fun stepCover() {
         val c = core ?: return
-        if (!advanceTransition(c) || transitionJob?.isActive == true) return
-        transitionJob = scope.launch {
+        if (!advanceCover(c) || coverJob?.isActive == true) return
+        coverJob = scope.launch {
             while (core === c) {
                 withFrameNanos { }
                 frameTick.intValue++
-                if (!advanceTransition(c)) break
+                if (!advanceCover(c)) break
             }
-            // Settled: whether the core draws at all may have changed (covered whole by today's map, or not).
-            publishCamera()
+            // the core's picture shows alone: the puck goes to the core with the camera, and the status says so
+            publishCamera(force = true)
             noteFrame()
             noteStatus()
-            if (c.transition.canvasHidden && shown != null) scheduleIdle(c)
         }
     }
 
-    /**
-     * Where the core has drawn alone for [IDLE_MS], today's map lets go of its frame and the engine's scenes (the Java
-     * heap the core's places do not need, §3); they come back with today's map's next place.
-     */
-    private fun scheduleIdle(c: CoreMap) {
-        if (idleJob?.isActive == true) return
-        idleJob = scope.launch {
-            delay(IDLE_MS)
-            if (core !== c || !c.transition.canvasHidden) return@launch
-            frames.idle()
-            shown = null
-            previous = null
-            lastRequest = null
-        }
-    }
-
-    /** One step of the rule; true while it is still under way. */
-    private fun advanceTransition(c: CoreMap): Boolean {
-        val wanted = coreWanted ?: return false
-        val coreReady = c.complete && c.completeRevision >= wantRevision
-        val cover = c.transition.canvas
-        val due = c.transition.update(SystemClock.uptimeMillis(), wanted, coreReady, canvasReady(), whereDrawn(wanted))
-        if (c.transition.canvas != cover) canvasTick.intValue++
-        // Whether the core draws may change mid-way (no longer covered whole): it hears at once.
-        if (publishedDraw != !c.transition.coreHidden) publishCamera()
+    /** One step of the start's paper; true while it still covers the core. */
+    private fun advanceCover(c: CoreMap): Boolean {
+        if (c.cover.started) return false
+        val coreReady = startRevision >= 0 && c.complete && c.completeRevision >= startRevision
+        val before = c.cover.canvas
+        val due = c.cover.update(SystemClock.uptimeMillis(), coreReady)
+        if (c.cover.canvas != before) canvasTick.intValue++
+        if (c.cover.started) Log.i(MapEngine.TAG, "vk cover gone: the core draws ${drawnPack()?.id ?: "its own cover"} alone")
         noteFrame()
         noteChrome()
         return due
-    }
-
-    /**
-     * Today's map has its picture here: a frame made since the switch to it began, or its own honest state (no data
-     * here, a download under way), once it has finished with the newest request.
-     */
-    private fun canvasReady(): Boolean {
-        if (frames.busy) return false
-        return when (frames.status) {
-            is MapStatus.Ready -> (shown?.number ?: 0L) > canvasFrameAtWant
-            is MapStatus.NoData, is MapStatus.Downloading -> true
-            is MapStatus.Loading -> false
-        }
-    }
-
-    /** Where the path [wanted] draws, for the log: today's map's region, or the core's pack. */
-    private fun whereDrawn(wanted: Transition.Path): String = when (wanted) {
-        Transition.Path.CANVAS -> shown?.region ?: (frames.status as? MapStatus.Downloading)?.region ?: "nowhere (no data here)"
-        Transition.Path.CORE -> drawnPack()?.id ?: "-"
     }
 
     /** The core's first complete picture since the app began: `vk first frame <ms> first|warm` (Appendix C), once. */
@@ -810,13 +743,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val at = c.firstCompleteAt
         if (at < 0 || !MapEngine.firstFrameLogged.compareAndSet(false, true)) return
         val from = MapEngine.startedAt.takeIf { it > 0 } ?: android.os.Process.getStartUptimeMillis()
-        Log.i(EngineFrames.TAG, "vk first frame ${at - from} ${if (MapEngine.firstLaunch) "first" else "warm"}")
+        Log.i(MapEngine.TAG, "vk first frame ${at - from} ${if (MapEngine.firstLaunch) "first" else "warm"}")
     }
 
     /**
-     * The labels: the core draws them once its picture shows with nothing of today's map over it (fixed where they are
-     * on the map, growing and shrinking with it, ENGINE.md design point 8), today's map's canvas until then; handed over
-     * off the main thread when that, the labels or their face change.
+     * The labels: the core draws them once its picture shows with nothing over it (fixed where they are on the map,
+     * growing and shrinking with it, ENGINE.md design point 8), the canvas over the start's paper until then; handed
+     * over off the main thread when that, the labels or their face change.
      */
     private fun sendLabels(c: CoreMap) {
         // what the world's names are drawn with (ENGINE.md step 5, "Names"): the core asks for them as its frames show them
@@ -827,7 +760,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (look == null || look.density != density || look.face !== nameFace || look.globeFace !== globeFace || look.floorDp != floor) {
             c.names.look = app.atlas.mapview.vk.CoreNames.Look(density, nameFace, globeFace, floor)
         }
-        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f
+        val draws = c.cover.started
         val labels = if (draws) overlays.labels else emptyList()
         val face = labelTypeface
         val sent = sentLabels
@@ -842,19 +775,19 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val least = READABLE_SP * fontScale / painter.smallestSize
         scope.launch(Dispatchers.Default) {
             val why = c.labels(labels, face, painter, least, revision)
-            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk labels: $why")
+            if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk labels: $why")
         }
     }
 
     /**
-     * The markers: the core draws them where it draws the map with nothing of today's map over it and nothing on the
-     * ground the canvas draws over its picture (a route, an area: the canvas draws those, and the markers over them,
-     * until the core draws them), so they move with the map in the same frame; today's map's canvas elsewhere. Handed
-     * over off the main thread when that, the markers, the density or the night (a closed place's look, [Marker.faded])
-     * change; the canvas lets go of them once the core has them, so none are missing between.
+     * The markers: the core draws them once its picture shows with nothing over it and nothing on the ground the canvas
+     * draws over its picture (a route, an area: the canvas draws those, and the markers over them, until the core draws
+     * them), so they move with the map in the same frame; the canvas until then. Handed over off the main thread when
+     * that, the markers, the density or the night (a closed place's look, [Marker.faded]) change; the canvas lets go of
+     * them once the core has them, so none are missing between.
      */
     private fun sendMarkers(c: CoreMap) {
-        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
+        val draws = c.cover.started && (!overlays.onGround || coreRoutes)
         val markers = if (draws) overlays.markers else emptyList()
         val night = c.night
         val sent = sentMarkers
@@ -878,7 +811,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         }
         scope.launch(Dispatchers.Default) {
             val why = c.markers(markers, painter, revision, night)
-            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk markers: $why")
+            if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk markers: $why")
             main.post {
                 if (core !== c || revision != markersRevision) return@post
                 coreMarkers = draws && why.isEmpty()
@@ -889,13 +822,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * The routes and areas: the core draws them where it draws the map with nothing of today's map over it, on the
-     * street in the same frame as the map, under its labels, markers and puck; today's map's canvas elsewhere. Handed over
-     * off the main thread when that, the routes, the areas or the density change; the canvas lets go of them once the
-     * core has them, and the markers and the puck follow them into the core.
+     * The routes and areas: the core draws them once its picture shows with nothing over it, on the street in the same
+     * frame as the map, under its labels, markers and puck; the canvas until then. Handed over off the main thread when
+     * that, the routes, the areas or the density change; the canvas lets go of them once the core has them, and the
+     * markers and the puck follow them into the core.
      */
     private fun sendRoutes(c: CoreMap) {
-        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f
+        val draws = c.cover.started
         val ov = overlays
         val routes = if (draws) ov.routes else emptyList()
         val areas = if (draws) ov.areas else emptyList()
@@ -918,7 +851,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val painter = routePainter?.takeIf { it.density == density } ?: OverlayPainter(density).also { routePainter = it }
         scope.launch(Dispatchers.Default) {
             val why = c.routes(MapOverlays(routes = routes, areas = areas), painter, revision)
-            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk routes: $why")
+            if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk routes: $why")
             main.post {
                 if (core !== c || revision != routesRevision) return@post
                 val now = draws && why.isEmpty()
@@ -946,24 +879,53 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         scope.launch(Dispatchers.Default) { runCatching { c.ask(asked, revision) } }
     }
 
+    /** Where the moment lights the map, and the clock it goes by there. */
+    private data class LitPlace(val lat: Double, val lon: Double, val zone: java.time.ZoneId)
+
     /**
-     * The moment the core lights the map by, handed over off the main thread when it changed or the user's Tone or
-     * palette did (MapEngine.tone, MapEngine.palette). A moment's own step is drawn with the next frame (Bridge's moment()
-     * asks Kotlin's camera, which at rest has not moved); a new Tone or palette is the user's, so once the core has the
-     * theme the camera is published again and the map draws it at once, at rest too.
+     * The place the moment lights now, and its clock (the engine lead's and the reviewer's "the moment's place", 11
+     * November): the sun stands where it stands over the place the map draws, not over the bundled packs'.
+     * - Where a render pack holds the camera's target, its own origin, as its render is lit (the canal ring's is the
+     *   Westerkerk, so its pictures stay the renders').
+     * - Elsewhere the target itself, to a tenth of a degree: at most 8 km off, a fifteenth of a degree of the sun, where
+     *   its shadows step by half a degree, so the block is made again only as the camera moves on, a window's or none.
+     * The clock is the place's own zone: the forecast's where one is to hand (it holds for any place), else the zone of
+     * the pack that holds the target (a window's is its country's, a guess by a table), else, off every pack, the
+     * sun's own hour by the longitude. Never the nearest pack's, which may be a country away.
+     */
+    private fun litPlace(c: CoreMap): LitPlace? {
+        val v = viewport()
+        if (v.isEmpty) return null
+        val lv = liveView(state.camera, v)
+        val held = c.packs.choose(lv.lat, lv.lon)
+        val render = held?.takeIf { it.kind == app.atlas.mapcore.MapCore.PackRef.RENDER }
+        val lat = render?.frame?.lat0 ?: (Math.round(lv.lat * PLACE_STEPS) / PLACE_STEPS).coerceIn(-90.0, 90.0)
+        val lon = render?.frame?.lon0 ?: (Math.round(lv.lon * PLACE_STEPS) / PLACE_STEPS).coerceIn(-180.0, 180.0)
+        val zone = MapEngine.weather?.zone(LatLon(lv.lat, lv.lon)) ?: held?.zone
+            ?: java.time.ZoneOffset.ofHours(Math.round(lv.lon / 15.0).toInt().coerceIn(-12, 14))
+        return LitPlace(lat, lon, zone)
+    }
+
+    /**
+     * The moment the core lights the map by, handed over off the main thread when it changed, or the place it lights
+     * or its clock did ([litPlace]), or the user's Tone or palette (MapEngine.tone, MapEngine.palette). A moment's own
+     * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
+     * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
+     * at once, at rest too.
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         val tone = MapEngine.tone
         val palette = MapEngine.palette
-        if (moment == sentMoment && tone == sentTone && palette == sentPalette) return
+        val place = litPlace(c) ?: return
+        if (moment == sentMoment && tone == sentTone && palette == sentPalette && place == sentPlace) return
         val retoned = tone != sentTone || palette != sentPalette
         sentMoment = moment
         sentTone = tone
         sentPalette = palette
-        val zone = drawnPack()?.zone ?: java.time.ZoneId.of("Europe/Amsterdam")
-        val daylight = MapEngine.options.daylight
+        sentPlace = place
+        val daylight = MapEngine.DAYLIGHT
         scope.launch(Dispatchers.Default) {
-            c.moment(moment, zone, daylight)
+            c.moment(moment, place.zone, daylight, place.lat, place.lon)
             if (retoned) main.post { if (core === c && !closed) publishCamera(force = true) }
         }
     }
@@ -989,20 +951,19 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** Composition was dropped before it applied: the thread started for it must not linger. */
     override fun onAbandoned() = close()
 
-    /** True when nothing is loading, being made, fading, animating or waiting to be drawn: the picture is final. */
+    /**
+     * True when nothing is loading, fading, animating or on its way: the picture is final. Where the core has no tiles at
+     * the camera's place, once nothing comes for it (no window under way, the way to the map said).
+     */
     val settled: Boolean
         get() {
-            val c = core
-            if (c != null) {
-                if (transitionJob?.isActive == true || animation?.isActive == true || warming) return false
-                // Where the core draws, its picture complete and shown is the final one.
-                if (coreWanted == Transition.Path.CORE) return c.complete && c.transition.canvas == 0f
+            if (animation?.isActive == true || warming) return false
+            val c = core ?: return !coreExpected
+            if (coverJob?.isActive == true) return false
+            return when (place) {
+                MapPlace.DRAWN -> c.complete && c.cover.started
+                else -> !state.loading
             }
-            if (frames.busy || fade < 1f || animation?.isActive == true || warming) return false
-            val status = frames.status
-            if (status is MapStatus.Loading || status is MapStatus.Downloading) return false
-            val f = frames.latest
-            return f == null || f.number == lastDrawnNumber
         }
 
     /** The engine's view of [cam] in [v]: the screen in dp (whole, as the engine's frame), the principal point in those dp. */
@@ -1021,9 +982,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * Asks for a frame of the current camera, style and moment; reports the camera when it moved. With no fixed
-     * [MapState.time] the light follows the clock, in steps of [MOMENT_STEP_S]. Under the core, today's map is asked
-     * only where the transitional rule wants it, and the core gets the camera and the moment.
+     * Hands the core the current camera and moment, and looks at what it has at the camera's place ([MapPlace]); reports the
+     * camera when it moved. With no fixed [MapState.time] the light follows the clock, in steps of [MOMENT_STEP_S].
      */
     fun update() {
         val v = viewport()
@@ -1034,29 +994,13 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val moment = momentOf(s, state.time, cam.target)
         val c = core
         if (c != null && c.packs.loaded) {
-            // The transitional rule's place: the core where it has tiles for this camera, or where the place is a
-            // country's whose tiles it draws (its window on its way), today's map elsewhere.
             placedCountries = MapEngine.countries
             val under = MapEngine.worldUnder(view.lat, view.lon)
-            val wanted = Transition.pathOf(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance, under)
-            // Where the core's own cover stands in for the place's window on its way, today's map's last frame is not
-            // drawn either (the paper and the windows' line meanwhile): none of its other look shows in the country.
-            // Where the world draws (beyond the countries' reach) no window is on its way: offline too, the map is final.
-            val waits = wanted == Transition.Path.CORE && !c.packs.covers(view.lat, view.lon, view.distance) &&
-                !c.packs.worldDraws(view.lat, view.lon, view.distance, under)
-            if (waits != coreWaits) {
-                coreWaits = waits
+            val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance, under)
+            if (at != place) {
+                place = at
                 canvasTick.intValue++
                 noteStatus()
-            }
-            if (wanted != coreWanted) {
-                coreWanted = wanted
-                canvasTick.intValue++
-                if (wanted == Transition.Path.CANVAS) {
-                    // Today's map makes a frame for this place, whatever it made before.
-                    lastRequest = null
-                    canvasFrameAtWant = shown?.number ?: 0L
-                }
             }
             // The windows the core wants (ENGINE.md step 3): the nearest taken from its country's tiles or built in the
             // background, one at a time, and the core handed it when it is; asked twice a second, and after a step
@@ -1082,22 +1026,15 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                     }
                 }
                 // what the windows do now is what the map is, where the place's window has not come yet
-                if (coreWaits) noteStatus()
+                if (place == MapPlace.WINDOWS) noteStatus()
             }
         }
         if (c != null) {
             publishCamera()
-            if (coreWanted == Transition.Path.CORE && c.transition.wanted != Transition.Path.CORE) wantRevision = cameraRevision
+            // the start's paper waits for a complete picture of the first camera published once the packs are known
+            if (startRevision < 0 && c.packs.loaded) startRevision = cameraRevision
             sendMoment(c, moment)
-            stepTransition()
-        }
-        // Today's map alone, or where the rule wants it; never while the core is on its way, nor in T2's honest state.
-        if (honestReason == null && ((c == null && !coreExpected) || coreWanted == Transition.Path.CANVAS)) {
-            val req = EngineFrames.Request(view, moment, density, MapEngine.options, moment == Moment.Named("night"))
-            if (req != lastRequest) {
-                lastRequest = req
-                frames.submit(req)
-            }
+            stepCover()
         }
         val bounds = CameraOps.visibleBounds(cam, v)
         if (bounds != state.visibleBounds) state.visibleBounds = bounds
@@ -1130,50 +1067,17 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         }
     }
 
-    private fun startFade() {
-        fadeJob?.cancel()
-        if (previous == null) {
-            fade = 1f
-            return
-        }
-        fade = 0f
-        fadeJob = scope.launch {
-            var start = -1L
-            while (true) {
-                val now = withFrameNanos { it }
-                if (start < 0) start = now
-                fade = ((now - start) / 1e6 / FADE_MS).coerceIn(0.0, 1.0).toFloat()
-                frameTick.intValue++
-                if (fade >= 1f) break
-            }
-            previous = null
-        }
-    }
-
-    // -------------------------------------------------------------------------------------------------------------
-    // Drawing.
-
     private fun painter(): OverlayPainter = painter ?: OverlayPainter(density).also { p ->
         p.markers.sans = markerSans
         painter = p
     }
 
-    /** The markers' text in the boards' Geist, from the fonts the engine's frames use. */
+    /** The markers' text in the boards' Geist, from the app's fonts. */
     private val markerSans: (Int) -> Typeface = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
 
     /** The tilt readout's painter, made at its first draw (and again when the density changes); its figures in Geist too. */
     private fun tiltReadoutPainter(): TiltReadoutPainter =
         readoutPainter?.takeIf { it.density == density } ?: TiltReadoutPainter(density, markerSans).also { readoutPainter = it }
-
-    /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
-    private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {
-        val lv = liveView(state.camera, v)
-        val r = f.frame
-        return SvgCamera(
-            r.x(lv.lat, lv.lon), f.camera.targetY, r.z(lv.lat, lv.lon), LiveCamera.bearing(lv.bearing), LiveCamera.enginePitch(lv.pitch),
-            lv.distance, LiveCamera.FOV, lv.widthDp.toDouble(), lv.heightDp.toDouble(), cx = lv.widthDp / 2.0, cy = lv.cyDp,
-        )
-    }
 
     /**
      * Whether the canvas draws nothing over the core's picture now (ENGINE.md gain 12, [CanvasWork.idle]). It reads
@@ -1183,9 +1087,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     fun canvasIdle(): Boolean {
         val c = core ?: return false
         return CanvasWork.idle(
-            debug = debug, tape = tape != null, readout = readout != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
-            cover = c.transition.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
-            coreMarkers = coreMarkers, coreLocation = coreLocation, waits = coreWaits,
+            debug = debug, tape = tape != null, readout = readout != null, honest = honestReason != null,
+            cover = c.cover.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
+            coreMarkers = coreMarkers, coreLocation = coreLocation, waits = place != MapPlace.DRAWN,
         )
     }
 
@@ -1202,31 +1106,18 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * Draws the newest frame (warped to the camera, cross-faded from the one before) and the overlays over it. Under the
-     * core, today's map covers the core's picture only as much as the transitional rule says (at the start its paper
-     * alone, until the core's first picture is complete).
+     * Draws the start's paper over the core while it covers it ([CoreMap.cover]: the paper alone, until the core's first
+     * picture is complete), and the overlays the core does not draw over all of it.
      */
     fun draw(canvas: Canvas) {
-        val t0 = System.nanoTime()
         val v = viewport()
-        // where the core's own cover stands in for a window on its way, the paper alone under it, never today's map
-        val f = shown?.takeUnless { coreWaits }
         val c = core
-        val cover = c?.transition?.canvas ?: 1f
-        val night = if (f != null) f.moment == "night" else c?.night == true
+        val cover = c?.cover?.canvas ?: 1f
+        val night = c?.night == true
         if (cover > 0f) {
             val layered = cover < 1f && !v.isEmpty
             if (layered) canvas.saveLayerAlpha(0f, 0f, v.width.toFloat(), v.height.toFloat(), (cover * 255f).roundToInt())
             canvas.drawColor(if (night) NIGHT_EARTH else DAY_EARTH)
-            if (f != null && !v.isEmpty) {
-                val lv = liveView(state.camera, v)
-                canvas.save()
-                canvas.scale(v.width / lv.widthDp.toFloat(), v.height / lv.heightDp.toFloat())
-                val p = previous
-                if (p != null && fade < 1f && p.frame == f.frame) p.draw(canvas, cameraFor(p, v))
-                f.draw(canvas, cameraFor(f, v), if (p != null && p.frame == f.frame) fade else 1f)
-                canvas.restore()
-            }
             if (layered) canvas.restore()
         }
         if (!v.isEmpty) {
@@ -1247,44 +1138,17 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
             readout?.let { tiltReadoutPainter().draw(canvas, it, state.camera.pitch, CameraOps.maxPitch(state.camera.zoom), night) }
             drawStatus(canvas)
-            // the timings show while the map is loading or working; a finished map is the board's, with nothing over it
-            // (the core's line while the map moves and a few seconds after)
-            val canvasPanel = debug && ((c == null && !coreExpected) || coreWanted == Transition.Path.CANVAS) &&
-                (f == null || frames.busy || frames.status !is MapStatus.Ready)
-            val corePanel = debug && c != null && panelLine.isNotEmpty() && SystemClock.uptimeMillis() - movedAt < PANEL_LINGER_MS
-            if (canvasPanel || corePanel) drawDebug(canvas, f, pt, canvasPanel, corePanel)
+            // the core's line while the map moves and a few seconds after; a finished map is the board's, with nothing over it
+            if (debug && c != null && panelLine.isNotEmpty() && SystemClock.uptimeMillis() - movedAt < PANEL_LINGER_MS) drawDebug(canvas, pt)
         }
-        val t1 = System.nanoTime()
-        drawMillis = drawMillis * 0.8 + (t1 - t0) / 1e6 * 0.2
-        if (f != null && f.number != lastDrawnNumber) {
-            lastDrawnNumber = f.number
-            Log.i(EngineFrames.TAG, "frame ${f.number} drawn in %.2f ms (a warp of it: the same or less)".format(Locale.ROOT, (t1 - t0) / 1e6))
-        }
-    }
-
-    /** "Loading the map…", with the seconds once it takes a while. */
-    private fun loadingText(): String {
-        val since = frames.workSince
-        val secs = if (since == 0L) 0L else (frames.now() - since) / 1000
-        return if (secs < 3) "Loading the map…" else "Loading the map… %d s".format(Locale.getDefault(), secs)
     }
 
     /**
-     * The map's honest state, when it is not simply the picture: loading, downloading with its size, no data here.
-     * Where the core draws, none (its tiles are on the phone: no "Loading"), but where the place's window has not come
-     * yet ([coreWaits]): what the windows are doing.
+     * The map's line where the core has no tiles at the camera's place ([placeLine]), at the top of the map; none where
+     * it draws the place (its tiles are on the phone: no "Loading").
      */
     private fun drawStatus(canvas: Canvas) {
-        val coreDraws = (core == null && coreExpected) || (core != null && coreWanted != Transition.Path.CANVAS)
-        if (coreDraws && !coreWaits) return
-        val text = windowsText() ?: if (coreDraws) return else when (val s = frames.status) {
-            is MapStatus.Ready -> return
-            is MapStatus.Loading -> if (shown == null) loadingText() else return
-            is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
-            else if (s.bytes > 0) "Downloading map data · %.1f of %.1f MB".format(Locale.getDefault(), s.done / 1e6, s.bytes / 1e6)
-            else "Downloading map data…"
-            is MapStatus.NoData -> if (shown == null) state.camera.target.let { noDataLine(it.lat, it.lon) } else return
-        }
+        val text = placeLine() ?: return
         statusText.textSize = 13f * density
         val w = statusText.measureText(text) + 24f * density
         val h = 30f * density
@@ -1296,8 +1160,24 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
+     * What the map says where the core has no tiles at the camera's place ([place]): within the windows' reach what they
+     * do ([windowsText]), or that no map data comes here (no windows in this process); beyond it the way to the map;
+     * beyond the levels' reach the world on its way, or to come with the first connection. Null where the core draws the
+     * place, the windows rest, or no core draws yet (the paper alone while it starts).
+     */
+    private fun placeLine(): String? {
+        if (core == null || honestReason != null) return null
+        return when (place) {
+            MapPlace.DRAWN -> null
+            MapPlace.WINDOWS -> windowsText() ?: if (MapEngine.windows() == null) NO_DATA else null
+            MapPlace.NEAR -> ZOOM_IN
+            MapPlace.WORLD -> if (MapEngine.online()) "$WORLD…" else WORLD_OFFLINE
+        }
+    }
+
+    /**
      * Where the core has no tiles yet, what its windows are doing (ENGINE.md step 3, Windows.line), which says why the
-     * place is empty: today's map builds no area of its own there any more. Null where the windows rest.
+     * place is empty. Null where the windows rest.
      */
     private fun windowsText(): String? {
         if (core == null) return null
@@ -1322,29 +1202,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     private var windowsTickPosted = false
 
-    private fun drawDebug(canvas: Canvas, f: EngineFrame?, p: OverlayPainter, canvasLines: Boolean = true, coreLines: Boolean = false) {
+    /** The debug panel: the core's line (§8), the pack it draws, the markers and the camera. */
+    private fun drawDebug(canvas: Canvas, p: OverlayPainter) {
         val c = state.camera
-        val t = f?.timings
-        val lines = ArrayList<String>(10)
-        if (coreLines) {
-            // The core's line (§8), and what the transitional rule shows.
-            lines += panelLine.lines()
-            val k = core
-            if (k != null) lines += "core %s · today's map %.0f%%".format(Locale.ROOT, drawnPack()?.id ?: "none here", k.transition.canvas * 100f)
-        }
-        if (canvasLines) {
-            lines += if (t == null) "no frame yet" else "frame %d: load %d · render %d · parse %d · raster %d ms".format(Locale.ROOT, f.number, t.load, t.render, t.parse, t.raster)
-            lines += frames.stage.let { st ->
-                if (st.isEmpty()) "idle" else "now: %s%s · %d s".format(Locale.ROOT, st, frames.stageRegion?.let { " $it" } ?: "", (frames.now() - frames.stageSince) / 1000)
-            }
-            lines += when (val s = frames.status) {
-                is MapStatus.NoData -> "status: ${s.reason}".take(90)
-                is MapStatus.Downloading -> "status: ${if (s.building) "building" else "downloading"} ${s.region} ${s.done / 1000} of ${s.bytes / 1000} KB"
-                else -> frames.lastError?.let { "last error: $it".take(90) } ?: "status: ${s::class.simpleName}"
-            }
-            lines += "draw %.1f ms%s".format(Locale.ROOT, drawMillis, if (frames.failures > 0) " · ${frames.failures} failed" else "")
-            lines += if (f == null) "-" else "%s · %s · %s · band %.2f m".format(Locale.ROOT, f.region, f.view ?: "between views", f.moment, f.tolerance)
-        }
+        val lines = ArrayList<String>(8)
+        lines += panelLine.lines()
+        lines += "core %s · %s".format(Locale.ROOT, drawnPack()?.id ?: "none here", place.name.lowercase(Locale.ROOT))
         lines += "markers %d/%d · vertices %d".format(Locale.ROOT, p.markerCount, overlays.markers.size, p.routeVertices)
         lines += "z %.2f · bearing %.0f° · pitch %.0f°".format(Locale.ROOT, c.zoom, c.bearing, c.pitch)
         debugText.textSize = 11f * density
@@ -1698,7 +1561,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val ground = onTapGround
         // the building under the finger as the core drew it, where it draws the map (as a long press finds it), else
         // the ground it shows there: a building stands before the ground it hides
-        if (c != null && (building != null || ground != null) && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
+        if (c != null && (building != null || ground != null) && c.cover.started) {
             scope.launch {
                 val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
                 if (core !== c || closed) return@launch
@@ -1723,7 +1586,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val building = onLongPressBuilding
         // the building under the finger as the core drew it, where it draws the map: the first one the ray meets, which
         // may stand before the street point under the finger
-        if (c != null && building != null && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
+        if (c != null && building != null && c.cover.started) {
             scope.launch {
                 val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
                 if (core !== c || closed) return@launch
@@ -1767,22 +1630,25 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     companion object {
         /**
-         * What the map says where today's map has no data for [lat], [lon]: in a country whose tiles the core draws,
-         * where today's map is asked only beyond the core's reach and takes no region (LiveRegions' engineCountry), the
-         * way to the core's map; elsewhere, that there is none (the user, 30 October, of the reason only the debug
-         * overlay showed: "Nowhere its shows zoom in?").
+         * The map's lines where the core has no tiles at the camera's place: no windows come here (none in this process),
+         * the map nearer (the user, 30 October, of the reason only the debug overlay showed: "Nowhere its shows zoom
+         * in?"), the world on its way (ENGINE.md step 5: "Getting the world map…") or not before the first connection.
+         * [NO_CORE]: the status where no core runs in this process (the JVM's tests).
          */
-        internal fun noDataLine(lat: Double, lon: Double): String =
-            if (MapEngine.countryAt(lat, lon) != null) "Zoom in to see the map" else "No map data here"
+        const val NO_DATA = "No map data here"
+        const val ZOOM_IN = "Zoom in to see the map"
+        const val WORLD = "Getting the world map"
+        const val WORLD_OFFLINE = "The world map comes with the first connection"
+        const val NO_CORE = "No map core in this process"
 
         const val DAY_EARTH = 0xFFE4E0D8.toInt()
         const val NIGHT_EARTH = 0xFF0B0F1A.toInt()
 
-        /** How long a new exact frame takes to fade in over the last, ms. */
-        const val FADE_MS = 180.0
-
         /** The least text size a label draws at, sp: Android's text size scales it (the core's readable floor). */
         const val READABLE_SP = 12f
+
+        /** The steps a degree of the place the moment lights is taken in, off the render packs ([litPlace]): tenths. */
+        const val PLACE_STEPS = 10.0
 
         /** The live moment moves on in steps of this many seconds (each step is a new frame). */
         const val MOMENT_STEP_S = 300L
@@ -1805,9 +1671,6 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         /** How often the canvas draws again while the windows work (the status, and their next step), and while they wait. */
         const val WINDOWS_WORK_TICK_MS = 1_000L
         const val WINDOWS_WAIT_TICK_MS = 30_000L
-
-        /** How long the core draws alone before today's map lets go of its frame and scenes (ms). */
-        const val IDLE_MS = 10_000L
 
         const val FIT_MS = 650
         const val ZOOM_STEP_MS = 280L

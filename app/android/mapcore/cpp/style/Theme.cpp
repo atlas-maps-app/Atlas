@@ -132,8 +132,12 @@ std::expected<ThemeBlock, ThemeError> read_theme_block(std::span<const std::byte
     if ((b.flags & ~theme_flag::known) != 0U || (b.has(theme_flag::wet) && !b.has(theme_flag::wet_set))) {
         return std::unexpected(ThemeError::flags);
     }
-    if (b.reserved1 != 0U || (!b.has(theme_flag::tone_strength) && std::bit_cast<std::uint32_t>(b.tone) != 0U)) {
+    if (!b.has(theme_flag::tone_strength) && std::bit_cast<std::uint32_t>(b.tone) != 0U) {
         return std::unexpected(ThemeError::reserved);
+    }
+    if (!std::isfinite(b.place_latitude) || !std::isfinite(b.place_longitude) || std::abs(b.place_latitude) > 90.0F ||
+        std::abs(b.place_longitude) > 180.0F) {
+        return std::unexpected(ThemeError::value);
     }
     if (b.has(theme_flag::tone_strength) && (!std::isfinite(b.tone) || b.tone < 0.0F || b.tone > 2.0F)) {
         return std::unexpected(ThemeError::value);
@@ -260,6 +264,8 @@ std::string dump(const ThemeBlock& b) {
     bits("pressure", b.pressure);
     bits("vis", b.visibility);
     bits("hum", b.humidity);
+    std::format_to(std::back_inserter(out), "place_lat={:08x}\n", std::bit_cast<std::uint32_t>(b.place_latitude));
+    std::format_to(std::back_inserter(out), "place_lon={:08x}\n", std::bit_cast<std::uint32_t>(b.place_longitude));
     return out;
 }
 

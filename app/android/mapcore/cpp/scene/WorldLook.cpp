@@ -62,6 +62,34 @@ GeoPoint sub_solar(double azimuth, double elevation, double lat, double lon) noe
             .lon = pymath::degrees(pymath::atan2(y, x))};
 }
 
+double light_night(const tiles::WorldLadder& ladder, const GeoPoint& sun, double lat, double lon) noexcept {
+    const double p = pymath::radians(lat);
+    const double s = pymath::radians(sun.lat);
+    const double sine = (pymath::sin(p) * pymath::sin(s)) +
+                        (pymath::cos(p) * pymath::cos(s) * pymath::cos(pymath::radians(lon - sun.lon)));
+    const double altitude = pymath::degrees(pymath::asin(std::clamp(sine, -1.0, 1.0)));
+    if (!(ladder.light_over > 0.0)) return 0.0;
+    return std::clamp((-altitude - ladder.light_from) / ladder.light_over, 0.0, 1.0);
+}
+
+double name_rise(const tiles::WorldLadder& ladder, const LadderWeights& weights, const GeoPoint& sun, double lat,
+                 double lon) noexcept {
+    const auto smooth = [](double v) {
+        const double t = std::clamp(v, 0.0, 1.0);
+        return t * t * (3.0 - (2.0 * t));
+    };
+    const double shown = smooth(weights.caps / name_rise_caps);
+    if (!(shown > 0.0)) return 0.0;
+    return shown * smooth(light_night(ladder, sun, lat, lon) / light_least_night);
+}
+
+double light_halo_dp(const tiles::WorldLadder& ladder, double people) noexcept {
+    const std::size_t size = people >= static_cast<double>(ladder.light_sizes[0])
+                                 ? 0U
+                                 : (people >= static_cast<double>(ladder.light_sizes[1]) ? 1U : 2U);
+    return ladder.light_radii.at(size) * ladder.light_halo;
+}
+
 view::Vec3 direction_of(const WorldBend& bend, double lat, double lon) noexcept {
     const double p = pymath::radians(lat);
     const double l = pymath::radians(lon - bend.lon);
@@ -79,7 +107,8 @@ WorldLook world_look(const tiles::WorldLadder& ladder, double distance, const st
                      double height) noexcept {
     WorldLook look;
     look.weights = ladder_weights(ladder, distance);
-    look.sun = sub_solar(theme.sun_azimuth, theme.sun_elevation);
+    look.sun = sub_solar(theme.sun_azimuth, theme.sun_elevation, static_cast<double>(theme.place_latitude),
+                         static_cast<double>(theme.place_longitude));
     look.night = theme.has(style::theme_flag::night);
     shaders::WorldLookBlock& b = look.block;
     const LadderWeights& w = look.weights;
@@ -139,7 +168,7 @@ WorldLook world_look(const tiles::WorldLadder& ladder, double distance, const st
                   f32(ladder.light_radii[2] * density), f32(ladder.light_halo)};
     b.light_rule = {f32(ladder.light_halo_opacity), f32(ladder.light_from), f32(ladder.light_over),
                     f32(ladder.light_facing)};
-    b.light_least = {f32(ladder.light_least_facing), 0.05F, 0.0F, 0.0F};
+    b.light_least = {f32(ladder.light_least_facing), f32(light_least_night), 0.0F, 0.0F};
     return look;
 }
 

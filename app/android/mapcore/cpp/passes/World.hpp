@@ -87,8 +87,15 @@ public:
     /// (null: its entries the land's).
     [[nodiscard]] static std::vector<std::uint32_t> palette_of(const style::ThemeBlock& theme, bool night,
                                                                const tiles::Style* style);
-    /// The day's palette, which the ladder draws under the night's caps: palette_of's by day with the ladder's
-    /// ground, water and roads where the moment is night, the moment's own by day.
+    /// How much of the moment's own ground, water and roads the far world's day palette has, by the sun's elevation at
+    /// the moment's place: none at night, where the moment's are the night's, and none at the night flag's own
+    /// threshold (style::night_below), all from 5 degrees up, smoothstep between. So the far world does not step
+    /// when the flag flips (it stepped 5 to 7 levels from 75 km out, measured 11 November), and by day it is the
+    /// moment's.
+    static constexpr double day_share_whole = 5.0;
+    [[nodiscard]] static double day_share(const style::ThemeBlock& theme) noexcept;
+    /// The day's palette, which the ladder draws under the night's caps: palette_of's by day with, for its ground,
+    /// water and roads, the ladder's where the moment is night and the moment's own by day (day_share between).
     [[nodiscard]] static std::vector<std::uint32_t> day_palette_of(const style::ThemeBlock& theme,
                                                                    const tiles::Style* style);
     /// Every world pass of the process paints all the world in `colour` (RGBA8, r in the low byte; 0: its palette

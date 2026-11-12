@@ -22,9 +22,9 @@ class CanvasWorkTest {
 
     private fun idle(
         overlays: MapOverlays = full, debug: Boolean = false, tape: Boolean = false, readout: Boolean = false, honest: Boolean = false,
-        core: Boolean = true, cover: Float = 0f, routes: Boolean = false, labels: Boolean = true, markers: Boolean = true,
+        cover: Float = 0f, routes: Boolean = false, labels: Boolean = true, markers: Boolean = true,
         location: Boolean = true, waits: Boolean = false,
-    ) = CanvasWork.idle(debug, tape, readout, honest, core, cover, overlays, routes, labels, markers, location, waits)
+    ) = CanvasWork.idle(debug, tape, readout, honest, cover, overlays, routes, labels, markers, location, waits)
 
     @Test
     fun idleWhereEverythingOverTheMapIsTheCores() {
@@ -38,8 +38,7 @@ class CanvasWorkTest {
 
     @Test
     fun drawingWhereTheCanvasDrawsSomething() {
-        assertFalse("today's map over the core's picture", idle(cover = 0.3f))
-        assertFalse("today's map wanted", idle(core = false))
+        assertFalse("the start's paper over the core's picture", idle(cover = 0.3f))
         assertFalse("the canvas's route", idle(full.copy(routes = listOf(RouteLine("r", listOf(at, LatLon(52.38, 4.89)))))))
         assertFalse("the canvas's area", idle(full.copy(areas = listOf(AreaOverlay("a", at, 200.0)))))
         assertFalse("the canvas's labels", idle(labels = false))
@@ -50,6 +49,6 @@ class CanvasWorkTest {
         assertFalse("the tilt readout over nothing else", idle(MapOverlays(), readout = true, labels = false, markers = false, location = false))
         assertFalse("the debug panel", idle(debug = true))
         assertFalse("the honest state", idle(honest = true))
-        assertFalse("the windows' line where the place's window has not come", idle(waits = true))
+        assertFalse("the map's line where the core has no tiles at the place", idle(waits = true))
     }
 }

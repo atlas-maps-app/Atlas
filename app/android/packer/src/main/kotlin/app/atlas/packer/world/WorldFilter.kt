@@ -12,7 +12,8 @@ import app.atlas.packer.UsageException
 object WorldFilter {
     const val USAGE = """packer world-tags
       osmium tags-filter's expressions for the world's profile, one a line (osmium tags-filter -e <file>): the places, the
-      road classes the world draws, land cover, water, rivers, runways and railways."""
+      road classes the world draws, land cover, water, rivers, runways and railways, and the seas, bays and straits
+      the water's names name."""
 
     fun run(args: List<String>, out: (String) -> Unit): Int {
         if (args != listOf("world-tags")) throw UsageException("usage: $USAGE")
@@ -38,8 +39,17 @@ object WorldFilter {
             // water areas and the rivers' lines
             "wr/waterway=" + (tags.waterWays + "river").distinct().joinToString(","),
             "w/railway=rail",
+            // the water's names: oceans and seas, bays and straits, as nodes or areas (lakes are natural=water's)
+            "nwr/place=" + WATER_PLACES.joinToString(","),
+            "nwr/natural=" + WATER_NATURALS.joinToString(","),
         )
     }
+
+    /** The place=* of the water's names (the place nodes above are the places'). */
+    val WATER_PLACES = listOf(WorldProfile.OCEAN, WorldProfile.SEA)
+
+    /** The natural=* of the water's names besides natural=water's lakes. */
+    val WATER_NATURALS = listOf(WorldProfile.BAY, WorldProfile.STRAIT)
 
     /** An expression read back: the types it holds for, its key and its values. */
     class Expression(val types: Set<Char>, val key: String, val values: Set<String>) {

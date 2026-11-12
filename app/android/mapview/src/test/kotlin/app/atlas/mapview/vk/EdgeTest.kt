@@ -3,9 +3,11 @@ package app.atlas.mapview.vk
 import app.atlas.geo.BBox
 import app.atlas.mapcore.MapCore
 import app.atlas.mapview.CountryTiles
-import app.atlas.mapview.MapController
 import app.atlas.mapview.MapEngine
-import app.atlas.mapview.vk.Transition.Path
+import app.atlas.mapview.vk.MapPlace.DRAWN
+import app.atlas.mapview.vk.MapPlace.NEAR
+import app.atlas.mapview.vk.MapPlace.WINDOWS
+import app.atlas.mapview.vk.MapPlace.WORLD
 import app.atlas.tiles.WorldIndex
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -22,12 +24,12 @@ import java.time.Instant
 
 /**
  * The edge of the windows on the phone (the user, 30 October, on alpha 21: today's map there "looks different then the
- * engine", "the dark green is a different green"): within a country whose tiles the core draws, a place whose window
- * has not come is never handed to today's map. The core keeps it, its camera naming the window nearest the place, so it
- * draws the windows it has around it (its own cover), and the map says what the windows are doing: taking the place
- * from the country's tiles, getting its data, building it, waiting, or that it is not on the phone offline. Beyond the
- * core's reach, and outside such a country where no window is on the phone, today's map draws as before, in the core's
- * light where that is still in the country.
+ * engine", "the dark green is a different green"): the core draws every place (ENGINE.md step 3; today's map left the
+ * phone on 5 November). Where a place's window has not come, its camera names the window nearest the place, so it draws
+ * the windows it has around it (its own cover), and the map says what the windows are doing: taking the place from the
+ * country's tiles, getting its data, building it, waiting, or that it is not on the phone offline ([MapPlace.WINDOWS]);
+ * beyond the windows' reach, that a nearer view shows the map ([MapPlace.NEAR]); beyond the levels' reach, that the
+ * world is on its way ([MapPlace.WORLD]).
  */
 class EdgeTest {
     private val dir: File = Files.createTempDirectory("edge").toFile()
@@ -80,7 +82,7 @@ class EdgeTest {
     private fun inCountry(lat: Double, lon: Double) = MapEngine.countryAt(lat, lon)
 
     @Test
-    fun beyondTheLastWindowWithinTheCountryTheCoreKeepsThePlaceAndTodaysMapIsNotAsked() {
+    fun beyondTheLastWindowWithinTheCountryTheCoreDrawsItsOwnCoverWhileTheWindowComes() {
         val list = twoWindows()
         MapEngine.countries = listOf(netherlands)
         // the Plantage, east of the last window: no window holds it, the country's tiles do
@@ -89,49 +91,47 @@ class EdgeTest {
         assertNull(list.choose(lat, lon))
         assertFalse(list.covers(lat, lon, 650.0))
         for (distance in listOf(100.0, 650.0, 2_300.0, PackList.CORE_REACH, PackList.LEVELS_REACH)) {
-            // the core's path, so MapController asks today's map for no frame here and draws none of its last
-            assertEquals("at $distance m", Path.CORE, Transition.pathOf(list, ::inCountry, lat, lon, distance))
+            // the windows' place: the core's own cover, and the windows' line
+            assertEquals("at $distance m", WINDOWS, MapPlace.of(list, ::inCountry, lat, lon, distance))
         }
         // the camera names the window nearest the place, which the core draws with its frame cell's pack: its own cover
         assertEquals("window/14/8415/5383", list.named(lat, lon)?.id)
         // on a window, as before: its own
         assertEquals("window/14/8414/5383", list.named(52.37, 4.88)?.id)
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, 430.0))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 52.37, 4.88, 430.0))
     }
 
     @Test
-    fun todaysMapStillDrawsBeyondTheCoresReachAndOutsideTheCountriesWhereNoWindowIs() {
+    fun beyondTheReachOfWhatIsOnThePhoneTheMapSaysWhyItIsEmpty() {
         val list = twoWindows()
         MapEngine.countries = listOf(netherlands)
         // within the country the core draws its frame cells' levels beyond the windows' reach (ENGINE.md one pack per
-        // country, step 7); zoomed out past their reach, today's map
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.LEVELS_REACH + 1))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
+        // country, step 7): none of them on the phone yet, they come as windows do; zoomed out past their reach, the
+        // world's place
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(WORLD, MapPlace.of(list, ::inCountry, 52.3662, 4.9150, PackList.LEVELS_REACH + 1))
+        assertEquals(WORLD, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
         // the country's tiles of another core only (published before this core's): its windows are built on the phone
-        // and no level comes, so the core keeps the windows' reach and today's map draws beyond it
+        // and no level comes, so the windows' reach is the cover's, and a nearer view shows the map beyond it
         MapEngine.countries = listOf(netherlands.copy(levels = false))
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, PackList.CORE_REACH))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 52.3662, 4.9150, PackList.CORE_REACH))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
         MapEngine.countries = listOf(netherlands)
-        // where it has nothing to draw there (it takes no region in such a country), the map says to zoom in
-        assertEquals("Zoom in to see the map", MapController.noDataLine(52.37, 4.88))
-        // Lille, south of the Netherlands' box (CI's transitional script): no window, no country's tiles
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, 430.0))
-        assertEquals("No map data here", MapController.noDataLine(50.6292, 3.0573))
-        // before the published list is read, no country is known: the windows alone decide, as until now, and beyond
-        // their reach a level's tile on the phone that holds the target
+        // Lille, south of the Netherlands' box (CI's away script): no window, no country's tiles; its window comes as any
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, 430.0))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.CORE_REACH + 1))
+        // before the published list is read, no country is known: the windows alone decide, and beyond their reach a
+        // level's tile on the phone that holds the target
         MapEngine.countries = emptyList()
-        assertEquals("No map data here", MapController.noDataLine(52.37, 4.88))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.3662, 4.9150, 650.0))
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, 650.0))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 52.3662, 4.9150, 650.0))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 52.37, 4.88, 650.0))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
         // the L13 tile that holds the target, as the tiles give it (13/4207/2692: 4.878° to 4.922° east, 52.349° to
         // 52.376° north)
         window(4207, z = 13, y = 2692, west = 4.878, wide = 0.044, south = 52.349, north = 52.376)
         list.load()
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.CORE_REACH + 1))
+        assertEquals(WORLD, MapPlace.of(list, ::inCountry, 52.37, 4.88, PackList.LEVELS_REACH + 1))
         // with nothing listed, the camera names no pack
         assertNull(PackList(windows = { File(dir, "none") }).also { it.load() }.named(52.37, 4.88))
     }
@@ -165,10 +165,10 @@ class EdgeTest {
         assertEquals("", ref.path)
         assertArrayEquals(sha, ref.identity)
         // beyond the levels' reach the core draws every camera, in a country or not, over land or the open sea
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 40.0, -30.0, 1_000_000.0))
-        // within it, as before: no window at Lille, today's map
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 40.0, -30.0, 1_000_000.0))
+        // within it, as before: no window at Lille, a nearer view shows it
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH))
         // the world is no pack a camera names; beyond the levels' reach it draws, so no window is on its way there
         assertNull(list.named(50.6292, 3.0573))
         assertTrue(list.worldDraws(PackList.LEVELS_REACH + 1))
@@ -177,11 +177,11 @@ class EdgeTest {
         // from every distance, so beyond the windows' reach the world draws the camera where its index has the place's
         // fine pack (here Mainz, in block 6/33/21, its head on the phone or not), and nowhere else
         assertTrue(list.worldDraws(50.0, 8.27, PackList.CORE_REACH + 1, under = true))
-        assertEquals(Path.CORE, Transition.pathOf(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
+        assertEquals(DRAWN, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
         assertFalse(list.worldDraws(50.0, 8.27, PackList.CORE_REACH, under = true))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH, under = true))
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH, under = true))
         assertFalse(list.worldDraws(50.6292, 3.0573, PackList.CORE_REACH + 1, under = true))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH, under = true))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH, under = true))
         // and where a country's levels are, beyond their reach alone
         assertFalse(list.worldDraws(50.0, 8.27, PackList.LEVELS_REACH, under = false))
         assertTrue(list.worldDraws(50.0, 8.27, PackList.LEVELS_REACH + 1, under = false))
@@ -198,8 +198,9 @@ class EdgeTest {
         list.load()
         assertFalse(list.hasWorld)
         assertFalse(list.worldDraws(PackList.LEVELS_REACH + 1))
+        assertEquals(WORLD, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
         assertFalse(list.worldDraws(50.0, 8.27, PackList.CORE_REACH + 1, under = true))
-        assertEquals(Path.CANVAS, Transition.pathOf(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
     }
 
     @Test
@@ -209,18 +210,6 @@ class EdgeTest {
         assertEquals(netherlands, MapEngine.countryAt(50.8514, 5.6910)) // Maastricht, in the box's south-east
         assertNull(MapEngine.countryAt(50.6292, 3.0573)) // Lille
         assertNull(MapEngine.countryAt(48.8566, 2.3522)) // Paris
-    }
-
-    @Test
-    fun whereTodaysMapStillDrawsInTheCountryItTakesTheCoresLight() {
-        // beyond the core's reach in the Netherlands: TONE whatever the region's profile, as the core lights every pack there
-        MapEngine.countries = listOf(netherlands)
-        assertTrue(MapEngine.coreLight(52.366, 4.917)) // Artis's region
-        assertTrue(MapEngine.coreLight(52.3746, 4.8840)) // the Westerkerk's, the living map's
-        // outside it, and before the published list is read, the renders' own light
-        assertFalse(MapEngine.coreLight(48.858, 2.343)) // Paris's region
-        MapEngine.countries = emptyList()
-        assertFalse(MapEngine.coreLight(52.366, 4.917))
     }
 
     @Test

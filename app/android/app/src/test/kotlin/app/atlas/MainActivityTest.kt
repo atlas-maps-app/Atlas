@@ -33,7 +33,7 @@ class MainActivityTest {
         val file = File(activity.filesDir, MainActivity.CI_SCREENS_FILE)
         assertEquals(MainActivity.screenList(), file.readText())
         assertTrue(activity.isFinishing)
-        for (name in file.readText().split(' ')) if (name != MainActivity.SCREEN_FILTERS) assertTrue(name, CiScreens.stackFor(name) != null)
+        for (name in file.readText().split(' ')) assertTrue(name, CiScreens.stackFor(name) != null)
     }
 
     @Test

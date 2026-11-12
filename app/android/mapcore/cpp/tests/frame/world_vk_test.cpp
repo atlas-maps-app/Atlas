@@ -22,6 +22,7 @@
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "scene/WorldBend.hpp"
+#include "scene/WorldLook.hpp"
 #include "scene/WorldNames.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
@@ -98,7 +99,10 @@ public:
 [[nodiscard]] style::ThemeBlock sunny() {
     namespace flag = style::theme_flag;
     style::ThemeBlock b{};
-    b.version = 1;
+    b.version = style::theme_block_version;
+    // the place the sun's azimuth and elevation are of: the bundled packs' (the Westerkerk)
+    b.place_latitude = 52.3746F;
+    b.place_longitude = 4.8840F;
     b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
     b.year = 2026;
     b.month = 10;
@@ -2139,6 +2143,36 @@ TEST_CASE("the world under the cover: where the camera's place has no country's 
             CHECK(map.complete());
             CHECK(map.world()->tiles_line().find(" under land 0") != std::string::npos);
         }
+        // the world under the cover has its names (ENGINE.md step 5, "Names"): 2 km over the L11 tile's village (the
+        // test tile's place, in its second cell) the frame asks for its name in a village's look, from the tile that
+        // draws its ground; without the flag nothing of the world is drawn there, and no name is asked for
+        {
+            const std::array<std::int32_t, 4> cell = test::world_tile(11, 1051, 673).cell_boxes.at(1).first;
+            style::CameraState over = camera((cell[0] + 5) / 1e7, (cell[1] + 5) / 1e7, 0.0, 0.0, 2'000.0);
+            over.flags |= style::camera_flag::world_under;
+            CHECK(draw_until(over, [&] {
+                keep_wanted();
+                const scene::WorldFrame* f = frame_of();
+                return f != nullptr && f->wanted == 0 && !f->fading && map.world_wants().empty();
+            }));
+            for (int i = 0; i < 3; ++i) (void)session.draw(over, {});
+            const scene::WorldFrame* f = frame_of();
+            ATLAS_REQUIRE(f != nullptr);
+            CHECK(f->under);
+            CHECK(std::ranges::any_of(
+                f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11 && (d.light_cells & 2U) != 0; }));
+            const std::vector<labels::NameWant> wants = map.names().ask(1e6);
+            MESSAGE(std::format("2 km over the L11 tile's village, under the cover: {} name{} asked for{}",
+                                wants.size(), wants.size() == 1 ? "" : "s",
+                                wants.empty() ? "" : std::format(", the first {}", wants[0].text)));
+            ATLAS_REQUIRE(wants.size() == 1);
+            CHECK(wants[0].text == "Westzaan");
+            CHECK(wants[0].style == static_cast<std::uint8_t>(scene::NameStyle::village));
+            over.flags &= ~style::camera_flag::world_under;
+            for (int i = 0; i < 3; ++i) (void)session.draw(over, {});
+            CHECK(frame_of() == nullptr);
+            CHECK(map.names().ask(2e6).empty());
+        }
         // 3 km over the L9 tile's west edge (4.21875° east): east of it the block's L9 tile draws its cells, west of it
         // the block holds nothing (the globe's L5 does), so the plain land lies there, not the globe's coast
         cam = camera(52.33, 4.21875, 0.0, 0.0, 3'000.0);
@@ -2273,7 +2307,8 @@ TEST_CASE("the world's painter's order holds wherever the camera stands: from 45
 }
 
 TEST_CASE("the world's names: the frame over the globe asks for its places' names by rank, in the look of its "
-          "distance, and draws the sprites handed where the world pass draws their places") {
+          "distance, and draws the sprites handed where the world pass draws their places, a lit place's over its "
+          "light in the night") {
     if (!test::open_session()) return;
     const std::string out = environment("ATLAS_LOOK_OUT");
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-names-{}", ::getpid());
@@ -2337,10 +2372,27 @@ TEST_CASE("the world's names: the frame over the globe asks for its places' name
             double lon;
             std::uint32_t sprite; // its block's colour, premultiplied, R in the low byte
             std::array<std::uint8_t, 3> rgb;
+            bool night; // the sun is under its horizon (the eastern city's by 30 degrees): its light is drawn
         };
-        const std::array<Place, 2> places{
-            Place{.name = "East", .lat = 25.0, .lon = 70.0, .sprite = 0xFF'F0'10'F0U, .rgb = {0xF0, 0x10, 0xF0}},
-            Place{.name = "Middle", .lat = 20.0, .lon = 10.0, .sprite = 0xFF'10'F0'F0U, .rgb = {0xF0, 0xF0, 0x10}}};
+        const std::array<Place, 2> places{Place{.name = "East",
+                                                .lat = 25.0,
+                                                .lon = 70.0,
+                                                .sprite = 0xFF'F0'10'F0U,
+                                                .rgb = {0xF0, 0x10, 0xF0},
+                                                .night = true},
+                                          Place{.name = "Middle",
+                                                .lat = 20.0,
+                                                .lon = 10.0,
+                                                .sprite = 0xFF'10'F0'F0U,
+                                                .rgb = {0xF0, 0xF0, 0x10},
+                                                .night = false}};
+        // a city of 12 million's light: its colour in the deep night, and its halo's radius, px
+        const tiles::WorldLadder ladder = load::world_ladder();
+        const std::uint32_t lit = ladder.lights[0].colour;
+        const hlsl::float3 light = {static_cast<float>((lit >> 16U) & 0xFFU) / 255.0F,
+                                    static_cast<float>((lit >> 8U) & 0xFFU) / 255.0F,
+                                    static_cast<float>(lit & 0xFFU) / 255.0F};
+        const double halo = scene::light_halo_dp(ladder, 12e6) * density;
         struct Look {
             const char* name;
             style::CameraState camera;
@@ -2397,7 +2449,8 @@ TEST_CASE("the world's names: the frame over the globe asks for its places' name
             if (!out.empty()) {
                 CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("names_{}.ppm", look.name)).string()));
             }
-            // each sprite whole, at its own size, on whole pixels, centred on its place's point
+            // each sprite whole, at its own size, on whole pixels: by day centred on its place's point; in the night
+            // clear of its light, which is drawn at the point, the sprite's lower edge the halo's radius over it
             for (const auto& [place, at] : standing) {
                 const std::size_t block = count(*pixels, place->rgb[0], place->rgb[1], place->rgb[2]);
                 MESSAGE(std::format("names from {}: {}'s sprite {} px of 640, its place at ({:.1f}, {:.1f})", look.name,
@@ -2406,7 +2459,18 @@ TEST_CASE("the world's names: the frame over the globe asks for its places' name
                 const hlsl::float3 colour = {static_cast<float>(place->rgb[0]) / 255.0F,
                                              static_cast<float>(place->rgb[1]) / 255.0F,
                                              static_cast<float>(place->rgb[2]) / 255.0F};
-                CHECK(levels_apart(pixel_at(*pixels, at.x, at.y), colour) < 1.0);
+                if (place->night) {
+                    CHECK(levels_apart(pixel_at(*pixels, at.x, at.y), light) <= 3.0);
+                    CHECK(levels_apart(pixel_at(*pixels, at.x, at.y - halo - 8.0), colour) < 1.0);
+                    // and no pixel of it within the halo
+                    for (const double dy : {-3.0, 0.0, 3.0}) {
+                        for (const double dx : {-3.0, 0.0, 3.0}) {
+                            CHECK(levels_apart(pixel_at(*pixels, at.x + dx, at.y + dy), colour) > 30.0);
+                        }
+                    }
+                } else {
+                    CHECK(levels_apart(pixel_at(*pixels, at.x, at.y), colour) < 1.0);
+                }
             }
             CHECK(map.names().ask(1e9).empty());
         }
