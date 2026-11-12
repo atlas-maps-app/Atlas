@@ -196,7 +196,13 @@ enum class Profile(val code: Int, val label: String) {
     WILLIAMSBURG(2, "williamsburg"),
 
     /** The world mid-zoom base (K20b). */
-    WORLD_BASE(3, "world-base");
+    WORLD_BASE(3, "world-base"),
+
+    /**
+     * A terrain pack (ENGINE.md part 6, terrain): tiles of one [Layer.HEIGHTS] layer each, nothing to draw by a rule
+     * set. Its `style` section holds no table, and a reader types none.
+     */
+    TERRAIN(4, "terrain");
 
     companion object {
         fun of(code: Int): Profile = entries.firstOrNull { it.code == code } ?: throw IllegalArgumentException("no profile $code")
@@ -263,7 +269,15 @@ enum class Layer(val id: Int, val label: String) {
      * from the simplified footprint (the land use under its centroid, the outline a part stands in), so a region's views
      * and bands at their own tolerance take these values instead. Each holds every attribute of its base feature.
      */
-    VARIANT(15, "variant");
+    VARIANT(15, "variant"),
+
+    /**
+     * A terrain tile's height raster ([Heights], [app.atlas.rendertiles.codec.HeightsCodec]): one feature, the raster,
+     * counted in the tile's first cell. It is no layer of [Schema] (so [StyleVersion] does not hash it, and a map
+     * pack's version does not move with it): the map's readers skip it by the format's rule for a layer they do not
+     * know, and the terrain's reader reads its columns itself.
+     */
+    HEIGHTS(16, "heights");
 
     companion object {
         fun of(id: Int): Layer? = entries.firstOrNull { it.id == id }

@@ -43,6 +43,7 @@ enum class Profile : std::uint8_t {
     region = 1,       ///< every other region of the renders (regions.load)
     williamsburg = 2, ///< real.py (K30)
     world_base = 3,   ///< the world mid-zoom base (K20b)
+    terrain = 4,      ///< a terrain pack (tiles/Heights.hpp): height rasters, no rule set; its `style` holds no table
 };
 
 /// A pack's frame: the port's metres from OSM's grid, as amsterdam.py's XZ computes them from the pack's coordinates

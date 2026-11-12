@@ -1,0 +1,251 @@
+# Builds Atlas's terrain packs (ENGINE.md part 6, terrain): for each region the registry builds
+# (app/android/packs/terrain-sources.json), its tiles' height rasters from the registry's sources (`packer heights`):
+# the national laser survey where there is one, Copernicus GLO-30 in its gaps. The sources are read from their own
+# hosts by the packer (at most 4 requests at a time per host, retried, named by USER_AGENT; no sign-in anywhere), the
+# national grids are brought onto the tiles' lattice by GDAL's tools (gdal-bin: a tool of this job, never in the app),
+# and the packs are checked before they are kept (`packer heights-check`): every tile decoded by the packer's reader and
+# by the core's host build (atlas_stagep), hash for hash; every apron against its neighbours' samples; and 50 samples
+# over the boards' views read afresh from their source and averaged as the packer averages.
+#
+# A run keeps its packs as its artifacts (<region>-terrain.000, …, <region>-terrain.idx, <region>-terrain.stats.json).
+# It publishes nothing: no release, and nothing a phone reads. Publishing comes with a later step, on the terrain
+# lead's word. This workflow is apart from packs.yml and world.yml because their publish jobs rewrite packs-latest and
+# world-latest, which every phone reads, and a run for heights alone must never touch those.
+#
+# Until this file is on the default branch, GitHub cannot dispatch it: a push to the branch `heights` whose head
+# commit's message holds a line `[terrain …]` starts it, with the dispatch's inputs as words of that line
+# (`[terrain regions=netherlands,norway points=50]`, `[terrain regions=tuscany box=10.9,43.4,11.2,43.6]`; `[terrain]`
+# alone builds every region). Once it has landed, the push trigger can go.
+name: Terrain
+
+on:
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: Region ids from app/android/packs/terrain-sources.json, comma-separated (empty for all)
+        required: false
+        default: ''
+      box:
+        description: "A trial: build this box alone (west,south,east,north in degrees) in place of each region's area"
+        required: false
+        default: ''
+      levels:
+        description: Build these levels alone, comma-separated (empty for the registry's)
+        required: false
+        default: ''
+      points:
+        description: Samples over the boards' views read afresh from their source (0 for none)
+        required: false
+        default: '50'
+  push:
+    branches: [heights]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terrain
+  cancel-in-progress: false
+
+env:
+  USER_AGENT: Atlas-packs/1 (+https://github.com/atlas-maps-app/Atlas)
+
+jobs:
+  plan:
+    name: Plan
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[terrain')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      box: ${{ steps.plan.outputs.box }}
+      levels: ${{ steps.plan.outputs.levels }}
+      points: ${{ steps.plan.outputs.points }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: The regions to build
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+          IN_REGIONS: ${{ inputs.regions }}
+          IN_BOX: ${{ inputs.box }}
+          IN_LEVELS: ${{ inputs.levels }}
+          IN_POINTS: ${{ inputs.points }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, sys
+          registry = json.load(open('app/android/packs/terrain-sources.json'))
+          known = [r['id'] for r in registry['regions']]
+          words = {}
+          if os.environ['EVENT'] == 'workflow_dispatch':
+              words = {'regions': os.environ['IN_REGIONS'], 'box': os.environ['IN_BOX'], 'levels': os.environ['IN_LEVELS'], 'points': os.environ['IN_POINTS']}
+          else:
+              line = re.search(r'\[terrain([^\]\n]*)\]', os.environ['MESSAGE'])
+              if not line:
+                  sys.exit('the head commit names no [terrain …] line')
+              for word in line.group(1).split():
+                  key, _, value = word.partition('=')
+                  words[key] = value
+          unknown = set(words) - {'regions', 'box', 'levels', 'points'}
+          if unknown:
+              sys.exit('unknown words: ' + ', '.join(sorted(unknown)))
+          regions = [r.strip() for r in words.get('regions', '').split(',') if r.strip()] or known
+          for r in regions:
+              if r not in known:
+                  sys.exit("the registry builds no terrain for region '%s' (it builds %s)" % (r, ', '.join(known)))
+          box = words.get('box', '').strip()
+          if box and not re.fullmatch(r'-?[0-9.]+(,-?[0-9.]+){3}', box):
+              sys.exit("a box of '%s': want west,south,east,north" % box)
+          levels = words.get('levels', '').strip()
+          if levels and not re.fullmatch(r'[0-9]+(,[0-9]+)*', levels):
+              sys.exit("levels of '%s'" % levels)
+          points = words.get('points', '').strip() or '50'
+          if not re.fullmatch(r'[0-9]{1,3}', points):
+              sys.exit("points of '%s'" % points)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('matrix=%s\n' % json.dumps([{'id': r} for r in regions]))
+              out.write('box=%s\nlevels=%s\npoints=%s\n' % (box, levels, points))
+          print('regions', regions, 'box', box or '-', 'levels', levels or '-', 'points', points)
+          EOF
+
+  build:
+    needs: plan
+    name: ${{ matrix.region.id }}
+    runs-on: ubuntu-latest
+    # The runner's limits: 6 hours, 16 GB of memory, 14 GB of disk (more once the preinstalled tools are gone).
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        region: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      ID: ${{ matrix.region.id }}
+      BOX: ${{ needs.plan.outputs.box }}
+      LEVELS: ${{ needs.plan.outputs.levels }}
+      POINTS: ${{ needs.plan.outputs.points }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37 and the SDK's CMake
+        # Gradle configures every module of the build, the Android ones too; the SDK's CMake and Ninja build the core's
+        # stage P tool, at the version app/android/mapcore/tools.properties pins
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "cmake;$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: "GDAL's tools and the core's host build"
+        # gdal-bin: gdalwarp, gdalbuildvrt, gdaltransform and gdal_translate, for the national grids (MIT; a tool of
+        # this job only). atlas_stagep: the core's own reader, which decodes every tile the packer wrote (packs.yml
+        # builds it the same way). An apt step can hang on a runner: each is given ten minutes, and tried again.
+        run: |
+          set -euo pipefail
+          LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL --retry 20 --retry-delay 30 --retry-all-errors https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          for try in $(seq 20); do
+            sudo timeout 600 apt-get update -q && apt-cache show "clang-$LLVM" > /dev/null 2>&1 && break
+            echo "::warning::apt.llvm.org's clang-$LLVM is not there (try $try of 20); again in 30 s"
+            sleep 30
+          done
+          for try in 1 2 3; do
+            sudo timeout 600 apt-get install -y -q --no-install-recommends gdal-bin clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev && break
+            [ "$try" -lt 3 ] || { echo "::error::apt-get install did not end"; exit 1; }
+            echo "::warning::apt-get install did not end (try $try of 3); again in 30 s"
+            sleep 30
+          done
+          gdalwarp --version
+          cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' app/android/mapcore/tools.properties | cut -d= -f2-)/bin"
+          cd app/android/mapcore/cpp
+          CC=clang-$LLVM CXX=clang++-$LLVM CXXFLAGS=-stdlib=libc++ LDFLAGS=-stdlib=libc++ \
+            "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
+          "$cmake_bin/cmake" --build --preset host-stagep
+          echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
+      - name: Make room
+        run: |
+          set -euo pipefail
+          df -h / /mnt || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          # work on whichever disk has more room
+          WORK="$RUNNER_TEMP/terrain"
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
+            sudo mkdir -p /mnt/terrain && sudo chown "$(id -u):$(id -g)" /mnt/terrain && WORK=/mnt/terrain
+          fi
+          mkdir -p "$WORK/out" "$WORK/work"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt || true
+      - name: Build the region's terrain
+        env:
+          JAVA_OPTS: -Xmx10g
+        run: |
+          set -euo pipefail
+          args=()
+          [ -z "$BOX" ] || args+=(--box "$BOX")
+          [ -z "$LEVELS" ] || args+=(--levels "$LEVELS")
+          app/android/packer/build/install/packer/bin/packer heights "$ID" "$WORK/out" --repo "$PWD" --work "$WORK/work" "${args[@]}" | tee "$WORK/build.log"
+          rm -rf "$WORK/work"
+          ls -l "$WORK/out"
+          df -h "$WORK"
+      - name: Check it
+        env:
+          JAVA_OPTS: -Xmx10g
+        run: |
+          set -euo pipefail
+          args=()
+          [ "$POINTS" = 0 ] || args+=(--points "$POINTS")
+          app/android/packer/build/install/packer/bin/packer heights-check "$ID" "$WORK/out" --core "$ATLAS_STAGEP" --repo "$PWD" --work "$WORK/check" "${args[@]}" | tee "$WORK/check.log"
+      - name: Sizes
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          work, region = os.environ['WORK'], os.environ['ID']
+          path = os.path.join(work, 'out', region + '-terrain.stats.json')
+          if not os.path.isfile(path):
+              print('## %s: no terrain was built' % region)
+              raise SystemExit
+          s = json.load(open(path))
+          print('## %s terrain: %d tiles in %d packs, %.1f MB, built in %d s' % (region, s['tiles'], s['packs'], s['bytes'] / 1e6, s['seconds']))
+          print('Heights from %.1f to %.1f m.%s' % (s['lowest_m'], s['highest_m'], ' ' + s['skipped'] if s.get('skipped') else ''))
+          print()
+          print('| Level | Tiles | MB | km² | MB per 1,000 km² |')
+          print('|---|---|---|---|---|')
+          for z, l in sorted(s['levels'].items()):
+              print('| L%s | %d | %.1f | %.0f | %.2f |' % (z, l['tiles'], l['stored'] / 1e6, l['km2'], l['mb_per_1000_km2']))
+          print()
+          print('| Source | MB | km² | MB per 1,000 km², its levels together | Requests | Bytes read | Seconds of requests |')
+          print('|---|---|---|---|---|---|---|')
+          for name, v in s['sources'].items():
+              print('| %s | %.1f | %.0f | %.2f | %s | %s | %s |' % (name, v['bytes'] / 1e6, v['km2'], v['mb_per_1000_km2'], v.get('fetch_requests', '-'), v.get('fetch_bytes', '-'),
+                                                         '%.0f' % v['fetch_seconds'] if 'fetch_seconds' in v else '-'))
+          print()
+          for log in ('build.log', 'check.log'):
+              p = os.path.join(work, log)
+              if os.path.isfile(p):
+                  lines = [l.rstrip() for l in open(p) if l.startswith(('fetch ', 'heights-check', 'world-check', 'not as it should be', 'point '))]
+                  print('```\n%s\n```' % '\n'.join(lines[-80:]))
+          EOF
+      - name: Keep the packs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: terrain-${{ matrix.region.id }}
+          path: |
+            ${{ env.WORK }}/out/*-terrain.*
+            ${{ env.WORK }}/build.log
+            ${{ env.WORK }}/check.log
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: warn

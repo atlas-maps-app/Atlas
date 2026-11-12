@@ -1432,6 +1432,114 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
   - the offscreen passes at half resolution while moving;
   - follow mode at 30 fps.
 - **Terrain and relief everywhere,** from the best elevation model for each region and a global one elsewhere, with the dunes and San Gimignano among them.
+  - **History.** Designed on 12 November by the terrain session. The engine lead took its choices the same day, and the user approved the sources and their credits on 12 November.
+  - **The user, 12 November:** "I think it doesnt have to match the relief images, it can be much better. Even if its in the plan, design for easy advancements later. I think the look of relief in streets.gl is good? Maybe there is something even better". Later the same day: "You dont have to pick anything from streets.gl approach. You can", and then: "You can meant you can pick anything from streets.gl approach. You dont have to". So any part of streets.gl's approach may be taken, and none has to be: each part of the look is whichever reads best on the boards' views.
+  - **Sources.** Each source is one entry of `app/android/packs/terrain-sources.json`, so a further country is one entry. An entry holds:
+    - its area and priority;
+    - its hosts;
+    - its format, CRS and datum;
+    - whether it is a DTM or a DSM, and its resolution;
+    - its licence and credit, and the date it was read.
+
+    Worldwide, the Copernicus DEM:
+    - GLO-90 for the globe and L6–L10, and GLO-30 for L11 and L12, read by range from its COGs on AWS.
+    - It is a surface model, so the packer lowers it under OpenStreetMap's buildings by their footprints.
+    - For forests outside the laser surveys, step 4 compares two options side by side on three forest views:
+      - GEDTM30, OpenGeoHub's bare earth, CC BY 4.0;
+      - a packer filter that lowers Copernicus under OSM's forests to their edges' ground, feathered.
+
+      Step 4 takes whichever reads truer.
+
+    National laser surveys at L12–L14, wherever they are open:
+    - AHN4 for the Netherlands (0.5 m);
+    - for Italy, Regione Toscana's 1 m lidar, with TINITALY 1.1 (10 m) elsewhere;
+    - Kartverket's 1 m DTM for Norway;
+    - for France, IGN's LiDAR HD and RGE ALTI;
+    - the Environment Agency's LIDAR Composite DTM for England;
+    - USGS 3DEP for the United States;
+    - Flanders' DHMV II, Wallonia's MNT LiDAR and Luxembourg's ACT LiDAR.
+
+    How sources combine:
+    - Where several sources cover a tile, the highest priority wins and the next fills its gaps.
+    - At a source's edge, the packer removes the mean offset along the edge and feathers over 1 km.
+  - **Credits.** The app's licence screen shows the credits of the sources in the user's packs. The map's credit line adds "Copernicus" and the place's national source.
+    - For each of WorldDEM-30 and WorldDEM-90, the licence's Art. 6(b) notice and its Art. 6(c) sentence. For GLO-30 they read: "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved", and "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30". GLO-90's are the same with WorldDEM-90.
+    - The national credits:
+      - "AHN";
+      - Regione Toscana, CC BY 4.0;
+      - TINITALY 1.1, CC BY 4.0, with its citation (Tarquini et al. 2023, doi 10.13127/tinitaly/1.1);
+      - "© Kartverket", CC BY 4.0;
+      - "IGN", Licence Ouverte 2.0;
+      - the Environment Agency's notice, under the OGL v3;
+      - "USGS 3DEP";
+      - Digitaal Vlaanderen and the SPW;
+      - ACT, for Luxembourg;
+      - GEDTM30, CC BY 4.0, if step 4 takes it.
+    - A CC BY credit names the source and the licence, and says the heights were resampled.
+  - **Heights in packs of their own,** fetched by range. They are kept apart from the map's packs, which are rebuilt monthly, because heights change about once a year.
+    - Three kinds:
+      - `terrain_globe`: L0–L5, about 10 MB, resident.
+      - `terrain_world`: L6–L11 in the world's blocks, on a release of its own, about 56 GB at 257².
+      - `terrain_country`: L12–L14 for each packs.yml region, keyed by level, x and y over the region's land. The Netherlands is about 0.45 GB. Its tiles lie in packs of an L9 tile each (as a world pack holds an L6 tile's L9–L11), end to end in parts, with an index in the world's own format (`<region>-terrain.idx`): a pack's head is some 100 KB however large the country, and none leans on the country's windows, which Norway does not have.
+    - Each map tile gets one raster in format 3's `heights` layer (layer 16; rendertiles' `Heights.kt` is its specification, the core's `tiles/Heights` its reader):
+      - 257² samples over the tile's box, capped at the source's resolution: a raster is never sampled finer than 0.75 of what its source is read at, and a level that would only repeat the one above is not written (TINITALY's 10 m stops at L13);
+      - the samples of a level lie on one lattice over the world, even in longitude and in Web Mercator's y, so a tile's edge samples are its neighbours' and every second sample is one of the level above;
+      - an apron of 8 samples beyond the edges, the neighbours' own to the bit: the packer computes each node of the lattice once;
+      - quantized to the power of two nearest 1 % of the spacing (1/16 m at L14 in the Netherlands), on the lattice of whole steps from 0 m, so tiles side by side share their step and their shared samples;
+      - each sample predicted by MED from its west, north and north-west neighbours, the residuals as zigzag varints, the tile one zstd frame as every tile of the format.
+    - The layer is no layer of the map's schema, so a map pack's style version does not move with it: the map's readers skip it as a layer they do not know, and the terrain's reader takes its columns (the side, the apron, the step, the base, the highest sample, flags, the sources and their shares, the samples). A later column (a mask, a baked sky-view) is no change of the format. The reader refuses a bad length, range, lowest or highest sample.
+    - A terrain pack has a profile of its own (`terrain`) and a style without tables. The store holds terrain packs apart from the map's (`Store::heights`), so the map is drawn from the same packs with or without them.
+    - A tile with no raster of its own level reads its nearest coarser one, cut to its box.
+    - A tile with no heights yet is drawn flat, and takes its relief as a top-up when they come.
+  - **Steps.** About 88 builder-hours. Each step is on its own branch off app.
+    1. **Heights in packs (10 h; built 12 November, branch `heights`):**
+       - the heights layer and its decoder;
+       - the store's `terrain_country`;
+       - the registry and `packer heights`, with `packer heights-check`: every tile decoded by the packer's reader and by the core's host build, hash for hash; every apron against its neighbours' samples; 50 samples over the boards' views read afresh from their source;
+       - terrain's own workflow, `terrain.yml`, which keeps its packs as artifacts and publishes nothing;
+       - the Netherlands, Tuscany and Norway, each level whole where its fetch is under about 10 GB, else around the boards' views;
+       - the credits of the registry's sources on About & licences (`packer/LICENSES.md`'s table), before any phone reads a terrain pack.
+
+       What the hosts gave, measured on 12 November:
+       - No national host averages for a coarser grid. PDOK's coverage service picks samples, and so do TINITALY's and Kartverket's overviews. So nothing is scaled by a host.
+       - AHN4 is read from PDOK's own sheets (cloud-optimised GeoTIFFs), at their 4 m overview: a filtered reduction, within 8 cm RMS of the 4 m block mean on the dunes, 6 GB for the country. Its 2 m overview is within 2.4 cm and 23 GB.
+       - TINITALY is read at its own 10 m from INGV's coverage service, and averaged in the job.
+       - Kartverket's DTM 1 m is read whole, sheet by sheet (1 GB each), and averaged in the job. Its nationwide 10 m model is one 19.6 GB file, over the limit, so Norway's L12 too is built around Bergen, and step 8 does the rest.
+       - Regione Toscana's lidar is not read: its hosts did not answer, and an archived copy of its service sheet gives the 1 m model to public bodies only, under CC BY-NC-SA. Tuscany is TINITALY's until the user or the terrain lead settles that licence.
+       - Kartverket's download feed names the Norwegian Licence for Open Government Data 2.0; the credit shown meets it and CC BY 4.0.
+    2. **Relief light on the plane (10 h):**
+       - `shared/relief.slang` and its twin;
+       - the tiles' heights as textures;
+       - a sky-view baked per tile, 16 directions within 8 samples;
+       - `FrameOptions::terrain` and the style's `relief` values.
+    3. **The surface (18 h):**
+       - stage T's mesh, RTIN with skirts;
+       - every ground record laid on it;
+       - the ground at true depth, its painter slots kept as leads;
+       - water at its levels, the surface cut along its shores;
+       - what stands up at its base, and bridges at their decks.
+    4. **The world's relief (14 h):**
+       - world.yml's `heights` stage for Europe and the globe;
+       - `terrain_world` and `terrain_globe`;
+       - the sphere at R + h;
+       - the forests' comparison.
+    5. **Terrain shadows (10 h):**
+       - horizon maps per tile;
+       - soft terrain shadows;
+       - the horizon in the sun's test.
+    6. **On the surface (8 h):** labels, markers, the puck, routes, the pick and the camera's target, all on the terrain.
+    7. **The far look (8 h):** haze by depth and height, and the globe's relief faded out by 6,000 km.
+    8. **The planet and the countries (6 h, plus CI time):**
+       - every region's terrain, and the planet's;
+       - the levels step 1 left around the boards' views;
+       - the credits;
+       - terrain in a kept country's download.
+    9. **References (4 h):** terrain views in EngineRefs and WorldRefsTest, once the user approves the look.
+  - **Checks.**
+    - With terrain off (`FrameOptions::terrain`), every check is byte for byte as today.
+    - Terrain is on everywhere, Amsterdam, the port and Schiphol among them (the engine lead, 12 November). Their checks stay flat.
+    - A terrain check at the dunes and San Gimignano holds the core to the renders where the two share rules. Each region's survey is stored losslessly, and the check alone takes the renders' choices.
+    - The light is the engine's own.
 - Williamsburg in `real.py`'s own look, if the user says yes.
 - **Cleanup:** the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
 - Tag an alpha.

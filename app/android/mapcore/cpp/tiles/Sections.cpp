@@ -45,7 +45,7 @@ Result<RenderHead> read_head(std::span<const std::byte> section) {
     if (!r.ok()) return fail(Fault::truncated);
     if (payload != payload_version) return fail(Fault::bad_version, payload);
     const std::uint8_t profile = r.u8();
-    if (profile > static_cast<std::uint8_t>(Profile::world_base)) return fail(Fault::bad_value, profile);
+    if (profile > static_cast<std::uint8_t>(Profile::terrain)) return fail(Fault::bad_value, profile);
     h.profile = static_cast<Profile>(profile);
     const std::uint8_t level_count = r.u8();
     for (std::uint8_t i = 0; i < level_count; ++i) {
