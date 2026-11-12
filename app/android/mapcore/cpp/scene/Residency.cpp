@@ -461,6 +461,7 @@ bool Residency::start(Underway& u, tiles::Zstd& zstd, tiles::TileDecoder& decode
     out->pack = job.pack;
     out->kind = u.pack->kind;
     out->frame = view::frame_of(head.frame);
+    out->data = u.pack->data_of(job.request.key);
     out->origin = {head.frame.x(u.tile.header.west), 0.0, head.frame.z(u.tile.header.south)};
     out->level = job.request.level;
     out->cells_per_side = u.tile.header.cells_per_side;
