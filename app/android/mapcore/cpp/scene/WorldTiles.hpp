@@ -254,6 +254,15 @@ struct WorldStats {
     std::uint64_t built = 0;
     std::uint64_t failed = 0;
     double build_ms = 0; ///< the builds' time on the worker, all told
+    /// The heap's bytes, those of the resident tiles the last frame drew and of the pinned ones (the globe's L0 to
+    /// L3), and its largest free piece: a tile larger than that finds no room, whatever the bytes free.
+    vk::DeviceSize capacity = 0;
+    vk::DeviceSize drawn_bytes = 0;
+    vk::DeviceSize pinned_bytes = 0;
+    vk::DeviceSize largest_free = 0;
+    /// The builds that found no room in the heap, all told, and the bytes the last of them asked for.
+    std::uint64_t no_room = 0;
+    std::uint32_t no_room_bytes = 0;
 };
 
 class WorldTiles {
@@ -311,9 +320,9 @@ private:
     WorldTiles(const tiles::Store& store, std::unique_ptr<Heaps> heaps) noexcept;
     void run(const std::stop_token& stop);
     /// Builds `key` from the store into the heap; null where it cannot (no world tile, no room, a damaged chunk, or a
-    /// chunk not on the phone, which `absent` then names).
+    /// chunk not on the phone, which `absent` then names). `bytes`: the heap bytes its geometry asked for.
     [[nodiscard]] std::unique_ptr<WorldTile> build(const tiles::TileKey& key, Scratch& scratch, bool& no_room,
-                                                   std::optional<WorldWant>& absent);
+                                                   std::uint32_t& bytes, std::optional<WorldWant>& absent);
     /// Gives a resident tile's range back: once the last frame that drew it has finished.
     void let_go(const WorldTile& t);
     /// Lets go of resident tiles not drawn by frame `number`, least lately drawn first, until `need` bytes are free.
@@ -329,6 +338,7 @@ private:
     std::array<std::unique_ptr<WorldTile>, 2> caps_; // the north's and the south's, built with the heap
     std::unique_ptr<WorldTile> blank_;               // the plain land, built with the heap
     WorldFrame frame_;
+    std::uint64_t number_ = 0; ///< the last update's frame
     bool drawing_ = false;
     std::shared_ptr<const tiles::StorePack> style_pack_;
     std::vector<std::shared_ptr<const tiles::StorePack>> seen_packs_;

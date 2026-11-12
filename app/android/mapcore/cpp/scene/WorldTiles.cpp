@@ -687,7 +687,11 @@ WorldStats WorldTiles::stats() const {
     for (const auto& [key, t] : resident_) {
         s.bytes += t->range.size;
         s.triangles += t->triangles;
+        if (t->drawn == number_) s.drawn_bytes += t->range.size;
+        if (t->pinned) s.pinned_bytes += t->range.size;
     }
+    s.capacity = heaps_->budget().total;
+    s.largest_free = heaps_->largest_free(HeapKind::ground);
     return s;
 }
 
@@ -767,11 +771,12 @@ void WorldTiles::run(const std::stop_token& stop) {
         const std::shared_ptr<tl::ExpandedCache> cache = store_.cache();
         const std::uint64_t writes = cache != nullptr ? cache->writes() : 0;
         bool no_room = false;
+        std::uint32_t bytes = 0;
         std::optional<WorldWant> absent;
         std::unique_ptr<WorldTile> tile;
         {
             const trace::Section traced("atlas world tile");
-            tile = build(key, scratch, no_room, absent);
+            tile = build(key, scratch, no_room, bytes, absent);
         }
         std::function<void()> wake;
         {
@@ -781,6 +786,8 @@ void WorldTiles::run(const std::stop_token& stop) {
                 ++stats_.built;
                 built_.push_back(std::move(tile));
             } else if (no_room) {
+                ++stats_.no_room;
+                stats_.no_room_bytes = bytes;
                 no_room_.push_back(key);
             } else if (absent) {
                 // its chunk not on the phone yet: wanted from the app, and built once the cache has changed
@@ -800,7 +807,7 @@ void WorldTiles::run(const std::stop_token& stop) {
 }
 
 std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& scratch, bool& no_room,
-                                             std::optional<WorldWant>& absent) {
+                                             std::uint32_t& bytes, std::optional<WorldWant>& absent) {
     const std::optional<tl::StoreHit> hit = world_hit(store_, key);
     if (!hit) return nullptr;
     scratch.arena.reset();
@@ -834,7 +841,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->names = build_world_names(*tile);
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
-    const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
+    bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
     auto range = heaps_->allocate(HeapKind::ground, bytes, 16, HeapEnd::low);
     if (!range) {
         no_room = true;
@@ -875,6 +882,7 @@ void WorldTiles::make_room(vk::DeviceSize need, std::uint64_t number) {
 void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
                         double seconds, double reach, double under_far) {
     const view::Camera& camera = view.camera();
+    number_ = number;
     heaps_->bound(number);
     heaps_->collect(number >= gpu::Frames::in_flight ? number - gpu::Frames::in_flight : 0);
     const bool world_changed = take_style();
