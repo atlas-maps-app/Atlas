@@ -108,11 +108,7 @@ class WorldPackRefsTest {
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()
                 val notes = draw(handle, o, w, h, widthDp, heightDp, density, frame.dbl("cy"), names)
-                val world = WORLD.find(notes)
-                val complete = notes.contains("complete yes")
-                val wanted = world?.groupValues?.get(3)?.toInt() ?: -1
-                val bare = world?.groupValues?.get(4)?.toInt() ?: -1
-                if (!complete || wanted != 0 || bare != 0) failed += "$frameName ($notes)"
+                if (!whole(notes)) failed += "$frameName ($notes)"
                 val pixels = ByteBuffer.allocateDirect(w * h * 4)
                 check(LookHost.read(handle, pixels)) { LookHost.lastError() }
                 val rgb = ByteArray(w * h * 3)
@@ -165,7 +161,10 @@ class WorldPackRefsTest {
         )
     }
 
-    /** Frame [o] drawn: its moment, its camera, the world's names handed until it wants none (none with [names] false); the last draw's notes. */
+    /**
+     * Frame [o] drawn: its moment, its camera, the world's names handed until it wants none (none with [names] false),
+     * and drawn on until [whole]; the last draw's notes.
+     */
     private fun draw(handle: Long, o: JsonObject, w: Int, h: Int, widthDp: Int, heightDp: Int, density: Double, cy: Double, names: Boolean): String {
         val zone = ZoneId.of(o.strOrNull("zone") ?: "Europe/Amsterdam")
         val moment = o.strOrNull("time")?.let { Moment.Live(Instant.parse(it), null) } ?: Moment.Named(o.str("moment"))
@@ -185,18 +184,33 @@ class WorldPackRefsTest {
         var drew = LookHost.draw(handle, camera, DRAW_SECONDS)
         check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
         // the world's names: those the frame shows without a sprite are handed (TestNames' sprites, the same pixels on
-        // every platform) and the map drawn again, until it wants none
+        // every platform) and the map drawn again, until it wants none. And a frame not yet whole is drawn again: the
+        // host's draw ends where its residency has nothing under way, which the world's tiles alone never put there (they
+        // are WorldTiles'), so a call can end before the frame is whole. Each frame drawn once, without names, left some
+        // of the Netherlands' views not whole (World run 43256654382)
         var named = 0
-        for (round in 0 until (if (names) NAME_ROUNDS else 0)) {
-            val wants = TestNames.wants(LookHost.namesWanted(handle))
-            if (wants.isEmpty()) break
-            val why = LookHost.names(handle, TestNames.block(wants, density), TestNames.FLOOR_DP)
-            check(why.isEmpty()) { why }
-            named += wants.size
+        for (round in 0 until ROUNDS) {
+            var handed = false
+            if (names) {
+                val wants = TestNames.wants(LookHost.namesWanted(handle))
+                if (wants.isNotEmpty()) {
+                    val why = LookHost.names(handle, TestNames.block(wants, density), TestNames.FLOOR_DP)
+                    check(why.isEmpty()) { why }
+                    named += wants.size
+                    handed = true
+                }
+            }
+            if (!handed && whole(drew)) break
             drew = LookHost.draw(handle, camera, DRAW_SECONDS)
             check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
         }
         return if (named > 0) "$drew; $named names' sprites handed" else drew
+    }
+
+    /** Whether the draw that said [notes] drew its frame whole: complete, no world tile wanted and no cell bare. */
+    private fun whole(notes: String): Boolean {
+        val world = WORLD.find(notes) ?: return false
+        return notes.contains("complete yes") && world.groupValues[3] == "0" && world.groupValues[4] == "0"
     }
 
     private companion object {
@@ -209,9 +223,12 @@ class WorldPackRefsTest {
         /** WorldFetch.GLOBE: the globe's file in the world's folder. */
         const val GLOBE = "world-globe.atlas"
 
-        /** The longest a frame is drawn for, seconds, and the rounds of names handed for one at most. */
+        /**
+         * The longest a draw lasts, seconds, and the most draws a frame gets after its first (each hands the names it
+         * wants, or carries it on to whole).
+         */
         const val DRAW_SECONDS = 300.0
-        const val NAME_ROUNDS = 6
+        const val ROUNDS = 12
 
         /** MapFrame::set_packs' line for a pack it took ("<id>: <why not>" for one it did not). */
         val OPENED = Regex(""".* (opened|listed|kept)""")
