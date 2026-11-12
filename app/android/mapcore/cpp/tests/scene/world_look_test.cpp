@@ -6,12 +6,16 @@
 #include "scene/WorldLook.hpp"
 #include "style/Theme.hpp"
 #include "tests/base/require.hpp"
+#include "view/Bend.hpp"
+#include "view/Camera.hpp"
+#include "view/ScreenLayers.hpp"
 
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <format>
 #include <optional>
 
 namespace {
@@ -342,4 +346,91 @@ TEST_CASE("a lit place's name rises off its light by what the light follows: not
     CHECK(scene::light_halo_dp(l, 5e6) == doctest::Approx(1.9 * 2.2));
     CHECK(scene::light_halo_dp(l, 2e5) == doctest::Approx(1.3 * 2.2));
     CHECK(scene::light_halo_dp(l, 0.0) == doctest::Approx(1.3 * 2.2));
+}
+
+TEST_CASE("the haze's stops over the bent ground run from its own horizon's row by its own depth, off the space over "
+          "it; where nothing bends they are the flat ground's") {
+    const tiles::WorldLadder l = load::world_ladder();
+    constexpr double width = 412.0;
+    constexpr double height = 916.0;
+    constexpr double haze_max = 0.3;
+    const auto camera = [&](double pitch, double distance) {
+        return view::Camera({.target = {0, 0, 0},
+                             .yaw = 20.0,
+                             .pitch = pitch,
+                             .dist = distance,
+                             .width = width,
+                             .height = height,
+                             .cy = height * 0.48});
+    };
+    style::ThemeBlock theme{};
+    theme.haze_max = haze_max;
+    // nothing bends: the flat ground's 17 stops (view::haze_of's), their rows and their opacities
+    for (const double pitch : {15.0, 40.0, 90.0}) {
+        const view::Camera cam = camera(pitch, 10'000.0);
+        const view::LayerSettings settings{
+            .width = width, .height = height, .pitch = pitch, .haze0 = 8'500.0, .haze1 = 22'000.0};
+        const view::Haze flat = view::layers_of(cam, theme, settings).haze;
+        const view::Haze bent = scene::bent_haze(cam, 0.0, 0.0, haze_max, 8'500.0, 22'000.0, height, 0.0);
+        ATLAS_REQUIRE(flat.count == 17);
+        ATLAS_REQUIRE(bent.count == 17);
+        CHECK(std::abs(bent.y0 - flat.y0) < 1.0);
+        CHECK(bent.y1 == flat.y1);
+        for (std::size_t i = 0; i < 17; ++i) {
+            CHECK(bent.offsets.at(i) == flat.offsets.at(i));
+            CHECK(std::abs(bent.alphas.at(i) - flat.alphas.at(i)) < 0.01);
+        }
+    }
+    // from 1,000 km, the view 25 degrees under the horizontal: the world is the sphere, and its horizon lies under
+    // the flat ground's (which stands above the frame's top here) by the dip of the eye's height over it
+    {
+        const double distance = 1'000'000.0;
+        const view::Camera cam = camera(25.0, distance);
+        const double flat_row = cam.horizon_y();
+        const double down = pymath::atan((cam.cy() - flat_row) / cam.focal()); // the view under the horizontal
+        const view::Vec3& eye = cam.eye();
+        const double from_centre = pymath::sqrt(
+            (eye.x * eye.x) + ((eye.y + view::earth_radius) * (eye.y + view::earth_radius)) + (eye.z * eye.z));
+        const double dip = pymath::acos(view::earth_radius / from_centre);
+        const double limb_row = cam.cy() - (cam.focal() * pymath::tan(down - dip));
+        const scene::LadderWeights w = scene::ladder_weights(l, distance);
+        CHECK(view::sphere_weight(distance) == 1.0);
+        CHECK(w.space > 0.0);
+        const view::Haze h = scene::bent_haze(cam, view::drop_of(distance), 1.0, haze_max, l.haze_start * distance,
+                                              l.haze_reach * distance, height, w.space);
+        MESSAGE(std::format("from 1,000 km at 25 degrees: the flat horizon's row {:.1f}, the sphere's {:.1f}, the "
+                            "haze's first row {:.1f}; {} stops, over space {:.3f}, at the horizon {:.3f}, at the foot "
+                            "{:.3f}",
+                            flat_row, limb_row, h.y0, h.count, h.alphas[0], h.alphas[2], h.alphas.at(h.count - 1)));
+        CHECK(limb_row > flat_row + 20.0);
+        CHECK(std::abs(h.y0 - limb_row) < 1.5);
+        CHECK(h.y1 == height);
+        // over space what the ladder keeps of the haze there; the horizon's own a pixel and a half under it
+        ATLAS_REQUIRE(h.count == 19);
+        CHECK(h.offsets[0] == 0.0);
+        CHECK(h.alphas[0] == doctest::Approx(h.alphas[2] * (1.0 - w.space)));
+        CHECK(h.alphas[1] == h.alphas[2]);
+        CHECK(h.offsets[1] == doctest::Approx(1.5 / (height - h.y0)));
+        // down the frame the ground is nearer and the haze thinner, never thicker; the stops' rows ascend
+        for (std::size_t i = 2; i + 1 < h.count; ++i) {
+            CHECK(h.alphas.at(i + 1) <= h.alphas.at(i) + 1e-12);
+            CHECK(h.offsets.at(i + 1) >= h.offsets.at(i));
+        }
+        // (the horizon is 2,500 km from the eye, within the haze's reach of 3,050: most of the haze, not all)
+        CHECK(h.alphas[2] > 0.5 * haze_max);
+        CHECK(h.alphas[2] <= haze_max);
+        CHECK(h.alphas.at(h.count - 1) < h.alphas[2]);
+        CHECK(h.offsets.at(h.count - 1) == 1.0);
+    }
+    // straight down the horizon is above the frame: the 17 stops from its top, none for space
+    {
+        const double distance = 100'000.0;
+        const view::Camera cam = camera(90.0, distance);
+        const view::Haze h = scene::bent_haze(cam, view::drop_of(distance), view::sphere_weight(distance), haze_max,
+                                              l.haze_start * distance, l.haze_reach * distance, height, 0.2);
+        CHECK(h.count == 17);
+        CHECK(h.y0 == 0.0);
+        CHECK(h.y1 == height);
+        for (std::size_t i = 0; i < 17; ++i) CHECK(h.alphas.at(i) < 0.05);
+    }
 }

@@ -18,6 +18,7 @@
 #include "style/Palette.hpp"
 #include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
+#include "view/Bend.hpp"
 #include "view/Snap.hpp"
 
 #include <algorithm>
@@ -425,6 +426,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     // the style ladder's haze (ENGINE.md step 5): beyond 18 km its depths go to the camera's distance's (0.85 · D and
     // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was. The moment's weather
     // over the screen thins with it, so it has gone where its steps end (below)
+    double space = -1.0; // the ladder's weight of space where the world bends (under 0: it does not)
     if (const tiles::Style* world = load::world_style(); world != nullptr && world->ladder) {
         const tiles::WorldLadder& far = *world->ladder;
         if (spec.dist > far.from) {
@@ -433,10 +435,18 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
             settings.haze1 += ((far.haze_reach * spec.dist) - settings.haze1) * w.caps;
             settings.haze_scale = 1.0 - w.haze;
             settings.weather_gone = w.haze;
+            space = w.space;
         }
     }
     state_.view.emplace(spec, device);
     state_.layers = view::layers_of(state_.view->camera(), state_.theme, settings);
+    // where the world bends, the haze's stops over the bent ground: from its horizon's row, which lies under the flat
+    // ground's, by its own depth, and off the space over it (scene::bent_haze); the eye-level band stays the flat one
+    if (space >= 0.0 && state_.view->drop() > 0.0 && !state_.layers->haze.band && state_.layers->haze.count > 0) {
+        state_.layers->haze = scene::bent_haze(
+            state_.view->camera(), state_.view->drop(), view::sphere_weight(spec.dist),
+            state_.theme.haze_max * settings.haze_scale, settings.haze0, settings.haze1, settings.height, space);
+    }
     const bool engine = cam.has(style::camera_flag::engine_mode);
     state_.grounded = options_.grounded && !engine;
     shaders::FrameBlock& b = state_.block;
