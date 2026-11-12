@@ -262,7 +262,6 @@ TEST_CASE("ground: the glints read the field as it lies at the home and by each 
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
 
-#include <format>
 #include <memory>
 #include <string>
 #include <string_view>
