@@ -561,6 +561,8 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
 
 std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     std::vector<WorldName> names;
+    // each row's place in the tile's order: the places, then the waters, then the rivers, each by the packer's rank
+    constexpr std::int64_t group = std::int64_t{1} << 40U;
     std::vector<std::int64_t> ranks;
     const tl::Layer* label = tile.layer(tl::LayerId::label);
     if (label == nullptr) return names;
@@ -568,7 +570,30 @@ std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     constexpr std::uint8_t capital = tl::slot_of(tl::label::columns, "tag:capital");
     const std::uint32_t cells = std::uint32_t{tile.header.cells_per_side} * tile.header.cells_per_side;
     each_row(*label, cells, [&](std::uint32_t i, std::uint32_t c) {
-        if (label->integer(tl::label::source, i) != tl::label::source_place) return;
+        const std::int64_t source = label->integer(tl::label::source, i);
+        const bool river = std::cmp_equal(source, tl::label::source_river);
+        if (river || std::cmp_equal(source, tl::label::source_water)) {
+            // a water at its name's point with its area, a river at the middle of its longest piece in the tile with
+            // its length there
+            const std::optional<NameKind> kind =
+                river ? std::optional(NameKind::river) : water_kind(label->string(tl::label::kind, i).value_or(""));
+            // a name of several languages' (OpenStreetMap's "North Sea / Nordsee / Noordzee" of a water no one
+            // language names): its first part, until the packs hold each language's own (ENGINE.md step 5, "Names")
+            std::string_view text = label->string(tl::label::name, i).value_or("");
+            if (const std::size_t part = text.find(" / "); part != std::string_view::npos) text = text.substr(0, part);
+            if (!kind || text.empty()) return;
+            const tl::GridPoint at = label->point(tl::label::pos, i);
+            ranks.push_back(((river ? 2 : 1) * group) + label->integer(tl::label::index, i));
+            WorldName water{.kind = *kind,
+                            .cell = static_cast<std::uint8_t>(c),
+                            .lat = tl::Frame::degrees(at.lat),
+                            .lon = tl::Frame::degrees(at.lon),
+                            .text = std::string(text)};
+            water.extent = static_cast<double>(label->integer(tl::label::count, i));
+            names.push_back(std::move(water));
+            return;
+        }
+        if (!std::cmp_equal(source, tl::label::source_place)) return;
         const std::string_view place = label->string(tl::label::kind, i).value_or("");
         const std::optional<NameKind> kind = name_kind(place);
         const std::string_view text = label->string(tl::label::name, i).value_or("");

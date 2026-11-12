@@ -67,7 +67,11 @@ data class Marker(
 
 /** What a [MapLabel] names, which sets its look: the Main board's two map labels. */
 enum class LabelKind {
-    /** A water ("IJ"): italic serif 21 board px in #2F5A84 on a 10 px white glow at 85 %. */
+    /**
+     * A water ("IJ"): italic serif 21 board px in #2F5A84 on a 10 px white glow at 85 %. The world's waters and rivers,
+     * which the core picks and places (ENGINE.md step 5, "Names"), are named in it too: the board has this one water
+     * label, for a sea as for a lake.
+     */
     WATER,
 
     /** A quarter ("Jordaan"): italic serif 17 board px in #3A3F4B on white halos of 6 and 2 px. */

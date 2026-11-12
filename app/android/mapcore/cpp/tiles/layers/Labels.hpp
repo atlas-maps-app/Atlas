@@ -1,5 +1,7 @@
 // The label layer (rendertiles' Schema.LABEL): the canal name candidates in source order (each a way's middle vertex
-// and the one before it, the baseline's direction, and its slot among the marks) and the place nodes with their rank.
+// and the one before it, the baseline's direction, and its slot among the marks) and the place nodes with their rank;
+// in the world's tiles also the waters' names at their points and the rivers' at the middle of their longest piece
+// (the packer's WorldCut.WATER_NAMES and RIVER_NAMES: sources 2 and 3 in the same columns).
 #pragma once
 
 #include "tiles/Schema.hpp"
@@ -10,14 +12,16 @@
 namespace atlas::tiles::label {
 
 inline constexpr std::array<ColumnSpec, 13> columns = {{
-    {"source", Codec::u8},   // 0 a canal name candidate (S['labels'], kind canal); 1 a place node
-    {"index", Codec::delta}, // source order: in S['labels'], or in S['nodes']
+    {"source", Codec::u8},   // 0 a canal name candidate (S['labels'], kind canal); 1 a place node; 2 a water; 3 a river
+    {"index", Codec::delta}, // source order: in S['labels'], or in S['nodes']; a water's or a river's rank in the tile
     {"id", Codec::nvarz},    // a place node's id
     {"name", Codec::str},    // the name
-    {"pos", Codec::point},   // a canal: the way's middle vertex (pts[n / 2]); a place: the node
+    {"pos", Codec::point},   // a canal: the way's middle vertex (pts[n / 2]); a place: the node; a water: its
+                             // name's point; a river: the middle of its longest piece in the tile
     {"prev", Codec::point},  // a canal: the vertex before it (pts[n / 2 - 1]), the baseline's direction
-    {"count", Codec::varu},  // a canal: the way's vertex count
-    {"kind", Codec::str},    // a place: its place=* value
+    {"count", Codec::varu},  // a canal: the way's vertex count; a water: its area, m² (0: a node's); a river: its
+                             // length in the tile, m
+    {"kind", Codec::str},    // a place: its place=* value; a water: ocean, sea, bay, strait, lake or reservoir; river
     {"ground_key",
      Codec::varu}, // a canal name: its slot among the marks (ground_key::marks, class marks_canal); 0: a place
     {"tag:place", Codec::str},
@@ -36,8 +40,10 @@ inline constexpr std::uint8_t count = slot_of(columns, "count");
 inline constexpr std::uint8_t kind = slot_of(columns, "kind");
 inline constexpr std::uint8_t ground_key = slot_of(columns, "ground_key");
 
-/// The two sources of the layer.
+/// The sources of the layer: the cover's two, and the world's waters and rivers.
 inline constexpr std::uint8_t source_canal = 0;
 inline constexpr std::uint8_t source_place = 1;
+inline constexpr std::uint8_t source_water = 2;
+inline constexpr std::uint8_t source_river = 3;
 
 } // namespace atlas::tiles::label
