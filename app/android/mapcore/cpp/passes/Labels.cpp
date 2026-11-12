@@ -10,6 +10,7 @@
 #include "gpu/Descriptors.hpp"
 #include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
+#include "passes/PlacePoint.hpp"
 #include "scene/WorldLook.hpp"
 #include "scene/WorldTiles.hpp"
 
@@ -181,7 +182,8 @@ void Labels::update(const frame::FrameState& state) {
         state.camera.leaves_out(style::camera_part::labels)) {
         return;
     }
-    // Each label's points on the view's device pixels (LabelPainter's GroundView: the ground at street level).
+    // Each label's points on the view's device pixels (LabelPainter's GroundView: the ground at street level; from
+    // 150 km the world's bent ground, passes/PlacePoint.hpp).
     const view::View& view = *state.view;
     const view::GroundFrame& ground = *frame_drawn;
     const auto sprites = set != nullptr ? set->sprites() : std::span<const labels::LabelSprite>();
@@ -192,7 +194,7 @@ void Labels::update(const frame::FrameState& state) {
         std::vector<labels::Point>& points = points_[i];
         points.clear();
         for (const auto& [lat, lon] : s.points) {
-            const auto p = view.device_proj({ground.x(lat, lon), 0.0, ground.z(lat, lon)});
+            const auto p = place_point(state, view, ground, lat, lon);
             points.push_back(p ? labels::Point{.x = static_cast<float>(p->x), .y = static_cast<float>(p->y)}
                                : labels::Point{.x = no_point, .y = no_point});
         }
