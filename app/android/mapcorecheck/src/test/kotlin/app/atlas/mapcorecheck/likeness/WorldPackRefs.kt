@@ -4,6 +4,7 @@ import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.vk.CoreMoment
 import app.atlas.render.live.Moment
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -31,8 +32,10 @@ import kotlin.math.roundToInt
  * A pack the core does not open, a tile stage P's check (`atlas_stagep check`, the core's own decoding) does not
  * decode, or a frame that is not complete with every tile its cover wants drawn fails it: the refs job's gate. Each
  * frame's pixels' SHA-256 goes to the report's `world-refs/world-refs.json` (to paste in as a version's frames on its
- * platform) and the frame to a PNG beside it; on a platform the current version holds frames of, every frame must come
- * out as stored, as WorldRefsTest holds the board's.
+ * platform, with the world they are of, `ATLAS_WORLD_REFS_RELEASE`) and the frame to a PNG beside it; on a platform the
+ * current version holds frames of, every frame must come out as stored, as WorldRefsTest holds the board's, where the
+ * world drawn is the one they are of (its `world`): another world's data draws other pixels, so its frames are only
+ * proposed (a month's world drawn by world.yml's schedule).
  *
  * `ATLAS_WORLD_REFS_VIEWS` names other views of `likeness` to draw instead, held the same way, their report in a folder
  * of their name: `world-keep.json`, a kept country's zoom-out from 18 km to the globe over the tiles `packer world-keep`
@@ -119,12 +122,23 @@ class WorldPackRefsTest {
         assertTrue("$name's frames not drawn whole: ${failed.joinToString("; ")}", failed.isEmpty())
 
         val platform = Likeness.platform
+        // the world drawn: the release world.yml's refs job cut the folder from (unset for a folder of no named release)
+        val world = System.getenv("ATLAS_WORLD_REFS_RELEASE")?.takeIf { it.isNotBlank() }
         val versions = refs["versions"]?.jsonObject ?: JsonObject(emptyMap())
         val entry = versions[version]?.jsonObject ?: JsonObject(mapOf("note" to JsonPrimitive("")))
         val stored = entry["platforms"]?.jsonObject?.get(platform)?.jsonObject
+        // the world the version's frames are of: they hold the engine over that world alone, as another month's data
+        // draws other pixels with the same engine
+        val storedWorld = entry["world"]?.jsonPrimitive?.content
         val platforms = LinkedHashMap(entry["platforms"]?.jsonObject ?: JsonObject(emptyMap())).apply { this[platform] = JsonObject(drawn.mapValues { JsonPrimitive(it.value) }) }
+        val proposed = LinkedHashMap<String, JsonElement>().apply {
+            this["note"] = entry["note"] ?: JsonPrimitive("")
+            (world?.let { JsonPrimitive(it) } ?: entry["world"])?.let { this["world"] = it }
+            for ((k, v) in entry) if (k !in setOf("note", "world", "platforms")) this[k] = v
+            this["platforms"] = JsonObject(platforms)
+        }
         val proposal = JsonObject(LinkedHashMap(refs).apply {
-            this["versions"] = JsonObject(LinkedHashMap(versions).apply { this[version] = JsonObject(LinkedHashMap(entry).apply { this["platforms"] = JsonObject(platforms) }) })
+            this["versions"] = JsonObject(LinkedHashMap(versions).apply { this[version] = JsonObject(proposed) })
         })
         File(out, views).writeText(Ratchet.format(proposal) + "\n")
         if (stored == null) {
@@ -132,6 +146,10 @@ class WorldPackRefsTest {
             return
         }
         val changed = drawn.filter { (frameName, hash) -> stored[frameName]?.jsonPrimitive?.content != hash }.keys
+        if (world != null && storedWorld != null && world != storedWorld) {
+            println("$name: version $version's frames are of $storedWorld, this is $world: ${drawn.size - changed.size} of ${drawn.size} frames alike; this run's are in ${File(out, views)}")
+            return
+        }
         println("$name: ${drawn.size - changed.size} of ${drawn.size} frames as version $version stored them on $platform")
         assertTrue(
             "the engine no longer draws version $version's frames around the world on $platform: $changed (this run's frames: $out). A " +
