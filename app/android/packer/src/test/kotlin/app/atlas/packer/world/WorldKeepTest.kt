@@ -153,6 +153,13 @@ class WorldKeepTest {
         // across the antimeridian
         assertEquals(WorldKeep.distance(10.0, 179.9, 10.0, -180.0), WorldKeep.boxDistance(10.0, 179.9, 9.0, -180.0, 11.0, -174.375), 1.0)
         assertEquals(0.0, WorldKeep.boxDistance(10.0, -179.0, 9.0, -180.0, 11.0, -174.375), 0.0)
+        // more than 90° of longitude away the nearest point of an edge's great circle lies past a pole: here the
+        // nearest corner is the north-west one, not the edge's south end (CI's sample, 12 November: 107 km farther)
+        assertEquals(WorldKeep.distance(-34.5, 75.1, 64.4, -152.2), WorldKeep.boxDistance(-34.5, 75.1, 61.8, -152.2, 64.4, -143.7), 1e-6)
+        // beyond the pole from a place in the north: a corner of the box's pole-ward edge, nearer than that edge's
+        // point on the place's far meridian (24.98° against 25°)
+        assertEquals(WorldKeep.distance(70.0, 20.0, 85.0, -155.0), WorldKeep.boxDistance(70.0, 20.0, 80.0, -165.0, 85.0, -155.0), 1e-6)
+        assertTrue(WorldKeep.boxDistance(70.0, 20.0, 80.0, -165.0, 85.0, -155.0) < WorldKeep.distance(70.0, 20.0, 85.0, -160.0))
         // sampled along the box's edges, never nearer than the closed form
         val random = Random(3)
         repeat(200) {

@@ -220,7 +220,10 @@ object WorldKeep {
     /**
      * The great-circle distance (m) from a place to a box (degrees, at most 180° of longitude wide; 0 inside it):
      * straight north or south where its longitude lies within the box's, else to the nearer point of its west or east
-     * edge, each a meridian's arc (the nearest point of a parallel's edge is then a corner).
+     * edge, each a meridian's arc (the nearest point of a parallel's edge is then a corner). Along a meridian the
+     * distance falls toward the point of its great circle nearest the place, so an edge's nearest point is that one
+     * where the edge holds it, else the nearer of its ends: more than 90° of longitude away that point lies beyond a
+     * pole, and the nearer end may be the edge's north or its south.
      */
     fun boxDistance(lat: Double, lon: Double, south: Double, west: Double, north: Double, east: Double): Double {
         fun off(l: Double): Double {
@@ -237,9 +240,10 @@ object WorldKeep {
         fun meridian(edge: Double): Double {
             val dl = Math.toRadians(off(edge))
             val p = Math.toRadians(lat)
-            // the meridian's point nearest the place, within its half from pole to pole, then within the edge
-            val foot = Math.toDegrees(atan2(sin(p), cos(p) * cos(dl))).coerceIn(-90.0, 90.0).coerceIn(south, north)
-            return distance(lat, lon, foot, edge)
+            // the point of the edge's great circle nearest the place (a latitude beyond ±90° lies past a pole)
+            val foot = Math.toDegrees(atan2(sin(p), cos(p) * cos(dl)))
+            val ends = min(distance(lat, lon, south, edge), distance(lat, lon, north, edge))
+            return if (foot in south..north) min(ends, distance(lat, lon, foot, edge)) else ends
         }
         return min(meridian(west), meridian(east))
     }
