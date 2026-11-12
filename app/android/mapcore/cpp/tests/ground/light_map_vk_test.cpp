@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <optional>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ struct LightDraw {
     test::GroundDraw frame;
     passes::LightStats stats;
     double frame_ms = 0;
+    std::vector<geometry::P2> lamps; ///< the drawn tiles' street lamps (frame metres)
 };
 
 /// Draws `camera` at night for `frames` frames, the bakes waited for after each; `turning`: from frame 30 on the
@@ -45,11 +47,18 @@ struct LightDraw {
                                             int frames = 40) {
     passes::Ground* ground = nullptr;
     passes::LightStats stats;
+    std::vector<geometry::P2> lamps;
     std::vector<std::chrono::steady_clock::time_point> at;
     const double bearing = camera.bearing;
     auto drawn = test::draw_ground(
         session, camera, theme, dir, "amsterdam",
-        [&](passes::Ground& g, const frame::FrameState&) { stats = g.light_stats(); }, frames,
+        [&](passes::Ground& g, const frame::FrameState&) {
+            stats = g.light_stats();
+            for (const passes::DrawnTile& t : g.decided().tiles) {
+                for (const geometry::Lamp& lamp : t.ground->lamps) lamps.push_back(lamp.at);
+            }
+        },
+        frames,
         [&](passes::Ground& g) {
             ground = &g;
             if (no_light) {
@@ -71,7 +80,7 @@ struct LightDraw {
         },
         every_pass);
     if (!drawn) return std::nullopt;
-    LightDraw out{.frame = std::move(*drawn), .stats = stats};
+    LightDraw out{.frame = std::move(*drawn), .stats = stats, .lamps = std::move(lamps)};
     if (at.size() >= 12) {
         // the frames before the last (whose end no later frame marks)
         const std::size_t last = at.size() - 1;
@@ -122,10 +131,9 @@ TEST_CASE("ground: the night's light by the tiles' maps is the lamps' pools, cut
     MESSAGE("the home at night: " << on->frame.decided.light_tiles.size() << " tiles' maps drawn, " << s.bakes
                                   << " bakes of " << s.ms << " ms in all on the baker's thread (the longest "
                                   << s.longest_ms << " ms), " << s.pieces << " pieces walked, " << s.lit
-                                  << " blocks lit; " << s.slots << " of " << passes::light_slots
-                                  << " slots taken, " << s.bytes << " bytes of maps kept; "
-                                  << on->frame.decided.lamp_pools.size() << " of " << pools.size()
-                                  << " lamps keep their ellipses");
+                                  << " blocks lit; " << s.slots << " of " << passes::light_slots << " slots taken, "
+                                  << s.bytes << " bytes of maps kept; " << on->frame.decided.lamp_pools.size() << " of "
+                                  << pools.size() << " lamps keep their ellipses");
 
     const gpu::Pixels& a = on->frame.pixels;
     const gpu::Pixels& b = off->frame.pixels;
@@ -203,17 +211,19 @@ TEST_CASE("ground: the night's light by the tiles' maps is the lamps' pools, cut
     const auto off_turning = draw(*session, dir, camera, night, false, true);
     const auto on_turning = draw(*session, dir, with_cascades(camera), night, false, true);
     ATLAS_REQUIRE((off_turning.has_value() && on_turning.has_value()), "the turning frames were not drawn");
-    MESSAGE("a frame at rest (ms, the mean of ten, on this device): " << off->frame_ms << " with the renders' pools, "
-                                                                      << on->frame_ms << " with the maps; turning: "
-                                                                      << off_turning->frame_ms << " and "
-                                                                      << on_turning->frame_ms << "; turning asked for "
-                                                                      << on_turning->stats.bakes << " bakes");
+    MESSAGE("a frame at rest (ms, the mean of ten, on this device): "
+            << off->frame_ms << " with the renders' pools, " << on->frame_ms
+            << " with the maps; turning: " << off_turning->frame_ms << " and " << on_turning->frame_ms
+            << "; turning asked for " << on_turning->stats.bakes << " bakes");
     // turning the camera bakes nothing again
     CHECK(on_turning->stats.bakes == s.bakes);
 
     // the pictures, every pass drawn: the canal ring from the home, and a lamp-lit street from near
     const std::string dump = test::environment("ATLAS_LIGHT_DUMP");
     if (!dump.empty()) {
+        std::string where;
+        for (const geometry::P2& lamp : on->lamps) where += std::format(" ({:.0f}, {:.0f})", lamp.x, lamp.z);
+        MESSAGE("the lamps (frame metres: east, south):" << where);
         // (the street: the lamps along the Prinsengracht by the Westerkerk, 45 m north-west of the home's target)
         const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
         const style::CameraState street =

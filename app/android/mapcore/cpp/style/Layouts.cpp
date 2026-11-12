@@ -381,8 +381,8 @@ static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme
                theme_flag::wet_set | theme_flag::golden | theme_flag::tone | theme_flag::tone_strength |
                theme_flag::daylight) == theme_flag::known);
 static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
-               camera_flag::location | camera_flag::heading | camera_flag::world_under |
-               camera_flag::light_cascades) == camera_flag::known);
+               camera_flag::location | camera_flag::heading | camera_flag::world_under | camera_flag::light_cascades) ==
+              camera_flag::known);
 // The parts are the known ones, each once, in the order of their bits.
 constexpr std::array part_bits{camera_part::ground,
                                camera_part::water,

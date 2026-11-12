@@ -1433,8 +1433,8 @@ private:
     void emit_pools(twin::Stream& out) const;
     [[nodiscard]] gpu::Result<void> make_pool_pipelines(const frame::PassContext& context, Pipelines& p) const;
     /// The night's light by the maps (LightMap.cpp): which tiles' maps the frame draws, asking the baker for those it
-    /// lacks; their words (each map's grid in camera coordinates, a word a lit block) with their blocks into the buffer;
-    /// their draw at the lamps' pools' slot, a quad a lit block.
+    /// lacks; their words (each map's grid in camera coordinates, a word a lit block) with their blocks into the
+    /// buffer; their draw at the lamps' pools' slot, a quad a lit block.
     void decide_light(const frame::FrameState& state);
     /// Whether the frame asks for the maps (the camera's flag at night, a kind of light drawn), and whether a frame
     /// that would keep the last one's decisions must decide the light again: the answer changed, a bake is done, a map
@@ -1514,7 +1514,7 @@ private:
     bool no_wind_glints_ = false;
     bool no_clouds_ = false;
     bool no_light_ = false;
-    bool light_was_asked_ = false; ///< the last decision's light_asked
+    bool light_was_asked_ = false;     ///< the last decision's light_asked
     std::unique_ptr<LightMaps> light_; ///< the night's light's maps, from the first frame that asks for them
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;

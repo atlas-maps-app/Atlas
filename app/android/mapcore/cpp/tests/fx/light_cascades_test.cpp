@@ -77,7 +77,8 @@ TEST_CASE("fx: a lone light in the open lays its pool, and lights in the open th
             const float a = fx::light_alpha(fx::light_lamp, distance(x, z, g.emitters[0]));
             const float b = fx::light_alpha(fx::light_lamp, distance(x, z, g.emitters[1]));
             const float c = fx::light_alpha(fx::light_open, distance(x, z, g.emitters[2]));
-            worst = std::max(worst, static_cast<double>(std::abs(fx::light_over(depths[at]) - (1 - ((1 - a) * (1 - b))))));
+            worst =
+                std::max(worst, static_cast<double>(std::abs(fx::light_over(depths[at]) - (1 - ((1 - a) * (1 - b))))));
             worst = std::max(worst, static_cast<double>(std::abs(fx::light_over(depths[at + 1]) - c)));
         }
     }
@@ -92,7 +93,8 @@ TEST_CASE("fx: a building takes away the light it hides, and none beside it") {
     g.emitters.push_back(lamp);
     // a wall of houses 4 m east of the lamp, 2 m deep and 9 m long
     for (std::int32_t z = 28; z < 37; ++z) {
-        for (std::int32_t x = 28; x < 30; ++x) g.solid[(static_cast<std::size_t>(z) * side) + static_cast<std::size_t>(x)] = 1;
+        for (std::int32_t x = 28; x < 30; ++x)
+            g.solid[(static_cast<std::size_t>(z) * side) + static_cast<std::size_t>(x)] = 1;
     }
     const std::vector<float> depths = fx::light_depths(g);
     const auto alpha = [&](std::int32_t x, std::int32_t z) {
@@ -123,8 +125,9 @@ TEST_CASE("fx: a building takes away the light it hides, and none beside it") {
             }
         }
     }
-    MESSAGE("a lamp 4 m from a wall of houses: " << behind << " texels behind it, the most light there " << leaked << "; "
-                                        << before << " texels on the lamp's other side, the most lost there " << lost);
+    MESSAGE("a lamp 4 m from a wall of houses: " << behind << " texels behind it, the most light there " << leaked
+                                                 << "; " << before
+                                                 << " texels on the lamp's other side, the most lost there " << lost);
     CHECK(behind >= 4);
     CHECK(leaked == 0.0);
     CHECK(before > 100);
@@ -136,7 +139,8 @@ TEST_CASE("fx: a building takes away the light it hides, and none beside it") {
     CHECK(std::abs(alpha(26, 40) - fx::light_alpha(fx::light_lamp, distance(26, 40, lamp))) < 0.01F);
 }
 
-TEST_CASE("passes: a tile's light map is the cascades' over its grid, its lit blocks alone, whatever piece a texel is in") {
+TEST_CASE(
+    "passes: a tile's light map is the cascades' over its grid, its lit blocks alone, whatever piece a texel is in") {
     passes::LightJob job;
     job.blocks_x = 9; // 288 texels: three pieces across, the last cut short
     job.blocks_z = 9;
@@ -161,7 +165,8 @@ TEST_CASE("passes: a tile's light map is the cascades' over its grid, its lit bl
     constexpr std::int32_t whole = 288 + (2 * about);
     fx::LightGrid g = grid_of(whole);
     for (const fx::LightEmitter& e : job.emitters)
-        g.emitters.push_back({.x = e.x + static_cast<float>(about), .z = e.z + static_cast<float>(about), .kind = e.kind});
+        g.emitters.push_back(
+            {.x = e.x + static_cast<float>(about), .z = e.z + static_cast<float>(about), .kind = e.kind});
     for (std::int32_t z = 64; z < 70; ++z) {
         for (std::int32_t x = 120; x < 136; ++x)
             g.solid[(static_cast<std::size_t>(z + about) * whole) + static_cast<std::size_t>(x + about)] = 1;
@@ -185,8 +190,8 @@ TEST_CASE("passes: a tile's light map is the cascades' over its grid, its lit bl
         }
     }
     MESSAGE("a tile of 9 × 9 blocks: " << tile.lit() << " lit, " << tile.pieces << " pieces walked in " << tile.ms
-                                       << " ms; " << lit << " lit texels, " << nudged << " a level from the one grid's, "
-                                       << apart << " farther");
+                                       << " ms; " << lit << " lit texels, " << nudged
+                                       << " a level from the one grid's, " << apart << " farther");
     CHECK(nudged * 50 < lit);
     CHECK(lit > 900);
     CHECK(apart == 0);

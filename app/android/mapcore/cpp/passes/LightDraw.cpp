@@ -179,7 +179,8 @@ void Ground::decide_light(const frame::FrameState& state) {
     for (const Near& n : near) {
         const DrawnTile& t = f.tiles[n.tile];
         const geo::GroundTile& g = *t.ground;
-        auto found = std::ranges::find(l.entries, static_cast<const void*>(&g), [](const auto& e) { return e->ground; });
+        auto found =
+            std::ranges::find(l.entries, static_cast<const void*>(&g), [](const auto& e) { return e->ground; });
         if (found == l.entries.end()) {
             l.entries.push_back(std::make_unique<LightEntry>());
             found = l.entries.end() - 1;
@@ -216,10 +217,8 @@ void Ground::decide_light(const frame::FrameState& state) {
             LightJob job;
             job.x0 = std::floor(box[0]) - light_margin;
             job.z0 = std::floor(box[1]) - light_margin;
-            job.blocks_x =
-                static_cast<std::int32_t>(std::ceil((box[2] + light_margin - job.x0) / light_block));
-            job.blocks_z =
-                static_cast<std::int32_t>(std::ceil((box[3] + light_margin - job.z0) / light_block));
+            job.blocks_x = static_cast<std::int32_t>(std::ceil((box[2] + light_margin - job.x0) / light_block));
+            job.blocks_z = static_cast<std::int32_t>(std::ceil((box[3] + light_margin - job.z0) / light_block));
             if (lamps_on) {
                 for (const geo::Lamp& lamp : g.lamps) {
                     job.emitters.push_back({.x = static_cast<float>(lamp.at.x - job.x0),
@@ -348,8 +347,8 @@ void Ground::write_light(std::vector<std::uint32_t>& words, const frame::FrameSt
         const view::Vec3 k0 = cam.cam({map.x0, 0.0, map.z0});
         const view::Vec3 k1 = cam.cam({map.x0 + 1.0, 0.0, map.z0});
         const view::Vec3 k2 = cam.cam({map.x0, 0.0, map.z0 + 1.0});
-        for (const double v : {k0.x, k0.y, k0.z, k1.x - k0.x, k1.y - k0.y, k1.z - k0.z, k2.x - k0.x, k2.y - k0.y,
-                               k2.z - k0.z}) {
+        for (const double v :
+             {k0.x, k0.y, k0.z, k1.x - k0.x, k1.y - k0.y, k1.z - k0.z, k2.x - k0.x, k2.y - k0.y, k2.z - k0.z}) {
             words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(v)));
         }
         words.insert(words.end(), light_tile_words - 9, 0U);
@@ -362,8 +361,9 @@ void Ground::write_light(std::vector<std::uint32_t>& words, const frame::FrameSt
         const LightTile& map = *e.map;
         for (std::int32_t bz = 0; bz < map.blocks_z; ++bz) {
             for (std::int32_t bx = 0; bx < map.blocks_x; ++bx) {
-                const std::uint16_t place = map.index[(static_cast<std::size_t>(bz) * static_cast<std::size_t>(map.blocks_x)) +
-                                                      static_cast<std::size_t>(bx)];
+                const std::uint16_t place =
+                    map.index[(static_cast<std::size_t>(bz) * static_cast<std::size_t>(map.blocks_x)) +
+                              static_cast<std::size_t>(bx)];
                 if (place == 0) continue;
                 words.push_back(e.slots[place - 1U] | (static_cast<std::uint32_t>(bx) << 12U) |
                                 (static_cast<std::uint32_t>(bz) << 18U) | (m << 24U));

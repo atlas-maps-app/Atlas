@@ -147,8 +147,9 @@ LightTile bake_light(const LightJob& job) {
             const std::int32_t z1 = std::min(height, pz + piece_side);
             for (std::int32_t z = pz; z < z1; ++z) {
                 for (std::int32_t x = px; x < x1; ++x) {
-                    const std::size_t from = ((static_cast<std::size_t>(z - wz) * window_side) +
-                                              static_cast<std::size_t>(x - wx)) * fx::light_kinds;
+                    const std::size_t from =
+                        ((static_cast<std::size_t>(z - wz) * window_side) + static_cast<std::size_t>(x - wx)) *
+                        fx::light_kinds;
                     const std::uint16_t lamps = byte_of(depths[from + fx::light_lamp]);
                     const std::uint16_t open = byte_of(depths[from + fx::light_open]);
                     alphas[(static_cast<std::size_t>(z) * static_cast<std::size_t>(width)) +

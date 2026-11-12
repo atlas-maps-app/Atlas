@@ -87,7 +87,9 @@ struct Cascade {
 
     [[nodiscard]] std::size_t at(std::int32_t px, std::int32_t pz, std::uint32_t k) const noexcept {
         return (((static_cast<std::size_t>(pz) * static_cast<std::size_t>(pw)) + static_cast<std::size_t>(px)) *
-                wedges + k) * light_kinds;
+                    wedges +
+                k) *
+               light_kinds;
     }
 };
 
@@ -204,8 +206,8 @@ void merge(Scene& s, std::size_t i, Cascade& c, const Cascade& up) {
     const auto step = static_cast<float>(c.spacing);
     for (std::int32_t pz = 0; pz < c.ph; ++pz) {
         for (std::int32_t px = 0; px < c.pw; ++px) {
-            if (c.open[(static_cast<std::size_t>(pz) * static_cast<std::size_t>(c.pw)) + static_cast<std::size_t>(px)] ==
-                0)
+            if (c.open[(static_cast<std::size_t>(pz) * static_cast<std::size_t>(c.pw)) +
+                       static_cast<std::size_t>(px)] == 0)
                 continue;
             const Above above = above_of(up, px, pz);
             if (!above.any) continue;

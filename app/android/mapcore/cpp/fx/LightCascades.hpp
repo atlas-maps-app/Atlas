@@ -54,9 +54,9 @@ inline constexpr float light_radius = 1.2F;
 /// its solids within it all that shade it.
 inline constexpr float light_reach = 12.0F;
 /// The cascades: their count, the first's wedges, the bounds of the intervals their wedges' middle rays cross, and
-/// where each cascade's share of a light rises from nothing to all of it, by the light's distance (texels): the second's
-/// over 0 to 4, the third's over 4 to 12. A rise is two of its cascade's probes' spacings wide, so the probes carry it
-/// between them without a ring.
+/// where each cascade's share of a light rises from nothing to all of it, by the light's distance (texels): the
+/// second's over 0 to 4, the third's over 4 to 12. A rise is two of its cascade's probes' spacings wide, so the probes
+/// carry it between them without a ring.
 inline constexpr std::size_t light_cascades = 3;
 inline constexpr std::uint32_t light_wedges = 16;
 inline constexpr std::array<float, 4> light_bounds{0.0F, 2.0F, 6.0F, 12.0F};

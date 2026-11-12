@@ -13,8 +13,9 @@
 // texel of its neighbours about it for the frame's bilinear read.
 //
 // The frame draws the maps of the tiles near its target at the lamps' pools' slot, a quad on the ground a lit block
-// (light_vs, light_fs), reading the blocks from a buffer of slots the pass fills as bakes arrive (passes/Ground.hpp's LightMaps); the lamps of a tile
-// whose map is not there yet are drawn as the renders' ellipses meanwhile, and so are those farther than light_far.
+// (light_vs, light_fs), reading the blocks from a buffer of slots the pass fills as bakes arrive (passes/Ground.hpp's
+// LightMaps); the lamps of a tile whose map is not there yet are drawn as the renders' ellipses meanwhile, and so are
+// those farther than light_far.
 #pragma once
 
 #include "fx/LightCascades.hpp"
@@ -52,7 +53,7 @@ struct LightJob {
     std::int32_t blocks_x = 0;
     std::int32_t blocks_z = 0;
     std::vector<fx::LightEmitter> emitters;
-    std::vector<float> ring_points;       ///< x, z of every footprint's points, ring after ring
+    std::vector<float> ring_points;           ///< x, z of every footprint's points, ring after ring
     std::vector<std::uint32_t> ring_first{0}; ///< where each ring's points begin (one more than rings)
 };
 
@@ -135,7 +136,7 @@ struct LightEntry {
     std::uint64_t asked = 0; ///< the ticket of the bake under way (0: none), and what it bakes from
     std::uint64_t asked_key = 0;
     std::vector<std::uint32_t> slots;
-    bool uploaded = false; ///< its blocks are in the buffer
+    bool uploaded = false;  ///< its blocks are in the buffer
     std::uint64_t seen = 0; ///< the last frame its tile was drawn near the target
 };
 
