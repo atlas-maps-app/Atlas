@@ -17,7 +17,8 @@ import java.io.RandomAccessFile
  * world-coarse.*), or packs cut by `packer world-refs` (world-<z>-<x>-<y>.atlas), and the globe beside them. Every
  * tile's LABEL rows by level and source (1 a place, 2 a water, 3 a river), the waters' and the rivers' kinds, and the
  * first of each level's waters and rivers by rank; a water's name stands in one tile of a level, and a river's once in a
- * tile.
+ * tile. With `-Datlas.world.names.find=<text>`, every water's and river's row whose name holds the text (any case), with
+ * its tile, rank and area or length.
  */
 class WorldNamesSurveyTest {
     @Test
@@ -52,6 +53,8 @@ class WorldNamesSurveyTest {
         // where each water's name stands: its tiles, kind, id and point
         val waterWhere = HashMap<Pair<Int, String>, MutableList<String>>()
         var riverTwice = 0
+        val find = System.getProperty("atlas.world.names.find")?.takeIf { it.isNotBlank() }
+        val found = ArrayList<String>()
         for ((packName, read) in packs) {
             val reader = Format3Reader(read())
             for (c in reader.chunks) {
@@ -69,6 +72,9 @@ class WorldNamesSurveyTest {
                     // a column's default (a rank or a count of 0) is left out of the row
                     val index = (f["index"] as Number?)?.toLong() ?: 0L
                     val count = (f["count"] as Number?)?.toLong() ?: 0L
+                    if (find != null && text.contains(find, ignoreCase = true)) {
+                        found += "$packName ${t.level}/${t.x}/${t.y}: $text (${if (source == 2) kind else "river"}, rank $index, ${if (source == 2) "$count m²" else "$count m"})"
+                    }
                     if (source == 2) {
                         val at = f["pos"] as GridPoint
                         // a water by its id where it has one, else its name and point
@@ -89,6 +95,10 @@ class WorldNamesSurveyTest {
                 "world-names: L$z: ${l.tiles} tiles; canals ${l.rows[0]}, places ${l.rows[1]}, waters ${l.rows[2]}, rivers ${l.rows[3]}; " +
                     "${l.kinds.entries.joinToString { "${it.key} ${it.value}" }}; the largest firsts: $first",
             )
+        }
+        if (find != null) {
+            for (line in found.take(80)) println("world-names: found $line")
+            println("world-names: ${found.size} rows of waters and rivers whose name holds \"$find\"")
         }
         val again = waterTiles.filterValues { it > 1 }
         for (k in again.keys.sortedWith(compareBy({ it.first }, { it.second })).take(40)) println("world-names: again L${k.first}: ${waterWhere[k]}")
