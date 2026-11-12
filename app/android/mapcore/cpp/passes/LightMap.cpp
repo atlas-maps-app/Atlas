@@ -42,11 +42,11 @@ void fill_ring(const LightJob& job, std::size_t ring, std::int32_t wx, std::int3
         for (std::uint32_t i = 0; i < count; ++i) {
             const std::uint32_t a = first + i;
             const std::uint32_t b = first + ((i + 1) % count);
-            const float az = job.ring_points[(2 * a) + 1];
-            const float bz = job.ring_points[(2 * b) + 1];
+            const float az = job.ring_points[(std::size_t{2} * a) + 1];
+            const float bz = job.ring_points[(std::size_t{2} * b) + 1];
             if ((az <= z) == (bz <= z)) continue;
-            const float ax = job.ring_points[2 * a];
-            const float bx = job.ring_points[2 * b];
+            const float ax = job.ring_points[std::size_t{2} * a];
+            const float bx = job.ring_points[std::size_t{2} * b];
             crossings.push_back(ax + ((bx - ax) * ((z - az) / (bz - az))));
         }
         std::ranges::sort(crossings);
@@ -91,6 +91,7 @@ LightTile bake_light(const LightJob& job) {
     const std::int32_t width = job.blocks_x * light_block;
     const std::int32_t height = job.blocks_z * light_block;
     out.index.assign(static_cast<std::size_t>(job.blocks_x) * static_cast<std::size_t>(job.blocks_z), 0);
+    for (const fx::LightEmitter& e : job.emitters) ++out.lights[e.kind];
     if (job.emitters.empty() || width <= 0 || height <= 0) return out;
     // each ring's box
     const std::size_t rings = job.ring_first.size() - 1;
@@ -98,10 +99,12 @@ LightTile bake_light(const LightJob& job) {
     for (std::size_t r = 0; r < rings; ++r) {
         RingBox b{.x0 = 1e30F, .z0 = 1e30F, .x1 = -1e30F, .z1 = -1e30F};
         for (std::uint32_t i = job.ring_first[r]; i < job.ring_first[r + 1]; ++i) {
-            b.x0 = std::min(b.x0, job.ring_points[2 * i]);
-            b.x1 = std::max(b.x1, job.ring_points[2 * i]);
-            b.z0 = std::min(b.z0, job.ring_points[(2 * i) + 1]);
-            b.z1 = std::max(b.z1, job.ring_points[(2 * i) + 1]);
+            const float x = job.ring_points[std::size_t{2} * i];
+            const float z = job.ring_points[(std::size_t{2} * i) + 1];
+            b.x0 = std::min(b.x0, x);
+            b.x1 = std::max(b.x1, x);
+            b.z0 = std::min(b.z0, z);
+            b.z1 = std::max(b.z1, z);
         }
         boxes[r] = b;
     }
@@ -180,7 +183,8 @@ LightTile bake_light(const LightJob& job) {
             for (std::int32_t z = 0; z < light_slot; ++z) {
                 for (std::int32_t x = 0; x < light_slot; ++x) {
                     const std::uint32_t both = alpha_at((bx * light_block) + x - 1, (bz * light_block) + z - 1);
-                    const auto texel = static_cast<std::size_t>((z * light_slot) + x);
+                    const std::size_t texel =
+                        (static_cast<std::size_t>(z) * static_cast<std::size_t>(light_slot)) + static_cast<std::size_t>(x);
                     words[texel / 2] |= both << ((texel % 2) * 16U);
                 }
             }

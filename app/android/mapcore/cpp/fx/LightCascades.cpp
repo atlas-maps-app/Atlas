@@ -1,6 +1,8 @@
 // The night's light on the ground by radiance cascades (LightCascades.hpp).
 #include "fx/LightCascades.hpp"
 
+#include "base/pymath/PyMath.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -8,6 +10,8 @@
 namespace atlas::fx {
 
 namespace {
+
+namespace pm = atlas::pymath;
 
 constexpr float pi = std::numbers::pi_v<float>;
 constexpr float two_pi = 2.0F * pi;
@@ -26,10 +30,14 @@ constexpr float ray_step = 0.5F;
 }
 
 /// A lone light's share of the directions about a place `d` texels from its foot.
-[[nodiscard]] float seen(float d) noexcept { return d <= light_radius ? 1.0F : std::asin(light_radius / d) / pi; }
+[[nodiscard]] float seen(float d) noexcept {
+    return d <= light_radius ? 1.0F : static_cast<float>(pm::asin(static_cast<double>(light_radius / d))) / pi;
+}
 
 /// The optical depth a kind's pool lays `d` texels from its light's foot.
-[[nodiscard]] float depth_of(std::uint8_t kind, float d) noexcept { return -std::log1p(-light_alpha(kind, d)); }
+[[nodiscard]] float depth_of(std::uint8_t kind, float d) noexcept {
+    return static_cast<float>(-pm::strict::log1p(-static_cast<double>(light_alpha(kind, d))));
+}
 
 /// The scene, with its lights in buckets.
 struct Scene {
@@ -40,9 +48,8 @@ struct Scene {
     std::vector<std::uint32_t> order;
     LightCost cost;
 
-    explicit Scene(const LightGrid& g) : grid(g) {
-        bw = (g.width + bucket_side - 1) / bucket_side;
-        bh = (g.height + bucket_side - 1) / bucket_side;
+    explicit Scene(const LightGrid& g)
+        : grid(g), bw((g.width + bucket_side - 1) / bucket_side), bh((g.height + bucket_side - 1) / bucket_side) {
         first.assign((static_cast<std::size_t>(bw) * static_cast<std::size_t>(bh)) + 1, 0);
         const auto bucket = [this](const LightEmitter& e) {
             const std::int32_t bx = std::clamp(static_cast<std::int32_t>(std::floor(e.x)) / bucket_side, 0, bw - 1);
@@ -177,8 +184,8 @@ void own_lights(Scene& s, std::size_t i, Cascade& c, const Cascade* up) {
                         if (!s.free(x, z, dx / d, dz / d, ray_step, d - light_radius)) continue;
                         // over the wedges the disc fills, as the radiance whose mean over all of them is `own`
                         const float w = own / seen(d);
-                        const float half = std::asin(light_radius / d);
-                        float mid = std::atan2(dz, dx);
+                        const auto half = static_cast<float>(pm::asin(static_cast<double>(light_radius / d)));
+                        auto mid = static_cast<float>(pm::atan2(static_cast<double>(dz), static_cast<double>(dx)));
                         if (mid < 0.0F) mid += two_pi;
                         const float lo = mid - half;
                         const float hi = mid + half;
@@ -204,6 +211,12 @@ void own_lights(Scene& s, std::size_t i, Cascade& c, const Cascade* up) {
 void merge(Scene& s, std::size_t i, Cascade& c, const Cascade& up) {
     const float wedge = two_pi / static_cast<float>(c.wedges);
     const auto step = static_cast<float>(c.spacing);
+    // each wedge's middle ray
+    std::vector<std::array<float, 2>> rays(c.wedges);
+    for (std::uint32_t k = 0; k < c.wedges; ++k) {
+        const double angle = (static_cast<double>(k) + 0.5) * static_cast<double>(wedge);
+        rays[k] = {static_cast<float>(pm::cos(angle)), static_cast<float>(pm::sin(angle))};
+    }
     for (std::int32_t pz = 0; pz < c.ph; ++pz) {
         for (std::int32_t px = 0; px < c.pw; ++px) {
             if (c.open[(static_cast<std::size_t>(pz) * static_cast<std::size_t>(c.pw)) +
@@ -227,9 +240,8 @@ void merge(Scene& s, std::size_t i, Cascade& c, const Cascade& up) {
                     any = any || a != 0.0F;
                 }
                 if (!any) continue;
-                const float angle = (static_cast<float>(k) + 0.5F) * wedge;
                 ++s.cost.rays;
-                if (!s.free(x, z, std::cos(angle), std::sin(angle), light_bounds[i] + ray_step, light_bounds[i + 1]))
+                if (!s.free(x, z, rays[k][0], rays[k][1], light_bounds[i] + ray_step, light_bounds[i + 1]))
                     continue;
                 const std::size_t at = c.at(px, pz, k);
                 for (std::size_t kind = 0; kind < light_kinds; ++kind) c.radiance[at + kind] += light[kind];
@@ -281,6 +293,6 @@ float light_alpha(std::uint8_t kind, float d) noexcept {
     return p.mid * (1.0F - ((t - p.middle) / (1.0F - p.middle)));
 }
 
-float light_over(float depth) noexcept { return -std::expm1(-depth); }
+float light_over(float depth) noexcept { return static_cast<float>(-pm::strict::expm1(-static_cast<double>(depth))); }
 
 } // namespace atlas::fx

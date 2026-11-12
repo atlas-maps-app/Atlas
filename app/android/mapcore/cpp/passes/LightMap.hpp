@@ -66,7 +66,9 @@ struct LightTile {
     std::int32_t blocks_z = 0;
     std::vector<std::uint16_t> index;
     std::vector<std::uint32_t> blocks;
-    /// What the bake took: its time on the baker's thread (ms), the pieces it walked, and the cascades' work.
+    /// Its lights by kind, and what the bake took: its time on the baker's thread (ms), the pieces it walked, and the
+    /// cascades' work.
+    std::array<std::uint32_t, fx::light_kinds> lights{};
     double ms = 0;
     std::uint32_t pieces = 0;
     fx::LightCost cost;
@@ -149,6 +151,7 @@ struct LightStats {
     double longest_ms = 0;
     std::uint64_t pieces = 0;
     std::uint64_t lit = 0;
+    std::array<std::uint64_t, fx::light_kinds> lights{}; ///< the bakes' lights by kind
     std::uint32_t maps = 0;
     std::uint32_t drawn = 0;
     std::uint32_t slots = 0;

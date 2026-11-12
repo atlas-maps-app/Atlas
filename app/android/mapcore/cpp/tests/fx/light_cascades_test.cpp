@@ -2,6 +2,7 @@
 // (passes/LightMap.hpp), on the CPU: a lone light in the open lays the renders' pool, lights in the open lay their
 // pools one over the other, a building takes away what it hides and nothing else, the same grid gives the same result,
 // and a tile's map is the grid's whatever piece a texel fell in.
+#include "base/pymath/PyMath.hpp"
 #include "fx/LightCascades.hpp"
 #include "passes/LightMap.hpp"
 
@@ -31,7 +32,8 @@ namespace {
 
 /// The distance from texel (x, z)'s centre to `e`'s foot.
 [[nodiscard]] float distance(std::int32_t x, std::int32_t z, const fx::LightEmitter& e) {
-    return std::hypot(static_cast<float>(x) + 0.5F - e.x, static_cast<float>(z) + 0.5F - e.z);
+    return static_cast<float>(pymath::hypot(static_cast<double>(static_cast<float>(x) + 0.5F - e.x),
+                                            static_cast<double>(static_cast<float>(z) + 0.5F - e.z)));
 }
 
 } // namespace

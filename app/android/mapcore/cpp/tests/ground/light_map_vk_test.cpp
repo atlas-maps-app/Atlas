@@ -4,7 +4,8 @@
 // their lamps' ellipses; the light is warm, and nowhere but near a lamp; at a lamp's foot in the open it is the
 // renders' pool's, and the buildings take some of the renders' light away. Then the frames' times with the flag and
 // without, at rest and with the camera turning, and (where ATLAS_LIGHT_DUMP names a folder) the pictures: the canal
-// ring and a lamp-lit street with every pass drawn, and that street's ground alone, flag off and on.
+// ring and a lamp-lit street with every pass drawn, and that street's ground alone, flag off and on, the open places'
+// pools among the light (the theme's daylight).
 #if !defined(__ANDROID__)
 
 #include "passes/Ground.hpp"
@@ -218,16 +219,40 @@ TEST_CASE("ground: the night's light by the tiles' maps is the lamps' pools, cut
     // turning the camera bakes nothing again
     CHECK(on_turning->stats.bakes == s.bakes);
 
+    // with the theme's daylight (the renders' DAYLIGHT: the open places' pools on the ground) at four in the
+    // afternoon's hours, the places open then light the ground too, from before their walls
+    style::ThemeBlock open_night = night;
+    open_night.flags |= style::theme_flag::daylight;
+    const auto open = draw(*session, dir, with_cascades(camera), open_night);
+    ATLAS_REQUIRE(open.has_value(), "the frame with the open places' light was not drawn");
+    std::size_t more = 0;
+    std::size_t less = 0;
+    for (std::size_t i = 0; i < a.rgba.size(); i += 4) {
+        const int d = static_cast<int>(open->frame.pixels.rgba[i]) - static_cast<int>(a.rgba[i]);
+        if (d > 0) ++more;
+        if (d < 0) ++less;
+    }
+    MESSAGE("with the open places: " << open->stats.lights[fx::light_lamp] << " lamps and "
+                                     << open->stats.lights[fx::light_open] << " open places baked, "
+                                     << open->stats.lit << " blocks lit; " << more
+                                     << " pixels lighter than with the lamps alone, " << less << " darker");
+    CHECK(s.lights[fx::light_lamp] >= 22);
+    CHECK(s.lights[fx::light_open] == 0);
+    CHECK(open->stats.lights[fx::light_open] > 0);
+    CHECK(open->stats.lights[fx::light_lamp] == s.lights[fx::light_lamp]);
+    CHECK(more > 500);
+    CHECK(less == 0);
+
     // the pictures, every pass drawn: the canal ring from the home, and a lamp-lit street from near
     const std::string dump = test::environment("ATLAS_LIGHT_DUMP");
     if (!dump.empty()) {
         std::string where;
         for (const geometry::P2& lamp : on->lamps) where += std::format(" ({:.0f}, {:.0f})", lamp.x, lamp.z);
         MESSAGE("the lamps (frame metres: east, south):" << where);
-        // (the street: the lamps along the Prinsengracht by the Westerkerk, 45 m north-west of the home's target)
+        // (the street: the seven lamps 40 m north of the Westerkerk, from 90 m)
         const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
         const style::CameraState street =
-            test::s1_camera(52.3746 + (65.5 / 110540.0), 4.8840 + (-37.7 / kx), 52.0, 50.0, 120.0);
+            test::s1_camera(52.3746 + (40.0 / 110540.0), 4.8840 + (-10.0 / kx), 52.0, 45.0, 90.0);
         struct View {
             const char* name;
             style::CameraState camera;
@@ -238,8 +263,8 @@ TEST_CASE("ground: the night's light by the tiles' maps is the lamps' pools, cut
                                          {.name = "street-ground", .camera = street, .every_pass = false}}};
         for (const View& view : views) {
             for (const bool cascades : {false, true}) {
-                const auto picture = draw(*session, dir, cascades ? with_cascades(view.camera) : view.camera, night,
-                                          false, false, view.every_pass);
+                const auto picture = draw(*session, dir, cascades ? with_cascades(view.camera) : view.camera,
+                                          open_night, false, false, view.every_pass);
                 ATLAS_REQUIRE(picture.has_value(), "a picture was not drawn");
                 test::write_ppm(picture->frame.pixels,
                                 std::filesystem::path(dump) /

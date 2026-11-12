@@ -1,6 +1,7 @@
 // The night's light on the ground as a map a tile, in the ground pass (LightMap.hpp; passes/Ground.hpp): which tiles'
 // maps a frame draws and the bakes it asks for, the maps' words and their blocks' slots, and their one draw.
 #include "base/log.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "gen/layouts.hpp"
@@ -17,15 +18,14 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <numeric>
 #include <span>
 #include <vector>
 
 namespace atlas::passes {
 
 LightMaps::LightMaps() : free(light_slots) {
-    // the first slots first
-    std::iota(free.rbegin(), free.rend(), 0U);
+    // the first slots first: taken from the back
+    for (std::uint32_t i = 0; i < light_slots; ++i) free[i] = light_slots - 1U - i;
 }
 
 namespace {
@@ -63,6 +63,52 @@ struct Key {
 /// A map's words in the frame's (ground.slang's LIGHT_TILE_WORDS): the camera coordinates of its grid's corner and of
 /// a texel's step across and down (nine floats), and three spare.
 constexpr std::uint32_t light_tile_words = 12;
+
+/// Moves `light` out of the footprint of `job` that holds it, if one does: to the nearest point of that ring, and
+/// 0.8 texels on, so that its disc shows before the wall (the renders lay an open place's pool about its node, which
+/// is mapped inside its building more often than not; cut by the walls about it, it would light nothing).
+void out_of_walls(const LightJob& job, fx::LightEmitter& light) {
+    for (std::size_t r = 0; r + 1 < job.ring_first.size(); ++r) {
+        const std::uint32_t first = job.ring_first[r];
+        const std::uint32_t count = job.ring_first[r + 1] - first;
+        if (count < 3) continue;
+        bool inside = false;
+        float nearest = 1e30F;
+        float nx = light.x;
+        float nz = light.z;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const std::size_t a = std::size_t{2} * (first + i);
+            const std::size_t b = std::size_t{2} * (first + ((i + 1) % count));
+            const float ax = job.ring_points[a];
+            const float az = job.ring_points[a + 1];
+            const float bx = job.ring_points[b];
+            const float bz = job.ring_points[b + 1];
+            if ((az <= light.z) != (bz <= light.z) && light.x < ax + ((bx - ax) * ((light.z - az) / (bz - az)))) {
+                inside = !inside;
+            }
+            const float ex = bx - ax;
+            const float ez = bz - az;
+            const float length = (ex * ex) + (ez * ez);
+            const float t =
+                length > 0 ? std::clamp((((light.x - ax) * ex) + ((light.z - az) * ez)) / length, 0.0F, 1.0F) : 0.0F;
+            const float px = ax + (ex * t);
+            const float pz = az + (ez * t);
+            const float d = ((px - light.x) * (px - light.x)) + ((pz - light.z) * (pz - light.z));
+            if (d < nearest) {
+                nearest = d;
+                nx = px;
+                nz = pz;
+            }
+        }
+        if (!inside) continue;
+        const float d = std::sqrt(nearest);
+        if (d > 0) {
+            light.x = nx + (((nx - light.x) / d) * 0.8F);
+            light.z = nz + (((nz - light.z) / d) * 0.8F);
+        }
+        return;
+    }
+}
 
 } // namespace
 
@@ -141,6 +187,7 @@ void Ground::decide_light(const frame::FrameState& state) {
         l.stats.longest_ms = std::max(l.stats.longest_ms, baked->ms);
         l.stats.pieces += baked->pieces;
         l.stats.lit += baked->lit();
+        for (std::size_t kind = 0; kind < fx::light_kinds; ++kind) l.stats.lights[kind] += baked->lights[kind];
         for (const std::unique_ptr<LightEntry>& e : l.entries) {
             if (e->asked != ticket) continue;
             let_go(*e);
@@ -169,7 +216,7 @@ void Ground::decide_light(const frame::FrameState& state) {
         const std::array<double, 4> box = box_of(g);
         const double dx = std::max({box[0] - tx, 0.0, tx - box[2]});
         const double dz = std::max({box[1] - tz, 0.0, tz - box[3]});
-        const double d = std::hypot(dx, dz);
+        const double d = pymath::hypot(dx, dz);
         // (a block's word holds its column and row in six bits each, its map in eight)
         const bool fits = box[2] - box[0] + (2.0 * light_margin) < 63.0 * light_block &&
                           box[3] - box[1] + (2.0 * light_margin) < 63.0 * light_block;
@@ -254,6 +301,10 @@ void Ground::decide_light(const frame::FrameState& state) {
                     }
                     job.ring_first.push_back(static_cast<std::uint32_t>(job.ring_points.size() / 2));
                 }
+            }
+            // an open place whose node lies in a building shines from the nearest point of its wall
+            for (fx::LightEmitter& light : job.emitters) {
+                if (light.kind == fx::light_open) out_of_walls(job, light);
             }
             e.asked = ++l.tickets;
             e.asked_key = key.value;
