@@ -41,6 +41,7 @@ internal object TestNames {
         1 -> 15.0
         2 -> 13.0
         3 -> 12.0
+        4 -> 21.0
         else -> 17.0
     }
 
@@ -64,10 +65,15 @@ internal object TestNames {
         val margin = 2 * dot
         val w = (points.size * 6 - 1) * dot + 2 * margin
         val h = 7 * dot + 2 * margin
-        // premultiplied, R in the low byte: the Main board's ink on a white plate; on the globe white on its night
+        // premultiplied, R in the low byte: the Main board's ink on a white plate (a water's in the board's water blue);
+        // on the globe white on its night
         val globe = want.look == 3
         val plate = if (globe) premultiplied(0x05, 0x07, 0x0D, 0xB0) else premultiplied(0xFF, 0xFF, 0xFF, 0xB0)
-        val ink = if (globe) premultiplied(0xFF, 0xFF, 0xFF, 0xFF) else premultiplied(0x3A, 0x3F, 0x4B, 0xFF)
+        val ink = when (want.look) {
+            3 -> premultiplied(0xFF, 0xFF, 0xFF, 0xFF)
+            4 -> premultiplied(0x2F, 0x5A, 0x84, 0xFF)
+            else -> premultiplied(0x3A, 0x3F, 0x4B, 0xFF)
+        }
         val pixels = IntArray(w * h) { plate }
         for ((n, cp) in points.withIndex()) {
             val bits = pattern(cp)
