@@ -101,6 +101,18 @@ Result<RenderHead> read_head(std::span<const std::byte> section) {
         if (std::isnan(end)) return fail(Fault::bad_value, b);
         h.bands_[b].up_to = end;
     }
+    // a window built from part of its box's data says which part: a byte 1, then the box on the grid
+    if (r.ok() && r.remaining() > 0) {
+        if (r.u8() != 1) return fail(Fault::left_over);
+        DataBox b;
+        b.south = static_cast<std::int32_t>(r.u32le());
+        b.west = static_cast<std::int32_t>(r.u32le());
+        b.north = static_cast<std::int32_t>(r.u32le());
+        b.east = static_cast<std::int32_t>(r.u32le());
+        if (!r.ok()) return fail(Fault::truncated);
+        if (b.south >= b.north || b.west >= b.east) return fail(Fault::bad_value);
+        h.data = b;
+    }
     if (!r.done()) return fail(Fault::left_over);
     h.nodes_ = values.take_nodes();
     h.strings_ = values.take_strings();

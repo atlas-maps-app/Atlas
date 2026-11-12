@@ -157,6 +157,8 @@ internal fun SearchOverMap(nav: Navigator, query: String = "", kind: String? = n
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
+            // a short tap on a building opens the place it is, or the one in it under the finger (MapHit.OnFeature)
+            featureOf = { b -> services.localData.feature(b.id, b.at) },
         )
         SearchSheet(
             find, typed, field,

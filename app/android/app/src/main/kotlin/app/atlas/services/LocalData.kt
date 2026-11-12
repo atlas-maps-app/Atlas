@@ -619,6 +619,42 @@ class LocalData(
         LocalHere(address, spot, nearby, origin ?: address?.origin, gap)
     }
 
+    /**
+     * The place a short tap on a building opens (ENGINE.md step 6, [app.atlas.mapview.MapHit.OnFeature]): the building
+     * [id] the map drew under the finger where Atlas lists it as a place (named, of a category: a church, a museum, a
+     * shop that is its building); else the listed place in it nearest to where the tap met it ([at]: the shop behind
+     * the front tapped), within [FEATURE_M]; null where it holds none (a house: the tap is an empty one). From a
+     * region's store or the map's packs, else from the map's window data, kept or from Atlas's packs, waited on for
+     * [FEATURE_WAIT_MS] at most; Overpass is never asked for a tap.
+     */
+    suspend fun feature(id: OsmId, at: LatLon): Place? = withContext(Dispatchers.IO) {
+        val store = storeCovering(at)
+        val pack = packsCovering(at) ?: if (store == null) withTimeoutOrNull(FEATURE_WAIT_MS) { windowAround(at, NAMED_M) } else null
+        val listed = { t: Map<String, String> -> t["name"] != null && Categories.of(t) != null }
+        val box = BBox.around(at, NAMED_M)
+        // the building's own element, as a press on the map names it (whatsHere)
+        val element = pack?.elements(box) { e -> e.id == id.id && e.type.json == id.type.name.lowercase() }?.firstOrNull()
+        val record = store?.get(id)
+        // the building itself, where it is a place
+        record?.takeIf { it.category != null && it.tags["name"] != null }?.let { return@withContext it.place }
+        element?.takeIf { e -> e.tags?.let { listed(it) && keeps(e, it) } == true }?.let(PackFeatures::place)?.let { return@withContext it }
+        // else the listed place standing in it nearest to where the tap met it: in its outline where the phone has one,
+        // else in its box
+        val outline = element?.let(PackFeatures::outlineOf)
+        val bounds = record?.place?.bbox?.takeIf { it.width > 0 && it.height > 0 }
+        if (outline == null && bounds == null) return@withContext null
+        val inside = { p: LatLon -> outline?.contains(p) ?: (p in bounds!!) }
+        val around = BBox.around(at, FEATURE_M)
+        val places = when {
+            store != null -> store.inBox(around).filter { it.category != null && it.tags["name"] != null && it.id != id }.map { it.place }
+            pack != null -> pack.elements(around) { e -> e.tags?.let { listed(it) && keeps(e, it) } == true }
+                .mapNotNull { e -> PackFeatures.place(e)?.takeIf { it.id != id } }
+            else -> emptyList()
+        }
+        places.filter { inside(it.location) }.map { it to Geo.distance(at, it.location) }.filter { it.second <= FEATURE_M }
+            .minByOrNull { it.second }?.first
+    }
+
     /** Whether a region's store or a pack on the phone holds [at]: what is there is read without the network. */
     fun holds(at: LatLon): Boolean = storeCovering(at) != null || packsCovering(at) != null
 
@@ -810,6 +846,12 @@ class LocalData(
 
         /** How far from where a press met a building its element is looked for (its box meets this much around it), m. */
         const val NAMED_M = 30.0
+
+        /** A short tap on a building: how far from where it met the building a place in it may stand, m. */
+        const val FEATURE_M = 20.0
+
+        /** A short tap on a building: the longest the map's window data is waited on where nothing else holds the place. */
+        const val FEATURE_WAIT_MS = 3_000L
 
         /** What's here: how far the places around reach, and how near a place's point must be to be the spot. */
         const val NEARBY_M = 150.0

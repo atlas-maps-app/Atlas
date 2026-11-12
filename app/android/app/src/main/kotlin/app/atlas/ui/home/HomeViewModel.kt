@@ -290,7 +290,8 @@ class HomeViewModel(
      * then those packs' heads, which the view's first frames there ask for) and then for the map's picture to be final
      * (the chunks of the tiles in view, which its frames ask for by ranges),
      * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then, the same way, [WORLD_UNDER_KM] km over [AWAY],
-     * where no country's levels are and the world draws under the core's cover (ENGINE.md step 3); then back. `vk
+     * where no country's levels are and the world draws under the core's cover (ENGINE.md step 3), and over [BEYOND],
+     * within a country's box beyond its border, where none are either; then back. `vk
      * script …` lines mark each step for smoke.sh, which reads the world's fetch (`vk world` lines) and the core's rests
      * (`vk tiles … world` lines) between them.
      */
@@ -323,6 +324,28 @@ class HomeViewModel(
         delay(WORLD_SETTLE_MS)
         val under = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
         log("vk script: world under at $WORLD_UNDER_KM km ${if (under) "final" else "not final: ${map.status}"}")
+        delay(WORLD_HOLD_MS)
+        // within a country's box beyond its border: no levels there either, once the country's tiles' index is on the
+        // phone (MapEngine.countryHolds), which the first camera within the box had read
+        log("vk script: world beyond the border out to $WORLD_UNDER_KM km")
+        map.camera = start.copy(
+            target = BEYOND, zoom = HomeView.zoomForDistance(WORLD_UNDER_KM * 1_000.0, HomeView.HEIGHT_DP, BEYOND.lat), pitch = WORLD_UNDER_PITCH,
+        )
+        kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!MapEngine.worldUnder(BEYOND.lat, BEYOND.lon)) delay(1_000)
+        }
+        log(
+            "vk script: beyond the border: levels at the start ${MapEngine.levelsAt(start.target.lat, start.target.lon)?.id ?: "none"}, " +
+                "at ${BEYOND.lat},${BEYOND.lon} in the box of ${MapEngine.countryAt(BEYOND.lat, BEYOND.lon)?.id ?: "none"} " +
+                (MapEngine.levelsAt(BEYOND.lat, BEYOND.lon)?.id ?: "none"),
+        )
+        val across = kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!worldHere(BEYOND)) delay(1_000)
+        } != null
+        log("vk script: world's packs beyond the border ${if (across) "on the phone" else "not on the phone within ${WORLD_WAIT_MS / 1_000} s"}")
+        delay(WORLD_SETTLE_MS)
+        val beyond = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: world beyond the border at $WORLD_UNDER_KM km ${if (beyond) "final" else "not final: ${map.status}"}")
         delay(WORLD_HOLD_MS)
         log("vk script: back")
         map.camera = start
@@ -570,6 +593,12 @@ class HomeViewModel(
          */
         private const val WORLD_UNDER_KM = 12
         private const val WORLD_UNDER_PITCH = 30.0
+
+        /**
+         * Where it looks at the world under the cover within a country's box beyond its border: Antwerp's centre, which
+         * the Netherlands' box holds and its tiles do not (their index lists no window there).
+         */
+        private val BEYOND = LatLon(51.2194, 4.4025)
 
         /** How long the script waits for the world's packs' heads, then for the picture: the index, the globe's 9.7 MB and the chunks over the emulator's network. */
         private const val WORLD_WAIT_MS = 300_000L

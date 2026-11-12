@@ -8,7 +8,8 @@
 // camera (a typed map with written-out strings: places.py's view, target, yaw, pitch, dist, fov, cy, radius, ...) and a
 // u8, the ladder index of the tolerance its renders load the region at (GENERALISE); then the live map's bands: a u8
 // count B (at least 1), B u8 ladder indexes, and B − 1 doubles, the distances (metres, eye to target) where each band
-// but the last ends.
+// but the last ends. A window the phone built from part of its box's data ends with that part (DataBox): a u8 1 and its
+// south, west, north and east on OSM's grid (i32 each); every other pack's head ends at its bands.
 //
 // Which tolerance a frame loads at (the port's Lod.tolerance, RenderHead.toleranceOf): a camera the ladder snaps onto
 // one of the views takes that view's index; any other takes the first band whose end its distance is below, else the
@@ -61,6 +62,17 @@ struct Frame {
     [[nodiscard]] constexpr double z(std::int32_t lat) const noexcept { return -(degrees(lat) - lat0) * kz; }
 };
 
+/// The part of a window's box its data holds, on OSM's grid (1e-7°), where it is not the whole box: a window built on
+/// the phone from the element packs it has (ENGINE.md step 3, the windows' local lane), whose packs reach over part of
+/// it. Beyond it the window knows nothing of the ground, so nothing of it lies there: no plate (passes/Ground.cpp).
+struct DataBox {
+    std::int32_t south = 0;
+    std::int32_t west = 0;
+    std::int32_t north = 0;
+    std::int32_t east = 0;
+    [[nodiscard]] bool operator==(const DataBox&) const noexcept = default;
+};
+
 /// One of the region's views: its name (grachten_home), its camera, and the ladder index of its tolerance.
 struct HeadView {
     std::string_view name;
@@ -92,6 +104,9 @@ public:
     std::string_view engine_version;
     std::string_view style_version;
     std::string_view source;
+    /// A window's data's box where its data holds part of its box alone (after the bands: a byte 1 and the box; a
+    /// head without it ends at its bands, as every pack's did until 12 November, and its data is its whole box's).
+    std::optional<DataBox> data;
 
     [[nodiscard]] std::span<const HeadView> views() const noexcept { return views_; }
     [[nodiscard]] std::optional<HeadView> view(std::string_view name) const noexcept;
@@ -122,7 +137,8 @@ private:
 
 /// Reads `rhead` (a copy of its bytes is kept): magic, payload version, a known profile, levels (from fine to coarse,
 /// each at most the finest zoom), every view's camera a map and its tolerance on the ladder, at least one band, each
-/// on the ladder, every band but the last ending at a number, no byte left over.
+/// on the ladder, every band but the last ending at a number, then a window's data's box or nothing (a box with its
+/// south below its north and its west below its east), no byte left over.
 [[nodiscard]] Result<RenderHead> read_head(std::span<const std::byte> section);
 
 /// The `style` section: the renders' tables by name.

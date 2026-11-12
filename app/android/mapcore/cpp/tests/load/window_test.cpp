@@ -47,9 +47,13 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -318,6 +322,73 @@ TEST_CASE("load: a window by the sea builds, the sea's computed points at their 
     CHECK(place.close_up);
     const tl::Layer* quays = tile->layer(tl::LayerId::quay);
     CHECK((quays == nullptr || quays->count == 0));
+}
+
+TEST_CASE("load: a window built from part of its box's data says which part in its head, and its cell for its tile") {
+    // the element packs on the phone hold part of a window's box (ENGINE.md step 3, the windows' local lane): their
+    // answer names it (`atlas.box`, on the grid), the window's head carries it within its tile's box, and its frame
+    // cell's pack gives it for the window's tile, for the ground's plate under it alone
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const std::array<std::int32_t, 4> tb = tl::tile_box(k); // south, west, north, east
+    const load::WindowPlace place = load::place_of(k);
+    const auto built = [&](std::string_view atlas) {
+        const std::string data = std::format(
+            R"({{"version": 0.6, "osm3s": {{"timestamp_osm_base": "2026-10-22T18:00:00Z"}},{} "elements": [
+{{"type": "way", "id": 10, "tags": {{"building": "house"}}, "geometry": [
+    {{"lat": 52.3735, "lon": 4.8840}}, {{"lat": 52.3735, "lon": 4.8842}}, {{"lat": 52.3737, "lon": 4.8842}},
+    {{"lat": 52.3737, "lon": 4.8840}}, {{"lat": 52.3735, "lon": 4.8840}}]}}]}})",
+            atlas);
+        auto b = load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, place);
+        ATLAS_REQUIRE_OR_RETURN(std::vector<std::byte>{}, b.has_value(), b.error().what);
+        return std::move(b->pack);
+    };
+    const auto data_of = [](const std::vector<std::byte>& pack) -> std::optional<tl::DataBox> {
+        auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(pack));
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, opened.has_value() && opened->head() != nullptr);
+        return opened->head()->data;
+    };
+    const auto box = [](std::int32_t south, std::int32_t west, std::int32_t north, std::int32_t east) {
+        return std::format(R"( "atlas": {{"box": "{},{},{},{}"}},)", south, west, north, east);
+    };
+    // every window but the local lane's: its data is its whole box's, and its pack is to the byte what it was
+    const std::vector<std::byte> whole = built("");
+    CHECK(!data_of(whole));
+    // a part within the tile
+    const tl::DataBox part{
+        .south = tb[0] + 1'000, .west = tb[1] + 2'000, .north = tb[2] - 3'000, .east = tb[3] - 4'000};
+    const std::vector<std::byte> partial = built(box(part.south, part.west, part.north, part.east));
+    CHECK(data_of(partial) == part);
+    CHECK(partial.size() > whole.size());
+    // one that reaches beyond the tile (a window's data's box has a margin) is its part of the tile
+    CHECK(data_of(built(box(tb[0] - 50'000, part.west, tb[2] + 50'000, tb[3] + 50'000))) ==
+          tl::DataBox{.south = tb[0], .west = part.west, .north = tb[2], .east = tb[3]});
+    // the whole tile, none of it, or what does not read: no part named, the head every window's (its length the
+    // whole's: the data's SHA-256 alone differs)
+    for (const std::string& none :
+         {box(tb[0] - 50'000, tb[1] - 50'000, tb[2] + 50'000, tb[3] + 50'000),
+          box(tb[2] + 10, tb[1], tb[2] + 20, tb[3]), std::string(R"( "atlas": {"box": "north of here"},)"),
+          std::string(R"( "atlas": {"box": "1,2,3"},)"), std::string(R"( "atlas": {"box": "1,2,3,4,5"},)")}) {
+        const std::vector<std::byte> pack = built(none);
+        CHECK(!data_of(pack));
+        CHECK(pack.size() == whole.size());
+    }
+    // beside the date the data was last fetched whole
+    CHECK(data_of(built(std::format(R"( "atlas": {{"whole": "2026-10-01T00:00:00Z", "box": "{},{},{},{}"}},)",
+                                    part.south, part.west, part.north, part.east))) == part);
+    // its cell gives the part for its tile, and nothing for a neighbour built from its whole box's data
+    tl::Store store;
+    ATLAS_REQUIRE(
+        store.add({.id = "window/part", .kind = tl::PackKind::window, .path = written(partial, "data-box-part")})
+            .has_value());
+    ATLAS_REQUIRE(store.packs().size() == 1);
+    CHECK(store.packs()[0]->data_of(k) == part);
+    CHECK(!store.packs()[0]->data_of(tl::TileKey(14, k.x + 1, k.y)));
+    // built again from its whole box's data (the window's own answer, online), its cell names no part
+    ATLAS_REQUIRE(
+        store.add({.id = "window/part", .kind = tl::PackKind::window, .path = written(whole, "data-box-whole")})
+            .has_value());
+    ATLAS_REQUIRE(store.packs().size() == 1);
+    CHECK(!store.packs()[0]->data_of(k));
 }
 
 TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, which says so and joins no cell") {

@@ -224,3 +224,11 @@ sealed interface MapHit {
     data class OnFeature(val place: Place, override val at: LatLon) : MapHit
     data class Empty(override val at: LatLon) : MapHit
 }
+
+/**
+ * What a tap on the building [picked] is: the [place] it opens, where it holds one, at the point the tap met it; else
+ * an empty tap on the street under the finger ([street]; where the finger's ray meets no ground, where it met the
+ * building), so a screen that closes its selection on an empty tap closes it on a house too.
+ */
+internal fun featureHit(place: Place?, picked: MapPick, street: LatLon?): MapHit =
+    if (place != null) MapHit.OnFeature(place, picked.at) else MapHit.Empty(street ?: picked.at)

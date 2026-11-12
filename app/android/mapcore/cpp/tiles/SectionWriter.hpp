@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -36,11 +37,12 @@ struct HeadOut {
     std::string_view source;
     std::span<const HeadViewOut> views;
     std::span<const HeadBand> bands; ///< nearest first; every one but the last ends
+    std::optional<DataBox> data;     ///< a window's data's box, where its data holds part of its box alone
 };
 
 /// `rhead`'s bytes, or why a head cannot hold these values (RenderHead's own requirements): no level or more than 255,
 /// no band or more than 255, a band but the last without an end or the last with one, an end that is NaN, a tolerance
-/// off the ladder, a view's camera that is not a map.
+/// off the ladder, a view's camera that is not a map, a data box without area.
 [[nodiscard]] Result<std::vector<std::byte>> encode_head(const HeadOut& head);
 
 /// `style`'s tables, written one after another, each a name and one typed value.

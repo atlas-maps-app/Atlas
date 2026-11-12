@@ -20,10 +20,14 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <format>
+#include <optional>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace atlas::load {
@@ -144,6 +148,38 @@ std::shared_ptr<const Tradition> tradition_named(std::string_view name) {
     return nullptr;
 }
 
+namespace {
+
+/// The part of window `tb`'s box (tiles::tile_box: south, west, north, east) its data holds, as the data names it
+/// (`atlas.box`, osm::Document::box: "south,west,north,east" on the grid): nothing where the data names none, which is
+/// every window's but one built from the element packs on the phone, where it does not read, where it holds the whole
+/// tile, or none of it.
+[[nodiscard]] std::optional<tl::DataBox> data_box(std::string_view text, const std::array<std::int32_t, 4>& tb) {
+    if (text.empty()) return std::nullopt;
+    std::array<std::int32_t, 4> v{};
+    const char* at = text.data();
+    const char* const end = at + text.size();
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (i > 0) {
+            if (at == end || *at != ',') return std::nullopt;
+            ++at;
+        }
+        const auto [next, error] = std::from_chars(at, end, v.at(i));
+        if (error != std::errc{}) return std::nullopt;
+        at = next;
+    }
+    if (at != end) return std::nullopt;
+    const tl::DataBox b{.south = std::max(v[0], tb[0]),
+                        .west = std::max(v[1], tb[1]),
+                        .north = std::min(v[2], tb[2]),
+                        .east = std::min(v[3], tb[3])};
+    if (b.south >= b.north || b.west >= b.east) return std::nullopt;
+    if (b == tl::DataBox{.south = tb[0], .west = tb[1], .north = tb[2], .east = tb[3]}) return std::nullopt;
+    return b;
+}
+
+} // namespace
+
 std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, const tiles::Sha256Digest& source,
                                                      const tiles::TileKey& tile, const WindowPlace& place) {
     using clock = std::chrono::steady_clock;
@@ -220,6 +256,7 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
     }
     const std::string style_version = load::style_version();
     const std::string data = tl::hex(source);
+    const std::array<std::int32_t, 4> tb = tl::tile_box(tile);
     const auto head = tl::encode_head({.profile = tl::Profile::region,
                                        .levels = window_levels,
                                        .frame = place.frame,
@@ -228,10 +265,10 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                                        .style_version = style_version,
                                        .source = data,
                                        .views = {},
-                                       .bands = region_bands()});
+                                       .bands = region_bands(),
+                                       .data = data_box(doc.box(), tb)});
     if (!head) return std::unexpected(WindowError{"the head does not encode: " + tl::describe(head.error())});
     // R, as the port's RegionConfig.forBox writes a built region's (without views: a window has none)
-    const std::array<std::int32_t, 4> tb = tl::tile_box(tile);
     std::string r =
         std::format(R"({{"bbox": [{}, {}, {}, {}], "origin": [{}, {}], "title": {}, "tz": {})", exact(degrees(tb[0])),
                     exact(degrees(tb[1])), exact(degrees(tb[2])), exact(degrees(tb[3])), exact(place.frame.lat0),

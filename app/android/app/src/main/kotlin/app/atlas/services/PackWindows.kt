@@ -25,6 +25,11 @@ import java.util.zip.GZIPOutputStream
  * Overpass writes a point beyond it as null, which the core's reader refuses, so each null point is left out, as the
  * renders' loaders leave out `None` (a way's nodes are kept whole). The answer says it was never fetched whole
  * (`"whole"` 1970), so the windows ask for the window's own whole answer as soon as the network gives one.
+ *
+ * Where the packs' boxes hold part of the window's box alone, the answer says which part (`"atlas": {"box":
+ * "south,west,north,east"}` on OpenStreetMap's grid of 1e-7°, the bounds of what they hold of it): the core lays the
+ * window's plate under that part alone, so that offline, with the world on the phone, the packs' patch does not stand
+ * in a bare box of its windows' tiles within the world's map (Bergen's sea, 11 November).
  */
 object PackWindows {
     /** What the answer says of a whole fetch: never ([Windows.Head]'s `whole`). */
@@ -46,7 +51,9 @@ object PackWindows {
             text.append("{\"version\":0.6,\"generator\":\"Atlas: the element packs on the phone\",")
                 .append("\"osm3s\":{\"timestamp_osm_base\":\"").append(date).append("\",")
                 .append("\"copyright\":\"The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.\"},")
-                .append("\"whole\":\"").append(NEVER_WHOLE).append("\",\"elements\":[\n")
+                .append("\"whole\":\"").append(NEVER_WHOLE).append("\",")
+            held(meeting.map { it.manifest.bbox }, box)?.let { text.append("\"atlas\":{\"box\":\"").append(it).append("\"},") }
+            text.append("\"elements\":[\n")
             for ((i, e) in elements.withIndex()) {
                 if (i > 0) text.append(",\n")
                 text.append(solid(e).toJson())
@@ -58,6 +65,28 @@ object PackWindows {
         } finally {
             readers.forEach { runCatching { it.close() } }
         }
+    }
+
+    /**
+     * The part of [box] the packs' boxes [packs] hold, where it is not all of it: the bounds of what each holds of it,
+     * "south,west,north,east" on OpenStreetMap's grid (1e-7°); null where they hold all of it, or none.
+     */
+    internal fun held(packs: List<BBox>, box: BBox): String? {
+        var south = Double.POSITIVE_INFINITY
+        var west = Double.POSITIVE_INFINITY
+        var north = Double.NEGATIVE_INFINITY
+        var east = Double.NEGATIVE_INFINITY
+        for (p in packs) {
+            if (!p.intersects(box)) continue
+            south = minOf(south, maxOf(p.south, box.south))
+            west = minOf(west, maxOf(p.west, box.west))
+            north = maxOf(north, minOf(p.north, box.north))
+            east = maxOf(east, minOf(p.east, box.east))
+        }
+        if (!(south < north) || !(west < east)) return null
+        if (south <= box.south && west <= box.west && north >= box.north && east >= box.east) return null
+        fun grid(degrees: Double) = Math.round(degrees * 1e7)
+        return "${grid(south)},${grid(west)},${grid(north)},${grid(east)}"
     }
 
     /** The date of a pack's data: its manifest's, else its extract's header's (`osm3s.timestamp_osm_base`), to the second. */

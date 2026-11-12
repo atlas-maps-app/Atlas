@@ -45,6 +45,7 @@ class EdgeTest {
     fun clean() {
         dir.deleteRecursively()
         MapEngine.countries = emptyList()
+        MapEngine.countryHolds = null
     }
 
     /**
@@ -79,7 +80,7 @@ class EdgeTest {
         return PackList(windows = { windows }).also { it.load() }
     }
 
-    private fun inCountry(lat: Double, lon: Double) = MapEngine.countryAt(lat, lon)
+    private fun inCountry(lat: Double, lon: Double) = MapEngine.levelsAt(lat, lon)
 
     @Test
     fun beyondTheLastWindowWithinTheCountryTheCoreDrawsItsOwnCoverWhileTheWindowComes() {
@@ -201,6 +202,39 @@ class EdgeTest {
         assertEquals(WORLD, MapPlace.of(list, ::inCountry, 50.6292, 3.0573, PackList.LEVELS_REACH + 1))
         assertFalse(list.worldDraws(50.0, 8.27, PackList.CORE_REACH + 1, under = true))
         assertEquals(NEAR, MapPlace.of(list, ::inCountry, 50.0, 8.27, PackList.CORE_REACH + 1, under = true))
+    }
+
+    @Test
+    fun withinACountrysBoxBeyondItsBorderNoLevelsAreOnceItsTilesIndexSaysSo() {
+        val antwerp = doubleArrayOf(51.2194, 4.4025)
+        val westerkerk = doubleArrayOf(52.3747, 4.8838)
+        MapEngine.countries = listOf(netherlands)
+        // the box alone, until the country's tiles' index is on the phone: Antwerp counts as the Netherlands', its
+        // levels on their way out to their reach, and no world under the cover
+        MapEngine.countryHolds = MapEngine.CountryHolds { _, _, _ -> null }
+        assertEquals(netherlands, MapEngine.levelsAt(antwerp[0], antwerp[1]))
+        assertFalse(MapEngine.worldUnder(antwerp[0], antwerp[1]))
+        // the index lists no window there (the country's data ends at its border, here drawn at 51.3° north)
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, _ -> c.id == "netherlands" && lat > 51.3 }
+        assertNull(MapEngine.levelsAt(antwerp[0], antwerp[1]))
+        assertTrue(MapEngine.worldUnder(antwerp[0], antwerp[1]))
+        assertEquals("the box still names the country", netherlands, MapEngine.countryAt(antwerp[0], antwerp[1]))
+        assertEquals(netherlands, MapEngine.levelsAt(westerkerk[0], westerkerk[1]))
+        assertFalse(MapEngine.worldUnder(westerkerk[0], westerkerk[1]))
+        // so at Antwerp the windows' reach is the cover's, as anywhere outside the countries
+        val list = twoWindows()
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, antwerp[0], antwerp[1], PackList.CORE_REACH))
+        assertEquals(NEAR, MapPlace.of(list, ::inCountry, antwerp[0], antwerp[1], PackList.CORE_REACH + 1))
+        assertEquals(WINDOWS, MapPlace.of(list, ::inCountry, westerkerk[0], 4.9150, PackList.CORE_REACH + 1))
+        // a country without levels for this core has none anywhere, whatever its index lists
+        MapEngine.countries = listOf(netherlands.copy(levels = false))
+        assertTrue(MapEngine.worldUnder(westerkerk[0], westerkerk[1]))
+        // and where two countries' boxes hold a place, the one whose tiles hold it has its levels
+        val belgium = CountryTiles("belgium", "Belgium", BBox(2.5, 49.4, 6.5, 51.6), levels = true)
+        MapEngine.countries = listOf(netherlands, belgium)
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, _ -> if (c.id == "netherlands") lat > 51.3 else lat <= 51.3 }
+        assertEquals(belgium, MapEngine.levelsAt(antwerp[0], antwerp[1]))
+        assertFalse(MapEngine.worldUnder(antwerp[0], antwerp[1]))
     }
 
     @Test
