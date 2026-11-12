@@ -423,7 +423,8 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
                     .no_fin = false};
     }
     // the style ladder's haze (ENGINE.md step 5): beyond 18 km its depths go to the camera's distance's (0.85 · D and
-    // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was
+    // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was. The moment's weather
+    // over the screen thins with it, so it has gone where its steps end (below)
     if (const tiles::Style* world = load::world_style(); world != nullptr && world->ladder) {
         const tiles::WorldLadder& far = *world->ladder;
         if (spec.dist > far.from) {
@@ -431,6 +432,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
             settings.haze0 += ((far.haze_start * spec.dist) - settings.haze0) * w.caps;
             settings.haze1 += ((far.haze_reach * spec.dist) - settings.haze1) * w.caps;
             settings.haze_scale = 1.0 - w.haze;
+            settings.weather_gone = w.haze;
         }
     }
     state_.view.emplace(spec, device);

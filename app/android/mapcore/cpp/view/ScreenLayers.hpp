@@ -60,6 +60,9 @@ struct LayerSettings {
     double haze1 = haze1_default;
     /// How much of the haze there is (the style ladder's: 1 up to a camera 600 km from its target, 0 from 2,000 km).
     double haze_scale = 1.0;
+    /// How much of the moment's weather over the screen is gone (the clouds' shadows, the rain, the golden wash: the
+    /// style ladder's, with the haze: 0 up to a camera 600 km from its target, 1 from 2,000 km).
+    double weather_gone = 0.0;
     double ground_y = 0; ///< the target's height (the ground's under it)
     bool no_fin = false;
 };
@@ -82,6 +85,9 @@ struct Layers {
     std::optional<Vec2> sun;
     Haze haze;
     bool wash = false;
+    /// How much of the weather over the screen is gone (LayerSettings::weather_gone): the wash, the clouds' shadows
+    /// and the rain are drawn at the rest of their opacity.
+    double weather_gone = 0.0;
     double cloud_shadow_cut = std::numeric_limits<double>::quiet_NaN(); ///< NaN: no cloud shadows
     std::optional<std::int64_t> rain_angle;
     bool draws_fin = false;
