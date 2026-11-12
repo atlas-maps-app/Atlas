@@ -89,9 +89,12 @@ std::array<float, 9> water_map(const view::Camera& cam, double water_y, double d
         const double jy = pm::floor(qy / period_y);
         if (octaves != nullptr) {
             // the footprint at the middle: the longer of the map's derivatives along the screen's x and y there
-            const double along_x = std::hypot(r0[0] - (qx * w[0]), r1[0] - (qy * w[0])) / -wm;
-            const double along_y = std::hypot(r0[1] - (qx * w[1]), r1[1] - (qy * w[1])) / -wm;
-            const double lies = 4.0 / std::clamp(std::max(along_x, along_y), 1.0, 4.0);
+            const auto squared = [&](std::size_t i) {
+                const double u = r0.at(i) - (qx * w.at(i));
+                const double v = r1.at(i) - (qy * w.at(i));
+                return ((u * u) + (v * v)) / (wm * wm);
+            };
+            const double lies = 4.0 / std::clamp(std::sqrt(std::max(squared(0), squared(1))), 1.0, 4.0);
             octaves->as_it_lies = static_cast<float>(lies * lies);
             // the periods left out, as the octaves put them back (a frame so far out that they pass an int: none)
             constexpr double most = 1.0e9;
@@ -136,7 +139,10 @@ GlintsRead glints_read(const std::array<float, 9>& m, const WaterOctaves& o, std
     const float foot = std::max((dx[0] * dx[0]) + (dx[1] * dx[1]), (dy[0] * dy[0]) + (dy[1] * dy[1])) / (w * w);
     out.footprint = std::sqrt(foot);
     if (!(foot > o.as_it_lies)) return out;
-    const float l = std::min(0.5F * std::log2(foot / o.as_it_lies), 15.0F);
+    // (the shader's log2 is the GPU's own; here the port's, which a far pixel's blend follows within the GPU's ulps)
+    const float ratio = foot / o.as_it_lies;
+    const float l =
+        std::isfinite(ratio) ? std::min(0.5F * static_cast<float>(pm::log2(static_cast<double>(ratio))), 15.0F) : 15.0F;
     const float n = std::floor(l);
     out.octave = static_cast<std::uint32_t>(n);
     out.blend = l - n;

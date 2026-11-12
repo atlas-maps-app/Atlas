@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <numbers>
 #include <optional>
 #include <utility>
 
@@ -162,7 +163,8 @@ TEST_CASE("ground: the glints read the field as it lies at the home and by each 
                 r.lies += lies ? 1 : 0;
                 r.octaves += lies ? 0 : 1;
                 r.footprint = std::max(r.footprint, static_cast<double>(g.footprint));
-                r.most = std::max(r.most, static_cast<double>(g.footprint) / std::exp2(static_cast<double>(g.octave)));
+                r.most =
+                    std::max(r.most, static_cast<double>(g.footprint) / std::ldexp(1.0, static_cast<int>(g.octave)));
                 if (!lies) CHECK((g.blend >= 0.0F && g.blend < 1.0F));
             }
         }
@@ -219,14 +221,15 @@ TEST_CASE("ground: the glints read the field as it lies at the home and by each 
         const auto py = static_cast<float>(p->y * density);
         const passes::GlintsRead own = passes::glints_read(m, o, width, height, px, py);
         REQUIRE(own.first.on);
-        const double f = static_cast<double>(own.footprint) / std::exp2(static_cast<double>(octave) + 0.5);
+        const double f =
+            static_cast<double>(own.footprint) / (std::ldexp(1.0, static_cast<int>(octave)) * std::numbers::sqrt2);
         o.as_it_lies = static_cast<float>(f * f);
         const passes::GlintsRead g = passes::glints_read(m, o, width, height, px, py);
         REQUIRE(g.second.on);
         REQUIRE(g.octave == octave);
         return std::array<double, 5>{static_cast<double>(g.first.x), static_cast<double>(g.first.y),
                                      static_cast<double>(g.second.x), static_cast<double>(g.second.y),
-                                     static_cast<double>(o.periods[0]) + (1000.0 * o.periods[1])};
+                                     static_cast<double>(o.periods[0]) + (1000.0 * static_cast<double>(o.periods[1]))};
     };
     std::size_t held = 0;
     std::size_t crossed = 0;
@@ -237,7 +240,7 @@ TEST_CASE("ground: the glints read the field as it lies at the home and by each 
                  {std::pair{1500.0, -700.0}, std::pair{-2300.0, 1900.0}, std::pair{600.0, 2500.0}}) {
                 const std::array<double, 5> b = octave_point(spec(22.0, 42.0, 10000.0, tx, tz), x, z, octave);
                 // a float's step at the map's points over the octave's scale, and the projection's own rounding
-                const double eps = 0.6 / std::exp2(static_cast<double>(octave)) + 0.02;
+                const double eps = (0.6 / std::ldexp(1.0, static_cast<int>(octave))) + 0.02;
                 CHECK(std::abs(mirrored(a[0], width) - mirrored(b[0], width)) < eps);
                 CHECK(std::abs(mirrored(a[1], height) - mirrored(b[1], height)) < eps);
                 CHECK(std::abs(mirrored(a[2], width) - mirrored(b[2], width)) < eps);
@@ -312,10 +315,10 @@ TEST_CASE("ground: the glints are their filter's table at the field's red, over 
         style::CameraState camera;
         frame::Mode mode;
     };
-    const std::array<Seen, 3> seen{
-        {{"the home", "amsterdam", test::home_camera(), frame::Mode::full},
-         {"the home", "amsterdam", test::home_camera(), frame::Mode::structural},
-         {"the board", "grachten", test::view_camera(dir, "grachten", "grachten_home"), frame::Mode::full}}};
+    const std::vector<Seen> seen{
+        {"the home", "amsterdam", test::home_camera(), frame::Mode::full},
+        {"the home", "amsterdam", test::home_camera(), frame::Mode::structural},
+        {"the board", "grachten", test::view_camera(dir, "grachten", "grachten_home"), frame::Mode::full}};
     for (const Seen& view : seen) {
         const style::CameraState camera = view.camera;
         const frame::Mode mode = view.mode;
