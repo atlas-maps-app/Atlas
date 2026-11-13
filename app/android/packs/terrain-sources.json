@@ -1,0 +1,139 @@
+{
+  "about": "The elevation sources of Atlas's terrain (ENGINE.md part 6) and what .github/workflows/terrain.yml builds from them with `packer heights`. A source is one entry of `sources`: where it is read (`hosts`, in order), how (`format`: `cog-tiles`, one cloud-optimised GeoTIFF per degree cell, read by ranges; `cog-sheets`, GeoTIFF sheets listed by an `index`, of which `overview` is read, 0 the sheet itself; `wcs`, an OGC coverage service asked for boxes of its own grid), its `crs` (with `operation_area` where its datum is its own: the box, west, south, east and north, that GDAL chooses the operation to the tiles' CRS for, whatever the bounds of the raster it warps) and vertical `datum`, whether it is a terrain model (`dtm`) or a surface model (`dsm`), its own `resolution_m` and the resolution it is read at (`read_m`: a raster is never sampled finer than 0.75 of it), `sea_m` where its rasters give the open sea a height of their own (a tile whose every sample of it stands there is sea, and is not built), its `priority` (the highest covering a sample wins, the next fills its gaps: a hole within `fill_m` of its samples from its surroundings, the rest from the next source with the offset between the two feathered out over `feather_m`), its `licence` and `credit` as the app's licence screen shows them (app/android/packer/LICENSES.md's terrain table carries the same words), and the day they were read. A further country is one entry here and one under `regions`. `regions` says what terrain.yml builds for a packs/regions.json region: its `sources` in the order of their priority, and each `levels` entry's levels over `area`: `whole` (every tile the region's sources reach inside its box) or `views` (the boxes of the renders' regions named in `views`, data/regions/<name>/region.json, grown by `grow_km`); `check_views` names the renders' regions in whose boxes `packer heights-check --points` reads samples afresh from their source.",
+  "sources": [
+    {
+      "id": "glo30",
+      "name": "Copernicus DEM GLO-30",
+      "area": "world",
+      "priority": 10,
+      "format": "cog-tiles",
+      "hosts": ["https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com/"],
+      "pattern": "Copernicus_DSM_COG_10_{NS}{lat:02}_00_{EW}{lon:03}_00_DEM/Copernicus_DSM_COG_10_{NS}{lat:02}_00_{EW}{lon:03}_00_DEM.tif",
+      "crs": "EPSG:4326",
+      "datum": "EGM2008",
+      "model": "dsm",
+      "resolution_m": 30,
+      "read_m": 30,
+      "licence": "Licence for the use of the Copernicus WorldDEM-30",
+      "licence_url": "https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E004_00_DEM/INFO/eula_F.pdf",
+      "credit": "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+      "notice": "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30",
+      "read": "2026-11-12"
+    },
+    {
+      "id": "glo90",
+      "name": "Copernicus DEM GLO-90",
+      "area": "world",
+      "priority": 5,
+      "format": "cog-tiles",
+      "hosts": ["https://copernicus-dem-90m.s3.eu-central-1.amazonaws.com/"],
+      "pattern": "Copernicus_DSM_COG_30_{NS}{lat:02}_00_{EW}{lon:03}_00_DEM/Copernicus_DSM_COG_30_{NS}{lat:02}_00_{EW}{lon:03}_00_DEM.tif",
+      "crs": "EPSG:4326",
+      "datum": "EGM2008",
+      "model": "dsm",
+      "resolution_m": 90,
+      "read_m": 90,
+      "licence": "Licence for the use of the Copernicus WorldDEM-90",
+      "credit": "produced using Copernicus WorldDEM-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+      "notice": "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-90",
+      "read": "2026-11-12"
+    },
+    {
+      "id": "ahn4",
+      "name": "AHN4 DTM (Actueel Hoogtebestand Nederland)",
+      "area": ["netherlands"],
+      "priority": 100,
+      "format": "cog-sheets",
+      "hosts": ["https://service.pdok.nl/rws/ahn/atom/downloads/dtm_05m/"],
+      "index": {
+        "kind": "geojson",
+        "url": "https://service.pdok.nl/rws/actueel-hoogtebestand-nederland/atom/downloads/dtm_05m/kaartbladindex.json",
+        "file": "url"
+      },
+      "overview": 3,
+      "crs": "EPSG:28992",
+      "operation_area": [4.0, 51.5, 6.5, 53.0],
+      "datum": "NAP",
+      "model": "dtm",
+      "resolution_m": 0.5,
+      "read_m": 4,
+      "fill_m": 400,
+      "feather_m": 1000,
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/deed.nl",
+      "credit": "AHN (Actueel Hoogtebestand Nederland), through PDOK. CC0.",
+      "read": "2026-11-12"
+    },
+    {
+      "id": "tinitaly",
+      "name": "TINITALY 1.1",
+      "area": ["tuscany"],
+      "priority": 50,
+      "format": "wcs",
+      "hosts": ["https://tinitaly.pi.ingv.it/TINItaly_1_1/wcs"],
+      "wcs": {
+        "coverage": "TINItaly_1_1__tinitaly_dem",
+        "axes": ["E", "N"],
+        "extra": "geotiff:compression=DEFLATE",
+        "block": 4000
+      },
+      "crs": "EPSG:32632",
+      "datum": "orthometric, Italy's national datum",
+      "model": "dtm",
+      "resolution_m": 10,
+      "read_m": 10,
+      "fill_m": 150,
+      "feather_m": 1000,
+      "sea_m": 0,
+      "licence": "CC BY 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by/4.0/",
+      "credit": "Tarquini S., I. Isola, M. Favalli, A. Battistini, G. Dotta (2023). TINITALY, a digital elevation model of Italy with a 10 meters cell size (Version 1.1). Istituto Nazionale di Geofisica e Vulcanologia (INGV). https://doi.org/10.13127/tinitaly/1.1. CC BY 4.0; the heights were resampled.",
+      "read": "2026-11-12"
+    },
+    {
+      "id": "kartverket-dtm1",
+      "name": "Kartverket DTM 1 m (Nasjonal høydemodell)",
+      "area": ["norway"],
+      "priority": 100,
+      "format": "cog-sheets",
+      "hosts": ["https://nedlasting.geonorge.no/hoydedata/DTM1/"],
+      "index": {
+        "kind": "vrt",
+        "url": "https://nedlasting.geonorge.no/hoydedata/dtm1.vrt"
+      },
+      "overview": 0,
+      "crs": "EPSG:25833",
+      "datum": "NN2000",
+      "model": "dtm",
+      "resolution_m": 1,
+      "read_m": 1,
+      "fill_m": 150,
+      "feather_m": 1000,
+      "sea_m": 0,
+      "licence": "Norwegian Licence for Open Government Data (NLOD) 2.0, as its download feed states; CC BY 4.0 by Kartverket's terms for its free data",
+      "licence_url": "https://data.norge.no/nlod/en/2.0",
+      "credit": "© Kartverket. Contains data under the Norwegian licence for Open Government data (NLOD) distributed by Kartverket; the heights were resampled.",
+      "read": "2026-11-12"
+    }
+  ],
+  "regions": [
+    {
+      "id": "netherlands",
+      "sources": ["ahn4", "glo30"],
+      "levels": [{"levels": [12, 13, 14], "area": "whole"}],
+      "check_views": ["dunes", "port", "schiphol", "grachten"]
+    },
+    {
+      "id": "tuscany",
+      "sources": ["tinitaly", "glo30"],
+      "levels": [{"levels": [12, 13], "area": "whole"}],
+      "check_views": ["sangimignano"]
+    },
+    {
+      "id": "norway",
+      "sources": ["kartverket-dtm1", "glo30"],
+      "levels": [{"levels": [12, 13, 14], "area": "views", "views": ["bergen"], "grow_km": 20}],
+      "check_views": ["bergen"]
+    }
+  ]
+}

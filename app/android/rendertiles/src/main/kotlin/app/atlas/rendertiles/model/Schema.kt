@@ -353,5 +353,6 @@ object Schema {
         Layer.LABEL -> LABEL
         Layer.VARIANT -> VARIANT
         Layer.MARKING, Layer.BUILT, Layer.DEM -> throw UnsupportedOperationException("the ${layer.label} layer comes with K30, K20b and K28")
+        Layer.HEIGHTS -> throw UnsupportedOperationException("the heights layer is the terrain's own (Heights), no layer of the map's schema")
     }
 }

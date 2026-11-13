@@ -80,6 +80,9 @@ Result<Pack> Pack::open(std::unique_ptr<ByteSource> source, const Style* world_s
             if (world) {
                 p.style_ = std::make_shared<const PackStyle>(
                     PackStyle{.tables = std::move(*s), .style = *world_style, .world = true});
+            } else if (p.head_->profile == Profile::terrain) {
+                // a terrain pack is drawn by no rule set: its tables (none) are kept and no value is typed
+                p.style_ = std::make_shared<const PackStyle>(PackStyle{.tables = std::move(*s), .style = {}});
             } else {
                 auto typed = Style::of(*s);
                 if (!typed) return std::unexpected(typed.error());
