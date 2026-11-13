@@ -18,6 +18,12 @@
 //   label fading out over 250 ms where it stood as its new place fades in (the set standing for its own next level
 //   until the levels' sets come).
 //
+// - The marks: a frame may have marks its labels stand clear of where a spot allows, the city lights of a night frame
+//   (ENGINE.md step 5, "Names"). A label being placed takes the first of its spots that fits and covers no mark but
+//   the one at its own point; where each fitting spot covers one, the first that fits, as without marks. Marks bear
+//   on placing alone: a placed label keeps its place, and its box grows and shrinks with the map as the marks' places
+//   do. The marks are asked for only when a label is placed.
+//
 // Everything is device px. The measures are the app's, taken from the paint LabelPainter draws with (MapCore.labels),
 // so at its own size a label's box is LabelPainter's to the bit.
 #pragma once
@@ -27,6 +33,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -67,6 +74,13 @@ struct Stand {
 [[nodiscard]] Stand stand_at(const Measures& m, Point p, std::size_t spot, float rise = 0.0F,
                              float mark = 0.0F) noexcept;
 
+/// A mark a label stands clear of where a spot allows (a city's light): its middle and its radius, device px.
+struct Mark {
+    float x = 0.0F;
+    float y = 0.0F;
+    float radius = 0.0F;
+};
+
 /// What a frame's labels stand within and clear of: the frame, the chrome's keep-out boxes, the markers' boxes; and the
 /// least size a label may draw at, a fraction of its own (the readable floor: 0, none).
 struct Frame {
@@ -75,6 +89,8 @@ struct Frame {
     std::span<const Box> keep_out;
     std::span<const Box> markers;
     float least = 0.0F;
+    /// The frame's marks (the file's head), asked for when a label is placed, once a call of place: null, none.
+    const std::function<std::span<const Mark>()>* marks = nullptr;
 };
 
 /// One label of a frame: its stable id, its index in the caller's list, its priority, its measures and its points this
@@ -116,9 +132,12 @@ void priority_order(std::span<const Candidate> candidates, std::vector<std::uint
 [[nodiscard]] Measures scaled(const Measures& m, float scale) noexcept;
 
 /// LabelPainter's placement: `candidates` in `order`, each at its first fitting point and spot, appended to `out` in
-/// that order; `index` holds the placed boxes after (it is not reset: boxes already in it are kept clear of).
-void place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
-           CollisionIndex& index, std::vector<Placed>& out);
+/// that order; `index` holds the placed boxes after (it is not reset: boxes already in it are kept clear of). With
+/// marks on the frame, at its first fitting point and spot that covers no mark but its own point's, else as without.
+/// Returns how many it placed over a mark for want of a clear spot; `moved`, where given, takes how many it placed
+/// clear of a mark that their first fitting stand would have covered.
+std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
+                    CollisionIndex& index, std::vector<Placed>& out, std::uint32_t* moved = nullptr);
 
 /// A label as the frame draws it.
 struct Drawn {
@@ -159,6 +178,11 @@ public:
     /// The last update's CPU time, ms, and how many labels it drew clear (placed and not hidden).
     [[nodiscard]] double millis() const noexcept { return millis_; }
     [[nodiscard]] std::uint32_t placed() const noexcept { return placed_count_; }
+    /// How many labels the last update placed anew, and how many of them over a mark for want of a clear spot.
+    [[nodiscard]] std::uint32_t placed_new() const noexcept { return placed_new_; }
+    [[nodiscard]] std::uint32_t placed_on_marks() const noexcept { return on_marks_; }
+    /// And how many of them clear of a mark that their first fitting stand would have covered.
+    [[nodiscard]] std::uint32_t placed_off_marks() const noexcept { return off_marks_; }
     /// The set's size this frame, a fraction of its own; and the scale its band was placed at (0: none yet).
     [[nodiscard]] float size() const noexcept { return size_; }
     [[nodiscard]] double reference() const noexcept { return reference_; }
@@ -200,6 +224,9 @@ private:
     bool fading_ = false;
     double millis_ = 0.0;
     std::uint32_t placed_count_ = 0;
+    std::uint32_t placed_new_ = 0;
+    std::uint32_t on_marks_ = 0;
+    std::uint32_t off_marks_ = 0;
     double reference_ = 0.0;
     float size_ = 1.0F;
 };

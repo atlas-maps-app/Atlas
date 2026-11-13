@@ -24,6 +24,7 @@
 #include "gen/layouts.hpp"
 #include "gpu/Memory.hpp"
 #include "labels/Placement.hpp"
+#include "scene/WaterStand.hpp"
 #include "scene/WorldNames.hpp"
 
 #include <array>
@@ -94,6 +95,10 @@ private:
     /// The frame's names among its candidates: picked, projected, those with a sprite candidates after the boards'.
     void pick_names(const frame::FrameState& state, const view::View& view, const view::GroundFrame& frame,
                     std::size_t first);
+    /// The lights the world pass draws this frame, as marks (labels::Frame::marks): at most max_marks, the tiles'
+    /// first by rank.
+    static constexpr std::size_t max_marks = 2048;
+    [[nodiscard]] std::span<const labels::Mark> light_marks(const frame::FrameState& state, const view::View& view);
     /// The place in the names' buffer of `sprite`'s images' texels (its own, then its large one), copied there now
     /// if they were not; nothing where the buffer has no room left.
     [[nodiscard]] const std::array<std::uint32_t, 2>* name_offsets(const labels::NameSprite& sprite);
@@ -102,6 +107,8 @@ private:
 
     labels::Placement placement_; // by the labels' ids, which hold across the app's sets
     scene::WorldNames world_names_;
+    std::vector<labels::Mark> marks_; // the night's lights of the frame, when a label was placed
+    scene::WaterStands water_stands_; ///< where a water's name stands when its own point does not show
     std::vector<scene::PickedName> picked_;
     std::vector<const labels::NameSprite*> name_sprites_; // per name candidate, its sprite
     std::vector<std::uint8_t> name_waters_;               // per name candidate, whether it is a water's

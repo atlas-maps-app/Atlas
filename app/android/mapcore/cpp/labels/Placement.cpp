@@ -69,26 +69,58 @@ Measures scaled(const Measures& m, float scale) noexcept {
             .baseline = m.baseline * scale};
 }
 
-void place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
-           CollisionIndex& index, std::vector<Placed>& out) {
+std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
+                    CollisionIndex& index, std::vector<Placed>& out, std::uint32_t* moved) {
+    if (moved != nullptr) *moved = 0;
+    // the frame's marks, asked for at the first stand that fits
+    std::span<const Mark> marks;
+    bool asked = false;
+    const auto on_a_mark = [&](const Box& box, Point own) {
+        if (!asked) {
+            asked = true;
+            if (frame.marks != nullptr && *frame.marks) marks = (*frame.marks)();
+        }
+        return std::ranges::any_of(marks, [&](const Mark& m) {
+            // (its own point's mark is its own: a lit place's name stands over its light by its rise)
+            if (m.x == own.x && m.y == own.y) return false;
+            return overlaps(box, {.l = m.x - m.radius, .t = m.y - m.radius, .r = m.x + m.radius, .b = m.y + m.radius});
+        });
+    };
+    std::uint32_t covering = 0;
     for (const std::uint32_t c : order) {
         const Candidate& label = candidates[c];
         bool placed = false;
+        // the first stand that fits but covers a mark: taken where none is clear of them
+        bool has_covered = false;
+        Placed covered;
         for (std::size_t p = 0; p < label.points.size() && !placed; ++p) {
             if (!projected(label.points[p])) continue;
             for (std::size_t k = 0; k < spot_count; ++k) {
                 const Stand s = stand_at(label.measures, label.points[p], k, label.rise, label.mark);
                 if (!fits(s.box, frame, index)) continue;
+                const Placed at{.candidate = c,
+                                .point = static_cast<std::uint16_t>(p),
+                                .spot = static_cast<std::uint8_t>(k),
+                                .stand = s};
+                if (on_a_mark(s.box, label.points[p])) {
+                    if (!has_covered) covered = at;
+                    has_covered = true;
+                    continue;
+                }
                 index.insert(s.box);
-                out.push_back({.candidate = c,
-                               .point = static_cast<std::uint16_t>(p),
-                               .spot = static_cast<std::uint8_t>(k),
-                               .stand = s});
+                out.push_back(at);
                 placed = true;
+                if (has_covered && moved != nullptr) ++*moved;
                 break;
             }
         }
+        if (!placed && has_covered) {
+            index.insert(covered.stand.box);
+            out.push_back(covered);
+            ++covering;
+        }
     }
+    return covering;
 }
 
 std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, const Frame& frame, double scale,
@@ -159,7 +191,9 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
         placed_.push_back({.candidate = c, .point = st.point, .spot = st.spot, .stand = stand});
         clear_.push_back(clear ? 1 : 0);
     }
-    place(scaled_, others, frame, index_, placed_);
+    const std::size_t kept = placed_.size();
+    on_marks_ = place(scaled_, others, frame, index_, placed_, &off_marks_);
+    placed_new_ = static_cast<std::uint32_t>(placed_.size() - kept);
     clear_.resize(placed_.size(), 1);
     placed_count_ = static_cast<std::uint32_t>(std::ranges::count(clear_, std::uint8_t{1}));
 

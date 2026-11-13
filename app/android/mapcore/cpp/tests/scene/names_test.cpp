@@ -21,7 +21,9 @@
 #include <format>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -490,6 +492,88 @@ TEST_CASE("scene: the pick names a frame's waters among its places by their size
         return first[1].id;
     }();
     CHECK(again.update(&with, {}, 100'000.0, everywhere, 0.5, false, true, scale)[1].id == id);
+}
+
+TEST_CASE("scene: a water whose point does not show is named at the stand the frame gives it, under an id of its own, "
+          "holds that stand while the frame keeps it, and goes back to its point by a fade") {
+    std::vector<scene::WorldTile> tiles(1);
+    tiles[0].names = {name("Amsterdam", NameKind::city, 9e5, 52.37, 4.89, 0, true),
+                      water("Markermeer", NameKind::lake, 5.93e8, 52.53, 5.25),
+                      water("Vecht", NameKind::river, 40'000.0, 52.3, 5.05)};
+    scene::WorldFrame frame = frame_of(tiles);
+    const scene::NameScale scale{.metres_a_dp = 71.0, .lat = 52.37, .lon = 4.89};
+    // what the frame says of a water: its own point, a stand, or nothing; and what it was asked
+    std::optional<scene::NamePlace> answer;
+    std::vector<std::pair<std::string, std::optional<scene::NamePlace>>> asked;
+    const scene::WorldNames::Stand stand = [&](const WorldName& w,
+                                               const scene::NamePlace* held) -> std::optional<scene::NamePlace> {
+        asked.emplace_back(w.text, held != nullptr ? std::optional(*held) : std::nullopt);
+        return answer;
+    };
+    // a place and a river are asked of the frame as before: the river's point is not in view here
+    const scene::WorldNames::InView places = [](double, double lon) { return lon < 5.0; };
+    scene::WorldNames names;
+    // at its own point
+    answer = scene::NamePlace{.lat = 52.53, .lon = 5.25};
+    auto picked = names.update(&frame, {}, 100'000.0, places, 0.0, false, true, scale, stand);
+    ATLAS_REQUIRE((texts(picked) == std::vector<std::string>{"Amsterdam", "Markermeer"}));
+    ATLAS_REQUIRE(asked.size() == 1);
+    CHECK(asked[0].first == "Markermeer");
+    CHECK_FALSE(asked[0].second.has_value());
+    CHECK_FALSE(picked[1].stand);
+    CHECK(picked[1].lat == 52.53);
+    const std::uint32_t home = picked[1].id;
+    // at a stand: another place, another id; its own point is kept beside it, and the name at its point leaves
+    answer = scene::NamePlace{.lat = 52.6, .lon = 5.05, .stand = true};
+    picked = names.update(&frame, {}, 100'000.0, places, 0.2, false, true, scale, stand);
+    ATLAS_REQUIRE((texts(picked) == std::vector<std::string>{"Amsterdam", "Markermeer"}));
+    CHECK(picked[1].stand);
+    CHECK(picked[1].lat == 52.6);
+    CHECK(picked[1].lon == 5.05);
+    CHECK(picked[1].own_lat == 52.53);
+    CHECK(picked[1].own_lon == 5.25);
+    CHECK(picked[1].style == NameStyle::water);
+    const std::uint32_t away = picked[1].id;
+    CHECK(away != home);
+    ATLAS_REQUIRE((texts(picked, true) == std::vector<std::string>{"Markermeer"}));
+    CHECK(picked[2].id == home);
+    CHECK(picked[2].lat == 52.53); // it fades out where it stood
+    CHECK_FALSE(asked[1].second.has_value());
+    // the next pick hands the stand back, for the frame to keep: the same id while it is kept
+    picked = names.update(&frame, {}, 100'000.0, places, 0.4, false, true, scale, stand);
+    ATLAS_REQUIRE(asked.size() == 3);
+    ATLAS_REQUIRE(asked[2].second.has_value());
+    const scene::NamePlace handed = asked[2].second.value_or(scene::NamePlace{});
+    CHECK(handed.lat == 52.6);
+    CHECK(handed.lon == 5.05);
+    CHECK(handed.stand);
+    CHECK(picked[1].id == away);
+    // the frame gives another stand: another id again
+    answer = scene::NamePlace{.lat = 52.45, .lon = 5.1, .stand = true};
+    picked = names.update(&frame, {}, 100'000.0, places, 0.6, false, true, scale, stand);
+    CHECK(picked[1].stand);
+    CHECK(picked[1].id != away);
+    CHECK(picked[1].id != home);
+    // back at its point: the id it had there
+    answer = scene::NamePlace{.lat = 52.53, .lon = 5.25};
+    picked = names.update(&frame, {}, 100'000.0, places, 0.8, false, true, scale, stand);
+    CHECK_FALSE(picked[1].stand);
+    CHECK(picked[1].id == home);
+    // it was at no stand, so none is handed back
+    asked.clear();
+    picked = names.update(&frame, {}, 100'000.0, places, 1.0, false, true, scale, stand);
+    ATLAS_REQUIRE(asked.size() == 1);
+    CHECK_FALSE(asked[0].second.has_value());
+    // nowhere: no name
+    answer.reset();
+    picked = names.update(&frame, {}, 100'000.0, places, 1.2, false, true, scale, stand);
+    CHECK(texts(picked) == std::vector<std::string>{"Amsterdam"});
+    // with no stand asked a water is in view or not, as a place: the pick of before
+    scene::WorldNames plain;
+    CHECK(texts(plain.update(&frame, {}, 100'000.0, places, 0.0, false, true, scale)) ==
+          std::vector<std::string>{"Amsterdam"});
+    CHECK(texts(plain.update(&frame, {}, 100'000.0, everywhere, 0.2, false, true, scale)) ==
+          std::vector<std::string>{"Amsterdam", "Markermeer", "Vecht"});
 }
 
 TEST_CASE("scene: a river, which every tile it crosses names, is named once within 400 dp on the screen: where it was "

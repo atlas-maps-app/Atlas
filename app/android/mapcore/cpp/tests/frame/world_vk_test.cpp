@@ -1489,6 +1489,28 @@ namespace {
     return tile;
 }
 
+/// lit_globe_tile with a sea's name after its cities: "Deep", 6·10¹³ m², at (21 S, 67 E) in the sea of its cell 10's
+/// east half, which is one water with its cell 6's (0 to 42.5 N, 0 to 90 E).
+[[nodiscard]] test::TileBytes sea_globe_tile() {
+    using namespace atlas::tiles;
+    namespace col = test::columns;
+    test::TileBytes tile = test::world_tile(0, 0, 0);
+    test::LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    label.cells = {6, 6, 10};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {250'000'000, 700'000'000}, {200'000'000, 100'000'000}, {-210'000'000, 670'000'000}};
+    label.columns = {{"source", Codec::u8, col::u8({1, 1, 2})},
+                     {"index", Codec::delta, col::delta({0, 1, 1})},
+                     {"name", Codec::str, col::str(tile, {"East", "Middle", "Deep"})},
+                     {"pos", Codec::point, col::point(at)},
+                     {"prev", Codec::point, col::point(at)},
+                     {"count", Codec::varu, col::varu({1, 1, 60'000'000'000'000})},
+                     {"kind", Codec::str, col::str(tile, {"city", "city", "sea"})},
+                     {"tag:population", Codec::str, col::str(tile, {"12000000", "12000000", ""})}};
+    tile.layers.back() = label;
+    return tile;
+}
+
 /// Whether (`lat`, `lon`) is land in test::world_tile's L0 tile: its cell's rows of equal latitude from Mercator's
 /// 85.0511° N, its columns of 90°.
 [[nodiscard]] bool test_land(double lat, double lon) {
@@ -2517,6 +2539,163 @@ TEST_CASE("the world's names: the frame over the globe asks for its places' name
             }
             CHECK(map.names().ask(1e9).empty());
         }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world's names: a sea whose point lies off the frame is named where its water shows on the frame, and "
+          "at its own point once that shows") {
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-stand-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> globe = test::world_pack({sea_globe_tile()}, coarse);
+    {
+        std::ofstream file(guard / tiles::world_globe_file, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        frame::MapPack base;
+        base.number = 102;
+        base.ref.id = std::string(tiles::world_globe_id);
+        base.ref.kind = tiles::PackKind::world_base;
+        base.ref.path = (guard / tiles::world_globe_file).string();
+        std::vector<frame::MapPack> packs;
+        packs.push_back(std::move(base));
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // by day (the sun over the place the frames look at): no light is drawn
+        style::ThemeBlock theme = magenta_sky();
+        theme.flags = 0;
+        theme.weather_code = 255;
+        theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+        theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+        theme.shadow_blur = theme.cloud_shadows = 0.0;
+        map.set_theme(theme);
+        map.set_screen(false, false, false);
+        constexpr double sea_lat = -21.0;
+        constexpr double sea_lon = 67.0;
+        static constexpr std::uint32_t block = 0xFF'F0'10'F0U; // magenta, premultiplied, R in the low byte
+        const auto sprite = [](std::uint32_t id) {
+            labels::LabelSprite made{
+                .id = id, .measures = {.half = 20.0F + 8.0F, .pad = 8.0F, .text_height = 16.0F, .baseline = -4.0F}};
+            made.own = {.width = 40,
+                        .height = 16,
+                        .pixels = std::vector<std::uint32_t>(std::size_t{40} * 16, block),
+                        .anchor_x = 20,
+                        .anchor_y = 12};
+            return made;
+        };
+        // the sprite's pixels on the frame: how many, and their middle
+        struct Seen {
+            std::size_t count = 0;
+            double x = 0;
+            double y = 0;
+        };
+        const auto seen = [](const gpu::Pixels& p) {
+            Seen s;
+            for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+                if (p.rgba[i] != 0xF0 || p.rgba[i + 1] != 0x10 || p.rgba[i + 2] != 0xF0) continue;
+                ++s.count;
+                const std::size_t pixel = i / 4;
+                s.x += static_cast<double>(pixel % p.width);
+                s.y += std::floor(static_cast<double>(pixel) / static_cast<double>(p.width));
+            }
+            if (s.count > 0) {
+                s.x = (s.x / static_cast<double>(s.count)) + 0.5;
+                s.y = (s.y / static_cast<double>(s.count)) + 0.5;
+            }
+            return s;
+        };
+        const auto point = [](const style::CameraState& cam, double lat, double lon) {
+            const view::View v = view_of(cam);
+            const view::GroundFrame f = centred_on(cam);
+            return scene::name_point(scene::world_bend(v, f), f, v, lat, lon, 0.1);
+        };
+        const auto on_frame = [](const std::optional<view::Vec2>& p) {
+            return p && p->x >= 0.0 && p->y >= 0.0 && p->x <= size.width && p->y <= size.height;
+        };
+        double asked = 0.0;
+        // From 5,000 km over (20 N, 40 E): the frame is the sea of the tile's cell 6, whose name's point lies 41
+        // degrees south of it. The name is wanted all the same, in the water's look, and drawn whole on the frame.
+        const style::CameraState over = camera(20.0, 40.0, 0.0, 0.0, 5'000'000.0);
+        draw_world_complete(session, map, over);
+        CHECK_FALSE(on_frame(point(over, sea_lat, sea_lon)));
+        CHECK_FALSE(test_land(20.0, 40.0));
+        asked += 100.0;
+        std::vector<labels::NameWant> wants = map.names().ask(asked);
+        ATLAS_REQUIRE(wants.size() == 1);
+        CHECK(wants[0].text == "Deep");
+        CHECK(wants[0].style == static_cast<std::uint8_t>(scene::NameStyle::water));
+        const std::uint32_t at_stand = wants[0].id;
+        std::vector<labels::LabelSprite> sprites;
+        sprites.push_back(sprite(at_stand));
+        ATLAS_REQUIRE(map.names().give(std::move(sprites), 0.0F, 0.0F, map.seconds()).has_value());
+        for (int n = 0; n < 400 && (n < 3 || map.animating()); ++n) (void)session.draw(over, {});
+        ATLAS_REQUIRE(kept->kept != nullptr);
+        auto pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        if (!out.empty()) CHECK(gpu::write_ppm(*pixels, (fs::path(out) / "names_stand.ppm").string()));
+        const Seen stood = seen(*pixels);
+        MESSAGE(std::format("a sea's name at its stand: {} px of 640 about ({:.1f}, {:.1f}) of {} by {}", stood.count,
+                            stood.x, stood.y, size.width, size.height));
+        CHECK(stood.count == 640);
+        // as near its own point, to the south-east, as the frame lets it: in the frame's lower half, not left of
+        // its middle
+        CHECK(stood.x >= (size.width / 2.0) - 4.0);
+        CHECK(stood.y > size.height / 2.0);
+        // A pan of 2 degrees: the stand is a place of the ground, so the name moves with it, under the same id.
+        const style::CameraState panned = camera(18.0, 40.0, 0.0, 0.0, 5'000'000.0);
+        for (int n = 0; n < 400 && (n < 12 || map.animating()); ++n) (void)session.draw(panned, {});
+        CHECK(map.names().ask(asked + 50.0).empty());
+        pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        const Seen moved = seen(*pixels);
+        CHECK(moved.count == 640);
+        CHECK(std::abs(moved.x - stood.x) <= 2.0);
+        // (2 degrees of latitude at the frame's middle, px)
+        const std::optional<view::Vec2> a = point(over, 20.0, 40.0);
+        const std::optional<view::Vec2> b = point(over, 22.0, 40.0);
+        ATLAS_REQUIRE(a.has_value());
+        ATLAS_REQUIRE(b.has_value());
+        // up, by the px of 2 degrees there: no more than at the frame's middle, and (the sphere turns away toward
+        // the frame's foot) no less than two fifths of that
+        CHECK(stood.y - moved.y <= (a->y - b->y) * 1.05);
+        CHECK(stood.y - moved.y >= (a->y - b->y) * 0.4);
+        MESSAGE(std::format("after a pan of 2 degrees south: about ({:.1f}, {:.1f}), {:.1f} px up", moved.x, moved.y,
+                            stood.y - moved.y));
+        // Over its own point: the name stands there, another name by its id (it fades between the two).
+        const style::CameraState home = camera(sea_lat, sea_lon, 0.0, 0.0, 5'000'000.0);
+        draw_world_complete(session, map, home);
+        asked += 100.0;
+        wants = map.names().ask(asked);
+        ATLAS_REQUIRE(wants.size() == 1);
+        CHECK(wants[0].text == "Deep");
+        CHECK(wants[0].id != at_stand);
+        sprites.clear();
+        sprites.push_back(sprite(wants[0].id));
+        ATLAS_REQUIRE(map.names().give(std::move(sprites), 0.0F, 0.0F, map.seconds()).has_value());
+        for (int n = 0; n < 400 && (n < 3 || map.animating()); ++n) (void)session.draw(home, {});
+        pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        const Seen back = seen(*pixels);
+        CHECK(back.count == 640);
+        const std::optional<view::Vec2> own = point(home, sea_lat, sea_lon);
+        ATLAS_REQUIRE(own.has_value());
+        CHECK(std::abs(back.x - own->x) <= 1.0);
+        CHECK(std::abs(back.y - own->y) <= 6.0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

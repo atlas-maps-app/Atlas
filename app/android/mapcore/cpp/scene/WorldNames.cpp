@@ -137,16 +137,16 @@ void WorldNames::reset() noexcept {
     rested_ = false;
 }
 
-WorldNames::Id& WorldNames::id_of(const WorldName& name, NameStyle style, double seconds) {
+WorldNames::Id& WorldNames::id_of(const WorldName& name, NameStyle style, const NamePlace& place, double seconds) {
     const auto [first, last] = ids_.equal_range(name.text);
     for (auto at = first; at != last; ++at) {
         Id& id = at->second;
-        if (id.style == style && near(name.kind, id.lat, id.lon, name.lat, name.lon)) {
+        if (id.style == style && near(name.kind, id.lat, id.lon, place.lat, place.lon)) {
             id.seen = seconds;
             return id;
         }
     }
-    Id made{.id = name_id_bit | next_id_, .style = style, .lat = name.lat, .lon = name.lon, .seen = seconds};
+    Id made{.id = name_id_bit | next_id_, .style = style, .lat = place.lat, .lon = place.lon, .seen = seconds};
     next_id_ = next_id_ + 1 < name_id_bit ? next_id_ + 1 : 1;
     made.text = name.text;
     return ids_.emplace(name.text, std::move(made))->second;
@@ -166,7 +166,7 @@ void WorldNames::pick_waters(const NameScale& scale) {
         if (!is_water(n.kind)) continue;
         // named there before, and still picked
         const bool shown = std::ranges::any_of(picked_, [&n](const PickedName& p) {
-            return !p.leaving && p.text == n.text && near(n.kind, p.lat, p.lon, n.lat, n.lon);
+            return !p.leaving && p.text == n.text && near(n.kind, p.own_lat, p.own_lon, n.lat, n.lon);
         });
         rows.push_back({.at = i,
                         .river = n.kind == NameKind::river,
@@ -207,7 +207,7 @@ void WorldNames::pick_waters(const NameScale& scale) {
 }
 
 void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra, double distance, const InView& in_view,
-                      double seconds, const NameScale& scale) {
+                      double seconds, const NameScale& scale, const Stand& stand) {
     ++picks_;
     candidates_.clear();
     const auto take = [&](const WorldName& name) {
@@ -217,8 +217,24 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
         // a water by its size on the screen, or not at all
         const std::optional<std::int32_t> priority =
             is_water(name.kind) ? water_priority(name, scale.metres_a_dp) : name_priority(name);
-        if (!priority || !in_view(name.lat, name.lon)) return;
-        candidates_.push_back({.name = &name, .style = *style, .priority = *priority});
+        if (!priority) return;
+        NamePlace place{.lat = name.lat, .lon = name.lon};
+        if (stand && is_water(name.kind) && name.kind != NameKind::river) {
+            // where its water shows: the stand the last pick gave it is the caller's to keep or let go
+            const auto before = std::ranges::find_if(picked_, [&name](const PickedName& p) {
+                return !p.leaving && p.stand && p.text == name.text &&
+                       near(name.kind, p.own_lat, p.own_lon, name.lat, name.lon);
+            });
+            const NamePlace held = before != picked_.end()
+                                       ? NamePlace{.lat = before->lat, .lon = before->lon, .stand = true}
+                                       : NamePlace{};
+            const std::optional<NamePlace> at = stand(name, before != picked_.end() ? &held : nullptr);
+            if (!at) return;
+            place = *at;
+        } else if (!in_view(name.lat, name.lon)) {
+            return;
+        }
+        candidates_.push_back({.name = &name, .style = *style, .priority = *priority, .place = place});
     };
     if (world != nullptr) {
         for (const WorldDraw& draw : world->draws) {
@@ -244,7 +260,7 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
         if (!twice) candidates_[kept++] = c;
     }
     candidates_.resize(kept);
-    for (Candidate& c : candidates_) c.id = id_of(*c.name, c.style, seconds).id;
+    for (Candidate& c : candidates_) c.id = id_of(*c.name, c.style, c.place, seconds).id;
 
     // The first `most` by rank, and the names picked before that still stand among the first `keep`.
     std::vector<std::uint8_t> chosen(candidates_.size(), 0);
@@ -259,15 +275,18 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
     for (std::size_t i = 0; i < candidates_.size(); ++i) {
         if (chosen[i] == 0) continue;
         const Candidate& c = candidates_[i];
-        const Id& id = id_of(*c.name, c.style, seconds);
+        const Id& id = id_of(*c.name, c.style, c.place, seconds);
         next_.push_back({.id = c.id,
                          .style = c.style,
                          .priority = c.priority,
-                         .lat = c.name->lat,
-                         .lon = c.name->lon,
+                         .lat = c.place.lat,
+                         .lon = c.place.lon,
                          .text = id.text,
                          .lit = c.name->lit,
-                         .people = c.name->people});
+                         .people = c.name->people,
+                         .stand = c.place.stand,
+                         .own_lat = c.name->lat,
+                         .own_lon = c.name->lon});
     }
     // Those no longer picked leave: handed on, leaving, for a fade's length from when they left.
     for (const PickedName& p : picked_) {
@@ -295,7 +314,7 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
 
 std::span<const PickedName> WorldNames::update(const WorldFrame* world, std::span<const WorldName> extra,
                                                double distance, const InView& in_view, double seconds, bool rest,
-                                               bool changed, const NameScale& scale) {
+                                               bool changed, const NameScale& scale, const Stand& stand) {
     // What the frame draws of the world's names: its tiles, each with the cells it names, and the test's names.
     std::uint64_t drawn = 0xCBF2'9CE4'8422'2325ULL;
     const auto mix = [&drawn](std::uint64_t v) { drawn = (drawn ^ v) * 0x0000'0100'0000'01B3ULL; };
@@ -321,7 +340,7 @@ std::span<const PickedName> WorldNames::update(const WorldFrame* world, std::spa
         now = due;
     }
     if (now) {
-        pick(world, extra, distance, in_view, seconds, scale);
+        pick(world, extra, distance, in_view, seconds, scale, stand);
         drawn_ = drawn;
     }
     return picked_;

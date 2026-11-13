@@ -559,6 +559,95 @@ WorldGeometry build_world_geometry(const tl::Tile& tile, const tl::Style* style)
     return w.finish();
 }
 
+WaterMask world_water_mask(const WorldGeometry& geometry) noexcept {
+    WaterMask mask{};
+    // a cell's middle in a vertex word's units (0 to 65,535 over the box), doubled so it is whole
+    static constexpr std::int64_t unit = 65'535;
+    static constexpr std::int64_t side = water_mask_side;
+    const std::size_t count = geometry.triangles;
+    if (geometry.words.size() < count * 4) return mask;
+    const std::span<const std::uint32_t> vertices(geometry.words.data(), count * 3);
+    const std::span<const std::uint32_t> looks(geometry.words.data() + (count * 3), count);
+    for (std::size_t t = 0; t < count; ++t) {
+        std::array<std::int64_t, 3> x{};
+        std::array<std::int64_t, 3> y{};
+        for (std::size_t k = 0; k < 3; ++k) {
+            const std::uint32_t word = vertices[(t * 3) + k];
+            // scaled by 2·side: a cell's middle c lies at (2c + 1)·unit
+            x[k] = std::int64_t{word & 0xFFFFU} * 2 * side;
+            y[k] = std::int64_t{word >> 16U} * 2 * side;
+        }
+        const auto first = [](std::int64_t least) {
+            // the first cell whose middle is at or beyond `least`: (2c + 1)·unit >= least
+            const std::int64_t c = (least - unit + (2 * unit) - 1) / (2 * unit);
+            return std::clamp<std::int64_t>(least <= unit ? 0 : c, 0, side);
+        };
+        const auto last = [](std::int64_t most) {
+            // the last cell whose middle is at or before `most`
+            return most < unit ? std::int64_t{-1} : std::min<std::int64_t>((most - unit) / (2 * unit), side - 1);
+        };
+        const std::int64_t c0 = first(std::min({x[0], x[1], x[2]}));
+        const std::int64_t c1 = last(std::max({x[0], x[1], x[2]}));
+        const std::int64_t r0 = first(std::min({y[0], y[1], y[2]}));
+        const std::int64_t r1 = last(std::max({y[0], y[1], y[2]}));
+        if (c0 > c1 || r0 > r1) continue;
+        const bool water = (looks[t] & 0xFFU) == world_palette::water;
+        const auto edge = [&](std::size_t a, std::size_t b, std::int64_t px, std::int64_t py) {
+            return ((x[b] - x[a]) * (py - y[a])) - ((y[b] - y[a]) * (px - x[a]));
+        };
+        for (std::int64_t r = r0; r <= r1; ++r) {
+            for (std::int64_t c = c0; c <= c1; ++c) {
+                const std::int64_t px = ((2 * c) + 1) * unit;
+                const std::int64_t py = ((2 * r) + 1) * unit;
+                const std::int64_t e0 = edge(0, 1, px, py);
+                const std::int64_t e1 = edge(1, 2, px, py);
+                const std::int64_t e2 = edge(2, 0, px, py);
+                const bool inside = (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
+                if (!inside) continue;
+                const std::uint64_t bit = std::uint64_t{1} << static_cast<unsigned>(c);
+                auto& row = mask.at(static_cast<std::size_t>(r));
+                row = water ? (row | bit) : (row & ~bit);
+            }
+        }
+    }
+    return mask;
+}
+
+std::optional<bool> world_water_at(const WorldFrame& frame, double lat, double lon) noexcept {
+    double l = lon;
+    while (l >= 180.0) l -= 360.0;
+    while (l < -180.0) l += 360.0;
+    const double glat = lat * 1e7;
+    const double glon = l * 1e7;
+    const WorldTile* found = nullptr;
+    double fu = 0.0;
+    double fv = 0.0;
+    for (const WorldDraw& draw : frame.draws) {
+        const WorldTile* t = draw.tile;
+        if (t == nullptr || t->cap != 0 || t->blank) continue;
+        if (found != nullptr && t->key.z <= found->key.z) continue;
+        const auto south = static_cast<double>(t->box[0]);
+        const auto west = static_cast<double>(t->box[1]);
+        const auto north = static_cast<double>(t->box[2]);
+        const auto east = static_cast<double>(t->box[3]);
+        if (glat < south || glat >= north || glon < west || glon >= east) continue;
+        const double u = (glon - west) / (east - west);
+        const double v = (north - glat) / (north - south);
+        const auto per_side = static_cast<double>(world_cells_per_side);
+        const auto cell =
+            (static_cast<unsigned>(v * per_side) * world_cells_per_side) + static_cast<unsigned>(u * per_side);
+        if (((draw.cells >> cell) & 1U) == 0) continue;
+        found = t;
+        fu = u;
+        fv = v;
+    }
+    if (found == nullptr) return std::nullopt;
+    const auto side = static_cast<double>(water_mask_side);
+    const auto row = std::min<std::size_t>(static_cast<std::size_t>(fv * side), water_mask_side - 1);
+    const auto column = std::min<unsigned>(static_cast<unsigned>(fu * side), water_mask_side - 1);
+    return ((found->water.at(row) >> column) & 1U) != 0;
+}
+
 std::vector<WorldName> build_world_names(const tl::Tile& tile) {
     std::vector<WorldName> names;
     // each row's place in the tile's order: the places, then the waters, then the rivers, each by the packer's rank
@@ -832,6 +921,7 @@ std::unique_ptr<WorldTile> WorldTiles::build(const tl::TileKey& key, Scratch& sc
     out->coast = g.coast;
     out->lights = g.lights;
     out->names = build_world_names(*tile);
+    out->water = world_water_mask(g);
     out->pinned = key.z <= pinned_last;
     if (g.words.empty()) return out;
     const auto bytes = static_cast<std::uint32_t>(g.words.size() * sizeof(std::uint32_t));
