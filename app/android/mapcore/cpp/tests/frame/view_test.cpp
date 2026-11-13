@@ -420,6 +420,197 @@ TEST_CASE("ranks leave out an item whose cut point lies deeper than its most dep
                              << " left out beyond it");
 }
 
+// The world's frames rank the rows of the tiles they draw alone (frame::RankOptions::by_tile: the cover's tiles and
+// those kept under ones fading in). The walls' near tiles and the passes' near-first sorts read the order, so the drawn
+// rows keep the order, depths, bands and details they have among every row, as the tiles drawn change from frame to
+// frame and the camera turns; the other tiles' rows take no rank.
+TEST_CASE("ranks leave out the rows of the tiles not drawn, and keep the drawn rows' order as it is among every row") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    const std::array<double, 3> details{600.0, 300.0, 1200.0};
+    selectors.set_details(kind, details);
+    scene::ItemTable items;
+    std::mt19937_64 rng = seeded(11);
+    std::uniform_real_distribution<double> u(-800.0, 800.0);
+    std::uint32_t source = 0;
+    const auto add = [&](std::uint32_t tile) {
+        const double x = std::round(u(rng)); // whole metres: equal depths happen, and the gather order breaks them
+        const double z = std::round(u(rng));
+        const std::uint32_t n = source++;
+        return items.add({.x = x,
+                          .y = 4,
+                          .z = z,
+                          .offset = (n % 3 == 0) ? -0.01 * (n % 11) : 0.0,
+                          .cut_x = x,
+                          .cut_z = z,
+                          .order = scene::order_of(n % 2, n),
+                          .kind = kind,
+                          .slots = {10, 5, 2, 1},
+                          .min_depth = 2.0F,
+                          .radius = 20.0F,
+                          .tile = tile});
+    };
+    // three tiles' rows, each tile's added together in runs; then a part of tile 2 gone and tile 4 in the rows it
+    // freed (a freed row is reused), so that tile 4's rows lie among tile 2's
+    std::vector<std::uint32_t> second;
+    for (std::uint32_t i = 0; i < 4500; ++i) {
+        const std::uint32_t tile = 1 + ((i / 500) % 3);
+        const std::uint32_t row = add(tile);
+        if (tile == 2) second.push_back(row);
+    }
+    for (std::size_t i = 0; i < second.size(); i += 3) items.remove(second[i]);
+    for (std::uint32_t i = 0; i < 700; ++i) (void)add(4);
+    const std::span<const std::uint32_t> tile = items.tile();
+
+    // the tiles drawn, frame by frame: tiles come and go between frames, and for a while none is drawn
+    const std::array<std::vector<std::uint32_t>, 6> drawn_sets{{{1, 3}, {1, 2, 3, 4}, {2}, {}, {3, 4}, {1, 2, 4}}};
+    frame::Ranks every; // every tile's rows, as a scene without a cover ranks them
+    frame::Ranks ranks; // the drawn tiles' rows
+    frame::Ranks with;  // the others ranked all the same (rank_undrawn), and counted
+    std::size_t left_out_most = 0;
+    std::size_t ranked_most = 0;
+    for (int f = 0; f < 48; ++f) {
+        const std::vector<std::uint32_t>& drawn = drawn_sets.at(static_cast<std::size_t>(f / 8));
+        const auto is_drawn = [&](std::uint32_t row) { return std::ranges::binary_search(drawn, tile[row]); };
+        const view::Camera camera({.target = {0, 0, 0},
+                                   .yaw = 30.0 + f * 1.5,
+                                   .pitch = 40.0 + f * 0.2,
+                                   .dist = 900,
+                                   .fov = 36,
+                                   .width = 412,
+                                   .height = 916,
+                                   .cx = std::nullopt,
+                                   .cy = 440});
+        every.update(items, camera, selectors, {.ground_slots = 100});
+        ranks.update(items, camera, selectors, {.ground_slots = 100, .tiles = drawn, .by_tile = true});
+        with.update(items, camera, selectors,
+                    {.ground_slots = 100, .tiles = drawn, .by_tile = true, .rank_undrawn = true});
+        // the drawn rows in the order they have among every row
+        std::vector<std::uint32_t> want;
+        std::size_t others_ranked = 0;
+        for (const std::uint32_t row : every.order()) {
+            if (is_drawn(row)) {
+                want.push_back(row);
+            } else {
+                ++others_ranked;
+            }
+        }
+        CAPTURE(f);
+        CHECK(std::ranges::equal(want, ranks.order()));
+        // each with the depth, band and detail it has there, in slots of its own from the ground's
+        std::uint32_t at = 100;
+        for (const std::uint32_t row : ranks.order()) {
+            CHECK(ranks.depth()[row] == every.depth()[row]);
+            CHECK(ranks.band()[row] == every.band()[row]);
+            CHECK(ranks.first_slot()[row] == at);
+            CHECK(ranks.table()[row] == shaders::rank_entry(at, shaders::rank_detail(every.table()[row])));
+            at += items.slots(row, ranks.band()[row]);
+        }
+        CHECK(ranks.slots() == at);
+        // the other tiles' rows take no rank, in view or not, and are counted: every live row of a tile not drawn
+        std::size_t others = 0;
+        for (std::uint32_t row = 0; row < items.rows(); ++row) {
+            if (!items.alive(row) || is_drawn(row)) continue;
+            ++others;
+            CHECK(ranks.first_slot()[row] == frame::Ranks::none);
+            CHECK(ranks.table()[row] == shaders::RANK_NONE);
+            CHECK(ranks.band()[row] == 0);
+        }
+        CHECK(ranks.undrawn() == others);
+        // ranked all the same, the ranks are every row's, and the count is of those ranked
+        CHECK(std::ranges::equal(every.order(), with.order()));
+        CHECK(std::ranges::equal(every.table(), with.table()));
+        CHECK(with.undrawn() == others_ranked);
+        CHECK(every.undrawn() == 0);
+        left_out_most = std::max(left_out_most, others);
+        ranked_most = std::max(ranked_most, ranks.order().size());
+        if (drawn.empty()) CHECK(ranks.order().empty());
+    }
+    CHECK(ranked_most > 500);
+    CHECK(left_out_most == items.live());
+    MESSAGE("over 48 frames of six sets of tiles drawn: at most " << ranked_most << " rows ranked, " << left_out_most
+                                                                  << " left out with no tile drawn");
+}
+
+// A tile's rows come thousands at once, as it arrives or is first drawn. The insertion pass would move each past half
+// the order, and fell back on a full sort of the order; they are sorted among themselves and merged in, which gives the
+// same order.
+TEST_CASE("a tile's rows new to the ranks are merged into last frame's order: the full sort's order, without it") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    scene::ItemTable items;
+    std::mt19937_64 rng = seeded(5);
+    std::uniform_real_distribution<double> u(-3000.0, 3000.0);
+    constexpr std::uint32_t tiles = 12;
+    constexpr std::uint32_t each = 12'000;
+    for (std::uint32_t i = 0; i < tiles * each; ++i) {
+        const double x = std::round(u(rng)); // whole metres: equal depths happen, and the gather order breaks them
+        const double z = std::round(u(rng));
+        items.add({.x = x,
+                   .y = 4,
+                   .z = z,
+                   .cut_x = x,
+                   .cut_z = z,
+                   .order = scene::order_of(i % 2, i),
+                   .kind = kind,
+                   .slots = {10, 5, 2, 1},
+                   .min_depth = 2.0F,
+                   .radius = 20.0F,
+                   .tile = 1 + (i / each)});
+    }
+    const auto camera_at = [](double yaw) {
+        return view::Camera({.target = {0, 0, 0},
+                             .yaw = yaw,
+                             .pitch = 48.0,
+                             .dist = 5000,
+                             .fov = 36,
+                             .width = 412,
+                             .height = 916,
+                             .cx = std::nullopt,
+                             .cy = 440});
+    };
+    std::vector<std::uint32_t> drawn(tiles - 1);
+    std::ranges::iota(drawn, 1U);
+    frame::Ranks ranks;
+    ranks.update(items, camera_at(22.0), selectors, {.tiles = drawn, .by_tile = true});
+    const std::size_t before = ranks.order().size();
+    // the same frame again, nothing new: the scan and the insertion pass alone, the merge's baseline
+    const auto again = std::chrono::steady_clock::now();
+    ranks.update(items, camera_at(22.0), selectors, {.tiles = drawn, .by_tile = true});
+    const double again_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - again).count();
+    // the last tile drawn too, the camera still (a turn moves the old rows, which is the insertion pass's case, not
+    // the merge's: these rows lie evenly over 6 km, and a 0.2 degree turn moves them past its budget): its rows join
+    // the others' order
+    drawn.push_back(tiles);
+    const auto started = std::chrono::steady_clock::now();
+    ranks.update(items, camera_at(22.0), selectors, {.tiles = drawn, .by_tile = true});
+    const double merged_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    CHECK_FALSE(ranks.sorted_fully());
+    const std::size_t joined = ranks.order().size() - before;
+    CHECK(joined > 2000);
+    // the order the full sort gives (the key is total: depth, then the gather order), timed as the insertion pass's
+    // fallback ran it: last frame's order with the new rows after it
+    const auto by_key = [&](std::uint32_t a, std::uint32_t b) {
+        return ranks.depth()[a] > ranks.depth()[b] ||
+               (ranks.depth()[a] == ranks.depth()[b] && items.order()[a] < items.order()[b]);
+    };
+    std::vector<std::uint32_t> want;
+    std::vector<std::uint32_t> fresh;
+    for (const std::uint32_t row : ranks.order()) (items.tile()[row] == tiles ? fresh : want).push_back(row);
+    want.insert(want.end(), fresh.begin(), fresh.end());
+    const auto sorting = std::chrono::steady_clock::now();
+    std::ranges::sort(want, by_key);
+    const double sorted_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sorting).count();
+    CHECK(std::ranges::equal(want, ranks.order()));
+    MESSAGE(std::format("{} rows of a tile joined {} ranked: the ranks' update {:.2f} ms with their merge and {} "
+                        "insertion moves, {:.2f} ms with nothing new; a full sort of the order alone {:.2f} ms",
+                        joined, before, merged_ms, ranks.moves(), again_ms, sorted_ms));
+}
+
 // The item table's room (scene::ItemTable::reserve): the world makes it at rest, so that a tile's rows added in a
 // pinch grow no column. A reserve leaves the table row for row as it was, and the rows added within the room, the freed
 // rows first, grow nothing.

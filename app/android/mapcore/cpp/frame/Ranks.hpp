@@ -7,9 +7,15 @@
 // item's sphere against the frame plus the renders' least cull margin; a sphere across the eye's plane against the
 // frame's four sides, so what lies behind the camera takes no rank), fixes last frame's order with a stable insertion
 // pass (a full sort when the camera turned too far for that to pay: the key, depth then gather order, is total, so both
-// give the stable sort's order), and gives each item its first painter slot: the ground's slots first, then the items'
-// slots in painter's order, each item's count that of its detail band (Selectors.hpp) at its depth. Pans and zooms keep
-// the order; turns and tilts move few items in a frame.
+// give the stable sort's order), sorts the rows new to the order among themselves and merges them in (a tile's rows
+// come thousands at once, as it arrives or is first drawn: the insertion pass would move each past half the order), and
+// gives each item its first painter slot: the ground's slots first, then the items' slots in painter's order, each
+// item's count that of its detail band (Selectors.hpp) at its depth. Pans and zooms keep the order; turns and tilts
+// move few items in a frame.
+//
+// In the world's frames only the rows of the tiles drawn take ranks (RankOptions::by_tile: the cover's tiles and those
+// kept under ones fading in), since no pass reads another tile's; the drawn rows' order is what it would be among
+// every row, since the key is each row's own.
 //
 // The rank table set 0 holds (binding 1) is each row's first slot; shaders/shared/painter.slang turns a slot into its
 // depth. The C++ over the item table's columns is K7's benchmark (bench/frame_bench.cpp: the Main board's items within
@@ -46,6 +52,16 @@ struct RankOptions {
     /// The app's map (FrameState::grounded): the items flagged scene::item_flag::app take ranks, those flagged
     /// item_flag::renders none; elsewhere the other way about.
     bool grounded = false;
+    /// With `by_tile`, the tiles whose rows take ranks, by their handles (ItemTable::tile), ascending: the tiles the
+    /// frame draws and those kept under ones fading in (scene::Cover::upright), whose rows alone a pass reads. A
+    /// resident tile's rows that no pass draws take none, in view or not: a place's coarsest level kept under its
+    /// windows, the windows left resident after a zoom out, the level left after a zoom in. Without `by_tile`, every
+    /// tile's rows (a scene without a cover).
+    std::span<const std::uint32_t> tiles;
+    bool by_tile = false;
+    /// The other tiles' rows ranked all the same, as before the ranks knew the tiles drawn: the pinch audit's measure
+    /// of what leaving them out saves (Ranks::undrawn counts them either way).
+    bool rank_undrawn = false;
 };
 
 /// The frame's painter ranks.
@@ -78,10 +94,14 @@ public:
     [[nodiscard]] bool sorted_fully() const noexcept { return sorted_fully_; }
     /// The drawn rows whose sphere reaches within the near plane (drawn by the clipping variant, D6).
     [[nodiscard]] std::uint32_t near_items() const noexcept { return near_; }
+    /// The rows of the tiles not drawn (RankOptions::by_tile): those the last update left out for it (live, not
+    /// masked, of the frame's kind; in view or not), or with rank_undrawn those of them it ranked (in view).
+    [[nodiscard]] std::uint32_t undrawn() const noexcept { return undrawn_; }
 
 private:
     std::vector<std::uint32_t> order_;
     std::vector<std::uint32_t> next_;
+    std::vector<std::uint32_t> merged_;
     std::vector<std::uint32_t> first_;
     std::vector<double> depth_;
     std::vector<std::uint8_t> band_;
@@ -92,6 +112,7 @@ private:
     std::uint64_t moves_ = 0;
     bool sorted_fully_ = false;
     std::uint32_t near_ = 0;
+    std::uint32_t undrawn_ = 0;
 };
 
 } // namespace atlas::frame

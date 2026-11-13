@@ -75,12 +75,20 @@
 // ATLAS_PINCH_LOOK=a22: the phone's default colours, the Map look's Alpha 22 (the red tiles as tiles_red, each guessed
 // flat roof one of three mid greys) with the Tone off, where the core's own default is today's palette with TONE; the
 // phone's default parts are ATLAS_PINCH_OFF's to name.
+// ATLAS_PINCH_RANKS=every: the frames' ranks over the rows of the resident tiles not drawn too, as before the ranks
+// knew the tiles drawn (FrameBuilder::rank_undrawn); =cycle: the ATLAS_PINCH_STILL and ATLAS_PINCH_FINGER frames two
+// with them, two without, over and over (the second of each two has the order of its kind from the first), so that the
+// two are measured side by side whatever else runs. Each frame's line ends with its ranks: the rows ranked of the
+// table's, those of tiles not drawn (left out, or ranked with them), the insertion pass's moves, and the item table's
+// room where it changed. ATLAS_PINCH_RESERVE=0: the item table without its room made at rest (World::reserve_items),
+// as before it.
 // Each rest waits for the sun as well (settle): its workers idle, nothing published since the frame before and no
 // tile's bits cross-fading (SunGlobals::fading), as buildings_vk_test's draw does, since those fades run on the sun's
 // own clock and a rest captured while one runs differs run to run.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Ranks.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/Window.hpp"
@@ -363,6 +371,23 @@ struct Listed {
     for (std::size_t i = 0; i < p.pass_ms.size() && i < builder.passes().size(); ++i) {
         if (p.pass_ms[i] >= 0.1) out += std::format(", {} {:.1f}", builder.passes()[i]->name(), p.pass_ms[i]);
     }
+    return out;
+}
+
+/// The last frame's ranks and the item table's room: `ranks 5120 rows of 20480 (18112 live), 3072 of tiles not drawn
+/// left out, 12 moves; items' room 32768`, the room's growths since `growths` (the frame before's) after it, and the
+/// world's reserve at rest where this frame made one.
+[[nodiscard]] std::string ranks_line(const frame::FrameBuilder& builder, const scene::World* world, bool every,
+                                     std::uint64_t growths) {
+    const frame::Ranks& r = builder.ranks();
+    std::string out = std::format("; ranks {} rows", r.order().size());
+    const scene::ItemTable* items = world != nullptr ? world->items() : nullptr;
+    if (items == nullptr) return out;
+    out += std::format(" of {} ({} live), {} of tiles not drawn {}, {} moves{}; items' room {}", items->rows(),
+                       items->live(), r.undrawn(), every ? "ranked with them" : "left out", r.moves(),
+                       r.sorted_fully() ? ", sorted fully" : "", items->capacity());
+    if (items->growths() != growths) out += std::format(", grown {} time(s)", items->growths() - growths);
+    if (world->items_reserve_ms() > 0.0) out += std::format(", made at rest in {:.2f} ms", world->items_reserve_ms());
     return out;
 }
 
@@ -913,6 +938,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             most_shape_chunks = n;
             MESSAGE(std::format("at most {} chunks of the walls' and near cells' lists drawn from shape records", n));
         }
+        // the ranks over the rows of the tiles not drawn too (ATLAS_PINCH_RANKS), and the item table's room made at
+        // rest or not (ATLAS_PINCH_RESERVE)
+        const bool ranks_cycle = environment("ATLAS_PINCH_RANKS") == "cycle";
+        bool rank_every = environment("ATLAS_PINCH_RANKS") == "every";
+        const bool reserve_items = environment("ATLAS_PINCH_RESERVE") != "0";
         // the target moved from the place by this many metres east and north (ATLAS_PINCH_PAN's frames)
         double moved_east = 0.0;
         double moved_north = 0.0;
@@ -920,6 +950,10 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         // it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
             if (passes::Buildings* p = buildings(); p != nullptr) p->most_shape_chunks(most_shape_chunks);
+            map.rank_undrawn(rank_every);
+            if (map.world() != nullptr) map.world()->reserve_items(reserve_items);
+            const std::uint64_t growths =
+                map.world() != nullptr && map.world()->items() != nullptr ? map.world()->items()->growths() : 0U;
             const double at_lat = lat + (moved_north / 111'320.0);
             const double at_lon = lon + (moved_east / (111'320.0 * pymath::strict::cos(pymath::radians(lat))));
             style::CameraState c = camera(screen, at_lat, at_lon, bearing, pitch, d, rest);
@@ -964,7 +998,9 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                                     b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
                                     s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k, fading,
                                     under, b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
-                                    b != nullptr ? stage_f_parts(*b) + ground_cpu(*b) : std::string(),
+                                    b != nullptr ? stage_f_parts(*b) + ground_cpu(*b) +
+                                                       ranks_line(*b, map.world(), rank_every, growths)
+                                                 : std::string(),
                                     s.record.gpu_offscreen_ms, s.record.gpu_main_ms, s.record.gpu_after_ms,
                                     s.record.frame, s.record.gpu_frame, ripple));
                 if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
@@ -1398,9 +1434,15 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (finger > 0) {
                 parts.push_back({.name = std::format("{}under a finger at {:.0f} m", round, to)});
                 for (int i = 0; i < finger; ++i) {
-                    (void)draw(std::format("finger {:2d}", i), to, false, true);
+                    if (ranks_cycle) rank_every = (i / 2) % 2 == 0;
+                    (void)draw(std::format("finger {:2d}{}", i,
+                                           !ranks_cycle ? ""
+                                           : rank_every ? " every"
+                                                        : " drawn"),
+                               to, false, true);
                     track(parts.back());
                 }
+                if (ranks_cycle) rank_every = false;
                 said(std::format("under a finger at {:.0f} m", to));
             }
             parts.push_back({.name = std::format("{}held at {:.0f} m", round, to)});
@@ -1521,10 +1563,14 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     const std::size_t mode = shapes_cycle ? static_cast<std::size_t>(k / 2) % modes.size() : 2;
                     if (shapes_cycle) most_shape_chunks = mode == 1 ? std::optional<std::uint32_t>(0) : std::nullopt;
                     const std::uint64_t bare = mode == 0 ? style::camera_part::walls | style::camera_part::roofs : 0U;
-                    const std::string tag =
-                        shapes_cycle ? std::format("still {:3d} {}", k, modes.at(mode)) : std::format("still {:3d}", k);
+                    if (ranks_cycle) rank_every = (k / 2) % 2 == 0;
+                    const std::string tag = shapes_cycle ? std::format("still {:3d} {}", k, modes.at(mode))
+                                            : ranks_cycle
+                                                ? std::format("still {:3d} {}", k, rank_every ? "every" : "drawn")
+                                                : std::format("still {:3d}", k);
                     (void)draw(tag, d, true, true, bare);
                 }
+                if (ranks_cycle) rank_every = false;
                 if (shapes_cycle) most_shape_chunks = std::nullopt;
                 if (shapes_alone) map.set_passes(~std::uint64_t{0});
             }
