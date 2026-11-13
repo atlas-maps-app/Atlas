@@ -222,12 +222,13 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
     const auto n = static_cast<std::uint32_t>(kept.size());
     bool has = sun_has_;
     const float amount = shaders::tree_sun_amount(j.sample, sun_texel_, has, std::bit_cast<float>(j.weight), night);
-    const bool lit = shaders::tree_sunlit(j.sample, sun_texel_, has, night);
     const hlsl::float3 l = state_.block.theme.light.xyz;
     const std::uint32_t lit_tone =
         shaders::tree_mix(tones_[j.tint + shaders::TREE_TONE_LIT], tones_[j.tint + shaders::TREE_TONE_LIT + 1], amount);
-    const std::uint32_t high_tone = shaders::tree_mix(tones_[j.tint + shaders::TREE_TONE_HIGHLIGHT],
-                                                      tones_[j.tint + shaders::TREE_TONE_HIGHLIGHT + 1], amount);
+    // the highlight's own tone where the crown is lit; between the lit tone and its own while the bit's swap fades
+    const std::uint32_t high_tone =
+        shaders::tree_highlight_tone(lit_tone, tones_[j.tint + shaders::TREE_TONE_HIGHLIGHT],
+                                     tones_[j.tint + shaders::TREE_TONE_HIGHLIGHT + 1], amount);
     const std::uint32_t third = n / 3;
     const std::uint32_t two_thirds = (2 * n) / 3;
     std::vector<std::array<Circle, 3>> circles(n);
@@ -255,7 +256,7 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
                     .at = point(o), .r = shaders::tree_print(c, rr * 0.72F), .tone = lit_tone, .drawn = true};
             }
         }
-        if (lam > 0.35F && lit) {
+        if (lam > 0.35F && amount > 0.0F) {
             const hlsl::float3 m = shaders::tree_toward(c, j.place, t, qc, br, l, 0.55F);
             if (shaders::tree_ahead(c, m)) {
                 const hlsl::float2 o = shaders::tree_printed(c, shaders::css_of(c, m));

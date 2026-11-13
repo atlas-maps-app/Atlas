@@ -1,9 +1,10 @@
 // The screen-wide noise fields made on the GPU (plan-vector D10, N17; shaders/fx/fields.slang): fx/Fields.hpp's nine
-// fields of a frame, every byte make_fields', in the GPU's four images' layout, wherever the device passes the byte
-// check. Each noise is fx/noise.slang's turbulence (each fused operation of the port's an exact emulated fma) and each
-// field keeps what make_fields keeps of it, from the same tables and with the same arithmetic (mat's two fused
-// operations emulated too); the check holds both to the CPU's on the device before the core relies on them: the
-// renders' eleven noises (fx::noise_byte_check), then the nine fields' kept bytes over the same blocks.
+// fields every frame has (the frame's set; the sky's clouds are the CPU's alone), every byte make_fields', in the
+// GPU's four images' layout, wherever the device passes the byte check. Each noise is fx/noise.slang's turbulence
+// (each fused operation of the port's an exact emulated fma) and each field keeps what make_fields keeps of it, from
+// the same tables and with the same arithmetic (mat's two fused operations emulated too); the check holds both to the
+// CPU's on the device before the core relies on them: the renders' twelve noises (fx::noise_byte_check, the clouds'
+// among them), then the nine fields' kept bytes over the same blocks.
 //
 // The core takes it (fx/FieldCache.hpp's make_on_gpu) for a size the disk does not hold, on a device that passes the
 // check where it is a GPU (not lavapipe or SwiftShader, which run the shader on the CPU many times slower than the

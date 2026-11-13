@@ -157,7 +157,8 @@ class PhoneLook {
         // as a debug build's Look settings can switch them back on)
         val off = when (val parts = System.getProperty("atlas.phonelook.parts")?.takeIf { it.isNotBlank() } ?: "default") {
             "default" -> MapParts.bits(MapParts.byDefault)
-            "all" -> 0L
+            // (the light cascades' trial is no part of the picture: its own switch stays off)
+            "all" -> MapPart.LIGHT_CASCADES.bit
             else -> error("the parts are the app's default (default) or every one (all), not '$parts'")
         }
         val world = System.getProperty("atlas.phonelook.world")?.takeIf { it.isNotBlank() }?.let(::File)
@@ -496,9 +497,13 @@ internal class PhoneCore(
     private fun camera(view: LiveView, w: Int, h: Int, density: Double, pack: Listed?): ByteBuffer {
         val b = CameraWriter.allocate()
         // MapController.publishCamera: at rest, and where no country's levels are, the world under the cover
-        CameraWriter.header(b, ++sequence, CameraWriter.REST or (if (under) CameraWriter.WORLD_UNDER else 0))
+        // and the light cascades' trial where its switch is on (off by default)
+        CameraWriter.header(
+            b, ++sequence,
+            CameraWriter.REST or (if (under) CameraWriter.WORLD_UNDER else 0) or (if (MapParts.lightCascades(off)) CameraWriter.LIGHT_CASCADES else 0),
+        )
         // MapController.publishCamera: the style's trees and shadows are drawn, the app's default parts left out
-        CameraWriter.parts(b, off)
+        CameraWriter.parts(b, MapParts.cameraBits(off))
         CameraWriter.view(b, view.lat, view.lon, view.bearing, view.pitch, view.distance, view.widthDp / 2.0, view.cyDp)
         CameraWriter.frame(b, w, h, view.widthDp, view.heightDp, density)
         CameraWriter.pack(b, pack?.number ?: 0L, pack?.profile ?: CameraWriter.PROFILE_NONE)

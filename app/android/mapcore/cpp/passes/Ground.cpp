@@ -897,6 +897,8 @@ bool Ground::decide(const frame::FrameState& state) {
         last_tiles_.emplace_back(t.ground, t.cells);
         last_suns_.push_back(sun_of(t));
     }
+    // (the night's light by the maps moves on its own: a bake done, the moment's open places)
+    same = same && !light_due(state);
     if (same) {
         // the same camera over the same tiles: every decision and slot as the last frame's, but the quays' faces where
         // what their colours are made of moved (the palette's quay walls, the moment's light), decided again and laid
@@ -1004,6 +1006,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_wind_glints(cam, state);
     decide_sky(cam, state);
     decide_lit(cam);
+    decide_light(state);
     decide_pools();
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -1292,7 +1295,8 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     }
     // set 3, a set a frame slot: the soft shadows' grid, their blurred mask, and the grid as words for the compute
     // stages, the slot's own (Shadows.cpp); the ripple's two buffers, which its composite reads (Ripple.cpp); the
-    // glow's result and the lit streets' two layers, which theirs reads (LitGlow.cpp)
+    // glow's result and the lit streets' two layers, which theirs reads (LitGlow.cpp); the light maps' blocks, which
+    // their draw reads (LightMap.cpp)
     const std::array soft_bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
         gpu::Binding{
@@ -1308,7 +1312,9 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         gpu::Binding{
             .slot = 6, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{
-            .slot = 7, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment}};
+            .slot = 7, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 8, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
     p->soft_set_layout = std::move(soft_layout);
     const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
@@ -1325,6 +1331,7 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     ATLAS_GPU_CHECK(make_water_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_sky_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_pool_pipelines(context, *p));
+    ATLAS_GPU_CHECK(make_light_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_line_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_shadow_pipelines(context, *p));
     // the ripple, but in the owner mode (its map draws no reflections' colours); where the device cannot make it, the
@@ -1592,9 +1599,11 @@ void Ground::write_words(const frame::FrameState& state) {
     write_glitter(v);
     write_rings(v);
     write_pools(v);
+    write_light(v, state);
     write_lit(v, state);
     write_ripple(v, state);
     write_wind_glints(v, state);
+    write_clouds(v, state);
     write_canopy(v, state);
     write_palette(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
@@ -1731,6 +1740,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         // plate, then the app's map's thin water's band and streets over what lies under them, and the sky; the
         // water's count before what lies above it, which the app's map's streets keep off
         record_quays(r);
+        record_courses(r);
         record_water_count(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);
@@ -1758,6 +1768,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_shadows: record_shadows(r); break;
     case phase_pools:
         record_lit(r);
+        record_light(r);
         record_pools(r);
         break;
     default: break;

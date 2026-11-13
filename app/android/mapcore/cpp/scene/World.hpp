@@ -78,6 +78,10 @@ struct WorldOptions {
     /// (scene/Governor.hpp; 0: no governor, the bias 0). MapFrame sets it per device.
     std::uint64_t triangle_budget = 0;
     HeapBudget heaps;
+    /// The world's heap in bytes (WorldTiles) and the bytes it may grow to (none past it where 0): a test's; 0 for the
+    /// world's own, a sixth of the heaps' budget (at least 1 MiB) grown up to a third where a view's tiles need it.
+    vk::DeviceSize world_heap = 0;
+    vk::DeviceSize world_heap_budget = 0;
     /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
     /// data), §3's decoded tiles.
     std::size_t native_budget = std::size_t{64} << 20U;

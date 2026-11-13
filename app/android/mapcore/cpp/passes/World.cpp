@@ -180,12 +180,14 @@ void World::update(const frame::FrameState& state) {
     if (paint != 0) std::ranges::fill(palette_, paint);
     std::memcpy(palette_buffer_.bytes().data() + ((state.slot & 1U) * palette_bytes), palette_.data(), palette_bytes);
     palette_buffer_.flush();
-    if (s.bound != world->buffer) {
-        // the slot's last frame has finished with its set (the frame slots' fences)
+    if (s.bound != world->buffer || s.bound_bytes != world->buffer_bytes) {
+        // the slot's last frame has finished with its set (the frame slots' fences); the world's heap grown, a new
+        // buffer and its bytes
         gpu::SetWriter(*s.set)
             .buffer(wl::world_words.binding, vk::DescriptorType::eStorageBuffer, world->buffer, 0, world->buffer_bytes)
             .apply(device_->handle());
         s.bound = world->buffer;
+        s.bound_bytes = world->buffer_bytes;
     }
     const view::Camera& camera = state.view->camera();
     const view::Vec3& eye = camera.eye();
@@ -208,9 +210,10 @@ void World::update(const frame::FrameState& state) {
     const std::array<float, 4> target{static_cast<float>(bend.target.x - eye.x),
                                       static_cast<float>(bend.target.y - eye.y),
                                       static_cast<float>(bend.target.z - eye.z), 0.0F};
+    std::uint32_t drawn = 0; // the tiles drawn so far: each draw's tile (a tile in parts has a draw for each)
     for (const scene::WorldDraw& d : world->draws) {
         const scene::WorldTile& t = *d.tile;
-        if (!t.range || (t.triangles == 0 && t.segments == 0)) continue;
+        if (t.parts.empty() || (t.triangles == 0 && t.segments == 0)) continue;
         constexpr double grid = 1e-7;
         // a cap's box is the frame's and the plain land's its draw's; a tile's longitudes within 180° of the target's
         const scene::DegreeBox box = t.blank      ? d.box
@@ -236,14 +239,18 @@ void World::update(const frame::FrameState& state) {
         out.target = target;
         out.fade = d.fade;
         out.level = t.key.z;
-        out.at = {t.range.offset / 4U, static_cast<std::uint32_t>(d.cells & 0xFFFFU), 3U * t.triangles,
-                  4U * t.triangles};
-        out.triangles = t.triangles;
-        out.segments = t.segments;
-        out.coast = t.coast;
-        out.lights = t.lights;
         out.light_cells = static_cast<std::uint32_t>(d.light_cells & 0xFFFFU);
-        draws_.push_back(out);
+        out.tile = drawn++;
+        // a draw for each of its parts, each laid out as a tile (scene::WorldPart)
+        for (const scene::WorldPart& p : t.parts) {
+            out.at = {p.range.offset / 4U, static_cast<std::uint32_t>(d.cells & 0xFFFFU), 3U * p.triangles,
+                      4U * p.triangles};
+            out.triangles = p.triangles;
+            out.segments = p.segments;
+            out.coast = p.coast;
+            out.lights = p.lights;
+            draws_.push_back(out);
+        }
     }
     // the fading tiles' depths: their levels' ranks, coarse to fine
     std::array<bool, 32> fading{};
@@ -304,6 +311,7 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
                     palette_bytes)
             .apply(d);
         slots_.at(s).bound = palette_buffer_.handle();
+        slots_.at(s).bound_bytes = palette_bytes;
     }
     const std::array<vk::DescriptorSetLayout, 1> extra{*set_layout_};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
@@ -384,6 +392,7 @@ void World::release() noexcept {
     for (Slot& s : slots_) {
         s.set.clear();
         s.bound = vk::Buffer{};
+        s.bound_bytes = 0;
         s.drawing = false;
     }
     pool_.clear();
@@ -509,33 +518,47 @@ void World::record_tiles(const frame::Recording& recording) {
     const vk::raii::Pipeline& lines = looked ? look_lines_ : lines_;
     const bool coasts = looked && look_.block.weights.y > 0.0F;
     float at = -1.0F;
-    for (const Draw& d : draws_) {
-        const bool fading = d.fade < 1.0F;
-        const float depth = fading ? fading_depth(flags, d.lift) : world_depth(flags);
+    for (std::size_t first = 0; first < draws_.size();) {
+        // a tile's draws: one, or one for each of its parts
+        std::size_t end = first + 1;
+        while (end < draws_.size() && draws_[end].tile == draws_[first].tile) ++end;
+        const bool fading = draws_[first].fade < 1.0F;
+        const float depth = fading ? fading_depth(flags, draws_[first].lift) : world_depth(flags);
         if (depth != at) {
             viewport(depth, depth);
             at = depth;
         }
-        const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
-                                   .scale = d.scale,
-                                   .at = d.at,
-                                   .globe = d.globe,
-                                   .sphere = d.sphere,
-                                   .target = d.target};
-        if (d.triangles > 0) {
-            bind(fading ? fading_fills : fills);
+        const auto push = [&](const Draw& d) {
+            const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
+                                       .scale = d.scale,
+                                       .at = d.at,
+                                       .globe = d.globe,
+                                       .sphere = d.sphere,
+                                       .target = d.target};
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
+        };
+        // its fills, part by part; a fading tile's last part first, as within each its triangles are drawn top first
+        // (world.slang's fill_vs), so they are across its parts too
+        for (std::size_t i = 0; i < end - first; ++i) {
+            const Draw& d = draws_[fading ? end - 1 - i : first + i];
+            if (d.triangles == 0) continue;
+            bind(fading ? fading_fills : fills);
+            push(d);
             cmd.draw(3 * d.triangles, 1, 0, 0);
             triangles += d.triangles;
         }
-        // its lines, its coast's (the last of them) only where the ramps give the coast a weight
-        const std::uint32_t segments = coasts ? d.segments : d.segments - std::min(d.coast, d.segments);
-        if (segments > 0) {
+        // then its lines over them, part by part, its coast's (the last of them) only where the ramps give the coast
+        // a weight
+        for (std::size_t i = first; i < end; ++i) {
+            const Draw& d = draws_[i];
+            const std::uint32_t segments = coasts ? d.segments : d.segments - std::min(d.coast, d.segments);
+            if (segments == 0) continue;
             bind(lines);
-            cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
+            push(d);
             cmd.draw(6, segments, 0, 0);
             triangles += 2ULL * segments;
         }
+        first = end;
     }
     if (at >= 0.0F) viewport(0.0F, 1.0F);
     recording.counters.draw("world", triangles, static_cast<std::uint32_t>(draws_.size()));

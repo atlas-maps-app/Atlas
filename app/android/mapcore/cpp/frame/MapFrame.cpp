@@ -198,6 +198,8 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
          .fade_seconds = options_.fade_seconds != 0 ? options_.fade_seconds : scene::WorldOptions{}.fade_seconds,
          .triangle_budget = triangles,
          .heaps = heaps,
+         .world_heap = options_.world_heap,
+         .world_heap_budget = options_.world_heap_budget,
          .native_budget = static_cast<std::size_t>(heaps.total),
          .resources = options_.resources,
          .clock = std::move(clock),

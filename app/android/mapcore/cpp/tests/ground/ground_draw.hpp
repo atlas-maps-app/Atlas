@@ -68,7 +68,9 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 /// 1's bindings to the world (the noise fields), and `settle` (may be empty) runs after each frame (their worker's
 /// wait); `options` are the frame builder's (no composite step by default). With `second_buffer`, the heaps are two
 /// buffers of 64 MB and the first is filled before any tile is built, so the tiles' ground and lines lie in the second.
-/// `each` (may be empty) changes the inputs before each frame, by its number from 0: the camera's size stays.
+/// `each` (may be empty) changes the inputs before each frame, by its number from 0: the camera's size stays. With
+/// `every_pass`, every pass of the registry draws (the buildings, the trees and the rest over the ground), not the
+/// ground's alone.
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
@@ -76,13 +78,14 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
             const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
             const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {},
             const frame::FrameOptions& options = {.steps = 0}, bool second_buffer = false,
-            const std::function<void(int, frame::FrameInputs&)>& each = {}) {
+            const std::function<void(int, frame::FrameInputs&)>& each = {}, bool every_pass = false) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
     // The ground's own passes: the registry's buildings and text would stand over the ground these tests check.
     constexpr std::array<std::string_view, 3> ground_only{"composite", "frosted", "ground"};
-    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
+    std::vector<std::unique_ptr<frame::Pass>> passes =
+        every_pass ? frame::make_passes() : frame::make_passes(ground_only);
     passes::Ground* g = ground_of(passes);
     if (before) before(*g);
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), options);

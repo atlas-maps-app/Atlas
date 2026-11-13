@@ -189,6 +189,9 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
     }
     std::ranges::stable_sort(
         drawn, [](const Drawn& a, const Drawn& b) { return a.marks != b.marks ? b.marks : a.slot < b.slot; });
+    // the quay walls' courses' lines' ends first (Quays.cpp): their runs follow the others'
+    std::vector<CoursePath> courses;
+    write_course_points(words, courses);
     // the runs: one per polyline, 8 words each; a dashed one's table after the segments
     runs = static_cast<std::uint32_t>(words.size());
     std::array<std::vector<std::uint32_t>, 2> segments;
@@ -285,12 +288,37 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             ++run;
         }
     }
+    // a quay wall's courses: a run a path, each of its lines a pair of its own points in the words (three f32 each:
+    // the draw's GROUND_COURSES), butt-ended, at its path's slot, in its joints' colour at the path's opacity (its
+    // lines lie apart, a course from each other: they blend as one layer would)
+    std::vector<std::uint32_t> course_segments;
+    for (const CoursePath& c : courses) {
+        if (run >= (1U << 18U)) break; // an instance word holds 18 bits of its run
+        const QuayFace& e = frame_.quays[c.face];
+        const geo::Rgba joints{.r = static_cast<std::uint8_t>((e.colour >> 16U) & 0xFFU),
+                               .g = static_cast<std::uint8_t>((e.colour >> 8U) & 0xFFU),
+                               .b = static_cast<std::uint8_t>(e.colour & 0xFFU),
+                               .a = static_cast<std::uint8_t>(std::lround(e.opacity * 255.0))};
+        words.push_back(e.tile);
+        words.push_back(c.first);
+        words.push_back(2 * c.lines);
+        words.push_back(0U);
+        words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(e.width)));
+        words.push_back(joints.packed());
+        words.push_back(slot(geo::group::quay, c.face, 0));
+        words.push_back(shaders::LINE_PAIRS);
+        for (std::uint32_t k = 0; k < c.lines; ++k) course_segments.push_back((run << 14U) | k);
+        ++run;
+    }
     words_->woods_split = woods_split.value_or(static_cast<std::uint32_t>(segments[0].size()));
     for (std::size_t phase = 0; phase < 2; ++phase) {
         instances[phase] = static_cast<std::uint32_t>(words.size());
         words.insert(words.end(), segments[phase].begin(), segments[phase].end());
         words_->instance_count[phase] = static_cast<std::uint32_t>(segments[phase].size());
     }
+    words_->course_instances = static_cast<std::uint32_t>(words.size());
+    words.insert(words.end(), course_segments.begin(), course_segments.end());
+    words_->course_count = static_cast<std::uint32_t>(course_segments.size());
     // the dash tables, each run's flags naming its own; a run whose table begins beyond the flags' reach (2^22 words
     // on) is drawn solid
     const std::size_t base = words.size();

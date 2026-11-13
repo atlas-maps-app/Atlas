@@ -106,8 +106,8 @@ class WorldPackRefsTest {
             check(refused.isEmpty()) { "the core did not open world-refs' packs: ${refused.joinToString("; ")}" }
             for (e in refs["frames"]!!.jsonArray) {
                 val o = e.jsonObject
-                // a view held by its tiles alone (world-keep.json's pitched views from 60 to 1,000 km, which the core
-                // does not yet draw whole over the world alone: ENGINE.md step 11)
+                // a view held by its tiles alone (world-keep.json's pitched views from 60 to 1,000 km, drawn whole over
+                // the world alone since worldpages, whose pixels come back with the next refs run: ENGINE.md step 11)
                 if ((o["pixels"] as? JsonPrimitive)?.booleanOrNull == false) continue
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()
@@ -211,10 +211,15 @@ class WorldPackRefsTest {
         return if (named > 0) "$drew; $named names' sprites handed" else drew
     }
 
-    /** Whether the draw that said [notes] drew its frame whole: complete, no world tile wanted and no cell bare. */
+    /**
+     * Whether the draw that said [notes] drew its frame whole: complete, no world tile wanted or held back for room (a
+     * frame final over a coarser ancestor in its place) and no cell bare.
+     */
     private fun whole(notes: String): Boolean {
         val world = WORLD.find(notes) ?: return false
-        return notes.contains("complete yes") && world.groupValues[3] == "0" && world.groupValues[4] == "0"
+        val held = HELD.find(notes)?.groupValues?.get(1) ?: return false
+        return notes.contains("complete yes") && world.groupValues[3] == "0" && world.groupValues[4] == "0" &&
+            held == "0"
     }
 
     private companion object {
@@ -239,5 +244,8 @@ class WorldPackRefsTest {
 
         /** The world's part of the tiles line (scene::World::tiles_line). */
         val WORLD = Regex("""world (\d+) drawn finest (\d+) wanted (\d+) bare (\d+)""")
+
+        /** The world heap's tiles held back for room, its notes' last word before the world's part (scene::World). */
+        val HELD = Regex(""" held (\d+) world \d+ drawn finest""")
     }
 }

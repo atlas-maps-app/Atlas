@@ -30,6 +30,10 @@ namespace sp = layouts::text_sprite;
 constexpr std::size_t draw_bytes = sizeof(sp::SpriteDraw);
 constexpr std::size_t slot_bytes = Labels::max_draws * draw_bytes;
 constexpr float no_point = std::numeric_limits<float>::quiet_NaN();
+/// Half a letter of a water's name over its look's size, about (the board's italic serif), and its sprite's pad,
+/// dp: how wide a name will be, to find a stand that holds it before its sprite is drawn.
+constexpr double water_letter_half = 0.26;
+constexpr double water_pad_dp = 8.0;
 /// Updates a names' buffer let go of is kept: two frame builders' frames in flight, and as many again.
 constexpr std::uint64_t retire_after = 4ULL * gpu::Frames::in_flight;
 
@@ -73,8 +77,44 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
     const scene::NameScale scale{.metres_a_dp = focal > 0.0 ? state.camera.distance / focal : 0.0,
                                  .lat = state.camera.latitude,
                                  .lon = state.camera.longitude};
+    // A water's name stands at its own point while that lies a name's height clear of the frame's edges (two, to go
+    // back there from a stand); else at the stand it had while that shows and is water, else at one found now where
+    // its water shows on the frame (scene/WaterStand.hpp), else at its own point where that is in view at all.
+    const double density = state.camera.density;
+    const double tall = scene::name_size_dp(scene::NameStyle::water) * density;
+    const scene::WaterStands::Point stand_point = point;
+    const scene::WaterStands::Water stand_water = [&state](double lat, double lon) -> std::optional<bool> {
+        return state.world != nullptr ? scene::world_water_at(*state.world, lat, lon) : std::nullopt;
+    };
+    water_stands_.begin({.width = width,
+                         .height = height,
+                         .step = scene::stand_step_dp * scale.metres_a_dp,
+                         .px = scale.metres_a_dp > 0.0 ? density / scale.metres_a_dp : 0.0,
+                         .lat = scale.lat,
+                         .lon = scale.lon},
+                        &stand_point, &stand_water);
+    const scene::WorldNames::Stand stand =
+        [&](const scene::WorldName& water, const scene::NamePlace* held,
+            std::span<const scene::WorldName* const> waters) -> std::optional<scene::NamePlace> {
+        const bool holds = held != nullptr && water_stands_.on_frame(held->lat, held->lon, tall) &&
+                           stand_water(held->lat, held->lon).value_or(true) &&
+                           scene::WaterStands::own_place(water, held->lat, held->lon, waters);
+        if (water_stands_.on_frame(water.lat, water.lon, holds ? 2.0 * tall : tall)) {
+            return scene::NamePlace{.lat = water.lat, .lon = water.lon};
+        }
+        if (holds) return *held;
+        // half the name's width as its text will measure, about: the look's size, 0.26 of it a letter's half, and
+        // the sprite's pad
+        const auto letters = static_cast<double>(
+            std::ranges::count_if(water.text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; }));
+        const double half =
+            ((water_letter_half * letters * scene::name_size_dp(scene::NameStyle::water)) + water_pad_dp) * density;
+        if (const std::optional<scene::NamePlace> found = water_stands_.find(water, half, tall, waters)) return found;
+        if (in_view(water.lat, water.lon)) return scene::NamePlace{.lat = water.lat, .lon = water.lon};
+        return std::nullopt;
+    };
     const auto picked = world_names_.update(state.world, state.extra_names, state.camera.distance, in_view,
-                                            state.seconds, state.rest, changed, scale);
+                                            state.seconds, state.rest, changed, scale, stand);
     picked_.assign(picked.begin(), picked.end());
     // What a lit place's light follows this frame (the world pass's look of it): the ladder's weights at the camera's
     // distance and the point the sun is overhead of. Its name stands clear of it (scene::name_rise).
@@ -125,6 +165,36 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
             names_least_, static_cast<float>(static_cast<double>(store->floor_dp()) / scene::name_size_dp(name.style)));
     }
     store->want(std::move(wanted));
+}
+
+std::span<const labels::Mark> Labels::light_marks(const frame::FrameState& state, const view::View& view) {
+    marks_.clear();
+    if (state.world == nullptr || state.world->style == nullptr || !state.world->style->ladder) return marks_;
+    // the lights the world pass draws this frame: the lit places of the tiles it draws, where the caps have any
+    // weight and the night is deep enough for a light (globe.slang's globe_light)
+    const tiles::WorldLadder& ladder = *state.world->style->ladder;
+    if (!(scene::ladder_weights(ladder, state.camera.distance).caps > 0.0)) return marks_;
+    const scene::GeoPoint sun = scene::sub_solar(state.theme.sun_azimuth, state.theme.sun_elevation,
+                                                 static_cast<double>(state.theme.place_latitude),
+                                                 static_cast<double>(state.theme.place_longitude));
+    const auto width = static_cast<double>(state.camera.width_px);
+    const auto height = static_cast<double>(state.camera.height_px);
+    for (const scene::WorldDraw& draw : state.world->draws) {
+        if (draw.tile == nullptr || draw.light_cells == 0) continue;
+        for (const scene::WorldName& name : draw.tile->names) {
+            if (!name.lit || ((draw.light_cells >> name.cell) & 1U) == 0) continue;
+            if (scene::light_night(ladder, sun, name.lat, name.lon) < scene::light_least_night) continue;
+            const std::optional<view::Vec2> p =
+                scene::name_point(state.world->bend, state.world->frame, view, name.lat, name.lon, name_least_facing);
+            if (!p) continue;
+            const double radius = scene::light_halo_dp(ladder, name.people) * state.camera.density;
+            if (p->x < -radius || p->y < -radius || p->x > width + radius || p->y > height + radius) continue;
+            marks_.push_back(
+                {.x = static_cast<float>(p->x), .y = static_cast<float>(p->y), .radius = static_cast<float>(radius)});
+            if (marks_.size() >= max_marks) return marks_;
+        }
+    }
+    return marks_;
 }
 
 bool Labels::fresh_names_buffer(std::uint32_t texels) {
@@ -210,6 +280,8 @@ void Labels::update(const frame::FrameState& state) {
             {.l = k.left * density, .t = k.top * density, .r = k.right * density, .b = k.bottom * density});
     }
     const float names_large = state.names != nullptr ? state.names->large_scale() : 0.0F;
+    // The night's lights, which a name being placed stands clear of where a spot allows (asked for only then).
+    const std::function<std::span<const labels::Mark>()> marks = [&] { return light_marks(state, view); };
     const labels::Frame frame{.width = static_cast<float>(state.camera.width_px),
                               .height = static_cast<float>(state.camera.height_px),
                               .keep_out = keep_out_,
@@ -218,11 +290,17 @@ void Labels::update(const frame::FrameState& state) {
                                              ? std::span<const labels::Box>(state.marker_boxes->boxes)
                                              : std::span<const labels::Box>(),
                               // the readable floor: the set's, and the names' where the frame has any
-                              .least = std::max(set != nullptr ? set->least() : 0.0F, names_least_)};
+                              .least = std::max(set != nullptr ? set->least() : 0.0F, names_least_),
+                              .marks = &marks};
     // The map's scale: the reciprocal of the camera's distance (a tilted view keeps the zoom's size).
     const double scale = state.camera.distance > 0.0 ? 1.0 / state.camera.distance : 0.0;
     const auto drawn = placement_.update(candidates_, frame, scale, state.seconds);
     fading_ = placement_.fading();
+    if (placement_.placed_on_marks() + placement_.placed_off_marks() > 0) {
+        log::info("vk names: of {} placed, {} clear of a light their first stand covered, {} over one for want of a "
+                  "clear stand ({} lights)",
+                  placement_.placed_new(), placement_.placed_off_marks(), placement_.placed_on_marks(), marks_.size());
+    }
     drawn_.assign(drawn.begin(), drawn.end());
     // The sprites to draw: a board's label from the set's texels (set 1), a name from the names' buffer. Where that
     // has no room for a name's texels, a buffer for this frame's names (twice their texels, so the next ones have
