@@ -73,12 +73,14 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${app.atlas.packer.heights.HeightsBuild.USAGE}
 
-  ${app.atlas.packer.heights.HeightsCheck.USAGE}"""
+  ${app.atlas.packer.heights.HeightsCheck.USAGE}
+
+  ${app.atlas.packer.heights.HeightsList.USAGE}"""
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
  * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
- * `world-tags`, `world-assemble`, `world-check` and `world-refs`), and the terrain's (`heights`, `heights-check`).
+ * `world-tags`, `world-assemble`, `world-check` and `world-refs`), and the terrain's (`heights`, `heights-check`, `heights-list`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -217,6 +219,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "world-refs" -> return app.atlas.packer.world.WorldRefs.run(args, out)
         "heights" -> return app.atlas.packer.heights.HeightsBuild.run(args, out)
         "heights-check" -> return app.atlas.packer.heights.HeightsCheck.run(args, out)
+        "heights-list" -> return app.atlas.packer.heights.HeightsList.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

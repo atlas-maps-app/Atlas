@@ -38,6 +38,8 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
     class Source(
         val id: String,
         val name: String,
+        /** Its name as the map's credit line shows it ("Copernicus", "AHN"): the registry's `short`, else its [name]; terrain.json's `sources[].name`. */
+        val short: String,
         /** The regions it covers; empty for the world. */
         val area: List<String>,
         val priority: Int,
@@ -101,7 +103,7 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
                     else -> emptyList()
                 }
                 Source(
-                    o.text("id"), o.text("name"), area, o.number("priority").toInt(), format, o.getValue("hosts").jsonArray.map { it.jsonPrimitive.content },
+                    o.text("id"), o.text("name"), o.textOrNull("short") ?: o.text("name"), area, o.number("priority").toInt(), format, o.getValue("hosts").jsonArray.map { it.jsonPrimitive.content },
                     o.textOrNull("pattern"),
                     (o["index"] as? JsonObject)?.let { Index(it.text("kind"), it.text("url"), it.textOrNull("file")) },
                     (o["wcs"] as? JsonObject)?.let { w -> Wcs(w.text("coverage"), w.getValue("axes").jsonArray.map { it.jsonPrimitive.content }, w.textOrNull("extra"), w.getValue("block").jsonPrimitive.int) },
@@ -112,6 +114,7 @@ class TerrainSources(val sources: List<Source>, val regions: List<Region>) {
                 ).also { s ->
                     require(s.id.matches(Regex("[a-z0-9-]+"))) { "a source id of '${s.id}'" }
                     require(s.hosts.isNotEmpty()) { "source ${s.id} has no host" }
+                    require(s.short.isNotBlank()) { "source ${s.id} has a blank short name" }
                     require(s.model == "dtm" || s.model == "dsm") { "source ${s.id} is a '${s.model}'" }
                     require(s.resolution > 0 && s.read >= s.resolution) { "source ${s.id}: read at ${s.read} m of ${s.resolution} m" }
                     when (s.format) {

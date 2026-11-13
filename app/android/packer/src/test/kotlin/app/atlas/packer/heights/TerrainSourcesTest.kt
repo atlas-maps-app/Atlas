@@ -51,6 +51,8 @@ class TerrainSourcesTest {
         }
         assertTrue(r.source("tinitaly").credit.contains("https://doi.org/10.13127/tinitaly/1.1"))
         assertTrue(r.source("kartverket-dtm1").credit.contains("© Kartverket"))
+        // the map's credit line names each source by its short name (terrain.json's, packer heights-list)
+        assertEquals(listOf("Copernicus", "Copernicus", "AHN", "TINITALY", "Kartverket"), r.sources.map { it.short })
         // the Netherlands whole, Tuscany's L12 and L13 whole, Norway round Bergen
         assertTrue(r.region("netherlands").levels.single().let { it.whole && it.levels == listOf(12, 13, 14) })
         assertTrue(r.region("tuscany").levels.single().let { it.whole && it.levels == listOf(12, 13) })

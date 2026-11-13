@@ -35,7 +35,7 @@ class WorldFetch(
 ) {
     // the globe takes a while on a phone's network: no limit on the whole call, only on each wait for bytes; nor through
     // the app's HTTP cache, which would keep a second copy (PackDownloader's reasons)
-    private val client = client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    private val client = releaseClient(client)
 
     // the scheme world.json came on (https): its release's files must come on it too
     private val scheme = latest.substringBefore("://")
@@ -133,38 +133,13 @@ class WorldFetch(
      * bytes, then what of the head lies past them, a request each: the rest of its directory where it runs past them,
      * the rest before its chunks, and the sections after them (one request for a pack no longer than [HEAD_FIRST]).
      */
-    fun head(e: WorldIndex.Entry): List<Pair<Long, ByteArray>> {
-        var first = range(e, 0, minOf(e.length, HEAD_FIRST.toLong()).toInt())
-        val need = directoryEnd(first)
-        if (need > first.size) first += range(e, first.size.toLong(), need - first.size)
-        val (start, end) = chunksOf(first, e.length)
-        val before = if (start <= first.size) first.copyOf(start.toInt()) else first + range(e, first.size.toLong(), (start - first.size).toInt())
-        if (end >= e.length) return listOf(0L to before)
-        val after = if (first.size >= e.length) first.copyOfRange(end.toInt(), e.length.toInt()) else range(e, end, (e.length - end).toInt())
-        return listOf(0L to before, end to after)
-    }
+    fun head(e: WorldIndex.Entry): List<Pair<Long, ByteArray>> = headOf(e.length) { offset, length -> range(e, offset, length) }
 
     /** Bytes [offset] to [offset] + [length] of pack [e] of the world on the phone: one range of its part. */
     fun range(e: WorldIndex.Entry, offset: Long, length: Int): ByteArray {
         val w = world ?: throw IOException("the world is not on the phone yet")
         require(offset >= 0 && length > 0 && offset + length <= e.length) { "bytes $offset to ${offset + length} of a pack of ${e.length}" }
-        val url = w.release.url + w.index.parts[e.part].name
-        val a = e.offset + offset
-        val req = Http.request(url).header("Accept-Encoding", "identity").header("Range", "bytes=$a-${a + length - 1}")
-        client.newCall(req.build()).execute().use { r ->
-            if (r.code != 206 || PackDownloader.rangeStart(r.header("Content-Range")) != a) {
-                throw HttpStatusException(r.code, "HTTP ${r.code} (${r.header("Content-Range")}) for bytes $a to ${a + length} of $url")
-            }
-            val out = ByteArray(length)
-            var done = 0
-            val source = r.body.source()
-            while (done < length) {
-                val n = source.read(out, done, length - done)
-                if (n < 0) throw IOException("$url: bytes $a to ${a + length} cut short at ${a + done}")
-                done += n
-            }
-            return out
-        }
+        return rangeOf(client, w.release.url + w.index.parts[e.part].name, e.offset + offset, length)
     }
 
     /**
@@ -210,39 +185,86 @@ class WorldFetch(
      * Fetches [url] into [target] by way of `<target>.download`, moved into place once it is [bytes] long (-1: as its
      * answer said) with the SHA-256 [sha256] (null: any) and [check] passes.
      */
-    private fun fetch(url: String, target: File, bytes: Long, sha256: String?, check: (File) -> Unit) {
-        val partial = File(target.path + ".download")
-        try {
-            partial.delete()
-            client.newCall(Http.request(url).header("Accept-Encoding", "identity").build()).execute().use { r ->
-                if (r.code != 200) throw HttpStatusException(r.code, "HTTP ${r.code} fetching $url")
-                val declared = r.body.contentLength()
-                val digest = MessageDigest.getInstance("SHA-256")
-                partial.outputStream().use { out ->
-                    val source = r.body.byteStream()
-                    val buf = ByteArray(BUFFER)
-                    while (true) {
-                        val n = source.read(buf)
-                        if (n < 0) break
-                        digest.update(buf, 0, n)
-                        out.write(buf, 0, n)
-                    }
-                }
-                val want = if (bytes >= 0) bytes else declared
-                if (want >= 0 && partial.length() != want) throw IOException("$url: ${partial.length()} bytes of $want")
-                if (sha256 != null && hex(digest.digest()) != sha256) {
-                    throw PackDownloader.ChecksumException("$url is not the file world.json names")
-                }
-            }
-            check(partial)
-            target.delete()
-            if (!partial.renameTo(target)) throw IOException("$url: not moved into place")
-        } finally {
-            partial.delete()
-        }
-    }
+    private fun fetch(url: String, target: File, bytes: Long, sha256: String?, check: (File) -> Unit) = fetchFile(client, url, target, bytes, sha256, JSON, check)
 
     companion object {
+        /**
+         * [client] for a release's files: no limit on the whole call, only on each wait for bytes; nor through the app's
+         * HTTP cache, which would keep a second copy (PackDownloader's reasons).
+         */
+        internal fun releaseClient(client: OkHttpClient): OkHttpClient =
+            client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+
+        /**
+         * The head of a pack of [length] bytes, by [read] (a range of the pack: its offset and length): its first
+         * [HEAD_FIRST] bytes, then what of the head lies past them, a request each ([head]'s).
+         */
+        internal fun headOf(length: Long, read: (Long, Int) -> ByteArray): List<Pair<Long, ByteArray>> {
+            var first = read(0, minOf(length, HEAD_FIRST.toLong()).toInt())
+            val need = directoryEnd(first)
+            if (need > first.size) first += read(first.size.toLong(), need - first.size)
+            val (start, end) = chunksOf(first, length)
+            val before = if (start <= first.size) first.copyOf(start.toInt()) else first + read(first.size.toLong(), (start - first.size).toInt())
+            if (end >= length) return listOf(0L to before)
+            val after = if (first.size >= length) first.copyOfRange(end.toInt(), length.toInt()) else read(end, (length - end).toInt())
+            return listOf(0L to before, end to after)
+        }
+
+        /** Bytes [a] to [a] + [length] of the file at [url], by one range request: refused unless it answers 206 from [a]. */
+        internal fun rangeOf(client: OkHttpClient, url: String, a: Long, length: Int): ByteArray {
+            val req = Http.request(url).header("Accept-Encoding", "identity").header("Range", "bytes=$a-${a + length - 1}")
+            client.newCall(req.build()).execute().use { r ->
+                if (r.code != 206 || PackDownloader.rangeStart(r.header("Content-Range")) != a) {
+                    throw HttpStatusException(r.code, "HTTP ${r.code} (${r.header("Content-Range")}) for bytes $a to ${a + length} of $url")
+                }
+                val out = ByteArray(length)
+                var done = 0
+                val source = r.body.source()
+                while (done < length) {
+                    val n = source.read(out, done, length - done)
+                    if (n < 0) throw IOException("$url: bytes $a to ${a + length} cut short at ${a + done}")
+                    done += n
+                }
+                return out
+            }
+        }
+
+        /**
+         * Fetches [url] into [target] by way of `<target>.download`, moved into place once it is [bytes] long (-1: as its
+         * answer said) with the SHA-256 [sha256] (null: any) and [check] passes; [list] names the list that names it.
+         */
+        internal fun fetchFile(client: OkHttpClient, url: String, target: File, bytes: Long, sha256: String?, list: String, check: (File) -> Unit) {
+            val partial = File(target.path + ".download")
+            try {
+                partial.delete()
+                client.newCall(Http.request(url).header("Accept-Encoding", "identity").build()).execute().use { r ->
+                    if (r.code != 200) throw HttpStatusException(r.code, "HTTP ${r.code} fetching $url")
+                    val declared = r.body.contentLength()
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    partial.outputStream().use { out ->
+                        val source = r.body.byteStream()
+                        val buf = ByteArray(BUFFER)
+                        while (true) {
+                            val n = source.read(buf)
+                            if (n < 0) break
+                            digest.update(buf, 0, n)
+                            out.write(buf, 0, n)
+                        }
+                    }
+                    val want = if (bytes >= 0) bytes else declared
+                    if (want >= 0 && partial.length() != want) throw IOException("$url: ${partial.length()} bytes of $want")
+                    if (sha256 != null && hex(digest.digest()) != sha256) {
+                        throw PackDownloader.ChecksumException("$url is not the file $list names")
+                    }
+                }
+                check(partial)
+                target.delete()
+                if (!partial.renameTo(target)) throw IOException("$url: not moved into place")
+            } finally {
+                partial.delete()
+            }
+        }
+
         /** The release world.yml's publish points at the newest world (ENGINE.md step 5): its world.json alone. */
         const val WORLD_LATEST = "https://github.com/atlas-maps-app/Atlas/releases/download/world-latest/"
 
