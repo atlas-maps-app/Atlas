@@ -40,21 +40,34 @@ class FillInStateTest {
     @Test
     fun theBuildingAskedAboutAsTheBoardDrawsIt() {
         val id = OsmId(app.atlas.model.OsmType.WAY, 123L)
-        val open = AskedBuilding(id, 0xA2A5A9, hatched = true)
-        val answered = AskedBuilding(id, 0x453433, hatched = false)
+        // the board's house: the plain box (*_none) until the roof is answered
+        val open = AskedBuilding(id, 0xA2A5A9, hatched = true, roof = AskedBuilding.ROOF_FLAT)
+        val answered = AskedBuilding(id, 0x453433, hatched = false, roof = AskedBuilding.ROOF_FLAT)
         var s = FillInState(FillIn.asks(leliegracht))
         // the board's grey, hatched, while the colour is open (none_*)
         assertEquals(open, s.asked(id))
         // the answer's colour as the board draws it (brown_*), plain, from the pick through the end
         s = s.pick(brown)
         assertEquals(answered, s.asked(id))
-        s = s.next().pick(gabled).next().send()
+        // the roof picked (brown_gabled), from the pick through the end; another pick, another roof
+        s = s.next().pick(gabled)
+        assertEquals(answered.copy(roof = AskedBuilding.ROOF_GABLED), s.asked(id))
+        assertEquals(answered.copy(roof = AskedBuilding.ROOF_HIPPED), s.pick(FillIn.ROOFS.first { it.shape == "hipped" }).asked(id))
+        assertEquals(answered.copy(roof = AskedBuilding.ROOF_FLAT), s.pick(FillIn.ROOFS.first { it.shape == "flat" }).asked(id))
+        s = s.next().send()
         assertTrue(s.done)
-        assertEquals(answered, s.asked(id))
-        // "Can't tell" leaves it open
+        assertEquals(answered.copy(roof = AskedBuilding.ROOF_GABLED), s.asked(id))
+        // "Can't tell" leaves each open: the grey under the hatch, the plain box
         assertEquals(open, FillInState(FillIn.asks(leliegracht)).pick(brown).skip().asked(id))
-        // a colour mapped already: the map draws the building as mapped
-        assertNull(FillInState(FillIn.asks(leliegracht + ("building:material" to "brick"))).asked(id))
+        assertEquals(answered, FillInState(FillIn.asks(leliegracht)).pick(brown).next().pick(gabled).skip().asked(id))
+        // a colour mapped already: the house in its own colour, under the roof asked about
+        val mapped = FillInState(FillIn.asks(leliegracht + ("building:material" to "brick")))
+        assertEquals(AskedBuilding(id, AskedBuilding.OWN_WALL, hatched = false, roof = AskedBuilding.ROOF_FLAT), mapped.asked(id))
+        assertEquals(AskedBuilding(id, AskedBuilding.OWN_WALL, hatched = false, roof = AskedBuilding.ROOF_HIPPED), mapped.pick(FillIn.ROOFS.first { it.shape == "hipped" }).asked(id))
+        // a roof mapped already: the building's own roof, its walls as asked
+        assertEquals(AskedBuilding(id, 0xA2A5A9, hatched = true), FillInState(FillIn.asks(leliegracht + ("roof:shape" to "gabled"))).asked(id))
+        // both mapped: the map draws the building as mapped
+        assertNull(FillInState(FillIn.asks(leliegracht + ("building:material" to "brick") + ("roof:shape" to "gabled"))).asked(id))
     }
 
     @Test

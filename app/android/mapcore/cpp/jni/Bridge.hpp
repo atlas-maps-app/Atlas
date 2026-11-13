@@ -40,8 +40,12 @@ namespace atlas::jni {
 /// Native.names (their sprites, the app's) and Native.testNames (names no tile holds, a test's). 28: the theme block's
 /// version 2, which carries the place its sun's azimuth and elevation are of (the moment lights the place the map
 /// draws; the world's look takes the terminator from it). 29: the world's waters' names: Native.namesWanted's looks
-/// have a fifth, a water's (scene::NameStyle::water), and Native.testNames takes the waters' kinds and a river.
-inline constexpr jint abi = 29;
+/// have a fifth, a water's (scene::NameStyle::water), and Native.testNames takes the waters' kinds and a river. 30:
+/// Native.ask takes the roof the building is asked about in (FillIn's roof question: its house, scene/House.hpp), and a
+/// negative wall for walls whose colour is not asked about. 31: the world a kept country keeps (ENGINE.md step 11):
+/// Native.worldKept (its packs' heads and tiles' chunks pinned in the world's cache, what is lacking said) and
+/// Native.worldKeptRange (a fetched range of one of them kept).
+inline constexpr jint abi = 31;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";
