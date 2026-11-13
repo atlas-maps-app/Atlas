@@ -19,10 +19,14 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <limits>
+#include <numeric>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -414,6 +418,135 @@ TEST_CASE("ranks leave out an item whose cut point lies deeper than its most dep
     CHECK(std::ranges::equal(kept, b.order()));
     MESSAGE(a.order().size() << " items ranked without a most depth, " << b.order().size() << " with one, " << beyond
                              << " left out beyond it");
+}
+
+// The item table's room (scene::ItemTable::reserve): the world makes it at rest, so that a tile's rows added in a
+// pinch grow no column. A reserve leaves the table row for row as it was, and the rows added within the room, the freed
+// rows first, grow nothing.
+TEST_CASE("the item table's room: a reserve changes no row, and the rows added within it grow no column") {
+    scene::ItemTable items;
+    const auto spec = [](std::uint32_t i) {
+        return scene::ItemSpec{.x = 1.5 * i,
+                               .y = 4.0 + (i % 5),
+                               .z = -2.25 * i,
+                               .offset = (i % 3 == 0) ? -0.01 * (i % 11) : 0.0,
+                               .cut_x = 1.5 * i + 0.5,
+                               .cut_z = -2.25 * i - 0.5,
+                               .order = scene::order_of(i % 5, i),
+                               .kind = static_cast<std::uint16_t>(i % 7),
+                               .flags = static_cast<std::uint16_t>(i % 4 == 0 ? scene::item_flag::radius : 0),
+                               .slots = {10 + i, 5, 2 + (i % 3), 1},
+                               .min_depth = 2.0F + static_cast<float>(i % 2),
+                               .max_depth = i % 9 == 0 ? 75.0F : std::numeric_limits<float>::infinity(),
+                               .radius = 20.0F + static_cast<float>(i % 13),
+                               .tile = 1 + (i / 100),
+                               .cell = static_cast<std::uint8_t>(i % 64),
+                               .owner = scene::owner_key(2, 1000 + i),
+                               .building = scene::owner_key(scene::owner_kind_area, 500 + (i / 4))};
+    };
+    const std::uint32_t place = items.add_place({.x0 = 10, .sx = 1.001, .z0 = -20, .sz = 0.999});
+    for (std::uint32_t i = 0; i < 1000; ++i) {
+        const std::uint32_t row = items.add(spec(i));
+        if (i % 3 == 0) items.set_place(row, place);
+        if (i % 17 == 0) items.set_flag(row, scene::item_flag::masked, true);
+    }
+    for (std::uint32_t row = 5; row < 1000; row += 10) items.remove(row); // a hundred rows freed
+    CHECK(items.capacity() >= items.rows());
+
+    // the table as it is: every column, row for row
+    struct Copy {
+        std::vector<double> x, y, z, offset, cut_x, cut_z;
+        std::vector<std::uint64_t> order, owner, building;
+        std::vector<std::uint16_t> kind, flags;
+        std::vector<float> min_depth, max_depth, radius;
+        std::vector<std::uint32_t> tile, place, slots;
+        std::vector<std::uint8_t> cell, alive;
+        std::size_t live = 0;
+        std::size_t rows = 0;
+        std::uint64_t changes = 0;
+        bool operator==(const Copy&) const = default;
+    };
+    const auto copy = [](const scene::ItemTable& t) {
+        const auto of = [](const auto& span) { return std::vector(span.begin(), span.end()); };
+        Copy c{.x = of(t.x()),
+               .y = of(t.y()),
+               .z = of(t.z()),
+               .offset = of(t.offset()),
+               .cut_x = of(t.cut_x()),
+               .cut_z = of(t.cut_z()),
+               .order = of(t.order()),
+               .owner = of(t.owner()),
+               .building = of(t.building()),
+               .kind = of(t.kind()),
+               .flags = of(t.flags()),
+               .min_depth = of(t.min_depth()),
+               .max_depth = of(t.max_depth()),
+               .radius = of(t.radius()),
+               .tile = of(t.tile()),
+               .place = of(t.place()),
+               .slots = {},
+               .cell = of(t.cell()),
+               .alive = of(t.alive_rows()),
+               .live = t.live(),
+               .rows = t.rows(),
+               .changes = t.changes()};
+        for (std::uint32_t row = 0; row < t.rows(); ++row) {
+            for (std::size_t b = 0; b < scene::bands; ++b) c.slots.push_back(t.slots(row, b));
+        }
+        return c;
+    };
+    const Copy before = copy(items);
+    const std::uint64_t growths = items.growths();
+    items.reserve(5000);
+    CHECK(items.capacity() >= 5000);
+    CHECK(items.growths() == growths + 1);
+    CHECK(copy(items) == before); // max_depth's infinities compare equal; no column holds a NaN
+    CHECK(items.places()[place].sx == 1.001);
+    // room asked for that is there already: nothing done
+    items.reserve(100);
+    items.reserve(items.capacity());
+    CHECK(items.growths() == growths + 1);
+
+    // rows added within the room: the freed rows first (the last freed first), then new ones, no column moved
+    const double* const xs = items.x().data();
+    const std::uint32_t* const tiles_at = items.tile().data();
+    const std::uint8_t* const alive_at = items.alive_rows().data();
+    const std::size_t room = items.capacity();
+    CHECK(items.add(spec(2000)) == 995);
+    CHECK(items.add(spec(2001)) == 985);
+    std::uint32_t i = 2002;
+    while (items.live() < room) (void)items.add(spec(i++));
+    CHECK(items.rows() == room);
+    CHECK(items.capacity() == room);
+    CHECK(items.growths() == growths + 1);
+    CHECK(items.x().data() == xs);
+    CHECK(items.tile().data() == tiles_at);
+    CHECK(items.alive_rows().data() == alive_at);
+    // the rows that were there are as they were (but the freed ones, in use again)
+    for (std::uint32_t row = 0; row < 1000; ++row) {
+        if (before.alive[row] == 0) continue;
+        CHECK(items.x()[row] == before.x[row]);
+        CHECK(items.order()[row] == before.order[row]);
+        CHECK(items.place()[row] == before.place[row]);
+        CHECK(items.flags()[row] == before.flags[row]);
+        CHECK(items.slots(row, 0) == before.slots[row * scene::bands]);
+    }
+    // one row more than the room: every column grows at once, to twice the rows, and keeps its rows
+    const Copy full = copy(items);
+    const std::uint32_t over = items.add(spec(i));
+    CHECK(over == room);
+    CHECK(items.growths() == growths + 2);
+    CHECK(items.capacity() >= 2 * room);
+    items.remove(over);
+    Copy after = copy(items);
+    CHECK(after.rows == full.rows + 1);
+    CHECK(after.live == full.live);
+    after.x.resize(room);
+    CHECK(after.x == full.x);
+    after.tile.resize(room);
+    CHECK(after.tile == full.tile);
+    after.slots.resize(room * scene::bands);
+    CHECK(after.slots == full.slots);
 }
 
 TEST_CASE("ranks take an item flagged for the app's map only in it, and one flagged for the renders' frames only "
