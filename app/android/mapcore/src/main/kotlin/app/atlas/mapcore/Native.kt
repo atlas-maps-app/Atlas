@@ -308,7 +308,7 @@ object Native {
     /**
      * A world pack's head into the world's cache in [dir]: the pack of [kind] and [length] bytes whose SHA-256 is
      * [identity], its bytes but its `chunks` section as [ranges], each from its offset in [offsets]; kept once the pack
-     * opens from them alone. "" or why not.
+     * opens from them alone. "" or why not. A terrain pack's head comes the same way, of kind 5 (terrain_country).
      */
     @JvmStatic external fun worldHead(
         dir: String,
@@ -339,6 +339,32 @@ object Native {
      * where the map's world holds no such pack or no cache.
      */
     @JvmStatic external fun worldKeep(handle: Long, block: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
+
+    /**
+     * The terrain's tiles the map wants whose chunks are not on the phone (ENGINE.md part 6, step 2), nearest first, as
+     * [worldWants]': eight numbers each, its pack's L9 block and its tile (keys packed as [wantedWindows]'), the
+     * chunk's offset in the pack and its length, then the pack's SHA-256 as four big-endian longs.
+     */
+    @JvmStatic external fun terrainWants(handle: Long): LongArray
+
+    /**
+     * The L9 tiles the map's drawn tiles lie in, nearest first, keys packed as [wantedWindows]', whether or not a
+     * terrain pack is open for them: the app fetches the heads of their packs that are not held.
+     */
+    @JvmStatic external fun terrainBlocks(handle: Long): LongArray
+
+    /**
+     * A range of the bytes of the terrain pack of [identity] (its SHA-256) from [offset]: its whole chunks checked and
+     * kept in the world's cache. The chunks kept, then the refused ones' tiles (packed); null where the map holds no
+     * such pack or no cache.
+     */
+    @JvmStatic external fun terrainKeep(handle: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
+
+    /** The map's relief from the terrain's heights, [on] (the default) or off. */
+    @JvmStatic external fun terrain(handle: Long, on: Boolean)
+
+    /** The registry ids of the sources of the relief the map's last frame drew, comma-separated; "" for none. */
+    @JvmStatic external fun terrainSources(handle: Long): String
 
     /**
      * Window ([z], [x], [y])'s kept data (Overpass's JSON of its query, in the file at [kept], which the core maps)

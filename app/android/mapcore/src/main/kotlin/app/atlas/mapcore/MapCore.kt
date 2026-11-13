@@ -46,7 +46,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * A world pack's head the app fetched into the world's cache in [dir] (ENGINE.md step 6): the pack of [kind]
-         * ([PackRef.WORLD_MID] or [PackRef.WORLD_BASE]) and [length] bytes whose SHA-256 is [identity], its bytes but its
+         * ([PackRef.WORLD_MID], [PackRef.WORLD_BASE], or [PackRef.TERRAIN_COUNTRY] for a terrain pack's: ENGINE.md part
+         * 6, step 2) and [length] bytes whose SHA-256 is [identity], its bytes but its
          * `chunks` section as [ranges] (each its offset in the pack and its bytes), kept once the pack opens from them
          * alone. "" or why not. Off the main thread.
          */
@@ -307,6 +308,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
             /** The world's globe (ENGINE.md step 5: world-globe.atlas, L0 to L5), drawn where no world pack reaches. */
             const val WORLD_BASE = 4
+
+            /**
+             * A country's terrain pack (ENGINE.md part 6: an L9 tile's height rasters, L12 to L14), which the core holds
+             * apart from the map's packs: a remote pack as [WORLD_MID] is, by its [identity] and [length] (its region's
+             * `<region>-terrain.idx`), opened from its head in the world's cache and its chunks kept there
+             * ([terrainKeep]); or a file's [path] with [offset] and [length] the pack's range in its part.
+             */
+            const val TERRAIN_COUNTRY = 5
         }
     }
 
@@ -591,13 +600,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * The world's tiles the map wants now whose chunks are not on the phone (ENGINE.md step 6), nearest first: the app
      * fetches their ranges and hands them over ([worldKeep]). Empty before the world draws. Off the main thread.
      */
-    fun worldWants(): List<WorldWant> = core.call(emptyList()) { h ->
-        val w = Native.worldWants(h)
-        List(w.size / WANT) { i ->
-            val at = WANT * i
-            val identity = java.nio.ByteBuffer.allocate(32).putLong(w[at + 4]).putLong(w[at + 5]).putLong(w[at + 6]).putLong(w[at + 7]).array()
-            WorldWant(Window.of(w[at]), identity, Window.of(w[at + 1]), w[at + 2], w[at + 3])
-        }
+    fun worldWants(): List<WorldWant> = core.call(emptyList()) { h -> wantsOf(Native.worldWants(h)) }
+
+    /** [Native.worldWants]' or [Native.terrainWants]' numbers as wants. */
+    private fun wantsOf(w: LongArray): List<WorldWant> = List(w.size / WANT) { i ->
+        val at = WANT * i
+        val identity = java.nio.ByteBuffer.allocate(32).putLong(w[at + 4]).putLong(w[at + 5]).putLong(w[at + 6]).putLong(w[at + 7]).array()
+        WorldWant(Window.of(w[at]), identity, Window.of(w[at + 1]), w[at + 2], w[at + 3])
     }
 
     /**
@@ -617,6 +626,42 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun worldKeep(block: Window, identity: ByteArray, offset: Long, bytes: ByteArray): WorldKept? = core.call(null) { h ->
         Native.worldKeep(h, block.packed, identity, offset, bytes)?.let { r -> WorldKept(r[0].toInt(), List(r.size - 1) { Window.of(r[it + 1]) }) }
     }
+
+    /**
+     * The terrain's tiles the map wants now whose chunks are not on the phone (ENGINE.md part 6, step 2), nearest first,
+     * as [worldWants]' (a want's [WorldWant.block] its pack's L9 tile): the app fetches their ranges and hands them over
+     * ([terrainKeep]). Empty before the map draws relief. Off the main thread.
+     */
+    fun terrainWants(): List<WorldWant> = core.call(emptyList()) { h -> wantsOf(Native.terrainWants(h)) }
+
+    /**
+     * The L9 tiles the map's drawn tiles lie in (ENGINE.md part 6, step 2), nearest first, whether or not a terrain pack
+     * is open for them: the app fetches the heads of the packs its terrain's indexes hold there and are not held. Off
+     * the main thread.
+     */
+    fun terrainBlocks(): List<Window> = core.call(emptyList()) { h -> Native.terrainBlocks(h).map { Window.of(it) } }
+
+    /**
+     * A range of the bytes of the terrain pack of [identity] (its SHA-256) from [offset] (ENGINE.md part 6, step 2): its
+     * whole chunks checked against their SHA-256 and kept in the world's cache, and the map's next frame takes their
+     * heights. Null where the map holds no such pack (another release's) or no cache. Off the main thread.
+     */
+    fun terrainKeep(identity: ByteArray, offset: Long, bytes: ByteArray): WorldKept? = core.call(null) { h ->
+        Native.terrainKeep(h, identity, offset, bytes)?.let { r -> WorldKept(r[0].toInt(), List(r.size - 1) { Window.of(r[it + 1]) }) }
+    }
+
+    /**
+     * The map's relief from the terrain's heights from now on, [on] (the default) or off (VK bench's comparison). Off the
+     * main thread.
+     */
+    fun terrain(on: Boolean) = core.call(Unit) { Native.terrain(it, on) }
+
+    /**
+     * The registry ids of the sources of the relief the map's last frame drew (`packs/terrain-sources.json`'s: "glo30",
+     * "ahn4"), in the core's order; empty where it drew none (or no map). The map's credit line names them. Off the main
+     * thread.
+     */
+    fun terrainSources(): List<String> = core.call(emptyList()) { h -> Native.terrainSources(h).split(',').map { it.trim() }.filter { it.isNotEmpty() } }
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
