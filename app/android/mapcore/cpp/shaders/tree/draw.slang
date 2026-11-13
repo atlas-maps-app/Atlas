@@ -79,10 +79,9 @@ TreeClump blob_at(TreeJob j, uint i) {
     return tree_clump(points_heap[j.tree + TREE_HEADER_VECTORS + clumps + i]);
 }
 
-/// The crown's sun: how lit its tones draw, and whether it takes the highlight tone.
+/// The crown's sun: how lit its tones draw (and its highlights, which show by that much).
 struct TreeSun {
     float amount;
-    bool lit;
 };
 
 TreeSun sun_of(TreeJob j, bool night) {
@@ -95,7 +94,6 @@ TreeSun sun_of(TreeJob j, bool night) {
     }
     TreeSun s;
     s.amount = tree_sun_amount(j.sample, texel, has, asfloat(j.weight), night);
-    s.lit = tree_sunlit(j.sample, texel, has, night);
     return s;
 }
 
@@ -208,8 +206,10 @@ void close_tree(FrameCamera c, TreeJob j, TreeHeader t) {
     TreeSun sun = sun_of(j, night);
     float3 l = frame.theme.light.xyz;
     uint lit_tone = tree_mix(tree_tones[j.tint + TREE_TONE_LIT], tree_tones[j.tint + TREE_TONE_LIT + 1u], sun.amount);
-    uint high_tone =
-        tree_mix(tree_tones[j.tint + TREE_TONE_HIGHLIGHT], tree_tones[j.tint + TREE_TONE_HIGHLIGHT + 1u], sun.amount);
+    // the highlight's own tone where the crown is lit; while its sun bit's swap fades, between the lit tone it lies on
+    // and its own, so the highlights come and go as the tones cross-fade
+    uint high_tone = tree_highlight_tone(lit_tone, tree_tones[j.tint + TREE_TONE_HIGHLIGHT],
+                                         tree_tones[j.tint + TREE_TONE_HIGHLIGHT + 1u], sun.amount);
     uint third = n / 3u;
     uint two_thirds = (2u * n) / 3u;
     for (uint p = 0u; p < n; ++p) {
@@ -231,7 +231,7 @@ void close_tree(FrameCamera c, TreeJob j, TreeHeader t) {
                                          tree_depth(c, kz, j.slot, 3u + 4u * slice + 2u)));
             }
         }
-        if (lam > 0.35f && sun.lit) {
+        if (lam > 0.35f && sun.amount > 0.0f) {
             float3 m = tree_toward(c, j.place, t, q, br, l, 0.55f);
             if (tree_ahead(c, m)) {
                 put(at, tree_circle(tree_printed(c, css_of(c, m)), tree_print(c, rr * 0.36f), high_tone, 1.0f,

@@ -23,7 +23,7 @@ constexpr std::uint32_t group_side = 8;
 constexpr std::size_t selector_words = (2 * lattice_entries) + 2;
 
 /// The renders' filters' noises, as they write them (seed, base frequency, octaves; fractal noise all).
-constexpr std::array<Turbulence, 11> checked{{
+constexpr std::array<Turbulence, 12> checked{{
     {.seed = 13.0F, .base_x = 0.16F, .base_y = 0.75F, .octaves = 2},     // mat
     {.seed = 8.0F, .base_x = 0.9F, .base_y = 0.9F, .octaves = 1},        // the grain
     {.seed = 11.0F, .base_x = 0.012F, .base_y = 0.26F, .octaves = 2},    // the ripple
@@ -35,6 +35,7 @@ constexpr std::array<Turbulence, 11> checked{{
     {.seed = 4.0F, .base_x = 0.55F, .base_y = 0.55F, .octaves = 2},      // foliage
     {.seed = 17.0F, .base_x = 0.55F, .base_y = 0.55F, .octaves = 2},     // the regions' canopy
     {.seed = 7.0F, .base_x = 0.0451F, .base_y = 0.3172F, .octaves = 2},  // a glint band at eye level (glint2)
+    {.seed = 31.0F, .base_x = 0.0055F, .base_y = 0.017F, .octaves = 4},  // the sky layer's clouds
 }};
 
 } // namespace

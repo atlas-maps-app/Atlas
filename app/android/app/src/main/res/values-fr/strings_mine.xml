@@ -412,6 +412,7 @@
     <string name="mine_part_lamp_halos">Halos des lampadaires</string>
     <string name="mine_part_lamp_streaks">Traînées des lampadaires</string>
     <string name="mine_part_open_glows">Lueur des lieux ouverts</string>
+    <string name="mine_part_light_cascades">Lumière coupée par les bâtiments (essai)</string>
     <string name="mine_part_rain">Pluie</string>
     <string name="mine_part_golden_wash">Lumière dorée</string>
     <string name="mine_part_walls">Murs</string>

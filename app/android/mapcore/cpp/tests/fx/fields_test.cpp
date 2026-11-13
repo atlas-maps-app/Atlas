@@ -105,7 +105,7 @@ TEST_CASE("every screen-wide field at every reference size is the port's, noise 
     for (const FieldReference& ref : field_references()) {
         if (thread_sanitizer && ref.name != "S1") continue;
         CAPTURE(std::string(ref.name));
-        const auto fields = make_fields(ref.size, MakeOptions{.threads = 4});
+        const auto fields = make_fields(ref.size, MakeOptions{.threads = 4, .set = FieldSet::all});
         for (std::size_t f = 0; f < field_count; ++f) {
             CAPTURE(std::string(screen_fields[f].name));
             CHECK(hash_of(little_endian(noise_of(static_cast<Field>(f), ref.size, true))) == ref.noise[f]);
@@ -114,10 +114,48 @@ TEST_CASE("every screen-wide field at every reference size is the port's, noise 
     }
 }
 
+TEST_CASE("the frame's fields hold no byte of the clouds, and the sky's field none of the others") {
+    const FieldSize size = size_of(211, 97, 2.625);
+    const std::size_t pixels = std::size_t{size.width} * size.height;
+    const auto frame = make_fields(size, MakeOptions{.threads = 2});
+    const auto sky = make_fields(size, MakeOptions{.threads = 2, .set = FieldSet::sky});
+    const auto all = make_fields(size, MakeOptions{.threads = 2, .set = FieldSet::all});
+    CHECK(frame->set() == FieldSet::frame);
+    CHECK(frame->clouds().empty());
+    CHECK(frame->rgba().size() + frame->rg().size() + frame->r().size() + frame->canopy().size() ==
+          pixels * pixel_bytes);
+    CHECK(pixel_bytes == 13);
+    CHECK(sky->rgba().empty());
+    CHECK(sky->rg().empty());
+    CHECK(sky->r().empty());
+    CHECK(sky->canopy().empty());
+    CHECK(sky->clouds().size() == pixels * clouds_bytes);
+    // each set's bytes are the same whichever set they were made in
+    for (std::size_t i = 0; i < image_count; ++i) CHECK(std::ranges::equal(frame->plane(i), all->plane(i)));
+    CHECK(std::ranges::equal(sky->clouds(), all->clouds()));
+    for (std::size_t f = 0; f < field_count; ++f) {
+        CHECK(holds(FieldSet::frame, static_cast<Field>(f)) == (f < frame_field_count));
+        CHECK(holds(FieldSet::sky, static_cast<Field>(f)) == (f == frame_field_count));
+    }
+    // the disk keeps the frame's alone
+    const std::filesystem::path dir = std::filesystem::path(ATLAS_TEST_SCRATCH) / "fields-sets";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    const FieldDisk disk(dir);
+    CHECK_FALSE(disk.write(*sky));
+    CHECK_FALSE(disk.holds(size));
+    CHECK(disk.write(*frame));
+    const auto kept = disk.read(size);
+    REQUIRE(kept != nullptr);
+    CHECK(kept->clouds().empty());
+    CHECK(std::ranges::equal(kept->canopy(), frame->canopy()));
+    CHECK(std::filesystem::file_size(disk.path(size)) == 64 + (pixels * pixel_bytes));
+}
+
 TEST_CASE("the scalar reference makes S1's fields too") {
     if (thread_sanitizer) return; // the lanes' S1 above, and the lanes against the reference in noise_test.cpp
     const FieldReference& s1 = reference("S1");
-    const auto fields = make_fields(s1.size, MakeOptions{.threads = 4, .lanes = false});
+    const auto fields = make_fields(s1.size, MakeOptions{.threads = 4, .lanes = false, .set = FieldSet::all});
     for (std::size_t f = 0; f < field_count; ++f) {
         CAPTURE(std::string(screen_fields[f].name));
         CHECK(hash_of(little_endian(noise_of(static_cast<Field>(f), s1.size, false))) == s1.noise[f]);
@@ -129,7 +167,7 @@ TEST_CASE("the kept bytes are SvgFilterRaster's steps one by one") {
     // make_fields reads tables of the steps; keep() takes them one by one (premultiply, unpremultiply, the matrices'
     // rows, the output's conversion): every pixel of a frame that is no reference size, odd in both directions.
     const FieldSize size = size_of(331, 517, 1.7);
-    const auto fields = make_fields(size, MakeOptions{.threads = 2, .band_rows = 7});
+    const auto fields = make_fields(size, MakeOptions{.threads = 2, .band_rows = 7, .set = FieldSet::all});
     for (std::size_t f = 0; f < field_count; ++f) {
         const auto field = static_cast<Field>(f);
         const std::vector<Argb> noise = noise_of(field, size, false);

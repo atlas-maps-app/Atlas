@@ -410,6 +410,7 @@ private fun partName(part: MapPart): Int = when (part) {
     MapPart.LAMP_HALOS -> R.string.mine_part_lamp_halos
     MapPart.LAMP_STREAKS -> R.string.mine_part_lamp_streaks
     MapPart.OPEN_GLOWS -> R.string.mine_part_open_glows
+    MapPart.LIGHT_CASCADES -> R.string.mine_part_light_cascades
     MapPart.RAIN -> R.string.mine_part_rain
     MapPart.GOLDEN_WASH -> R.string.mine_part_golden_wash
     MapPart.WALLS -> R.string.mine_part_walls
