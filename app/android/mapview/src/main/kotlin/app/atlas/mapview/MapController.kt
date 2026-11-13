@@ -428,12 +428,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * What the map is where the core draws a place whose window has not come yet ([MapPlace.WINDOWS]): not on the phone,
-     * offline; on its way while the windows take it from its country's tiles, fetch its data or build it; null otherwise.
+     * offline; its place's pack on its way, where the app fetches one that holds it ([MapEngine.packComing]: how far);
+     * on its way while the windows take it from its country's tiles, fetch its data or build it; null otherwise.
      */
     private fun windowStatus(): MapStatus? {
         if (place != MapPlace.WINDOWS) return null
         if (!MapEngine.online()) return MapStatus.NoData("offline, and this area is not on the phone yet")
         val target = state.camera.target
+        packComingHere()?.let { return MapStatus.Downloading(it.name, it.done, it.bytes) }
         val where = MapEngine.countryAt(target.lat, target.lon)?.name ?: "this area"
         return when (val s = MapEngine.windowsNow?.status) {
             is Windows.Status.Fetching -> MapStatus.Downloading(where, -1, -1, building = !s.tiles)
@@ -1185,15 +1187,18 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (!MapEngine.online()) return Windows.line(online = false, status = null, remainingMs = 0L, country = null)
         val w = MapEngine.windowsNow ?: return null
         val s = w.status
-        // while the windows work or wait, the canvas draws again now and then: the status stays true, and the windows'
-        // next step (asked from the draw) comes though the map lies still
-        if (s != Windows.Status.Idle && !windowsTickPosted) {
+        // the place's own pack on its way says more than what its windows do meanwhile: which map, and how far it is
+        val coming = packComingHere()
+        // while the windows work or wait, or a pack comes, the canvas draws again now and then: the status stays true,
+        // and the windows' next step (asked from the draw) comes though the map lies still
+        if ((s != Windows.Status.Idle || coming != null) && !windowsTickPosted) {
             windowsTickPosted = true
             main.postDelayed({
                 windowsTickPosted = false
                 canvasTick.intValue++
-            }, if (s is Windows.Status.Waiting) WINDOWS_WAIT_TICK_MS else WINDOWS_WORK_TICK_MS)
+            }, if (coming == null && s is Windows.Status.Waiting) WINDOWS_WAIT_TICK_MS else WINDOWS_WORK_TICK_MS)
         }
+        if (coming != null) return Windows.packLine(coming.name, coming.done, coming.bytes)
         val target = state.camera.target
         return Windows.line(
             true, s, (s as? Windows.Status.Waiting)?.let(w::remaining) ?: 0L, MapEngine.countryAt(target.lat, target.lon)?.name,
@@ -1202,6 +1207,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     private var windowsTickPosted = false
+
+    /** The pack the app is fetching now, where it holds the camera's place ([MapEngine.packComing]); null otherwise. */
+    private fun packComingHere(): MapEngine.PackComing? {
+        val target = state.camera.target
+        return MapEngine.packComing()?.takeIf { it.holds(target.lat, target.lon) }
+    }
 
     /** The debug panel: the core's line (§8), the pack it draws, the markers and the camera. */
     private fun drawDebug(canvas: Canvas, p: OverlayPainter) {

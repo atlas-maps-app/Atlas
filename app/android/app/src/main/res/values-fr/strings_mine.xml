@@ -66,6 +66,8 @@
     <string name="mine_offline_orphan_text">Ces lieux n\'appartiennent à aucune région de ce téléphone et cette version d\'Atlas ne peut pas les lire. Les supprimer libère %1$s.</string>
     <string name="mine_offline_delete_title">Supprimer %1$s ?</string>
     <string name="mine_offline_delete_text">Cela libère %1$s. La carte, la recherche et les itinéraires y demandent alors une connexion.</string>
+    <string name="mine_offline_size_world">%1$s · monde %2$s</string>
+    <string name="mine_offline_world_text">Sa carte garde %1$s du monde alentour, pour se dessiner hors ligne jusqu\'au globe.</string>
     <string name="mine_offline_delete_confirm">Supprimer</string>
     <string name="mine_offline_keep">Garder</string>
     <string name="mine_offline_footer">Cartes et lieux : contributeurs OpenStreetMap (ODbL) · itinéraires : BRouter · paquets construits par Atlas sur GitHub</string>
@@ -639,6 +641,7 @@
     <string name="mine_picker_from_pack">depuis le paquet publié d\'Atlas</string>
     <string name="mine_picker_built">construit sur ce téléphone depuis OpenStreetMap</string>
     <string name="mine_picker_too_big">Trop grand pour être construit ici : choisissez un paquet de pays, ou dessinez une zone plus petite.</string>
+    <string name="mine_picker_world">La carte comprend %1$s du monde autour du pays, pour se dessiner hors ligne jusqu\'au globe.</string>
     <string name="mine_picker_failed">La taille n\'a pas pu être calculée. Réessayez dans un instant.</string>
     <string name="mine_picker_wifi">Seulement en Wi‑Fi</string>
     <string name="mine_picker_download">Télécharger</string>

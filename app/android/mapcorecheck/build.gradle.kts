@@ -217,7 +217,8 @@ sourceSets {
         // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
         // parts with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
         val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
-        val mapviewShared = listOf("MapParts.kt", "vk/CoreMoment.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
+        // and the keeper of a kept country's world (MT/tiles/KeptWorldTest.kt), which runs over the core's own cache
+        val mapviewShared = listOf("MapParts.kt", "vk/CoreMoment.kt", "vk/WorldKeeper.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
         kotlin.srcDir(mapviewKotlin)
         kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
         // The port's Turbulence, in mapview's raster sources (src/raster: in tests alone, ENGINE.md step 3).

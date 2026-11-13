@@ -1311,16 +1311,20 @@ jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget
 }
 
 /// Empties the world's cache in `dir` of every head and chunk (a new version of the world drops the old one's:
-/// ENGINE.md step 6), its budget `budget` from now on; "" or why not.
-jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget) {
+/// ENGINE.md step 6), its budget `budget` from now on; "" or why not. With `pinned`, all but what is pinned there: the
+/// kept countries' world stays (ENGINE.md step 11: the app pinned the new world's keep, whole, before it let the old
+/// one go); without, the pins go too.
+jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jboolean pinned) {
     if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
     std::string why;
     const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
     if (cache == nullptr) return java(env, why);
-    // the old world's keep with it: the app pins the new world's as it fetches it (native_world_kept)
-    if (const auto unpinned = cache->set_pinned({}); !unpinned) {
-        return java(env, std::format("the world's cache: {}", tiles::describe(unpinned.error())));
+    if (pinned == JNI_FALSE) {
+        if (const auto unpinned = cache->set_pinned({}); !unpinned) {
+            return java(env, std::format("the world's cache: {}", tiles::describe(unpinned.error())));
+        }
     }
+    // the cache's budget counts, and its eviction takes, the entries not pinned alone
     cache->evict_to(0);
     return java(env, "");
 }
@@ -2085,7 +2089,7 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("worldCache", "(JLjava/lang/String;J)Ljava/lang/String;", fn(&native_world_cache)),
         method("worldHeld", "(Ljava/lang/String;J[B)[Z", fn(&native_world_held)),
         method("worldHead", "(Ljava/lang/String;JIJ[B[J[[B)Ljava/lang/String;", fn(&native_world_head)),
-        method("worldDrop", "(Ljava/lang/String;J)Ljava/lang/String;", fn(&native_world_drop)),
+        method("worldDrop", "(Ljava/lang/String;JZ)Ljava/lang/String;", fn(&native_world_drop)),
         method("worldKept", "(Ljava/lang/String;J[J[B[I[J)[J", fn(&native_world_kept)),
         method("worldKeptRange", "(Ljava/lang/String;JJ[BJ[B)[J", fn(&native_world_kept_range)),
         method("worldWants", "(J)[J", fn(&native_world_wants)),

@@ -66,6 +66,8 @@
     <string name="mine_offline_orphan_text">These places belong to no region on this phone, and this Atlas can\'t read them. Deleting them frees %1$s.</string>
     <string name="mine_offline_delete_title">Delete %1$s?</string>
     <string name="mine_offline_delete_text">This frees %1$s. The map, search and routes there then need a connection.</string>
+    <string name="mine_offline_size_world">%1$s · world %2$s</string>
+    <string name="mine_offline_world_text">Its map keeps %1$s of the world around it, so it draws out to the globe offline.</string>
     <string name="mine_offline_delete_confirm">Delete</string>
     <string name="mine_offline_keep">Keep</string>
     <string name="mine_offline_footer">Maps and places: OpenStreetMap contributors (ODbL) · routing: BRouter · packs built by Atlas on GitHub</string>
@@ -639,6 +641,7 @@
     <string name="mine_picker_from_pack">from Atlas\'s published pack</string>
     <string name="mine_picker_built">built on this phone from OpenStreetMap</string>
     <string name="mine_picker_too_big">Too big to build here: pick a country pack instead, or draw a smaller area.</string>
+    <string name="mine_picker_world">The map includes %1$s of the world around the country, so it draws out to the globe offline.</string>
     <string name="mine_picker_failed">The size could not be worked out. Try again in a moment.</string>
     <string name="mine_picker_wifi">Only on Wi‑Fi</string>
     <string name="mine_picker_download">Download</string>

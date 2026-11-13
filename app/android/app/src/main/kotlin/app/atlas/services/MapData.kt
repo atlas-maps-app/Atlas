@@ -27,6 +27,7 @@ import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
 import app.atlas.tiles.WorldFetch
+import app.atlas.ui.mine.MineKeys
 import app.atlas.ui.mine.offline.RegionFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -195,46 +196,38 @@ class MapData(private val services: Services) {
 
     /**
      * Window [w]'s data from the element packs on the phone ([packs]; ENGINE.md step 3, the windows' local lane): those
-     * that meet its box ([PackWindows]). Online, where none does, a published pack holding the window's middle is fetched
-     * first and kept, as today's map fetched it until 5 November (its list read, and a pack that did not come asked for
-     * again, at most every [PUBLISHED_RETRY_MS]). Null where no pack holds any of it. Blocks: the windows' own thread.
+     * that meet its box ([PackWindows]); null where none holds any of it. Where none meets it, the published pack
+     * holding the window's middle is asked for ([publishedPacks]), on a job of its own: this window does not wait
+     * for it (its data comes as any window's meanwhile), and the windows the phone has nothing of once the pack is
+     * there come from it. Reads the phone's files alone, on the windows' own thread: nothing of the network.
      */
     private fun localWindow(w: MapCore.Window): app.atlas.mapview.vk.Windows.Packed? {
         val b = w.box()
         val box = BBox(b[1], b[0], b[3], b[2])
-        var here = packs.local().filter { it.bbox.intersects(box) }
-        if (here.isEmpty() && online()) {
-            val now = System.currentTimeMillis()
-            val entry = published().firstOrNull { box.center in it.bbox && packs.local(it.id) == null } ?: return null
-            if (packFailed[entry.id]?.let { now - it < PUBLISHED_RETRY_MS } == true) return null
-            try {
-                packs.download(entry)
-            } catch (e: IOException) {
-                packFailed[entry.id] = now
-                android.util.Log.w("AtlasMap", "vk window ${w.id}: the pack ${entry.id} did not come: ${e.message}")
-                return null
-            }
-            android.util.Log.i("AtlasMap", "vk window ${w.id}: the pack ${entry.id} fetched (${entry.bytes} bytes)")
-            here = packs.local().filter { it.bbox.intersects(box) }
+        val here = packs.local().filter { it.bbox.intersects(box) }
+        if (here.isEmpty()) {
+            publishedPacks.want(box.center)
+            return null
         }
-        if (here.isEmpty()) return null
         return PackWindows.answer(here.map { it.file }, box)
     }
 
+    /** The Maps board's "Wi-Fi only" as last read (on until the settings say otherwise): what a download on mobile data waits for. */
     @Volatile
-    private var publishedAskedAt = 0L
+    private var wifiOnly = true
 
-    /** When each published pack last failed to come (ms), asked for again [PUBLISHED_RETRY_MS] later. */
-    private val packFailed = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    /** The published packs, their list read once (again while none came, every [PUBLISHED_RETRY_MS] at most). */
-    private fun published(): List<PackLibrary.Entry> {
-        val known = packs.published
-        if (known.isNotEmpty()) return known
-        val now = System.currentTimeMillis()
-        if (now - publishedAskedAt < PUBLISHED_RETRY_MS) return known
-        publishedAskedAt = now
-        return runCatching { packs.refresh() }.getOrDefault(emptyList())
+    /**
+     * The published packs the map's places ask for ([localWindow]), fetched off the windows' step and only on a network
+     * the user lets downloads use: any that is not metered, and mobile data once the Maps board's "Wi-Fi only" is off.
+     */
+    private val publishedPacks: PublishedPacks by lazy {
+        PublishedPacks(
+            packs,
+            allowed = { online() && (!services.connectivity.metered.value || !wifiOnly) },
+            run = worker::execute,
+            changed = { MapEngine.invalidate() },
+            said = { android.util.Log.i("AtlasMap", "vk packs: $it") },
+        )
     }
 
     /**
@@ -280,6 +273,18 @@ class MapData(private val services: Services) {
         // published pack fetched for it): before Overpass, and offline too
         MapEngine.windowLocal = { w -> localWindow(w) }
         MapEngine.localKept = { packs.local().isNotEmpty() }
+        // a published pack on its way for such a place, for the map's line; taken up as the network or the Maps board's
+        // "Wi-Fi only" changes (it never comes over mobile data while that is on)
+        MapEngine.packComing = {
+            publishedPacks.coming?.let { c -> MapEngine.PackComing(c.name, c.bbox.south, c.bbox.west, c.bbox.north, c.bbox.east, c.done, c.bytes) }
+        }
+        services.scope.launch {
+            combine(services.settings.flow(MineKeys.WIFI_ONLY, true), services.connectivity.online, services.connectivity.metered) { wifi, _, _ -> wifi }
+                .collect {
+                    wifiOnly = it
+                    publishedPacks.wake()
+                }
+        }
         // a country downloaded whole (the Maps board): its windows come from it offline too
         MapEngine.tilesKept = { regionFiles.keepsTiles() }
         // and the windows taken from it are the first the windows' budget lets go: they come back from the phone at once
@@ -382,17 +387,23 @@ class MapData(private val services: Services) {
         MapEngine.nameTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.instrument_serif_italic) }.getOrNull()
         MapEngine.globeTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.geist) }.getOrNull()
         val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk world: $line") }
-        val world = WorldFetch(dir, client = services.http.client, drop = {
-            MapEngine.worldCacheDir()?.let { cache ->
-                val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
-                said(if (why.isEmpty()) "the old version's heads and chunks dropped" else "the old version's heads and chunks not dropped: $why")
-            }
-        })
+        // a new version drops the old one's heads and chunks, unless a country is kept by its tiles: then it waits
+        // beside the old one until the keeper holds its kept world whole (ENGINE.md step 11: no kept world lost offline)
+        val world = WorldFetch(
+            dir, client = services.http.client,
+            drop = {
+                MapEngine.worldCacheDir()?.let { cache ->
+                    val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
+                    said(if (why.isEmpty()) "the old version's heads and chunks dropped" else "the old version's heads and chunks not dropped: $why")
+                }
+            },
+            hold = { services.mine.engine.keepsWorld() },
+        )
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch
             MapEngine.worldReads = WorldReads(world, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
-            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said)
+            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said, adopted = { MapEngine.invalidate() })
             launch { keepWorld(landed, said) }
             world.follow(services.connectivity.online, said = said, landed = {
                 MapEngine.invalidate()
@@ -406,7 +417,9 @@ class MapData(private val services: Services) {
      * changes and as the network changes: what they keep is pinned in the world's cache at once, and what the phone
      * lacks of it (after a new version of the world, or a download that stopped) is fetched while the phone is online
      * and its network is not metered, as a region's download waits for Wi-Fi; a fetch that fails is tried again
-     * [KEEP_AGAIN_MS] on. A country's own download keeps its world as it takes its tiles (RegionEngine).
+     * [KEEP_AGAIN_MS] on. A new version of the world waits beside the phone's until its keep is whole, and is taken
+     * then (WorldKeeper), so the phone keeps drawing the old one, offline too, however long that fetch waits. A
+     * country's own download keeps its world as it takes its tiles (RegionEngine).
      */
     private suspend fun keepWorld(landed: Flow<Unit>, said: (String) -> Unit) {
         combine(landed, services.connectivity.online, services.connectivity.metered) { _, online, metered -> online && !metered }
@@ -473,8 +486,5 @@ class MapData(private val services: Services) {
 
         /** A fetch of the kept countries' world that failed is tried again this long on. */
         private const val KEEP_AGAIN_MS = 600_000L
-
-        /** How long the windows wait to ask for the renders' list or one of its packs again where none came (ms), as today's map did. */
-        private const val PUBLISHED_RETRY_MS = 60_000L
     }
 }

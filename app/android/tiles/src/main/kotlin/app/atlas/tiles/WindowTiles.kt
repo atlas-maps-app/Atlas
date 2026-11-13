@@ -72,31 +72,44 @@ class WindowTiles(
      * Window ([x], [y]) of level [z]'s pack, or a frame cell's level's tile ([z] 13 or 12), as a core of window version
      * [version] (MapCore.Window.version: its stage P's and its style's) builds it, from the newest country's tiles that
      * hold it; null where none holds it (no pack with tiles of that version holds its place or lists it, or no list of
-     * packs to be had). Throws IOException where a country holds it but its bytes did not come whole, or were not the
-     * ones published.
+     * packs to be had). A country whose index or bytes did not come whole, or were not the ones published, is passed
+     * over for the next that holds the window (two countries' tiles meet at a border): IOException, the first
+     * country's, only where none of them gave it.
      */
     fun window(z: Int, x: Int, y: Int, version: String): Tiled? {
         if (z != LEVEL && z !in TilesIndex.LEVELS) return null
         val list = reads.list() ?: return null
         val holding = list.filter { PackReads.holds(it, z, x, y) }.mapNotNull { p -> p.tilesOf(version)?.let { p to it } }
+        var failed: IOException? = null
         for ((pack, set) in holding.sortedByDescending { it.first.osmTime ?: Instant.EPOCH }) {
-            val kept = local(pack, set)
-            val index = indexOf(pack, set, kept)
-            if (index.level != LEVEL || index.version != version) continue
-            val e = index.find(z, x, y) ?: continue
-            if (!e.drawn) return Tiled(ByteArray(0), index.date, pack.id)
-            val bytes = kept?.let { k -> readKept(k.tiles, set.tiles, e) } ?: reads.range(set.tiles, e.offset, e.length)
-            if (!PackReads.sha256(bytes).contentEquals(e.sha256)) {
-                throw IOException("window $z/$x/$y of pack ${pack.id}: not the tiles its index names")
+            try {
+                return windowOf(pack, set, z, x, y, version) ?: continue
+            } catch (e: IOException) {
+                val first = failed
+                if (first == null) failed = e else first.addSuppressed(e)
             }
-            val whole = try {
-                CountryStyle.unpack(bytes, index.style)
-            } catch (x: IllegalArgumentException) {
-                throw IOException("window $z/$x/$y of pack ${pack.id}: ${x.message}", x)
-            }
-            return Tiled(whole, index.date, pack.id)
         }
+        failed?.let { throw it }
         return null
+    }
+
+    /** Window or level's tile [z]/[x]/[y] from [pack]'s tiles [set]; null where they are another core's or do not list it. */
+    private fun windowOf(pack: Pack, set: TileSet, z: Int, x: Int, y: Int, version: String): Tiled? {
+        val kept = local(pack, set)
+        val index = indexOf(pack, set, kept)
+        if (index.level != LEVEL || index.version != version) return null
+        val e = index.find(z, x, y) ?: return null
+        if (!e.drawn) return Tiled(ByteArray(0), index.date, pack.id)
+        val bytes = kept?.let { k -> readKept(k.tiles, set.tiles, e) } ?: reads.range(set.tiles, e.offset, e.length)
+        if (!PackReads.sha256(bytes).contentEquals(e.sha256)) {
+            throw IOException("window $z/$x/$y of pack ${pack.id}: not the tiles its index names")
+        }
+        val whole = try {
+            CountryStyle.unpack(bytes, index.style)
+        } catch (x: IllegalArgumentException) {
+            throw IOException("window $z/$x/$y of pack ${pack.id}: ${x.message}", x)
+        }
+        return Tiled(whole, index.date, pack.id)
     }
 
     /**

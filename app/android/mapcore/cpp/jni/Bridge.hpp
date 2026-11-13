@@ -44,8 +44,9 @@ namespace atlas::jni {
 /// Native.ask takes the roof the building is asked about in (FillIn's roof question: its house, scene/House.hpp), and a
 /// negative wall for walls whose colour is not asked about. 31: the world a kept country keeps (ENGINE.md step 11):
 /// Native.worldKept (its packs' heads and tiles' chunks pinned in the world's cache, what is lacking said) and
-/// Native.worldKeptRange (a fetched range of one of them kept).
-inline constexpr jint abi = 31;
+/// Native.worldKeptRange (a fetched range of one of them kept). 32: Native.worldDrop says whether the pinned keep stays
+/// (a new world's keep is whole before the old world's goes).
+inline constexpr jint abi = 32;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

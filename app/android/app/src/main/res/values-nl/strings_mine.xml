@@ -66,6 +66,8 @@
     <string name="mine_offline_orphan_text">Deze plaatsen horen bij geen gebied op deze telefoon en deze Atlas kan ze niet lezen. Verwijderen maakt %1$s vrij.</string>
     <string name="mine_offline_delete_title">%1$s verwijderen?</string>
     <string name="mine_offline_delete_text">Dit maakt %1$s vrij. Kaart, zoeken en routes daar hebben dan verbinding nodig.</string>
+    <string name="mine_offline_size_world">%1$s · wereld %2$s</string>
+    <string name="mine_offline_world_text">De kaart bewaart %1$s van de wereld eromheen, zodat ze offline tot de wereldbol tekent.</string>
     <string name="mine_offline_delete_confirm">Verwijder</string>
     <string name="mine_offline_keep">Bewaar</string>
     <string name="mine_offline_footer">Kaarten en plaatsen: OpenStreetMap-bijdragers (ODbL) · routes: BRouter · pakketten door Atlas op GitHub</string>
@@ -639,6 +641,7 @@
     <string name="mine_picker_from_pack">uit Atlas\' gepubliceerde pakket</string>
     <string name="mine_picker_built">op deze telefoon gebouwd uit OpenStreetMap</string>
     <string name="mine_picker_too_big">Te groot om hier te bouwen: kies een landpakket, of teken een kleiner gebied.</string>
+    <string name="mine_picker_world">De kaart bevat %1$s van de wereld rond het land, zodat ze offline tot de wereldbol tekent.</string>
     <string name="mine_picker_failed">De grootte kon niet worden berekend. Probeer het zo opnieuw.</string>
     <string name="mine_picker_wifi">Alleen via wifi</string>
     <string name="mine_picker_download">Downloaden</string>
