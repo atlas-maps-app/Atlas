@@ -1993,8 +1993,15 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
     packs.push_back(base);
     // A map of the world alone with a world heap of `heap` bytes that may grow to `budget` (0: the world's own), run
     // by `run` with the window that keeps its frames: a start of its own for each (a session's close lets go of the
-    // device). False where no session presents (CI's arm64 lavapipe), which skips the case.
-    const style::ThemeBlock theme = sunny();
+    // device). False where no session presents (CI's arm64 lavapipe), which skips the case. A plain day without
+    // weather, so each picture is the world pass's colours alone: the cloud shadows' fields come from a worker, and a
+    // frame whole before they do draws none (CI's first frame over Amsterdam had 12.9k px of land more than the next)
+    style::ThemeBlock theme = sunny();
+    theme.flags = 0;
+    theme.weather_code = 255;
+    theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+    theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+    theme.shadow_blur = theme.cloud_shadows = 0.0;
     const auto with_map = [&](std::uint64_t heap, std::uint64_t budget, const auto& run) {
         auto started = start_world(guard);
         if (!started) {
