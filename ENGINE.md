@@ -1509,12 +1509,26 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
        - the credits of the registry's sources on About & licences (`packer/LICENSES.md`'s table), before any phone reads a terrain pack.
 
        What the hosts gave, measured on 12 November:
-       - No national host averages for a coarser grid. PDOK's coverage service picks samples, and so do TINITALY's and Kartverket's overviews. So nothing is scaled by a host.
-       - AHN4 is read from PDOK's own sheets (cloud-optimised GeoTIFFs), at their 4 m overview: a filtered reduction, within 8 cm RMS of the 4 m block mean on the dunes, 6 GB for the country. Its 2 m overview is within 2.4 cm and 23 GB.
-       - TINITALY is read at its own 10 m from INGV's coverage service, and averaged in the job.
-       - Kartverket's DTM 1 m is read whole, sheet by sheet (1 GB each), and averaged in the job. Its nationwide 10 m model is one 19.6 GB file, over the limit, so Norway's L12 too is built around Bergen, and step 8 does the rest.
+       - No national host averages for a coarser grid. PDOK's coverage service, asked for 5 m, answers 0.17 to 0.43 m RMS off the block mean on the dunes; INGV's picks the nearest sample; Kartverket's sheets' overviews are nearest picks too. So nothing is scaled by a host.
+       - AHN4 is read from PDOK's own sheets (cloud-optimised GeoTIFFs, 1,373 of them), at their 4 m overview: a filtered reduction, within 8 cm RMS of the 4 m block mean on the dunes, 5.9 GB for the country. Its 2 m overview is within 2.4 cm and about 23 GB.
+       - TINITALY is read at its own 10 m from INGV's coverage service (1.8 GB for the region), and averaged in the job.
+       - Kartverket's DTM 1 m is read whole, sheet by sheet (0.7 GB each), and averaged in the job: 17.5 GB for the 25 sheets round Bergen. Its nationwide 10 m model is one 19.6 GB file, over the limit, so Norway's L12 too is built around Bergen, and step 8 does the rest.
        - Regione Toscana's lidar is not read: its hosts did not answer, and an archived copy of its service sheet gives the 1 m model to public bodies only, under CC BY-NC-SA. Tuscany is TINITALY's until the user or the terrain lead settles that licence.
        - Kartverket's download feed names the Norwegian Licence for Open Government Data 2.0; the credit shown meets it and CC BY 4.0.
+
+       What terrain.yml built (the runs' artifacts; nothing is published):
+
+       | Region | Source | Levels | Tiles | Size | MB per 1,000 km², its levels together |
+       |---|---|---|---|---|---|
+       | Netherlands, whole | AHN4 at 4 m | L12–L14 | 23,193 | 470.0 MB | 12.2 |
+       | Tuscany, whole | TINITALY 1.1 | L12–L13 | 4,104 | 167.4 MB | 4.0 |
+       | Norway, 20 km round Bergen | Kartverket DTM 1 m | L12–L14 | 1,616 | 61.8 MB | about 34 |
+
+       - Every tile is decoded by the packer's reader and by the core's host build, hash for hash. Every apron and edge sample equals its neighbour's to the bit.
+       - 50 samples a region, read afresh from the source over the boards' views and averaged as the packer averages, stand within half a step of the pack's: the Netherlands' worst 0.030 m of a step of 1/16 m (mean 0.015 m), Tuscany's 0.061 m of 1/8 m, Norway's 0.031 m of 1/16 m.
+       - A tile of open sea is not built: TINITALY and Kartverket give the sea 0 m, and the registry's `sea_m` says so.
+       - The Dutch grid has a datum of its own, and GDAL chooses the operation to the tiles' CRS by the bounds of the raster it warps. The registry's `operation_area` names the box it is chosen for, whatever those bounds.
+       - The check cuts a sheet's overview on the overview's own pixels (GDAL's open option `OVERVIEW_LEVEL`). With gdal_translate's `-ovr` and `-projwin` a cut lay up to half an overview pixel (2 m) from where it said, and 10 of the Netherlands' 50 points stood up to 0.43 m from the pack on slopes, while the same pixels averaged by hand gave the pack's heights.
     2. **Relief light on the plane (10 h):**
        - `shared/relief.slang` and its twin;
        - the tiles' heights as textures;
