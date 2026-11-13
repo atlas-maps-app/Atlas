@@ -69,7 +69,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /** What taking the chosen boxes would download. [bytes] sums the layers; null where one box could not say. */
-private class Quote(val bytes: Map<RegionLayer, Long?>, val packed: Boolean, val kind: MapKind)
+private class Quote(val bytes: Map<RegionLayer, Long?>, val packed: Boolean, val kind: MapKind, val world: Long)
 
 /**
  * Takes an area offline in one of three ways: draw a loop (or set a radius) around where you are, follow a route with a
@@ -129,7 +129,7 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
         withContext(Dispatchers.IO) {
             try {
                 val e = manager.engine.estimateAll(boxes, layers)
-                quote = Quote(e.bytes, e.packed, e.kind)
+                quote = Quote(e.bytes, e.packed, e.kind, e.world)
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 failed = true
@@ -170,6 +170,10 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
                 else -> stringResource(R.string.mine_est_unknown)
             } + if (boxes.size > 1) " · " + stringResource(R.string.mine_picker_parts, boxes.size) else ""
             EstimateCard(if (failed) emptyMap<RegionLayer, Long?>() else q?.bytes, caption)
+            // what a country's map keeps of the world around it (ENGINE.md step 11), so its cost is seen before the download
+            if (!failed && q != null && q.world > 0) {
+                Text(stringResource(R.string.mine_picker_world, RegionEngine.size(q.world)), style = mt(13f, 400, line = 18f), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
+            }
             if (tooBig) Text(stringResource(R.string.mine_picker_too_big), style = mt(12f, 700, line = 16f), color = MineTone.red)
             if (failed) Text(stringResource(R.string.mine_picker_failed), style = mt(12f, 700, line = 16f), color = MineTone.red)
             Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {

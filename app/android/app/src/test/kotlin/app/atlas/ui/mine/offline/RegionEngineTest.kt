@@ -177,6 +177,10 @@ class RegionEngineTest {
         // its size in the country list and in the estimate: its tiles, their index and its world
         assertEquals(250_000L + 2_000L + 640_000L + 90_000L, e.countryBytes(p))
         assertEquals(892_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        // and how much of the map is the world, for the screens to say what keeping the country costs
+        assertEquals(640_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        assertEquals(640_000L, runBlocking { e.estimateAll(listOf(pack), setOf(RegionLayer.MAP)) }.world)
+        assertFalse(e.keepsWorld())
         val id = RegionEngine.idFor("Netherlands")
         e.begin(id, "Netherlands", pack, setOf(RegionLayer.MAP))
         // the world's fetch fails: the map layer is not recorded, though its tiles are on the phone
@@ -193,15 +197,29 @@ class RegionEngineTest {
         assertEquals(MapKind.TILES.id, m.layers.getValue(RegionLayer.MAP).kind)
         assertEquals(892_000L, m.layers.getValue(RegionLayer.MAP).bytes)
         assertEquals(892_000L, e.details.value.single().bytes)
+        assertEquals(640_000L, e.details.value.single().world)
+        // a country is kept by its tiles: a new version of the world waits for its keep (WorldFetch's hold)
+        assertTrue(e.keepsWorld())
         // the app's start, and a new version of the world: the kept countries' world again, fetched or only pinned
         e.keepWorld(fetch = false)
         assertEquals(setOf("netherlands") to false, world.calls.last())
         // a country the world lists nothing for keeps none, and costs nothing more
         val bare = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(emptyMap())))
         assertEquals(252_000L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        assertEquals(0L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        // a new version of the world lists another size for it: the region's size follows the world on the phone;
+        // with no list on the phone, its share is what its download recorded
+        val grown = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(mapOf("netherlands" to 650_000L))))
+        grown.refresh()
+        assertEquals(650_000L, grown.details.value.single().world)
+        assertEquals(902_000L, grown.details.value.single().bytes)
+        bare.refresh()
+        assertEquals(640_000L, bare.details.value.single().world)
+        assertEquals(892_000L, bare.details.value.single().bytes)
         // deleted: its world is no longer kept (the keep of no country, nothing fetched)
         e.delete(id)
         assertEquals(emptySet<String>() to false, world.calls.last())
+        assertFalse(e.keepsWorld())
     }
 
     private fun hitsOf(vararg names: String): Int = requested.count { path -> names.any { path.endsWith(it) } }

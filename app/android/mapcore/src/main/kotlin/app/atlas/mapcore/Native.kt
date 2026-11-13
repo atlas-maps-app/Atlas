@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 31
+    const val ABI = 32
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -320,8 +320,11 @@ object Native {
         ranges: Array<ByteArray>,
     ): String
 
-    /** Empties the world's cache in [dir] of every head and chunk (a new version of the world drops the old one's); "" or why not. */
-    @JvmStatic external fun worldDrop(dir: String, budget: Long): String
+    /**
+     * Empties the world's cache in [dir] of every head and chunk (a new version of the world drops the old one's); "" or
+     * why not. With [pinned], of all but what is pinned there ([worldKept]: the kept countries' world stays).
+     */
+    @JvmStatic external fun worldDrop(dir: String, budget: Long, pinned: Boolean): String
 
     /**
      * The world a kept country keeps (ENGINE.md step 11), pinned in the world's cache in [dir] in place of what was

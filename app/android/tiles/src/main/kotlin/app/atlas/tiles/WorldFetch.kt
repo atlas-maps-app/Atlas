@@ -25,6 +25,12 @@ import kotlin.math.tan
  * and [drop] called (the app empties the world's cache of heads and chunks). The packs themselves come by ranges as the
  * map's views want them ([head], [range]: mapview's WorldReads, into the core's cache). Every request says only who is
  * asking ([Http.USER_AGENT]). Blocking: call it off the main thread, one [start] at a time.
+ *
+ * Where the phone keeps a country's world ([hold], ENGINE.md step 11: the world on the phone lists a keep, and a
+ * country is kept by its tiles), a new version does not drop the old one: it waits beside it ([next]: its world.json,
+ * index, globe and keep list under `<name>.next`, which the core does not list), the phone's world going on as it was,
+ * until the app holds the new one's keep whole in the world's cache and takes it ([adopt]). So a phone that goes
+ * offline at any moment draws a kept country's world: the old one's until then, the new one's after.
  */
 class WorldFetch(
     private val dir: File,
@@ -32,6 +38,7 @@ class WorldFetch(
     client: OkHttpClient = Http.client,
     private val now: () -> Long = System::currentTimeMillis,
     private val drop: () -> Unit = {},
+    private val hold: () -> Boolean = { false },
 ) {
     // the globe takes a while on a phone's network: no limit on the whole call, only on each wait for bytes; nor through
     // the app's HTTP cache, which would keep a second copy (PackDownloader's reasons)
@@ -66,6 +73,19 @@ class WorldFetch(
     var keep: WorldKeepList? = null
         private set
 
+    /**
+     * The newer world that waits beside the phone's until its kept countries' world is whole ([hold], [adopt]): its
+     * release and its index, both on the phone; null where none waits.
+     */
+    @Volatile
+    var next: World? = null
+        private set
+
+    /** The keep list of [next], where its release has one and it came; null else (asked for again a day on). */
+    @Volatile
+    var nextKeep: WorldKeepList? = null
+        private set
+
     /** Whether world.json was asked for a day ago or more (or never, or the clock went back): [start] asks again. */
     fun due(): Boolean {
         val asked = runCatching { File(dir, ASKED).readText().trim().toLong() }.getOrNull() ?: return true
@@ -75,70 +95,162 @@ class WorldFetch(
 
     /**
      * world.json, asked for where it is [due] (else the phone's), then the index and the globe of the release it names,
-     * each fetched where the phone has another release's or none; a new release drops the old one ([drop]). Returns
-     * whether the world on the phone changed (the maps take their packs again). Throws where world.json, the index or
-     * the globe cannot be had and the phone has no whole world to go on with.
+     * each fetched where the phone has another release's or none. A new release drops the old one ([drop]), or, where
+     * the old one's keep is held ([hold]), waits beside it ([next]) for [adopt]. Returns whether the world on the
+     * phone, its keep list, or the world that waits changed (the maps take their packs again, and the app looks at the
+     * kept countries' world). Throws where world.json, the index or the globe cannot be had: the phone's world, where
+     * it has a whole one, goes on meanwhile ([world] is set before).
      */
     @Synchronized
     fun start(): Boolean {
         dir.mkdirs()
-        val json = File(dir, JSON)
-        if (due() || !json.isFile) {
+        val worldBefore = world
+        val keepBefore = keep
+        val nextBefore = next
+        val nextKeepBefore = nextKeep
+        val tagBefore = runCatching { File(dir, RELEASE).readText().trim() }.getOrNull()
+        // world-latest's world.json lands beside the phone's (`world.json.next`): the phone's own stays whole with its
+        // index and globe until a new release's are on the phone too
+        val newest = File(dir, JSON + NEXT)
+        var phone = onPhone()
+        if (due() || (phone == null && !newest.isFile)) {
             val asked = now()
             val fetched = runCatching {
-                fetch(latest + JSON, json, -1, null) { readRelease(it.readText(), scheme) }
+                fetch(latest + JSON, newest, -1, null) { readRelease(it.readText(), scheme) }
                 File(dir, ASKED).writeText("$asked\n")
             }
-            val phone = world ?: onPhone()
-            if (fetched.isFailure && phone != null) {
-                // the phone's world goes on until world-latest answers
-                val changed = world == null
-                world = phone
-                return changed
-            }
-            fetched.getOrThrow()
+            // the phone's world goes on until world-latest answers
+            if (fetched.isFailure && phone == null && !newest.isFile) fetched.getOrThrow()
         }
-        val release = readRelease(json.readText(), scheme)
-        val kept = runCatching { File(dir, RELEASE).readText().trim() }.getOrNull()
-        val idx = File(dir, INDEX)
-        val globe = File(dir, GLOBE)
-        val same = kept == release.tag && idx.length() == release.index.bytes && globe.length() == release.globe.bytes
-        if (!same) {
-            // the new release's index and globe beside the old ones, then both moved in: the old version dropped
-            val newIdx = File(dir, "$INDEX.new")
-            val newGlobe = File(dir, "$GLOBE.new")
-            try {
-                fetch(release.url + release.index.name, newIdx, release.index.bytes, release.index.sha256) { WorldIndex.read(it.readBytes()) }
-                fetch(release.url + release.globe.name, newGlobe, release.globe.bytes, release.globe.sha256) {}
-                File(dir, RELEASE).delete()
-                idx.delete()
-                globe.delete()
-                if (!newIdx.renameTo(idx) || !newGlobe.renameTo(globe)) throw IOException("the world's $INDEX and $GLOBE not moved into place")
-                File(dir, RELEASE).writeText(release.tag + "\n")
-            } finally {
-                newIdx.delete()
-                newGlobe.delete()
+        val release = runCatching { readRelease(newest.readText(), scheme) }.getOrNull()
+        var replaced = false
+        var failed: Throwable? = null
+        if (release == null) {
+            unstage()
+        } else if (phone != null && sameWorld(phone.release, release)) {
+            // world-latest names the phone's world still: its world.json as it is now, and nothing waits
+            val json = File(dir, JSON)
+            if (!newest.renameTo(json)) {
+                json.delete()
+                newest.renameTo(json)
             }
-            if (kept != null && kept != release.tag) drop()
+            unstage()
+            phone = onPhone() ?: phone
+        } else {
+            val list = phone?.let { listOnPhone(it.release, File(dir, WorldKeepList.NAME)) }
+            if (phone != null && list != null && hold()) {
+                // the old world's keep is held: the new one waits beside it until its own is whole (adopt)
+                try {
+                    next = stage(release)
+                    nextKeep = keepOf(release, File(dir, WorldKeepList.NAME + NEXT))
+                } catch (e: Exception) {
+                    next = null
+                    nextKeep = null
+                    failed = e
+                }
+            } else {
+                // the new release's index and globe beside the old ones, then both moved in: the old version dropped
+                try {
+                    stage(release)
+                    moveIn()
+                    replaced = true
+                    phone = onPhone()
+                    if (tagBefore != null && tagBefore != release.tag) drop()
+                } catch (e: Exception) {
+                    failed = e
+                }
+                next = null
+                nextKeep = null
+            }
         }
-        val before = world
-        val now = World(release, WorldIndex.read(idx.readBytes()))
-        world = now
-        val listBefore = keep
-        val list = keepOf(release)
-        keep = list
-        return before == null || before.release.tag != now.release.tag || !same || listBefore?.indexSha256 != list?.indexSha256
+        val mine = phone ?: throw (failed ?: IOException("the world is not whole on the phone"))
+        // the same world goes on as the object the maps hold
+        if (worldBefore == null || !sameWorld(worldBefore.release, mine.release) || worldBefore.release.url != mine.release.url || replaced) world = mine
+        keep = keepOf(mine.release, File(dir, WorldKeepList.NAME))
+        failed?.let { throw it }
+        return worldBefore == null || worldBefore.release.tag != mine.release.tag || replaced || keepBefore?.indexSha256 != keep?.indexSha256 ||
+            nextBefore?.release?.tag != next?.release?.tag || nextKeepBefore?.indexSha256 != nextKeep?.indexSha256
     }
 
     /**
-     * The keep list of [release]: the phone's where it is that release's (its index's SHA-256), else fetched from the
-     * release at most once a day (a release made before the keep has none, and a later run of world.yml's refs job
-     * adds it). Null where the release has none or it did not come: the world goes on without it.
+     * Takes the world that waits ([next]) as the phone's: its world.json, index, globe and keep list moved into
+     * place, [world] and [keep] its own from now on. The app calls it once the world's cache holds the new one's keep
+     * whole (mapview's WorldKeeper), or where no country's world is kept any more; the old one's heads and chunks are
+     * the caller's to let go ([drop] is not called). False where none waits. Throws where the files do not move.
      */
-    private fun keepOf(release: Release): WorldKeepList? {
-        val file = File(dir, WorldKeepList.NAME)
-        fun held() = runCatching { WorldKeepList.read(file.readText()) }.getOrNull()?.takeIf { it.indexSha256 == release.index.sha256 }
-        held()?.let { return it }
+    @Synchronized
+    fun adopt(): Boolean {
+        val staged = next ?: return false
+        val list = nextKeep
+        moveIn()
+        world = staged
+        keep = list
+        next = null
+        nextKeep = null
+        return true
+    }
+
+    /** Whether [a] and [b] are one world: the same release, index and globe. */
+    private fun sameWorld(a: Release, b: Release): Boolean =
+        a.tag == b.tag && a.index.bytes == b.index.bytes && a.index.sha256 == b.index.sha256 && a.globe.bytes == b.globe.bytes && a.globe.sha256 == b.globe.sha256
+
+    /**
+     * [release]'s index and globe on the phone beside the world's own (`world.idx.next`, `world-globe.atlas.next`),
+     * fetched where they are not there whole (`world.release.next` names the release they are of, written after
+     * both); its world.json is `world.json.next`.
+     */
+    private fun stage(release: Release): World {
+        val idx = File(dir, INDEX + NEXT)
+        val globe = File(dir, GLOBE + NEXT)
+        val tag = File(dir, RELEASE + NEXT)
+        val whole = runCatching { tag.readText().trim() }.getOrNull() == release.tag && idx.length() == release.index.bytes && globe.length() == release.globe.bytes
+        if (!whole) {
+            tag.delete()
+            fetch(release.url + release.index.name, idx, release.index.bytes, release.index.sha256) { WorldIndex.read(it.readBytes()) }
+            fetch(release.url + release.globe.name, globe, release.globe.bytes, release.globe.sha256) {}
+            tag.writeText(release.tag + "\n")
+        }
+        return World(release, WorldIndex.read(idx.readBytes()))
+    }
+
+    /**
+     * The staged world's files moved into place: `world.release` goes first and comes back last, so a move that stops
+     * halfway leaves no world that reads as whole (the next [start] fetches it again).
+     */
+    private fun moveIn() {
+        val tag = File(dir, RELEASE + NEXT).readText().trim()
+        File(dir, RELEASE).delete()
+        for (name in listOf(JSON, INDEX, GLOBE)) {
+            val to = File(dir, name)
+            to.delete()
+            if (!File(dir, name + NEXT).renameTo(to)) throw IOException("the world's $name not moved into place")
+        }
+        // the keep list is its world's: the new one's where it came, none else
+        val list = File(dir, WorldKeepList.NAME)
+        list.delete()
+        File(dir, WorldKeepList.NAME + NEXT).renameTo(list)
+        File(dir, RELEASE).writeText(tag + "\n")
+        File(dir, RELEASE + NEXT).delete()
+    }
+
+    /** Nothing waits beside the phone's world: the files of a world that did are deleted. */
+    private fun unstage() {
+        for (name in listOf(JSON, INDEX, GLOBE, RELEASE, WorldKeepList.NAME)) File(dir, name + NEXT).delete()
+        next = null
+        nextKeep = null
+    }
+
+    /** The keep list in [file] where it is [release]'s (its index's SHA-256), else null. */
+    private fun listOnPhone(release: Release, file: File): WorldKeepList? =
+        runCatching { WorldKeepList.read(file.readText()) }.getOrNull()?.takeIf { it.indexSha256 == release.index.sha256 }
+
+    /**
+     * The keep list of [release] in [file]: the phone's where it is that release's (its index's SHA-256), else fetched
+     * from the release at most once a day (a release made before the keep has none, and a later run of world.yml's
+     * refs job adds it). Null where the release has none or it did not come: the world goes on without it.
+     */
+    private fun keepOf(release: Release, file: File): WorldKeepList? {
+        listOnPhone(release, file)?.let { return it }
         val marker = File(dir, KEEP_ASKED)
         val asked = runCatching { marker.readText().trim().split(' ') }.getOrNull()
         val t = now()
@@ -153,7 +265,7 @@ class WorldFetch(
             file.delete()
         }
         runCatching { marker.writeText("${release.tag} $t\n") }
-        return held()
+        return listOnPhone(release, file)
     }
 
     /** The world as the phone keeps it (world.json, and its release's index and globe), or null where it is not whole. */
@@ -162,34 +274,33 @@ class WorldFetch(
         val idx = File(dir, INDEX)
         val whole = File(dir, RELEASE).readText().trim() == release.tag && idx.length() == release.index.bytes &&
             File(dir, GLOBE).length() == release.globe.bytes
-        if (whole) {
-            keep = runCatching { WorldKeepList.read(File(dir, WorldKeepList.NAME).readText()) }.getOrNull()?.takeIf { it.indexSha256 == release.index.sha256 }
-            World(release, WorldIndex.read(idx.readBytes()))
-        } else {
-            null
-        }
+        if (whole) World(release, WorldIndex.read(idx.readBytes())) else null
     }.getOrNull()
 
     /**
      * The head of pack [e] of the world on the phone (ENGINE.md step 6): its bytes but its `chunks` section, as ranges
      * (each its offset in the pack and its bytes), which the core keeps in the world's cache. Its first [HEAD_FIRST]
      * bytes, then what of the head lies past them, a request each: the rest of its directory where it runs past them,
-     * the rest before its chunks, and the sections after them (one request for a pack no longer than [HEAD_FIRST]).
+     * the rest before its chunks, and the sections after them (one request for a pack no longer than [HEAD_FIRST]). With
+     * [of], a pack of that world (the one that waits, [next]).
      */
-    fun head(e: WorldIndex.Entry): List<Pair<Long, ByteArray>> {
-        var first = range(e, 0, minOf(e.length, HEAD_FIRST.toLong()).toInt())
+    fun head(e: WorldIndex.Entry, of: World? = null): List<Pair<Long, ByteArray>> {
+        var first = range(e, 0, minOf(e.length, HEAD_FIRST.toLong()).toInt(), of)
         val need = directoryEnd(first)
-        if (need > first.size) first += range(e, first.size.toLong(), need - first.size)
+        if (need > first.size) first += range(e, first.size.toLong(), need - first.size, of)
         val (start, end) = chunksOf(first, e.length)
-        val before = if (start <= first.size) first.copyOf(start.toInt()) else first + range(e, first.size.toLong(), (start - first.size).toInt())
+        val before = if (start <= first.size) first.copyOf(start.toInt()) else first + range(e, first.size.toLong(), (start - first.size).toInt(), of)
         if (end >= e.length) return listOf(0L to before)
-        val after = if (first.size >= e.length) first.copyOfRange(end.toInt(), e.length.toInt()) else range(e, end, (e.length - end).toInt())
+        val after = if (first.size >= e.length) first.copyOfRange(end.toInt(), e.length.toInt()) else range(e, end, (e.length - end).toInt(), of)
         return listOf(0L to before, end to after)
     }
 
-    /** Bytes [offset] to [offset] + [length] of pack [e] of the world on the phone: one range of its part. */
-    fun range(e: WorldIndex.Entry, offset: Long, length: Int): ByteArray {
-        val w = world ?: throw IOException("the world is not on the phone yet")
+    /**
+     * Bytes [offset] to [offset] + [length] of pack [e] of the world on the phone, or of the world [of] where one is
+     * given (the one that waits, [next]): one range of its part.
+     */
+    fun range(e: WorldIndex.Entry, offset: Long, length: Int, of: World? = null): ByteArray {
+        val w = of ?: world ?: throw IOException("the world is not on the phone yet")
         require(offset >= 0 && length > 0 && offset + length <= e.length) { "bytes $offset to ${offset + length} of a pack of ${e.length}" }
         val url = w.release.url + w.index.parts[e.part].name
         val a = e.offset + offset
@@ -228,11 +339,15 @@ class WorldFetch(
         var wait = firstWait
         while (true) {
             online.first { it }
+            val had = world != null
             val started = runCatching { start() }
             val w = world
             if (started.isSuccess && w != null) {
                 if (started.getOrThrow()) {
                     said("$INDEX (${w.index.entries.size} packs) and $GLOBE of ${w.release.tag} on the phone")
+                    next?.let { n ->
+                        said("${n.release.tag} waits beside it: the kept countries' world of ${w.release.tag} stays until the new one's is whole" + if (nextKeep == null) " (it lists none yet)" else "")
+                    }
                     landed()
                 }
                 wait = firstWait
@@ -240,7 +355,13 @@ class WorldFetch(
                 while (!due()) delay(DUE_CHECK_MS)
                 continue
             }
-            said("not on the phone yet: ${started.exceptionOrNull()?.message}")
+            if (w != null) {
+                // the phone's world goes on while a new one's files do not come
+                said("${w.release.tag} goes on, the newest not on the phone yet: ${started.exceptionOrNull()?.message}")
+                if (!had) landed()
+            } else {
+                said("not on the phone yet: ${started.exceptionOrNull()?.message}")
+            }
             withTimeoutOrNull(wait) {
                 online.first { !it }
                 online.first { it }
@@ -300,6 +421,13 @@ class WorldFetch(
 
         /** The release the keep list was last asked for, and when. */
         private const val KEEP_ASKED = "world-keep.asked"
+
+        /** The ending of the files of the world that waits beside the phone's ([next]), and of world-latest's world.json as it lands. */
+        private const val NEXT = ".next"
+
+        /** Chunks closer than this in a pack are fetched in one range with what lies between (kept too), up to [MAX_RANGE] bytes. */
+        const val MERGE_GAP = 32L shl 10
+        const val MAX_RANGE = 4L shl 20
 
         private const val BUFFER = 1 shl 16
 

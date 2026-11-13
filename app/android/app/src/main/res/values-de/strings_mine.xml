@@ -66,6 +66,8 @@
     <string name="mine_offline_orphan_text">Diese Orte gehören zu keinem Gebiet auf diesem Telefon, und diese Version von Atlas kann sie nicht lesen. Löschen gibt %1$s frei.</string>
     <string name="mine_offline_delete_title">%1$s löschen?</string>
     <string name="mine_offline_delete_text">Das gibt %1$s frei. Karte, Suche und Routen dort brauchen dann Verbindung.</string>
+    <string name="mine_offline_size_world">%1$s · Welt %2$s</string>
+    <string name="mine_offline_world_text">Die Karte behält %1$s der Welt ringsum, damit sie offline bis zum Globus reicht.</string>
     <string name="mine_offline_delete_confirm">Löschen</string>
     <string name="mine_offline_keep">Behalten</string>
     <string name="mine_offline_footer">Karten und Orte: OpenStreetMap-Mitwirkende (ODbL) · Routen: BRouter · Pakete von Atlas auf GitHub</string>
@@ -638,6 +640,7 @@
     <string name="mine_picker_from_pack">aus Atlas\' veröffentlichtem Paket</string>
     <string name="mine_picker_built">auf diesem Telefon aus OpenStreetMap gebaut</string>
     <string name="mine_picker_too_big">Zu groß, um es hier zu bauen: wähle ein Länderpaket oder zeichne ein kleineres Gebiet.</string>
+    <string name="mine_picker_world">Die Karte enthält %1$s der Welt um das Land, damit sie offline bis zum Globus reicht.</string>
     <string name="mine_picker_failed">Die Größe konnte nicht berechnet werden. Versuche es gleich noch einmal.</string>
     <string name="mine_picker_wifi">Nur über WLAN</string>
     <string name="mine_picker_download">Laden</string>

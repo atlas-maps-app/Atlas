@@ -348,7 +348,11 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: Unread
                     .padding(start = 16.dp, top = 13.75.dp, end = 14.dp, bottom = 9.dp),
             ) {
                 BText(d.name, bt(24f, 400, 24f, SERIF), INK, lines = 2)
-                if (d.bytes > 0) BText(RegionEngine.size(d.bytes), bt(13f, 400, 17f, tnum = true), BODY, Modifier.padding(top = 8.25.dp))
+                // its size, and how much of it is the world kept with a country's tiles (ENGINE.md step 11)
+                if (d.bytes > 0) BText(
+                    if (d.world > 0) stringResource(R.string.mine_offline_size_world, RegionEngine.size(d.bytes), RegionEngine.size(d.world)) else RegionEngine.size(d.bytes),
+                    bt(13f, 400, 17f, tnum = true), BODY, Modifier.padding(top = 8.25.dp), lines = 2,
+                )
                 val icons = OfflineModel.icons(d)
                 if (icons.isNotEmpty()) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     for (s in icons) MSy(s, 16f, INK)
@@ -363,6 +367,7 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: Unread
                     stringResource(if (bad.otherVersion) R.string.mine_offline_unreadable_version else R.string.mine_offline_unreadable_damaged),
                     bt(13f, 400, 17f), BODY, lines = 3,
                 )
+                if (d.world > 0) BText(stringResource(R.string.mine_offline_world_text, RegionEngine.size(d.world)), bt(13f, 400, 17f, tnum = true), BODY, lines = 3)
                 // the longer names ("Opnieuw downloaden", "Verwijderen") go under each other on a narrow phone
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val running = d.progress != null

@@ -57,49 +57,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * Empties the world's cache in [dir] of every head and chunk (ENGINE.md step 6: a new version of the world drops
-         * the old one's), within [budget] bytes from now on. "" or why not. Off the main thread.
+         * the old one's), the kept countries' pins with them, within [budget] bytes from now on. "" or why not. Off the
+         * main thread. (The kept countries' world, which outlives a new version until the new one's is whole, goes
+         * through [KeptWorld].)
          */
         fun worldDrop(dir: String, budget: Long): String {
             Native.load()?.let { return it.ifEmpty { "the core did not load" } }
-            return Native.worldDrop(dir, budget)
-        }
-
-        /**
-         * Pins in the world's cache in [dir] everything [packs] keep (ENGINE.md step 11: the world's tiles a kept
-         * country draws offline), in place of what was pinned there, so the cache's LRU never takes it and its
-         * [budget] does not count it: every pack's head, and each tile's chunk of the packs whose heads the cache
-         * holds. Says what is lacking: the app fetches it, hands it over ([worldHead], [worldKeptRange]) and asks
-         * again. No packs: nothing is pinned. Null where the cache does not open or the pins cannot be written. Off
-         * the main thread.
-         */
-        fun worldKept(dir: String, budget: Long, packs: List<KeptPack>): Kept? {
-            if (Native.load() != null) return null
-            val identities = ByteArray(32 * packs.size)
-            packs.forEachIndexed { i, p -> p.identity.copyInto(identities, 32 * i, 0, 32) }
-            val tiles = LongArray(packs.sumOf { it.tiles.size })
-            var at = 0
-            for (p in packs) for (t in p.tiles) tiles[at++] = t.packed
-            val r = Native.worldKept(dir, budget, LongArray(packs.size) { packs[it].length }, identities, IntArray(packs.size) { packs[it].tiles.size }, tiles)
-                ?: return null
-            val heads = r[3].toInt()
-            val first = 4 + heads
-            return Kept(
-                heads = List(heads) { r[4 + it].toInt() },
-                chunks = List((r.size - first) / 4) { i -> KeptChunk(r[first + 4 * i].toInt(), Window.of(r[first + 4 * i + 1]), r[first + 4 * i + 2], r[first + 4 * i + 3]) },
-                unknown = r[0].toInt(),
-                held = r[1].toInt(),
-                heldBytes = r[2],
-            )
-        }
-
-        /**
-         * A range of the bytes of kept world pack [pack] from [offset] the app fetched, into the world's cache in
-         * [dir]: its whole chunks checked against their SHA-256 and kept. Null where the cache holds no head that
-         * opens the pack. Off the main thread.
-         */
-        fun worldKeptRange(dir: String, budget: Long, pack: KeptPack, offset: Long, bytes: ByteArray): WorldKept? {
-            if (Native.load() != null) return null
-            return Native.worldKeptRange(dir, budget, pack.length, pack.identity, offset, bytes)?.let { r -> WorldKept(r[0].toInt(), List(r.size - 1) { Window.of(r[it + 1]) }) }
+            return Native.worldDrop(dir, budget, false)
         }
 
         @Volatile
@@ -341,7 +305,7 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
              * A pack of the world's mid-zoom base (ENGINE.md steps 5 and 6): a remote pack by its [identity] and [length]
              * (world.idx's), opened from its head in the world's cache, drawn beyond 18 km under every country's tiles.
              */
-            const val WORLD_MID = 3
+            const val WORLD_MID = KeptWorld.WORLD_MID
 
             /** The world's globe (ENGINE.md step 5: world-globe.atlas, L0 to L5), drawn where no world pack reaches. */
             const val WORLD_BASE = 4
@@ -645,19 +609,6 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * coarse pack, an L6 block's fine one; the app fetches the head of each its index has. Off the main thread.
      */
     fun worldBlocks(): List<Window> = core.call(emptyList()) { h -> Native.worldBlocks(h).map { Window.of(it) } }
-
-    /** A world pack of a keep: its [length] and [identity] (its SHA-256) as world.idx has them, and its [tiles] to keep. */
-    class KeptPack(val length: Long, val identity: ByteArray, val tiles: List<Window>)
-
-    /** A chunk a keep lacks: its pack's place among those asked about, its [tile], its [offset] in the pack and its [length]. */
-    class KeptChunk(val pack: Int, val tile: Window, val offset: Long, val length: Long)
-
-    /**
-     * Where a keep stands: the packs whose [heads] the cache lacks (their places; their chunks are not known yet),
-     * the [chunks] it lacks of the others, the tiles asked for that no pack holds ([unknown]), and the chunks it
-     * holds ([held], [heldBytes] stored bytes).
-     */
-    class Kept(val heads: List<Int>, val chunks: List<KeptChunk>, val unknown: Int, val held: Int, val heldBytes: Long)
 
     /** What [worldKeep] made of a range: the chunks it kept, and the tiles whose bytes were refused. */
     class WorldKept(val kept: Int, val refused: List<Window>)

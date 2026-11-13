@@ -382,17 +382,23 @@ class MapData(private val services: Services) {
         MapEngine.nameTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.instrument_serif_italic) }.getOrNull()
         MapEngine.globeTypeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(services.context, app.atlas.R.font.geist) }.getOrNull()
         val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk world: $line") }
-        val world = WorldFetch(dir, client = services.http.client, drop = {
-            MapEngine.worldCacheDir()?.let { cache ->
-                val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
-                said(if (why.isEmpty()) "the old version's heads and chunks dropped" else "the old version's heads and chunks not dropped: $why")
-            }
-        })
+        // a new version drops the old one's heads and chunks, unless a country is kept by its tiles: then it waits
+        // beside the old one until the keeper holds its kept world whole (ENGINE.md step 11: no kept world lost offline)
+        val world = WorldFetch(
+            dir, client = services.http.client,
+            drop = {
+                MapEngine.worldCacheDir()?.let { cache ->
+                    val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
+                    said(if (why.isEmpty()) "the old version's heads and chunks dropped" else "the old version's heads and chunks not dropped: $why")
+                }
+            },
+            hold = { services.mine.engine.keepsWorld() },
+        )
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch
             MapEngine.worldReads = WorldReads(world, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
-            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said)
+            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said, adopted = { MapEngine.invalidate() })
             launch { keepWorld(landed, said) }
             world.follow(services.connectivity.online, said = said, landed = {
                 MapEngine.invalidate()
@@ -406,7 +412,9 @@ class MapData(private val services: Services) {
      * changes and as the network changes: what they keep is pinned in the world's cache at once, and what the phone
      * lacks of it (after a new version of the world, or a download that stopped) is fetched while the phone is online
      * and its network is not metered, as a region's download waits for Wi-Fi; a fetch that fails is tried again
-     * [KEEP_AGAIN_MS] on. A country's own download keeps its world as it takes its tiles (RegionEngine).
+     * [KEEP_AGAIN_MS] on. A new version of the world waits beside the phone's until its keep is whole, and is taken
+     * then (WorldKeeper), so the phone keeps drawing the old one, offline too, however long that fetch waits. A
+     * country's own download keeps its world as it takes its tiles (RegionEngine).
      */
     private suspend fun keepWorld(landed: Flow<Unit>, said: (String) -> Unit) {
         combine(landed, services.connectivity.online, services.connectivity.metered) { _, online, metered -> online && !metered }

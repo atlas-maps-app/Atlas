@@ -438,8 +438,11 @@ class MapFacadeTest {
             assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(3), tiles))
             assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), ByteArray(31), intArrayOf(2), tiles))
             assertNull(Native.worldKept(dir.path, budget, longArrayOf(0), identity, intArrayOf(2), tiles))
-            // the world dropped (a new version): nothing pinned
-            assertEquals("", Native.worldDrop(dir.path, budget))
+            // the world dropped but its pinned keep (a new version taken once its own keep is whole): the pin stays
+            assertEquals("", Native.worldDrop(dir.path, budget, true))
+            assertEquals(1, File(dir, "pinned").readLines().size)
+            // the world dropped (a new version where no country is kept): nothing pinned
+            assertEquals("", Native.worldDrop(dir.path, budget, false))
             assertEquals(0, File(dir, "pinned").readLines().size)
         } finally {
             dir.deleteRecursively()
