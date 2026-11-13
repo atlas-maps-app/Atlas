@@ -155,6 +155,10 @@ class VkBenchTest {
         val over = VkBench.MapView("home", 52.0, 4.9, 52.0, 52.0, 430.0, home.paths, "window/14/8414/5384", VkBench.Path.PINCH)
         assertEquals("map home pinch records off over window/14/8414/5384", VkBench.recordsLabel(over, VkBench.Path.PINCH, false))
         assertEquals("vkbench map home pinch records: not compared (no map)", VkBench.recordsSkipped(home, VkBench.Path.PINCH, "no map"))
+        // the terrain's relief is compared in the same slices, its lines named alike (ENGINE.md part 6, step 2)
+        assertEquals("map home pinch terrain on", VkBench.terrainLabel(home, VkBench.Path.PINCH, true))
+        assertEquals("map home pinch terrain off over window/14/8414/5384", VkBench.terrainLabel(over, VkBench.Path.PINCH, false))
+        assertEquals("vkbench map home pinch terrain: not compared (no map)", VkBench.terrainSkipped(home, VkBench.Path.PINCH, "no map"))
         assertEquals(
             "gpu before the main pass 2.00 ms, in it 7.00, after it 1.00",
             VkBench.gpuParts(doubleArrayOf(3.0, 2.0, 1.0), doubleArrayOf(7.0, 9.0, 5.0), doubleArrayOf(1.0, 1.0, 2.0)),
@@ -164,8 +168,15 @@ class VkBenchTest {
         // none of the comparison's lines, and the paths' own lines are as they were
         val s = VkBench.Summary(10, 16.7, 18.0, 20.0, 0, "display-timing", 9.0, 11.0, 6.0, 8.0, 1.0, 2.0, Double.NaN, Double.NaN, 40, 900)
         val lines = listOf(home, over).flatMap { v ->
-            listOf(true, false).map { on -> VkBench.line(VkBench.recordsLabel(v, VkBench.Path.PINCH, on), s, 100.0, 50.0, VkBench.gpuParts(DoubleArray(0), DoubleArray(0), DoubleArray(0))) }
-        } + VkBench.recordsSkipped(over, VkBench.Path.PINCH, "no map")
+            listOf(true, false).flatMap { on ->
+                listOf(VkBench.recordsLabel(v, VkBench.Path.PINCH, on), VkBench.terrainLabel(v, VkBench.Path.PINCH, on))
+                    .map { VkBench.line(it, s, 100.0, 50.0, VkBench.gpuParts(DoubleArray(0), DoubleArray(0), DoubleArray(0))) }
+            }
+        } + VkBench.recordsSkipped(over, VkBench.Path.PINCH, "no map") + VkBench.terrainSkipped(over, VkBench.Path.PINCH, "no map")
+        // each a line of vkbench.txt (smoke.sh keeps every `vkbench map` line), with its side named
+        assertEquals(10, lines.count { it.startsWith("vkbench map home pinch ") })
+        assertTrue(lines.any { it.startsWith("vkbench map home pinch terrain on: p50 ") })
+        assertTrue(lines.any { it.startsWith("vkbench map home pinch terrain off over window/14/8414/5384: p50 ") })
         val path = Regex("^vkbench map [a-z0-9]+ [a-z]+: p50 ")
         for (p in listOf("home still", "home orbit", "home pan", "home pinch", "board orbit", "pitch70 orbit", "world72 orbit")) {
             assertTrue(lines.none { it.startsWith("vkbench map $p: p50 ") })

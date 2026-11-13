@@ -314,6 +314,7 @@ object MapEngine {
             windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
             world = { worldDir() },
             worldHeld = { ids -> worldCacheDir()?.let { MapCore.worldHeld(it.path, worldCacheBytes, ids) } ?: BooleanArray(ids.size) },
+            terrain = { terrainDir() },
         )
             .also { packList = it }
     }
@@ -437,6 +438,12 @@ object MapEngine {
     /** Where the world is kept (ENGINE.md step 6: world.json, world.idx and the globe): [keptDir]'s `world/`. */
     fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
+    /**
+     * Where the terrain is kept (ENGINE.md part 6, step 2: terrain.json and its regions' indexes, TerrainFetch's):
+     * [keptDir]'s `terrain/`. Its packs' heads and chunks live in the world's cache ([worldCacheDir]).
+     */
+    fun terrainDir(): File? = keptDir?.let { File(it, "terrain") }
+
     /** The world's own cache of its packs' heads and chunks (ENGINE.md step 6, the core's LRU): [worldDir]'s `cache/`. */
     fun worldCacheDir(): File? = worldDir()?.let { File(it, "cache") }
 
@@ -454,6 +461,14 @@ object MapEngine {
      */
     @Volatile
     var worldReads: app.atlas.mapview.vk.WorldReads? = null
+
+    /**
+     * The terrain's packs by ranges as the maps' views want them (ENGINE.md part 6, step 2), once the app has the
+     * terrain's list ([TerrainReads][app.atlas.mapview.vk.TerrainReads]: each map asks it for a step beside the world's);
+     * null before, and where the app does not fetch terrain.
+     */
+    @Volatile
+    var terrainReads: app.atlas.mapview.vk.TerrainReads? = null
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null

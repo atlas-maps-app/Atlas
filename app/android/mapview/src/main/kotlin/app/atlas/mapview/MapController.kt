@@ -370,6 +370,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** When the map last asked the core which windows it wants (SystemClock.uptimeMillis). */
     private var windowCheckedAt = 0L
 
+    // when the relief's sources were last asked for (the credit line's: CREDITS_CHECK_MS)
+    private var creditsCheckedAt = 0L
+
     /**
      * The windows' next step, asked once the last one's half second is over, whatever the camera does: the last one
      * worked on a tile or a window but wrote no pack the core takes (one with nothing to draw, a miss), so there may be
@@ -1024,6 +1027,19 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 MapEngine.worldReads?.let { r ->
                     scope.launch(Dispatchers.IO) {
                         if (runCatching { r.step(c.core) }.getOrDefault(false)) main.post(repack)
+                    }
+                }
+                // the terrain's packs the view wants (ENGINE.md part 6, step 2): a region's index, a block's head, its chunks;
+                // and, once a second, the sources of the relief drawn, which the map's credit line names
+                MapEngine.terrainReads?.let { r ->
+                    val credits = now - creditsCheckedAt >= CREDITS_CHECK_MS
+                    if (credits) creditsCheckedAt = now
+                    scope.launch(Dispatchers.IO) {
+                        if (runCatching { r.step(c.core) }.getOrDefault(false)) main.post(repack)
+                        if (credits) {
+                            val names = runCatching { r.credits(c.core) }.getOrDefault(emptyList())
+                            main.post { if (!closed && state.credits != names) state.credits = names }
+                        }
                     }
                 }
                 // what the windows do now is what the map is, where the place's window has not come yet
@@ -1691,6 +1707,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
         /** How often the map asks the core which windows it wants, ms. */
         const val WINDOWS_CHECK_MS = 500L
+
+        /** How often the map asks the core which sources its relief drew (its credit line's names), ms. */
+        const val CREDITS_CHECK_MS = 1_000L
 
         /** How often the canvas draws again while the windows work (the status, and their next step), and while they wait. */
         const val WINDOWS_WORK_TICK_MS = 1_000L

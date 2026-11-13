@@ -205,6 +205,50 @@ class EdgeTest {
     }
 
     @Test
+    fun theTerrainsPacksAreListedOnceTheirHeadsAreOnThePhoneApartFromTheMap() {
+        // the terrain's folder as TerrainFetch keeps it (ENGINE.md part 6, step 2): two regions' indexes, Amsterdam's
+        // L9 block in each (a border's block two regions hold), and terrain.json beside them; a pack is listed once its
+        // head is in the world's cache, as a remote terrain pack of its SHA-256 and length, its id the core's
+        val terrain = File(dir, "terrain").apply { mkdirs() }
+        val nl = ByteArray(WorldIndex.HASH_BYTES) { 1 }
+        val de = ByteArray(WorldIndex.HASH_BYTES) { 2 }
+        fun index(region: String, vararg entries: WorldIndex.Entry) =
+            File(terrain, "$region-terrain.idx").outputStream().use { WorldIndex(Instant.EPOCH, listOf(WorldIndex.Part("$region-terrain.000", 1_000)), entries.toList()).write(it) }
+        index("netherlands", WorldIndex.Entry(9, 262, 168, 12, 14, 0, 0, 400, 21, IntArray(4), nl), WorldIndex.Entry(9, 263, 168, 12, 14, 0, 400, 300, 21, IntArray(4), ByteArray(32) { 3 }))
+        index("germany", WorldIndex.Entry(9, 262, 168, 12, 14, 0, 100, 500, 21, IntArray(4), de))
+        File(terrain, "terrain.json").writeText("{}")
+        File(terrain, "netherlands-terrain.idx.download").writeBytes(ByteArray(10))
+        val held = HashSet<List<Byte>>()
+        val list = PackList(windows = { windows }, worldHeld = { ids -> BooleanArray(ids.size) { ids[it].toList() in held } }, terrain = { terrain })
+        list.load()
+        assertEquals(emptyList<MapCore.PackRef>(), list.terrainRefs)
+        held += nl.toList()
+        held += de.toList()
+        val revision = list.revision
+        list.load()
+        assertTrue(list.revision > revision)
+        assertEquals(
+            listOf("terrain/germany-terrain/9/262/168 5 0 500", "terrain/netherlands-terrain/9/262/168 5 0 400"),
+            list.terrainRefs.map { "${it.id} ${it.kind} ${it.offset} ${it.length}" },
+        )
+        val ref = list.refs().first { it.id == "terrain/netherlands-terrain/9/262/168" }
+        assertEquals("", ref.path)
+        assertArrayEquals(nl, ref.identity)
+        // the terrain is no world, no pack a camera names, and covers nothing
+        assertFalse(list.hasWorld)
+        assertNull(list.named(52.37, 4.88))
+        assertFalse(list.covers(52.37, 4.88, 1_000.0))
+        // the same heads again: nothing new for the core; a region's index gone (a new release that no longer names it)
+        val same = list.revision
+        list.load()
+        assertEquals(same, list.revision)
+        File(terrain, "germany-terrain.idx").delete()
+        list.load()
+        assertTrue(list.revision > same)
+        assertEquals(listOf("terrain/netherlands-terrain/9/262/168"), list.terrainRefs.map { it.id })
+    }
+
+    @Test
     fun withinACountrysBoxBeyondItsBorderNoLevelsAreOnceItsTilesIndexSaysSo() {
         val antwerp = doubleArrayOf(51.2194, 4.4025)
         val westerkerk = doubleArrayOf(52.3747, 4.8838)

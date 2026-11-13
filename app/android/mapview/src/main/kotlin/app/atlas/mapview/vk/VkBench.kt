@@ -387,6 +387,18 @@ object VkBench {
         "vkbench map ${view.label} ${path.label} records" + (view.over?.let { " over $it" } ?: "") + ": not compared ($why)"
 
     /**
+     * A terrain comparison's label (ENGINE.md part 6, step 2: the compared path drawn with the relief on and off in turn
+     * as the records are, [recordsOn]'s slices, by [app.atlas.mapcore.MapCore.terrain]): `map <view> <path> terrain
+     * on|off`, and the pack drawn over where it is the phone's own ([MapView.over]).
+     */
+    fun terrainLabel(view: MapView, path: Path, on: Boolean): String =
+        "map ${view.label} ${path.label} terrain ${if (on) "on" else "off"}" + (view.over?.let { " over $it" } ?: "")
+
+    /** The line where the terrain cannot be compared at [view]: why. */
+    fun terrainSkipped(view: MapView, path: Path, why: String): String =
+        "vkbench map ${view.label} ${path.label} terrain" + (view.over?.let { " over $it" } ?: "") + ": not compared ($why)"
+
+    /**
      * The triangle governor's words in the core's stats ([app.atlas.mapcore.MapCore.stats]: `World::tiles_line`'s
      * `governor bias <b> most <m> triangles <t> of <budget>`, in millions) for a path's line: `bias <b> most <m>
      * triangles <t>M of <budget>M` (the bias as the path ends, the highest any frame of the map had, and what the last

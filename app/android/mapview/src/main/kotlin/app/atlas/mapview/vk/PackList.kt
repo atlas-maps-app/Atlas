@@ -7,6 +7,8 @@ import app.atlas.mapcore.state.CameraWriter
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.RegionFrame
 import app.atlas.render.py.PyJson
+import app.atlas.tiles.TerrainFetch
+import app.atlas.tiles.TerrainList
 import app.atlas.tiles.WorldFetch
 import app.atlas.tiles.WorldIndex
 import java.io.DataInputStream
@@ -49,6 +51,12 @@ class PackList(
     private val world: () -> File? = { null },
     /** Whether the world's cache holds each pack's head, by their SHA-256s (MapCore.worldHeld); none by default. */
     private val worldHeld: (List<ByteArray>) -> BooleanArray = { BooleanArray(it.size) },
+    /**
+     * The terrain's folder on the phone (ENGINE.md part 6, step 2: TerrainFetch's `<region>-terrain.idx` files), or null
+     * for none: each pack of its indexes whose head is in the world's cache ([worldHeld], which holds the terrain's
+     * heads and chunks too) is listed as a remote terrain pack, whose heights the core's relief reads.
+     */
+    private val terrain: () -> File? = { null },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -113,6 +121,14 @@ class PackList(
      */
     @Volatile
     var worldRefs: List<MapCore.PackRef> = emptyList()
+        private set
+
+    /**
+     * The terrain's packs as the core takes them ([MapCore.PackRef.TERRAIN_COUNTRY]), from the [terrain] folder: none
+     * chosen, named or covered by, as the core holds them apart from the map's packs.
+     */
+    @Volatile
+    var terrainRefs: List<MapCore.PackRef> = emptyList()
         private set
 
     /** Whether the world is on the phone: the core draws every camera beyond [LEVELS_REACH] from it. */
@@ -201,12 +217,14 @@ class PackList(
         // a file gone (evicted, or listed no longer) is forgotten: one written there again is read
         heads.keys.retainAll(seen)
         val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
+        val terrainOut = runCatching { terrain()?.let { terrainOf(it) } }.getOrNull().orEmpty()
         val worldKey = { r: MapCore.PackRef -> listOf(r.id, r.path, r.offset, r.length, r.identity?.contentHashCode()) }
         if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
-            worldOut.map(worldKey) != worldRefs.map(worldKey)
+            worldOut.map(worldKey) != worldRefs.map(worldKey) || terrainOut.map(worldKey) != terrainRefs.map(worldKey)
         ) {
             packs = out
             worldRefs = worldOut
+            terrainRefs = terrainOut
             revision++
         }
         loaded = true
@@ -239,6 +257,27 @@ class PackList(
         return out
     }
 
+    /**
+     * The terrain in [dir]: each pack of its `<region>-terrain.idx` files whose head the world's cache holds, as a remote
+     * pack by its SHA-256 and length (its chunks loaded from the cache as they come), its id the core's
+     * (`terrain/<index name without .idx>/<z>/<x>/<y>`: tiles/WorldIndex.hpp's terrain_pack_id).
+     */
+    private fun terrainOf(dir: File): List<MapCore.PackRef> {
+        val out = ArrayList<MapCore.PackRef>()
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(TerrainList.INDEX_SUFFIX) }.orEmpty().sortedBy { it.name }
+        for (f in files) {
+            val index = runCatching { WorldIndex.read(f.readBytes()) }.getOrNull() ?: continue
+            val name = f.name.removeSuffix(".idx")
+            val held = worldHeld(index.entries.map { it.sha256 })
+            for ((i, e) in index.entries.withIndex()) {
+                if (i >= held.size || !held[i]) continue
+                val id = TerrainFetch.idOf(name, e)
+                out += MapCore.PackRef(id, numberOf(id), MapCore.PackRef.TERRAIN_COUNTRY, length = e.length, identity = e.sha256)
+            }
+        }
+        return out
+    }
+
     private fun packOf(id: String, kind: Int, h: Head, file: File, read: Read): Pack {
         val profile = profileOf(h.profile)
         return Pack(
@@ -254,7 +293,7 @@ class PackList(
      * again at the same path anew.
      */
     fun refs(): List<MapCore.PackRef> =
-        packs.map { p -> MapCore.PackRef(p.id, p.number, p.kind, path = p.file.path, offset = p.time, length = p.size) } + worldRefs
+        packs.map { p -> MapCore.PackRef(p.id, p.number, p.kind, path = p.file.path, offset = p.time, length = p.size) } + worldRefs + terrainRefs
 
     /**
      * The pack the frame draws at a camera whose target is [lat], [lon]: the smallest whose box holds the target, the

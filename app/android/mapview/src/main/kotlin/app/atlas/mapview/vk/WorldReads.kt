@@ -129,17 +129,25 @@ class WorldReads(
          * a want of a pack [index] holds at the core's identity (another version's is left: its map takes the new packs
          * soon), not [refused], merged with the wants of its pack within [MERGE_GAP] of each other up to [MAX_RANGE].
          */
-        internal fun runsOf(wants: List<MapCore.WorldWant>, index: WorldIndex, refused: Set<String> = emptySet()): List<Run> {
+        internal fun runsOf(wants: List<MapCore.WorldWant>, index: WorldIndex, refused: Set<String> = emptySet()): List<Run> =
+            runsOf(wants, { w -> index.find(w.block.z, w.block.x, w.block.y) }, refused)
+
+        /**
+         * [runsOf] for wants whose packs [find] gives (a terrain want's: its block's pack of its identity, TerrainReads):
+         * the same entry for each want of one pack.
+         */
+        internal fun runsOf(wants: List<MapCore.WorldWant>, find: (MapCore.WorldWant) -> WorldIndex.Entry?, refused: Set<String>): List<Run> {
             class Want(val w: MapCore.WorldWant, val e: WorldIndex.Entry, val rank: Int)
             val usable = ArrayList<Want>()
             for ((rank, w) in wants.withIndex()) {
-                val e = index.find(w.block.z, w.block.x, w.block.y) ?: continue
+                val e = find(w) ?: continue
                 if (!e.sha256.contentEquals(w.identity) || refusedKey(w.identity, w.tile) in refused) continue
                 if (w.length <= 0 || w.offset < 0 || w.offset + w.length > e.length) continue
                 usable += Want(w, e, rank)
             }
             val runs = ArrayList<Run>()
-            for ((_, group) in usable.groupBy { WorldFetch.idOf(it.e) }) {
+            // a pack's wants together (its entry: one object a pack in its index)
+            for ((_, group) in usable.groupBy { it.e }) {
                 var run: Run? = null
                 for (u in group.sortedBy { it.w.offset }) {
                     val end = u.w.offset + u.w.length

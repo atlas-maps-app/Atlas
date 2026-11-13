@@ -937,8 +937,8 @@ private class BenchRun(
      * are drawn over the phone's own packs ([VkBench.installedViews]), so a phone measures the governor's bias and
      * world72's p95 over its own tiles, each line naming the pack it is drawn over so that none is taken for CI's canal
      * ring's. At the views that keep the most walls, the compared path ([VkBench.MapView.compared]) is drawn on with the
-     * kept walls' shape records on and off in turn, a line each ([compareRecords]); on CI's bench at the first of them
-     * alone ([VkBench.recordsCompared]). The map goes off after (the next step's bench call takes the window back).
+     * kept walls' shape records on and off in turn, a line each ([compareRecords]), then with the terrain's relief on
+     * and off in turn ([compareTerrain]); on CI's bench at the first of them alone ([VkBench.recordsCompared]). The map goes off after (the next step's bench call takes the window back).
      */
     private suspend fun mapStage() {
         val surface = switchHost(VkHost.SURFACE, "the map")
@@ -994,7 +994,10 @@ private class BenchRun(
                     val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}" +
                         if (governor.isEmpty()) "" else " $governor"
                     emit(VkBench.line(label, s, graphicsMb(), nativeMb(), extra))
-                    if (path == view.compared && VkBench.recordsCompared(view, views, plan)) compareRecords(view, path)
+                    if (path == view.compared && VkBench.recordsCompared(view, views, plan)) {
+                        compareRecords(view, path)
+                        compareTerrain(view, path)
+                    }
                 }
             }
         } finally {
@@ -1233,25 +1236,47 @@ private class BenchRun(
      * again once, as [measure] measures a path again. The two lines have the memory of one reading after both sides
      * (the records' buffers are kept either way), which takes 2 to 3 s on CI's emulator.
      */
-    private suspend fun compareRecords(view: VkBench.MapView, path: VkBench.Path) {
-        val step = "map ${view.label} ${path.label} records"
+    private suspend fun compareRecords(view: VkBench.MapView, path: VkBench.Path) =
+        compare(view, path, "records", { on -> core.shapeRecords(on) }, VkBench::recordsLabel, VkBench::recordsSkipped)
+
+    /**
+     * [path] about the map's [view] drawn on with the terrain's relief on and off in turn (ENGINE.md part 6, step 2:
+     * [MapCore.terrain]), exactly as [compareRecords] draws it with the records on and off: a line for each side
+     * ([VkBench.terrainLabel]), so that the user's phone and CI's bench measure what the relief costs on the map's paths.
+     */
+    private suspend fun compareTerrain(view: VkBench.MapView, path: VkBench.Path) =
+        compare(view, path, "terrain", { on -> core.terrain(on); "" }, VkBench::terrainLabel, VkBench::terrainSkipped)
+
+    /**
+     * [compareRecords]' and [compareTerrain]'s comparison of [what]: [set] turns it on or off ("" or why it cannot be),
+     * [label] names each side's line, [skipped] the line where it cannot be compared.
+     */
+    private suspend fun compare(
+        view: VkBench.MapView,
+        path: VkBench.Path,
+        what: String,
+        set: (Boolean) -> String,
+        label: (VkBench.MapView, VkBench.Path, Boolean) -> String,
+        skipped: (VkBench.MapView, VkBench.Path, String) -> String,
+    ) {
+        val step = "map ${view.label} ${path.label} $what"
         awaitApp(step, VkHost.SURFACE)
         val stopsBefore = stops
-        var compared = measureRecords(view, path, plan.pathSeconds, warm = false)
+        var compared = measureRecords(view, path, plan.pathSeconds, warm = false, set)
         // (cut short, whatever it answered: a window made again has no frame drawn, which the warm-up draws)
         if (stops != stopsBefore) {
             emit(VkBench.cutShort(step))
             awaitApp(step, VkHost.SURFACE)
             hostSwitch(VkHost.SURFACE)
-            compared = measureRecords(view, path, plan.pathSeconds, warm = true)
+            compared = measureRecords(view, path, plan.pathSeconds, warm = true, set)
         }
         when (compared) {
-            is RecordsCompared.Not -> emit(VkBench.recordsSkipped(view, path, compared.why))
+            is RecordsCompared.Not -> emit(skipped(view, path, compared.why))
             is RecordsCompared.Sides -> {
                 val graphics = graphicsMb()
                 val native = nativeMb()
                 for ((on, side) in listOf(true to compared.on, false to compared.off)) {
-                    emit(VkBench.line(VkBench.recordsLabel(view, path, on), side.first, graphics, native, side.second))
+                    emit(VkBench.line(label(view, path, on), side.first, graphics, native, side.second))
                 }
             }
         }
@@ -1264,10 +1289,10 @@ private class BenchRun(
      * the records on, and of those with them off, each summarised ([sliceSummary]) with its GPU's time before, in and
      * after the main pass, none of the frames begun while the records were being set; or none, should the first slice's
      * setting say the frames draw no records either way. The setting waits for the frame the render thread is on, within
-     * the slice it begins.
+     * the slice it begins. [set] sets the records (or the terrain's relief: [compareTerrain]) on or off.
      */
     private suspend fun measureRecords(
-        view: VkBench.MapView, path: VkBench.Path, seconds: Double, warm: Boolean,
+        view: VkBench.MapView, path: VkBench.Path, seconds: Double, warm: Boolean, set: (Boolean) -> String,
     ): RecordsCompared {
         measureStartNs = System.nanoTime()
         source.mapView = view
@@ -1289,7 +1314,7 @@ private class BenchRun(
                 val on = VkBench.recordsOn(i, n)
                 slices.lastOrNull()?.untilNs = System.nanoTime()
                 records = on
-                val why = withContext(Dispatchers.Default) { core.shapeRecords(on) }
+                val why = withContext(Dispatchers.Default) { set(on) }
                 if (why.isNotEmpty()) return RecordsCompared.Not(why)
                 slices += VkBench.RecordsSlice(on, System.nanoTime())
                 val endAt = from + (seconds * 1e9 * (i + 1) / n).toLong()
@@ -1302,7 +1327,7 @@ private class BenchRun(
             slices.last().untilNs = System.nanoTime()
         } finally {
             // the records on again where the comparison ended with them off (cut off: it ends on them otherwise)
-            if (!records) withContext(NonCancellable + Dispatchers.Default) { core.shapeRecords(true) }
+            if (!records) withContext(NonCancellable + Dispatchers.Default) { set(true) }
         }
         delay(250) // the last records' presentation times
         got += drain().filter { it.startNs >= from }
