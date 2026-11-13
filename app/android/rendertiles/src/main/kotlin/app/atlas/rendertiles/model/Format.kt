@@ -75,6 +75,10 @@ package app.atlas.rendertiles.model
  * pads for both: shadows, which the sun casts beyond a feature by its top over the tangent of its elevation, and
  * reflections in the water, which mirror what stands within 16 m of a quay edge below the water's level.
  *
+ * **Terrain packs** ([Profile.TERRAIN], ENGINE.md part 6) are packs of this format whose tiles hold one layer,
+ * [Layer.HEIGHTS]: a height raster, specified in [Heights]. Their `style` holds no table, each chunk's reach is its
+ * tile's box and its raster's top, and the map's readers skip the layer by the rule above.
+ *
  * **Keep codes** ([Keep]): one byte per vertex of every simplified ring: how many of the ladder's positive tolerances
  * the vertex survives `regions.py`'s `simplify` at. At a view's or band's tolerance ([RenderHead]) the renders simplify
  * buildings, parts and areas only; land cover and water they draw whole at every tolerance, and their codes serve the
@@ -196,7 +200,13 @@ enum class Profile(val code: Int, val label: String) {
     WILLIAMSBURG(2, "williamsburg"),
 
     /** The world mid-zoom base (K20b). */
-    WORLD_BASE(3, "world-base");
+    WORLD_BASE(3, "world-base"),
+
+    /**
+     * A terrain pack (ENGINE.md part 6, terrain): tiles of one [Layer.HEIGHTS] layer each, nothing to draw by a rule
+     * set. Its `style` section holds no table, and a reader types none.
+     */
+    TERRAIN(4, "terrain");
 
     companion object {
         fun of(code: Int): Profile = entries.firstOrNull { it.code == code } ?: throw IllegalArgumentException("no profile $code")
@@ -263,7 +273,15 @@ enum class Layer(val id: Int, val label: String) {
      * from the simplified footprint (the land use under its centroid, the outline a part stands in), so a region's views
      * and bands at their own tolerance take these values instead. Each holds every attribute of its base feature.
      */
-    VARIANT(15, "variant");
+    VARIANT(15, "variant"),
+
+    /**
+     * A terrain tile's height raster ([Heights], [app.atlas.rendertiles.codec.HeightsCodec]): one feature, the raster,
+     * counted in the tile's first cell. It is no layer of [Schema] (so [StyleVersion] does not hash it, and a map
+     * pack's version does not move with it): the map's readers skip it by the format's rule for a layer they do not
+     * know, and the terrain's reader reads its columns itself.
+     */
+    HEIGHTS(16, "heights");
 
     companion object {
         fun of(id: Int): Layer? = entries.firstOrNull { it.id == id }
