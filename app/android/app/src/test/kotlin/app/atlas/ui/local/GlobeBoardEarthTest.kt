@@ -34,7 +34,8 @@ import kotlin.math.max
  * The Globe board's Earth as the app draws it, for the engine's globe check (ENGINE.md step 5, "The globe": the
  * engine's frame at the board's camera and instant against `drawEarth` rasterised by Robolectric).
  *
- * `drawEarth` is drawn alone over the Globe screen's night, in the board's 412 x 915 frame at one pixel a unit, at a
+ * `drawEarth` is drawn over the Globe screen's night and its backdrop (`drawBackdrop`: the board's stars and its
+ * Milky Way band, which the core draws behind its Earth too), in the board's 412 x 915 frame at one pixel a unit, at a
  * fixed instant and view, without the station and with "you" behind the Earth, and held to the picture `:mapcorecheck`
  * keeps (`likeness/globe/board.png`, with `board.txt` saying what it is of): the core's GlobeCheckTest draws the same
  * Earth at the same instant and compares its frame with that picture. A deliberate change to the board's Earth is
@@ -55,6 +56,8 @@ class GlobeBoardEarthTest {
             // GlobeScreen's night behind the pictures (its Night, and the glow about the frame's middle)
             drawRect(NIGHT)
             drawRect(Brush.radialGradient(0f to Color(0xFF0C1428), 0.7f to NIGHT, center = Offset(size.width * 0.5f, size.height * 0.45f), radius = max(size.width, size.height) * 0.75f))
+            // the stars and the Milky Way's band behind everything, as GlobeScreen draws them
+            drawBackdrop(data)
             drawEarth(data, EarthFrame(view, INSTANT, you, null, 0f))
         }
         val drawn = image.asAndroidBitmap()

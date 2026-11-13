@@ -90,7 +90,9 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
 }
 
 /// The pass's result against the CPU's chain over the pass's own layer (the ripple's field the CPU's): within the
-/// result's region word for word, and beyond it transparent (the region holds all of it).
+/// result's region word for word, and beyond it transparent (the region holds all of it). The layer is its drawn box's
+/// content, transparent beyond it, as the stages read it (ripple.slang): the image keeps there what earlier frames
+/// drew while the tiles came, and the copy with it.
 struct Chain {
     std::vector<fx::Argb> want;
     std::size_t covered = 0;
@@ -102,7 +104,13 @@ struct Chain {
 Chain chain_of(const RippleLook& look, const fx::ScreenFields& fields, float density) {
     Chain c;
     const std::vector<std::uint8_t> field = fields.bytes_of(fx::Field::ripple);
-    c.want = fx::ripple_cpu(look.layer, field, look.w, look.h, look.scale, density);
+    std::vector<fx::Argb> layer = look.layer;
+    for (std::size_t i = 0; i < layer.size(); ++i) {
+        if (!look.drawn.contains(static_cast<std::int32_t>(i % look.w), static_cast<std::int32_t>(i / look.w))) {
+            layer[i] = 0;
+        }
+    }
+    c.want = fx::ripple_cpu(layer, field, look.w, look.h, look.scale, density);
     for (std::size_t i = 0; i < c.want.size(); ++i) {
         const bool in = look.out.contains(static_cast<std::int32_t>(i % look.w), static_cast<std::int32_t>(i / look.w));
         if ((c.want[i] >> 24U) != 0) {

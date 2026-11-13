@@ -186,6 +186,13 @@ class MineHub(private val services: Services) {
         },
         segments = services.segments,
         segmentSizes = { segmentSizes.get() },
+        // the world a country kept by its tiles keeps with them, once the app has its world's files
+        world = object : app.atlas.ui.mine.offline.WorldKeep {
+            override fun bytes(packId: String): Long? = app.atlas.mapview.MapEngine.worldKeeper?.bytes(packId)
+            override fun keep(packIds: Set<String>, fetch: Boolean, report: (Float) -> Unit) {
+                app.atlas.mapview.MapEngine.worldKeeper?.keep(packIds, fetch, report)
+            }
+        },
         mapBuilder = mapBuilder ?: if (services.config.offline) null else { id, name, bbox, target, report ->
             withContext(Dispatchers.IO) { services.mapData.buildRegion(id, name, bbox, target).also { report(1f) } }
         },

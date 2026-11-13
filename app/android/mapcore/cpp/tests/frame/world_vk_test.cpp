@@ -1695,6 +1695,49 @@ TEST_CASE("the globe's look: from 54,000 km the engine draws the board's Earth, 
         CHECK(rim.z >= 140.0F / 255.0F);
         CHECK(outside.x < 60.0F / 255.0F);
         CHECK(outside.z > outside.x + 0.05F);
+        // The Globe board's backdrop behind the Earth (shared/backdrop.slang, the board's own): its stars where the
+        // board has them, fitted to the frame as the board's pictures are (by the lesser side's ratio, centred), and
+        // its Milky Way band; none of it over the disc.
+        {
+            const double width_dp = size.width / density;
+            const double height_dp = size.height / density;
+            const double fit = std::min(width_dp / 412.0, height_dp / 915.0);
+            const double left = (width_dp - (412.0 * fit)) / 2.0;
+            const double top = (height_dp - (915.0 * fit)) / 2.0;
+            const auto on_frame = [&](double x, double y) {
+                return view::Vec2{(left + (x * fit)) * density, (top + (y * fit)) * density};
+            };
+            // the table's star at (34.8, 876.2), 1.6 px in radius at .74: far from the disc, white over space
+            const view::Vec2 star = on_frame(34.8, 876.2);
+            const hlsl::float3 lit = pixel_at(*pixels, star.x, star.y);
+            const hlsl::float3 dark = space_at(star.x, star.y);
+            MESSAGE(std::format("the board's star at ({:.1f}, {:.1f}) px: #{:02X}{:02X}{:02X} over space's "
+                                "#{:02X}{:02X}{:02X}",
+                                star.x, star.y, std::lround(lit.x * 255.0F), std::lround(lit.y * 255.0F),
+                                std::lround(lit.z * 255.0F), std::lround(dark.x * 255.0F), std::lround(dark.y * 255.0F),
+                                std::lround(dark.z * 255.0F)));
+            CHECK(lit.x > dark.x + 0.4F);
+            CHECK(lit.y > dark.y + 0.4F);
+            CHECK(lit.z > dark.z + 0.4F);
+            // six pixels from it space is space again
+            CHECK(levels_apart(pixel_at(*pixels, star.x + 6.0, star.y), space_at(star.x + 6.0, star.y)) <= 2.0);
+            // the star at (213.6, 508.2) lies behind the Earth: the disc's own colour there, as beside it
+            const view::Vec2 hidden = on_frame(213.6, 508.2);
+            const double from_x = hidden.x - (c.cx() * density);
+            const double from_y = hidden.y - (c.cy() * density);
+            CHECK(pymath::sqrt((from_x * from_x) + (from_y * from_y)) < radius * density * 0.8);
+            CHECK(levels_apart(pixel_at(*pixels, hidden.x, hidden.y), pixel_at(*pixels, hidden.x + 4.0, hidden.y)) <=
+                  25.0);
+            // the band: at the board's (400, 706) a third of its 7 % of #A1A8FF over space; 40 px over its edge none
+            const view::Vec2 band = on_frame(400.0, 706.0);
+            const hlsl::float3 banded = pixel_at(*pixels, band.x, band.y);
+            const hlsl::float3 under = space_at(band.x, band.y);
+            CHECK(banded.z > under.z + (3.0F / 255.0F));
+            CHECK(banded.z < under.z + (10.0F / 255.0F));
+            CHECK(banded.z - under.z > banded.x - under.x);
+            const view::Vec2 beside = on_frame(400.0, 606.0);
+            CHECK(levels_apart(pixel_at(*pixels, beside.x, beside.y), space_at(beside.x, beside.y)) <= 2.0);
+        }
         // no pixel of the frame is the clear colour's or the sky's (magenta)
         CHECK(count_bare(*pixels) == 0);
         std::size_t sky = 0;
@@ -2213,6 +2256,95 @@ TEST_CASE("the world under the cover: where the camera's place has no country's 
             ATLAS_REQUIRE(f != nullptr);
             CHECK_FALSE(f->under);
             CHECK(land_draws(*f) == 0);
+        }
+        // A window built from part of its box's data, as the element packs on the phone give it (ENGINE.md step 3, the
+        // windows' local lane): the hall's window's east neighbour, a hall in its middle too, of which the packs held
+        // the tile's west, to 20 m east of the hall. Its plate lies under that part alone, so east of it the world's
+        // map shows, where the window's tile stood in a bare box of its own plate (Bergen's sea, 11 November). 500 m
+        // over its hall, straight down, north up.
+        const tiles::TileKey beside(14, place.x + 1, place.y);
+        const std::array<std::int32_t, 4> bb = tiles::tile_box(beside);
+        const double part_lat = (bb[0] + bb[2]) / 2e7;
+        const double part_lon = (bb[1] + bb[3]) / 2e7;
+        frame::MapPack part;
+        {
+            const double dlat = 40.0 / 110540.0;
+            const double dlon = 40.0 / (111320.0 * pymath::cos(pymath::radians(part_lat)));
+            std::string geometry;
+            for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+                geometry += std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", part_lat + a,
+                                        part_lon + o);
+            }
+            const auto east = static_cast<std::int32_t>(std::lround((part_lon + (dlon * 1.5)) * 1e7));
+            const std::string json = std::format(
+                R"({{"version":0.6,"atlas":{{"box":"{},{},{},{}"}},"elements":[{{"type":"way","id":8,)"
+                R"("nodes":[1,2,3,4,1],"tags":{{"building":"yes","building:levels":"4"}},"geometry":[{}]}}]}})",
+                bb[0], bb[1], bb[2], east, geometry);
+            auto built =
+                load::build_window(std::as_bytes(std::span(json.data(), json.size())), beside, load::place_of(beside));
+            ATLAS_REQUIRE(built.has_value(), built.error().what);
+            const fs::path file = guard / "window-part.atlas";
+            std::ofstream out(file, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                      static_cast<std::streamsize>(built->pack.size()));
+            part.number = 8;
+            part.ref.id = std::format("window/14/{}/{}", beside.x, beside.y);
+            part.ref.kind = tiles::PackKind::window;
+            part.ref.path = file.string();
+        }
+        // the world's pixels of each column of the last frame
+        const auto columns_of = [&](const char* name) -> std::vector<std::size_t> {
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE_OR_RETURN(std::vector<std::size_t>{}, pixels.has_value(), pixels.error().text());
+            if (!look.empty()) {
+                CHECK(gpu::write_ppm(*pixels, (fs::path(look) / std::format("under_{}.ppm", name)).string()));
+            }
+            const auto near = [](std::uint8_t x, std::uint8_t y) { return std::abs(int{x} - int{y}) <= 60; };
+            std::vector<std::size_t> columns(pixels->width, 0);
+            for (std::size_t i = 0; i + 3 < pixels->rgba.size(); i += 4) {
+                if (near(pixels->rgba[i], magenta_rgb.r) && near(pixels->rgba[i + 1], magenta_rgb.g) &&
+                    near(pixels->rgba[i + 2], magenta_rgb.b)) {
+                    ++columns[(i / 4) % pixels->width];
+                }
+            }
+            return columns;
+        };
+        cam = camera(part_lat, part_lon, 0.0, 0.0, 500.0);
+        cam.flags |= style::camera_flag::world_under;
+        cam.pack_id = part.number;
+        const std::vector<frame::MapPack> with_part{remote, base, window, part};
+        MESSAGE(map.set_packs(with_part));
+        // until the window's tile draws: its plate over the view's west edge
+        CHECK(draw_until(cam, [&] {
+            keep_wanted();
+            const scene::WorldFrame* f = frame_of();
+            if (!map.complete() || f == nullptr || f->wanted != 0 || f->fading) return false;
+            const std::vector<std::size_t> columns = columns_of("part");
+            return !columns.empty() && columns.front() == 0;
+        }));
+        int settled = 0; // the window's tile's fade over
+        CHECK(draw_until(cam, [&] { return ++settled >= 20; }));
+        {
+            const std::vector<std::size_t> columns = columns_of("part");
+            ATLAS_REQUIRE(columns.size() == size.width);
+            // the first column mostly the world's: the data's east edge on the screen
+            const auto edge = static_cast<std::size_t>(
+                std::ranges::find_if(columns, [](std::size_t n) { return n > size.height / 2; }) - columns.begin());
+            std::size_t west = 0; // the world's pixels west of the edge, where the plate lies
+            std::size_t east = 0; // and east of it
+            for (std::size_t x = 0; x < columns.size(); ++x) {
+                if (x + 3 < edge) west += columns[x];
+                if (x > edge + 3) east += columns[x];
+            }
+            const std::size_t beyond = edge + 4 < columns.size() ? (columns.size() - edge - 4) * size.height : 0;
+            MESSAGE(std::format("500 m over a hall whose window was built from its tile's west: the world's land from "
+                                "column {} of {} on, {} of {} px east of it and {} west of it",
+                                edge, columns.size(), east, beyond, west));
+            CHECK(edge > columns.size() / 2); // the hall is the view's middle, the data ends east of it
+            CHECK(edge + 8 < columns.size());
+            CHECK(west == 0);
+            CHECK(east > beyond * 8 / 10);
+            CHECK(pixels_of("part").second == 0);
         }
         passes::World::paint_for_tests(0);
     }

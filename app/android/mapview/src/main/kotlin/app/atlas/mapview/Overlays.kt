@@ -126,11 +126,29 @@ data class AreaOverlay(val id: String, val centre: LatLon, val radiusM: Double, 
 /**
  * The building the app asks about (FillIn's question, the board's look), the way or relation [id]: drawn plain (no
  * windows, no facade detail), its walls in one flat colour [wall] (0xRRGGBB: the board's grey before an answer, the
- * answer's colour as the board draws it after), and [hatched] while the question is open. The core draws it so
- * (MapCore.ask).
+ * answer's colour as the board draws it after; [OWN_WALL] where their colour is not asked about), and [hatched] while
+ * the question is open. Where its roof's shape is asked about, [roof] is the roof the board's house stands under in
+ * its place: [ROOF_FLAT], the plain box, until the answer, then the answer's ([ROOF_GABLED], [ROOF_HIPPED]);
+ * [ROOF_OWN]: the building's own, as the map has it. The core draws it so (MapCore.ask).
  */
 @Immutable
-data class AskedBuilding(val id: app.atlas.model.OsmId, val wall: Int, val hatched: Boolean)
+data class AskedBuilding(val id: app.atlas.model.OsmId, val wall: Int, val hatched: Boolean, val roof: Int = ROOF_OWN) {
+    companion object {
+        /** [wall] where the walls' colour is not asked about: they keep the colour the map gives them. */
+        const val OWN_WALL = -1
+        const val ROOF_OWN = 0
+        const val ROOF_FLAT = 1
+        const val ROOF_GABLED = 2
+        const val ROOF_HIPPED = 3
+
+        /** The code of OpenStreetMap's roof:shape [shape] among those the house is drawn in; [ROOF_FLAT] for another. */
+        fun roofOf(shape: String): Int = when (shape) {
+            "gabled" -> ROOF_GABLED
+            "hipped" -> ROOF_HIPPED
+            else -> ROOF_FLAT
+        }
+    }
+}
 
 @Immutable
 data class MapOverlays(
@@ -224,3 +242,11 @@ sealed interface MapHit {
     data class OnFeature(val place: Place, override val at: LatLon) : MapHit
     data class Empty(override val at: LatLon) : MapHit
 }
+
+/**
+ * What a tap on the building [picked] is: the [place] it opens, where it holds one, at the point the tap met it; else
+ * an empty tap on the street under the finger ([street]; where the finger's ray meets no ground, where it met the
+ * building), so a screen that closes its selection on an empty tap closes it on a house too.
+ */
+internal fun featureHit(place: Place?, picked: MapPick, street: LatLon?): MapHit =
+    if (place != null) MapHit.OnFeature(place, picked.at) else MapHit.Empty(street ?: picked.at)

@@ -538,6 +538,9 @@ struct GroundGpu {
     /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
     /// app's map draws by themselves after the land, `above` without them (passes/Ground.cpp's record_streets).
     Words streets;
+    /// The big roads' asphalt's triangles in `above` (draw_over's, over the roads), which the app's map draws after its
+    /// streets, their edges by their coverage as the streets' are; empty where they are not one run.
+    Words bigs;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
@@ -568,6 +571,7 @@ struct GroundLayout {
     Words vertices;
     Words above;
     Words streets;
+    Words bigs;
     Words below;
     Words canopy;
     Words fans;

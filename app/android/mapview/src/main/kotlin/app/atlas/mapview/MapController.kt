@@ -29,6 +29,7 @@ import app.atlas.mapview.vk.MapCameraSource
 import app.atlas.mapview.vk.MapPlace
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.Windows
+import app.atlas.model.Place
 import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
 import app.atlas.render.live.RegionFrame
@@ -996,7 +997,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (c != null && c.packs.loaded) {
             placedCountries = MapEngine.countries
             val under = MapEngine.worldUnder(view.lat, view.lon)
-            val at = MapPlace.of(c.packs, MapEngine::countryAt, view.lat, view.lon, view.distance, under)
+            val at = MapPlace.of(c.packs, MapEngine::levelsAt, view.lat, view.lon, view.distance, under)
             if (at != place) {
                 place = at
                 canvasTick.intValue++
@@ -1541,6 +1542,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (state.follow == Follow.NONE) fling(vx, vy)
     }
 
+    /**
+     * The place a tap on a building opens where the core draws the map ([MapHit.OnFeature]): asked with the building
+     * under the finger as the core drew it (its pick), it gives the building's place or a point of interest's in it,
+     * or null where it holds none: the tap is then an empty one ([MapHit.Empty]), as a tap on the street is. Null: a
+     * tap on a building is a tap on the map. [onTapBuilding], where set, takes the building instead.
+     */
+    var featureOf: (suspend (MapPick) -> Place?)? = null
+
     override fun onTap(x: Float, y: Float) {
         if (tape != null) {
             tapeJob?.cancel()
@@ -1559,14 +1568,29 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val c = core
         val building = onTapBuilding
         val ground = onTapGround
+        val feature = featureOf
         // the building under the finger as the core drew it, where it draws the map (as a long press finds it), else
         // the ground it shows there: a building stands before the ground it hides
-        if (c != null && (building != null || ground != null) && c.cover.started) {
+        if (c != null && (building != null || ground != null || feature != null) && c.cover.started) {
             scope.launch {
                 val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
                 if (core !== c || closed) return@launch
                 if (picked != null) {
-                    if (building != null) building(picked, Offset(x, y)) else at?.let { onTap(MapHit.Empty(it)) }
+                    if (building != null) {
+                        building(picked, Offset(x, y))
+                    } else {
+                        // the place the building opens, where it holds one; else an empty tap, where the street lies
+                        // under the finger (the building's own place where the ray meets no ground)
+                        val place = if (feature == null) null else try {
+                            feature(picked)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (core !== c || closed) return@launch
+                        onTap(featureHit(place, picked, at))
+                    }
                     return@launch
                 }
                 val shown = if (ground != null) withContext(Dispatchers.Default) { runCatching { c.pickGround(x, y) }.getOrNull() } else null
