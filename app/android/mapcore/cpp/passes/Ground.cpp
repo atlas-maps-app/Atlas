@@ -1864,7 +1864,8 @@ void Ground::record_fading_fills(const frame::Recording& r) {
     const auto bind = [&](bool streets) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
                          streets ? *pipelines_->fill_fading_streets : *pipelines_->fill_fading);
-        push(r, wide | (streets ? ground_flag::streets : 0U), 0);
+        // (a thin street as wide as the settled tiles' draws make theirs: the push's least width)
+        push_run(r, wide | (streets ? ground_flag::streets : 0U), 0, 0);
     };
     bind(false);
     for (const std::uint32_t i : fading) {

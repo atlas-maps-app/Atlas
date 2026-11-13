@@ -114,8 +114,8 @@ inline constexpr std::uint32_t near_clip = 32;  ///< stroke_vs: fixed widths fro
 /// fill_vs: the streets' own draw (the app's map): each off a bridge as wide as its way, the stencil keeping it off the
 /// water; without it, under `wide`, such a street is left to that draw
 inline constexpr std::uint32_t streets = 64;
-/// street_vs and fill_fading_vs: a street narrower on the screen than 1.5 device px drawn 1.5 px wide at the share of
-/// them it covers (ground.slang's least_point; the app's map, with `wide`)
+/// street_vs and fill_fading_vs: a street narrower on the screen than the draw's least width (push_run's) drawn that
+/// wide at the share of it its width covers (ground.slang's least_point; the app's map, with `wide`)
 inline constexpr std::uint32_t least = 128;
 /// street_vs: a street's or a big road's edges by their coverage where it is narrower on the screen than 8 device px
 /// (ground.slang's soft_point; the app's map's streets' own draws, with `wide`)
@@ -1066,7 +1066,7 @@ public:
     /// The tests' switch: the app's map's streets and big roads narrower on the screen than 8 device px drawn with
     /// their edges by their coverage (ground.slang's soft_point), else as they lie (on by default; the far flicker's
     /// measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST). A tile fading in keeps the least width
-    /// (least_point: a street under 1.5 px drawn 1.5 px wide at its share) for its fade.
+    /// on the samples for its fade (least_point: a street under least_width_px's drawn that wide at its share).
     void draw_least_width(bool draw) noexcept { least_width_ = draw; }
     /// The tests' and the measure's: the least width a street or a big road is drawn at, device px (2 by default).
     void least_width_px(float px) noexcept { least_px_ = px; }
