@@ -45,13 +45,18 @@ import kotlin.math.tan
  */
 object WorldRefs {
     const val USAGE = """packer world-refs <world.idx> <views.json> --needed
-       packer world-refs <world.idx> <views.json> <packs-dir> <out-dir>
+       packer world-refs <world.idx> <views.json> <packs-dir> <out-dir> [--kept <world-keep.json> <id>]
       The world's references' tiles (ENGINE.md step 5, its references around the world): for each view of <views.json>
       (mapcorecheck's likeness/world-refs.json) the L6 to L11 tiles the world's cover may draw there, from the packs of
       <world.idx>. --needed prints the packs holding them, a line each: its part, its offset and length there, and its
       file (world-<z>-<x>-<y>.atlas); otherwise each pack's tiles chosen are written into a pack of their own in
       <out-dir> (named as the world's folder names a pack), from the pack in <packs-dir> (its range of its part, as
-      --needed names it) or from its part there, held to the index's SHA-256."""
+      --needed names it) or from its part there, held to the index's SHA-256. --kept names the tiles written that
+      <world-keep.json> (made for <world.idx>) does not keep for the country <id>, by pack, and how many: the views'
+      tiles a kept country lacks, the names in them with their ground (ENGINE.md step 11, world.yml's keep check)."""
+
+    /** The tiles --kept names of a pack at most. */
+    private const val SHOWN = 8
 
     /** The core's walk: L11's start, the finest level, the world's first level of its own (the globe's are L0 to L5). */
     const val L11_START = 18_800.0
@@ -237,8 +242,8 @@ object WorldRefs {
         return out
     }
 
-    /** What [cut] wrote: the pack's file, its tiles kept of those it held, its bytes. */
-    class Cut(val file: File, val kept: Int, val held: Int, val bytes: Long)
+    /** What [cut] wrote: the pack's file, its tiles kept of those it held (and their keys), its bytes. */
+    class Cut(val file: File, val kept: Int, val held: Int, val bytes: Long, val keys: Set<Long>)
 
     /** The file a pack is fetched to and cut into: the world's folder's name for it (WorldFolder's, WorldFetch's). */
     fun fileOf(entry: WorldIndex.Entry): String = "world-${entry.z}-${entry.x}-${entry.y}.atlas"
@@ -268,17 +273,20 @@ object WorldRefs {
         val reach = reachOf(pack)
         val manifest = PackManifest(Json.parseToJsonElement(String(pack.manifest, Charsets.UTF_8)).jsonObject)
         val encoded = ArrayList<Format3Writer.Encoded>()
+        val written = LinkedHashSet<Long>()
         for ((i, c) in pack.chunks.withIndex()) {
-            if (key(c.z, c.x, c.y) !in keys) continue
+            val k = key(c.z, c.x, c.y)
+            if (k !in keys) continue
             val raw = pack.tile(c)
             encoded += Format3Writer.Encoded(c.z, c.x, c.y, raw, c.count, reach[i], layerCounts(raw))
+            written += k
         }
         if (encoded.isEmpty()) return null
         val file = File(out, fileOf(entry))
         val source = (manifest.json["source_sha256"] as? JsonPrimitive)?.content ?: throw IllegalStateException("pack ${entry.z}/${entry.x}/${entry.y} names no inputs' hash")
         val spec = WorldPack.Spec(manifest.id, entry.z, entry.x, entry.y, entry.firstLevel..entry.lastLevel, manifest.dataTime, manifest.sources, source)
         WorldPack.write(encoded, spec, file)
-        return Cut(file, encoded.size, pack.chunks.size, file.length())
+        return Cut(file, encoded.size, pack.chunks.size, file.length(), written)
     }
 
     /** The reach section's entries of [pack], in its chunks' order (Format's Reach: a header, then an entry a chunk). */
@@ -307,11 +315,22 @@ object WorldRefs {
     }
 
     fun run(args: List<String>, out: (String) -> Unit): Int {
-        if (args.firstOrNull() != "world-refs" || args.size !in 4..5) throw UsageException("usage: $USAGE")
-        val indexFile = File(args[1]).also { if (!it.isFile) throw UsageException("no index $it") }
-        val viewsFile = File(args[2]).also { if (!it.isFile) throw UsageException("no views $it") }
-        val needed = args[3] == "--needed"
-        if (needed != (args.size == 4)) throw UsageException("usage: $USAGE")
+        if (args.firstOrNull() != "world-refs") throw UsageException("usage: $USAGE")
+        // --kept <world-keep.json> <id>, after the cut's folders
+        val at = args.indexOf("--kept")
+        if (at >= 0 && (at != 5 || args.size != 8)) throw UsageException("usage: $USAGE")
+        val a = if (at >= 0) args.subList(0, at) else args
+        if (a.size !in 4..5) throw UsageException("usage: $USAGE")
+        val indexFile = File(a[1]).also { if (!it.isFile) throw UsageException("no index $it") }
+        val viewsFile = File(a[2]).also { if (!it.isFile) throw UsageException("no views $it") }
+        val needed = a[3] == "--needed"
+        if (needed != (a.size == 4)) throw UsageException("usage: $USAGE")
+        val country = if (at >= 0) args[7] else null
+        // the country's kept tiles by pack (z, x, y), of a world-keep.json made for this index
+        val kept = country?.let { id ->
+            val keepFile = File(args[6]).also { if (!it.isFile) throw UsageException("no world-keep.json $it") }
+            WorldKeep.kept(WorldKeep.madeFor(keepFile, indexFile), id)
+        }
         val index = WorldIndex.read(indexFile.readBytes())
         val (frame, views) = views(viewsFile)
         val chosen = LinkedHashSet<Long>()
@@ -328,18 +347,29 @@ object WorldRefs {
             }
             return 0
         }
-        val from = File(args[3]).also { if (!it.isDirectory) throw UsageException("no packs folder $it") }
-        val dir = File(args[4]).apply { mkdirs() }
+        val from = File(a[3]).also { if (!it.isDirectory) throw UsageException("no packs folder $it") }
+        val dir = File(a[4]).apply { mkdirs() }
         if (from.canonicalFile == dir.canonicalFile) throw UsageException("the packs are cut from $from into another folder, not into it")
         var tiles = 0
         var bytes = 0L
         var written = 0
+        var lacking = 0
         for ((entry, keys) in packs) {
             val c = cut(index, entry, keys, from, dir) ?: continue
             written++
             tiles += c.kept
             bytes += c.bytes
             out("world-refs: ${c.file.name}: ${c.kept} of its ${c.held} tiles, ${c.bytes} bytes")
+            if (kept == null) continue
+            // the tiles the views draw of this pack that the country does not keep
+            val lacks = (c.keys - kept[Triple(entry.z, entry.x, entry.y)].orEmpty()).sorted()
+            if (lacks.isEmpty()) continue
+            lacking += lacks.size
+            val named = lacks.take(SHOWN).joinToString { "${level(it)}/${(it ushr 24) and 0xFFFFFF}/${it and 0xFFFFFF}" }
+            out("world-refs: ${c.file.name}: not kept for $country: ${lacks.size} (${named}${if (lacks.size > SHOWN) ", …" else ""})")
+        }
+        if (kept != null) {
+            out(if (lacking == 0) "world-refs: kept for $country: all $tiles of the views' tiles" else "world-refs: not kept for $country: $lacking of the views' $tiles tiles")
         }
         out("world-refs: ${views.size} views, ${chosen.size} tiles walked, $tiles of them in $written packs, $bytes bytes")
         return 0
