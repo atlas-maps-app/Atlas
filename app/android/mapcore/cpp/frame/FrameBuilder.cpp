@@ -544,7 +544,7 @@ void FrameBuilder::stage_f() {
     state_.block.strokes = strokes_of(state_.active_pack);
     state_.block.windows = windows_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
-    // which effects its resources allow (FRAME_FIELDS: in full mode alone).
+    // which effects its resources allow (FRAME_FIELDS, FRAME_SKY_FIELD: in full mode alone).
     part = clock::now();
     if (scene != nullptr) {
         const trace::Section traced("atlas globals");
@@ -554,8 +554,8 @@ void FrameBuilder::stage_f() {
             g->update(state_, globals);
             allowed |= g->frame_flags(state_);
         }
-        allowed &= shaders::FRAME_FIELDS;
-        if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed &= ~shaders::FRAME_FIELDS;
+        allowed &= shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+        if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed = 0;
         state_.block.info.x |= allowed;
     }
     parts.globals_ms = ms_since(part);

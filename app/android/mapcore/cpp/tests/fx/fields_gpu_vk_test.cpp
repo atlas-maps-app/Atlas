@@ -98,9 +98,10 @@ struct Probe {
     std::uint32_t unused;
 };
 
-/// The five images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame` (every
-/// earlier one finished): mat.slang's fields_check at every pixel through set 1 of `layout` (fields_vk_test's way),
-/// rows from the top, four bytes a pixel an image (the canopy's one, the clouds' two).
+/// The frame's four images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame`
+/// (every earlier one finished): mat.slang's fields_check at every pixel through set 1 of `layout` (fields_vk_test's
+/// way), rows from the top, four bytes a pixel an image (the canopy's one). The sky's image is not staged here:
+/// noise_clouds reads its placeholder.
 [[nodiscard]] std::array<std::vector<std::uint8_t>, fx::image_count>
 read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout& layout, std::uint64_t frame) {
     std::array<std::vector<std::uint8_t>, fx::image_count> out;
@@ -111,7 +112,6 @@ read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout
     layout.set_image(frame::Global::noise_rg, images.view(1), images.sampler());
     layout.set_image(frame::Global::noise_r, images.view(2), images.sampler());
     layout.set_image(frame::Global::noise_canopy, images.view(3), images.canopy_sampler());
-    layout.set_image(frame::Global::noise_clouds, images.view(4), images.sampler());
     layout.set_buffer(frame::Global::byte_tables, images.tables());
     auto begun = layout.begin_frame(frame, frame - 1, 1, 1);
     ATLAS_REQUIRE_OR_RETURN(out, begun.has_value(), begun.error().text());
@@ -169,7 +169,7 @@ read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout
                             {}, {});
     });
     results->invalidate();
-    // Each probe's answer: the rgba, rg and r images' words at its pixel, then the canopy's byte and the clouds' two.
+    // Each probe's answer: the rgba, rg and r images' words at its pixel, then the canopy's byte.
     const auto* words = reinterpret_cast<const std::uint32_t*>(results->bytes().data());
     for (std::size_t k = 0; k < 3; ++k) {
         out.at(k).resize(every.size() * 4);
@@ -179,13 +179,7 @@ read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout
         }
     }
     out[3].resize(every.size());
-    out[4].resize(every.size() * fx::clouds_bytes);
-    for (std::size_t i = 0; i < every.size(); ++i) {
-        const std::uint32_t w = words[(i * 4) + 3];
-        out[3][i] = static_cast<std::uint8_t>(w);
-        out[4][i * 2] = static_cast<std::uint8_t>(w >> 8U);
-        out[4][(i * 2) + 1] = static_cast<std::uint8_t>(w >> 16U);
-    }
+    for (std::size_t i = 0; i < every.size(); ++i) out[3][i] = static_cast<std::uint8_t>(words[(i * 4) + 3]);
     return out;
 }
 
@@ -224,7 +218,7 @@ TEST_CASE("the GPU's byte check holds its noises and its fields' kept bytes to t
     ATLAS_REQUIRE(check.has_value(), check.error().text());
     CHECK_MESSAGE(check->exact, check->first);
     // The checked noises over two blocks of 64 × 64, then the fields over the same blocks.
-    CHECK(check->pixels == (fx::checked_noises().size() * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
+    CHECK(check->pixels == (fx::checked_noises().size() * 2 * 64 * 64) + (fx::frame_field_count * 2 * 64 * 64));
     CHECK(check->differ == 0);
     MESSAGE("the byte check: " << check->pixels << " pixels in " << ms_since(started) << " ms");
     const auto messages = session->take_messages();
@@ -271,8 +265,8 @@ TEST_CASE("every field at S1 and at the Pixel 10 Pro's size made on the GPU is t
         CHECK(std::ranges::equal(g.rg(), cpu->rg()));
         CHECK(std::ranges::equal(g.r(), cpu->r()));
         CHECK(std::ranges::equal(g.canopy(), cpu->canopy()));
-        CHECK(std::ranges::equal(g.clouds(), cpu->clouds()));
-        for (std::size_t f = 0; f < fx::field_count; ++f) {
+        CHECK(g.clouds().empty()); // the sky's field is no part of the frame's
+        for (std::size_t f = 0; f < fx::frame_field_count; ++f) {
             CAPTURE(std::string(fx::screen_fields[f].name));
             CHECK(fx::hash_of(g.bytes_of(static_cast<fx::Field>(f))) == ref.kept[f]);
         }

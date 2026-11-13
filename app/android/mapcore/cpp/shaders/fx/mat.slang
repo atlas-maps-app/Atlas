@@ -4,7 +4,7 @@
 //   noise_rg (binding 8): the ripple's red and green, the crowns' red and green; noise_r (binding 9): the glints' red,
 //   the crown tone's red, the leaves' red and green; noise_canopy (binding 14): the canopy's alpha, with its mipmaps
 //   and a sampler that filters (CP/fx/Canopy.hpp); noise_clouds (binding 15): the sky layer's clouds' premultiplied
-//   red and alpha;
+//   red and alpha, bound only while frames show the sky (FRAME_SKY_FIELD; its placeholder otherwise);
 //   byte_tables (binding 10): bytes packed four to a uint, little-endian: the to-linear table at 0, the to-sRGB table
 //   at 65536, mat's opaque table at 131072, each indexed row · 256 + column.
 // The fields are the frame's upright device pixels; fx_pixel finds a fragment's. Every module that reads a field or a

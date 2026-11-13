@@ -208,15 +208,42 @@ TEST_CASE(
     }
     auto session = test::open_session();
     if (!session) return;
-    auto made = fx::FieldCache::create(*session->device, {.threads = 3});
+    // (the sky's field goes eight frames after the last whose sky showed)
+    auto made = fx::FieldCache::create(*session->device, {.threads = 3, .sky_kept_frames = 8});
     ATLAS_REQUIRE(made.has_value(), made.error().text());
     const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
-    const auto settle = [&fields] { fields->worker().wait_idle(); };
+    const auto settle = [&fields] {
+        fields->worker().wait_idle();
+        if (fx::FieldWorker* sky = fields->sky_worker(); sky != nullptr) sky->wait_idle();
+    };
     // the horizon in view (12° down), the sun behind the camera: no glow lies over the clouds by day
     const style::CameraState camera = test::s1_camera(52.3746, 4.8840, 52.0, 78.0, 200.0);
     const double density = camera.density;
     style::ThemeBlock day = test::sunny();
     day.sun_vector = sun_before(232.0, 30.0);
+    // The app's map at home, with the same weather, shows no sky: its frames hold the frame's four images and no byte
+    // of the clouds' field, and nothing makes one.
+    {
+        bool bound = false;
+        bool sky_bound = true;
+        const auto home = test::draw_ground(
+            *session, test::home_camera(), day, dir, "amsterdam",
+            [&](passes::Ground& g, const frame::FrameState& state) {
+                CHECK_FALSE(g.decided().clouds);
+                CHECK_FALSE(fx::sky_shows(state));
+                bound = (state.block.info.x & shaders::FRAME_FIELDS) != 0U;
+                sky_bound = (state.block.info.x & shaders::FRAME_SKY_FIELD) != 0U;
+            },
+            12, {}, frame::Mode::full, fields, settle);
+        ATLAS_REQUIRE(home.has_value(), "the map at home was not drawn");
+        CHECK(bound);
+        CHECK_FALSE(sky_bound);
+        CHECK(fields->sky_worker() == nullptr);
+        CHECK_FALSE(fields->images().sky_ready());
+    }
+    const vk::DeviceSize without_sky = fields->images().bytes();
+    const std::shared_ptr<const fx::ScreenFields> latest = fx::make_fields(
+        fx::size_of(camera.width_px, camera.height_px, density), {.threads = 3, .set = fx::FieldSet::sky});
     style::ThemeBlock grey = day;
     grey.flags |= style::theme_flag::overcast;
     grey.sky_k = 0.6;
@@ -236,10 +263,25 @@ TEST_CASE(
             *session, camera, m.theme, dir, "amsterdam",
             [&](passes::Ground& g, const frame::FrameState& state) {
                 f = g.decided();
-                filtered = (state.block.info.x & shaders::FRAME_FIELDS) != 0U;
+                constexpr std::uint32_t both = shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+                filtered = (state.block.info.x & both) == both;
+                CHECK(fx::sky_shows(state));
             },
             40, {}, frame::Mode::full, fields, settle);
         ATLAS_REQUIRE(with.has_value(), "the frame was not drawn with its clouds");
+        // the sky's field is there now, made once for the size: its image's bytes over the frame's four
+        CHECK(fields->images().sky_ready());
+        CHECK(fields->sky_bound_for(latest->size()));
+        ATLAS_REQUIRE(fields->sky_worker() != nullptr, "no worker made the sky's field");
+        CHECK(fields->sky_worker()->version() == 1);
+        CHECK(fields->sky_worker()->latest() == nullptr); // its bytes are the image's alone
+        const vk::DeviceSize with_sky = fields->images().bytes();
+        MESSAGE(std::format("the fields' images at {} × {}: {} bytes for a frame with no sky, {} more with the sky's "
+                            "field ({} a pixel)",
+                            camera.width_px, camera.height_px, without_sky, with_sky - without_sky,
+                            static_cast<double>(with_sky - without_sky) /
+                                (static_cast<double>(camera.width_px) * camera.height_px)));
+        CHECK(with_sky >= without_sky + (vk::DeviceSize{camera.width_px} * camera.height_px * fx::clouds_bytes));
         for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);
         const auto without = test::draw_ground(
             *session, camera, m.theme, dir, "amsterdam", {}, 40, [](passes::Ground& g) { g.draw_clouds(false); },
@@ -251,8 +293,6 @@ TEST_CASE(
         CHECK(f.city_glow == m.night);
         const gpu::Pixels& a = with->pixels;
         const gpu::Pixels& b = without->pixels;
-        const std::shared_ptr<const fx::ScreenFields> latest = fields->worker().latest();
-        ATLAS_REQUIRE(latest != nullptr, "no fields");
         REQUIRE(latest->size().width == a.width);
         REQUIRE(latest->size().height == a.height);
         const std::array<fx::Argb, 256> shadow_table = fx::cloud_table(f.cloud_shadow_matrix);
@@ -344,6 +384,10 @@ TEST_CASE(
             [&](passes::Ground& g, const frame::FrameState&) { CHECK_FALSE(g.decided().clouds); }, 40, {},
             frame::Mode::structural, fields, settle);
         ATLAS_REQUIRE(plain.has_value(), "the frame was not drawn in structural mode");
+        // forty frames whose sky showed no clouds: the field, its image and its worker have gone
+        CHECK(fields->sky_worker() == nullptr);
+        CHECK_FALSE(fields->images().sky_ready());
+        CHECK_FALSE(fields->sky_bound_for(latest->size()));
     }
     for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);
 }

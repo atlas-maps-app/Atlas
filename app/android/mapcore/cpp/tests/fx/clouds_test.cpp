@@ -65,7 +65,7 @@ TEST_CASE("fx: the clouds' two filters' results over the sky's rows are SvgFilte
                                                                        .top = 0,
                                                                        .width = static_cast<std::int32_t>(c.width),
                                                                        .height = static_cast<std::int32_t>(c.rows)},
-                                                                      scale);
+                                                                      scale, FieldSet::sky);
         const std::array<Argb, 256> shadow_table = cloud_table(cloud_shadow_matrix(c.red, c.green, c.blue, c.k, c.t));
         const std::array<Argb, 256> table = cloud_table(cloud_matrix(c.red, c.green, c.blue, c.k, c.t));
         const CloudOffset offset = cloud_offset(scale);

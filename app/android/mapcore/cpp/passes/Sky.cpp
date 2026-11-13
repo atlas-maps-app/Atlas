@@ -143,7 +143,8 @@ gpu::Result<void> Ground::make_sky_pipelines(const frame::PassContext& context, 
 }
 
 bool Ground::clouds_filtered(const frame::FrameState& state) const noexcept {
-    return frame_.clouds && state.mode == frame::Mode::full && (state.block.info.x & shaders::FRAME_FIELDS) != 0U &&
+    constexpr std::uint32_t bound = shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+    return frame_.clouds && state.mode == frame::Mode::full && (state.block.info.x & bound) == bound &&
            pipelines_ != nullptr && *pipelines_->clouds;
 }
 

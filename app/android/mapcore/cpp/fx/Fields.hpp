@@ -1,5 +1,6 @@
 // The screen-wide noise fields (plan-vector D10, D5.5, N16, N17, K17a): the renders' ten noises whose turbulence is
-// fixed to the screen and spans it, made once per surface size on the CPU, exactly, and kept on disk.
+// fixed to the screen and spans it, made once per surface size on the CPU, exactly, and kept on disk: nine that every
+// frame has, and the clouds', which only a frame whose sky shows has (below).
 //
 // The fields (render/amsterdam.py, all fractal noise anchored at the user-space origin, so the same at every camera):
 //   mat            seed 13, base frequency .16 × .75, 2 octaves: the walls', roofs' and pavements' texture
@@ -28,19 +29,26 @@
 // averaged where the app's map reads it on the ground. The clouds' two filters read one noise, `cloudf` its red as
 // the others do and `cloudsh2` the noise moved 5 px down first (feOffset, which at a density that is no whole number
 // blends two rows of the premultiplied noise), so the clouds' field keeps the noise premultiplied, its red and its
-// alpha: what the offset blends, and what each matrix's red comes of. Fifteen bytes a pixel, the GPU's five images
+// alpha: what the offset blends, and what each matrix's red comes of.
+//
+// Two sets (FieldSet). The frame's, which every frame has: nine fields, thirteen bytes a pixel, the GPU's four images
 // (D5.5):
 //   rgba:   mat's grey, the grain's grey, the grain's alpha, the cloud shadows' red
 //   rg:     the ripple's red and green, the crown's red and green (four bytes: the image is RGBA8)
 //   r:      the glints' red, the crown tone's red, the leaf's red and green (four bytes: the image is RGBA8)
 //   canopy: the canopy's alpha (R8, with its mipmaps on the GPU)
+// 33.7 MB at S1, 58.4 MB at S3 (N16). And the sky's, which only a frame whose sky shows its clouds has (sky_layer's
+// rects: with weather, the horizon on the frame; the app's camera never looks that level): the clouds' field, two
+// bytes a pixel, a fifth image:
 //   clouds: the clouds' premultiplied red and their alpha (R8G8)
-// 38.9 MB at S1, 67.4 MB at S3 (N16).
+// 5.2 MB at S1 while such frames are drawn, and nothing before the first or once they have stopped.
 //
-// The fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes), or on the
-// GPU where the device passes its byte check (fx/GpuFields.hpp: the same bytes), and kept in cacheDir/fields, one file
-// a size, so a warm start maps them. Mapped or made, a size's fields are immutable and shared; FieldWorker publishes
-// the latest size asked for (or made on the GPU), and fx/FieldCache.hpp puts it on the GPU.
+// The frame's fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes), or
+// on the GPU where the device passes its byte check (fx/GpuFields.hpp: the same bytes), and kept in cacheDir/fields,
+// one file a size, so a warm start maps them. Mapped or made, a size's fields are immutable and shared; FieldWorker
+// publishes the latest size asked for (or made on the GPU), and fx/FieldCache.hpp puts it on the GPU. The sky's field
+// is made on a worker's threads when the first frame whose sky shows asks for it, kept nowhere, and let go once no
+// frame has asked for a while (fx/FieldCache.hpp).
 #pragma once
 
 #include "fx/Noise.hpp"
@@ -66,8 +74,18 @@ namespace atlas::fx {
 /// The renders' screen-wide fields.
 enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone, leaf, canopy, clouds };
 
-/// The number of screen-wide fields.
+/// The number of screen-wide fields, and of those every frame has (the first nine: all but the clouds).
 inline constexpr std::size_t field_count = 10;
+inline constexpr std::size_t frame_field_count = 9;
+
+/// Which fields: the frame's nine, the sky's one (the clouds), or all ten in one (the tests', the twins').
+enum class FieldSet : std::uint8_t { frame = 1, sky = 2, all = 3 };
+
+/// Whether `set` holds field `f`.
+[[nodiscard]] constexpr bool holds(FieldSet set, Field f) noexcept {
+    const auto bit = f == Field::clouds ? FieldSet::sky : FieldSet::frame;
+    return (static_cast<std::uint8_t>(set) & static_cast<std::uint8_t>(bit)) != 0U;
+}
 
 /// A screen-wide field: its name, its turbulence, the channels its filter's next primitive reads, and how many bytes
 /// the core keeps of a pixel.
@@ -140,22 +158,21 @@ inline constexpr std::uint32_t rg_bytes = 4;
 inline constexpr std::uint32_t r_bytes = 4;
 inline constexpr std::uint32_t canopy_bytes = 1;
 inline constexpr std::uint32_t clouds_bytes = 2;
-/// The images: rgba, rg, r, the canopy's and the clouds'.
-inline constexpr std::size_t image_count = 5;
-/// The bytes a pixel of each image holds, in the images' order.
-inline constexpr std::array<std::uint32_t, image_count> image_bytes{rgba_bytes, rg_bytes, r_bytes, canopy_bytes,
-                                                                    clouds_bytes};
-/// The bytes a pixel of the five images holds in all.
-inline constexpr std::uint32_t pixel_bytes = rgba_bytes + rg_bytes + r_bytes + canopy_bytes + clouds_bytes;
-/// Where each image's plane begins among a frame's bytes (kept on disk, staged for the GPU, made on it), in bytes a
-/// pixel: rgba, rg, r, then the clouds' and last the canopy's, so each plane begins at a multiple of its pixel's
-/// bytes whatever the frame's size (a copy into an image needs its bytes there).
+/// The frame's images: rgba, rg, r and the canopy's; and the sky's, the clouds', after them.
+inline constexpr std::size_t image_count = 4;
+inline constexpr std::size_t clouds_image = 4;
+/// The bytes a pixel of each image holds, in the images' order (the frame's four, then the sky's).
+inline constexpr std::array<std::uint32_t, image_count + 1> image_bytes{rgba_bytes, rg_bytes, r_bytes, canopy_bytes,
+                                                                        clouds_bytes};
+/// The bytes a pixel of the frame's four images holds in all.
+inline constexpr std::uint32_t pixel_bytes = rgba_bytes + rg_bytes + r_bytes + canopy_bytes;
+/// Where each of the frame's images' planes begins among a frame's bytes (kept on disk, staged for the GPU, made on
+/// it), in bytes a pixel: rgba, rg, r, then the canopy's.
 inline constexpr std::array<std::uint32_t, image_count> plane_offsets{0, rgba_bytes, rgba_bytes + rg_bytes,
-                                                                      rgba_bytes + rg_bytes + r_bytes + clouds_bytes,
                                                                       rgba_bytes + rg_bytes + r_bytes};
 
-/// Where field `f`'s bytes lie in the five images: the image (0 rgba, 1 rg, 2 r, 3 canopy, 4 clouds) and the first
-/// channel.
+/// Where field `f`'s bytes lie in the images: the image (0 rgba, 1 rg, 2 r, 3 canopy; 4 the sky's clouds) and the
+/// first channel.
 struct Placement {
     std::uint32_t image = 0;
     std::uint32_t channel = 0;
@@ -171,37 +188,36 @@ struct Placement {
     case Field::crown_tone: return {.image = 2, .channel = 1};
     case Field::leaf: return {.image = 2, .channel = 2};
     case Field::canopy: return {.image = 3, .channel = 0};
-    case Field::clouds: return {.image = 4, .channel = 0};
+    case Field::clouds: return {.image = clouds_image, .channel = 0};
     }
     return {};
 }
 
-/// A size's ten fields, as the GPU's images take them: rows from the top, each image's bytes a plane (plane_offsets).
-/// Made in memory, mapped from the disk cache, or read back from the GPU; immutable.
+/// A size's fields, a set of them (the frame's nine, the sky's one, or all), as the GPU's images take them: rows from
+/// the top, each image's bytes a plane (the frame's as plane_offsets lays them). Made in memory, mapped from the disk
+/// cache, or read back from the GPU; immutable. The planes of the fields its set leaves out are empty.
 class ScreenFields {
 public:
-    /// Fields of `size` in memory, zeroed (made by make_fields).
-    explicit ScreenFields(FieldSize size);
-    /// Fields of `size` viewed in the bytes `owner` holds and keeps alive with them: a mapping of the disk cache's
-    /// file (`mapped`), or the GPU's buffer they were made in.
-    ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped, std::span<const std::uint8_t> rgba,
-                 std::span<const std::uint8_t> rg, std::span<const std::uint8_t> r,
-                 std::span<const std::uint8_t> canopy, std::span<const std::uint8_t> clouds);
-    /// Fields of `size` viewed in `bytes`, a frame's planes as plane_offsets lays them (pixels · pixel_bytes of them).
+    /// The fields of `set` of `size` in memory, zeroed (made by make_fields).
+    explicit ScreenFields(FieldSize size, FieldSet set = FieldSet::frame);
+    /// The frame's fields of `size` viewed in `bytes`, their planes as plane_offsets lays them (pixels · pixel_bytes
+    /// of them), which `owner` holds and keeps alive with them: a mapping of the disk cache's file (`mapped`), or the
+    /// GPU's buffer they were made in.
     ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped, std::span<const std::uint8_t> bytes);
 
     [[nodiscard]] FieldSize size() const noexcept { return size_; }
+    [[nodiscard]] FieldSet set() const noexcept { return set_; }
     [[nodiscard]] std::span<const std::uint8_t> rgba() const noexcept { return rgba_; }
     [[nodiscard]] std::span<const std::uint8_t> rg() const noexcept { return rg_; }
     [[nodiscard]] std::span<const std::uint8_t> r() const noexcept { return r_; }
     [[nodiscard]] std::span<const std::uint8_t> canopy() const noexcept { return canopy_; }
     [[nodiscard]] std::span<const std::uint8_t> clouds() const noexcept { return clouds_; }
-    /// Image `i`'s bytes (0 rgba, 1 rg, 2 r, 3 canopy, 4 clouds).
+    /// Image `i`'s bytes (0 rgba, 1 rg, 2 r, 3 canopy, 4 clouds): none where the set leaves it out.
     [[nodiscard]] std::span<const std::uint8_t> plane(std::size_t i) const noexcept;
     /// Whether they came from the disk cache.
     [[nodiscard]] bool mapped() const noexcept { return mapped_; }
 
-    /// Field `f`'s bytes at pixel (x, y): the first, and the second for the two-byte fields.
+    /// Field `f`'s (one of the set's) bytes at pixel (x, y): the first, and the second for the two-byte fields.
     [[nodiscard]] std::array<std::uint8_t, 2> at(Field f, std::uint32_t x, std::uint32_t y) const noexcept;
     /// Field `f`'s bytes over the frame in its own layout (spec_of(f).bytes a pixel, rows from the top): what
     /// fields.inc's hashes are taken over.
@@ -216,6 +232,7 @@ public:
 
 private:
     FieldSize size_;
+    FieldSet set_ = FieldSet::frame;
     std::vector<std::uint8_t> owned_rgba_;
     std::vector<std::uint8_t> owned_rg_;
     std::vector<std::uint8_t> owned_r_;
@@ -238,14 +255,16 @@ struct MakeOptions {
     bool lanes = true;
     /// Rows a worker takes at a time.
     std::uint32_t band_rows = 32;
+    /// The fields made: the frame's nine unless said.
+    FieldSet set = FieldSet::frame;
 };
 
-/// Makes the ten fields of `size`.
+/// Makes the fields of `size` (options.set's).
 [[nodiscard]] std::shared_ptr<const ScreenFields> make_fields(FieldSize size, const MakeOptions& options = {});
 
-/// make_fields' bytes of the pixels of `block` of a frame at filter scale `scale`, as fields of the block's size, by
-/// the scalar reference (what the GPU's byte check holds its fields to, fx/GpuFields.hpp).
-[[nodiscard]] std::shared_ptr<const ScreenFields> make_block(Block block, float scale);
+/// make_fields' bytes of the pixels of `block` of a frame at filter scale `scale`, as fields of the block's size (the
+/// frame's unless said), by the scalar reference (what the GPU's byte check holds its fields to, fx/GpuFields.hpp).
+[[nodiscard]] std::shared_ptr<const ScreenFields> make_block(Block block, float scale, FieldSet set = FieldSet::frame);
 
 /// make_fields' keep tables as the GPU reads them (shaders/fx/fields.slang): a channel premultiplied and
 /// unpremultiplied again at each alpha (entry a · 256 + c), then the grain's grey from its matrix written as
@@ -253,8 +272,8 @@ struct MakeOptions {
 /// fx::canopy_alpha).
 [[nodiscard]] std::vector<std::uint8_t> keep_tables_bytes();
 
-/// The fields kept on disk (cacheDir/fields): one file a size, written whole by a rename, its head and checksum checked
-/// when it is mapped; the least recently written dropped past a budget.
+/// The frame's fields kept on disk (cacheDir/fields): one file a size, written whole by a rename, its head and checksum
+/// checked when it is mapped; the least recently written dropped past a budget.
 class FieldDisk {
 public:
     explicit FieldDisk(std::filesystem::path dir, std::uint64_t budget = std::uint64_t{96} << 20U);
@@ -278,14 +297,15 @@ private:
 
 /// The version of the fields' bytes: bump it whenever a kept byte could change (the turbulence, a step, the layout),
 /// so files made by older code are never read as this code's.
-inline constexpr std::uint32_t fields_algorithm = 5;
+inline constexpr std::uint32_t fields_algorithm = 6;
 
-/// The workers that make the fields: the latest size asked for, from the disk cache when it holds them, else made on
-/// `threads` threads, published for the frame to take, then kept there.
+/// The workers that make a set's fields: the latest size asked for, from the disk cache when it holds them, else made
+/// on `threads` threads, published for the frame to take, then kept there.
 class FieldWorker {
 public:
-    /// `disk` may be null (nothing kept); `threads` in all, the worker's own among them.
-    FieldWorker(std::shared_ptr<const FieldDisk> disk, unsigned threads);
+    /// `disk` may be null (nothing kept; the frame's fields alone are kept); `threads` in all, the worker's own among
+    /// them.
+    FieldWorker(std::shared_ptr<const FieldDisk> disk, unsigned threads, FieldSet set = FieldSet::frame);
     ~FieldWorker();
     FieldWorker(const FieldWorker&) = delete;
     FieldWorker& operator=(const FieldWorker&) = delete;
@@ -305,6 +325,11 @@ public:
     void on_publish(std::function<void()> wake);
     /// Waits until every request made so far is done (published, and kept on disk).
     void wait_idle();
+    /// Whether every request made so far is done.
+    [[nodiscard]] bool idle() const;
+    /// Lets go of the fields published last (what took them keeps them): latest() is null until the next
+    /// publication.
+    void forget();
     /// The last publication's milliseconds and whether it came from disk.
     [[nodiscard]] double last_ms() const;
     [[nodiscard]] bool last_from_disk() const;
@@ -320,6 +345,7 @@ private:
 
     std::shared_ptr<const FieldDisk> disk_;
     unsigned threads_;
+    FieldSet set_;
     mutable std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
@@ -362,8 +388,9 @@ struct GpuPart {
 };
 
 /// `fields <w>x<h> cpu <ms> gpu <gpu> hash <h> ok` (plan-vector Appendix C), or `... FAIL <field> <h> expected <h>`
-/// where a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the ten
-/// fields of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone. `<gpu>` is the GPU's
+/// where a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the frame's
+/// nine fields of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone (the sky's field
+/// is made after them, for the hash and the check alone). `<gpu>` is the GPU's
 /// milliseconds where it made them too (fx/GpuFields.hpp's fields_line), and then the line ends `FAIL gpu <field> <h>
 /// expected <h>` where its bytes are not the CPU's; else `off`, or `off (<why>)`.
 [[nodiscard]] std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu = {});

@@ -1304,7 +1304,7 @@ private:
     void record_sky_layer(const frame::Recording& r);
     void emit_sky(const frame::FrameState& state, twin::Stream& out) const;
     /// Whether this frame draws the clouds through their filters: the frame decided them (frame_.clouds, in full
-    /// mode) and the fields are bound (FRAME_FIELDS).
+    /// mode) and the fields are bound, the sky's among them (FRAME_FIELDS, FRAME_SKY_FIELD).
     [[nodiscard]] bool clouds_filtered(const frame::FrameState& state) const noexcept;
     /// The clouds' two tables into the frame's words (Words::clouds): cloudsh2's 256 results, then cloudf's.
     void write_clouds(std::vector<std::uint32_t>& words, const frame::FrameState& state);

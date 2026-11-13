@@ -1,9 +1,10 @@
-// The screen-wide noise fields made on the GPU (plan-vector D10, N17; shaders/fx/fields.slang): fx/Fields.hpp's ten
-// fields of a frame, every byte make_fields', in the GPU's five images' layout, wherever the device passes the byte
-// check. Each noise is fx/noise.slang's turbulence (each fused operation of the port's an exact emulated fma) and each
-// field keeps what make_fields keeps of it, from the same tables and with the same arithmetic (mat's two fused
-// operations emulated too); the check holds both to the CPU's on the device before the core relies on them: the
-// renders' twelve noises (fx::noise_byte_check), then the ten fields' kept bytes over the same blocks.
+// The screen-wide noise fields made on the GPU (plan-vector D10, N17; shaders/fx/fields.slang): fx/Fields.hpp's nine
+// fields every frame has (the frame's set; the sky's clouds are the CPU's alone), every byte make_fields', in the
+// GPU's four images' layout, wherever the device passes the byte check. Each noise is fx/noise.slang's turbulence
+// (each fused operation of the port's an exact emulated fma) and each field keeps what make_fields keeps of it, from
+// the same tables and with the same arithmetic (mat's two fused operations emulated too); the check holds both to the
+// CPU's on the device before the core relies on them: the renders' twelve noises (fx::noise_byte_check, the clouds'
+// among them), then the nine fields' kept bytes over the same blocks.
 //
 // The core takes it (fx/FieldCache.hpp's make_on_gpu) for a size the disk does not hold, on a device that passes the
 // check where it is a GPU (not lavapipe or SwiftShader, which run the shader on the CPU many times slower than the
@@ -28,7 +29,7 @@ namespace atlas::fx {
 
 /// A size's fields made on the GPU.
 struct GpuMade {
-    /// The five images' planes (fx/Fields.hpp's plane_offsets; the last padded to a whole word), in
+    /// The four images' bytes one after the other (fx/Fields.hpp's layout; the canopy's padded to a whole word), in
     /// host-visible memory: what FieldImages uploads from, and what the fields view.
     std::shared_ptr<const gpu::Buffer> buffer;
     /// The fields, viewing the buffer's bytes (and keeping it alive).
@@ -36,7 +37,7 @@ struct GpuMade {
     double ms = 0; ///< from the commands' recording to the fence
 };
 
-/// fields.slang's pipeline, its inputs (the ten specs and lattices, the keep tables) and a command pool on one
+/// fields.slang's pipeline, its inputs (the nine specs and lattices, the keep tables) and a command pool on one
 /// device.
 class GpuFields {
 public:
@@ -49,7 +50,7 @@ public:
     GpuFields& operator=(GpuFields&&) = delete;
     ~GpuFields();
 
-    /// The byte check: fx::noise_byte_check, then the ten fields of its two blocks at its filter scale against
+    /// The byte check: fx::noise_byte_check, then the nine fields of its two blocks at its filter scale against
     /// make_fields' bytes of the same pixels; the first difference named. On the device's queue, waiting for it.
     [[nodiscard]] gpu::Result<NoiseCheck> check() const;
     /// The fields of `size`, on the device's queue, waiting for them.
@@ -69,7 +70,7 @@ private:
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
-    gpu::Buffer lattices_; ///< the ten specs, then their lattices
+    gpu::Buffer lattices_; ///< the nine specs, then their lattices
     gpu::Buffer keep_;     ///< make_fields' keep tables
     vk::raii::CommandPool commands_{nullptr};
 };
