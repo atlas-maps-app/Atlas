@@ -337,7 +337,9 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .routes = routes_.get(),
                           .asked = asked_,
                           .house = house_.get(),
-                          .palette = &palette_});
+                          .palette = &palette_,
+                          .terrain = terrain_,
+                          .sky_view = sky_view_});
 }
 
 void MapFrame::set_asked(std::optional<AskedBuilding> asked) {
@@ -478,6 +480,29 @@ std::vector<scene::WorldWant> MapFrame::world_wants() const {
 std::vector<tiles::TileKey> MapFrame::world_blocks() const {
     const scene::WorldTiles* tiles = world_ ? world_->world_tiles() : nullptr;
     return tiles != nullptr ? tiles->blocks() : std::vector<tiles::TileKey>{};
+}
+
+std::vector<scene::WorldWant> MapFrame::terrain_wants() const {
+    const scene::ReliefTiles* tiles = world_ ? world_->relief_tiles() : nullptr;
+    return tiles != nullptr ? tiles->wants() : std::vector<scene::WorldWant>{};
+}
+
+std::vector<tiles::TileKey> MapFrame::terrain_blocks() const {
+    const scene::ReliefTiles* tiles = world_ ? world_->relief_tiles() : nullptr;
+    return tiles != nullptr ? tiles->blocks() : std::vector<tiles::TileKey>{};
+}
+
+std::string MapFrame::terrain_sources() const {
+    const scene::ReliefTiles* tiles = world_ ? world_->relief_tiles() : nullptr;
+    return tiles != nullptr ? tiles->sources() : std::string();
+}
+
+std::shared_ptr<const tiles::StorePack> MapFrame::terrain_pack(const tiles::Sha256Digest& identity) const {
+    if (!world_) return nullptr;
+    for (const auto& p : world_->store().terrain_packs()) {
+        if (p->identity == identity) return p;
+    }
+    return nullptr;
 }
 
 std::shared_ptr<const tiles::StorePack> MapFrame::world_pack(std::string_view id) const {

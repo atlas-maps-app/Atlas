@@ -12,6 +12,7 @@
 #include "passes/Labels.hpp"
 #include "passes/Markers.hpp"
 #include "passes/Overlays.hpp"
+#include "passes/Relief.hpp"
 #include "passes/Routes.hpp"
 #include "passes/Shopfronts.hpp"
 #include "passes/Things.hpp"
@@ -48,7 +49,8 @@ constexpr std::array registry{
     Registration{.name = "markers", .make = &make<passes::Markers>},        // ENGINE.md step 6: updates before labels
     Registration{.name = "labels", .make = &make<passes::Labels>},          // K13: the board's labels (D13)
     Registration{.name = "overlays", .make = &make<passes::Overlays>},      // ENGINE.md step 6: the location's puck
-    Registration{.name = "world", .make = &make<passes::World>},            // ENGINE.md step 5: the world, last
+    Registration{.name = "world", .make = &make<passes::World>},            // ENGINE.md step 5: the world
+    Registration{.name = "relief", .make = &make<passes::Relief>},          // ENGINE.md part 6: the terrain's light
 };
 
 } // namespace

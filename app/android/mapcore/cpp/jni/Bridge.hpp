@@ -44,8 +44,11 @@ namespace atlas::jni {
 /// Native.ask takes the roof the building is asked about in (FillIn's roof question: its house, scene/House.hpp), and a
 /// negative wall for walls whose colour is not asked about. 31: the world a kept country keeps (ENGINE.md step 11):
 /// Native.worldKept (its packs' heads and tiles' chunks pinned in the world's cache, what is lacking said) and
-/// Native.worldKeptRange (a fetched range of one of them kept).
-inline constexpr jint abi = 31;
+/// Native.worldKeptRange (a fetched range of one of them kept). 32: the terrain's relief (ENGINE.md part 6, step 2):
+/// Native.terrainWants, terrainBlocks and terrainKeep (a country's terrain packs fetched by range, as the world's),
+/// Native.terrain (the relief on or off) and Native.terrainSources (the sources of the relief drawn, for the credit
+/// line); Native.packs and Native.worldHead take a terrain pack's kind (5).
+inline constexpr jint abi = 32;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

@@ -157,6 +157,19 @@ public:
         passes_ = passes;
         if (builder_) builder_->set_passes(passes);
     }
+    /// The terrain's relief on (the default) or off from now on (MapCore.terrain; FrameInputs::terrain), and whether
+    /// its light takes the sky-view (on by default: a test's and a tool's switch).
+    void set_terrain(bool on) noexcept { terrain_ = on; }
+    void set_sky_view(bool on) noexcept { sky_view_ = on; }
+    [[nodiscard]] bool terrain() const noexcept { return terrain_; }
+    /// The terrain's rasters the map wants whose chunks are not on the phone, nearest first
+    /// (scene::ReliefTiles::wants), the L9 tiles the relief's tiles lie in (blocks), and the registry ids of the
+    /// sources of the relief the last frame drew, comma-separated (sources).
+    [[nodiscard]] std::vector<scene::WorldWant> terrain_wants() const;
+    [[nodiscard]] std::vector<tiles::TileKey> terrain_blocks() const;
+    [[nodiscard]] std::string terrain_sources() const;
+    /// The store's terrain pack whose SHA-256 is `identity`, or null.
+    [[nodiscard]] std::shared_ptr<const tiles::StorePack> terrain_pack(const tiles::Sha256Digest& identity) const;
     /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
     /// later.
     void set_landing(std::optional<scene::World::Landing> landing) noexcept {
@@ -254,6 +267,8 @@ private:
     bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;
+    bool terrain_ = true;
+    bool sky_view_ = true;
     std::uint64_t passes_ = ~std::uint64_t{0};
     bool shape_records_ = true;
     /// set_shape_records' choice on the frame builder's buildings pass: "" where it draws from records, else why not.

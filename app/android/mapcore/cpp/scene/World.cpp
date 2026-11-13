@@ -121,6 +121,7 @@ gpu::Result<void> World::add_globals(std::shared_ptr<frame::GlobalProvider> prov
 void World::set_wake(std::function<void()> wake) {
     wake_ = wake;
     if (world_tiles_) world_tiles_->set_wake(wake);
+    if (relief_tiles_) relief_tiles_->set_wake(wake);
     if (sun_) sun_->set_wake(wake);
     pack_stage_->set_published(wake);
     residency_->set_published(std::move(wake));
@@ -710,7 +711,23 @@ bool World::world_fading() const noexcept {
     return w != nullptr && (w->fading || w->settling);
 }
 
+void World::update_relief(const frame::FrameState& state, const view::GroundFrame& frame) {
+    const double distance = state.placed ? state.placed->dist() : state.camera.distance;
+    if (!state.view || !state.terrain || fx::relief_strength(fx::relief_style(), distance) <= 0.0) {
+        if (relief_tiles_) relief_tiles_->rest();
+        return;
+    }
+    if (!relief_tiles_) {
+        relief_tiles_ = std::make_unique<ReliefTiles>(store_);
+        if (wake_) relief_tiles_->set_wake(wake_);
+    }
+    relief_tiles_->update(*state.view, frame,
+                          {.far = reach_of(distance), .fine = options_.fine_reach, .coarse = options_.coarse_reach},
+                          state.number);
+}
+
 void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds) {
+    update_relief(state, frame);
     if (!state.view) return;
     if (!world_tiles_) {
         // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps', up to a

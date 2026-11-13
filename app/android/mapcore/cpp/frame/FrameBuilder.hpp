@@ -56,6 +56,7 @@ struct House;        // scene/House.hpp
 class ItemTable;     // scene/ItemTable.hpp
 struct ResidentPack; // scene/Packs.hpp
 struct WorldFrame;   // scene/WorldTiles.hpp
+struct ReliefFrame;  // scene/Relief.hpp
 struct WorldName;    // scene/WorldNames.hpp
 } // namespace atlas::scene
 
@@ -103,6 +104,9 @@ struct FrameState {
     bool rest = false;
     /// The screen fields are read where the ground lies (FrameOptions::grounded, outside engine mode).
     bool grounded = false;
+    /// The frame takes the terrain's relief (FrameInputs::terrain, outside engine mode: the renders' own frames lie on
+    /// flat ground): the scene walks its relief tiles, and the relief pass lights what they hold (`relief` below).
+    bool terrain = false;
     Mode mode = Mode::structural;
     /// The block set 0 holds this frame.
     shaders::FrameBlock block{};
@@ -128,6 +132,11 @@ struct FrameState {
     /// What the frame draws of the world beyond the countries' tiles (ENGINE.md step 5; the world pass's), or null: up
     /// to 18 km from the target, and without the world's packs, nothing.
     const scene::WorldFrame* world = nullptr;
+    /// What the frame lights of the terrain's relief (ENGINE.md part 6, terrain; scene/Relief.hpp; the relief pass's),
+    /// or null: no terrain pack, the terrain switched off (FrameInputs::terrain), or engine mode, whose frames are the
+    /// renders' flat ground. And whether the light takes the sky-view (FrameInputs::sky_view).
+    const scene::ReliefFrame* relief = nullptr;
+    bool sky_view = true;
     /// The user's palette (FrameInputs::palette; null: today's), which the passes that draw by it read.
     const style::PaletteBlock* palette = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
@@ -235,6 +244,8 @@ public:
     [[nodiscard]] virtual std::span<const scene::ResidentPack* const> neighbour_packs() const noexcept { return {}; }
     /// What the frame draws of the world beyond the countries' tiles after update (valid until the next), or null.
     [[nodiscard]] virtual const scene::WorldFrame* world_frame() const noexcept { return nullptr; }
+    /// What the frame lights of the terrain's relief after update (valid until the next), or null.
+    [[nodiscard]] virtual const scene::ReliefFrame* relief_frame() const noexcept { return nullptr; }
     /// The providers of set 1's globals that no pass owns (frame/Globals.hpp), asked in this order each frame after
     /// update: the geometry heaps', the sun's, those added to the world.
     [[nodiscard]] virtual std::span<GlobalProvider* const> globals() noexcept { return {}; }
@@ -266,6 +277,11 @@ struct FrameInputs {
     const scene::House* house = nullptr;
     /// The user's palette (MapCore.palette; null: today's).
     const style::PaletteBlock* palette = nullptr;
+    /// The terrain's relief (ENGINE.md part 6, terrain; MapCore.terrain): off by default, so a frame whose inputs do
+    /// not ask for it is the frame before the relief (every check that holds to the renders' flat ground); the app's
+    /// map asks for it (MapFrame). And whether its light takes the sky-view (the relief's hollows).
+    bool terrain = false;
+    bool sky_view = true;
 };
 
 /// The map's frame.

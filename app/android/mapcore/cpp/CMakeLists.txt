@@ -194,6 +194,8 @@ endif()
 # building traditions a window takes from its country (render/traditions' five, read as data until the renderer
 # retires and they join the engine's style).
 atlas_embed_data(engine_style "${CMAKE_CURRENT_SOURCE_DIR}/../style/engine.jsonc")
+# the relief's look (fx/Relief.hpp): the core's own, which no pack carries
+atlas_embed_data(relief_style "${CMAKE_CURRENT_SOURCE_DIR}/../style/relief.jsonc")
 foreach(_tradition IN ITEMS fr_paris gb_terrace it_tuscan nl_amsterdam no_timber)
     atlas_embed_data(tradition_${_tradition} "${CMAKE_CURRENT_SOURCE_DIR}/../../../../render/traditions/${_tradition}.json")
 endforeach()

@@ -205,7 +205,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_packs(JN
         p.number = static_cast<std::uint64_t>(number[at]);
         p.ref.id = string_at(env, ids, i);
         p.ref.path = string_at(env, paths, i);
-        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::world_base) || p.ref.id.empty() ||
+        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::terrain_country) || p.ref.id.empty() ||
             number[at] <= 0) {
             refused += std::format("{}: not a pack the map can list\n", p.ref.id);
             continue;

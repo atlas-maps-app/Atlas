@@ -1,0 +1,42 @@
+// The relief's look (ENGINE.md part 6, terrain): the values the core lights the terrain with, as data. It is compiled
+// into the core (cmake/Data.cmake) and read by fx/Relief.hpp; no pack carries it, so the map's style version does not
+// move with it and refining the look is an edit here that builds no pack again.
+//
+// The light is a share of what flat open ground takes (shaders/shared/relief.slang), so flat open ground keeps its
+// colours whatever stands here.
+{
+    // The contrast k of the light on open ground, the renders' (render/relief.py): under a clear day's sun
+    // 1 + k·(max(0, n·L) − L_y); under an overcast sky, from the sky's side below; at night from straight above.
+    "sun": 0.8,
+    "overcast": 0.55,
+    "night": 0.25,
+    // Where the sun's light comes in as it rises: none at the horizon (its sine `from`), all of it from `to` on, the
+    // sky's side taking the overcast's contrast below.
+    "sunrise": [0.0, 0.12],
+
+    // The side the sky's directed share comes from (x east, y up, z south): the north-west, the renders' overcast
+    // light and the cartographers' convention.
+    "sky_side": [-0.6, 0.9, -0.6],
+    // Under a high sun the slopes' light flattens (the cosine changes slowly near its peak): a share of the sky's light
+    // comes from the side, none up to the sun's sine `from`, `share` of it from `to` on. Flat land stays as it is.
+    "high_sun": {"share": 0.3, "from": 0.6, "to": 0.95},
+
+    // The sky-view (the share of the sky a point sees): how much of it lies over all of the light as a relief factor,
+    // f·(1 + a·(V − 1)); baked a tile from `directions` horizons within `reach` samples.
+    "sky_view": {"factor": 0.5, "directions": 16, "reach": 8},
+
+    // The light's range: eased toward `most` from `shoulder` on (the renders clip at 1.16), never under `floor`.
+    "shoulder": 1.1,
+    "most": 1.16,
+    "floor": 0.42,
+
+    // Shade takes a little of the blue sky's colour: the tint at its full, and how fast it comes as the light falls,
+    // q = (1 − f)·rate (the renders' cool and 1.6).
+    "tint": [0.93, 0.97, 1.07],
+    "tint_rate": 1.6,
+
+    // How long a tile's relief fades in where none was drawn, seconds; and the camera's distance from its target over
+    // which the relief fades out, metres (the world's relief beyond is ENGINE.md's terrain step 4).
+    "fade": 0.18,
+    "far": [18000, 24000]
+}

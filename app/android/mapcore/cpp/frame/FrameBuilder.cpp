@@ -393,6 +393,9 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.house = nullptr;
     state_.house_place = {};
     state_.palette = inputs_.palette;
+    state_.terrain = inputs_.terrain && !cam.has(style::camera_flag::engine_mode);
+    state_.sky_view = inputs_.sky_view;
+    state_.relief = nullptr;
     // Atlas's guesses off (the user's palette): the map leaves out the buildings' parts it guesses, and draws a guessed
     // roof's shape as the plain box in its place (FRAME_PLAIN_ROOFS)
     const bool no_guesses = state_.palette != nullptr && state_.palette->has(style::palette_flag::no_guesses);
@@ -558,6 +561,7 @@ void FrameBuilder::stage_f() {
     state_.coarser_pack = ours ? scene->coarser_pack() : nullptr;
     state_.neighbour_packs = ours ? scene->neighbour_packs() : std::span<const scene::ResidentPack* const>();
     state_.world = scene != nullptr ? scene->world_frame() : nullptr;
+    state_.relief = scene != nullptr && state_.terrain ? scene->relief_frame() : nullptr;
     // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
     state_.block.strokes = strokes_of(state_.active_pack);
     state_.block.windows = windows_of(state_.active_pack);

@@ -23,6 +23,7 @@
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
+#include "scene/Relief.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/WorldTiles.hpp"
@@ -196,6 +197,12 @@ public:
     [[nodiscard]] const WorldFrame* world_frame() const noexcept override {
         return world_tiles_ ? world_tiles_->frame() : nullptr;
     }
+    [[nodiscard]] const ReliefFrame* relief_frame() const noexcept override {
+        return relief_tiles_ && !relief_tiles_->frame().draws.empty() ? &relief_tiles_->frame() : nullptr;
+    }
+    /// The terrain's relief tiles (ENGINE.md part 6, terrain), once a frame has taken the terrain; else null.
+    [[nodiscard]] ReliefTiles* relief_tiles() noexcept { return relief_tiles_.get(); }
+    [[nodiscard]] const ReliefTiles* relief_tiles() const noexcept { return relief_tiles_.get(); }
     /// The world's tiles beyond the countries' (ENGINE.md step 5), once the store holds a world pack; else null.
     [[nodiscard]] WorldTiles* world_tiles() noexcept { return world_tiles_.get(); }
     [[nodiscard]] const WorldTiles* world_tiles() const noexcept { return world_tiles_.get(); }
@@ -309,6 +316,9 @@ private:
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
     /// The world's tiles for this frame (made once the store holds a world pack), in `frame`, the frame drawn.
     void update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds);
+    /// The frame's relief (scene/Relief.hpp) in `frame`: its tiles walked and wanted where the frame takes the terrain
+    /// (FrameState::terrain) and the camera is within the relief's reach, else none.
+    void update_relief(const frame::FrameState& state, const view::GroundFrame& frame);
     /// Whether a world tile drawn is still fading in (ENGINE.md step 5's fades).
     [[nodiscard]] bool world_fading() const noexcept;
     /// The cover's reach for a camera `distance` metres from its target under the governor's bias: far_of, nearer by
@@ -327,8 +337,10 @@ private:
     std::unique_ptr<PackStage> pack_stage_;
     const gpu::Device* device_ = nullptr;     ///< the device the world's tiles are made on
     std::unique_ptr<WorldTiles> world_tiles_; ///< the world beyond the countries' tiles (ENGINE.md step 5)
-    std::function<void()> wake_;              ///< the frame loop's frame request, for the world's tiles
-    std::vector<std::shared_ptr<const ResidentPack>> packs_;   ///< the packs' stage T, built so far
+    /// The terrain's relief (ENGINE.md part 6, terrain), made by the first frame that takes it.
+    std::unique_ptr<ReliefTiles> relief_tiles_;
+    std::function<void()> wake_;                             ///< the frame loop's frame request, for the world's tiles
+    std::vector<std::shared_ptr<const ResidentPack>> packs_; ///< the packs' stage T, built so far
     std::vector<std::shared_ptr<const ResidentPack>> arrived_; ///< taken this frame (kept for its capacity)
     std::shared_ptr<const tiles::StorePack> last_active_;      ///< the packs drawn when packs_ was last pruned
     std::shared_ptr<const tiles::StorePack> last_coarser_;

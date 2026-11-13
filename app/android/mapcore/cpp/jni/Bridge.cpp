@@ -359,6 +359,49 @@ public:
         return kept;
     }
 
+    /// The terrain's rasters the map wants whose chunks are not on the phone, nearest first
+    /// (scene::ReliefTiles::wants).
+    [[nodiscard]] std::vector<scene::WorldWant> terrain_wants() {
+        return on_session([this] { return map_->terrain_wants(); });
+    }
+
+    /// The L9 tiles the map's relief tiles lie in, nearest first (scene::ReliefTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> terrain_blocks() {
+        return on_session([this] { return map_->terrain_blocks(); });
+    }
+
+    /// A range of the bytes of the terrain pack of `identity` the app fetched, its whole chunks checked and kept in the
+    /// world's cache (tiles::Store::keep) on the caller's thread; the next frame bakes the rasters kept. Nothing where
+    /// the map holds no such terrain pack or has no cache.
+    [[nodiscard]] std::optional<tiles::KeptChunks> terrain_keep(const tiles::Sha256Digest& identity,
+                                                                const tiles::PackBytes& range) {
+        std::shared_ptr<tiles::ExpandedCache> cache;
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            cache = world_cache_;
+        }
+        const std::shared_ptr<const tiles::StorePack> pack =
+            on_session([this, &identity] { return map_->terrain_pack(identity); });
+        if (cache == nullptr || pack == nullptr || !pack->remote) return std::nullopt;
+        thread_local tiles::Zstd zstd;
+        tiles::KeptChunks kept = tiles::Store::keep(*cache, *pack, range, zstd);
+        if (!kept.kept.empty()) on_session([this] { ask_frame(); });
+        return kept;
+    }
+
+    /// The map's relief from the terrain's heights, on or off from now on.
+    void terrain(bool on) {
+        on_session([this, on] {
+            map_->set_terrain(on);
+            ask_frame();
+        });
+    }
+
+    /// The registry ids of the sources of the relief the map's last frame drew, comma-separated.
+    [[nodiscard]] std::string terrain_sources() {
+        return on_session([this] { return map_->terrain_sources(); });
+    }
+
     /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() {
         return on_session([this] { return map_->wanted_windows(); });
@@ -1139,7 +1182,7 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.number = static_cast<std::uint64_t>(number[at]);
         p.ref.id = string_at(env, ids, i);
         p.ref.path = string_at(env, paths, i);
-        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::world_base) || p.ref.id.empty() ||
+        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::terrain_country) || p.ref.id.empty() ||
             number[at] <= 0 || offset[at] < 0 || length[at] < 0) {
             refused += std::format("{}: not a pack the map can list\n", p.ref.id);
             continue;
@@ -1149,7 +1192,9 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.ref.length = static_cast<std::uint64_t>(length[at]);
         if (auto* identity = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(identities, i));
             identity != nullptr) {
-            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base;
+            // a pack fetched by range: the world's, or a country's terrain (its head in the world's cache as theirs)
+            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base ||
+                               tiles::is_terrain(p.ref.kind);
             const bool sized = env->GetArrayLength(identity) == static_cast<jsize>(p.ref.identity.size());
             if (sized) {
                 env->GetByteArrayRegion(identity, 0, static_cast<jsize>(p.ref.identity.size()),
@@ -1274,8 +1319,9 @@ jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget
         return java(env, "a world pack's head: an argument is missing");
     }
     if (kind != static_cast<jint>(tiles::PackKind::world_mid) &&
-        kind != static_cast<jint>(tiles::PackKind::world_base)) {
-        return java(env, std::format("a world pack's head: not a world pack's kind ({})", kind));
+        kind != static_cast<jint>(tiles::PackKind::world_base) &&
+        kind != static_cast<jint>(tiles::PackKind::terrain_country)) {
+        return java(env, std::format("a world pack's head: not a world pack's kind, nor a terrain pack's ({})", kind));
     }
     tiles::PackRef ref{.kind = static_cast<tiles::PackKind>(kind), .length = static_cast<std::uint64_t>(length)};
     if (env->GetArrayLength(identity) != static_cast<jsize>(ref.identity.size())) {
@@ -1478,6 +1524,78 @@ jlongArray native_world_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jlong bl
     jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
     if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
     return array;
+}
+
+/// The terrain's rasters the map wants whose chunks are not on the phone, nearest first, as the world's wants: eight
+/// longs each, its pack's L9 block and its tile (packed), the chunk's offset in the pack and its length, then the
+/// pack's SHA-256 as four big-endian longs.
+jlongArray native_terrain_wants(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<scene::WorldWant> wants =
+        core != nullptr ? core->terrain_wants() : std::vector<scene::WorldWant>{};
+    std::vector<jlong> out;
+    out.reserve(wants.size() * 8);
+    for (const scene::WorldWant& w : wants) {
+        if (w.tile.z < scene::relief_block) continue;
+        const std::uint32_t gap = w.tile.z - scene::relief_block;
+        out.push_back(
+            static_cast<jlong>(tiles::TileKey(scene::relief_block, w.tile.x >> gap, w.tile.y >> gap).packed()));
+        out.push_back(static_cast<jlong>(w.tile.packed()));
+        out.push_back(static_cast<jlong>(w.offset));
+        out.push_back(static_cast<jlong>(w.length));
+        for (std::size_t i = 0; i < w.identity.size(); i += 8) {
+            std::uint64_t v = 0;
+            for (std::size_t j = 0; j < 8; ++j) v = (v << 8U) | std::to_integer<std::uint64_t>(w.identity.at(i + j));
+            out.push_back(static_cast<jlong>(v));
+        }
+    }
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr && !out.empty()) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The L9 tiles the map's relief tiles lie in, nearest first, their keys packed.
+jlongArray native_terrain_blocks(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->terrain_blocks() : std::vector<tiles::TileKey>{});
+}
+
+/// A range of the bytes of the terrain pack of `identity` (its SHA-256) from `offset` the app fetched: its whole chunks
+/// checked and kept in the map's world cache. The number of chunks kept, then the refused ones' tiles (packed); null
+/// where the map holds no such pack or no cache.
+jlongArray native_terrain_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray identity, jlong offset,
+                               jbyteArray bytes) {
+    Core* core = core_of(handle);
+    tiles::Sha256Digest sha{};
+    if (core == nullptr || bytes == nullptr || identity == nullptr || offset < 0 ||
+        env->GetArrayLength(identity) != static_cast<jsize>(sha.size())) {
+        return nullptr;
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(sha.size()),
+        reinterpret_cast<jbyte*>(sha.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    std::vector<std::byte> b(static_cast<std::size_t>(env->GetArrayLength(bytes)));
+    env->GetByteArrayRegion(bytes, 0, static_cast<jsize>(b.size()),
+                            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const auto kept = core->terrain_keep(sha, {.offset = static_cast<std::uint64_t>(offset), .bytes = b});
+    if (!kept) return nullptr;
+    std::vector<jlong> out{static_cast<jlong>(kept->kept.size())};
+    for (const tiles::TileKey& t : kept->refused) out.push_back(static_cast<jlong>(t.packed()));
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The map's relief from the terrain's heights, `on` (the default) or off from now on.
+void native_terrain(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core != nullptr) core->terrain(on == JNI_TRUE);
+}
+
+/// The registry ids of the sources of the relief the map's last frame drew, comma-separated; "" for none.
+jstring native_terrain_sources(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return java(env, core != nullptr ? core->terrain_sources() : std::string());
 }
 
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
@@ -2009,8 +2127,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 68>& methods() {
-    static const std::array<JNINativeMethod, 68> table{{
+const std::array<JNINativeMethod, 73>& methods() {
+    static const std::array<JNINativeMethod, 73> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2091,6 +2209,11 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("worldWants", "(J)[J", fn(&native_world_wants)),
         method("worldBlocks", "(J)[J", fn(&native_world_blocks)),
         method("worldKeep", "(JJ[BJ[B)[J", fn(&native_world_keep)),
+        method("terrainWants", "(J)[J", fn(&native_terrain_wants)),
+        method("terrainBlocks", "(J)[J", fn(&native_terrain_blocks)),
+        method("terrainKeep", "(J[BJ[B)[J", fn(&native_terrain_keep)),
+        method("terrain", "(JZ)V", fn(&native_terrain)),
+        method("terrainSources", "(J)Ljava/lang/String;", fn(&native_terrain_sources)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
         method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
