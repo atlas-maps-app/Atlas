@@ -314,6 +314,8 @@ struct WorldStats {
     vk::DeviceSize stand_in_bytes = 0;
     vk::DeviceSize wanted_bytes = 0;
     std::size_t wanted_unsized = 0;
+    /// The stand-ins let go of for the tiles they stood in for, all told (WorldTiles::trade).
+    std::uint64_t traded = 0;
 };
 
 class WorldTiles {
@@ -400,6 +402,16 @@ private:
         none,   ///< the going of every tile the frame does not draw would not make it: none was let go of
     };
     [[nodiscard]] Piece make_piece(std::uint32_t bytes, std::uint64_t number);
+    /// Where the going of no tile frame `number` leaves out makes room for wanted tile `key`: whether its stand-in
+    /// (`stood_by`, by the wanted tiles' keys) is let go of for the tiles it stands in for. It is where the frame draws
+    /// it for them alone (none of `kept`: no place of its own, none under a tile fading in, no floor), each of them
+    /// found no room (`roomless`, their bytes), and the room its going makes, with that of the tiles the frame does
+    /// not draw, holds them all. Its draws in this frame stand: its ranges are retired as a drawn tile's are and the
+    /// tile is kept until the next update (leaving_). The frames after draw their places by its nearest resident
+    /// ancestor until they are built and fade in.
+    [[nodiscard]] bool trade(std::uint64_t key, const std::unordered_map<std::uint64_t, std::uint64_t>& stood_by,
+                             const std::unordered_set<std::uint64_t>& kept,
+                             const std::unordered_map<std::uint64_t, std::uint32_t>& roomless, std::uint64_t number);
     /// The world's style: the first world pack's. Returns whether the store's world packs changed.
     bool take_style();
     /// Lets go of the resident tiles whose packs the store no longer holds (render thread).
@@ -408,6 +420,8 @@ private:
     const tiles::Store& store_;
     std::unique_ptr<Heaps> heaps_;
     std::unordered_map<std::uint64_t, std::unique_ptr<WorldTile>> resident_; // by packed key
+    /// The stand-ins traded by the last update (trade): its frame drew them, so they are kept until the next.
+    std::vector<std::unique_ptr<WorldTile>> leaving_;
     std::array<std::unique_ptr<WorldTile>, 2> caps_; // the north's and the south's, built with the heap
     std::unique_ptr<WorldTile> blank_;               // the plain land, built with the heap
     WorldFrame frame_;

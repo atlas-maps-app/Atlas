@@ -1946,7 +1946,8 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
           "ancestors, and none is built again at rest; a view it can hold takes the room of the tiles a view before "
           "it left; a heap that may grow grows for a view's tiles, its picture the same, and one whose doubling the "
           "device refuses holds them back as one that may not; a tile no piece of the heap holds whole is built in "
-          "parts, its picture the same") {
+          "parts, its picture the same; a stand-in drawn for a tile alone is let go of for it where its room holds it, "
+          "so the stand-ins sharpen") {
     if (!test::open_session()) return;
     const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-room-{}", ::getpid());
     fs::create_directories(guard);
@@ -1983,7 +1984,36 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
                                             fine));
         packs.push_back(std::move(p));
     }
+    // and a third, Groningen's, whose L10 tile has all four of its L11 tiles. Over the middle of its L9 tile, where its
+    // four L10 quadrants meet, every view up to 50 km lies in the L9 (so its L5 is never wanted); from 50 km the L10 is
+    // a place's own tile, and from 25 km, where it is split into its L11 tiles, it draws no place of its own, only that
+    // of its L11 tile in view while that is not resident, as its stand-in
+    const tiles::TileKey g11 = tiles::tile_of(11, 532'200'000, 65'700'000);
+    const tiles::TileKey g10(10, g11.x >> 1U, g11.y >> 1U);
+    const tiles::TileKey g9(9, g11.x >> 2U, g11.y >> 2U);
+    const std::array<std::int32_t, 4> g9_box = tiles::tile_box(g9); // south, west, north, east
+    const Place groningen{.lat = 0.5e-7 * (static_cast<double>(g9_box[0]) + static_cast<double>(g9_box[2])),
+                          .lon = 0.5e-7 * (static_cast<double>(g9_box[1]) + static_cast<double>(g9_box[3]))};
+    {
+        std::set<std::uint64_t> fine_of{g9.packed(), g10.packed()};
+        std::vector<test::TileBytes> made = {test::world_tile(9, g9.x, g9.y), test::world_tile(10, g10.x, g10.y)};
+        for (std::uint32_t k = 0; k < 4; ++k) {
+            const tiles::TileKey c(11, (g10.x * 2) + (k & 1U), (g10.y * 2) + (k >> 1U));
+            fine_of.insert(c.packed());
+            made.push_back(test::world_tile(11, c.x, c.y));
+        }
+        own.push_back(std::move(fine_of));
+        const tiles::TileKey b(6, g11.x >> 5U, g11.y >> 5U);
+        frame::MapPack p;
+        p.number = 103;
+        p.ref.id = std::format("world/6/{}/{}", b.x, b.y);
+        p.ref.kind = tiles::PackKind::world_mid;
+        p.ref.path = write(std::format("world-6-{}-{}.atlas", b.x, b.y), test::world_pack(std::move(made), fine));
+        packs.push_back(std::move(p));
+    }
     ATLAS_REQUIRE(packs[0].ref.id != packs[1].ref.id);
+    ATLAS_REQUIRE(packs[2].ref.id != packs[0].ref.id);
+    ATLAS_REQUIRE(packs[2].ref.id != packs[1].ref.id);
     const tiles::TileKey l5 = tiles::tile_of(5, 523'700'000, 48'900'000);
     frame::MapPack base;
     base.number = 110;
@@ -1994,8 +2024,15 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
     packs.push_back(base);
     // A map of the world alone with a world heap of `heap` bytes that may grow to `budget` (0: the world's own), run
     // by `run` with the window that keeps its frames: a start of its own for each (a session's close lets go of the
-    // device). False where no session presents (CI's arm64 lavapipe), which skips the case.
-    const style::ThemeBlock theme = sunny();
+    // device). False where no session presents (CI's arm64 lavapipe), which skips the case. A plain day without
+    // weather, so each picture is the world pass's colours alone: the cloud shadows' fields come from a worker, and a
+    // frame whole before they do draws none (CI's first frame over Amsterdam had 12.9k px of land more than the next)
+    style::ThemeBlock theme = sunny();
+    theme.flags = 0;
+    theme.weather_code = 255;
+    theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+    theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+    theme.shadow_blur = theme.cloud_shadows = 0.0;
     const auto with_map = [&](std::uint64_t heap, std::uint64_t budget, const auto& run) {
         auto started = start_world(guard);
         if (!started) {
@@ -2238,6 +2275,78 @@ TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are he
             CHECK(draw(map, session, places[1], 30));
             CHECK(tiles.stats().built == st.built);
             CHECK(tiles.stats().no_room == st.no_room);
+        }));
+    // A stand-in's room (WorldTiles::trade). In the world's own heap, Groningen's L9 from 50 km over its middle, where
+    // its L10 tile draws a place of its own, then from 25 km, whole: the L10's L11 tile in view drawn and the L10 not.
+    // What that frame takes of the heap, the L10's bytes, the bytes of the tiles it leaves out but the L10 and the
+    // pinned (none, as no view here wants the L5), and its picture.
+    vk::DeviceSize took_near = 0;
+    vk::DeviceSize g10_bytes = 0;
+    vk::DeviceSize idle_bytes = 0;
+    Counts seen_near;
+    std::set<std::uint64_t> near_drawn; // Groningen's fine tiles its whole frame from 25 km draws
+    CHECK(with_map(0, 0, [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+        CHECK(draw(map, session, groningen, 0, 50'000.0));
+        const scene::WorldTiles& tiles = *map.world()->world_tiles();
+        for (const scene::WorldDraw& w : tiles.frame()->draws) {
+            if (w.tile->key.packed() == g10.packed()) g10_bytes = w.tile->bytes();
+        }
+        CHECK(draw(map, session, groningen, 0, 25'000.0));
+        seen_near = land_and_water(kept);
+        const scene::WorldFrame& f = *tiles.frame();
+        const scene::WorldStats st = tiles.stats();
+        near_drawn = drawn_of(f, 2);
+        vk::DeviceSize pinned_drawn = 0; // the globe's resident levels the frame draws (not the caps, not the land)
+        for (const scene::WorldDraw& w : f.draws) {
+            if (w.tile->pinned && w.tile->cap == 0 && !w.tile->blank) pinned_drawn += w.tile->bytes();
+        }
+        CHECK(f.held == 0);
+        took_near = st.capacity - st.free;
+        const vk::DeviceSize undrawn = st.bytes - st.drawn_bytes;
+        const vk::DeviceSize kept_undrawn = g10_bytes + (st.pinned_bytes - pinned_drawn);
+        idle_bytes = undrawn > kept_undrawn ? undrawn - kept_undrawn : 0;
+        MESSAGE(std::format("Groningen whole from 25 km: {} bytes of the heap taken, its L10 {} bytes, {} bytes of "
+                            "tiles the frame leaves out but the L10 and the pinned; {} fine tiles drawn; land {} px, "
+                            "water {} px",
+                            took_near, g10_bytes, idle_bytes, near_drawn.size(), seen_near.first, seen_near.second));
+    }));
+    // the L10 drawn from 50 km as a place's own, and not from 25 km, where its L11 tile in view draws its place
+    ATLAS_REQUIRE(g10_bytes > 0);
+    ATLAS_REQUIRE(!near_drawn.contains(g10.packed()));
+    ATLAS_REQUIRE(
+        std::ranges::count_if(near_drawn, [](std::uint64_t p) { return tiles::TileKey::unpack(p).z == 11; }) == 1);
+    ATLAS_REQUIRE(took_near > idle_bytes + g10_bytes);
+    // Then a heap that holds that frame less half the L10, and less the tiles it leaves out but the pinned (the first
+    // tile that finds no room has those let go of for it, make_piece): from 50 km, then from 25 km. The L11 tile finds
+    // no room, the going of no tile the frame leaves out would make it, and the L10, drawn for it alone, is let go of
+    // for it: the frame is whole, the L11 tile drawn, none held back, its picture the world's own heap's; at rest none
+    // is built again
+    CHECK(with_map(
+        ((took_near - idle_bytes - (g10_bytes / 2)) + 15) & ~vk::DeviceSize{15}, 0,
+        [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+            CHECK(draw(map, session, groningen, 0, 50'000.0));
+            const scene::WorldTiles& tiles = *map.world()->world_tiles();
+            CHECK(tiles.stats().traded == 0);
+            CHECK(tiles.frame()->held == 0);
+            CHECK(draw(map, session, groningen, 0, 25'000.0));
+            const scene::WorldFrame& f = *tiles.frame();
+            const scene::WorldStats st = tiles.stats();
+            const Counts sharp = land_and_water(kept);
+            MESSAGE(std::format("Groningen in {} bytes from 25 km: {} stand-ins let go of for their tiles, {} held, {} "
+                                "fine tiles drawn, {} builds found no room; land {} px, water {} px",
+                                st.capacity, st.traded, f.held, drawn_of(f, 2).size(), st.no_room, sharp.first,
+                                sharp.second));
+            CHECK(st.traded >= 1);
+            CHECK(st.no_room >= 1);
+            CHECK(f.held == 0);
+            CHECK(drawn_of(f, 2) == near_drawn);
+            const auto near = [](std::size_t a, std::size_t b) { return (a > b ? a - b : b - a) * 100 <= b; };
+            CHECK(near(sharp.first, seen_near.first));
+            CHECK(near(sharp.second, seen_near.second));
+            CHECK(draw(map, session, groningen, 30, 25'000.0));
+            CHECK(tiles.stats().built == st.built);
+            CHECK(tiles.stats().no_room == st.no_room);
+            CHECK(tiles.stats().traded == st.traded);
         }));
     std::error_code ec;
     fs::remove_all(guard, ec);
