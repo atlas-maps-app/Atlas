@@ -20,7 +20,9 @@
 //
 // - The marks: a frame may have marks its labels stand clear of where a spot allows, the city lights of a night frame
 //   (ENGINE.md step 5, "Names"). A label being placed takes the first of its spots that fits and covers no mark but
-//   the one at its own point; where each fitting spot covers one, the first that fits, as without marks. Marks bear
+//   the one at its own point, by its text's box without the pad (a mark's radius is its room; a risen label's box
+//   reaches down over its own mark, and a mark beside that one, under the text, is not covered); where each fitting
+//   spot covers one, the first that fits, as without marks. Marks bear
 //   on placing alone: a placed label keeps its place, and its box grows and shrinks with the map as the marks' places
 //   do. The marks are asked for only when a label is placed.
 //

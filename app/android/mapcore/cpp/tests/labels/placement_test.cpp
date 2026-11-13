@@ -410,6 +410,13 @@ TEST_CASE("a label being placed stands clear of the frame's marks where a spot a
     const auto box_of = [](const Mark& k) {
         return Box{.l = k.x - k.radius, .t = k.y - k.radius, .r = k.x + k.radius, .b = k.y + k.radius};
     };
+    // a stand's text: its box without the pad, and for a risen label without its reach down over its own mark
+    const auto text_of = [&m](const Stand& s) {
+        return Box{.l = s.x - (m.half - m.pad),
+                   .t = s.y - (m.text_height / 2.0F),
+                   .r = s.x + (m.half - m.pad),
+                   .b = s.y + (m.text_height / 2.0F)};
+    };
     // without marks: centred on its point, as LabelPainter places it
     {
         const Frame plain{.width = 400, .height = 300};
@@ -428,10 +435,12 @@ TEST_CASE("a label being placed stands clear of the frame's marks where a spot a
         return std::span<const Mark>(marks);
     };
     const Frame lit{.width = 400, .height = 300, .marks = &source};
-    // another place's light just under its point: the centred stand would cover it, the stand above does not
-    marks = {{.x = p.x, .y = above.box.b + 3.0F, .radius = 3.0F}};
-    ATLAS_REQUIRE(overlaps(centred.box, box_of(marks[0])));
-    ATLAS_REQUIRE(!overlaps(above.box, box_of(marks[0])));
+    // another place's light just under its point: the centred stand's text would cover it, the stand above's does
+    // not (its pad does: a light's radius is its room, the pad is the labels')
+    marks = {{.x = p.x, .y = p.y + 5.0F, .radius = 3.0F}};
+    ATLAS_REQUIRE(overlaps(text_of(centred), box_of(marks[0])));
+    ATLAS_REQUIRE(!overlaps(text_of(above), box_of(marks[0])));
+    ATLAS_REQUIRE(overlaps(above.box, box_of(marks[0])));
     {
         Placement placement;
         auto drawn = placement.update(c, lit, at, 0.0);
@@ -459,6 +468,30 @@ TEST_CASE("a label being placed stands clear of the frame's marks where a spot a
         CHECK(drawn[0].stand.y == centred.y);
         CHECK(placement.placed_on_marks() == 0);
     }
+    // a lit place's name, risen over its own light, with another place's light beside that one, under the text: its
+    // box reaches down over both, but its text covers neither, so it stands as without marks; a light where its
+    // text stands moves it
+    {
+        constexpr float halo = 9.0F;
+        std::vector<Candidate> lit_name{
+            {.id = 7, .label = 0, .priority = 5, .measures = m, .points = points, .rise = 1.0F, .mark = halo}};
+        const Stand risen = stand_at(m, p, 0, 1.0F, halo);
+        marks = {{.x = p.x, .y = p.y, .radius = halo}, {.x = p.x + 15.0F, .y = p.y, .radius = 4.0F}};
+        ATLAS_REQUIRE(overlaps(risen.box, box_of(marks[1])));
+        ATLAS_REQUIRE(!overlaps(text_of(risen), box_of(marks[1])));
+        Placement beside;
+        auto drawn = beside.update(lit_name, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == risen.x);
+        CHECK(drawn[0].stand.y == risen.y);
+        CHECK(beside.placed_on_marks() + beside.placed_off_marks() == 0);
+        marks[1] = {.x = p.x + 15.0F, .y = risen.y, .radius = 4.0F};
+        Placement under;
+        drawn = under.update(lit_name, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK((drawn[0].stand.x != risen.x || drawn[0].stand.y != risen.y));
+        CHECK(under.placed_off_marks() == 1);
+    }
     // lights all about it, 10 px apart: every spot covers one, so it stands as without marks, and is counted
     marks.clear();
     for (int y = 100; y <= 200; y += 10) {
@@ -467,7 +500,7 @@ TEST_CASE("a label being placed stands clear of the frame's marks where a spot a
         }
     }
     for (std::size_t spot = 0; spot < spot_count; ++spot) {
-        const Box box = stand_at(m, p, spot).box;
+        const Box box = text_of(stand_at(m, p, spot));
         ATLAS_REQUIRE(std::ranges::any_of(marks, [&](const Mark& k) { return overlaps(box, box_of(k)); }));
     }
     {

@@ -75,15 +75,23 @@ std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::
     // the frame's marks, asked for at the first stand that fits
     std::span<const Mark> marks;
     bool asked = false;
-    const auto on_a_mark = [&](const Box& box, Point own) {
+    const auto on_a_mark = [&](const Stand& stand, const Measures& m, Point own) {
         if (!asked) {
             asked = true;
             if (frame.marks != nullptr && *frame.marks) marks = (*frame.marks)();
         }
-        return std::ranges::any_of(marks, [&](const Mark& m) {
+        // the text's own box, without the pad (a mark's radius is its room): a risen label's box reaches down over
+        // its own mark, and a mark beside that one, under the text, is not covered
+        const float half_width = m.half - m.pad;
+        const float half_height = m.text_height / 2.0F;
+        const Box text{.l = stand.x - half_width,
+                       .t = stand.y - half_height,
+                       .r = stand.x + half_width,
+                       .b = stand.y + half_height};
+        return std::ranges::any_of(marks, [&](const Mark& k) {
             // (its own point's mark is its own: a lit place's name stands over its light by its rise)
-            if (m.x == own.x && m.y == own.y) return false;
-            return overlaps(box, {.l = m.x - m.radius, .t = m.y - m.radius, .r = m.x + m.radius, .b = m.y + m.radius});
+            if (k.x == own.x && k.y == own.y) return false;
+            return overlaps(text, {.l = k.x - k.radius, .t = k.y - k.radius, .r = k.x + k.radius, .b = k.y + k.radius});
         });
     };
     std::uint32_t covering = 0;
@@ -102,7 +110,7 @@ std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::
                                 .point = static_cast<std::uint16_t>(p),
                                 .spot = static_cast<std::uint8_t>(k),
                                 .stand = s};
-                if (on_a_mark(s.box, label.points[p])) {
+                if (on_a_mark(s, label.measures, label.points[p])) {
                     if (!has_covered) covered = at;
                     has_covered = true;
                     continue;
