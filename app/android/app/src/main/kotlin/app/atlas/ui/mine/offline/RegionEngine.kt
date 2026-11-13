@@ -10,12 +10,14 @@ import app.atlas.tiles.PackDownloader
 import app.atlas.tiles.PackFile
 import app.atlas.tiles.TileSet
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.runInterruptible
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -48,7 +50,26 @@ class RegionDeps(
      * the country's largest greens are there offline; none where the phone does not ask online.
      */
     val keepParks: (suspend (BBox, File) -> Unit)? = null,
+    /** The world a country kept by its tiles keeps with them ([WorldKeep]); null where this phone keeps none. */
+    val world: WorldKeep? = null,
 )
+
+/**
+ * The world a kept country keeps (ENGINE.md step 11): the world's tiles a view of the country draws from 18 km out to
+ * the globe, as the world on the phone lists them for the country's pack (mapview's WorldKeeper), so a country taken
+ * offline by its tiles draws offline from zoom 20 out to the globe. Both calls block: off the main thread.
+ */
+interface WorldKeep {
+    /** What keeping the world of pack [packId] fetches, in bytes; null where the world on the phone lists none for it. */
+    fun bytes(packId: String): Long?
+
+    /**
+     * The worlds of the packs [packIds], and of no others, are kept from now on (what another country kept goes back
+     * to the world's cache); with [fetch], what the phone lacks of them is fetched, [report] saying how far (0 to 1).
+     * Throws [IOException] where a fetch fails; what came stays, and the next call goes on from there.
+     */
+    fun keep(packIds: Set<String>, fetch: Boolean, report: (Float) -> Unit)
+}
 
 /** What a region would take: the bytes of each layer (null when unknown) and the pack behind it, if one is used. */
 data class RegionEstimate(val bytes: Map<RegionLayer, Long?>, val pack: Pack?, val mapKind: MapKind) {
@@ -165,7 +186,23 @@ class RegionEngine(
      * nor the tiles of another core: neither is downloaded.
      */
     fun countryBytes(pack: Pack): Long =
-        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes } ?: pack.atlas?.bytes ?: 0L) + (pack.places?.diskBytes ?: 0L)
+        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes + worldBytes(pack) } ?: pack.atlas?.bytes ?: 0L) + (pack.places?.diskBytes ?: 0L)
+
+    /** What the world kept with [pack]'s tiles takes (ENGINE.md step 11); 0 where the world on the phone lists none for it. */
+    private fun worldBytes(pack: Pack?): Long = pack?.let { p -> runCatching { deps.world?.bytes(p.id) }.getOrNull() } ?: 0L
+
+    /** The packs whose countries the phone keeps by their tiles: theirs are the worlds kept. */
+    private fun keptCountries(): Set<String> =
+        files.list().filter { it.layers[RegionLayer.MAP]?.kind == MapKind.TILES.id }.mapNotNull { it.packId }.toSet()
+
+    /**
+     * The world of the countries kept by their tiles, kept (ENGINE.md step 11): pinned in the world's cache, and with
+     * [fetch] what the phone lacks of it fetched (after a new version of the world, or a download that stopped).
+     * Blocking; throws [IOException] where a fetch fails.
+     */
+    fun keepWorld(fetch: Boolean) {
+        deps.world?.keep(keptCountries(), fetch) {}
+    }
 
     /** What taking [bbox] with [layers] would download, before it is asked for. */
     suspend fun estimate(bbox: BBox, layers: Set<RegionLayer>): RegionEstimate {
@@ -177,7 +214,7 @@ class RegionEngine(
             val atlas = pack?.atlas
             val tiles = tilesOf(pack)
             when {
-                tiles != null -> { kind = MapKind.TILES; out[RegionLayer.MAP] = tiles.tiles.bytes + tiles.index.bytes }
+                tiles != null -> { kind = MapKind.TILES; out[RegionLayer.MAP] = tiles.tiles.bytes + tiles.index.bytes + worldBytes(pack) }
                 atlas != null -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = atlas.bytes }
                 deps.mapBuilder != null && buildable(bbox) -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = estimateBuilt(bbox) }
                 else -> out[RegionLayer.MAP] = null
@@ -275,14 +312,23 @@ class RegionEngine(
                 val atlas = pack?.atlas
                 val tiles = tilesOf(pack)
                 val record = when {
-                    // the country's tiles whole, their index first (small): the map then draws them offline
+                    // the country's tiles whole, their index first (small): the map then draws them offline; then the
+                    // world's tiles its views draw from 18 km out to the globe (ENGINE.md step 11), kept with them
                     tiles != null -> {
-                        val total = (tiles.tiles.bytes + tiles.index.bytes).coerceAtLeast(1L).toDouble()
+                        val world = worldBytes(pack)
+                        val own = tiles.tiles.bytes + tiles.index.bytes
+                        val total = (own + world).coerceAtLeast(1L).toDouble()
                         deps.packDownloader.download(tiles.index, files.tilesIndex(meta.id)) { report((it.fraction * tiles.index.bytes / total).toFloat()) }
                         deps.packDownloader.download(tiles.tiles, files.tiles(meta.id)) {
                             report(((tiles.index.bytes + it.fraction * tiles.tiles.bytes) / total).toFloat())
                         }
-                        LayerRecord(MapKind.TILES.id, files.tiles(meta.id).length() + files.tilesIndex(meta.id).length(), now, tiles.tiles.sha256, pack?.osmTimestamp)
+                        val keeper = deps.world
+                        val id = pack?.id
+                        if (keeper != null && id != null) {
+                            val kept = keptCountries() + id
+                            runInterruptible(Dispatchers.IO) { keeper.keep(kept, fetch = true) { f -> report(((own + f * world) / total).toFloat()) } }
+                        }
+                        LayerRecord(MapKind.TILES.id, files.tiles(meta.id).length() + files.tilesIndex(meta.id).length() + world, now, tiles.tiles.sha256, pack?.osmTimestamp)
                     }
                     atlas != null -> {
                         val target = files.atlas(meta.id)
@@ -415,6 +461,8 @@ class RegionEngine(
         progress.remove(id)
         errors.remove(id)
         updates.remove(id)
+        // its world is no longer kept: back to the world cache's own keeping (the other countries' stays)
+        if (m?.layers?.get(RegionLayer.MAP)?.kind == MapKind.TILES.id) runCatching { keepWorld(fetch = false) }
         refresh()
         onChanged()
         return freed
@@ -426,7 +474,9 @@ class RegionEngine(
             out[layer] = when (layer) {
                 RegionLayer.MAP -> when (rec.kind) {
                     MapKind.ATLAS.id -> files.atlas(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
-                    MapKind.TILES.id -> files.tiles(m.id).takeIf { it.isFile }?.let { it.length() + files.tilesIndex(m.id).length() } ?: rec.bytes
+                    // its tiles and their index as they are on the phone, and the world kept with them as recorded
+                    MapKind.TILES.id -> files.tiles(m.id).takeIf { it.isFile }
+                        ?.let { t -> maxOf(rec.bytes, t.length() + files.tilesIndex(m.id).length()) } ?: rec.bytes
                     else -> rec.bytes
                 }
                 RegionLayer.PLACES -> files.places(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
