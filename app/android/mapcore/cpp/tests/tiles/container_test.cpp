@@ -479,8 +479,12 @@ TEST_CASE("tiles: rhead and style refuse what they must") {
         CHECK(read_head(head).error().fault == Fault::bad_version);
     }
     SUBCASE("an unknown profile") {
-        head[6] = std::byte{4};
+        head[6] = std::byte{5}; // one past the terrain's
         CHECK(read_head(head).error().fault == Fault::bad_value);
+        head[6] = std::byte{4};
+        const auto terrain = read_head(head);
+        ATLAS_REQUIRE(terrain.has_value());
+        CHECK(terrain->profile == Profile::terrain);
     }
     SUBCASE("levels from coarse to fine") {
         head[8] = std::byte{12};

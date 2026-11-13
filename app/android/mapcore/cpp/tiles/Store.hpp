@@ -5,6 +5,10 @@
 // assets) byte ranges fetched by the app; a remote pack's head and every chunk it fetched are kept in the expanded-tile
 // cache, so a place seen once works offline. Chunks come back decompressed and checked against their SHA-256.
 //
+// Terrain packs (ENGINE.md part 6: `terrain_country`, a country's height rasters, L12 to L14) are held apart from the
+// map's: packs(), find() and reaching() never name one, so the map is drawn from the same packs with or without
+// terrain; heights() finds a tile's raster, of its own level or the nearest coarser one.
+//
 // A frame asks for the chunks a view needs by their reach (every chunk of a level whose reach meets the view, with the
 // margin the renders cull by; Chunks.hpp), or for a tile by its key. Which pack a frame draws from where two overlap is
 // the frame's choice (K7): the store lists every holder. Thread-safe: the pack list is swapped whole, and readers keep
@@ -36,7 +40,13 @@ enum class PackKind : std::uint8_t {
     window = 2,     ///< an Overpass window built on the phone (K20)
     world_mid = 3,  ///< the world's mid-zoom base L6–L11 (ENGINE.md step 5): a pack a range of its part, fetched
     world_base = 4, ///< the globe L0–L5 (ENGINE.md step 5), fetched
+    /// A country's terrain (ENGINE.md part 6): a pack of an L9 tile's height rasters, L12 to L14 (tiles/Heights.hpp), a
+    /// range of its part (a file, or fetched). Held apart from the map's packs.
+    terrain_country = 5,
 };
+
+/// Whether packs of `kind` hold height rasters, not the map: the store keeps them apart (Store::heights).
+[[nodiscard]] constexpr bool is_terrain(PackKind kind) noexcept { return kind == PackKind::terrain_country; }
 
 /// Where a pack's bytes are: a file; a range of an open file (an APK asset); or a remote pack read by ranges.
 struct PackRef {
@@ -128,13 +138,15 @@ public:
     /// pack's own. Set before any pack is added (scene::World does as it is made).
     void set_world_style(const Style* style) noexcept { world_style_ = style; }
 
-    /// Opens a pack and adds it (replacing one of the same id). A remote pack opens from its cached head when the cache
-    /// has it, so it opens offline; else its head is fetched and cached. A window (PackKind::window: a pack of one L14
-    /// tile the core built, load/Window.hpp, or of one tile of one of the cell's levels, load/Levels.hpp) joins the
-    /// pack of its frame cell instead (cell_id), which holds every window of the cell and replaces the cell's last one:
-    /// composed, nothing copied (compose_pack), its head the first window's under the cell's name with the levels its
-    /// windows hold, its style the first window's. A window whose frame or style version is not its cell's is refused.
-    /// A window without a tile (it holds nothing to draw) joins no cell, and an earlier build of it leaves its cell.
+    /// Opens a pack and adds it (replacing one of the same id). A terrain pack (is_terrain) must be one (`rhead`'s
+    /// profile terrain) and no other pack may be, and it joins the terrain packs, apart from the map's. A remote pack
+    /// opens from its cached head when the cache has it, so it opens offline; else its head is fetched and cached. A
+    /// window (PackKind::window: a pack of one L14 tile the core built, load/Window.hpp, or of one tile of one of the
+    /// cell's levels, load/Levels.hpp) joins the pack of its frame cell instead (cell_id), which holds every window of
+    /// the cell and replaces the cell's last one: composed, nothing copied (compose_pack), its head the first window's
+    /// under the cell's name with the levels its windows hold, its style the first window's. A window whose frame or
+    /// style version is not its cell's is refused. A window without a tile (it holds nothing to draw) joins no cell,
+    /// and an earlier build of it leaves its cell.
     [[nodiscard]] Result<void> add(const PackRef& ref);
 
     /// Removes the pack `id` (a window: from its cell's pack); returns whether there was one. Readers holding it keep
@@ -157,8 +169,17 @@ public:
     /// `id` itself. The app names a window by its own id (MapCore.PackRef), which the store holds in its cell's pack.
     [[nodiscard]] std::string holder_of(std::string_view id) const;
 
-    /// Every open pack, in lookup order (by kind, then in the order added).
+    /// Every open pack of the map, in lookup order (by kind, then in the order added); no terrain pack.
     [[nodiscard]] std::vector<std::shared_ptr<const StorePack>> packs() const;
+
+    /// Every open terrain pack, in lookup order (by kind, then in the order added).
+    [[nodiscard]] std::vector<std::shared_ptr<const StorePack>> terrain_packs() const;
+
+    /// The raster `tile` reads: the terrain packs' chunk of the tile itself, else of its nearest ancestor that has one
+    /// (a level a source is capped at, or one not built yet: tiles/Heights.hpp's cut_heights cuts it to the tile's
+    /// box); nothing where no terrain pack holds either, and the tile is drawn flat. The hit's chunk names the
+    /// raster's own tile. Load it as any hit (decode, then read_heights).
+    [[nodiscard]] std::optional<StoreHit> heights(TileKey tile) const;
 
     /// Every chunk of tile `tile`, in lookup order.
     [[nodiscard]] std::vector<StoreHit> find(TileKey tile) const;
@@ -185,6 +206,9 @@ public:
     static constexpr std::uint8_t window_level = 14;
     static constexpr std::uint8_t coarse_level = 13;
     static constexpr std::uint8_t far_level = 12;
+    /// A country's terrain's levels (ENGINE.md part 6): a terrain_country pack's.
+    static constexpr std::uint8_t terrain_country_first = 12;
+    static constexpr std::uint8_t terrain_country_last = 14;
 
     /// Whether `level` is one of a cell's levels derived from its windows (drawn beyond the windows' reach).
     [[nodiscard]] static constexpr bool derived(std::uint8_t level) noexcept {
@@ -223,8 +247,9 @@ private:
     std::shared_ptr<ExpandedCache> cache_; ///< under cache_mutex_
     const Style* world_style_ = nullptr;
     mutable std::mutex mutex_;
-    std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order
-    mutable std::mutex cells_mutex_;                      ///< taken before mutex_, never after
+    std::vector<std::shared_ptr<const StorePack>> packs_;   ///< in lookup order
+    std::vector<std::shared_ptr<const StorePack>> terrain_; ///< the terrain packs, in lookup order (under mutex_)
+    mutable std::mutex cells_mutex_;                        ///< taken before mutex_, never after
     std::vector<Cell> cells_;
     bool held_ = false;            ///< hold(): compositions wait for release (under cells_mutex_)
     std::vector<TileKey> touched_; ///< the cells changed while held, the last changed last (under cells_mutex_)

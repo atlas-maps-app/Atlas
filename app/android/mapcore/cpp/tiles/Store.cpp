@@ -79,8 +79,8 @@ private:
     std::shared_ptr<const ByteSource> source_;
 };
 
-/// A world pack's range of its part named by path (the app lists the world so: MapCore.PackRef.WORLD_MID), mapped and
-/// the descriptor closed.
+/// A world or terrain pack's range of its part named by path (the app lists the world so: MapCore.PackRef.WORLD_MID),
+/// mapped and the descriptor closed.
 Result<std::unique_ptr<MappedSource>> open_range(const PackRef& ref) {
     const int fd = ::open(ref.path.c_str(), O_RDONLY | O_CLOEXEC); // NOLINT(cppcoreguidelines-pro-type-vararg)
     if (fd < 0) return std::unexpected(error(Fault::io, Site::file, static_cast<std::uint64_t>(errno)));
@@ -89,9 +89,10 @@ Result<std::unique_ptr<MappedSource>> open_range(const PackRef& ref) {
     return source;
 }
 
-/// Whether `ref` names a range of a file by its path: a world pack's.
+/// Whether `ref` names a range of a file by its path: a world pack's, or a terrain pack's.
 [[nodiscard]] bool names_range(const PackRef& ref) noexcept {
-    return ref.fd < 0 && ref.kind == PackKind::world_mid && !ref.path.empty() && ref.length > 0;
+    return ref.fd < 0 && (ref.kind == PackKind::world_mid || is_terrain(ref.kind)) && !ref.path.empty() &&
+           ref.length > 0;
 }
 
 /// A pack's bytes as a shared source: a file or a range of one, mapped.
@@ -117,11 +118,23 @@ Result<std::shared_ptr<const ByteSource>> shared_source(const PackRef& ref) {
 /// Whether `pack`'s levels are the world's of `kind` (ENGINE.md step 5): a world pack's L6 to L11, the globe's L0 to
 /// L5, so a country's tile (L12 and finer) is never found in one, nor a world tile in a country's pack. Other kinds
 /// pass.
+/// Likewise a terrain pack's are its kind's (a country's L12 to L14), and it is a terrain pack (`rhead`'s profile
+/// terrain) exactly when its kind says so: a map pack is never listed as terrain, nor a terrain pack as the map.
 [[nodiscard]] Result<void> world_levels(const Pack& pack, PackKind kind) {
-    if (kind != PackKind::world_mid && kind != PackKind::world_base) return {};
     const RenderHead* head = pack.head();
-    const std::uint8_t lo = kind == PackKind::world_mid ? Store::world_mid_first : 0;
-    const std::uint8_t hi = kind == PackKind::world_mid ? Store::world_mid_last : Store::world_mid_first - 1;
+    if (head != nullptr && (head->profile == Profile::terrain) != is_terrain(kind)) {
+        return std::unexpected(error(Fault::bad_value, Site::head, static_cast<std::uint64_t>(head->profile)));
+    }
+    if (kind != PackKind::world_mid && kind != PackKind::world_base && !is_terrain(kind)) return {};
+    std::uint8_t lo = 0;
+    std::uint8_t hi = Store::world_mid_first - 1;
+    if (kind == PackKind::world_mid) {
+        lo = Store::world_mid_first;
+        hi = Store::world_mid_last;
+    } else if (kind == PackKind::terrain_country) {
+        lo = Store::terrain_country_first;
+        hi = Store::terrain_country_last;
+    }
     if (head == nullptr || head->levels.empty() ||
         std::ranges::any_of(head->levels, [&](std::uint8_t z) { return z < lo || z > hi; })) {
         return std::unexpected(error(Fault::bad_value, Site::head, head == nullptr ? 0 : head->levels.size()));
@@ -307,8 +320,10 @@ Result<void> Store::add(const PackRef& ref) {
 void Store::insert(std::shared_ptr<const StorePack> entry) {
     const std::scoped_lock lock(mutex_);
     std::erase_if(packs_, [&](const auto& p) { return p->id == entry->id; });
-    const auto at = std::ranges::find_if(packs_, [&](const auto& p) { return p->kind > entry->kind; });
-    packs_.insert(at, std::move(entry));
+    std::erase_if(terrain_, [&](const auto& p) { return p->id == entry->id; });
+    auto& list = is_terrain(entry->kind) ? terrain_ : packs_;
+    const auto at = std::ranges::find_if(list, [&](const auto& p) { return p->kind > entry->kind; });
+    list.insert(at, std::move(entry));
 }
 
 Result<void> Store::add_window(const PackRef& ref) {
@@ -502,12 +517,32 @@ bool Store::remove(std::string_view id) {
         }
     }
     const std::scoped_lock lock(mutex_);
-    return std::erase_if(packs_, [&](const auto& p) { return p->id == id; }) > 0;
+    const std::size_t map = std::erase_if(packs_, [&](const auto& p) { return p->id == id; });
+    return map + std::erase_if(terrain_, [&](const auto& p) { return p->id == id; }) > 0;
 }
 
 std::vector<std::shared_ptr<const StorePack>> Store::packs() const {
     const std::scoped_lock lock(mutex_);
     return packs_;
+}
+
+std::vector<std::shared_ptr<const StorePack>> Store::terrain_packs() const {
+    const std::scoped_lock lock(mutex_);
+    return terrain_;
+}
+
+std::optional<StoreHit> Store::heights(TileKey tile) const {
+    const auto packs = terrain_packs();
+    if (packs.empty()) return std::nullopt;
+    // the tile's own raster, else its nearest ancestor's: a scan of the packs a level (a country's are some hundreds,
+    // each a binary search; the world's terrain may want the index its packs come with)
+    for (std::uint32_t d = 0; d <= tile.z; ++d) {
+        const TileKey at(static_cast<std::uint8_t>(tile.z - d), tile.x >> d, tile.y >> d);
+        for (const auto& p : packs) {
+            if (const ChunkRef* c = p->pack.chunks().find(at)) return StoreHit{.pack = p, .chunk = c};
+        }
+    }
+    return std::nullopt;
 }
 
 std::vector<StoreHit> Store::find(TileKey tile) const {
