@@ -11,6 +11,7 @@ import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
+import app.atlas.mapview.vk.WorldKeeper
 import app.atlas.mapview.vk.WorldReads
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
@@ -27,12 +28,19 @@ import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
 import app.atlas.tiles.WorldFetch
 import app.atlas.ui.mine.offline.RegionFiles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -48,6 +56,9 @@ import java.util.concurrent.TimeUnit
  * moment. [wire] hands them to every map ([MapEngine]).
  */
 class MapData(private val services: Services) {
+    /** The world on the phone changed (a start found it, a new version came, its keep list came). */
+    private val landed = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
     /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
     private val client: OkHttpClient by lazy {
         services.http.client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
@@ -136,6 +147,37 @@ class MapData(private val services: Services) {
         WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
             set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
         })
+    }
+
+    /** When each country's tiles' index was last asked for ([countryHolds]), by its id, ms of the uptime clock. */
+    private val indexAsked = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * Whether country [id]'s tiles hold the place at [lat], [lon] (MapEngine.countryHolds), from its tiles' index in
+     * memory; null until it is read. The first camera within a country's box has the index read in the background (from
+     * the windows' folder, from the country kept whole, else downloaded: the Netherlands' is 1.5 MB), and the maps
+     * drawn again once it is; where it does not come it is asked for again a minute on. CI's runs ask no server for it
+     * (`atlas.ci`), but for the world phase (`atlas.ci.world`). On the main thread at each camera: the answer from
+     * memory allocates nothing.
+     */
+    private fun countryHolds(id: String, lat: Double, lon: Double): Boolean? {
+        val version = MapEngine.windowVersion() ?: return null
+        windowTiles.holds(id, version, lat, lon)?.let { return it }
+        if (services.ciRun && !services.worldFetch.isCompleted) return null
+        val now = android.os.SystemClock.uptimeMillis()
+        val asked = indexAsked[id]
+        if (asked != null && now - asked < COUNTRIES_RETRY_MS) return null
+        indexAsked[id] = now
+        services.scope.launch(Dispatchers.IO) {
+            try {
+                val tiles = windowTiles.index(id, version) ?: return@launch
+                android.util.Log.i("AtlasMap", "vk windows: the tiles' index of $id on the phone, $tiles tiles: beyond them no levels, the world under the cover")
+                MapEngine.invalidate()
+            } catch (e: IOException) {
+                android.util.Log.w("AtlasMap", "vk windows: the tiles' index of $id did not come: ${e.message}")
+            }
+        }
+        return null
     }
 
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
@@ -268,6 +310,9 @@ class MapData(private val services: Services) {
                 delay(COUNTRIES_RETRY_MS)
             }
         }
+        // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
+        // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and
@@ -347,8 +392,34 @@ class MapData(private val services: Services) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch
             MapEngine.worldReads = WorldReads(world, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
-            world.follow(services.connectivity.online, said = said, landed = MapEngine::invalidate)
+            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said)
+            launch { keepWorld(landed, said) }
+            world.follow(services.connectivity.online, said = said, landed = {
+                MapEngine.invalidate()
+                landed.tryEmit(Unit)
+            })
         }
+    }
+
+    /**
+     * The world of the countries kept by their tiles (ENGINE.md step 11), looked at each time the world on the phone
+     * changes and as the network changes: what they keep is pinned in the world's cache at once, and what the phone
+     * lacks of it (after a new version of the world, or a download that stopped) is fetched while the phone is online
+     * and its network is not metered, as a region's download waits for Wi-Fi; a fetch that fails is tried again
+     * [KEEP_AGAIN_MS] on. A country's own download keeps its world as it takes its tiles (RegionEngine).
+     */
+    private suspend fun keepWorld(landed: Flow<Unit>, said: (String) -> Unit) {
+        combine(landed, services.connectivity.online, services.connectivity.metered) { _, online, metered -> online && !metered }
+            .collectLatest { fetch ->
+                while (true) {
+                    val done = runCatching { runInterruptible(Dispatchers.IO) { services.mine.engine.keepWorld(fetch) } }
+                    val failed = done.exceptionOrNull()
+                    if (failed is CancellationException) throw failed
+                    if (failed == null || !fetch) break
+                    said("the kept countries' world not whole yet: ${failed.message}")
+                    delay(KEEP_AGAIN_MS)
+                }
+            }
     }
 
     private fun open(asset: String): InputStream = services.context.assets.open(asset)
@@ -399,6 +470,9 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
+
+        /** A fetch of the kept countries' world that failed is tried again this long on. */
+        private const val KEEP_AGAIN_MS = 600_000L
 
         /** How long the windows wait to ask for the renders' list or one of its packs again where none came (ms), as today's map did. */
         private const val PUBLISHED_RETRY_MS = 60_000L

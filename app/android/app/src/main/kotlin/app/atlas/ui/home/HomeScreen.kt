@@ -341,6 +341,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
+            // a short tap on a building opens the place it is, or the one in it under the finger (MapHit.OnFeature)
+            featureOf = { b -> services.localData.feature(b.id, b.at) },
             onCameraMove = vm::onCameraMove,
             // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat, unless the
             // Look settings' Frame timings chip is off.

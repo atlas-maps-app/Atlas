@@ -117,6 +117,9 @@ inline constexpr std::uint32_t streets = 64;
 /// street_vs and fill_fading_vs: a street narrower on the screen than 1.5 device px drawn 1.5 px wide at the share of
 /// them it covers (ground.slang's least_point; the app's map, with `wide`)
 inline constexpr std::uint32_t least = 128;
+/// street_vs: a street's or a big road's edges by their coverage where it is narrower on the screen than 8 device px
+/// (ground.slang's soft_point; the app's map's streets' own draws, with `wide`)
+inline constexpr std::uint32_t soft = 256;
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -1060,10 +1063,13 @@ public:
     /// what it reads alone: the base a measure holds the kept results to, tests/frame/pinch_audit_vk_test.cpp's
     /// ATLAS_PINCH_RIPPLE).
     void make_ripple_always(bool always) noexcept { ripple_always_ = always; }
-    /// The tests' switch: the app's map's streets narrower on the screen than 1.5 device px drawn 1.5 px wide at their
-    /// share of them (ground.slang's least_point), else at their own width (on by default; the far flicker's measure,
-    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST).
+    /// The tests' switch: the app's map's streets and big roads narrower on the screen than 8 device px drawn with
+    /// their edges by their coverage (ground.slang's soft_point), else as they lie (on by default; the far flicker's
+    /// measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_LEAST). A tile fading in keeps the least width
+    /// (least_point: a street under 1.5 px drawn 1.5 px wide at its share) for its fade.
     void draw_least_width(bool draw) noexcept { least_width_ = draw; }
+    /// The tests' and the measure's: the least width a street or a big road is drawn at, device px (2 by default).
+    void least_width_px(float px) noexcept { least_px_ = px; }
     /// The tests' switch: the app's map's water narrower on the screen than 1.5 device px drawn as a band 1.5 px wide
     /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
     /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
@@ -1164,6 +1170,9 @@ private:
     [[nodiscard]] gpu::Result<void> make_shadow_pipelines(const frame::PassContext& context, Pipelines& p) const;
     void write_words(const frame::FrameState& state);
     void push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot) const;
+    /// push's for a draw that names its run of a tile's fills to the vertex stage (street_vs): its first word, as the
+    /// draw's firstVertex counts them, and how many.
+    void push_run(const frame::Recording& r, std::uint32_t flags, std::uint32_t first, std::uint32_t count) const;
     /// The fills above the water (`above`: in the app's map but its streets) or the land, top first at their painter
     /// depth, of the tiles not fading in.
     void record_fills(const frame::Recording& r, bool above);
@@ -1398,6 +1407,7 @@ private:
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
+    float least_px_ = 2.0F;
     bool thin_water_ = true;
     bool no_quays_ = false;
     bool no_reflections_ = false;
@@ -1479,9 +1489,11 @@ struct Ground::Pipelines {
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
     /// The app's map's streets over what lies under them (record_streets): off a bridge where the stencil holds no
-    /// water, and on a bridge over it.
+    /// water, and on a bridge over it (the big roads with these); and their depth after them, each alike.
     vk::raii::Pipeline fill_streets{nullptr};
     vk::raii::Pipeline fill_bridges{nullptr};
+    vk::raii::Pipeline fill_streets_depth{nullptr};
+    vk::raii::Pipeline fill_bridges_depth{nullptr};
     vk::raii::Pipeline fill_fading{nullptr};
     vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
     vk::raii::Pipeline plate{nullptr};

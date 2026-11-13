@@ -381,13 +381,39 @@ object MapEngine {
     /** The country whose tiles the core draws at [lat], [lon] ([countries]), or null. */
     fun countryAt(lat: Double, lon: Double): CountryTiles? = countries.firstOrNull { it.holds(lat, lon) }
 
+    /** Whether a country's tiles hold a place, as their index says ([countryHolds]). */
+    fun interface CountryHolds {
+        /** Whether [country]'s tiles hold the place at [lat], [lon]; null where its tiles' index is not on the phone. */
+        fun at(country: CountryTiles, lat: Double, lon: Double): Boolean?
+    }
+
+    /**
+     * Which places within a country's box its tiles hold (ENGINE.md step 3): a box reaches beyond its country's border
+     * (the Netherlands' holds Antwerp and Aachen), and the tiles' index lists the windows the country's data reaches.
+     * The app sets it with the published packs (WindowTiles.holds). Asked at each camera on the main thread: it must
+     * neither block nor allocate. Null: a country holds its whole box.
+     */
+    @Volatile
+    var countryHolds: CountryHolds? = null
+
+    /**
+     * The country whose frame cells' levels the core draws at [lat], [lon], or null: a published country with levels
+     * ([CountryTiles.levels]) whose box holds the place and whose tiles do ([countryHolds]; its whole box until its
+     * tiles' index is on the phone).
+     */
+    fun levelsAt(lat: Double, lon: Double): CountryTiles? {
+        val holds = countryHolds
+        return countries.firstOrNull { it.levels && it.holds(lat, lon) && holds?.at(it, lat, lon) != false }
+    }
+
     /**
      * Whether the place at [lat], [lon] has no country's levels: no published country whose tiles hold its frame cells'
-     * levels holds it ([CountryTiles.levels]), so beyond its windows the core's cover has nothing there, and the world
-     * draws under it from every distance (CameraWriter.WORLD_UNDER; ENGINE.md step 3). False until the published list
-     * is read: nothing is known of the countries before.
+     * levels holds it ([levelsAt]), so beyond its windows the core's cover has nothing there, and the world draws under
+     * it from every distance (CameraWriter.WORLD_UNDER; ENGINE.md step 3). So it does within a country's box beyond its
+     * border, once the country's tiles' index says so. False until the published list is read: nothing is known of the
+     * countries before.
      */
-    fun worldUnder(lat: Double, lon: Double): Boolean = countries.isNotEmpty() && countryAt(lat, lon)?.levels != true
+    fun worldUnder(lat: Double, lon: Double): Boolean = countries.isNotEmpty() && levelsAt(lat, lon) == null
 
     /**
      * The user's own edits that OpenStreetMap accepted, which the windows draw until the map's data carries them
@@ -428,6 +454,13 @@ object MapEngine {
      */
     @Volatile
     var worldReads: app.atlas.mapview.vk.WorldReads? = null
+
+    /**
+     * The world the kept countries keep (ENGINE.md step 11: [app.atlas.mapview.vk.WorldKeeper]), once the app has its
+     * world's files; null before, and in CI's runs but their world phase.
+     */
+    @Volatile
+    var worldKeeper: app.atlas.mapview.vk.WorldKeeper? = null
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null

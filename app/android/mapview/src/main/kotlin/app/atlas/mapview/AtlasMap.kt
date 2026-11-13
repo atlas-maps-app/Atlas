@@ -39,6 +39,7 @@ import app.atlas.mapview.vk.LocalChromeShapes
 import app.atlas.mapview.vk.VkHost
 import app.atlas.mapview.vk.VkSurface
 import app.atlas.mapview.vk.chromeSurface
+import app.atlas.model.Place
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -70,6 +71,12 @@ fun AtlasMap(
     onTapBuilding: ((MapPick, Offset) -> Unit)? = null,
     /** A tap on the ground the core draws: what it shows there and where the finger was (px), in place of [onTap]. */
     onTapGround: ((GroundPick, Offset) -> Unit)? = null,
+    /**
+     * The place a tap on a building the core draws opens ([MapHit.OnFeature]): the building itself or a point of
+     * interest in it, or null where it holds none (the tap is then [MapHit.Empty]). Null: a tap on a building is a tap
+     * on the map, as before.
+     */
+    featureOf: (suspend (MapPick) -> Place?)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -89,6 +96,7 @@ fun AtlasMap(
     val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
     val tapBuilding by rememberUpdatedState(onTapBuilding)
     val tapGround by rememberUpdatedState(onTapGround)
+    val feature by rememberUpdatedState(featureOf)
     val cameraMove by rememberUpdatedState(onCameraMove)
 
     val insets = with(density) {
@@ -114,6 +122,7 @@ fun AtlasMap(
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onTapBuilding = if (tapBuilding != null) { p, at -> tapBuilding?.invoke(p, at) } else null
         controller.onTapGround = if (tapGround != null) { p, at -> tapGround?.invoke(p, at) } else null
+        controller.featureOf = if (feature != null) { p -> feature?.invoke(p) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
         // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }

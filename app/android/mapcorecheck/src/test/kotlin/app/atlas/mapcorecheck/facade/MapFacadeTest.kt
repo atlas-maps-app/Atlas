@@ -211,10 +211,14 @@ class MapFacadeTest {
                 // A pick before the map has drawn a frame (hosts have no window): none.
                 assertEquals("", Native.pick(handle, 100f, 200f))
 
-                // The building FillIn asks about: hatched in the board's grey, then in its answer's colour, then none.
-                Native.ask(handle, false, 4242L, 0xA2A5A9, true)
-                Native.ask(handle, true, 4242L, 0x453433, false)
-                Native.ask(handle, false, 0L, 0, false)
+                // The building FillIn asks about: hatched in the board's grey, then in its answer's colour, as the
+                // board's house under each roof (no tile draws it here: no house, and none is looked for in vain), its
+                // walls' colour not asked about, then none.
+                Native.ask(handle, false, 4242L, 0xA2A5A9, true, 0)
+                Native.ask(handle, true, 4242L, 0x453433, false, 0)
+                for (roof in 1..3) Native.ask(handle, false, 4242L, 0x453433, false, roof)
+                Native.ask(handle, false, 4242L, -1, false, 2)
+                Native.ask(handle, false, 0L, 0, false, 0)
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
@@ -409,6 +413,34 @@ class MapFacadeTest {
             assertTrue(junk.exceptionOrNull()?.message.orEmpty(), junk.exceptionOrNull()?.message.orEmpty().startsWith("the edits are refused"))
             val heap = runCatching { Native.editWindow(14, x, y, source.path, ByteBuffer.wrap("[]".toByteArray()), none.path) }
             assertTrue(heap.exceptionOrNull()?.message.orEmpty().contains("direct buffer"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun theWorldAKeptCountryKeepsIsPinnedThroughTheFacade() {
+        // ENGINE.md step 11 (tiles/Kept.hpp; world_test holds the cache's pins and the keep's chunks): the calls' shape
+        val dir = Files.createTempDirectory("atlas-worldkept").toFile()
+        try {
+            val budget = 1L shl 20
+            fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong()
+            // no country kept: nothing pinned, nothing lacking (unknown tiles, chunks held, their bytes, heads lacking)
+            assertTrue(longArrayOf(0, 0, 0, 0).contentEquals(Native.worldKept(dir.path, budget, LongArray(0), ByteArray(0), IntArray(0), LongArray(0))))
+            // a pack whose head is not on the phone: its head lacking (pack 0), its chunks not known yet; its head pinned
+            val identity = ByteArray(32) { it.toByte() }
+            val tiles = longArrayOf(key(9, 262, 168), key(11, 1050, 673))
+            assertTrue(longArrayOf(0, 0, 0, 1, 0).contentEquals(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(2), tiles)))
+            assertEquals(1, File(dir, "pinned").readLines().size)
+            // a range of it before its head: not kept
+            assertNull(Native.worldKeptRange(dir.path, budget, 4_000, identity, 0, ByteArray(100)))
+            // arrays that do not agree, a pack of no length: refused
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(3), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), ByteArray(31), intArrayOf(2), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(0), identity, intArrayOf(2), tiles))
+            // the world dropped (a new version): nothing pinned
+            assertEquals("", Native.worldDrop(dir.path, budget))
+            assertEquals(0, File(dir, "pinned").readLines().size)
         } finally {
             dir.deleteRecursively()
         }

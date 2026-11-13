@@ -85,7 +85,9 @@ public:
                     bool& once = osm3s ? seen_osm3s : seen_atlas;
                     if (once) return fail(Fault::duplicate);
                     once = true;
-                    if (!head(osm3s ? "timestamp_osm_base" : "whole", osm3s ? values_->osm_base : values_->whole)) {
+                    std::optional<Text> none;
+                    if (!head(osm3s ? "timestamp_osm_base" : "whole", osm3s ? values_->osm_base : values_->whole,
+                              osm3s ? "" : "box", osm3s ? none : values_->box)) {
                         return false;
                     }
                 } else if (!skip(1)) {
@@ -519,23 +521,26 @@ private:
         return string(out);
     }
 
-    /// An object of the document's head (`osm3s`, `atlas`): its string `name` read into `out`, its other keys stepped
-    /// over; a value of another kind stepped over whole.
-    bool head(std::string_view name, std::optional<Text>& out) {
+    /// An object of the document's head (`osm3s`, `atlas`): its string `name` read into `out` and, where `other` names
+    /// one, its string `other` into `out_other`; its other keys stepped over; a value of another kind stepped over
+    /// whole.
+    bool head(std::string_view name, std::optional<Text>& out, std::string_view other, std::optional<Text>& out_other) {
         space();
         if (at_ == end_ || *at_ != '{') return skip(1);
         ++at_;
         bool seen = false;
+        bool seen_other = false;
         if (!peek('}')) {
             do {
                 std::string_view key;
                 if (!string(key) || !expect(':')) return false;
-                if (key == name) {
-                    if (seen) return fail(Fault::duplicate);
-                    seen = true;
+                if (key == name || (!other.empty() && key == other)) {
+                    bool& once = key == name ? seen : seen_other;
+                    if (once) return fail(Fault::duplicate);
+                    once = true;
                     Text t;
                     if (!typed_string(t)) return false;
-                    out = t;
+                    (key == name ? out : out_other) = t;
                 } else if (!skip(2)) {
                     return false;
                 }

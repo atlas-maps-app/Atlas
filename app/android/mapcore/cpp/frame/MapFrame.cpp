@@ -9,6 +9,7 @@
 #include "load/Window.hpp"
 #include "passes/Ground.hpp"
 #include "passes/Walls.hpp"
+#include "scene/House.hpp"
 
 #include <algorithm>
 #include <format>
@@ -316,6 +317,12 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
     (void)world_->ladder(camera);
     style::ThemeBlock theme = *theme_;
     if (const tiles::StorePack* pack = world_->active(); pack != nullptr) theme = with_pack(theme, *pack);
+    // The asked building's house, while no frame draws it (its tile not resident yet, or built again in another
+    // pack): looked for twice a second.
+    if (asked_ && asked_->roof != 0 && builder_->state().house == nullptr && seconds >= house_due_) {
+        read_house();
+        house_due_ = seconds + 0.5;
+    }
     builder_->set_inputs({.camera = camera,
                           .theme = theme,
                           .seconds = seconds,
@@ -327,7 +334,37 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .markers = markers_.get(),
                           .routes = routes_.get(),
                           .asked = asked_,
+                          .house = house_.get(),
                           .palette = &palette_});
+}
+
+void MapFrame::set_asked(std::optional<AskedBuilding> asked) {
+    const bool same_house = asked && asked_ && asked->id == asked_->id && asked->relation == asked_->relation &&
+                            asked->roof == asked_->roof;
+    asked_ = asked;
+    if (same_house) return; // its colour alone changed: the house's pass colours it each frame
+    house_.reset();
+    house_refused_.reset();
+    house_due_ = 0;
+    if (asked_ && asked_->roof != 0 && made() && world_) read_house();
+}
+
+void MapFrame::read_house() {
+    if (!asked_ || !world_) return;
+    const AskedBuilding asked = *asked_;
+    const std::string_view roof = scene::house_roof(asked.roof);
+    if (roof.empty()) return;
+    const scene::ResidentTile* from = scene::house_tile(world_->residency().resident(), asked.id);
+    if (from == nullptr) return;
+    if (house_ && house_->key == from->key && house_->pack == from->pack) return;
+    if (house_refused_ && house_refused_->first == from->key && house_refused_->second == from->pack) return;
+    house_ = scene::house_of(world_->store(), *from, asked.id, asked.relation, roof);
+    if (!house_) {
+        house_refused_.emplace(from->key, from->pack);
+        log::info("vk asked: no house of {} {} with a {} roof from tile {}/{}/{} of {} (not drawn as itself there)",
+                  asked.relation ? "relation" : "way", asked.id, roof, from->key.z, from->key.x, from->key.y,
+                  from->pack);
+    }
 }
 
 std::optional<scene::Picked> MapFrame::pick(double x, double y) {

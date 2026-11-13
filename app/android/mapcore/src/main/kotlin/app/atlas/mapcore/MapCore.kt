@@ -64,6 +64,44 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             return Native.worldDrop(dir, budget)
         }
 
+        /**
+         * Pins in the world's cache in [dir] everything [packs] keep (ENGINE.md step 11: the world's tiles a kept
+         * country draws offline), in place of what was pinned there, so the cache's LRU never takes it and its
+         * [budget] does not count it: every pack's head, and each tile's chunk of the packs whose heads the cache
+         * holds. Says what is lacking: the app fetches it, hands it over ([worldHead], [worldKeptRange]) and asks
+         * again. No packs: nothing is pinned. Null where the cache does not open or the pins cannot be written. Off
+         * the main thread.
+         */
+        fun worldKept(dir: String, budget: Long, packs: List<KeptPack>): Kept? {
+            if (Native.load() != null) return null
+            val identities = ByteArray(32 * packs.size)
+            packs.forEachIndexed { i, p -> p.identity.copyInto(identities, 32 * i, 0, 32) }
+            val tiles = LongArray(packs.sumOf { it.tiles.size })
+            var at = 0
+            for (p in packs) for (t in p.tiles) tiles[at++] = t.packed
+            val r = Native.worldKept(dir, budget, LongArray(packs.size) { packs[it].length }, identities, IntArray(packs.size) { packs[it].tiles.size }, tiles)
+                ?: return null
+            val heads = r[3].toInt()
+            val first = 4 + heads
+            return Kept(
+                heads = List(heads) { r[4 + it].toInt() },
+                chunks = List((r.size - first) / 4) { i -> KeptChunk(r[first + 4 * i].toInt(), Window.of(r[first + 4 * i + 1]), r[first + 4 * i + 2], r[first + 4 * i + 3]) },
+                unknown = r[0].toInt(),
+                held = r[1].toInt(),
+                heldBytes = r[2],
+            )
+        }
+
+        /**
+         * A range of the bytes of kept world pack [pack] from [offset] the app fetched, into the world's cache in
+         * [dir]: its whole chunks checked against their SHA-256 and kept. Null where the cache holds no head that
+         * opens the pack. Off the main thread.
+         */
+        fun worldKeptRange(dir: String, budget: Long, pack: KeptPack, offset: Long, bytes: ByteArray): WorldKept? {
+            if (Native.load() != null) return null
+            return Native.worldKeptRange(dir, budget, pack.length, pack.identity, offset, bytes)?.let { r -> WorldKept(r[0].toInt(), List(r.size - 1) { Window.of(r[it + 1]) }) }
+        }
+
         @Volatile
         private var process: MapCore? = null
 
@@ -458,10 +496,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * The building the app asks about from now on (FillIn's question): way or [relation] [id] (0: none), drawn plain in
-     * its walls' flat colour [wall] (0xRRGGBB, the board's), hatched while the question is open ([hatched]). Off the main
-     * thread.
+     * its walls' flat colour [wall] (0xRRGGBB, the board's; negative: their colour is not asked about, and they keep
+     * their own), hatched while the question is open ([hatched]); and, where its roof's shape is asked about, in the roof
+     * [roof] (0 its own, 1 flat, 2 gabled, 3 hipped) as the board's house. Off the main thread.
      */
-    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean) = core.call(Unit) { Native.ask(it, relation, id, wall, hatched) }
+    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean, roof: Int = 0) =
+        core.call(Unit) { Native.ask(it, relation, id, wall, hatched, roof) }
 
     /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
@@ -605,6 +645,19 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * coarse pack, an L6 block's fine one; the app fetches the head of each its index has. Off the main thread.
      */
     fun worldBlocks(): List<Window> = core.call(emptyList()) { h -> Native.worldBlocks(h).map { Window.of(it) } }
+
+    /** A world pack of a keep: its [length] and [identity] (its SHA-256) as world.idx has them, and its [tiles] to keep. */
+    class KeptPack(val length: Long, val identity: ByteArray, val tiles: List<Window>)
+
+    /** A chunk a keep lacks: its pack's place among those asked about, its [tile], its [offset] in the pack and its [length]. */
+    class KeptChunk(val pack: Int, val tile: Window, val offset: Long, val length: Long)
+
+    /**
+     * Where a keep stands: the packs whose [heads] the cache lacks (their places; their chunks are not known yet),
+     * the [chunks] it lacks of the others, the tiles asked for that no pack holds ([unknown]), and the chunks it
+     * holds ([held], [heldBytes] stored bytes).
+     */
+    class Kept(val heads: List<Int>, val chunks: List<KeptChunk>, val unknown: Int, val held: Int, val heldBytes: Long)
 
     /** What [worldKeep] made of a range: the chunks it kept, and the tiles whose bytes were refused. */
     class WorldKept(val kept: Int, val refused: List<Window>)
