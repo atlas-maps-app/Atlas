@@ -470,6 +470,13 @@ object MapEngine {
     @Volatile
     var terrainReads: app.atlas.mapview.vk.TerrainReads? = null
 
+    /**
+     * The world the kept countries keep (ENGINE.md step 11: [app.atlas.mapview.vk.WorldKeeper]), once the app has its
+     * world's files; null before, and in CI's runs but their world phase.
+     */
+    @Volatile
+    var worldKeeper: app.atlas.mapview.vk.WorldKeeper? = null
+
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null
 

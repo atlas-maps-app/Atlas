@@ -288,7 +288,7 @@ internal class CoreMap(
             if (asked == null) {
                 core.ask(false, 0L, 0, false)
             } else {
-                core.ask(asked.id.type == OsmType.RELATION, asked.id.id, asked.wall, asked.hatched)
+                core.ask(asked.id.type == OsmType.RELATION, asked.id.id, asked.wall, asked.hatched, asked.roof)
             }
         }
     }

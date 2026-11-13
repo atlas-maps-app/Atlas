@@ -12,6 +12,7 @@ import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
 import app.atlas.mapview.vk.TerrainReads
+import app.atlas.mapview.vk.WorldKeeper
 import app.atlas.mapview.vk.WorldReads
 import app.atlas.providers.Forecast
 import app.atlas.providers.Overpass
@@ -29,12 +30,19 @@ import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
 import app.atlas.tiles.WorldFetch
 import app.atlas.ui.mine.offline.RegionFiles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -50,6 +58,9 @@ import java.util.concurrent.TimeUnit
  * moment. [wire] hands them to every map ([MapEngine]).
  */
 class MapData(private val services: Services) {
+    /** The world on the phone changed (a start found it, a new version came, its keep list came). */
+    private val landed = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
     /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
     private val client: OkHttpClient by lazy {
         services.http.client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
@@ -386,7 +397,12 @@ class MapData(private val services: Services) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch
             MapEngine.worldReads = WorldReads(world, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
-            world.follow(services.connectivity.online, said = said, landed = MapEngine::invalidate)
+            MapEngine.worldKeeper = WorldKeeper(world, cache, budget = { MapEngine.worldCacheBytes }, said = said)
+            launch { keepWorld(landed, said) }
+            world.follow(services.connectivity.online, said = said, landed = {
+                MapEngine.invalidate()
+                landed.tryEmit(Unit)
+            })
         }
     }
 
@@ -407,6 +423,27 @@ class MapData(private val services: Services) {
             MapEngine.terrainReads = TerrainReads(terrain, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
             terrain.follow(services.connectivity.online, said = said, landed = MapEngine::invalidate)
         }
+    }
+
+    /**
+     * The world of the countries kept by their tiles (ENGINE.md step 11), looked at each time the world on the phone
+     * changes and as the network changes: what they keep is pinned in the world's cache at once, and what the phone
+     * lacks of it (after a new version of the world, or a download that stopped) is fetched while the phone is online
+     * and its network is not metered, as a region's download waits for Wi-Fi; a fetch that fails is tried again
+     * [KEEP_AGAIN_MS] on. A country's own download keeps its world as it takes its tiles (RegionEngine).
+     */
+    private suspend fun keepWorld(landed: Flow<Unit>, said: (String) -> Unit) {
+        combine(landed, services.connectivity.online, services.connectivity.metered) { _, online, metered -> online && !metered }
+            .collectLatest { fetch ->
+                while (true) {
+                    val done = runCatching { runInterruptible(Dispatchers.IO) { services.mine.engine.keepWorld(fetch) } }
+                    val failed = done.exceptionOrNull()
+                    if (failed is CancellationException) throw failed
+                    if (failed == null || !fetch) break
+                    said("the kept countries' world not whole yet: ${failed.message}")
+                    delay(KEEP_AGAIN_MS)
+                }
+            }
     }
 
     private fun open(asset: String): InputStream = services.context.assets.open(asset)
@@ -457,6 +494,9 @@ class MapData(private val services: Services) {
 
         /** How long the map waits to ask for the published list again where none was to be had (ms). */
         private const val COUNTRIES_RETRY_MS = 60_000L
+
+        /** A fetch of the kept countries' world that failed is tried again this long on. */
+        private const val KEEP_AGAIN_MS = 600_000L
 
         /** How long the windows wait to ask for the renders' list or one of its packs again where none came (ms), as today's map did. */
         private const val PUBLISHED_RETRY_MS = 60_000L

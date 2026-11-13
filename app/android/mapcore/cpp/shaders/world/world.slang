@@ -27,6 +27,10 @@
 //
 //   - light_vs and light_fs: a tile's cities' lights on the night side, a disc and its halo each (two words a light
 //     after the tile's segments: its place as a vertex word, then its size and its cell at bit 8);
+//   - star_vs and star_fs: the Globe board's backdrop stars (shared/backdrop.slang: the board's own, fixed on the
+//     frame as the board's are and fitted to it as the board's pictures, board_fit), each a disc, at space's depth, so
+//     only where nothing of the world draws; with the board's look (w.z, from 2,000 km). The board's Milky Way band is
+//     globe_fs's, in space.
 //   - globe_vs and globe_fs: a triangle over the frame, drawn twice. As space (push.at.x 0, at a depth under the
 //     world's, so only where nothing of the world draws): space and its glow where the sky was, the atmosphere's ring
 //     and the dashed outline about the planet's disc. As the glass (push.at.x 1, over the world): the shine on the
@@ -39,6 +43,7 @@
 // pipeline), so each pixel takes its topmost fill alone at the fade's alpha, as the tile would look whole and faded,
 // and its lines at that alpha. Its colours are the palette's (set 2, binding 1), the moment's theme and the
 // world's style as passes/World.cpp writes them, as 8-bit RGBA (r in the low byte), premultiplied by the line's alpha.
+#include "shared/backdrop.slang"
 #include "shared/frame.slang"
 #include "shared/globe.slang"
 #include "shared/sphere.slang"
@@ -423,6 +428,103 @@ ColourOut light_fs(LightOut v) {
     return o;
 }
 
+/// The Globe board's frame (CSS px): its backdrop's stars and band are placed in it.
+static const float2 BOARD_FRAME = {412.0f, 915.0f};
+
+/// The board's frame in the engine's, as the board's pictures fit a screen (CosmosArt's inBoardFrame): scaled by the
+/// lesser of the two sides' ratios and centred. xy: where the board's corner lies (CSS px); z: the scale.
+float3 board_fit(FrameCamera c) {
+    float s = min(c.frame.x / BOARD_FRAME.x, c.frame.y / BOARD_FRAME.y);
+    return float3((c.frame.xy - BOARD_FRAME * s) * 0.5f, s);
+}
+
+/// The planet's disc at the CSS point `css`: the point's place from the disc's middle in radii of the disc (1 on the
+/// limb), by the tangents of its ray's angle and the limb's; far beyond where the ray looks away from the planet.
+float disc_rho(FrameCamera c, float2 css) {
+    float kx = (css.x - c.right.w) / c.forward.w;
+    float ky = -(css.y - c.up.w) / c.forward.w;
+    float3 ray = normalize(c.right.xyz * kx + c.up.xyz * ky + c.forward.xyz);
+    float3 centre = look.centre.xyz;
+    float radius = look.centre.w;
+    float toward = dot(ray, centre);
+    float beside = length(cross(ray, centre));
+    float far = sqrt(max(dot(centre, centre) - radius * radius, 1.0f)); // the eye to the limb
+    return toward > 0.0f ? (beside / toward) * (far / radius) : 1e9f;
+}
+
+/// How much of the atmosphere's ring lies at `rho` radii from the disc's middle, 0 to 1 (the board's: rising from its
+/// inner edge to its brightest, falling to its outer edge).
+float air_cover(float rho) {
+    float air = 0.0f;
+    if (rho > look.air_at.x && rho < look.air_at.y) {
+        air = (rho - look.air_at.x) / (look.air_at.y - look.air_at.x);
+    } else if (rho >= look.air_at.y && rho < look.air_at.z) {
+        air = (look.air_at.z - rho) / (look.air_at.z - look.air_at.y);
+    }
+    return air;
+}
+
+struct StarOut {
+    float4 position : SV_Position;
+    [[vk::location(0)]] nointerpolation float2 look : LOOK0; // the star's radius (device px) and its opacity
+    [[vk::location(1)]] float2 from : FROM0;                 // the fragment from the star's middle (device px)
+};
+
+[shader("vertex")]
+StarOut star_vs(uint vertex : SV_VulkanVertexID, uint star : SV_VulkanInstanceID) {
+    StarOut o;
+    FrameCamera c = frame.camera;
+    float4 s = backdrop_stars[star % BACKDROP_STARS];
+    float3 fit = board_fit(c);
+    float2 css = fit.xy + s.xy * fit.z;
+    float r = s.z * fit.z * c.frame.z;
+    // (the atmosphere's ring lies over the board's stars: a star within it shows through what the ring leaves)
+    float under_air = 1.0f - air_cover(disc_rho(c, css)) * look.air.a * look.weights.z;
+    o.look = float2(r, s.w * look.weights.z * look.weights.w * under_air);
+    uint corner = line_corners[vertex % 6u];
+    float reach = r + 1.0f;
+    o.from = float2((corner & 1u) != 0u ? reach : -reach, corner >= 2u ? reach : -reach);
+    float2 px = css * c.frame.z + o.from;
+    float2 at = {px.x * c.device.x - 1.0f, px.y * c.device.y - 1.0f};
+    float2 t = {c.turn.x * at.x + c.turn.y * at.y, c.turn.z * at.x + c.turn.w * at.y};
+    o.position = float4(t.x, t.y, push.origin.w, 1.0f);
+    return o;
+}
+
+[shader("fragment")]
+ColourOut star_fs(StarOut v) {
+    ColourOut o;
+    float alpha = v.look.y * saturate(v.look.x + 0.5f - length(v.from));
+    o.colour = float4(alpha, alpha, alpha, alpha);
+    return o;
+}
+
+/// The Globe board's Milky Way band over space at the board's point `p` (its 412 x 915 frame): the board's path, from
+/// (−40, 260) by the cubic through (120, 330) and (260, 520) to (460, 700) and 120 px down from it, filled by its
+/// linear gradient from (−40, 260) to (460, 820): #8FA8FF at 0, #B9A8FF at 7 % (0x12 of 255) half way, #8FA8FF at 0.
+/// Premultiplied; nothing outside the path.
+float4 backdrop_band(float2 p) {
+    if (p.x < -40.0f || p.x > 460.0f) {
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    // the curve's parameter at the column: x(t) rises along it, so Newton's steps from the chord's guess
+    float t = (p.x + 40.0f) / 500.0f;
+    for (uint i = 0u; i < 4u; ++i) {
+        float u = 1.0f - t;
+        float x = -40.0f * u * u * u + 360.0f * u * u * t + 780.0f * u * t * t + 460.0f * t * t * t;
+        float dx = 480.0f * u * u + 840.0f * u * t + 600.0f * t * t;
+        t = saturate(t - (x - p.x) / dx);
+    }
+    float u = 1.0f - t;
+    float top = 260.0f * u * u * u + 990.0f * u * u * t + 1560.0f * u * t * t + 700.0f * t * t * t;
+    float cover = saturate(p.y - top + 0.5f) * saturate(top + 120.0f - p.y + 0.5f);
+    float along = ((p.x + 40.0f) * 500.0f + (p.y - 260.0f) * 560.0f) / 563600.0f;
+    float mid = saturate(1.0f - abs(2.0f * along - 1.0f));
+    float3 colour = float3(0.5608f, 0.6588f, 1.0f) + (float3(0.7255f, 0.6588f, 1.0f) - float3(0.5608f, 0.6588f, 1.0f)) * mid;
+    float alpha = (18.0f / 255.0f) * mid * cover;
+    return float4(colour * alpha, alpha);
+}
+
 struct GlobeOut {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 at : AT0; // the fragment, upright device px
@@ -463,12 +565,11 @@ ColourOut globe_fs(GlobeOut v) {
         float glow = saturate(length(v.at - look.space_at.xy) * look.space_at.z / look.space_glow.a);
         float3 colour = look.space_glow.rgb + (look.space.rgb - look.space_glow.rgb) * glow;
         if (w.z > 0.0f) {
-            float air = 0.0f;
-            if (rho > look.air_at.x && rho < look.air_at.y) {
-                air = (rho - look.air_at.x) / (look.air_at.y - look.air_at.x);
-            } else if (rho >= look.air_at.y && rho < look.air_at.z) {
-                air = (look.air_at.z - rho) / (look.air_at.z - look.air_at.y);
-            }
+            // the board's Milky Way band behind everything (its stars are star_fs's)
+            float3 fit = board_fit(c);
+            float4 band = backdrop_band((css - fit.xy) / fit.z) * w.z;
+            colour = band.rgb + colour * (1.0f - band.a);
+            float air = air_cover(rho);
             colour = colour + (look.air.rgb - colour) * (air * look.air.a * w.z);
             // the outline's dashes along the limb, from the disc's right, clockwise
             float2 on_screen = {dot(ray, c.right.xyz) - dot(normalize(centre), c.right.xyz),

@@ -590,6 +590,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     geo::GroundGpu gpu = geo::pack(*ground);
     // fill_vs's wide_point finds a vertex's triangle by its word's place past the range's first, mod 3
     ATLAS_ASSERT(gpu.vertices.first == 0 && gpu.above.first % 3 == 0 && gpu.streets.first % 3 == 0 &&
+                 gpu.streets.count % 3 == 0 && gpu.bigs.first % 3 == 0 && gpu.bigs.count % 3 == 0 &&
                  gpu.below.first % 3 == 0);
     ground->polyline_words.resize(ground->polylines.size());
     std::uint32_t words = 0;
@@ -600,6 +601,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     ground->layout = {.vertices = gpu.vertices,
                       .above = gpu.above,
                       .streets = gpu.streets,
+                      .bigs = gpu.bigs,
                       .below = gpu.below,
                       .canopy = gpu.canopy,
                       .fans = gpu.fans,
@@ -892,6 +894,8 @@ bool Ground::decide(const frame::FrameState& state) {
         last_tiles_.emplace_back(t.ground, t.cells);
         last_suns_.push_back(sun_of(t));
     }
+    // (the night's light by the maps moves on its own: a bake done, the moment's open places)
+    same = same && !light_due(state);
     if (same) {
         // the same camera over the same tiles: every decision and slot as the last frame's, but the quays' faces where
         // what their colours are made of moved (the palette's quay walls, the moment's light), decided again and laid
@@ -999,6 +1003,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_wind_glints(cam, state);
     decide_sky(cam, state);
     decide_lit(cam);
+    decide_light(state);
     decide_pools();
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -1287,7 +1292,8 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     }
     // set 3, a set a frame slot: the soft shadows' grid, their blurred mask, and the grid as words for the compute
     // stages, the slot's own (Shadows.cpp); the ripple's two buffers, which its composite reads (Ripple.cpp); the
-    // glow's result and the lit streets' two layers, which theirs reads (LitGlow.cpp)
+    // glow's result and the lit streets' two layers, which theirs reads (LitGlow.cpp); the light maps' blocks, which
+    // their draw reads (LightMap.cpp)
     const std::array soft_bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
         gpu::Binding{
@@ -1303,7 +1309,9 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         gpu::Binding{
             .slot = 6, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{
-            .slot = 7, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment}};
+            .slot = 7, .type = vk::DescriptorType::eSampledImage, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 8, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
     p->soft_set_layout = std::move(soft_layout);
     const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
@@ -1320,6 +1328,7 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     ATLAS_GPU_CHECK(make_water_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_sky_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_pool_pipelines(context, *p));
+    ATLAS_GPU_CHECK(make_light_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_line_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_shadow_pipelines(context, *p));
     // the ripple, but in the owner mode (its map draws no reflections' colours); where the device cannot make it, the
@@ -1384,14 +1393,17 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     opaque_depth(fill);
     ATLAS_GPU_LET(f, frame::make_pipeline(context, fill, frame::Overdraw::opaque));
     p.fill = std::move(f);
-    // the app's map's streets, after the land and the water (record_streets): over what lies under them at their
-    // coverage, top first at their painter depth (the fills over them drawn already, those under them deeper); on a
-    // bridge over the water, off a bridge where the stencil holds no water at the street (its count, or with weather
-    // w0's bit: record_water_count draws it first, and the water's plain draw keeps the count for them; or the thin
-    // water's bit, where its count was left to the band)
+    // the app's map's streets and big roads, after the land and the water (record_streets): over what lies under them
+    // at their coverage, under the fills drawn over them already (their painter depth tested), and bottom first among
+    // themselves without writing their depth (street_vs takes a run's triangles last first), so that a street's edge,
+    // drawn at its share of its pixels, lies over the street under it and under the street over it whatever the
+    // tiles' order; on a bridge over the water, off a bridge where the stencil holds no water at the street (its
+    // count, or with weather w0's bit: record_water_count draws it first, and the water's plain draw keeps the count
+    // for them; or the thin water's bit, where its count was left to the band). Their depth then by draws of their
+    // own, the fills as they lie (fill_vs, no colour written), for what is drawn after them: as their opaque draws
+    // wrote it.
     gpu::GraphicsDesc bridges = ground_desc(context, p, "ground bridges", "street_vs", "colour_over_fs");
-    scene_blend(bridges, gpu::Blend::over());
-    opaque_depth(bridges);
+    translucent(bridges);
     ATLAS_GPU_LET(fb, frame::make_pipeline(context, bridges, frame::Overdraw::translucent));
     p.fill_bridges = std::move(fb);
     gpu::GraphicsDesc streets = bridges;
@@ -1407,6 +1419,17 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
                        .reference = 0};
     ATLAS_GPU_LET(fs, frame::make_pipeline(context, streets, frame::Overdraw::translucent));
     p.fill_streets = std::move(fs);
+    gpu::GraphicsDesc bridges_depth = ground_desc(context, p, "ground bridges' depth", "fill_vs", "colour_fs");
+    colour_off(bridges_depth);
+    opaque_depth(bridges_depth);
+    ATLAS_GPU_LET(fbd, frame::make_pipeline(context, bridges_depth, frame::Overdraw::opaque));
+    p.fill_bridges_depth = std::move(fbd);
+    gpu::GraphicsDesc streets_depth = bridges_depth;
+    streets_depth.label.name = "ground streets' depth";
+    streets_depth.stencil_test = true;
+    streets_depth.stencil = streets.stencil;
+    ATLAS_GPU_LET(fsd, frame::make_pipeline(context, streets_depth, frame::Overdraw::opaque));
+    p.fill_streets_depth = std::move(fsd);
     // a tile's fills while it fades in (ENGINE.md's fades), over what lies under it, top first: each sample takes the
     // tile's topmost fill alone, at or above what is there (its ancestor's fill of the same place has its slot), at
     // the tile's fade, and keeps its depth for what is drawn over it
@@ -1573,9 +1596,11 @@ void Ground::write_words(const frame::FrameState& state) {
     write_glitter(v);
     write_rings(v);
     write_pools(v);
+    write_light(v, state);
     write_lit(v, state);
     write_ripple(v, state);
     write_wind_glints(v, state);
+    write_clouds(v, state);
     write_canopy(v, state);
     write_palette(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
@@ -1678,6 +1703,15 @@ void Ground::push(const frame::Recording& r, std::uint32_t flags, std::uint32_t 
     r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
 }
 
+void Ground::push_run(const frame::Recording& r, std::uint32_t flags, std::uint32_t first, std::uint32_t count) const {
+    const Words& w = *words_;
+    layouts::ground_ground::PushConstants pc{};
+    pc.at = {w.tiles, w.slots, w.theme, w.runs};
+    // (mode.y: the least width a street is drawn at, device px, as soft_point reads it)
+    pc.mode = {flags | (frame_.night ? ground_flag::night : 0U), std::bit_cast<std::uint32_t>(least_px_), first, count};
+    r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+}
+
 void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     if (!frame_.valid || pipelines_ == nullptr || words_ == nullptr || !words_->ready) return;
     // (a part the map leaves out was not decided: its phases find nothing to draw)
@@ -1703,6 +1737,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         // plate, then the app's map's thin water's band and streets over what lies under them, and the sky; the
         // water's count before what lies above it, which the app's map's streets keep off
         record_quays(r);
+        record_courses(r);
         record_water_count(r);
         if (!frame_.out(style::camera_part::ground)) record_fills(r, true);
         record_water_opaque(r);
@@ -1730,6 +1765,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_shadows: record_shadows(r); break;
     case phase_pools:
         record_lit(r);
+        record_light(r);
         record_pools(r);
         break;
     default: break;
@@ -1761,9 +1797,16 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
             r.counters.draw(above ? "ground above" : "ground land", count / 3);
         };
         if (above && frame_.grounded) {
-            const std::uint32_t after = l.streets.first + l.streets.count;
-            draw(w.first, l.streets.first - w.first);
-            draw(after, w.first + w.count - after);
+            // without the streets' run and the big roads' (record_streets draws them), whichever comes first
+            std::array<geo::Words, 2> out{l.streets, l.bigs};
+            if (out[1].count != 0 && (out[0].count == 0 || out[1].first < out[0].first)) std::swap(out[0], out[1]);
+            std::uint32_t from = w.first;
+            for (const geo::Words& o : out) {
+                if (o.count == 0) continue;
+                draw(from, o.first - from);
+                from = o.first + o.count;
+            }
+            draw(from, w.first + w.count - from);
         } else {
             draw(w.first, w.count);
         }
@@ -1773,22 +1816,42 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
 void Ground::record_streets(const frame::Recording& r) {
     if (!frame_.grounded) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-    const std::uint32_t least = least_width_ ? ground_flag::least : 0U;
-    // off a bridge, where the stencil holds no water at the street; then on a bridge, over the water
-    for (const bool off : {true, false}) {
-        bool bound = false;
-        for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
-            const DrawnTile& t = frame_.tiles[i];
-            const geo::Words w = t.ground->layout.streets;
-            if (w.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
-            if (!bound) {
-                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                                 off ? *pipelines_->fill_streets : *pipelines_->fill_bridges);
-                push(r, ground_flag::wide | least | (off ? ground_flag::streets : 0U), 0);
-                bound = true;
+    const std::uint32_t soft = least_width_ ? ground_flag::soft : 0U;
+    // The streets off a bridge, where the stencil holds no water at the street; then those on a bridge, over the
+    // water; then the big roads' asphalt, which lies over them. Each: its colour over what lies under it, the run's
+    // triangles bottom first without their depth (street_vs: the draw names its run), so a street's edge at its share
+    // of a pixel lies over the street under it; then its depth as the fills lie (fill_vs), which the next of the
+    // three and what is drawn after them test as before.
+    // (each kind's count holds both draws: a pass counts at most frame::max_kinds kinds apart)
+    struct Part {
+        bool bigs;
+        bool off;
+        const char* kind;
+    };
+    for (const Part& part : {Part{.bigs = false, .off = true, .kind = "ground streets"},
+                             Part{.bigs = false, .off = false, .kind = "ground bridges"},
+                             Part{.bigs = true, .off = false, .kind = "ground big roads"}}) {
+        const std::uint32_t flags = ground_flag::wide | (part.off ? ground_flag::streets : 0U);
+        for (const bool depth : {false, true}) {
+            bool bound = false;
+            for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+                const DrawnTile& t = frame_.tiles[i];
+                const geo::Words w = part.bigs ? t.ground->layout.bigs : t.ground->layout.streets;
+                if (w.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
+                const std::uint32_t first = (t.pass->ranges[0].offset / 4) + w.first;
+                if (!bound) {
+                    const Pipelines& p = *pipelines_;
+                    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                                     depth ? (part.off ? *p.fill_streets_depth : *p.fill_bridges_depth)
+                                           : (part.off ? *p.fill_streets : *p.fill_bridges));
+                    if (depth) push(r, flags, 0);
+                    bound = true;
+                }
+                // (the colour's run by the draw: its first word and how many, which street_vs takes last first)
+                if (!depth) push_run(r, flags | soft, first, w.count);
+                cmd.draw(w.count, 1, first, static_cast<std::uint32_t>(i));
+                r.counters.draw(part.kind, w.count / 3);
             }
-            cmd.draw(w.count, 1, (t.pass->ranges[0].offset / 4) + w.first, static_cast<std::uint32_t>(i));
-            r.counters.draw(off ? "ground streets" : "ground bridges", w.count / 3);
         }
     }
 }

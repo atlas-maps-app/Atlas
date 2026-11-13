@@ -12,10 +12,7 @@
 # lead's word. This workflow is apart from packs.yml and world.yml because their publish jobs rewrite packs-latest and
 # world-latest, which every phone reads, and a run for heights alone must never touch those.
 #
-# Until this file is on the default branch, GitHub cannot dispatch it: a push to the branch `heights` whose head
-# commit's message holds a line `[terrain …]` starts it, with the dispatch's inputs as words of that line
-# (`[terrain regions=netherlands,norway points=50]`, `[terrain regions=tuscany box=10.9,43.4,11.2,43.6]`; `[terrain]`
-# alone builds every region). Once it has landed, the push trigger can go.
+# It runs on dispatch only (`gh workflow run terrain.yml --ref <branch> -f regions=…`).
 name: Terrain
 
 on:
@@ -37,8 +34,6 @@ on:
         description: Samples over the boards' views read afresh from their source (0 for none)
         required: false
         default: '50'
-  push:
-    branches: [heights]
 
 permissions:
   contents: read
@@ -53,7 +48,6 @@ env:
 jobs:
   plan:
     name: Plan
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[terrain')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -66,8 +60,6 @@ jobs:
       - name: The regions to build
         id: plan
         env:
-          EVENT: ${{ github.event_name }}
-          MESSAGE: ${{ github.event.head_commit.message }}
           IN_REGIONS: ${{ inputs.regions }}
           IN_BOX: ${{ inputs.box }}
           IN_LEVELS: ${{ inputs.levels }}
@@ -77,19 +69,7 @@ jobs:
           import json, os, re, sys
           registry = json.load(open('app/android/packs/terrain-sources.json'))
           known = [r['id'] for r in registry['regions']]
-          words = {}
-          if os.environ['EVENT'] == 'workflow_dispatch':
-              words = {'regions': os.environ['IN_REGIONS'], 'box': os.environ['IN_BOX'], 'levels': os.environ['IN_LEVELS'], 'points': os.environ['IN_POINTS']}
-          else:
-              line = re.search(r'\[terrain([^\]\n]*)\]', os.environ['MESSAGE'])
-              if not line:
-                  sys.exit('the head commit names no [terrain …] line')
-              for word in line.group(1).split():
-                  key, _, value = word.partition('=')
-                  words[key] = value
-          unknown = set(words) - {'regions', 'box', 'levels', 'points'}
-          if unknown:
-              sys.exit('unknown words: ' + ', '.join(sorted(unknown)))
+          words = {'regions': os.environ['IN_REGIONS'], 'box': os.environ['IN_BOX'], 'levels': os.environ['IN_LEVELS'], 'points': os.environ['IN_POINTS']}
           regions = [r.strip() for r in words.get('regions', '').split(',') if r.strip()] or known
           for r in regions:
               if r not in known:

@@ -43,7 +43,8 @@ namespace atlas::passes {
 /// The world pass.
 class World final : public frame::Pass {
 public:
-    /// One tile's draw: where its words lie and how it is placed (world.slang's WorldPush).
+    /// One tile's draw, or one part's of a tile in parts (scene::WorldPart): where its words lie and how it is placed
+    /// (world.slang's WorldPush). A tile's parts are drawn one after another, all their fills before their lines.
     struct Draw {
         std::array<float, 4> origin{};
         std::array<float, 4> scale{};
@@ -59,6 +60,7 @@ public:
         float fade = 1.0F;             ///< under 1 while the tile fades in (scene::WorldDraw::fade)
         std::uint8_t level = 0;        ///< its tile's level
         std::uint32_t lift = 0; ///< while it fades, its depth's lift above the world's (World.cpp's fading_depth)
+        std::uint32_t tile = 0; ///< its tile's place among the frame's: the same for each of a tile's parts
     };
 
     World() = default;
@@ -108,6 +110,9 @@ public:
 private:
     /// The tiles, first of the opaque ground; then over it, before every other translucent layer, space, the glass
     /// and the lights.
+    /// The Globe board's backdrop stars (shaders/shared/backdrop.slang's BACKDROP_STARS: :mapcorecheck's
+    /// BackdropTableTest holds the two and the board's data to one another).
+    static constexpr std::uint32_t star_count = 170;
     static constexpr std::uint32_t tiles_phase = 0;
     static constexpr std::uint32_t over_phase = 1;
     static constexpr std::array<frame::Phase, 2> phase_list{
@@ -123,10 +128,11 @@ private:
     bool space_ = false;
     bool glass_ = false;
 
-    /// A frame slot's own: its set, the heap buffer bound to it, and its draws.
+    /// A frame slot's own: its set, the heap buffer bound to it and the bytes bound, and its draws.
     struct Slot {
         vk::raii::DescriptorSet set{nullptr};
         vk::Buffer bound;
+        vk::DeviceSize bound_bytes = 0;
         bool drawing = false;
     };
     std::array<Slot, 2> slots_{};
@@ -148,6 +154,7 @@ private:
     vk::raii::Pipeline look_fading_fills_{nullptr};
     vk::raii::Pipeline look_lines_{nullptr};
     vk::raii::Pipeline lights_{nullptr};
+    vk::raii::Pipeline stars_{nullptr}; ///< the Globe board's backdrop stars, at space's depth
     vk::raii::Pipeline globe_{nullptr}; ///< space and the glass: a triangle over the frame
 };
 

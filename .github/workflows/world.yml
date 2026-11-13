@@ -28,9 +28,14 @@
 # - refs: the references around the world (mapcorecheck's likeness/world-refs.json): the tiles the core's walk draws
 #   in each view cut from the release's packs into packs of their own, fetched by their byte ranges (`packer
 #   world-refs`), with the globe in world-refs.tar, then drawn by the core's host build on lavapipe (WorldPackRefsTest);
-#   a frame that cannot be decoded or drawn whole fails the job;
+#   a frame that cannot be decoded or drawn whole fails the job; and the world's tiles a kept country draws offline
+#   (ENGINE.md step 11: `packer world-keep`, for each region of app/android/packs/regions.json with windows, within
+#   each level's reach of the polygon Geofabrik cut its extract with), listed with their packs' heads and bytes in
+#   world-keep.json, which the app reads beside world.json, and the Netherlands' zoom-out from 18.5 km to the globe
+#   (likeness/world-keep.json) drawn over its kept tiles and the globe alone, every frame whole;
 # - publish (only by hand): the draft's scratch deleted, the release published, world-latest's world.json replaced,
 #   and every world release but the last two deleted.
+# The monthly run builds the planet into a draft world-YYYYMMDD-planet, which is published by hand as any other.
 # Hand-offs go through the draft's assets (scratch-*), as artifacts and the cache are too small; every upload goes
 # through UPLOAD, which tries again. The fine packs stay in the parts their region named; the index names every part.
 # A block at the area's edge holds the area's data alone. world-test, the app's test world, is never a run's.
@@ -67,10 +72,10 @@ on:
   push:
     branches: [worldyml]
     paths: [.github/world-run.json]
-  # The monthly run (the 3rd at 04:17 UTC, a day after Geofabrik's extracts of the 1st) is off until Europe's first run
-  # has proven itself. To turn it on, restore:
-  # schedule:
-  #   - cron: '17 4 3 * *'
+  # The monthly run (ENGINE.md step 11): the whole world from OpenStreetMap's planet file in 60 regions, the 3rd at
+  # 04:17 UTC, into a draft named by the planet's day (world-YYYYMMDD-planet); publish stays a run by hand.
+  schedule:
+    - cron: '17 4 3 * *'
 
 permissions:
   contents: write
@@ -115,7 +120,7 @@ env:
     tiles, the box it was built for and its SHA-256) and world.json, which lists the files with their sizes and SHA-256
     checksums and the time the OpenStreetMap data is current to; world-latest always holds the newest world.json.
     world-refs.tar holds the engine's references around the world: the tiles their views draw, cut from the packs, and
-    the globe.
+    the globe. world-keep.json lists the world's tiles a kept country draws offline, by pack, with their bytes.
 
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The world packs are derived databases and are themselves available under
@@ -172,6 +177,10 @@ jobs:
             REGIONS=$(jq -r '.regions // "" | tostring' .github/world-run.json)
             TAG=$(jq -r '.tag // ""' .github/world-run.json)
             LAND=$(jq -r '.land // ""' .github/world-run.json)
+          elif [ "$EVENT" = schedule ]; then
+            # the monthly run: the whole world, its draft named by the planet's day
+            AREA=planet
+            REGIONS=60
           fi
           AREA=${AREA:-europe}
           REGIONS=${REGIONS:-20}
@@ -321,6 +330,7 @@ jobs:
           URL: ${{ steps.plan.outputs.url }}
           WHO: ${{ steps.plan.outputs.who }}
           TAG: ${{ steps.run.outputs.tag }}
+          AREA: ${{ steps.run.outputs.area }}
         run: |
           set -euo pipefail
           # the extract the filter job takes: Geofabrik sends a -latest extract to its dated file, or a big one to a
@@ -387,7 +397,9 @@ jobs:
           if ! [[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then echo "::error::$NAME's header gives no replication time"; exit 1; fi
           DAY=${TS:0:4}${TS:5:2}${TS:8:2}
           if [ -z "$TAG" ]; then
+            # the planet's world beside the day's Europe (step 10's tag)
             TAG=world-$DAY
+            if [ "$AREA" = planet ]; then TAG=world-$DAY-planet; fi
             if gh release view "$TAG" > /dev/null 2>&1; then echo "::error::$TAG is there already: delete its draft or give another tag"; exit 1; fi
           elif [ "${TAG:6:8}" != "$DAY" ]; then
             # a release is named by the day its data is current to, so that the tag and the data never disagree
@@ -1003,8 +1015,9 @@ jobs:
     runs-on: ubuntu-latest
     # the packs the references' views draw from, fetched by their ranges of the release's parts (some hundreds of MB of
     # the planet's), cut to the tiles drawn (world-refs.tar, some 30 MB with the globe), then the core's host build
-    # and the frames on lavapipe
-    timeout-minutes: 90
+    # and the frames on lavapipe; then the kept countries' tiles (world-keep.json, from their packs' heads) and the
+    # Netherlands' views drawn over its kept tiles and over their own walk's (its packs whole, some hundreds of MB)
+    timeout-minutes: 150
     env:
       TAG: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
@@ -1012,6 +1025,9 @@ jobs:
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
       # the references' views, which WorldPackRefsTest draws
       VIEWS: app/android/mapcorecheck/src/test/resources/likeness/world-refs.json
+      # the world they are drawn over: a version's frames hold the engine over the world they are of alone (another
+      # month's data draws other pixels), so WorldPackRefsTest proposes another world's frames without holding them
+      ATLAS_WORLD_REFS_RELEASE: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -1077,6 +1093,78 @@ jobs:
           name: world-refs-tar
           path: ${{ runner.temp }}/refs/world-refs.tar
           retention-days: 14
+      - name: The kept countries' tiles
+        # ENGINE.md step 11: for each region of regions.json with windows, the world's tiles its views draw from 18 km
+        # out to the globe (each level's within its reach of the polygon Geofabrik cut the region's extract with, as
+        # packs.yml takes it), listed by pack with its head's bytes and its tiles' chunks' in world-keep.json, read from
+        # each pack's first bytes; then the Netherlands' kept tiles cut from its packs, whole, for the frames below, and
+        # the same views' own tiles as world-refs cuts them (the core's walk for each, what the whole world draws there)
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/refs"
+          K="$RUNNER_TEMP/keep"
+          mkdir -p "$K/polys" "$K/heads" "$K/packs" "$K/out"
+          jq -r '.regions[] | select(.windows != false) | "\(.id) \(.url)"' app/android/packs/regions.json | while read -r id url; do
+            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$K/polys/$id.poly" "${url%-latest.osm.pbf}.poly" < /dev/null
+            head -1 "$K/polys/$id.poly"
+          done
+          # each range of a part fetched through the API, as a draft's assets have no public URL (the parts' asset ids as
+          # the step above listed them)
+          fetch() {
+            local into=$1 list=$2 part offset length file asset got
+            while read -r part offset length file; do
+              # a pack already fetched whole for another list
+              if [ -f "$into/$file" ] && [ "$(stat -c %s "$into/$file")" = "$length" ]; then continue; fi
+              asset=$(awk -v n="$part" '$1 == n { print $2 }' "$R/assets.txt")
+              if [ -z "$asset" ]; then echo "::error::$TAG has no $part"; exit 1; fi
+              curl -fsSL --retry 10 --retry-delay 10 --retry-all-errors -A "$USER_AGENT" -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/octet-stream" -r "$offset-$((offset + length - 1))" -o "$into/$file" \
+                "https://api.github.com/repos/$GH_REPO/releases/assets/$asset" < /dev/null
+              got=$(stat -c %s "$into/$file")
+              if [ "$got" != "$length" ]; then echo "::error::$file: $got bytes of $part, not $length"; exit 1; fi
+            done < "$list"
+          }
+          "$PACKER" world-keep "$R/in/world.idx" app/android/packs/regions.json "$K/polys" --needed --threads 4 > "$K/heads.txt"
+          fetch "$K/heads" "$K/heads.txt"
+          "$PACKER" world-keep "$R/in/world.idx" app/android/packs/regions.json "$K/polys" "$K/heads" "$K/world-keep.json" \
+            --release "$TAG" --threads 4 2>&1 | tee "$K/keep.txt"
+          jq -r '.countries[] | "\(.id): \(.tiles) tiles in \(.packs | length) packs, \(.bytes) bytes (heads \(.heads))"' "$K/world-keep.json"
+          # into the release while it is a draft, as world-refs.tar
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+            bash -c "$UPLOAD" upload "$TAG" "$K/world-keep.json"
+          else
+            echo "::notice::$TAG is published: world-keep.json stays in the run's artifact world-refs"
+          fi
+          # the Netherlands' kept tiles in packs of their own, from its packs whole, and the globe beside them
+          "$PACKER" world-keep cut "$R/in/world.idx" "$K/world-keep.json" netherlands --needed > "$K/whole.txt"
+          fetch "$K/packs" "$K/whole.txt"
+          "$PACKER" world-keep cut "$R/in/world.idx" "$K/world-keep.json" netherlands "$K/packs" "$K/out" 2>&1 | tee "$K/cut.txt"
+          # the views' own walk: the packs it reaches that the Netherlands' keep does not are fetched too (none, where the
+          # keep holds what its views draw), and each tile of it a pack holds that the keep lacks is named (--kept: the
+          # step below fails on one, as its frames leave the world's names out)
+          V=app/android/mapcorecheck/src/test/resources/likeness/world-keep.json
+          "$PACKER" world-refs "$R/in/world.idx" "$V" --needed 2> "$K/walk.txt" > "$K/views.txt"
+          awk 'NR == FNR { kept[$4] = 1; next } !($4 in kept) { print }' "$K/whole.txt" "$K/views.txt" > "$K/views-more.txt"
+          fetch "$K/packs" "$K/views.txt"
+          "$PACKER" world-refs "$R/in/world.idx" "$V" "$K/packs" "$K/views" --kept "$K/world-keep.json" netherlands 2>&1 |
+            tee "$K/views-cut.txt" | grep -E '^world-refs: (not kept|kept) for netherlands: |^world-refs: [0-9]+ views, '
+          rm -rf "${K:?}/packs"
+          cp "$R/in/world-globe.atlas" "$K/out/"
+          cp "$R/in/world-globe.atlas" "$K/views/"
+          mkdir -p likeness
+          cp "$K/world-keep.json" likeness/world-keep-release.json
+          echo "ATLAS_WORLD_KEEP=$K/out" >> "$GITHUB_ENV"
+          echo "ATLAS_WORLD_KEEP_WALK=$K/views" >> "$GITHUB_ENV"
+          {
+            echo "### The kept countries' tiles (world-keep.json)"
+            jq -r '.reach | to_entries | map("L\(.key) \(.value / 1000 | round) km") | "- reach: " + join(", ")' "$K/world-keep.json"
+            jq -r '.countries[] | "- \(.id): \(.tiles) tiles in \(.packs | length) packs, \(.bytes) bytes (heads \(.heads)); " +
+              (.levels | to_entries | map("L\(.key) \(.value.tiles) tiles \(.value.bytes) bytes") | join(", "))' "$K/world-keep.json"
+            echo "- the Netherlands' packs whole: $(awk '{ s += $3 } END { print s }' "$K/whole.txt") bytes of $(wc -l < "$K/whole.txt") packs"
+            { grep '^world-keep: netherlands' "$K/cut.txt" || true; } | sed 's/^/- /'
+            echo "- its views' own walk: $(wc -l < "$K/views.txt") packs, $(wc -l < "$K/views-more.txt") of them not kept; $(tail -1 "$K/views-cut.txt")"
+            { grep -E '^world-refs: (not kept|kept) for netherlands: ' "$K/views-cut.txt" || true; } | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"
         run: |
           LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
@@ -1158,15 +1246,85 @@ jobs:
         # the frames and their proposal (world-refs/world-refs.json) in the report
         working-directory: app/android
         run: |
-          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
+          # on a failure the test's message too (the frames not drawn whole, with their notes), which Gradle's log gives
+          # as its class and line alone
+          if ! ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
             -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
-            -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace
+            -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace; then
+            grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
+            exit 1
+          fi
           # the test skips without ATLAS_WORLD_REFS, and writes the frames' proposal only once every frame is drawn
           # whole: without the proposal nothing was drawn
           if [ ! -f "${{ github.workspace }}/likeness/world-refs/world-refs.json" ]; then
             echo "::error::WorldPackRefsTest drew no frames: no likeness/world-refs/world-refs.json"
             exit 1
           fi
+      - name: A kept country drawn offline
+        # the Netherlands from 18.5 km out to the globe (likeness/world-keep.json: its middle, flat and pitched, and
+        # three edges looking out of it, each as steep as the app allows there), first over each view's own walk (what
+        # the whole world draws there), then over the tiles world-keep keeps for it and the globe alone: a frame not
+        # drawn whole, or one the kept tiles draw otherwise than the walk's, fails the job (a pack cut to its kept tiles
+        # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
+        # The frames leave the world's names out (world-keep.json's names: a frame keeps the names it picked while its
+        # tiles came, so where more than 64 stand in reach two draws can name it otherwise): a tile of the walk the keep
+        # lacks, its names with it, is the step above's --kept line. The views whose pixels are false (the pitched ones
+        # from 60 to 1,000 km, which the core does not yet draw whole over the world alone: ENGINE.md step 11's Left) are
+        # held by that line alone. A check of its own: it runs where the references' frames above moved too, once the
+        # kept tiles are cut
+        if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
+        working-directory: app/android
+        env:
+          ATLAS_WORLD_REFS_VIEWS: world-keep.json
+        run: |
+          L="${{ github.workspace }}/likeness"
+          # the references' report above, which these draws must leave as it is
+          before=$(sha256sum "$L/world-refs/world-refs.json" 2> /dev/null || true)
+          # without the configuration cache: the cache entry the references' draw stored keeps the test's environment of
+          # then (its ATLAS_WORLD_REFS, no ATLAS_WORLD_REFS_VIEWS), so with it the references were drawn once more here
+          # (World run 43247006004)
+          draw() {
+            # on a failure the test's message too (the frames not drawn whole, with their notes), as above
+            if ! ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
+              -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+              -Datlas.likeness.report="$L" --rerun --stacktrace; then
+              grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
+              exit 1
+            fi
+            if [ "$(sha256sum "$L/world-refs/world-refs.json" 2> /dev/null || true)" != "$before" ]; then
+              echo "::error::the kept country's draw over $1 drew the references' views again (likeness/world-refs/world-refs.json changed)"
+              exit 1
+            fi
+            if [ ! -f "$L/world-keep/world-keep.json" ]; then
+              echo "::error::WorldPackRefsTest drew none of the kept country's frames over $1: no likeness/world-keep/world-keep.json"
+              exit 1
+            fi
+          }
+          draw "$ATLAS_WORLD_KEEP_WALK"
+          rm -rf "${L:?}/world-keep-walk"
+          mv "$L/world-keep" "$L/world-keep-walk"
+          draw "$ATLAS_WORLD_KEEP"
+          # each frame's SHA-256 over the walk's tiles and over the kept ones
+          frames() { jq -c '.version as $v | .versions[$v].platforms["lavapipe-x86_64"] // {}' "$1"; }
+          all=$(jq '.frames | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
+          n=$(jq '[.frames[] | select(.pixels != false)] | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
+          for f in "$L/world-keep-walk/world-keep.json" "$L/world-keep/world-keep.json"; do
+            if [ "$(frames "$f" | jq length)" != "$n" ]; then echo "::error::$f holds $(frames "$f" | jq length) frames, not $n"; exit 1; fi
+          done
+          differ=$(jq -rn --argjson a "$(frames "$L/world-keep-walk/world-keep.json")" --argjson b "$(frames "$L/world-keep/world-keep.json")" \
+            '[$a | keys_unsorted[] | select($a[.] != $b[.])] | join(", ")')
+          if [ -n "$differ" ]; then
+            echo "::error::the Netherlands' kept tiles draw these views otherwise than the world does (frames in the artifact world-refs, world-keep and world-keep-walk): $differ"
+            exit 1
+          fi
+          # every tile of the views' walk a pack holds, kept (packer world-refs --kept, the step above)
+          C="$RUNNER_TEMP/keep/views-cut.txt"
+          if ! kept=$(grep -E '^world-refs: kept for netherlands: ' "$C"); then
+            echo "::error::the Netherlands' keep lacks tiles its views draw, the names in them with them: $(grep -E '^world-refs: (.+: )?not kept for netherlands: ' "$C" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "### A kept country drawn offline" >> "$GITHUB_STEP_SUMMARY"
+          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names), the other $((all - n)) (pitched, from 60 to 1,000 km) by their tiles alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
       - name: The frames
         if: ${{ !cancelled() }}
         run: |
@@ -1208,6 +1366,10 @@ jobs:
           jq -r '(.index, .globe, .parts[]) | "\(.name) \(.bytes)"' "$R/world.json" | while read -r line; do
             if ! grep -qxF "$line" "$R/assets.txt"; then echo "::error::$TAG has no $line bytes"; exit 1; fi
           done
+          # the kept countries' list the refs job puts up (a world drawn before ENGINE.md step 11 has none: refs=<tag> adds it)
+          if ! grep -q '^world-keep.json ' "$R/assets.txt"; then
+            echo "::warning::$TAG has no world-keep.json: a kept country keeps no world tiles of it (refs=$TAG adds the list while it is a draft)"
+          fi
           # the run's scratch goes, the release is published and world-latest names it
           gh release view "$TAG" --json assets -q '.assets[].name | select(startswith("scratch-"))' | while read -r a; do
             gh release delete-asset "$TAG" "$a" --yes

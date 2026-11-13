@@ -17,6 +17,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -463,6 +464,59 @@ TEST_CASE("ranks take an item flagged for the app's map only in it, and one flag
     }
 }
 
+TEST_CASE("ranks leave out the items of the building a house stands in the place of, and mark the asked one's") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    // three items in a row about the target: a building's own, a part's keyed by that building, and another building's
+    const std::uint64_t asked = scene::owner_key(scene::owner_kind_area, 100);
+    const std::uint64_t other = scene::owner_key(scene::owner_kind_area, 101);
+    const std::array<std::uint64_t, 3> buildings{asked, asked, other};
+    scene::ItemTable items;
+    for (std::uint32_t i = 0; i < buildings.size(); ++i) {
+        const double x = (10.0 * i) - 10.0;
+        items.add({.x = x,
+                   .y = 1,
+                   .z = 0,
+                   .cut_x = x,
+                   .cut_z = 0,
+                   .order = scene::order_of(0, i),
+                   .kind = kind,
+                   .slots = {1, 1, 1, 1},
+                   .min_depth = 0.8F,
+                   .radius = 2.0F,
+                   .tile = 1,
+                   .building = buildings.at(i)});
+    }
+    const view::Camera camera({.target = {0, 0, 0},
+                               .yaw = 30.0,
+                               .pitch = 45.0,
+                               .dist = 100,
+                               .fov = 36,
+                               .width = 412,
+                               .height = 916,
+                               .cx = std::nullopt,
+                               .cy = 440});
+    frame::Ranks ranks;
+    // asked about, its own building drawn: every item ranked, the asked building's two marked for the hatch
+    ranks.update(items, camera, selectors, {.ground_slots = 100, .asked = asked, .hatched = true});
+    CHECK(ranks.order().size() == 3);
+    CHECK((ranks.table()[0] & shaders::RANK_ASKED) != 0U);
+    CHECK((ranks.table()[1] & shaders::RANK_ASKED) != 0U);
+    CHECK((ranks.table()[2] & shaders::RANK_ASKED) == 0U);
+    // its house in its place: the building's items, its part's too, take no rank; the other building's keeps its own
+    ranks.update(items, camera, selectors, {.ground_slots = 100, .asked = asked, .hatched = true, .replaced = asked});
+    CHECK(ranks.order().size() == 1);
+    CHECK(ranks.order()[0] == 2);
+    CHECK(ranks.table()[0] == shaders::RANK_NONE);
+    CHECK(ranks.table()[1] == shaders::RANK_NONE);
+    CHECK(ranks.table()[2] != shaders::RANK_NONE);
+    CHECK(ranks.slots() == 101);
+    // and back
+    ranks.update(items, camera, selectors, {.ground_slots = 100});
+    CHECK(ranks.order().size() == 3);
+}
+
 TEST_CASE("an item's band and detail are the ranks' choice in double, which a float depth or threshold can miss") {
     // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
     // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one
@@ -580,4 +634,50 @@ TEST_CASE("the screen layers of a camera and a theme: the 17 stops, the eye-leve
     CHECK(b.haze.w == 17.0F);
     CHECK(static_cast<double>(b.haze_alphas[0].x) == doctest::Approx(view::decimals(l.haze.alphas[0], 3)));
     CHECK(b.vignette.x == doctest::Approx(0.2F));
+    // The moment's weather over the screen where the style ladder thins it (LayerSettings::weather_gone): none gone
+    // unless the setting says so, and then the layers' block carries how much.
+    CHECK(b.vignette.y == 0.0F);
+    const view::Layers thinned = view::layers_of(
+        cam, th, {.width = 412, .height = 916, .pitch = 38, .haze0 = 380, .haze1 = 800, .weather_gone = 0.5});
+    shaders::FrameLayers w = view::block_of(thinned, th, ~0U, 255);
+    CHECK(w.vignette.y == 0.5F);
+    CHECK(shaders::composite_weather_kept(b) == 4096);
+    CHECK(shaders::composite_weather_kept(w) == 2048);
+    CHECK(shaders::composite_kept(573, 4096) == 573);
+    CHECK(shaders::composite_kept(573, 2048) == 287);
+    CHECK(shaders::composite_kept(573, 0) == 0);
+    for (int a = 0; a <= 4096; ++a) CHECK(shaders::composite_kept(a, 4096) == a);
+    // A pixel under a cloud's shadow, a rain streak and the wash: with none of the weather gone as the steps draw it,
+    // with all of it gone as without the three steps, to the level; between the two half way.
+    const hlsl::float3 levels{120.0F, 150.0F, 180.0F};
+    const std::uint32_t cloud = (0x80U << 24U) | (0x20U << 16U) | (0x28U << 8U) | 0x30U; // a shadow at half cover
+    const auto finished = [&](float gone, std::uint32_t steps) {
+        shaders::FrameLayers f = w;
+        f.vignette.y = gone;
+        f.steps.x = steps;
+        f.haze.w = 0.0F; // no haze: the weather's steps alone
+        return shaders::composite_steps_alphas(f, levels, cloud, 1500, 0, 600, 0, hlsl::uint3{0U, 0U, 0U});
+    };
+    const std::uint32_t weather = shaders::COMPOSITE_CLOUD_SHADOWS | shaders::COMPOSITE_RAIN | shaders::COMPOSITE_WASH;
+    const hlsl::float3 whole = finished(0.0F, weather);
+    const hlsl::float3 without = finished(0.0F, 0U);
+    const hlsl::float3 gone = finished(1.0F, weather);
+    const hlsl::float3 half = finished(0.5F, weather);
+    CHECK(without.x == levels.x);
+    CHECK(whole.x != without.x);
+    CHECK(whole.z != without.z);
+    for (const auto& [all, some, none] :
+         {std::array{whole.x, half.x, without.x}, std::array{whole.y, half.y, without.y},
+          std::array{whole.z, half.z, without.z}}) {
+        CHECK(some >= std::min(all, none));
+        CHECK(some <= std::max(all, none));
+    }
+    CHECK(half.x != whole.x);
+    CHECK(gone.x == without.x);
+    CHECK(gone.y == without.y);
+    CHECK(gone.z == without.z);
+    // beyond its ends the setting is its nearest end
+    CHECK(shaders::composite_weather_kept(
+              view::block_of(view::layers_of(cam, th, {.width = 412, .height = 916, .pitch = 38, .weather_gone = 3.0}),
+                             th, ~0U, 255)) == 0);
 }

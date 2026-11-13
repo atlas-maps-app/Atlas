@@ -58,8 +58,9 @@
 // every makes it every frame, as before its key took what it reads alone (Ground::make_ripple_always), to measure
 // what the kept results save. ATLAS_PINCH_FILLS_OFF: the kinds of fill every frame leaves out, by
 // geometry::FillKind's names (road, rail, big ...: a kind's share of a picture). ATLAS_PINCH_LEAST=0: the app's map's
-// streets narrower than 1.5 device px at their own width (Ground::draw_least_width), the far flicker's base;
-// ATLAS_PINCH_THIN=0: its water narrower than that as it lies (Ground::draw_thin_water).
+// streets and big roads as they lie, without their edges by their coverage (Ground::draw_least_width), the far
+// flicker's base; ATLAS_PINCH_LEAST_PX: the least width they are drawn at, device px (Ground::least_width_px; 2);
+// ATLAS_PINCH_THIN=0: its water narrower than 1.5 device px as it lies (Ground::draw_thin_water).
 // ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
 // target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
 // ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
@@ -893,7 +894,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         }
         // the app's map's thin streets at their own width (ATLAS_PINCH_LEAST=0)
         const bool least_width = environment("ATLAS_PINCH_LEAST") != "0";
-        if (!least_width) MESSAGE("the streets at their own width, however thin");
+        if (!least_width) MESSAGE("the streets and big roads as they lie, their edges the samples' own");
+        // their least width, device px (ATLAS_PINCH_LEAST_PX; the pass's 2 by default)
+        const float least_px =
+            environment("ATLAS_PINCH_LEAST_PX").empty() ? 0.0F : std::stof(environment("ATLAS_PINCH_LEAST_PX"));
+        if (least_px > 0.0F) MESSAGE(std::format("their least width {:.2f} device px", least_px));
         // and its thin water as it lies (ATLAS_PINCH_THIN=0)
         const bool thin_water = environment("ATLAS_PINCH_THIN") != "0";
         if (!thin_water) MESSAGE("the water as it lies, however thin");
@@ -925,6 +930,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (g != nullptr) g->make_ripple_always(ripple_always);
             if (g != nullptr) g->leave_out_fills(fills_off);
             if (g != nullptr) g->draw_least_width(least_width);
+            if (g != nullptr && least_px > 0.0F) g->least_width_px(least_px);
             if (g != nullptr) g->draw_thin_water(thin_water);
             const std::uint64_t ripples = g != nullptr ? g->ripple_makes() : 0U;
             const auto at = std::chrono::steady_clock::now();

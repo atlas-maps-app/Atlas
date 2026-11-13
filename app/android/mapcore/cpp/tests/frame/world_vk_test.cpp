@@ -1489,6 +1489,28 @@ namespace {
     return tile;
 }
 
+/// lit_globe_tile with a sea's name after its cities: "Deep", 6·10¹³ m², at (21 S, 67 E) in the sea of its cell 10's
+/// east half, which is one water with its cell 6's (0 to 42.5 N, 0 to 90 E).
+[[nodiscard]] test::TileBytes sea_globe_tile() {
+    using namespace atlas::tiles;
+    namespace col = test::columns;
+    test::TileBytes tile = test::world_tile(0, 0, 0);
+    test::LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    label.cells = {6, 6, 10};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {250'000'000, 700'000'000}, {200'000'000, 100'000'000}, {-210'000'000, 670'000'000}};
+    label.columns = {{"source", Codec::u8, col::u8({1, 1, 2})},
+                     {"index", Codec::delta, col::delta({0, 1, 1})},
+                     {"name", Codec::str, col::str(tile, {"East", "Middle", "Deep"})},
+                     {"pos", Codec::point, col::point(at)},
+                     {"prev", Codec::point, col::point(at)},
+                     {"count", Codec::varu, col::varu({1, 1, 60'000'000'000'000})},
+                     {"kind", Codec::str, col::str(tile, {"city", "city", "sea"})},
+                     {"tag:population", Codec::str, col::str(tile, {"12000000", "12000000", ""})}};
+    tile.layers.back() = label;
+    return tile;
+}
+
 /// Whether (`lat`, `lon`) is land in test::world_tile's L0 tile: its cell's rows of equal latitude from Mercator's
 /// 85.0511° N, its columns of 90°.
 [[nodiscard]] bool test_land(double lat, double lon) {
@@ -1695,6 +1717,49 @@ TEST_CASE("the globe's look: from 54,000 km the engine draws the board's Earth, 
         CHECK(rim.z >= 140.0F / 255.0F);
         CHECK(outside.x < 60.0F / 255.0F);
         CHECK(outside.z > outside.x + 0.05F);
+        // The Globe board's backdrop behind the Earth (shared/backdrop.slang, the board's own): its stars where the
+        // board has them, fitted to the frame as the board's pictures are (by the lesser side's ratio, centred), and
+        // its Milky Way band; none of it over the disc.
+        {
+            const double width_dp = size.width / density;
+            const double height_dp = size.height / density;
+            const double fit = std::min(width_dp / 412.0, height_dp / 915.0);
+            const double left = (width_dp - (412.0 * fit)) / 2.0;
+            const double top = (height_dp - (915.0 * fit)) / 2.0;
+            const auto on_frame = [&](double x, double y) {
+                return view::Vec2{(left + (x * fit)) * density, (top + (y * fit)) * density};
+            };
+            // the table's star at (34.8, 876.2), 1.6 px in radius at .74: far from the disc, white over space
+            const view::Vec2 star = on_frame(34.8, 876.2);
+            const hlsl::float3 lit = pixel_at(*pixels, star.x, star.y);
+            const hlsl::float3 dark = space_at(star.x, star.y);
+            MESSAGE(std::format("the board's star at ({:.1f}, {:.1f}) px: #{:02X}{:02X}{:02X} over space's "
+                                "#{:02X}{:02X}{:02X}",
+                                star.x, star.y, std::lround(lit.x * 255.0F), std::lround(lit.y * 255.0F),
+                                std::lround(lit.z * 255.0F), std::lround(dark.x * 255.0F), std::lround(dark.y * 255.0F),
+                                std::lround(dark.z * 255.0F)));
+            CHECK(lit.x > dark.x + 0.4F);
+            CHECK(lit.y > dark.y + 0.4F);
+            CHECK(lit.z > dark.z + 0.4F);
+            // six pixels from it space is space again
+            CHECK(levels_apart(pixel_at(*pixels, star.x + 6.0, star.y), space_at(star.x + 6.0, star.y)) <= 2.0);
+            // the star at (213.6, 508.2) lies behind the Earth: the disc's own colour there, as beside it
+            const view::Vec2 hidden = on_frame(213.6, 508.2);
+            const double from_x = hidden.x - (c.cx() * density);
+            const double from_y = hidden.y - (c.cy() * density);
+            CHECK(pymath::sqrt((from_x * from_x) + (from_y * from_y)) < radius * density * 0.8);
+            CHECK(levels_apart(pixel_at(*pixels, hidden.x, hidden.y), pixel_at(*pixels, hidden.x + 4.0, hidden.y)) <=
+                  25.0);
+            // the band: at the board's (400, 706) a third of its 7 % of #A1A8FF over space; 40 px over its edge none
+            const view::Vec2 band = on_frame(400.0, 706.0);
+            const hlsl::float3 banded = pixel_at(*pixels, band.x, band.y);
+            const hlsl::float3 under = space_at(band.x, band.y);
+            CHECK(banded.z > under.z + (3.0F / 255.0F));
+            CHECK(banded.z < under.z + (10.0F / 255.0F));
+            CHECK(banded.z - under.z > banded.x - under.x);
+            const view::Vec2 beside = on_frame(400.0, 606.0);
+            CHECK(levels_apart(pixel_at(*pixels, beside.x, beside.y), space_at(beside.x, beside.y)) <= 2.0);
+        }
         // no pixel of the frame is the clear colour's or the sky's (magenta)
         CHECK(count_bare(*pixels) == 0);
         std::size_t sky = 0;
@@ -1938,6 +2003,416 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
         CHECK(std::ranges::includes(drawn, asked));
         CHECK(tiles->stats().failed == 0);
     }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world's room: tiles a view wants that its heap cannot hold are held back, its picture final over their "
+          "ancestors, and none is built again at rest; a view it can hold takes the room of the tiles a view before "
+          "it left; a heap that may grow grows for a view's tiles, its picture the same, and one whose doubling the "
+          "device refuses holds them back as one that may not; a tile no piece of the heap holds whole is built in "
+          "parts, its picture the same; a stand-in drawn for a tile alone is let go of for it where its room holds it, "
+          "so the stand-ins sharpen") {
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-room-{}", ::getpid());
+    fs::create_directories(guard);
+    // two L6 blocks, Amsterdam's (32, 21) and the Ruhr's (33, 21), each with its L9 to L11 tiles over its city, and
+    // the globe's L0 and L5 tiles over both: files on the phone
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    struct Place {
+        double lat = 0;
+        double lon = 0;
+    };
+    const std::array<Place, 2> places = {{{.lat = 52.37, .lon = 4.89}, {.lat = 51.45, .lon = 7.01}}};
+    const auto write = [&guard](const std::string& name, const std::vector<std::byte>& bytes) {
+        std::ofstream out(guard / name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); // NOLINT
+        return (guard / name).string();
+    };
+    std::vector<frame::MapPack> packs;
+    std::vector<std::set<std::uint64_t>> own(places.size()); // each place's fine tiles, packed
+    for (std::size_t i = 0; i < places.size(); ++i) {
+        const tiles::TileKey t11 = tiles::tile_of(11, static_cast<std::int32_t>(std::lround(places[i].lat * 1e7)),
+                                                  static_cast<std::int32_t>(std::lround(places[i].lon * 1e7)));
+        const tiles::TileKey t10(10, t11.x >> 1U, t11.y >> 1U);
+        const tiles::TileKey t9(9, t11.x >> 2U, t11.y >> 2U);
+        const tiles::TileKey b(6, t11.x >> 5U, t11.y >> 5U);
+        for (const tiles::TileKey& k : {t11, t10, t9}) own[i].insert(k.packed());
+        frame::MapPack p;
+        p.number = 101 + i;
+        p.ref.id = std::format("world/6/{}/{}", b.x, b.y);
+        p.ref.kind = tiles::PackKind::world_mid;
+        p.ref.path = write(std::format("world-6-{}-{}.atlas", b.x, b.y),
+                           test::world_pack({test::world_tile(9, t9.x, t9.y), test::world_tile(10, t10.x, t10.y),
+                                             test::world_tile(11, t11.x, t11.y)},
+                                            fine));
+        packs.push_back(std::move(p));
+    }
+    // and a third, Groningen's, whose L10 tile has all four of its L11 tiles. Over the middle of its L9 tile, where its
+    // four L10 quadrants meet, every view up to 50 km lies in the L9 (so its L5 is never wanted); from 50 km the L10 is
+    // a place's own tile, and from 25 km, where it is split into its L11 tiles, it draws no place of its own, only that
+    // of its L11 tile in view while that is not resident, as its stand-in
+    const tiles::TileKey g11 = tiles::tile_of(11, 532'200'000, 65'700'000);
+    const tiles::TileKey g10(10, g11.x >> 1U, g11.y >> 1U);
+    const tiles::TileKey g9(9, g11.x >> 2U, g11.y >> 2U);
+    const std::array<std::int32_t, 4> g9_box = tiles::tile_box(g9); // south, west, north, east
+    const Place groningen{.lat = 0.5e-7 * (static_cast<double>(g9_box[0]) + static_cast<double>(g9_box[2])),
+                          .lon = 0.5e-7 * (static_cast<double>(g9_box[1]) + static_cast<double>(g9_box[3]))};
+    {
+        std::set<std::uint64_t> fine_of{g9.packed(), g10.packed()};
+        std::vector<test::TileBytes> made = {test::world_tile(9, g9.x, g9.y), test::world_tile(10, g10.x, g10.y)};
+        for (std::uint32_t k = 0; k < 4; ++k) {
+            const tiles::TileKey c(11, (g10.x * 2) + (k & 1U), (g10.y * 2) + (k >> 1U));
+            fine_of.insert(c.packed());
+            made.push_back(test::world_tile(11, c.x, c.y));
+        }
+        own.push_back(std::move(fine_of));
+        const tiles::TileKey b(6, g11.x >> 5U, g11.y >> 5U);
+        frame::MapPack p;
+        p.number = 103;
+        p.ref.id = std::format("world/6/{}/{}", b.x, b.y);
+        p.ref.kind = tiles::PackKind::world_mid;
+        p.ref.path = write(std::format("world-6-{}-{}.atlas", b.x, b.y), test::world_pack(std::move(made), fine));
+        packs.push_back(std::move(p));
+    }
+    ATLAS_REQUIRE(packs[0].ref.id != packs[1].ref.id);
+    ATLAS_REQUIRE(packs[2].ref.id != packs[0].ref.id);
+    ATLAS_REQUIRE(packs[2].ref.id != packs[1].ref.id);
+    const tiles::TileKey l5 = tiles::tile_of(5, 523'700'000, 48'900'000);
+    frame::MapPack base;
+    base.number = 110;
+    base.ref.id = std::string(tiles::world_globe_id);
+    base.ref.kind = tiles::PackKind::world_base;
+    base.ref.path = write(std::string(tiles::world_globe_file),
+                          test::world_pack({test::world_tile(0, 0, 0), test::world_tile(5, l5.x, l5.y)}, coarse));
+    packs.push_back(base);
+    // A map of the world alone with a world heap of `heap` bytes that may grow to `budget` (0: the world's own), run
+    // by `run` with the window that keeps its frames: a start of its own for each (a session's close lets go of the
+    // device). False where no session presents (CI's arm64 lavapipe), which skips the case. A plain day without
+    // weather, so each picture is the world pass's colours alone: the cloud shadows' fields come from a worker, and a
+    // frame whole before they do draws none (CI's first frame over Amsterdam had 12.9k px of land more than the next)
+    style::ThemeBlock theme = sunny();
+    theme.flags = 0;
+    theme.weather_code = 255;
+    theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+    theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+    theme.shadow_blur = theme.cloud_shadows = 0.0;
+    const auto with_map = [&](std::uint64_t heap, std::uint64_t budget, const auto& run) {
+        auto started = start_world(guard);
+        if (!started) {
+            if (auto instance = test::open_instance({}); instance) {
+                test::cannot_present(*instance, started.error().reason);
+            }
+            return false;
+        }
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .world_heap = heap, .world_heap_budget = budget});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs(packs).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE_OR_RETURN(false, session.attach(std::move(window), size, why), why);
+        map.set_theme(theme);
+        run(map, session, *kept);
+        return true;
+    };
+    // the land's and the water's pixels of the last frame
+    using Counts = std::pair<std::size_t, std::size_t>;
+    const auto land_and_water = [&theme](KeptWindow& kept) {
+        ATLAS_REQUIRE_OR_RETURN(Counts{}, kept.kept != nullptr);
+        auto pixels = kept.kept->read(kept.kept->latest());
+        ATLAS_REQUIRE_OR_RETURN(Counts{}, pixels.has_value(), pixels.error().text());
+        return Counts{count_near(*pixels, theme.ground, 40), count_near(*pixels, theme.water, 40)};
+    };
+    // the frame drawn over place `i` from `distance` until it is whole (its world final: no tile wanted, none fading or
+    // waiting for room), at most a minute; and on for `rest` frames more
+    const auto draw = [](frame::MapFrame& map, standin::Session& session, const Place& place, int rest,
+                         double distance = 30'000.0) {
+        const style::CameraState cam = camera(place.lat, place.lon, 0.0, 0.0, distance);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        bool whole = false;
+        while (!whole && std::chrono::steady_clock::now() < until) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
+            const scene::WorldFrame* f = tiles != nullptr ? tiles->frame() : nullptr;
+            whole = map.complete() && f != nullptr && f->wanted == 0 && !f->fading && !f->settling;
+            if (tiles != nullptr) tiles->wait_idle();
+        }
+        for (int i = 0; i < rest; ++i) {
+            const standin::Drawn s = session.draw(cam, {});
+            if (s.stale) session.remake();
+            map.world()->world_tiles()->wait_idle();
+        }
+        return whole;
+    };
+    // the fine tiles of `place` the frame draws, packed
+    const auto drawn_of = [&own](const scene::WorldFrame& f, std::size_t place) {
+        std::set<std::uint64_t> d;
+        for (const scene::WorldDraw& w : f.draws) {
+            if (own[place].contains(w.tile->key.packed())) d.insert(w.tile->key.packed());
+        }
+        return d;
+    };
+    // The world's own heap: Amsterdam drawn whole, then the Ruhr, each fine tile in view drawn by itself. What
+    // Amsterdam's frame takes of the heap, with the poles' caps, the plain land and the globe's pinned L0, and its
+    // smallest tile.
+    std::vector<std::set<std::uint64_t>> whole(places.size()); // each place's fine tiles its whole frame draws
+    vk::DeviceSize took = 0;
+    vk::DeviceSize fine_bytes = 0;
+    vk::DeviceSize smallest = ~vk::DeviceSize{0};
+    vk::DeviceSize ruhr_smallest = ~vk::DeviceSize{0}; // the Ruhr's smallest fine tile
+    Counts seen;                                       // Amsterdam's whole picture: its land's and water's pixels
+    Counts seen_ruhr;                                  // and the Ruhr's, drawn after it
+    const bool presents = with_map(0, 0, [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+        CHECK(draw(map, session, places[0], 0));
+        seen = land_and_water(kept);
+        const scene::WorldTiles& tiles = *map.world()->world_tiles();
+        const scene::WorldFrame& f = *tiles.frame();
+        const scene::WorldStats st = tiles.stats();
+        CHECK(f.held == 0);
+        whole[0] = drawn_of(f, 0);
+        for (const scene::WorldDraw& w : f.draws) {
+            if (w.tile->pinned || w.tile->bytes() == 0) continue;
+            CHECK(w.tile->parts.size() == 1); // the world's own heap holds each whole
+            smallest = std::min<vk::DeviceSize>(smallest, w.tile->bytes());
+            if (own[0].contains(w.tile->key.packed())) fine_bytes += w.tile->bytes();
+        }
+        took = st.capacity - st.free;
+        MESSAGE(std::format("Amsterdam whole: {} bytes of the heap taken, {} of them its {} fine tiles', the smallest "
+                            "tile {} bytes; {} resident; land {} px, water {} px",
+                            took, fine_bytes, whole[0].size(), smallest, st.resident, seen.first, seen.second));
+        CHECK(st.buffer < st.capacity); // the world's own heap held it without growing
+        CHECK(draw(map, session, places[1], 0));
+        CHECK(tiles.frame()->held == 0);
+        whole[1] = drawn_of(*tiles.frame(), 1);
+        seen_ruhr = land_and_water(kept);
+        for (const scene::WorldDraw& w : tiles.frame()->draws) {
+            if (own[1].contains(w.tile->key.packed()))
+                ruhr_smallest = std::min<vk::DeviceSize>(ruhr_smallest, w.tile->bytes());
+        }
+    });
+    if (!presents) return;
+    ATLAS_REQUIRE(took > 0);
+    ATLAS_REQUIRE(smallest != ~vk::DeviceSize{0});
+    ATLAS_REQUIRE(!whole[0].empty());
+    ATLAS_REQUIRE(!whole[1].empty());
+    // A heap half a tile short of the frame: a tile it wants finds no room, and the going of no tile the frame leaves
+    // out would make it, so it is held back and the picture is final over its ancestor; at rest, 30 frames on, none is
+    // built again (each frame built the tile again before, and each build asked for the next frame). The globe from
+    // 20,000 km first, so its pinned L0 is resident: the view's tiles are built before the globe's levels, so in a
+    // first frame over Amsterdam the L0 would be the one finding no room, a tile the view does not draw
+    CHECK(with_map(((took - smallest / 2) + 15) & ~vk::DeviceSize{15}, 0,
+                   [&](frame::MapFrame& map, standin::Session& session, KeptWindow& /*kept*/) {
+                       CHECK(draw(map, session, places[0], 0, 20'000'000.0));
+                       CHECK(map.world()->world_tiles()->stats().no_room == 0);
+                       CHECK(draw(map, session, places[0], 0));
+                       const scene::WorldTiles& tiles = *map.world()->world_tiles();
+                       const scene::WorldStats before = tiles.stats();
+                       CHECK(tiles.frame()->held >= 1);
+                       CHECK(before.no_room >= 1);
+                       CHECK(draw(map, session, places[0], 30));
+                       const scene::WorldStats after = tiles.stats();
+                       MESSAGE(std::format(
+                           "half a tile short: {} held, {} builds found no room, {} built; 30 frames on: {} and {}",
+                           tiles.frame()->held, before.no_room, before.built, after.no_room, after.built));
+                       CHECK(after.no_room == before.no_room);
+                       CHECK(after.built == before.built);
+                       CHECK(tiles.frame()->held == 1);
+                       CHECK(tiles.frame()->wanted == 0);
+                       CHECK(map.complete());
+                   }));
+    // A heap that holds one place's frame and half its fine tiles more: the Ruhr, drawn after Amsterdam, takes the
+    // room of Amsterdam's fine tiles, which it does not draw, and is whole; and so is Amsterdam drawn again after it
+    CHECK(with_map(((took + fine_bytes / 2) + 15) & ~vk::DeviceSize{15}, 0,
+                   [&](frame::MapFrame& map, standin::Session& session, KeptWindow& /*kept*/) {
+                       for (const std::size_t i : {0U, 1U, 0U}) {
+                           CHECK(draw(map, session, places.at(i), 0));
+                           const scene::WorldTiles& tiles = *map.world()->world_tiles();
+                           const scene::WorldFrame& f = *tiles.frame();
+                           const scene::WorldStats st = tiles.stats();
+                           MESSAGE(std::format(
+                               "{} in {} bytes: {} held, {} fine tiles drawn, {} resident in {} bytes, {} builds "
+                               "found no room",
+                               i == 0 ? "Amsterdam" : "the Ruhr", st.capacity, f.held, drawn_of(f, i).size(),
+                               st.resident, st.bytes, st.no_room));
+                           CHECK(f.held == 0);
+                           CHECK(drawn_of(f, i) == whole.at(i));
+                           // at rest, 30 frames on, none built again
+                           CHECK(draw(map, session, places.at(i), 30));
+                           CHECK(tiles.stats().built == st.built);
+                           CHECK(tiles.stats().no_room == st.no_room);
+                       }
+                   }));
+    // A heap of a quarter of what Amsterdam's frame takes that may grow to twice it: its buffer doubles as the frame's
+    // tiles come (a quarter, a half, the whole, twice), each frame binding it as it then is, and the frame is whole,
+    // none held back, its picture the one the world's own heap drew; at rest none is built again
+    const vk::DeviceSize quarter = ((took / 4) + 15) & ~vk::DeviceSize{15};
+    CHECK(with_map(
+        quarter, ((2 * took) + 15) & ~vk::DeviceSize{15},
+        [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+            CHECK(draw(map, session, places[0], 0));
+            const scene::WorldTiles& tiles = *map.world()->world_tiles();
+            const scene::WorldStats st = tiles.stats();
+            const Counts grown = land_and_water(kept);
+            MESSAGE(std::format("grown from {} bytes: its buffer {} of {}, {} held, {} builds found no room; land "
+                                "{} px, water {} px",
+                                quarter, st.buffer, st.capacity, tiles.frame()->held, st.no_room, grown.first,
+                                grown.second));
+            CHECK(st.buffer > quarter);
+            CHECK(tiles.frame()->held == 0);
+            CHECK(drawn_of(*tiles.frame(), 0) == whole[0]);
+            const auto near = [](std::size_t a, std::size_t b) { return (a > b ? a - b : b - a) * 100 <= b; };
+            CHECK(near(grown.first, seen.first));
+            CHECK(near(grown.second, seen.second));
+            CHECK(draw(map, session, places[0], 30));
+            CHECK(tiles.stats().built == st.built);
+        }));
+    // A heap that may grow to twice the frame, whose doubling the device refuses: its budget ended at its buffer, as
+    // the refusal ends it (WorldTiles::end_budget), once the globe from 20,000 km has grown it to four times a quarter
+    // of the frame less half a tile, short of Amsterdam's tiles. The farthest finds no room and is held back, as in a
+    // heap that may not grow: no doubling, the frame final; at rest none is built again
+    const vk::DeviceSize short_quarter = ((took - smallest / 2) / 4) & ~vk::DeviceSize{15};
+    CHECK(with_map(short_quarter, ((2 * took) + 15) & ~vk::DeviceSize{15},
+                   [&](frame::MapFrame& map, standin::Session& session, KeptWindow& /*kept*/) {
+                       CHECK(draw(map, session, places[0], 0, 20'000'000.0));
+                       scene::WorldTiles& tiles = *map.world()->world_tiles();
+                       CHECK(tiles.stats().no_room == 0);
+                       tiles.end_budget();
+                       const scene::WorldStats ended = tiles.stats();
+                       CHECK(ended.capacity == ended.buffer);
+                       CHECK(ended.buffer < took);
+                       CHECK(draw(map, session, places[0], 0));
+                       const scene::WorldStats before = tiles.stats();
+                       const std::size_t held = tiles.frame()->held;
+                       CHECK(held >= 1);
+                       CHECK(before.no_room >= 1);
+                       CHECK(draw(map, session, places[0], 30));
+                       const scene::WorldStats after = tiles.stats();
+                       MESSAGE(std::format("a doubling refused at {} bytes: {} held, {} builds found no room, {} "
+                                           "built; 30 frames on: {} and {}, its buffer {}",
+                                           ended.buffer, held, before.no_room, before.built, after.no_room, after.built,
+                                           after.buffer));
+                       CHECK(after.no_room == before.no_room);
+                       CHECK(after.built == before.built);
+                       CHECK(after.buffer == ended.buffer);
+                       CHECK(after.capacity == ended.buffer);
+                       CHECK(tiles.frame()->held == held);
+                       CHECK(tiles.frame()->wanted == 0);
+                       CHECK(map.complete());
+                   }));
+    // A heap of Amsterdam's frame and twice its fine tiles' bytes more, which may not grow, whose free bytes once
+    // Amsterdam is whole are cut into pieces of half the Ruhr's smallest fine tile, 16 bytes apart
+    // (WorldTiles::fragment_for_tests): no piece holds a fine tile of the Ruhr whole, so each is built in parts, and
+    // the Ruhr is whole, none held back, its picture the one the world's own heap drew; at rest none is built again.
+    // (A piece of half a tile holds a part: WorldTiles' parts are of 256 bytes or more, 32 of which may stay free.)
+    ATLAS_REQUIRE(ruhr_smallest != ~vk::DeviceSize{0});
+    const vk::DeviceSize piece = (ruhr_smallest / 2) & ~vk::DeviceSize{15};
+    ATLAS_REQUIRE(piece >= 288);
+    CHECK(with_map(
+        (took + (2 * fine_bytes) + 15) & ~vk::DeviceSize{15}, 0,
+        [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+            CHECK(draw(map, session, places[0], 0));
+            scene::WorldTiles& tiles = *map.world()->world_tiles();
+            tiles.fragment_for_tests(piece);
+            CHECK(tiles.stats().largest_free <= piece);
+            CHECK(draw(map, session, places[1], 0));
+            const scene::WorldFrame& f = *tiles.frame();
+            const scene::WorldStats st = tiles.stats();
+            const Counts split = land_and_water(kept);
+            std::size_t in_parts = 0; // the Ruhr's fine tiles drawn in parts
+            for (const scene::WorldDraw& w : f.draws) {
+                if (own[1].contains(w.tile->key.packed()) && w.tile->parts.size() > 1) ++in_parts;
+            }
+            MESSAGE(std::format("the Ruhr in pieces of {} bytes: {} held, {} fine tiles drawn, {} of them in parts; {} "
+                                "parts of {} resident tiles, {} builds found no room; land {} px, water {} px",
+                                piece, f.held, drawn_of(f, 1).size(), in_parts, st.parts, st.resident, st.no_room,
+                                split.first, split.second));
+            CHECK(f.held == 0);
+            CHECK(drawn_of(f, 1) == whole[1]);
+            CHECK(in_parts == whole[1].size());
+            CHECK(st.parts > st.resident);
+            const auto near = [](std::size_t a, std::size_t b) { return (a > b ? a - b : b - a) * 100 <= b; };
+            CHECK(near(split.first, seen_ruhr.first));
+            CHECK(near(split.second, seen_ruhr.second));
+            CHECK(draw(map, session, places[1], 30));
+            CHECK(tiles.stats().built == st.built);
+            CHECK(tiles.stats().no_room == st.no_room);
+        }));
+    // A stand-in's room (WorldTiles::trade). In the world's own heap, Groningen's L9 from 50 km over its middle, where
+    // its L10 tile draws a place of its own, then from 25 km, whole: the L10's L11 tile in view drawn and the L10 not.
+    // What that frame takes of the heap, the L10's bytes, the bytes of the tiles it leaves out but the L10 and the
+    // pinned (none, as no view here wants the L5), and its picture.
+    vk::DeviceSize took_near = 0;
+    vk::DeviceSize g10_bytes = 0;
+    vk::DeviceSize idle_bytes = 0;
+    Counts seen_near;
+    std::set<std::uint64_t> near_drawn; // Groningen's fine tiles its whole frame from 25 km draws
+    CHECK(with_map(0, 0, [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+        CHECK(draw(map, session, groningen, 0, 50'000.0));
+        const scene::WorldTiles& tiles = *map.world()->world_tiles();
+        for (const scene::WorldDraw& w : tiles.frame()->draws) {
+            if (w.tile->key.packed() == g10.packed()) g10_bytes = w.tile->bytes();
+        }
+        CHECK(draw(map, session, groningen, 0, 25'000.0));
+        seen_near = land_and_water(kept);
+        const scene::WorldFrame& f = *tiles.frame();
+        const scene::WorldStats st = tiles.stats();
+        near_drawn = drawn_of(f, 2);
+        vk::DeviceSize pinned_drawn = 0; // the globe's resident levels the frame draws (not the caps, not the land)
+        for (const scene::WorldDraw& w : f.draws) {
+            if (w.tile->pinned && w.tile->cap == 0 && !w.tile->blank) pinned_drawn += w.tile->bytes();
+        }
+        CHECK(f.held == 0);
+        took_near = st.capacity - st.free;
+        const vk::DeviceSize undrawn = st.bytes - st.drawn_bytes;
+        const vk::DeviceSize kept_undrawn = g10_bytes + (st.pinned_bytes - pinned_drawn);
+        idle_bytes = undrawn > kept_undrawn ? undrawn - kept_undrawn : 0;
+        MESSAGE(std::format("Groningen whole from 25 km: {} bytes of the heap taken, its L10 {} bytes, {} bytes of "
+                            "tiles the frame leaves out but the L10 and the pinned; {} fine tiles drawn; land {} px, "
+                            "water {} px",
+                            took_near, g10_bytes, idle_bytes, near_drawn.size(), seen_near.first, seen_near.second));
+    }));
+    // the L10 drawn from 50 km as a place's own, and not from 25 km, where its L11 tile in view draws its place
+    ATLAS_REQUIRE(g10_bytes > 0);
+    ATLAS_REQUIRE(!near_drawn.contains(g10.packed()));
+    ATLAS_REQUIRE(
+        std::ranges::count_if(near_drawn, [](std::uint64_t p) { return tiles::TileKey::unpack(p).z == 11; }) == 1);
+    ATLAS_REQUIRE(took_near > idle_bytes + g10_bytes);
+    // Then a heap that holds that frame less half the L10, and less the tiles it leaves out but the pinned (the first
+    // tile that finds no room has those let go of for it, make_piece): from 50 km, then from 25 km. The L11 tile finds
+    // no room, the going of no tile the frame leaves out would make it, and the L10, drawn for it alone, is let go of
+    // for it: the frame is whole, the L11 tile drawn, none held back, its picture the world's own heap's; at rest none
+    // is built again
+    CHECK(with_map(
+        ((took_near - idle_bytes - (g10_bytes / 2)) + 15) & ~vk::DeviceSize{15}, 0,
+        [&](frame::MapFrame& map, standin::Session& session, KeptWindow& kept) {
+            CHECK(draw(map, session, groningen, 0, 50'000.0));
+            const scene::WorldTiles& tiles = *map.world()->world_tiles();
+            CHECK(tiles.stats().traded == 0);
+            CHECK(tiles.frame()->held == 0);
+            CHECK(draw(map, session, groningen, 0, 25'000.0));
+            const scene::WorldFrame& f = *tiles.frame();
+            const scene::WorldStats st = tiles.stats();
+            const Counts sharp = land_and_water(kept);
+            MESSAGE(std::format("Groningen in {} bytes from 25 km: {} stand-ins let go of for their tiles, {} held, {} "
+                                "fine tiles drawn, {} builds found no room; land {} px, water {} px",
+                                st.capacity, st.traded, f.held, drawn_of(f, 2).size(), st.no_room, sharp.first,
+                                sharp.second));
+            CHECK(st.traded >= 1);
+            CHECK(st.no_room >= 1);
+            CHECK(f.held == 0);
+            CHECK(drawn_of(f, 2) == near_drawn);
+            const auto near = [](std::size_t a, std::size_t b) { return (a > b ? a - b : b - a) * 100 <= b; };
+            CHECK(near(sharp.first, seen_near.first));
+            CHECK(near(sharp.second, seen_near.second));
+            CHECK(draw(map, session, groningen, 30, 25'000.0));
+            CHECK(tiles.stats().built == st.built);
+            CHECK(tiles.stats().no_room == st.no_room);
+            CHECK(tiles.stats().traded == st.traded);
+        }));
     std::error_code ec;
     fs::remove_all(guard, ec);
 }
@@ -2563,6 +3038,163 @@ TEST_CASE("the world's names: the frame over the globe asks for its places' name
             }
             CHECK(map.names().ask(1e9).empty());
         }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("the world's names: a sea whose point lies off the frame is named where its water shows on the frame, and "
+          "at its own point once that shows") {
+    if (!test::open_session()) return;
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-stand-{}", ::getpid());
+    auto started = start_world(guard);
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> globe = test::world_pack({sea_globe_tile()}, coarse);
+    {
+        std::ofstream file(guard / tiles::world_globe_file, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard, .clear = green_clear});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        frame::MapPack base;
+        base.number = 102;
+        base.ref.id = std::string(tiles::world_globe_id);
+        base.ref.kind = tiles::PackKind::world_base;
+        base.ref.path = (guard / tiles::world_globe_file).string();
+        std::vector<frame::MapPack> packs;
+        packs.push_back(std::move(base));
+        CHECK(map.set_packs(std::move(packs)).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // by day (the sun over the place the frames look at): no light is drawn
+        style::ThemeBlock theme = magenta_sky();
+        theme.flags = 0;
+        theme.weather_code = 255;
+        theme.cloud = theme.cloud_low = theme.wind = theme.gust = theme.wind_direction = 0.0;
+        theme.temperature = theme.pressure = theme.visibility = theme.humidity = 0.0;
+        theme.shadow_blur = theme.cloud_shadows = 0.0;
+        map.set_theme(theme);
+        map.set_screen(false, false, false);
+        constexpr double sea_lat = -21.0;
+        constexpr double sea_lon = 67.0;
+        static constexpr std::uint32_t block = 0xFF'F0'10'F0U; // magenta, premultiplied, R in the low byte
+        const auto sprite = [](std::uint32_t id) {
+            labels::LabelSprite made{
+                .id = id, .measures = {.half = 20.0F + 8.0F, .pad = 8.0F, .text_height = 16.0F, .baseline = -4.0F}};
+            made.own = {.width = 40,
+                        .height = 16,
+                        .pixels = std::vector<std::uint32_t>(std::size_t{40} * 16, block),
+                        .anchor_x = 20,
+                        .anchor_y = 12};
+            return made;
+        };
+        // the sprite's pixels on the frame: how many, and their middle
+        struct Seen {
+            std::size_t count = 0;
+            double x = 0;
+            double y = 0;
+        };
+        const auto seen = [](const gpu::Pixels& p) {
+            Seen s;
+            for (std::size_t i = 0; i + 3 < p.rgba.size(); i += 4) {
+                if (p.rgba[i] != 0xF0 || p.rgba[i + 1] != 0x10 || p.rgba[i + 2] != 0xF0) continue;
+                ++s.count;
+                const std::size_t pixel = i / 4;
+                s.x += static_cast<double>(pixel % p.width);
+                s.y += std::floor(static_cast<double>(pixel) / static_cast<double>(p.width));
+            }
+            if (s.count > 0) {
+                s.x = (s.x / static_cast<double>(s.count)) + 0.5;
+                s.y = (s.y / static_cast<double>(s.count)) + 0.5;
+            }
+            return s;
+        };
+        const auto point = [](const style::CameraState& cam, double lat, double lon) {
+            const view::View v = view_of(cam);
+            const view::GroundFrame f = centred_on(cam);
+            return scene::name_point(scene::world_bend(v, f), f, v, lat, lon, 0.1);
+        };
+        const auto on_frame = [](const std::optional<view::Vec2>& p) {
+            return p && p->x >= 0.0 && p->y >= 0.0 && p->x <= size.width && p->y <= size.height;
+        };
+        double asked = 0.0;
+        // From 5,000 km over (20 N, 40 E): the frame is the sea of the tile's cell 6, whose name's point lies 41
+        // degrees south of it. The name is wanted all the same, in the water's look, and drawn whole on the frame.
+        const style::CameraState over = camera(20.0, 40.0, 0.0, 0.0, 5'000'000.0);
+        draw_world_complete(session, map, over);
+        CHECK_FALSE(on_frame(point(over, sea_lat, sea_lon)));
+        CHECK_FALSE(test_land(20.0, 40.0));
+        asked += 100.0;
+        std::vector<labels::NameWant> wants = map.names().ask(asked);
+        ATLAS_REQUIRE(wants.size() == 1);
+        CHECK(wants[0].text == "Deep");
+        CHECK(wants[0].style == static_cast<std::uint8_t>(scene::NameStyle::water));
+        const std::uint32_t at_stand = wants[0].id;
+        std::vector<labels::LabelSprite> sprites;
+        sprites.push_back(sprite(at_stand));
+        ATLAS_REQUIRE(map.names().give(std::move(sprites), 0.0F, 0.0F, map.seconds()).has_value());
+        for (int n = 0; n < 400 && (n < 3 || map.animating()); ++n) (void)session.draw(over, {});
+        ATLAS_REQUIRE(kept->kept != nullptr);
+        auto pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        if (!out.empty()) CHECK(gpu::write_ppm(*pixels, (fs::path(out) / "names_stand.ppm").string()));
+        const Seen stood = seen(*pixels);
+        MESSAGE(std::format("a sea's name at its stand: {} px of 640 about ({:.1f}, {:.1f}) of {} by {}", stood.count,
+                            stood.x, stood.y, size.width, size.height));
+        CHECK(stood.count == 640);
+        // as near its own point, to the south-east, as the frame lets it: in the frame's lower half, not left of
+        // its middle
+        CHECK(stood.x >= (size.width / 2.0) - 4.0);
+        CHECK(stood.y > size.height / 2.0);
+        // A pan of 2 degrees: the stand is a place of the ground, so the name moves with it, under the same id.
+        const style::CameraState panned = camera(18.0, 40.0, 0.0, 0.0, 5'000'000.0);
+        for (int n = 0; n < 400 && (n < 12 || map.animating()); ++n) (void)session.draw(panned, {});
+        CHECK(map.names().ask(asked + 50.0).empty());
+        pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        const Seen moved = seen(*pixels);
+        CHECK(moved.count == 640);
+        CHECK(std::abs(moved.x - stood.x) <= 2.0);
+        // (2 degrees of latitude at the frame's middle, px)
+        const std::optional<view::Vec2> a = point(over, 20.0, 40.0);
+        const std::optional<view::Vec2> b = point(over, 22.0, 40.0);
+        ATLAS_REQUIRE(a.has_value());
+        ATLAS_REQUIRE(b.has_value());
+        // up, by the px of 2 degrees there: no more than at the frame's middle, and (the sphere turns away toward
+        // the frame's foot) no less than two fifths of that
+        CHECK(stood.y - moved.y <= (a->y - b->y) * 1.05);
+        CHECK(stood.y - moved.y >= (a->y - b->y) * 0.4);
+        MESSAGE(std::format("after a pan of 2 degrees south: about ({:.1f}, {:.1f}), {:.1f} px up", moved.x, moved.y,
+                            stood.y - moved.y));
+        // Over its own point: the name stands there, another name by its id (it fades between the two).
+        const style::CameraState home = camera(sea_lat, sea_lon, 0.0, 0.0, 5'000'000.0);
+        draw_world_complete(session, map, home);
+        asked += 100.0;
+        wants = map.names().ask(asked);
+        ATLAS_REQUIRE(wants.size() == 1);
+        CHECK(wants[0].text == "Deep");
+        CHECK(wants[0].id != at_stand);
+        sprites.clear();
+        sprites.push_back(sprite(wants[0].id));
+        ATLAS_REQUIRE(map.names().give(std::move(sprites), 0.0F, 0.0F, map.seconds()).has_value());
+        for (int n = 0; n < 400 && (n < 3 || map.animating()); ++n) (void)session.draw(home, {});
+        pixels = kept->kept->read(kept->kept->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        const Seen back = seen(*pixels);
+        CHECK(back.count == 640);
+        const std::optional<view::Vec2> own = point(home, sea_lat, sea_lon);
+        ATLAS_REQUIRE(own.has_value());
+        CHECK(std::abs(back.x - own->x) <= 1.0);
+        CHECK(std::abs(back.y - own->y) <= 6.0);
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <span>
+#include <string>
 #include <sys/stat.h>
 #include <system_error>
 #include <unistd.h>
@@ -21,6 +24,8 @@ constexpr std::uint32_t cache_magic = 0x4358'5441U; // "ATXC"
 constexpr std::uint16_t cache_format = 1;
 constexpr std::string_view entry_suffix = ".x";
 constexpr std::string_view temp_marker = ".tmp-";
+/// The pinned entries' file names, a line each.
+constexpr std::string_view pins_file = "pinned";
 
 void put_le(std::span<std::byte> out, std::size_t at, std::uint64_t v, std::size_t n) noexcept {
     for (std::size_t k = 0; k < n; ++k) out[at + k] = static_cast<std::byte>(v >> (8U * k));
@@ -117,6 +122,7 @@ Result<std::unique_ptr<ExpandedCache>> ExpandedCache::open(const std::string& di
         return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(ec.value())));
     }
     std::unique_ptr<ExpandedCache> cache(new ExpandedCache(directory, budget));
+    cache->read_pins();
     cache->scan();
     cache->evict_to(budget);
     return cache;
@@ -168,6 +174,7 @@ void ExpandedCache::scan() {
         const std::scoped_lock lock(mutex_);
         index_[name] = {.bytes = static_cast<std::uint64_t>(st.st_size), .used = mtime, .generation = 0};
         total_ += static_cast<std::uint64_t>(st.st_size);
+        if (pinned_.contains(name)) pinned_total_ += static_cast<std::uint64_t>(st.st_size);
     }
     for (const std::string& path : doomed) (void)::unlink(path.c_str());
     const std::scoped_lock lock(mutex_);
@@ -191,8 +198,7 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
         // the entry read is gone or damaged: delete it, unless another thread wrote it again meanwhile
         const std::scoped_lock lock(mutex_);
         if (const auto it = index_.find(name); it != index_.end() && it->second.generation == generation) {
-            total_ -= it->second.bytes;
-            index_.erase(it);
+            forget_locked(it);
             (void)::unlink(path.c_str());
         }
         return std::nullopt;
@@ -207,15 +213,18 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
 
 Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> payload) {
     const std::uint64_t size = cache_header_bytes + payload.size();
-    if (size > budget()) return std::unexpected(error(Fault::too_big, Site::cache, size));
-    const std::vector<std::byte> bytes = encode(key, payload);
     const std::string path = path_of(key.digest());
     const std::string name = path.substr(directory_.size() + 1);
     std::uint64_t serial = 0;
     {
         const std::scoped_lock lock(mutex_);
+        // the budget is the others': a pinned entry is kept whatever its size
+        if (size > budget() && !pinned_.contains(name)) {
+            return std::unexpected(error(Fault::too_big, Site::cache, size));
+        }
         serial = ++writes_;
     }
+    const std::vector<std::byte> bytes = encode(key, payload);
     const std::string temp = std::format("{}{}{}-{}", path, temp_marker, ::getpid(), serial);
     const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(errno)));
@@ -233,21 +242,83 @@ Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> 
         (void)::unlink(temp.c_str());
         return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(e)));
     }
-    if (const auto it = index_.find(name); it != index_.end()) total_ -= it->second.bytes;
+    if (const auto it = index_.find(name); it != index_.end()) forget_locked(it);
     index_[name] = {.bytes = size, .used = ++clock_, .generation = serial};
     total_ += size;
+    if (pinned_.contains(name)) pinned_total_ += size;
     evict_locked(budget(), &name);
     return {};
+}
+
+void ExpandedCache::forget_locked(std::unordered_map<std::string, Info>::iterator it) {
+    total_ -= it->second.bytes;
+    if (pinned_.contains(it->first)) pinned_total_ -= it->second.bytes;
+    index_.erase(it);
+}
+
+void ExpandedCache::read_pins() {
+    std::ifstream in(std::format("{}/{}", directory_, pins_file));
+    std::string line;
+    const std::scoped_lock lock(mutex_);
+    while (std::getline(in, line)) {
+        if (is_entry_name(line)) pinned_.insert(line);
+    }
+}
+
+Result<void> ExpandedCache::set_pinned(std::span<const CacheKey> keys) {
+    std::unordered_set<std::string> names;
+    names.reserve(keys.size());
+    for (const CacheKey& key : keys) names.insert(std::format("{}{}", hex(key.digest()), entry_suffix));
+    std::string text;
+    text.reserve(names.size() * (64 + entry_suffix.size() + 1));
+    for (const std::string& name : names) {
+        text += name;
+        text += '\n';
+    }
+    const std::scoped_lock lock(mutex_);
+    // the file first, beside its place and renamed: a set the next start would not find is not taken
+    const std::string path = std::format("{}/{}", directory_, pins_file);
+    const std::string temp = std::format("{}{}{}-{}", path, temp_marker, ::getpid(), ++writes_);
+    const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(errno)));
+    const bool written = write_all(fd, std::as_bytes(std::span(text)));
+    const int write_errno = errno;
+    const bool closed = ::close(fd) == 0;
+    if (!written || !closed || ::rename(temp.c_str(), path.c_str()) != 0) {
+        const int e = !written ? write_errno : errno;
+        (void)::unlink(temp.c_str());
+        return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(e)));
+    }
+    pinned_ = std::move(names);
+    pinned_total_ = 0;
+    for (const auto& [name, info] : index_) {
+        if (pinned_.contains(name)) pinned_total_ += info.bytes;
+    }
+    evict_locked(budget(), nullptr);
+    return {};
+}
+
+bool ExpandedCache::pinned(const CacheKey& key) const {
+    const std::string name = std::format("{}{}", hex(key.digest()), entry_suffix);
+    const std::scoped_lock lock(mutex_);
+    return pinned_.contains(name);
+}
+
+std::size_t ExpandedCache::pins() const {
+    const std::scoped_lock lock(mutex_);
+    return pinned_.size();
+}
+
+std::uint64_t ExpandedCache::pinned_bytes() const {
+    const std::scoped_lock lock(mutex_);
+    return pinned_total_;
 }
 
 void ExpandedCache::remove(const CacheKey& key) {
     const std::string path = path_of(key.digest());
     const std::string name = path.substr(directory_.size() + 1);
     const std::scoped_lock lock(mutex_);
-    if (const auto it = index_.find(name); it != index_.end()) {
-        total_ -= it->second.bytes;
-        index_.erase(it);
-    }
+    if (const auto it = index_.find(name); it != index_.end()) forget_locked(it);
     (void)::unlink(path.c_str());
 }
 
@@ -257,24 +328,23 @@ void ExpandedCache::evict_to(std::uint64_t budget) {
 }
 
 void ExpandedCache::evict_locked(std::uint64_t budget, const std::string* keep) {
-    if (total_ <= budget) return;
+    // the budget counts the entries that are not pinned, and only they go
+    if (total_ - pinned_total_ <= budget) return;
     std::vector<std::string> victims;
     std::vector<std::pair<std::uint64_t, const std::string*>> order;
     order.reserve(index_.size());
     for (const auto& [name, info] : index_) {
-        if (keep == nullptr || name != *keep) order.emplace_back(info.used, &name);
+        if ((keep == nullptr || name != *keep) && !pinned_.contains(name)) order.emplace_back(info.used, &name);
     }
     std::ranges::sort(order);
-    std::uint64_t left = total_;
+    std::uint64_t left = total_ - pinned_total_;
     for (const auto& [used, name] : order) {
         if (left <= budget) break;
         left -= index_.at(*name).bytes;
         victims.push_back(*name);
     }
     for (const std::string& v : victims) {
-        const auto it = index_.find(v);
-        total_ -= it->second.bytes;
-        index_.erase(it);
+        forget_locked(index_.find(v));
         (void)::unlink(std::format("{}/{}", directory_, v).c_str());
     }
 }

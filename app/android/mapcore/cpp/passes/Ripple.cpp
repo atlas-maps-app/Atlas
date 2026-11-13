@@ -134,11 +134,12 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
                                                    state.camera.width_px, state.camera.height_px);
         for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
     }
-    plan_ripple(words, state, d.reach);
+    plan_ripple(words, state, d.reach, static_cast<std::int32_t>(leaf.reach));
     key_ripple(words, state);
 }
 
-void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved) {
+void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state, std::int32_t moved,
+                         std::int32_t leaf) {
     Words& w = *words_;
     // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
     // the trees' circles, the streaks' ellipses, grown by the faces' strokes and two pixels of slack), the result's
@@ -146,52 +147,66 @@ void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameSt
     // pass's and the displacement's region, each what the next one reads
     RipplePlan& plan = ripple_plan_;
     plan = {};
+    std::vector<PixelBox>& boxes = ripple_boxes_;
+    boxes.clear();
     if (!state.view) return;
     const double density = state.camera.density;
-    double min_x = std::numeric_limits<double>::infinity();
-    double min_y = min_x;
-    double max_x = -min_x;
-    double max_y = -min_x;
-    const auto take = [&](double x, double y) {
-        min_x = std::min(min_x, x);
-        min_y = std::min(min_y, y);
-        max_x = std::max(max_x, x);
-        max_y = std::max(max_y, y);
+    const double pad = (0.15 * density) + 2;
+    const auto device = [&](double v, bool up) {
+        const double d = up ? std::ceil((v * density) + pad) : std::floor((v * density) - pad);
+        return static_cast<std::int32_t>(std::clamp(d, -1e9, 1e9));
+    };
+    // each element's own box in the layer (CSS px in, device px kept), `more` px wider each way
+    const auto take = [&](double x0, double y0, double x1, double y1, std::int32_t more) {
+        boxes.push_back({.x0 = device(x0, false) - more,
+                         .y0 = device(y0, false) - more,
+                         .x1 = device(x1, true) + more,
+                         .y1 = device(y1, true) + more});
     };
     for (const Reflection& e : frame_.reflections) {
         if (e.kind == Reflection::Kind::streak) {
             const ReflectionStreak& k = frame_.reflection_streaks[e.first];
-            take(k.cx - k.rx, k.cy - k.ry);
-            take(k.cx + k.rx, k.cy + k.ry);
+            take(k.cx - k.rx, k.cy - k.ry, k.cx + k.rx, k.cy + k.ry, 0);
             continue;
         }
         if (e.kind == Reflection::Kind::tree) {
+            // a tree's circles lie where its leaf filter moves them: within its reach of their own places
             for (std::uint32_t k = 0; k < e.count; ++k) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
-                take(c.cx - c.r, c.cy - c.r);
-                take(c.cx + c.r, c.cy + c.r);
+                take(c.cx - c.r, c.cy - c.r, c.cx + c.r, c.cy + c.r, leaf);
             }
             continue;
         }
         for (std::uint32_t k = 0; k < e.count; ++k) {
             // its Camera.poly's points' box, as face() took them deciding it
             const std::array<double, 4>& b = frame_.reflection_faces[e.first + k].box;
-            take(b[0], b[1]);
-            take(b[2], b[3]);
+            take(std::min(b[0], b[2]), std::min(b[1], b[3]), std::max(b[0], b[2]), std::max(b[1], b[3]), 0);
         }
     }
     const vk::Extent2D extent = pipelines_->ripple->extent;
     const auto fw = static_cast<std::int32_t>(extent.width);
     const auto fh = static_cast<std::int32_t>(extent.height);
-    if (min_x > max_x || min_y > max_y) return; // no content
-    const double pad = (0.15 * density) + 2;
-    const auto device = [&](double v, bool up) {
-        const double d = up ? std::ceil((v * density) + pad) : std::floor((v * density) - pad);
-        return static_cast<std::int32_t>(std::clamp(d, -1e9, 1e9));
-    };
-    plan.layer = grown(
-        {.x0 = device(min_x, false), .y0 = device(min_y, false), .x1 = device(max_x, true), .y1 = device(max_y, true)},
-        0, 0, fw, fh);
+    if (boxes.empty()) return; // no content
+    // the layer: the elements' boxes' own (a tree's without its leaf's reach, as the layer's draw takes its area)
+    PixelBox all{.x0 = std::numeric_limits<std::int32_t>::max(),
+                 .y0 = std::numeric_limits<std::int32_t>::max(),
+                 .x1 = std::numeric_limits<std::int32_t>::min(),
+                 .y1 = std::numeric_limits<std::int32_t>::min()};
+    {
+        std::size_t i = 0;
+        for (const Reflection& e : frame_.reflections) {
+            const std::int32_t more = e.kind == Reflection::Kind::tree ? leaf : 0;
+            const std::size_t n = e.kind == Reflection::Kind::streak ? 1 : e.count;
+            for (std::size_t k = 0; k < n; ++k, ++i) {
+                const PixelBox& b = boxes[i];
+                all.x0 = std::min(all.x0, b.x0 + more);
+                all.y0 = std::min(all.y0, b.y0 + more);
+                all.x1 = std::max(all.x1, b.x1 - more);
+                all.y1 = std::max(all.y1, b.y1 - more);
+            }
+        }
+    }
+    plan.layer = grown(all, 0, 0, fw, fh);
     if (plan.layer.empty()) return;
     const fx::RippleBlur blur = fx::ripple_blur(static_cast<float>(density));
     std::vector<std::array<std::int32_t, 2>> reach;
@@ -228,9 +243,41 @@ void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameSt
         region = grown(region, reach[k][0], reach[k][1], fw, fh);
     }
     plan.displace = region;
+    // The fused stages' tiles of the result that an element of the layer reaches: a result pixel reads the layer no
+    // farther than the spread from itself, and the layer holds nothing beyond its elements' boxes (within its drawn
+    // area), so a tile no box spread that far touches holds nothing, which the stage writes without the work. The
+    // layer spans the frame wherever water does, while its reflections lie along the banks alone.
+    const auto tiles_of = [](std::int32_t n) {
+        return (static_cast<std::uint32_t>(n) + ripple_tile - 1) / ripple_tile;
+    };
+    const std::uint32_t tiles_x = tiles_of(plan.out.x1 - plan.out.x0);
+    const std::uint32_t tiles_y = tiles_of(plan.out.y1 - plan.out.y0);
+    plan.tiles = tiles_x * tiles_y;
+    std::vector<std::uint32_t> reached((static_cast<std::size_t>(plan.tiles) + 31) / 32, 0U);
+    for (const PixelBox& own : boxes) {
+        // within the layer's drawn area, then spread as the result's region is
+        const PixelBox in{.x0 = std::max(own.x0, plan.layer.x0),
+                          .y0 = std::max(own.y0, plan.layer.y0),
+                          .x1 = std::min(own.x1, plan.layer.x1),
+                          .y1 = std::min(own.y1, plan.layer.y1)};
+        if (in.empty()) continue;
+        const PixelBox b = grown(in, spread_x, spread_y, fw, fh);
+        const auto tx0 = static_cast<std::uint32_t>(b.x0 - plan.out.x0) / ripple_tile;
+        const auto ty0 = static_cast<std::uint32_t>(b.y0 - plan.out.y0) / ripple_tile;
+        const auto tx1 = static_cast<std::uint32_t>(b.x1 - 1 - plan.out.x0) / ripple_tile;
+        const auto ty1 = static_cast<std::uint32_t>(b.y1 - 1 - plan.out.y0) / ripple_tile;
+        for (std::uint32_t ty = ty0; ty <= ty1; ++ty) {
+            for (std::uint32_t tx = tx0; tx <= tx1; ++tx) {
+                const std::uint32_t t = (ty * tiles_x) + tx;
+                reached[t >> 5U] |= 1U << (t & 31U);
+            }
+        }
+    }
+    for (const std::uint32_t word : reached) plan.tiles_reached += static_cast<std::uint32_t>(std::popcount(word));
     // The plan as ripple_fused_cs reads it: the passes' count and their reaches summed, the displacement's and the
     // result's regions, then each pass's kind (0 square, 1 line), side or axis, left, right, 1 / (left + right) as the
-    // stages apart take it, and region.
+    // stages apart take it, and region; then the tiles a row of the result and each tile's bit, whether an element
+    // reaches it.
     w.ripple_plan = static_cast<std::uint32_t>(words.size());
     const auto box = [&](const PixelBox& b) {
         for (const std::int32_t v : corners(b)) words.push_back(std::bit_cast<std::uint32_t>(v));
@@ -249,6 +296,8 @@ void Ground::plan_ripple(std::vector<std::uint32_t>& words, const frame::FrameSt
                                     : std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(pass.left + pass.right)));
         box(pass.region);
     }
+    words.push_back(tiles_x);
+    words.insert(words.end(), reached.begin(), reached.end());
 }
 
 void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state) {

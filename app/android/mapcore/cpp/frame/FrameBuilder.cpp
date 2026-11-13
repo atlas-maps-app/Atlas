@@ -11,13 +11,16 @@
 #include "gen/spirv/frame/owner.hpp"
 #include "gpu/Instance.hpp"
 #include "load/PackStyle.hpp"
+#include "scene/Cover.hpp"
 #include "scene/Heaps.hpp"
+#include "scene/House.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Packs.hpp"
 #include "scene/WorldLook.hpp"
 #include "style/Palette.hpp"
 #include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
+#include "view/Bend.hpp"
 #include "view/Snap.hpp"
 
 #include <algorithm>
@@ -384,7 +387,11 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.extra_names = inputs_.extra_names;
     state_.markers = inputs_.markers;
     state_.routes = inputs_.routes;
+    // the tile's own building is drawn as asked where its walls' colour is asked about
     state_.asked = inputs_.asked;
+    if (state_.asked && state_.asked->own_wall) state_.asked.reset();
+    state_.house = nullptr;
+    state_.house_place = {};
     state_.palette = inputs_.palette;
     // Atlas's guesses off (the user's palette): the map leaves out the buildings' parts it guesses, and draws a guessed
     // roof's shape as the plain box in its place (FRAME_PLAIN_ROOFS)
@@ -423,7 +430,9 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
                     .no_fin = false};
     }
     // the style ladder's haze (ENGINE.md step 5): beyond 18 km its depths go to the camera's distance's (0.85 · D and
-    // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was
+    // 2.2 · D by 75 km), and from 600 km it thins, gone by 2,000 km; up to 18 km it is as it was. The moment's weather
+    // over the screen thins with it, so it has gone where its steps end (below)
+    double space = -1.0; // the ladder's weight of space where the world bends (under 0: it does not)
     if (const tiles::Style* world = load::world_style(); world != nullptr && world->ladder) {
         const tiles::WorldLadder& far = *world->ladder;
         if (spec.dist > far.from) {
@@ -431,10 +440,19 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
             settings.haze0 += ((far.haze_start * spec.dist) - settings.haze0) * w.caps;
             settings.haze1 += ((far.haze_reach * spec.dist) - settings.haze1) * w.caps;
             settings.haze_scale = 1.0 - w.haze;
+            settings.weather_gone = w.haze;
+            space = w.space;
         }
     }
     state_.view.emplace(spec, device);
     state_.layers = view::layers_of(state_.view->camera(), state_.theme, settings);
+    // where the world bends, the haze's stops over the bent ground: from its horizon's row, which lies under the flat
+    // ground's, by its own depth, and off the space over it (scene::bent_haze); the eye-level band stays the flat one
+    if (space >= 0.0 && state_.view->drop() > 0.0 && !state_.layers->haze.band && state_.layers->haze.count > 0) {
+        state_.layers->haze = scene::bent_haze(
+            state_.view->camera(), state_.view->drop(), view::sphere_weight(spec.dist),
+            state_.theme.haze_max * settings.haze_scale, settings.haze0, settings.haze1, settings.height, space);
+    }
     const bool engine = cam.has(style::camera_flag::engine_mode);
     state_.grounded = options_.grounded && !engine;
     shaders::FrameBlock& b = state_.block;
@@ -544,7 +562,7 @@ void FrameBuilder::stage_f() {
     state_.block.strokes = strokes_of(state_.active_pack);
     state_.block.windows = windows_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
-    // which effects its resources allow (FRAME_FIELDS: in full mode alone).
+    // which effects its resources allow (FRAME_FIELDS, FRAME_SKY_FIELD: in full mode alone).
     part = clock::now();
     if (scene != nullptr) {
         const trace::Section traced("atlas globals");
@@ -554,8 +572,8 @@ void FrameBuilder::stage_f() {
             g->update(state_, globals);
             allowed |= g->frame_flags(state_);
         }
-        allowed &= shaders::FRAME_FIELDS;
-        if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed &= ~shaders::FRAME_FIELDS;
+        allowed &= shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+        if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed = 0;
         state_.block.info.x |= allowed;
     }
     parts.globals_ms = ms_since(part);
@@ -594,6 +612,24 @@ void FrameBuilder::stage_f() {
         if (state_.asked) {
             options.asked = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(state_.asked->id));
             options.hatched = state_.asked->hatched;
+        }
+        // its house in the roof asked about, while the cover draws the tile it was read from: the tile's own building
+        // takes no rank (at their true depth alone: under the painter switch the building is drawn as its tile has it)
+        if (const scene::House* house = inputs_.house; house != nullptr && inputs_.asked && state_.cover != nullptr &&
+                                                       !options_.painter && !options_.owners &&
+                                                       house->id == inputs_.asked->id) {
+            for (const scene::CoverTile& t : state_.cover->tiles()) {
+                if (t.drawn == nullptr || t.under || t.drawn->key != house->key || t.drawn->pack != house->pack) {
+                    continue;
+                }
+                state_.house = house;
+                state_.house_place = t.place;
+                state_.house_wall = inputs_.asked->own_wall ? house->wall : inputs_.asked->wall;
+                state_.house_hatched = !inputs_.asked->own_wall && inputs_.asked->hatched;
+                options.replaced =
+                    scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(inputs_.asked->id));
+                break;
+            }
         }
         const trace::Section traced("atlas ranks");
         part = clock::now();

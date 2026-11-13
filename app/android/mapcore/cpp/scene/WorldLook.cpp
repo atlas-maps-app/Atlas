@@ -90,6 +90,94 @@ double light_halo_dp(const tiles::WorldLadder& ladder, double people) noexcept {
     return ladder.light_radii.at(size) * ladder.light_halo;
 }
 
+view::Haze bent_haze(const view::Camera& cam, double drop, double sphere, double haze_max, double haze0, double haze1,
+                     double height, double space) noexcept {
+    // The frame's middle column looks along the ground from the target in one direction (the view's and its up's,
+    // flat), so its rows are the points of the bent ground's profile there: `s` metres from the target along it,
+    // dropped by the drop and blended to the sphere by w₂ (scene::world_point's blend, along a great circle).
+    const view::Vec3& f = cam.forward();
+    const view::Vec3& u = cam.up();
+    const view::Vec3& target = cam.spec().target;
+    const view::Vec3& eye = cam.eye();
+    double dx = f.x + u.x;
+    double dz = f.z + u.z;
+    const double flat = pymath::sqrt((dx * dx) + (dz * dz));
+    if (!(flat > 0.0)) return {};
+    dx /= flat;
+    dz /= flat;
+    const double w = std::clamp(sphere, 0.0, 1.0);
+    constexpr double radius = view::earth_radius;
+    const auto point = [&](double s) {
+        const double a = s / radius;
+        const double along = s + (((radius * pymath::sin(a)) - s) * w);
+        const double down = ((drop * s * s) * (1.0 - w)) + ((radius * (1.0 - pymath::cos(a))) * w);
+        return view::Vec3{target.x + (dx * along), target.y - down, target.z + (dz * along)};
+    };
+    // a point's row on the frame, or far below it where it stands behind the eye
+    const auto row = [&](double s) {
+        const std::optional<view::Vec2> p = cam.proj(point(s));
+        return p ? p->y : 1e18;
+    };
+    // The horizon: the highest row the profile reaches ahead of the eye's foot, a quarter of the way round the
+    // planet at most (the rows fall to it and rise again beyond it).
+    const double foot = ((eye.x - target.x) * dx) + ((eye.z - target.z) * dz);
+    double lo = foot;
+    double hi = 0.49 * pymath::pi * radius;
+    for (int i = 0; i < 200 && hi - lo > 1.0; ++i) {
+        const double a = lo + ((hi - lo) / 3.0);
+        const double b = hi - ((hi - lo) / 3.0);
+        if (row(a) > row(b)) {
+            lo = a;
+        } else {
+            hi = b;
+        }
+    }
+    const double limb = (lo + hi) / 2.0;
+    const double top = std::max(0.0, row(limb));
+    // the nearest ground the frame can show: behind the eye's foot, as far as it still stands before the eye
+    const double height_over = std::max(eye.y - target.y, 1.0);
+    double near = foot;
+    for (int i = 0; i < 60 && row(near) < height + 1.0; ++i) near -= height_over;
+    const auto alpha = [&](double depth) {
+        return haze_max * pymath::pow(std::clamp((depth - haze0) / haze1, 0.0, 1.0), view::haze_power);
+    };
+    view::Haze h;
+    h.band = false;
+    h.y0 = top;
+    h.y1 = height;
+    // over space, a stop of what the haze keeps there, and the horizon's own a pixel and a half below it
+    const bool over_space = space > 0.0 && top > 0.0 && height - top > 3.0;
+    const std::uint32_t first = over_space ? 2U : 0U;
+    const double step = over_space ? 1.5 / (height - top) : 0.0;
+    h.count = 17 + first;
+    for (int k = 0; k < 17; ++k) {
+        const double sy = top + ((height - top) * static_cast<double>(k) / 16.0);
+        // the ground at the row: the profile's point there, between the nearest ground and the horizon (the rows
+        // fall as s grows)
+        double a = near;
+        double b = limb;
+        for (int i = 0; i < 60 && b - a > 0.5; ++i) {
+            const double m = (a + b) / 2.0;
+            if (row(m) > sy + 0.01) {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        const auto i = static_cast<std::size_t>(k) + first;
+        h.alphas.at(i) = alpha(cam.depth(point((a + b) / 2.0)));
+        h.offsets.at(i) = std::max(static_cast<double>(k) / 16.0, k == 0 ? step : 0.0);
+    }
+    if (over_space) {
+        h.alphas[0] = h.alphas[2] * (1.0 - std::clamp(space, 0.0, 1.0));
+        h.offsets[0] = 0.0;
+        h.alphas[1] = h.alphas[2];
+        h.offsets[1] = step;
+        h.offsets[2] = std::max(h.offsets[2], step);
+    }
+    return h;
+}
+
 view::Vec3 direction_of(const WorldBend& bend, double lat, double lon) noexcept {
     const double p = pymath::radians(lat);
     const double l = pymath::radians(lon - bend.lon);

@@ -95,8 +95,10 @@ Result<Image> Memory::image(const vk::ImageCreateInfo& info, MemoryUse use) cons
     return image;
 }
 
-Result<Buffer> Memory::buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, MemoryUse use) const {
-    const VmaAllocationCreateInfo allocation = allocation_for(use);
+Result<Buffer> Memory::buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, MemoryUse use,
+                              bool within_budget) const {
+    VmaAllocationCreateInfo allocation = allocation_for(use);
+    if (within_budget) allocation.flags |= VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
     const vk::BufferCreateInfo info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
     const auto& c_info = static_cast<const VkBufferCreateInfo&>(info);
     Buffer buffer;

@@ -20,6 +20,7 @@
 #include "style/Theme.hpp"
 #include "tiles/WorldLadder.hpp"
 #include "view/Camera.hpp"
+#include "view/ScreenLayers.hpp"
 
 namespace atlas::shaders {
 
@@ -80,6 +81,17 @@ inline constexpr double name_rise_caps = 0.25;
 
 /// The radius of the light of a lit place of `people`, its halo's, dp (the ladder's sizes, as stage T sizes it).
 [[nodiscard]] double light_halo_dp(const tiles::WorldLadder& ladder, double people) noexcept;
+
+/// The haze's stops over the bent ground (ENGINE.md step 5; the flat ground's are view::haze_of's): where the world
+/// bends (a camera beyond 18 km, `drop` the bend's w₁/2R and `sphere` its w₂), the 17 stops run from the bent
+/// ground's horizon's row, or the frame's top where that lies above it, down to the frame's foot (`height`, CSS px),
+/// each at the opacity of the bent ground's depth along the view at its row (the opacity's rule and `haze_max`,
+/// `haze0`, `haze1` as haze_of's). The flat ground's horizon lies above the bent one's, so the flat stops laid the
+/// haze over what stands between the two, and over space. Where the frame shows space over the horizon (`space`, the
+/// ladder's weight of it, over 0) a stop before them keeps the haze off it by as much: 1 − `space` of the horizon's
+/// opacity above the horizon's row. With no bend the stops are the flat ground's.
+[[nodiscard]] view::Haze bent_haze(const view::Camera& cam, double drop, double sphere, double haze_max, double haze0,
+                                   double haze1, double height, double space) noexcept;
 
 /// A frame's look.
 struct WorldLook {

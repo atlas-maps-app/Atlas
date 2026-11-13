@@ -108,7 +108,27 @@ class WorldFetchTest {
             "index": ${file(WorldFetch.INDEX, index)}, "globe": ${file(WorldFetch.GLOBE, globe)}, "parts": []}""".toByteArray()
     }
 
-    private fun requested(): List<String> = gh.githubRequests.map { it.url.encodedPath.removePrefix("/atlas-maps-app/Atlas/releases/download/") }
+    /** What was asked of the releases, but the keep list ([keepRequested]: asked with each release and once a day while it has none). */
+    private fun requested(): List<String> = everyRequest().filterNot { it.endsWith("/" + WorldKeepList.NAME) }
+
+    private fun keepRequested(): List<String> = everyRequest().filter { it.endsWith("/" + WorldKeepList.NAME) }
+
+    private fun everyRequest(): List<String> = gh.githubRequests.map { it.url.encodedPath.removePrefix("/atlas-maps-app/Atlas/releases/download/") }
+
+    /** A keep list of the world whose index is [index]: the Netherlands' two fine packs' tiles and its coarse pack's. */
+    private fun keepList(index: ByteArray, release: String = "world-20261102"): ByteArray = """
+        {"format": 1, "release": "$release", "index": {"bytes": ${index.size}, "sha256": "${hex(sha(index))}"},
+         "about": "the world's tiles a kept country draws offline", "reach": {"6": 2548000, "11": 111000},
+         "countries": [
+           {"id": "netherlands", "name": "Netherlands", "country": "NL", "area": "poly", "bytes": 6400, "heads": 2990, "tiles": 5,
+            "levels": {"6": {"tiles": 1, "bytes": 400}},
+            "packs": [
+              {"z": 6, "x": 32, "y": 21, "head": 1390, "bytes": 3000, "tiles": {"9": [262, 168], "11": [1050, 673, 1051, 673]}},
+              {"z": 3, "x": 4, "y": 2, "head": 380, "bytes": 1200, "tiles": {"6": [32, 21], "7": [65, 42]}}
+            ]},
+           {"id": "luxembourg", "name": "Luxembourg", "bytes": 100, "tiles": 0, "packs": []}
+         ]}
+    """.trimIndent().toByteArray()
 
     private fun assertOnlyWhoIsAsking() {
         for (r in gh.githubRequests + gh.storageRequests) {
@@ -149,6 +169,74 @@ class WorldFetchTest {
         assertTrue(fetch.due())
         assertTrue(world.listFiles()!!.none { it.name.endsWith(".download") || it.name.endsWith(".new") })
         assertOnlyWhoIsAsking()
+    }
+
+    @Test
+    fun theKeepListComesWithTheWorldWhereItsReleaseHasOne() {
+        // a release without one: asked for once, the world goes on without it, and not asked again that day
+        val p = publish("world-20261102")
+        val fetch = fetch()
+        assertTrue(fetch.start())
+        assertNull(fetch.keep)
+        assertEquals(listOf("world-20261102/world-keep.json"), keepRequested())
+        assertFalse(fetch.start())
+        assertTrue(fetch().start())
+        assertEquals(1, keepRequested().size)
+        // world.yml's refs job adds it to the release: it comes with the next day's look, and the start says so
+        gh.assets[WorldKeepList.NAME] = keepList(p.index)
+        clock += WorldFetch.DAY_MS
+        assertTrue(fetch.start())
+        val keep = fetch.keep!!
+        assertEquals("world-20261102", keep.release)
+        assertEquals(listOf("netherlands", "luxembourg"), keep.countries.map { it.id })
+        val nl = keep.country("netherlands")!!
+        assertEquals(6400L, nl.bytes)
+        assertEquals(5, nl.tiles)
+        assertEquals(listOf(WorldKeepList.Tile(9, 262, 168), WorldKeepList.Tile(11, 1050, 673), WorldKeepList.Tile(11, 1051, 673)), nl.packs[0].tiles)
+        assertEquals(listOf(6, 32, 21), nl.packs[0].let { listOf(it.z, it.x, it.y) })
+        assertEquals(1390L, nl.packs[0].head)
+        assertNull(keep.country("belgium"))
+        // on the phone from then on: nothing more asked that day or the next, nor by the app's next start
+        assertFalse(fetch.start())
+        clock += WorldFetch.DAY_MS
+        assertFalse(fetch.start())
+        val next = fetch()
+        assertTrue(next.start())
+        assertEquals("netherlands", next.keep!!.countries[0].id)
+        assertEquals(2, keepRequested().size)
+        // a new version's list is its own: the old one's is not used, the new one's comes with it
+        val q = publish("world-20261201", seed = 9)
+        gh.assets[WorldKeepList.NAME] = keepList(p.index) // still the old world's: another index
+        clock += WorldFetch.DAY_MS
+        assertTrue(fetch.start())
+        assertNull(fetch.keep)
+        assertFalse(File(world, WorldKeepList.NAME).exists())
+        gh.assets[WorldKeepList.NAME] = keepList(q.index, "world-20261201")
+        clock += WorldFetch.DAY_MS
+        assertTrue(fetch.start())
+        assertEquals("world-20261201", fetch.keep!!.release)
+        assertEquals(listOf("world-20261102/world-keep.json", "world-20261102/world-keep.json", "world-20261201/world-keep.json", "world-20261201/world-keep.json"), keepRequested())
+        assertTrue(world.listFiles()!!.none { it.name.endsWith(".download") })
+        assertOnlyWhoIsAsking()
+    }
+
+    @Test
+    fun aKeepListThatIsNotOneIsRefused() {
+        val index = ByteArray(10) { it.toByte() }
+        val good = String(keepList(index))
+        assertEquals(2, WorldKeepList.read(good).countries.size)
+        for (bad in listOf(
+            good.replace("\"format\": 1", "\"format\": 2"),
+            good.replace(hex(sha(index)), "abc"),
+            good.replace("\"countries\"", "\"lands\""),
+            good.replace("[262, 168]", "[262]"),
+            good.replace("[262, 168]", "[262, 512]"), // no tile 512 at level 9
+            good.replace("\"9\": [262, 168]", "\"nine\": [262, 168]"),
+            good.replace("\"z\": 6, ", ""),
+            "[]",
+        )) {
+            assertTrue(bad, runCatching { WorldKeepList.read(bad) }.isFailure)
+        }
     }
 
     @Test
@@ -335,7 +423,9 @@ class WorldFetchTest {
         online.value = true
         advanceTimeBy(WorldFetch.DUE_CHECK_MS)
         runCurrent()
-        assertEquals(asked + 1, gh.githubRequests.size)
+        // and with it the keep list, which the release still lacks: asked for once a day
+        assertEquals(asked + 2, gh.githubRequests.size)
+        assertEquals(2, keepRequested().size)
         assertEquals("world-latest/world.json", requested().last())
         assertEquals(1, landed)
         follow.cancel()
