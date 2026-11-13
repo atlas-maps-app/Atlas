@@ -190,6 +190,14 @@ struct WorldGeometry {
 /// by the packer's rank.
 [[nodiscard]] std::vector<WorldName> build_world_names(const tiles::Tile& tile);
 
+/// Where a world tile is water, coarsely (a water's name is stood where its water shows, scene/WaterStand.hpp): a
+/// bit a cell of 64 by 64 over its box, rows from the north (row r's bit c, columns from the west), set where the
+/// tile's fills leave the water's colour at the cell's middle (a later fill over it, the ice's, takes it back). The
+/// rivers' lines are not in it.
+inline constexpr std::uint32_t water_mask_side = 64;
+using WaterMask = std::array<std::uint64_t, water_mask_side>;
+[[nodiscard]] WaterMask world_water_mask(const WorldGeometry& geometry) noexcept;
+
 /// A pole's cap: a grid of 128 by 16 quads over its box, two triangles each in the tiles' winding, in palette entry
 /// `palette` and cell 0.
 [[nodiscard]] WorldGeometry world_cap_geometry(std::uint8_t palette);
@@ -222,6 +230,7 @@ struct WorldTile {
     std::uint32_t coast = 0; ///< the last of its segments: its coast's
     std::uint32_t lights = 0;
     std::vector<WorldName> names; ///< the places and the waters it names, by rank (build_world_names)
+    WaterMask water{};            ///< where it is water (world_water_mask)
     std::uint64_t drawn = 0;      ///< the last frame that drew it
     double shown = -1;   ///< when the frames drawing it without a break began, seconds (its fade's start); -1: none
     bool pinned = false; ///< the globe's L0 to L3: never let go of
@@ -285,6 +294,10 @@ struct WorldFrame {
     /// cover's tiles are the picture where it has any, and the world lies under them.
     bool under = false;
 };
+
+/// Whether `frame` draws water at (`lat`, `lon`), by the mask of the finest tile it draws there (WorldTile::water);
+/// nothing where it draws no tile of the packs (off its tiles, a pole's cap, the plain land).
+[[nodiscard]] std::optional<bool> world_water_at(const WorldFrame& frame, double lat, double lon) noexcept;
 
 /// What the world holds: resident tiles, their heap bytes and triangles, builds done and failed.
 struct WorldStats {
