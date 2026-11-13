@@ -2641,8 +2641,8 @@ TEST_CASE(
 }
 
 TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the screen than 2.5 device px are drawn at "
-          "their share of each pixel, with as much of their colour as on the samples; a finest tile's are as they "
-          "were") {
+          "their share of each pixel, with as much of their colour as on the samples, through a tile's fade too; a "
+          "finest tile's are as they were") {
     // the synthetic tile from 9 km at 45°, where a 9 m wall is under 2 px tall: built as a level's tile is, in the
     // app's map, at 4 samples a pixel, with the thin walls' draws and without, and without its walls; then built as
     // a finest tile is, whose walls stay on the samples whatever their width
@@ -2670,7 +2670,8 @@ TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the sc
         gpu::Pixels pixels;
         std::uint32_t chunks = 0;
     };
-    const auto frame_of = [&](bool lean, bool thin, std::uint64_t parts_off) -> std::optional<Drawn> {
+    const auto frame_of = [&](bool lean, bool thin, std::uint64_t parts_off,
+                              std::optional<std::array<float, 2>> fade = std::nullopt) -> std::optional<Drawn> {
         lean_tiles = lean;
         app_map = true;
         auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, clear);
@@ -2678,6 +2679,7 @@ TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the sc
         app_map = false;
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, made.has_value());
         made->buildings->draw_thin_walls(thin);
+        made->buildings->fade_every(fade);
         style::CameraState c = cam;
         c.parts |= parts_off;
         auto pixels = draw(*made, c, sunny());
@@ -2728,6 +2730,47 @@ TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the sc
     CHECK(changed > 20);
     CHECK(walls > 1000.0);
     CHECK(off < 0.1 * walls);
+    // while the tile fades (every tile's standing fade set, as the cover sets one fading in): half way the thin
+    // walls hold the pixels the dither keeps, as the samples' do, with as much of the walls' colour as on the samples
+    // there and about half of what they hold at rest; at the fade's start nothing is left of them
+    const std::array<float, 2> half{0.0F, 0.5F};
+    const std::array<float, 2> out{0.0F, 0.0F};
+    const auto thin_half = frame_of(true, true, 0, half);
+    const auto sampled_half = frame_of(true, false, 0, half);
+    const auto bare_half = frame_of(true, false, style::camera_part::walls, half);
+    const auto thin_out = frame_of(true, true, 0, out);
+    const auto sampled_out = frame_of(true, false, 0, out);
+    const auto bare_out = frame_of(true, false, style::camera_part::walls, out);
+    ATLAS_REQUIRE(thin_half.has_value());
+    ATLAS_REQUIRE(sampled_half.has_value());
+    ATLAS_REQUIRE(bare_half.has_value());
+    ATLAS_REQUIRE(thin_out.has_value());
+    ATLAS_REQUIRE(sampled_out.has_value());
+    ATLAS_REQUIRE(bare_out.has_value());
+    const std::array<double, 3> ah = sums(thin_half->pixels);
+    const std::array<double, 3> bh = sums(sampled_half->pixels);
+    const std::array<double, 3> none_half = sums(bare_half->pixels);
+    double walls_half = 0;
+    double thin_half_walls = 0;
+    double off_half = 0;
+    double thin_walls = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+        walls_half += std::abs(bh[k] - none_half[k]);
+        thin_half_walls += std::abs(ah[k] - none_half[k]);
+        off_half += std::abs(ah[k] - bh[k]);
+        thin_walls += std::abs(a[k] - none[k]);
+    }
+    MESSAGE(std::format("half way through a fade: the walls' colour sums to {:.0f} levels on the samples, the thin "
+                        "walls' draws {:.0f} off ({:.1f} %), {:.2f} of their sum at rest",
+                        walls_half, off_half, walls_half > 0 ? 100.0 * off_half / walls_half : 0.0,
+                        thin_walls > 0 ? thin_half_walls / thin_walls : 0.0));
+    CHECK(thin_half->chunks > 0);
+    CHECK(walls_half > 500.0);
+    CHECK(off_half < 0.1 * walls_half);
+    CHECK(thin_half_walls > 0.35 * thin_walls);
+    CHECK(thin_half_walls < 0.65 * thin_walls);
+    CHECK_MESSAGE(thin_out->pixels.rgba == sampled_out->pixels.rgba, "a thin wall left at its tile's fade's start");
+    CHECK_MESSAGE(thin_out->pixels.rgba == bare_out->pixels.rgba, "a wall left at its tile's fade's start");
     // a finest tile's walls: no thin walls' draws, the same pixels with the switch and without
     const auto fine = frame_of(false, true, 0);
     const auto fine_sampled = frame_of(false, false, 0);

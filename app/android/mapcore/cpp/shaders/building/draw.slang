@@ -657,7 +657,9 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     // the list's places and its records: up to the next list's first (the total after the last)
     uint end = list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[2][list + 1u] : kept_jobs[5].y;
     uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[5].w) - record;
-    uint chunk = list == BUILDING_KEPT_ROOFS ? BUILDING_KEPT_PLAIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK;
+    uint chunk = list == BUILDING_KEPT_ROOFS
+                     ? BUILDING_KEPT_PLAIN_CHUNK
+                     : (list == BUILDING_KEPT_THIN ? BUILDING_KEPT_THIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK);
     uint vertices = list == BUILDING_KEPT_ROOFS
                         ? BUILDING_PLAIN_VERTICES
                         : (list == BUILDING_KEPT_THIN ? BUILDING_THIN_VERTICES : BUILDING_EDGED_VERTICES);

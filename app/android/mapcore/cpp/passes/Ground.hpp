@@ -1070,6 +1070,9 @@ public:
     void draw_least_width(bool draw) noexcept { least_width_ = draw; }
     /// The tests' and the measure's: the least width a street or a big road is drawn at, device px (2 by default).
     void least_width_px(float px) noexcept { least_px_ = px; }
+    /// The tests' switch: every tile drawn as one fading in at `fade` (0 to 1), over what lies under it, whatever the
+    /// cover says (which fades a tile in only over one the frame before drew: Cover::lay_upright).
+    void fade_every(std::optional<float> fade) noexcept { fade_every_ = fade; }
     /// The tests' switch: the app's map's water narrower on the screen than 1.5 device px drawn as a band 1.5 px wide
     /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
     /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
@@ -1408,6 +1411,7 @@ private:
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
     float least_px_ = 2.0F;
+    std::optional<float> fade_every_;
     bool thin_water_ = true;
     bool no_quays_ = false;
     bool no_reflections_ = false;

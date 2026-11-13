@@ -71,7 +71,9 @@ static_assert(Buildings::edged_chunk == shaders::BUILDING_KEPT_EDGED_CHUNK &&
 /// Each list's chunk (its index buffer's primitives), vertices and indexes a primitive, and its counters' kind (the
 /// thin walls counted with the walls).
 constexpr std::array<std::uint32_t, lists> chunk_of{Buildings::edged_chunk, Buildings::edged_chunk,
-                                                    Buildings::plain_chunk, Buildings::edged_chunk};
+                                                    Buildings::plain_chunk, shaders::BUILDING_KEPT_THIN_CHUNK};
+static_assert(std::uint64_t{shaders::BUILDING_KEPT_THIN_CHUNK} * shaders::BUILDING_THIN_VERTICES <= 65536,
+              "a chunk of the thin walls' boxes fits its indexes' 16 bits");
 constexpr std::array<std::uint32_t, lists> vertices_of{
     shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_PLAIN_VERTICES,
     shaders::BUILDING_THIN_VERTICES};

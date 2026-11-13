@@ -788,15 +788,18 @@ bool Ground::decide(const frame::FrameState& state) {
                 it->under = it->under && c.under;
                 continue;
             }
+            // (a test's fade on every tile: its place's scale.w, which the vertex stage reads)
+            shaders::TilePlace place = c.place;
+            if (fade_every_) place.scale.w = *fade_every_;
             f.tiles.push_back({.tile = c.drawn,
                                .pass = &p,
                                .ground = g,
                                .cells = cells,
-                               .place = c.place,
+                               .place = place,
                                .sun = c.sun,
                                .sun_base = c.sun_base,
                                .sun_weight = c.sun_weight,
-                               .fade = c.place.scale.w,
+                               .fade = place.scale.w,
                                .under = c.under});
         }
     }

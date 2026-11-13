@@ -218,11 +218,14 @@ style::ThemeBlock dry() {
 
 /// The window drawn by the ground alone (and the street furniture where `things`) at `camera` (in the app's map unless
 /// in engine mode) at `theme`, until its tile is built and faded in; without the fills of the kinds `fills_off` (bit k:
-/// geometry::FillKind k), its thin streets at their own width unless `least` (Ground::draw_least_width).
+/// geometry::FillKind k), its thin streets at their own width unless `least` (Ground::draw_least_width). With `fade`,
+/// the ground draws every tile as one fading in at that fade (Ground::fade_every: the cover fades a tile in only
+/// over one the frame before drew, and the window's has none under it).
 std::optional<WindowDraw> draw_window(const test::Session& session, const std::string& path,
                                       const style::CameraState& camera, const Collect& collect,
                                       const style::ThemeBlock& theme = test::sunny(), bool things = false,
-                                      std::uint32_t fills_off = 0, bool least = true) {
+                                      std::uint32_t fills_off = 0, bool least = true,
+                                      std::optional<float> fade = std::nullopt) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -234,6 +237,7 @@ std::optional<WindowDraw> draw_window(const test::Session& session, const std::s
     if (g == nullptr) return std::nullopt;
     g->leave_out_fills(fills_off);
     g->draw_least_width(least);
+    g->fade_every(fade);
     auto builder =
         frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0, .grain = false, .grounded = true});
     if (!builder) return std::nullopt;
@@ -596,6 +600,7 @@ struct StreetInk {
     std::size_t thin = 0;
     std::size_t one_pixel = 0;
     double most = 0;
+    double tops = 0; ///< the thin columns' most-covered pixels over their width's share of `least`, summed
 };
 
 StreetInk street_ink(const gpu::Pixels& with, const gpu::Pixels& without, const std::vector<Piece>& pieces,
@@ -643,6 +648,7 @@ StreetInk street_ink(const gpu::Pixels& with, const gpu::Pixels& without, const 
                 ++ink.thin;
                 if (inked < 2) ++ink.one_pixel;
                 ink.most = std::max(ink.most, top / (width / least));
+                ink.tops += top / (width / least);
             }
         }
     }
@@ -1465,6 +1471,7 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
             sum.thin += s.thin;
             sum.one_pixel += s.one_pixel;
             sum.most = std::max(sum.most, s.most);
+            sum.tops += s.tops;
         }
         return sum;
     };
@@ -1518,6 +1525,52 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
     CHECK(covered.most < 1.1);
     CHECK(near > 500);
     CHECK_MESSAGE(moved == 0, where);
+    // a tile fading in draws its thin streets on the samples (least_point), as wide as the settled tiles' draws
+    // make theirs, over its own land: with the tile drawn half way through a fade, the streets' change of the frame,
+    // over the fade, holds their ink against the fading frame without them as the settled frame does against its
+    // own, each column's most-covered pixel its width's share of 2 px (a band 2 px wide holds a whole pixel wherever
+    // it lies; one 1.5 px wide, as a fading tile's was, holds four thirds of that share where it does)
+    constexpr float half_way = 0.5F;
+    const auto fading_with = draw_window(*session, path, camera, streets, test::sunny(), false, 0U, true, half_way);
+    ATLAS_REQUIRE(fading_with.has_value(), "the window was not drawn fading in");
+    const auto fading_without = draw_window(
+        *session, path, camera, [](const passes::GroundFrame&, double, WindowDraw&) {}, test::sunny(), false,
+        1U << static_cast<std::uint32_t>(geo::FillKind::road), true, half_way);
+    ATLAS_REQUIRE(fading_without.has_value(), "the window was not drawn fading in without its streets");
+    ATLAS_REQUIRE(fading_with->pixels.rgba.size() == without->pixels.rgba.size());
+    ATLAS_REQUIRE(fading_without->pixels.rgba.size() == without->pixels.rgba.size());
+    CHECK(fading_with->pixels.rgba != with->pixels.rgba);
+    gpu::Pixels whole = fading_without->pixels;
+    for (std::size_t i = 0; i < whole.rgba.size(); ++i) {
+        if (i % 4 == 3) continue;
+        const double change = (static_cast<double>(fading_with->pixels.rgba[i]) - fading_without->pixels.rgba[i]) /
+                              static_cast<double>(half_way);
+        whole.rgba[i] = static_cast<std::uint8_t>(
+            std::lround(std::clamp(static_cast<double>(fading_without->pixels.rgba[i]) + change, 0.0, 255.0)));
+    }
+    StreetInk fading;
+    for (const auto& [paint, pieces] : thin) {
+        const StreetInk s = street_ink(whole, fading_without->pixels, pieces, paint, least);
+        fading.columns += s.columns;
+        fading.off += s.off;
+        fading.worst = std::max(fading.worst, s.worst);
+        fading.thin += s.thin;
+        fading.one_pixel += s.one_pixel;
+        fading.tops += s.tops;
+    }
+    const double settled_top = covered.thin > 0 ? covered.tops / static_cast<double>(covered.thin) : 0.0;
+    const double fading_top = fading.thin > 0 ? fading.tops / static_cast<double>(fading.thin) : 0.0;
+    MESSAGE(std::format("half way through a tile's fade: of {} columns under 2 px, {} off by over 15 % and 0.15 px "
+                        "(the worst by {:.1f} %), {} with their ink in one pixel; a column's most-covered pixel "
+                        "{:.2f} of its width's share of 2 px on the average, {:.2f} settled",
+                        fading.columns, fading.off, 100 * fading.worst, fading.one_pixel, fading_top, settled_top));
+    CHECK(fading.thin == covered.thin);
+    CHECK(fading.off * 50 <= fading.columns);
+    CHECK(fading.one_pixel == 0);
+    CHECK(fading_top > 0.9);
+    CHECK(fading_top < 1.1);
+    CHECK(settled_top > 0.9);
+    CHECK(settled_top < 1.1);
     // straight down from 300 m every street is wider than 8 px: the same pixels with the coverage and without
     style::CameraState down = test::moving(test::s1_camera(lats[2], street_lon, 90.0, 0.0, 300.0));
     down.flags &= ~style::camera_flag::engine_mode;

@@ -162,6 +162,8 @@ static const uint BUILDING_KEPT_ROOFS = 2u;
 static const uint BUILDING_KEPT_THIN = 3u;
 static const uint BUILDING_KEPT_EDGED_CHUNK = 4096u;
 static const uint BUILDING_KEPT_PLAIN_CHUNK = 13107u;
+// (the thin walls' boxes have 4 points where an outline has 16: four times as many fit an index buffer's 16 bits)
+static const uint BUILDING_KEPT_THIN_CHUNK = 16384u;
 static const uint BUILDING_KEPT_DRAW_WORDS = 5u;
 static const uint BUILDING_KEPT_TOTALS = 4u;
 // A face the cull leaves out as turned away is one building_shape turns away whatever either stage's float arithmetic
