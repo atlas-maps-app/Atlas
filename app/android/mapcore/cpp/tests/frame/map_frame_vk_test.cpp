@@ -1229,6 +1229,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         std::vector<Work> on;
         on.reserve(parts.size());
         for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));
+        // every pass counts its kinds apart: one at the bound folds the next kinds into its last (frame::max_kinds),
+        // and a part's own work then reads another's
+        for (const frame::PassCounters& counted : map.builder()->counters()) {
+            CHECK_MESSAGE(counted.kinds().size() < frame::max_kinds, "a pass's kinds reach frame::max_kinds: raise it");
+        }
         // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
         // again (a stage that keeps its result while its inputs stand makes it anew where they changed since the frame
         // before, which the two need not share: its work made anew is left out of their likeness), and the tiles each

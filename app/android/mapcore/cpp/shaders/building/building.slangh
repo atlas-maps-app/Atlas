@@ -132,23 +132,38 @@ static const uint BUILDING_LIGHT_WORDS = 8u;
 // primitive in 3 uint4 and each face in 1 (building_lean_prim, building_lean_face).
 static const uint BUILDING_LEAN_PRIM_VECTORS = 3u;
 static const uint BUILDING_LEAN_FACE_VECTORS = 1u;
-// A draw's list (BuildingPush's sun.w): near cells cut from their walls, and a level's tile's lean records.
+// A draw's list (BuildingPush's sun.w): near cells cut from their walls, and a level's tile's lean records; and, of a
+// kept job of a level's tile's walls in the app's map, that its walls narrower on the screen than BUILDING_THIN_PX go
+// to the thin walls' list (shaders/building/draw.slang's kept_cull_cs: the far flicker).
 static const uint BUILDING_LIST_CELLS = 1u;
 static const uint BUILDING_LIST_LEAN = 2u;
+static const uint BUILDING_LIST_THIN = 4u;
+/// The widest wall the thin walls' list takes, and the least width its draw draws one at, device px; and the points
+/// its draw gives a wall: a box about it, two triangles (its fragments take its edges: draw.slang's thin_vertex).
+static const float BUILDING_THIN_PX = 2.5f;
+static const float BUILDING_THIN_LEAST = 2.0f;
+static const uint BUILDING_THIN_VERTICES = 4u;
 
-// The kept primitives' jobs (passes/Kept.cpp): a header of 5 uint4 (in x, y and z each list's first job, its jobs, its
-// first place among the kept primitives, its first chunk's draw and its first shape record; in w the totals), then each
-// job's 5 uint4 (its tile's push constants as that list's draws have them, then its run: its first primitive in the
-// list, how many, at most 64, and its list). The lists, in the frame's order: the walls (the edged list), the near
-// cells, the roofs (the plain list), each drawn in chunks of the static index buffers' primitives, an indirect draw (5
-// words) a chunk, after each list's count of kept primitives (BUILDING_KEPT_TOTALS words). An edged list's first kept
+// The kept primitives' jobs (passes/Kept.cpp): a header of 6 uint4 (in x, y, z and w each list's first job, its jobs,
+// its first place among the kept primitives, its first chunk's draw and its first shape record; then the totals: the
+// jobs, the places, the chunks' draws and the records), then each job's 5 uint4 (its tile's push constants as that
+// list's draws have them, then its run: its first primitive in the list, how many, at most 64, and its list). The
+// lists, in the frame's order: the walls (the edged list), the near cells, the roofs (the plain list) and the thin
+// walls (BUILDING_KEPT_THIN: no jobs of its own, the walls' jobs' candidates the cull finds thin, which the walls'
+// list then leaves out), each drawn in chunks of the static index buffers' primitives, an indirect draw (5 words) a
+// chunk, after each list's count of kept primitives (BUILDING_KEPT_TOTALS words). An edged list's first kept
 // primitives, as many as its shape records (a whole number of chunks, or all), are drawn from their records, the rest
-// and the roofs decided at each point.
-static const uint BUILDING_KEPT_HEADER = 5u;
+// and the roofs decided at each point. Each job's candidates are two uint4 (kept_counts): the walls', near cells' or
+// roofs' count, mask and first place in their list, then its thin walls' in theirs.
+static const uint BUILDING_KEPT_HEADER = 6u;
 static const uint BUILDING_KEPT_JOB_VECTORS = 5u;
-static const uint BUILDING_KEPT_LISTS = 3u;
+static const uint BUILDING_KEPT_LISTS = 4u;
+static const uint BUILDING_KEPT_ROOFS = 2u;
+static const uint BUILDING_KEPT_THIN = 3u;
 static const uint BUILDING_KEPT_EDGED_CHUNK = 4096u;
 static const uint BUILDING_KEPT_PLAIN_CHUNK = 13107u;
+// (the thin walls' boxes have 4 points where an outline has 16: four times as many fit an index buffer's 16 bits)
+static const uint BUILDING_KEPT_THIN_CHUNK = 16384u;
 static const uint BUILDING_KEPT_DRAW_WORDS = 5u;
 static const uint BUILDING_KEPT_TOTALS = 4u;
 // A face the cull leaves out as turned away is one building_shape turns away whatever either stage's float arithmetic

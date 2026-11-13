@@ -1629,6 +1629,9 @@ bool second_buffer = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-v
 /// walls, its records lean on its tile's grid (ENGINE.md, one pack per country, step 7).
 bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
 
+/// Whether make_scene's frames are the app's map's (frame::FrameOptions::grounded; their cameras out of engine mode).
+bool app_map = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
+
 /// Makes the scene for `config` on a w × h output, drawing from `packs`.
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
@@ -1652,8 +1655,8 @@ bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-vari
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
                                  static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
                                  static_cast<float>(clear & 0xFFU) / 255.0F, 1.0F};
-    auto builder =
-        frame::FrameBuilder::create(device, cache, std::move(passes), {.overdraw = false, .clear = c, .steps = 0});
+    auto builder = frame::FrameBuilder::create(device, cache, std::move(passes),
+                                               {.overdraw = false, .clear = c, .steps = 0, .grounded = app_map});
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
     s.builder = std::move(*builder);
     scene::WorldOptions options{.workers = 3, .clock = {}};
@@ -2847,6 +2850,148 @@ TEST_CASE(
     check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, lean", packs, sunny(),
                  10, nullptr, true);
     lean_tiles = false;
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the screen than 2.5 device px are drawn at "
+          "their share of each pixel, with as much of their colour as on the samples, through a tile's fade too; a "
+          "finest tile's are as they were") {
+    // the synthetic tile from 9 km at 45°, where a 9 m wall is under 2 px tall: built as a level's tile is, in the
+    // app's map, at 4 samples a pixel, with the thin walls' draws and without, and without its walls; then built as
+    // a finest tile is, whose walls stay on the samples whatever their width
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration config{.config = gpu::FrameConfig::c,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::resolve};
+    if (!device.facts().supports(config.config)) {
+        MESSAGE("the device has no frame of 4 samples a pixel: the thin walls are not drawn here");
+        return;
+    }
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    style::CameraState cam = camera(52.37422, 4.88486, 300.0, 45.0, 9000.0, 1080, 2400, d);
+    cam.flags &= ~style::camera_flag::engine_mode;
+    cam.flags |= style::camera_flag::rest;
+    constexpr std::uint32_t clear = 0x808080;
+    struct Drawn {
+        gpu::Pixels pixels;
+        std::uint32_t chunks = 0;
+    };
+    const auto frame_of = [&](bool lean, bool thin, std::uint64_t parts_off,
+                              std::optional<std::array<float, 2>> fade = std::nullopt) -> std::optional<Drawn> {
+        lean_tiles = lean;
+        app_map = true;
+        auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, clear);
+        lean_tiles = false;
+        app_map = false;
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, made.has_value());
+        made->buildings->draw_thin_walls(thin);
+        made->buildings->fade_every(fade);
+        style::CameraState c = cam;
+        c.parts |= parts_off;
+        auto pixels = draw(*made, c, sunny());
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, pixels.has_value());
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, made->settled);
+        CHECK(made->builder->state().grounded);
+        Drawn out{.pixels = std::move(*pixels), .chunks = made->buildings->thin_wall_chunks()};
+        made->renderer.reset();
+        return out;
+    };
+    const auto thin = frame_of(true, true, 0);
+    const auto sampled = frame_of(true, false, 0);
+    const auto bare = frame_of(true, false, style::camera_part::walls);
+    ATLAS_REQUIRE(thin.has_value());
+    ATLAS_REQUIRE(sampled.has_value());
+    ATLAS_REQUIRE(bare.has_value());
+    CHECK(thin->chunks > 0);
+    CHECK(sampled->chunks == 0);
+    // the walls' colour over the frame: each channel's sum against the frame without walls
+    const auto sums = [](const gpu::Pixels& p) {
+        std::array<double, 3> out{};
+        for (std::size_t i = 0; i < p.rgba.size(); i += 4) {
+            for (std::size_t k = 0; k < 3; ++k) out[k] += p.rgba[i + k];
+        }
+        return out;
+    };
+    const std::array<double, 3> a = sums(thin->pixels);
+    const std::array<double, 3> b = sums(sampled->pixels);
+    const std::array<double, 3> none = sums(bare->pixels);
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i < thin->pixels.rgba.size(); i += 4) {
+        changed += !std::equal(thin->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                               thin->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i + 3),
+                               sampled->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i))
+                       ? 1
+                       : 0;
+    }
+    double walls = 0;
+    double off = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+        walls += std::abs(b[k] - none[k]);
+        off += std::abs(a[k] - b[k]);
+    }
+    MESSAGE(std::format("from 9 km: the thin walls' draws over {} chunks change {} pixels; the walls' colour sums to "
+                        "{:.0f} levels over the frame without them on the samples, the thin walls' draws {:.0f} off "
+                        "({:.1f} %)",
+                        thin->chunks, changed, walls, off, walls > 0 ? 100.0 * off / walls : 0.0));
+    CHECK(changed > 20);
+    CHECK(walls > 1000.0);
+    CHECK(off < 0.1 * walls);
+    // while the tile fades (every tile's standing fade set, as the cover sets one fading in): half way the thin
+    // walls hold the pixels the dither keeps, as the samples' do, with as much of the walls' colour as on the samples
+    // there and about half of what they hold at rest; at the fade's start nothing is left of them
+    const std::array<float, 2> half{0.0F, 0.5F};
+    const std::array<float, 2> out{0.0F, 0.0F};
+    const auto thin_half = frame_of(true, true, 0, half);
+    const auto sampled_half = frame_of(true, false, 0, half);
+    const auto bare_half = frame_of(true, false, style::camera_part::walls, half);
+    const auto thin_out = frame_of(true, true, 0, out);
+    const auto sampled_out = frame_of(true, false, 0, out);
+    const auto bare_out = frame_of(true, false, style::camera_part::walls, out);
+    ATLAS_REQUIRE(thin_half.has_value());
+    ATLAS_REQUIRE(sampled_half.has_value());
+    ATLAS_REQUIRE(bare_half.has_value());
+    ATLAS_REQUIRE(thin_out.has_value());
+    ATLAS_REQUIRE(sampled_out.has_value());
+    ATLAS_REQUIRE(bare_out.has_value());
+    const std::array<double, 3> ah = sums(thin_half->pixels);
+    const std::array<double, 3> bh = sums(sampled_half->pixels);
+    const std::array<double, 3> none_half = sums(bare_half->pixels);
+    double walls_half = 0;
+    double thin_half_walls = 0;
+    double off_half = 0;
+    double thin_walls = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+        walls_half += std::abs(bh[k] - none_half[k]);
+        thin_half_walls += std::abs(ah[k] - none_half[k]);
+        off_half += std::abs(ah[k] - bh[k]);
+        thin_walls += std::abs(a[k] - none[k]);
+    }
+    MESSAGE(std::format("half way through a fade: the walls' colour sums to {:.0f} levels on the samples, the thin "
+                        "walls' draws {:.0f} off ({:.1f} %), {:.2f} of their sum at rest",
+                        walls_half, off_half, walls_half > 0 ? 100.0 * off_half / walls_half : 0.0,
+                        thin_walls > 0 ? thin_half_walls / thin_walls : 0.0));
+    CHECK(thin_half->chunks > 0);
+    CHECK(walls_half > 500.0);
+    CHECK(off_half < 0.1 * walls_half);
+    CHECK(thin_half_walls > 0.35 * thin_walls);
+    CHECK(thin_half_walls < 0.65 * thin_walls);
+    CHECK_MESSAGE(thin_out->pixels.rgba == sampled_out->pixels.rgba, "a thin wall left at its tile's fade's start");
+    CHECK_MESSAGE(thin_out->pixels.rgba == bare_out->pixels.rgba, "a wall left at its tile's fade's start");
+    // a finest tile's walls: no thin walls' draws, the same pixels with the switch and without
+    const auto fine = frame_of(false, true, 0);
+    const auto fine_sampled = frame_of(false, false, 0);
+    ATLAS_REQUIRE(fine.has_value());
+    ATLAS_REQUIRE(fine_sampled.has_value());
+    CHECK(fine->chunks == 0);
+    CHECK_MESSAGE(fine->pixels.rgba == fine_sampled->pixels.rgba, "a finest tile's walls changed");
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

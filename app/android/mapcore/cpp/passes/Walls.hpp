@@ -19,7 +19,9 @@
 //     one's dilated outline through a static index buffer's fans) and the roofs (roofs_vs, 5 points each), tile by
 //     tile from the nearest, at their true depth, so early depth testing shades each visible sample about once; the
 //     vertex stage decides every primitive at the frame (shaders/building/building.slangh) from its building's rank
-//     entry (its first painter slot and detail band, through the tile's rows).
+//     entry (its first painter slot and detail band, through the tile's rows). In the app's map a level's tile's kept
+//     walls narrower on the screen than 2.5 device px are kept in a list of their own instead (the cull decides
+//     them), which the strokes' phase draws at their share of each pixel (record_thin_walls: the far flicker).
 //   - The roofs' thin edges (each face's .25, .45 or .4 px stroke, drawn as the objects' thin strokes through
 //     ObjectStrokes): stage F writes this frame slot's jobs (each drawn tile's plain runs, the farthest tile first, cut
 //     into runs of at most 64); before the main pass (the decide phase) a compute stage decides each such primitive
@@ -222,6 +224,12 @@ public:
     /// windowed walls, the records lean), so the tests hold the lean records to the twin with every shape of the
     /// synthetic tiles; set before the world builds a tile.
     void lean_every_tile(bool on) noexcept { lean_every_ = on; }
+    /// The tests' and the measure's switch: in the app's map the levels' tiles' kept walls narrower on the screen
+    /// than 2.5 device px drawn at their share of each pixel (record_thin_walls; on by default), else on the samples
+    /// as every other wall (tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN_WALLS).
+    void draw_thin_walls(bool draw) noexcept { thin_walls_ = draw; }
+    /// How many chunks the last frame's thin walls' list may fill (0: no job left it any wall).
+    [[nodiscard]] std::uint32_t thin_wall_chunks() const noexcept;
     /// How many of the last frame's tile draws read lean records.
     [[nodiscard]] std::size_t lean_draws() const noexcept {
         return static_cast<std::size_t>(std::ranges::count_if(draws_, [](const TileDraw& d) { return d.tile->lean; }));
@@ -336,6 +344,16 @@ private:
     /// cells, 2 the roofs).
     void record_kept_cull(const frame::Recording& recording);
     void record_kept(const frame::Recording& recording, std::uint32_t list);
+    /// The thin walls (the far flicker): the levels' tiles' kept walls narrower on the screen than building.slangh's
+    /// BUILDING_THIN_PX, which the cull keeps in a list of their own in the app's map (BUILDING_LIST_THIN in their
+    /// jobs), drawn in the strokes' phase, after everything opaque and the ground's translucent layers: their colour
+    /// at the share of each pixel they hold, over what lies behind them, depth tested and not written, the list's
+    /// chunks last first (the farthest tiles' first). As any blended thing they are hidden behind what is nearer and
+    /// write no depth, so a translucent thing drawn after them (a tree's side) lies over them whichever is nearer; a
+    /// depth draw after their colour hid those on the walls' samples, at a pass more over the list and with the
+    /// samples' twinkle back (ENGINE.md). The objects bit is left alone: a pixel a thin wall holds part of is no
+    /// silhouette of the objects group to the composite.
+    void record_thin_walls(const frame::Recording& recording);
     /// Whether this frame draws its walls, near cells and roofs kept.
     [[nodiscard]] bool drawn_kept() const noexcept;
     /// This frame slot's stroke jobs, from the draws (stage F).
@@ -376,6 +394,8 @@ private:
 
     std::uint16_t kind_ = 0;
     bool lean_every_ = false;
+    bool thin_walls_ = true;
+    bool grounded_ = false; ///< the frame is the app's map's (update)
     std::optional<std::uint32_t> most_shape_chunks_;
     std::optional<std::array<float, 2>> fade_every_;
     /// The parts the map leaves out this frame (the camera state's, style::camera_part), from select on.
@@ -576,16 +596,22 @@ struct Buildings::Kept {
     vk::raii::Pipeline roofs_fading{nullptr};
     vk::raii::Pipeline walls_shaped{nullptr};
     vk::raii::Pipeline walls_shaped_fading{nullptr}; ///< the same while a tile fades (walls_shape_fading_vs)
+    /// The thin walls' list's (record_thin_walls): decided at each point and from the records, blended, the depth
+    /// tested and not written, a tile's fade in their fragments. None where the device cannot make them: every wall
+    /// then stays on the samples.
+    vk::raii::Pipeline thin{nullptr};
+    vk::raii::Pipeline thin_shaped{nullptr};
+    gpu::Buffer thin_index; ///< their boxes' fans (two triangles over a wall's 4 points), a chunk's
     // the render thread's, per frame: the jobs' words, the frame slot they went to, their count, and each list's first
     // chunk draw, chunk draws, primitives submitted and shape records; each frame slot's, whether its draws hold its
     // last frame's kept counts
     std::vector<std::uint32_t> words;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
-    std::array<std::uint32_t, 3> first_draw{};
-    std::array<std::uint32_t, 3> chunks{};
-    std::array<std::uint32_t, 3> submitted{};
-    std::array<std::uint32_t, 3> records{};
+    std::array<std::uint32_t, 4> first_draw{};
+    std::array<std::uint32_t, 4> chunks{};
+    std::array<std::uint32_t, 4> submitted{};
+    std::array<std::uint32_t, 4> records{};
     std::array<bool, 2> counted{};
 };
 

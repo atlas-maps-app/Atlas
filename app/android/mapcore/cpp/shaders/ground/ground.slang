@@ -17,7 +17,7 @@
 //     than SOFT_PX device px has its edges drawn by their coverage, and one narrower than the draw's least width is
 //     drawn that wide at the share of it its width covers (GROUND_SOFT, soft_point), so that its colour across it
 //     holds while it moves, where 4 samples a pixel would step; a tile fading in keeps the least width on the samples
-//     (GROUND_LEAST, least_point: LEAST_PX wide at its share).
+//     (GROUND_LEAST, least_point: as wide as the draw's least width, at its share).
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - thin_vs, thin_band_vs and thin_fs: the app's map's thin water (passes/Water.cpp), where the water is narrower on
@@ -127,7 +127,7 @@ static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Rippl
 static const uint GROUND_WIDE = 16u;       // fill_vs: the ribbons' pavements as wide as their ways (the app's map)
 static const uint GROUND_NEAR_CLIP = 32u;  // stroke_vs: a line of a fixed width from the near plane on (the app's map)
 static const uint GROUND_STREETS = 64u;    // fill_vs: the streets' own draw, each off a bridge (with GROUND_WIDE)
-static const uint GROUND_LEAST = 128u;     // street_vs: a thin street LEAST_PX wide at its coverage (with GROUND_WIDE)
+static const uint GROUND_LEAST = 128u;     // street_vs: a thin street the draw's least width wide (with GROUND_WIDE)
 static const uint GROUND_SOFT = 256u;      // street_vs: a street's edges by their coverage (the app's map's own draws)
 static const uint GROUND_COURSES = 512u;   // stroke_vs: the runs' points the quay walls' courses', in `words` (x, y, z)
 
@@ -286,7 +286,7 @@ float2 wide_point(float2 p, float2 m) {
     return 2.0f * p - 0.5f * (p + m);
 }
 
-/// The least width a street is drawn at on the screen, device px (GROUND_LEAST).
+/// The least width the water is drawn at on the screen, device px (thin_vs; a street's is its draw's: push.mode.y).
 static const float LEAST_PX = 1.5f;
 /// How far least_point looks along a street either way of its centreline for its direction on the screen (metres).
 static const float LEAST_ALONG = 32.0f;
@@ -366,12 +366,14 @@ void soft_point(uint tile, float y, float2 w, float2 wm, float side, inout float
 }
 
 /// A street's vertex w as wide as its way (wide_point) and its mirror's wm, at height y: where the street is narrower
-/// on the screen than LEAST_PX device px, measured across its direction there at its centreline, both move out from the
-/// centreline to LEAST_PX apart and `cover` takes the street's width over LEAST_PX, the share of them it covers, so
-/// that across it the street keeps its colour's sum as the renders' analytic coverage gives a thin path its share of a
-/// pixel, where 4 samples a pixel give it 0 to 4 quarters as it moves: a street 1 px wide is drawn 1.5 px wide at 2/3.
-/// The vertex and its mirror measure the same width (each of their differences only changes its sign), so the two move
-/// apart alike. A street whose points reach the near plane is as it was (it is wide there).
+/// on the screen than the draw's least width (push.mode.y's float, device px: the one soft_point draws a settled
+/// tile's thin streets at, so a tile's thin streets keep their width when its fade ends), measured across its
+/// direction there at its centreline, both move out from the centreline to that width apart and `cover` takes the
+/// street's width over it, the share of them it covers, so that across it the street keeps its colour's sum as the
+/// renders' analytic coverage gives a thin path its share of a pixel, where 4 samples a pixel give it 0 to 4 quarters
+/// as it moves: a street 1 px wide is drawn 2 px wide at a half. The vertex and its mirror measure the same width
+/// (each of their differences only changes its sign), so the two move apart alike. A street whose points reach the
+/// near plane is as it was (it is wide there).
 float2 least_point(uint tile, float y, float2 w, float2 wm, inout float cover) {
     float2 across = w - wm;
     float l = length(across);
@@ -394,17 +396,18 @@ float2 least_point(uint tile, float y, float2 w, float2 wm, inout float cover) {
     float2 d = css_of(frame.camera, ka) - css_of(frame.camera, kb);
     float2 s = css_of(frame.camera, kw) - css_of(frame.camera, km);
     float px = abs(s.x * d.y - s.y * d.x) / length(d) * frame.camera.frame.z;
-    if (!(px < LEAST_PX)) {
+    float least = asfloat(push.mode.y);
+    if (!(px < least)) {
         return w;
     }
-    cover = px / LEAST_PX;
-    return c + (w - c) * (LEAST_PX / max(px, 1.0e-4f));
+    cover = px / least;
+    return c + (w - c) * (least / max(px, 1.0e-4f));
 }
 
 /// A fill's vertex: its index from the ground heap at word `index` (the draw's firstVertex counts the words), its tile
-/// the instance (the draw's firstInstance); where `least` and the draw's GROUND_LEAST say, a street at least LEAST_PX
-/// wide and `cover` its share of them (least_point); where `least` and the draw's GROUND_SOFT say, a street's or a big
-/// road's edges by their coverage, `soft` what its fragments read (soft_point).
+/// the instance (the draw's firstInstance); where `least` and the draw's GROUND_LEAST say, a street at least the
+/// draw's least width wide and `cover` its share of it (least_point); where `least` and the draw's GROUND_SOFT say, a
+/// street's or a big road's edges by their coverage, `soft` what its fragments read (soft_point).
 FillOut fill_of(uint index, uint tile, bool least, inout float cover, inout float3 soft) {
     uint base = tile_word(tile, 8u);
     uint v = ground_word(index);
@@ -474,8 +477,8 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
 }
 
 /// A street's vertex in the app's map (passes/Ground.cpp's record_streets): fill_of's, its edges by their coverage
-/// (GROUND_SOFT), or a thin one at least LEAST_PX wide at its share of them (GROUND_LEAST: a tile fading in). Where the
-/// draw names its run (push.mode.z its first word, as the draw's firstVertex counts them, and w how many, a whole
+/// (GROUND_SOFT), or a thin one at the draw's least width at its share of it (GROUND_LEAST: a tile fading in). Where
+/// the draw names its run (push.mode.z its first word, as the draw's firstVertex counts them, and w how many, a whole
 /// number of triangles), the run's triangles are taken last first: the tile's fills lie top first, and the streets
 /// blended over one another go bottom first, so a street's edge lies over the street under it.
 [shader("vertex")]
