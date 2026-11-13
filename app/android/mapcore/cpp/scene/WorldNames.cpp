@@ -210,6 +210,22 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
                       double seconds, const NameScale& scale, const Stand& stand) {
     ++picks_;
     candidates_.clear();
+    // the waters the frame's tiles name, rivers apart: a water's stand is asked for among them
+    waters_.clear();
+    const auto water_of = [this](const WorldName& name) {
+        if (is_water(name.kind) && name.kind != NameKind::river && !name.text.empty()) waters_.push_back(&name);
+    };
+    if (stand && world != nullptr) {
+        for (const WorldDraw& draw : world->draws) {
+            if (draw.tile == nullptr || draw.light_cells == 0) continue;
+            for (const WorldName& name : draw.tile->names) {
+                if (((draw.light_cells >> name.cell) & 1U) != 0) water_of(name);
+            }
+        }
+    }
+    if (stand) {
+        for (const WorldName& name : extra) water_of(name);
+    }
     const auto take = [&](const WorldName& name) {
         if (name.text.empty()) return;
         const std::optional<NameStyle> style = name_style(name.kind, distance);
@@ -228,7 +244,7 @@ void WorldNames::pick(const WorldFrame* world, std::span<const WorldName> extra,
             const NamePlace held = before != picked_.end()
                                        ? NamePlace{.lat = before->lat, .lon = before->lon, .stand = true}
                                        : NamePlace{};
-            const std::optional<NamePlace> at = stand(name, before != picked_.end() ? &held : nullptr);
+            const std::optional<NamePlace> at = stand(name, before != picked_.end() ? &held : nullptr, waters_);
             if (!at) return;
             place = *at;
         } else if (!in_view(name.lat, name.lon)) {

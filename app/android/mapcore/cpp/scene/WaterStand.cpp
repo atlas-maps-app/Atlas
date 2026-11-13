@@ -2,6 +2,7 @@
 #include "scene/WaterStand.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "view/Bend.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,37 @@ constexpr double last_latitude = 85.0;
 /// The least cosine of a latitude a degree of longitude is measured by.
 constexpr double least_cosine = 0.05;
 
+/// The metres between two places, along the sphere.
+[[nodiscard]] double metres_between(double lat0, double lon0, double lat1, double lon1) noexcept {
+    const double a0 = pymath::radians(lat0);
+    const double a1 = pymath::radians(lat1);
+    const double dlat = pymath::sin((a1 - a0) / 2.0);
+    const double dlon = pymath::sin(pymath::radians(lon1 - lon0) / 2.0);
+    const double h = std::clamp((dlat * dlat) + (pymath::cos(a0) * pymath::cos(a1) * dlon * dlon), 0.0, 1.0);
+    return 2.0 * view::earth_radius * pymath::atan2(pymath::sqrt(h), pymath::sqrt(1.0 - h));
+}
+
+[[nodiscard]] constexpr bool open_water(NameKind kind) noexcept {
+    return kind == NameKind::ocean || kind == NameKind::sea;
+}
+[[nodiscard]] constexpr bool closed_water(NameKind kind) noexcept {
+    return kind == NameKind::lake || kind == NameKind::reservoir;
+}
+
 } // namespace
+
+bool WaterStands::own_place(const WorldName& water, double lat, double lon,
+                            std::span<const WorldName* const> waters) noexcept {
+    const bool open = open_water(water.kind);
+    if (!open && !closed_water(water.kind)) return true;
+    const double own = metres_between(lat, lon, water.lat, water.lon);
+    return std::ranges::none_of(waters, [&](const WorldName* other) {
+        if (other == nullptr || other == &water || other->text == water.text) return false;
+        const bool rival =
+            open ? open_water(other->kind) : closed_water(other->kind) && other->extent >= rival_share * water.extent;
+        return rival && metres_between(lat, lon, other->lat, other->lon) < own;
+    });
+}
 
 void WaterStands::begin(const StandFrame& frame, const Point* point, const Water* water) {
     frame_ = frame;
@@ -31,10 +62,12 @@ bool WaterStands::on_frame(double lat, double lon, double clear) const {
     return p && p->x >= clear && p->y >= clear && p->x <= frame_.width - clear && p->y <= frame_.height - clear;
 }
 
-std::optional<NamePlace> WaterStands::find(const WorldName& water, double half, double tall) {
+std::optional<NamePlace> WaterStands::find(const WorldName& water, double half, double tall,
+                                           std::span<const WorldName* const> waters) {
     if (point_ == nullptr || water_ == nullptr || !(water.extent > 0.0) || !(frame_.step > 0.0)) return std::nullopt;
     if (frame_.width - (2.0 * half) < 0.0 || frame_.height - (2.0 * tall) < 0.0) return std::nullopt;
-    const double far = radii * pymath::sqrt(water.extent / std::numbers::pi);
+    const bool part = water.kind == NameKind::bay || water.kind == NameKind::strait;
+    const double far = (part ? part_radii : radii) * pymath::sqrt(water.extent / std::numbers::pi);
     // too far from where its name could stand to reach it (the file's head)
     if (frame_.px > 0.0) {
         if (const std::optional<view::Vec2> own = (*point_)(water.lat, water.lon)) {
@@ -77,6 +110,8 @@ std::optional<NamePlace> WaterStands::find(const WorldName& water, double half, 
             if (!wet) continue;
             const std::optional<view::Vec2> p = (*point_)(lat, lon);
             if (!p || p->x < half || p->x > frame_.width - half || p->y < tall || p->y > frame_.height - tall) continue;
+            // another water's place: the line has left its own, and goes no nearer it
+            if (!own_place(water, lat, lon, waters)) break;
             best = NamePlace{.lat = lat, .lon = lon, .stand = true};
             nearest = i;
             break;

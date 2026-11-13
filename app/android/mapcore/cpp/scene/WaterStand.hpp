@@ -13,6 +13,12 @@
 //   - The stand is the nearest of the lines' ends to the water's point: joined to it by water, so the same water.
 //     The name's middle is over its water; its ends may lie over the shore, as a name's at its own point may (a
 //     lake's strip along the frame's side is named). A water none of whose lines ends on the frame has no stand.
+//   - Its own place: a line of water tells a lake from the next only where a shore lies between them, and the open
+//     waters have none (the North Atlantic's lines reach the Norwegian Sea, the South Atlantic's the North's). So a
+//     stand must lie nearer its water's point than the point of any rival the frame's tiles name (own_place): for an
+//     ocean or a sea, every other ocean and sea; for a lake or a reservoir, the lakes and reservoirs of a quarter of
+//     its area or more (a dam or a dike under a mask's cell does not part two lakes; a pond beside a lake is no
+//     rival). A bay or a strait, a part of a larger water, has no rival and runs its lines one radius, not three.
 //   - A water whose point lies farther from the frame than its lines run (twice over, by the screen's scale at the
 //     camera's target, for a pitched view's sake) is not looked at: most waters past a frame's edge are ponds.
 //   - A stand is a place of the ground: the pick keeps it while it lies on the frame clear of its edges and is water
@@ -27,6 +33,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 
 namespace atlas::scene {
 
@@ -47,11 +54,14 @@ inline constexpr double stand_step_dp = 8.0;
 class WaterStands {
 public:
     /// The lines from a water's point: one toward the camera's target and `rays / 2` to either side, `spread`
-    /// degrees apart; the samples a line takes at most; and how many radii of a disc of the water's area it runs.
+    /// degrees apart; the samples a line takes at most; how many radii of a disc of the water's area it runs (a
+    /// bay's or a strait's, `part_radii`); and the share of a lake's area from which another lake is its rival.
     static constexpr int rays = 13;
     static constexpr double spread = 12.0;
     static constexpr int most = 256;
     static constexpr double radii = 3.0;
+    static constexpr double part_radii = 1.0;
+    static constexpr double rival_share = 0.25;
 
     /// Where a place lies on the frame, device px, or nothing where it does not show (scene::name_point).
     using Point = std::function<std::optional<view::Vec2>(double lat, double lon)>;
@@ -62,8 +72,15 @@ public:
     void begin(const StandFrame& frame, const Point* point, const Water* water);
 
     /// The stand of `water` (a water of a known area, at its point), its name `half` device px wide to each side of
-    /// its middle and `tall` px high, or nothing (the file's head).
-    [[nodiscard]] std::optional<NamePlace> find(const WorldName& water, double half, double tall);
+    /// its middle and `tall` px high, or nothing (the file's head); `waters` are the waters the frame's tiles name
+    /// (its rivals among them; itself may be one of them).
+    [[nodiscard]] std::optional<NamePlace> find(const WorldName& water, double half, double tall,
+                                                std::span<const WorldName* const> waters = {});
+
+    /// Whether (`lat`, `lon`) is `water`'s own place among `waters`: no rival's point is nearer it than `water`'s
+    /// (the file's head; a row of the same name is the same water).
+    [[nodiscard]] static bool own_place(const WorldName& water, double lat, double lon,
+                                        std::span<const WorldName* const> waters) noexcept;
 
     /// Whether a place lies on the frame clear of its edges by `clear` device px.
     [[nodiscard]] bool on_frame(double lat, double lon, double clear) const;

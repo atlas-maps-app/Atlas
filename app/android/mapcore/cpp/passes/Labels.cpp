@@ -93,10 +93,12 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
                          .lat = scale.lat,
                          .lon = scale.lon},
                         &stand_point, &stand_water);
-    const scene::WorldNames::Stand stand = [&](const scene::WorldName& water,
-                                               const scene::NamePlace* held) -> std::optional<scene::NamePlace> {
+    const scene::WorldNames::Stand stand =
+        [&](const scene::WorldName& water, const scene::NamePlace* held,
+            std::span<const scene::WorldName* const> waters) -> std::optional<scene::NamePlace> {
         const bool holds = held != nullptr && water_stands_.on_frame(held->lat, held->lon, tall) &&
-                           stand_water(held->lat, held->lon).value_or(true);
+                           stand_water(held->lat, held->lon).value_or(true) &&
+                           scene::WaterStands::own_place(water, held->lat, held->lon, waters);
         if (water_stands_.on_frame(water.lat, water.lon, holds ? 2.0 * tall : tall)) {
             return scene::NamePlace{.lat = water.lat, .lon = water.lon};
         }
@@ -107,7 +109,7 @@ void Labels::pick_names(const frame::FrameState& state, const view::View& view, 
             std::ranges::count_if(water.text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; }));
         const double half =
             ((water_letter_half * letters * scene::name_size_dp(scene::NameStyle::water)) + water_pad_dp) * density;
-        if (const std::optional<scene::NamePlace> found = water_stands_.find(water, half, tall)) return found;
+        if (const std::optional<scene::NamePlace> found = water_stands_.find(water, half, tall, waters)) return found;
         if (in_view(water.lat, water.lon)) return scene::NamePlace{.lat = water.lat, .lon = water.lon};
         return std::nullopt;
     };

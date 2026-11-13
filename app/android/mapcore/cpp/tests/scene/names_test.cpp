@@ -22,6 +22,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -505,9 +506,13 @@ TEST_CASE("scene: a water whose point does not show is named at the stand the fr
     // what the frame says of a water: its own point, a stand, or nothing; and what it was asked
     std::optional<scene::NamePlace> answer;
     std::vector<std::pair<std::string, std::optional<scene::NamePlace>>> asked;
-    const scene::WorldNames::Stand stand = [&](const WorldName& w,
-                                               const scene::NamePlace* held) -> std::optional<scene::NamePlace> {
+    std::vector<std::string> among;
+    const scene::WorldNames::Stand stand =
+        [&](const WorldName& w, const scene::NamePlace* held,
+            std::span<const WorldName* const> waters) -> std::optional<scene::NamePlace> {
         asked.emplace_back(w.text, held != nullptr ? std::optional(*held) : std::nullopt);
+        among.clear();
+        for (const WorldName* other : waters) among.push_back(other->text);
         return answer;
     };
     // a place and a river are asked of the frame as before: the river's point is not in view here
@@ -520,6 +525,8 @@ TEST_CASE("scene: a water whose point does not show is named at the stand the fr
     ATLAS_REQUIRE(asked.size() == 1);
     CHECK(asked[0].first == "Markermeer");
     CHECK_FALSE(asked[0].second.has_value());
+    // (among the waters the frame's tiles name, rivers apart: here itself alone)
+    CHECK(among == std::vector<std::string>{"Markermeer"});
     CHECK_FALSE(picked[1].stand);
     CHECK(picked[1].lat == 52.53);
     const std::uint32_t home = picked[1].id;

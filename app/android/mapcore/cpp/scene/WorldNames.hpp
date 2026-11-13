@@ -190,8 +190,10 @@ public:
     /// Whether a place stands in view (the labels pass: on the frame and before the horizon).
     using InView = std::function<bool(double lat, double lon)>;
     /// Where a water's name stands this pick (not a river's): its own point, a stand, or nothing where neither
-    /// shows; `held` is the stand the last pick gave it, if it stood at one (the labels pass: scene::WaterStands).
-    using Stand = std::function<std::optional<NamePlace>(const WorldName& water, const NamePlace* held)>;
+    /// shows; `held` is the stand the last pick gave it, if it stood at one, and `waters` the waters the frame's
+    /// tiles name, rivers apart (the labels pass: scene::WaterStands, which knows a water's rivals among them).
+    using Stand = std::function<std::optional<NamePlace>(const WorldName& water, const NamePlace* held,
+                                                         std::span<const WorldName* const> waters)>;
 
     /// The frame's names at `seconds`: picked again where a pick is due (the file's head; `rest`: the camera rests,
     /// `changed`: it is not where the last frame saw it), else the last pick's. `world` null, or a camera beyond the
@@ -236,6 +238,7 @@ private:
     std::unordered_multimap<std::string, Id> ids_; // by text
     std::uint32_t next_id_ = 1;
     std::vector<Candidate> candidates_;
+    std::vector<const WorldName*> waters_; // the pick's waters, rivers apart
     std::vector<PickedName> picked_;
     std::vector<PickedName> next_;
     std::vector<std::pair<std::uint32_t, double>> left_; // the ids leaving, and when each left

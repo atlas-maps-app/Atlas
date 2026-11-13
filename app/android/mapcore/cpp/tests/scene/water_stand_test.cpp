@@ -54,8 +54,8 @@ constexpr double radian = std::numbers::pi / 180.0;
     return ((mask.at(row) >> column) & 1U) != 0;
 }
 
-[[nodiscard]] WorldName lake(std::string text, double area, double lat, double lon) {
-    return {.kind = NameKind::lake, .lat = lat, .lon = lon, .text = std::move(text), .extent = area};
+[[nodiscard]] WorldName lake(std::string text, double area, double lat, double lon, NameKind kind = NameKind::lake) {
+    return {.kind = kind, .lat = lat, .lon = lon, .text = std::move(text), .extent = area};
 }
 
 /// Whether (`lat`, `lon`) lies in the ring `ring` of (lat, lon) corners.
@@ -208,6 +208,75 @@ TEST_CASE("scene: a water's stand is the nearest point of its water to its own t
     CHECK(north(at->lat, at->lon) == std::optional(true));
     // (the frame's north-east corner region: within 150 px of the nearest place a name's middle can take)
     CHECK(pymath::sqrt(((c.x - 900.0) * (c.x - 900.0)) + ((c.y - 50.0) * (c.y - 50.0))) <= 150.0);
+}
+
+TEST_CASE("scene: a stand lies in its water's own place: nearer its point than any rival's, an ocean's and a sea's "
+          "rivals the other oceans and seas, a lake's the lakes of a quarter of its area or more; a bay has none "
+          "and reaches one radius") {
+    // the North Atlantic, the Norwegian Sea and the Greenland Sea at about their points; a place off Norway
+    const WorldName atlantic = lake("North Atlantic Ocean", 4.2e13, 52.0, -30.0, NameKind::ocean);
+    const WorldName norwegian = lake("Norwegian Sea", 1.38e12, 68.0, 0.0, NameKind::sea);
+    const WorldName greenland = lake("Greenland Sea", 1.2e12, 76.0, -7.0, NameKind::sea);
+    const WorldName south = lake("South Atlantic Ocean", 4.0e13, -30.0, -15.0, NameKind::ocean);
+    const WorldName fjord = lake("Vestfjorden", 5.0e9, 68.0, 14.0, NameKind::bay);
+    const std::array<const WorldName*, 5> seas{&atlantic, &norwegian, &greenland, &south, &fjord};
+    using scene::WaterStands;
+    // off Norway at 64 N 5 E: the Norwegian Sea's, not the Atlantic's nor the Greenland Sea's
+    CHECK(WaterStands::own_place(norwegian, 64.0, 5.0, seas));
+    CHECK_FALSE(WaterStands::own_place(atlantic, 64.0, 5.0, seas));
+    CHECK_FALSE(WaterStands::own_place(greenland, 64.0, 5.0, seas));
+    // west of Ireland: the Atlantic's; at 25 N 38 W the North's still, not the South's
+    CHECK(WaterStands::own_place(atlantic, 52.0, -15.0, seas));
+    CHECK(WaterStands::own_place(atlantic, 25.0, -38.0, seas));
+    CHECK_FALSE(WaterStands::own_place(south, 25.0, -38.0, seas));
+    // a bay is a part of a larger water: no rival to a sea, and with none itself
+    CHECK(WaterStands::own_place(norwegian, 68.0, 13.0, seas));
+    CHECK(WaterStands::own_place(fjord, 64.0, 5.0, seas));
+    // with no other water named, every place is its own; a row of its own name is itself
+    CHECK(WaterStands::own_place(atlantic, 64.0, 5.0, {}));
+    const WorldName again = lake("North Atlantic Ocean", 4.2e13, 60.0, 0.0, NameKind::ocean);
+    const std::array<const WorldName*, 2> twice{&atlantic, &again};
+    CHECK(WaterStands::own_place(atlantic, 62.0, 2.0, twice));
+    // lakes: the IJsselmeer and the Markermeer, a dike between them that a mask does not show, and a pond
+    const WorldName ijssel = lake("IJsselmeer", 1.125e9, 52.8, 5.4);
+    const WorldName marker = lake("Markermeer", 5.93e8, 52.53, 5.25);
+    const WorldName pond = lake("Kinselmeer", 7.0e5, 52.42, 4.99);
+    const std::array<const WorldName*, 3> lakes{&ijssel, &marker, &pond};
+    CHECK(WaterStands::own_place(marker, 52.57, 5.03, lakes));       // the Hoornse Hop's side: the Markermeer's
+    CHECK_FALSE(WaterStands::own_place(ijssel, 52.57, 5.03, lakes)); // not the IJsselmeer's, whatever the mask says
+    CHECK(WaterStands::own_place(ijssel, 52.75, 5.3, lakes));
+    CHECK(WaterStands::own_place(marker, 52.43, 5.02, lakes)); // beside the pond, which is no rival
+    // a sea is no rival to a lake, nor a lake to a sea
+    const std::array<const WorldName*, 2> mixed{&marker, &norwegian};
+    CHECK(WaterStands::own_place(marker, 67.0, 1.0, mixed));
+    CHECK(WaterStands::own_place(norwegian, 52.5, 5.2, mixed));
+
+    // On the frame of the case above: the big lake has a stand; with a rival lake whose point lies at the frame's
+    // side of it, none (each end of its lines is the rival's place); a bay of its size reaches one radius, not three
+    const scene::StandFrame frame{
+        .width = 1'000.0, .height = 2'000.0, .step = 800.0, .px = 0.01, .lat = 0.0, .lon = 0.0};
+    const scene::WaterStands::Point point = [](double lat, double lon) -> std::optional<view::Vec2> {
+        return view::Vec2{500.0 + (lon * 111'320.0 / 100.0), 1'000.0 - (lat * 110'540.0 / 100.0)};
+    };
+    const double shore = 20'000.0 / 111'320.0;
+    const scene::WaterStands::Water water = [&](double lat, double lon) -> std::optional<bool> {
+        return std::abs(lat) <= 60'000.0 / 110'540.0 && lon >= shore;
+    };
+    const WorldName big = lake("Groot Meer", 6.0e9, 0.0, 70'000.0 / 111'320.0);
+    const WorldName next = lake("Buurmeer", 3.0e9, 0.0, 35'000.0 / 111'320.0);
+    const WorldName small = lake("Plasje", 1.0e9, 0.0, 35'000.0 / 111'320.0);
+    scene::WaterStands stands;
+    stands.begin(frame, &point, &water);
+    const std::array<const WorldName*, 2> alone{&big, &small};
+    CHECK(stands.find(big, 100.0, 50.0, alone).has_value()); // a sixth of its area: no rival
+    const std::array<const WorldName*, 2> rivals{&big, &next};
+    CHECK_FALSE(stands.find(big, 100.0, 50.0, rivals).has_value());
+    CHECK(stands.find(next, 100.0, 50.0, rivals).has_value()); // (the rival's own point lies in view: a stand too)
+    // a bay of the big lake's point and area: its one radius (43.7 km) reaches the frame's water, 30 km off; a bay
+    // of a ninth of the area (one radius 14.6 km) does not, where a lake of that area (three radii) does
+    CHECK(stands.find(lake("Baai", 6.0e9, big.lat, big.lon, NameKind::bay), 100.0, 50.0).has_value());
+    CHECK_FALSE(stands.find(lake("Baai", 6.0e9 / 9.0, big.lat, big.lon, NameKind::bay), 100.0, 50.0).has_value());
+    CHECK(stands.find(lake("Meer", 6.0e9 / 9.0, big.lat, big.lon), 100.0, 50.0).has_value());
 }
 
 TEST_CASE("scene: from 100 km over Amsterdam on a phone the Markermeer's point lies past the frame's side, and its "
