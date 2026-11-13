@@ -17,6 +17,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -580,4 +581,50 @@ TEST_CASE("the screen layers of a camera and a theme: the 17 stops, the eye-leve
     CHECK(b.haze.w == 17.0F);
     CHECK(static_cast<double>(b.haze_alphas[0].x) == doctest::Approx(view::decimals(l.haze.alphas[0], 3)));
     CHECK(b.vignette.x == doctest::Approx(0.2F));
+    // The moment's weather over the screen where the style ladder thins it (LayerSettings::weather_gone): none gone
+    // unless the setting says so, and then the layers' block carries how much.
+    CHECK(b.vignette.y == 0.0F);
+    const view::Layers thinned = view::layers_of(
+        cam, th, {.width = 412, .height = 916, .pitch = 38, .haze0 = 380, .haze1 = 800, .weather_gone = 0.5});
+    shaders::FrameLayers w = view::block_of(thinned, th, ~0U, 255);
+    CHECK(w.vignette.y == 0.5F);
+    CHECK(shaders::composite_weather_kept(b) == 4096);
+    CHECK(shaders::composite_weather_kept(w) == 2048);
+    CHECK(shaders::composite_kept(573, 4096) == 573);
+    CHECK(shaders::composite_kept(573, 2048) == 287);
+    CHECK(shaders::composite_kept(573, 0) == 0);
+    for (int a = 0; a <= 4096; ++a) CHECK(shaders::composite_kept(a, 4096) == a);
+    // A pixel under a cloud's shadow, a rain streak and the wash: with none of the weather gone as the steps draw it,
+    // with all of it gone as without the three steps, to the level; between the two half way.
+    const hlsl::float3 levels{120.0F, 150.0F, 180.0F};
+    const std::uint32_t cloud = (0x80U << 24U) | (0x20U << 16U) | (0x28U << 8U) | 0x30U; // a shadow at half cover
+    const auto finished = [&](float gone, std::uint32_t steps) {
+        shaders::FrameLayers f = w;
+        f.vignette.y = gone;
+        f.steps.x = steps;
+        f.haze.w = 0.0F; // no haze: the weather's steps alone
+        return shaders::composite_steps_alphas(f, levels, cloud, 1500, 0, 600, 0, hlsl::uint3{0U, 0U, 0U});
+    };
+    const std::uint32_t weather = shaders::COMPOSITE_CLOUD_SHADOWS | shaders::COMPOSITE_RAIN | shaders::COMPOSITE_WASH;
+    const hlsl::float3 whole = finished(0.0F, weather);
+    const hlsl::float3 without = finished(0.0F, 0U);
+    const hlsl::float3 gone = finished(1.0F, weather);
+    const hlsl::float3 half = finished(0.5F, weather);
+    CHECK(without.x == levels.x);
+    CHECK(whole.x != without.x);
+    CHECK(whole.z != without.z);
+    for (const auto& [all, some, none] :
+         {std::array{whole.x, half.x, without.x}, std::array{whole.y, half.y, without.y},
+          std::array{whole.z, half.z, without.z}}) {
+        CHECK(some >= std::min(all, none));
+        CHECK(some <= std::max(all, none));
+    }
+    CHECK(half.x != whole.x);
+    CHECK(gone.x == without.x);
+    CHECK(gone.y == without.y);
+    CHECK(gone.z == without.z);
+    // beyond its ends the setting is its nearest end
+    CHECK(shaders::composite_weather_kept(
+              view::block_of(view::layers_of(cam, th, {.width = 412, .height = 916, .pitch = 38, .weather_gone = 3.0}),
+                             th, ~0U, 255)) == 0);
 }
