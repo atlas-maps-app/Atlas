@@ -1474,9 +1474,9 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
     - For each of WorldDEM-30 and WorldDEM-90, the licence's Art. 6(b) notice and its Art. 6(c) sentence. For GLO-30 they read: "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved", and "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30". GLO-90's are the same with WorldDEM-90.
     - The national credits:
       - "AHN";
-      - Regione Toscana, CC BY 4.0;
+      - Regione Toscana, once step 8 settles its licence;
       - TINITALY 1.1, CC BY 4.0, with its citation (Tarquini et al. 2023, doi 10.13127/tinitaly/1.1);
-      - "© Kartverket", CC BY 4.0;
+      - "© Kartverket" with the NLOD 2.0 sentence, the licence its download feed names (the credit meets CC BY 4.0 too);
       - "IGN", Licence Ouverte 2.0;
       - the Environment Agency's notice, under the OGL v3;
       - "USGS 3DEP";
