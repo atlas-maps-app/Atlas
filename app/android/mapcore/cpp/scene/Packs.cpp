@@ -11,6 +11,7 @@
 #include <format>
 
 #if defined(__ANDROID__)
+#include <pthread.h>
 #include <sys/resource.h>
 #endif
 
@@ -120,6 +121,8 @@ void PackStage::wait_idle() {
 
 void PackStage::work(const std::stop_token& stop) {
 #if defined(__ANDROID__)
+    // Named: made on the render thread, it would show under that thread's name in a trace.
+    (void)::pthread_setname_np(::pthread_self(), "atlas-packs");
     // Background priority, as the residency's workers and the sun's threads have (ENGINE.md gain 8): made on the render
     // thread, this thread would keep its display priority, and a pack's stage T decodes every tile of the pack (the
     // canal names of a frame cell's windows, of the active pack and of up to three neighbours where four cells meet),

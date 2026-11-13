@@ -27,6 +27,7 @@
 #include <utility>
 
 #if defined(__ANDROID__)
+#include <pthread.h>
 #include <sys/resource.h>
 #endif
 
@@ -749,6 +750,8 @@ void WorldTiles::let_go_of_gone() {
 
 void WorldTiles::run(const std::stop_token& stop) {
 #if defined(__ANDROID__)
+    // named: made on the render thread, it would show under that thread's name in a trace
+    (void)::pthread_setname_np(::pthread_self(), "atlas-world");
     (void)setpriority(PRIO_PROCESS, 0, 10); // the workers' background priority (T8): this thread alone on Linux
 #endif
     Scratch scratch;
