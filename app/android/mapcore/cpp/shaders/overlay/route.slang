@@ -11,6 +11,12 @@
 //     nearest point of the nearest dash); its colour before the distance travelled and its faded colour after it, the
 //     colour's part over the faded one with its round cap (the painter's two pieces, the second drawn over the first);
 //   - a route's chip: the sprite the app drew of it, on whole pixels, texel for texel.
+// Where the ground bends (a camera beyond 18 km: the drop, and from 150 km the sphere) the street's plane is not where
+// the ground is drawn, so a piece and an area are measured on the view itself (ROUTE_SCREEN): a piece's points are the
+// view's device px, where the pass projected them on the bent ground (passes/PlacePoint.hpp), its half-width the
+// device px the ribbon lying on that ground spans there, and the pixel is its own point; an area's centre is the
+// view's, and the pixel is taken to the ground's metres about it by the draw's own map, so its circle lies on the
+// ground.
 // An edge's coverage is the pixel's distance from it, as Skia's antialiased paths; the colours are sRGB values over
 // sRGB values, premultiplied, as the canvas blends them.
 //
@@ -31,14 +37,17 @@
 /// One draw: a piece of a ribbon, an area, or a chip.
 struct RouteDraw {
     float4 a;     // a piece: its start on the street, relative to the eye (frame metres; y the street's), and its
-                  // distance along the route (w, metres); an area: its centre, and its radius (w, metres)
-    float4 b;     // a piece: its end, and its distance along the route (w)
+                  // distance along the route (w, metres); an area: its centre, and its radius (w, metres). On the view
+                  // (ROUTE_SCREEN): x and z the view's device px (an area's radius stays metres)
+    float4 b;     // a piece: its end, and its distance along the route (w); an area on the view: the view's device
+                  // px about its centre to the ground's metres there (a 2 x 2: xy its first row, zw its second)
     float4 width; // a piece: its half-width (x, metres) and least half-width (y, device px), its dashes' period and
                   // length (z, w, metres; 0: no dashes); an area: its line's half-width (x, device px)
     float4 box;   // the quad: left, top, right, bottom (the view's device px); a chip: its sprite's top-left and size
     float4 more;  // a piece: the distance travelled (x, metres)
     uint4 look;   // a piece: its colour (x) and faded colour (y, ARGB), its joins (z: ROUTE_PREV, ROUTE_NEXT); an area:
-                  // its fill (x) and line (y, ARGB); a chip: its first texel (x), width (y) and height (z); w: the kind
+                  // its fill (x) and line (y, ARGB); a piece's and an area's z: ROUTE_SCREEN where it is measured on the
+                  // view; a chip: its first texel (x), width (y) and height (z); w: the kind
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
@@ -52,6 +61,8 @@ static const uint ROUTE_CHIP = 2u;
 /// A piece's joins: it meets the piece before it in the draws, or the one after it.
 static const uint ROUTE_PREV = 1u;
 static const uint ROUTE_NEXT = 2u;
+/// A piece or an area measured on the view (its points and widths the view's device px), where the ground bends.
+static const uint ROUTE_SCREEN = 4u;
 
 /// Farther than anything on the view: no part there.
 static const float route_none = 1e30f;
@@ -207,9 +218,16 @@ RouteColour route_fs(RouteOut v) {
     float3 k = {(css.x - c.right.w) / c.forward.w, (c.up.w - css.y) / c.forward.w, 1.0f};
     float3 ray = k.x * c.right.xyz + k.y * c.up.xyz + k.z * c.forward.xyz;
     float t = ray.y < 0.0f ? d.a.y / ray.y : 0.0f;
-    float2 p = ray.xz * t;
-    float m = t / (c.forward.w * c.frame.z);
+    // on the view (the bent ground's draws): the pixel is its own point, a device px a device px
+    bool screen = (d.look.z & ROUTE_SCREEN) != 0u;
+    float2 p = screen ? view : ray.xz * t;
+    float m = screen ? 1.0f : t / (c.forward.w * c.frame.z);
+    if (screen && d.look.w == ROUTE_AREA) {
+        // the pixel from the centre, in the ground's metres there
+        float2 from = view - d.a.xz;
+        p = d.a.xz + float2(dot(d.b.xy, from), dot(d.b.zw, from));
+    }
     float4 colour = d.look.w == ROUTE_AREA ? route_area(d, p) : route_piece(v.draw, d, p, m);
-    o.colour = t > 0.0f ? colour : float4(0.0f);
+    o.colour = screen || t > 0.0f ? colour : float4(0.0f);
     return o;
 }

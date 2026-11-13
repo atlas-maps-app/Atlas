@@ -430,6 +430,25 @@ struct BuildingInput {
 /// The tile's buildings and parts at the input's level.
 [[nodiscard]] TileBuildings build_buildings(const BuildingInput& in);
 
+/// The roof shapes a house may be asked in (build_house): the plain box, and the two pitched shapes FillIn offers.
+inline constexpr std::array<std::string_view, 3> house_roofs = {"flat", "gabled", "hipped"};
+
+/// The height a house's roof of pitched shape `roof` takes where its building has none of that kind (build_house): the
+/// loader's for a mapped shape without a roof:height (load/Amsterdam.cpp's guess_tags: min(h * 0.4, max(2, min(5,
+/// 0.45 of its shortest side)))), `h` the building's top and `shortest` its footprint's shortest side.
+[[nodiscard]] double house_roof_height(double h, double shortest) noexcept;
+
+/// One building of the tile alone, drawn plain with the roof `roof` (one of house_roofs) in place of its own
+/// (ENGINE.md step 6, the building asked about: FillIn's roof question): the outline `id` (a relation's where
+/// `relation`) of the tile's building layer at the input's level, built as a level's tile's buildings are (each wall
+/// its one cell, no windowed walls, no kit's details), its walls up to the roof's eaves and the roof's faces as stage T
+/// draws that shape, never a guess (no plain top beside it). A pitched roof keeps the building's own roof height where
+/// its own roof is gabled or hipped with one, else takes house_roof_height. None where the tile holds no such outline,
+/// or it is not drawn as itself (hidden: drawn by its parts; without a height; a houseboat), or `roof` is none of
+/// house_roofs. One item; its primitives carry no sun samples the tile has (their numbers are the house's own).
+[[nodiscard]] std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t id, bool relation,
+                                                       std::string_view roof);
+
 // ---------------------------------------------------------------- stage T's builder, shared by walls, roofs and boats
 
 /// Whether a nullable string holds `s`.

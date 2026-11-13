@@ -36,8 +36,10 @@
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
+#include "passes/House.hpp"
 #include "passes/Walls.hpp"
 #include "scene/Heaps.hpp"
+#include "scene/House.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
@@ -1211,6 +1213,7 @@ struct Scene {
     std::unique_ptr<scene::World> world;
     std::unique_ptr<gpu::Renderer> renderer;
     passes::Buildings* buildings = nullptr;
+    passes::House* house = nullptr;
     double now = 0;
     bool settled = false; ///< every tile the cover wants built and faded in
     bool lit = false;     ///< every tile drawn with its own sun bits, their fade over
@@ -1626,6 +1629,9 @@ bool second_buffer = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-v
 /// walls, its records lean on its tile's grid (ENGINE.md, one pack per country, step 7).
 bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
 
+/// Whether make_scene's frames are the app's map's (frame::FrameOptions::grounded; their cameras out of engine mode).
+bool app_map = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the test's own switch
+
 /// Makes the scene for `config` on a w × h output, drawing from `packs`.
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
@@ -1642,11 +1648,15 @@ bool lean_tiles = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-vari
     owned->lean_every_tile(lean_tiles);
     s.buildings = owned.get();
     passes.push_back(std::move(owned));
+    // and the asked building's house's, after it as in the registry (it draws nothing until a frame has a house)
+    auto house = std::make_unique<passes::House>();
+    s.house = house.get();
+    passes.push_back(std::move(house));
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
                                  static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
                                  static_cast<float>(clear & 0xFFU) / 255.0F, 1.0F};
-    auto builder =
-        frame::FrameBuilder::create(device, cache, std::move(passes), {.overdraw = false, .clear = c, .steps = 0});
+    auto builder = frame::FrameBuilder::create(device, cache, std::move(passes),
+                                               {.overdraw = false, .clear = c, .steps = 0, .grounded = app_map});
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
     s.builder = std::move(*builder);
     scene::WorldOptions options{.workers = 3, .clock = {}};
@@ -2488,6 +2498,213 @@ TEST_CASE("buildings: the building the app asks about drawn plain in its flat co
     std::filesystem::remove(path, ignored);
 }
 
+TEST_CASE("buildings: the building the app asks about as the board's house under the roof asked about, in its place") {
+    // the synthetic tile's building under the view's middle asked about in a roof (FillIn's roof question,
+    // scene/House.hpp, passes/House.hpp): the tile's own building takes no rank, and its house stands in its place: the
+    // plain box under its white top while the roof's question is open, its walls as the asked building's are (the
+    // board's grey under the hatch, then the answer's colour); under a gabled and a hipped roof its slopes in the
+    // board's greys by the sun, its gables in the walls' colour; its walls in its tile's own colour where their colour
+    // is not asked about; and once no question is open, the frame as it was, pixel for pixel
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    style::CameraState cam = camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d);
+    cam.flags |= style::camera_flag::rest;
+    const gpu::Configuration config{.config = gpu::FrameConfig::x1,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::direct};
+    ATLAS_REQUIRE(device.facts().supports(config.config));
+    auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, 0x808080);
+    ATLAS_REQUIRE(made.has_value());
+    Scene& s = *made;
+    const auto before = draw(s, cam, sunny());
+    ATLAS_REQUIRE(before.has_value());
+    ATLAS_REQUIRE(s.settled);
+    // two frames with `asked` and its house (both frame slots), then the last one's pixels
+    const auto frames = [&](std::optional<frame::AskedBuilding> asked, const scene::House* house) {
+        for (int n = 0; n < 2; ++n) {
+            s.now += 0.25;
+            s.builder->set_inputs({.camera = cam,
+                                   .theme = sunny(),
+                                   .seconds = s.now,
+                                   .mode = frame::Mode::structural,
+                                   .scene = s.world.get(),
+                                   .asked = asked,
+                                   .house = house});
+            auto report = s.renderer->draw(0);
+            ATLAS_REQUIRE_OR_RETURN(std::optional<gpu::Pixels>{}, report.has_value(), report.error().text());
+            s.renderer->drain();
+        }
+        auto pixels = s.output->read(s.output->latest());
+        ATLAS_REQUIRE_OR_RETURN(std::optional<gpu::Pixels>{}, pixels.has_value(), pixels.error().text());
+        return std::optional<gpu::Pixels>(std::move(*pixels));
+    };
+    const auto count = [](const gpu::Pixels& px, std::uint32_t rgb) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i + 3 < px.rgba.size(); i += 4) {
+            const int r = px.rgba[i] - static_cast<int>((rgb >> 16U) & 0xFFU);
+            const int g = px.rgba[i + 1] - static_cast<int>((rgb >> 8U) & 0xFFU);
+            const int b = px.rgba[i + 2] - static_cast<int>(rgb & 0xFFU);
+            if (std::abs(r) <= 1 && std::abs(g) <= 1 && std::abs(b) <= 1) ++n;
+        }
+        return n;
+    };
+    const auto changed = [&](const gpu::Pixels& px) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < px.rgba.size() && i < before->rgba.size(); ++i)
+            n += px.rgba[i] != before->rgba[i] ? 1 : 0;
+        return n;
+    };
+    constexpr std::uint32_t grey = 0xA2A5A9;
+    constexpr std::uint32_t hatch = 0x8C857A;
+    constexpr std::uint32_t brown = 0x453433;
+    constexpr std::uint32_t white = passes::House::top;
+    // the building under the view's middle (scene/Pick.hpp), the one asked about
+    const frame::FrameState& state = s.builder->state();
+    ATLAS_REQUIRE(state.view.has_value());
+    ATLAS_REQUIRE(state.ground_frame.has_value());
+    std::vector<scene::PickPack> drawn;
+    for (const auto& tile : s.world->residency().resident()) {
+        if (tile != nullptr) drawn.push_back({.id = tile->pack, .z = tile->key.z});
+    }
+    std::optional<scene::Picked> picked;
+    for (int row = 1; row < 10 && !picked; ++row) {
+        for (int col = 1; col < 6 && !picked; ++col) {
+            const double x = static_cast<double>(cam.width_px) * col / 6.0;
+            const double y = static_cast<double>(cam.height_px) * row / 10.0;
+            picked = scene::pick_building(s.world->store(), drawn, *state.ground_frame, state.view->camera().eye(),
+                                          scene::ray_of(*state.view, x, y));
+        }
+    }
+    ATLAS_REQUIRE(picked.has_value());
+    const std::int64_t id = picked->id;
+    // its house under each roof, read from the tile that draws it
+    const scene::ResidentTile* from = scene::house_tile(s.world->residency().resident(), id);
+    ATLAS_REQUIRE(from != nullptr);
+    CHECK(scene::house_tile(s.world->residency().resident(), 999'999) == nullptr);
+    const auto flat = scene::house_of(s.world->store(), *from, id, picked->relation, scene::house_roof(1));
+    const auto gabled = scene::house_of(s.world->store(), *from, id, picked->relation, scene::house_roof(2));
+    const auto hipped = scene::house_of(s.world->store(), *from, id, picked->relation, scene::house_roof(3));
+    ATLAS_REQUIRE(flat != nullptr);
+    ATLAS_REQUIRE(gabled != nullptr);
+    ATLAS_REQUIRE(hipped != nullptr);
+    CHECK(scene::house_roof(0).empty());
+    CHECK(scene::house_roof(4).empty());
+    CHECK(flat->roof == "flat");
+    CHECK(flat->rim.size() >= 4); // its top's outline, closed
+    CHECK(gabled->rim.empty());
+    CHECK(flat->key == from->key);
+    CHECK(flat->pack == from->pack);
+    MESSAGE(std::format("asked about building {}: its house {} corners flat, {} gabled, {} hipped; its walls #{:06X}",
+                        id, flat->points.size(), gabled->points.size(), hipped->points.size(), flat->wall));
+    // the slopes' colours a frame's house draws (the pass's points that are neither walls nor a top nor the outline)
+    const auto slopes = [&](std::uint32_t wall) {
+        std::vector<std::uint32_t> out;
+        const auto points = s.house->points(s.builder->state().slot);
+        for (std::uint32_t k = 0; k < s.house->corners(s.builder->state().slot); ++k) {
+            const auto& c = points[k].colour;
+            const auto level = [](float v) { return static_cast<std::uint32_t>(std::lround(v * 255.0F)); };
+            const std::uint32_t rgb = (level(c[0]) << 16U) | (level(c[1]) << 8U) | level(c[2]);
+            if (rgb != wall && rgb != white && std::ranges::find(out, rgb) == out.end()) out.push_back(rgb);
+        }
+        return out;
+    };
+    // the tile's own building takes no rank while its house is drawn
+    const std::uint64_t key = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(id));
+    const auto ranked = [&] {
+        std::size_t n = 0;
+        const scene::ItemTable& items = *s.world->items();
+        const auto table = s.builder->state().ranks->table();
+        for (std::uint32_t row = 0; row < items.rows(); ++row) {
+            if (items.alive(row) && items.building()[row] == key && table[row] != shaders::RANK_NONE) ++n;
+        }
+        return n;
+    };
+    CHECK(ranked() >= 1);
+    // the roof's question open, the colour's too: the plain box, grey under the hatch, its top white
+    const auto open = frames(frame::AskedBuilding{.id = id, .wall = grey, .hatched = true, .roof = 1}, flat.get());
+    ATLAS_REQUIRE(open.has_value());
+    CHECK(s.builder->state().house == flat.get());
+    CHECK(ranked() == 0);
+    CHECK(s.house->corners(s.builder->state().slot) == flat->points.size());
+    CHECK(s.house->points(s.builder->state().slot).size() == flat->points.size() + (2 * (flat->rim.size() - 1)));
+    CHECK(slopes(grey).empty());
+    // the colour answered, the roof gabled: brown walls and gables, two slopes in the board's greys
+    const auto pitched =
+        frames(frame::AskedBuilding{.id = id, .wall = brown, .hatched = false, .roof = 2}, gabled.get());
+    ATLAS_REQUIRE(pitched.has_value());
+    const std::vector<std::uint32_t> gabled_slopes = slopes(brown);
+    std::size_t gabled_px = 0;
+    for (const std::uint32_t c : gabled_slopes) gabled_px += count(*pitched, c);
+    // hipped: four faces, by the sun
+    const auto hips = frames(frame::AskedBuilding{.id = id, .wall = brown, .hatched = false, .roof = 3}, hipped.get());
+    ATLAS_REQUIRE(hips.has_value());
+    const std::vector<std::uint32_t> hipped_slopes = slopes(brown);
+    std::size_t hipped_px = 0;
+    for (const std::uint32_t c : hipped_slopes) hipped_px += count(*hips, c);
+    // its walls' colour not asked about: the colour its tile gives them, flat
+    const auto own = frames(frame::AskedBuilding{.id = id, .roof = 1, .own_wall = true}, flat.get());
+    ATLAS_REQUIRE(own.has_value());
+    CHECK(!s.builder->state().asked.has_value());
+    CHECK(s.builder->state().house_wall == flat->wall);
+    // a house of another building than the one asked about is not drawn, nor one without a question
+    const auto other =
+        frames(frame::AskedBuilding{.id = id + 1000, .wall = grey, .hatched = true, .roof = 1}, flat.get());
+    ATLAS_REQUIRE(other.has_value());
+    CHECK(s.builder->state().house == nullptr);
+    const auto closed = frames(std::nullopt, flat.get());
+    ATLAS_REQUIRE(closed.has_value());
+    CHECK(s.builder->state().house == nullptr);
+    CHECK(ranked() >= 1);
+    if (std::getenv("ATLAS_ASKED_PPM") != nullptr) {           // NOLINT: the frames, to look at
+        const std::string out(std::getenv("ATLAS_ASKED_PPM")); // NOLINT
+        CHECK(gpu::write_ppm(*open, out + "/house-open.ppm"));
+        CHECK(gpu::write_ppm(*pitched, out + "/house-gabled.ppm"));
+        CHECK(gpu::write_ppm(*hips, out + "/house-hipped.ppm"));
+        CHECK(gpu::write_ppm(*own, out + "/house-own.ppm"));
+    }
+    MESSAGE(std::format("house, open: {} changed, {} grey, {} hatch, {} white ({} before); gabled: {} brown, {} slope "
+                        "colours over {} px; hipped: {} slope colours over {} px; its own walls: {} px; closed: {} "
+                        "changed",
+                        changed(*open), count(*open, grey), count(*open, hatch), count(*open, white),
+                        count(*before, white), count(*pitched, brown), gabled_slopes.size(), gabled_px,
+                        hipped_slopes.size(), hipped_px, count(*own, flat->wall), changed(*closed)));
+    // open: the box's walls grey between the hatch's lines, its top white
+    CHECK(changed(*open) > 1000);
+    CHECK(count(*open, grey) > 300);
+    CHECK(count(*open, hatch) > 300);
+    CHECK(count(*open, white) > count(*before, white) + 300);
+    // gabled: brown walls and gables, no hatch, no white top, its slopes drawn
+    CHECK(count(*pitched, brown) > 1000);
+    CHECK(count(*pitched, hatch) < 20);
+    CHECK(count(*pitched, white) <= count(*before, white) + 20);
+    CHECK(!gabled_slopes.empty());
+    CHECK(gabled_slopes.size() <= 2);
+    CHECK(gabled_px > 300);
+    for (const std::uint32_t c : gabled_slopes) {
+        // each a grey of the board's ramp, from a slope turned away to one square to the sun
+        CHECK(((c >> 16U) & 0xFFU) >= ((passes::House::slope_shade >> 16U) & 0xFFU));
+        CHECK(((c >> 16U) & 0xFFU) <= ((passes::House::slope_sun >> 16U) & 0xFFU));
+    }
+    // hipped: more faces than a gabled roof's slopes, lit apart
+    CHECK(hipped_slopes.size() >= 2);
+    CHECK(hipped_px > 300);
+    // its own walls
+    CHECK(count(*own, flat->wall) > 300);
+    CHECK(count(*own, hatch) < 20);
+    // another building's house, and none: the frame as it was but for the asked look of the other building (none)
+    CHECK(changed(*closed) == 0);
+    s.renderer.reset();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_CASE("buildings: the Westerkerk home drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
@@ -2633,6 +2850,148 @@ TEST_CASE(
     check_frames(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near, lean", packs, sunny(),
                  10, nullptr, true);
     lean_tiles = false;
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: in the app's map a level's tile's walls narrower on the screen than 2.5 device px are drawn at "
+          "their share of each pixel, with as much of their colour as on the samples, through a tile's fade too; a "
+          "finest tile's are as they were") {
+    // the synthetic tile from 9 km at 45°, where a 9 m wall is under 2 px tall: built as a level's tile is, in the
+    // app's map, at 4 samples a pixel, with the thin walls' draws and without, and without its walls; then built as
+    // a finest tile is, whose walls stay on the samples whatever their width
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration config{.config = gpu::FrameConfig::c,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::resolve};
+    if (!device.facts().supports(config.config)) {
+        MESSAGE("the device has no frame of 4 samples a pixel: the thin walls are not drawn here");
+        return;
+    }
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    style::CameraState cam = camera(52.37422, 4.88486, 300.0, 45.0, 9000.0, 1080, 2400, d);
+    cam.flags &= ~style::camera_flag::engine_mode;
+    cam.flags |= style::camera_flag::rest;
+    constexpr std::uint32_t clear = 0x808080;
+    struct Drawn {
+        gpu::Pixels pixels;
+        std::uint32_t chunks = 0;
+    };
+    const auto frame_of = [&](bool lean, bool thin, std::uint64_t parts_off,
+                              std::optional<std::array<float, 2>> fade = std::nullopt) -> std::optional<Drawn> {
+        lean_tiles = lean;
+        app_map = true;
+        auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, clear);
+        lean_tiles = false;
+        app_map = false;
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, made.has_value());
+        made->buildings->draw_thin_walls(thin);
+        made->buildings->fade_every(fade);
+        style::CameraState c = cam;
+        c.parts |= parts_off;
+        auto pixels = draw(*made, c, sunny());
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, pixels.has_value());
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, made->settled);
+        CHECK(made->builder->state().grounded);
+        Drawn out{.pixels = std::move(*pixels), .chunks = made->buildings->thin_wall_chunks()};
+        made->renderer.reset();
+        return out;
+    };
+    const auto thin = frame_of(true, true, 0);
+    const auto sampled = frame_of(true, false, 0);
+    const auto bare = frame_of(true, false, style::camera_part::walls);
+    ATLAS_REQUIRE(thin.has_value());
+    ATLAS_REQUIRE(sampled.has_value());
+    ATLAS_REQUIRE(bare.has_value());
+    CHECK(thin->chunks > 0);
+    CHECK(sampled->chunks == 0);
+    // the walls' colour over the frame: each channel's sum against the frame without walls
+    const auto sums = [](const gpu::Pixels& p) {
+        std::array<double, 3> out{};
+        for (std::size_t i = 0; i < p.rgba.size(); i += 4) {
+            for (std::size_t k = 0; k < 3; ++k) out[k] += p.rgba[i + k];
+        }
+        return out;
+    };
+    const std::array<double, 3> a = sums(thin->pixels);
+    const std::array<double, 3> b = sums(sampled->pixels);
+    const std::array<double, 3> none = sums(bare->pixels);
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i < thin->pixels.rgba.size(); i += 4) {
+        changed += !std::equal(thin->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                               thin->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i + 3),
+                               sampled->pixels.rgba.begin() + static_cast<std::ptrdiff_t>(i))
+                       ? 1
+                       : 0;
+    }
+    double walls = 0;
+    double off = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+        walls += std::abs(b[k] - none[k]);
+        off += std::abs(a[k] - b[k]);
+    }
+    MESSAGE(std::format("from 9 km: the thin walls' draws over {} chunks change {} pixels; the walls' colour sums to "
+                        "{:.0f} levels over the frame without them on the samples, the thin walls' draws {:.0f} off "
+                        "({:.1f} %)",
+                        thin->chunks, changed, walls, off, walls > 0 ? 100.0 * off / walls : 0.0));
+    CHECK(changed > 20);
+    CHECK(walls > 1000.0);
+    CHECK(off < 0.1 * walls);
+    // while the tile fades (every tile's standing fade set, as the cover sets one fading in): half way the thin
+    // walls hold the pixels the dither keeps, as the samples' do, with as much of the walls' colour as on the samples
+    // there and about half of what they hold at rest; at the fade's start nothing is left of them
+    const std::array<float, 2> half{0.0F, 0.5F};
+    const std::array<float, 2> out{0.0F, 0.0F};
+    const auto thin_half = frame_of(true, true, 0, half);
+    const auto sampled_half = frame_of(true, false, 0, half);
+    const auto bare_half = frame_of(true, false, style::camera_part::walls, half);
+    const auto thin_out = frame_of(true, true, 0, out);
+    const auto sampled_out = frame_of(true, false, 0, out);
+    const auto bare_out = frame_of(true, false, style::camera_part::walls, out);
+    ATLAS_REQUIRE(thin_half.has_value());
+    ATLAS_REQUIRE(sampled_half.has_value());
+    ATLAS_REQUIRE(bare_half.has_value());
+    ATLAS_REQUIRE(thin_out.has_value());
+    ATLAS_REQUIRE(sampled_out.has_value());
+    ATLAS_REQUIRE(bare_out.has_value());
+    const std::array<double, 3> ah = sums(thin_half->pixels);
+    const std::array<double, 3> bh = sums(sampled_half->pixels);
+    const std::array<double, 3> none_half = sums(bare_half->pixels);
+    double walls_half = 0;
+    double thin_half_walls = 0;
+    double off_half = 0;
+    double thin_walls = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+        walls_half += std::abs(bh[k] - none_half[k]);
+        thin_half_walls += std::abs(ah[k] - none_half[k]);
+        off_half += std::abs(ah[k] - bh[k]);
+        thin_walls += std::abs(a[k] - none[k]);
+    }
+    MESSAGE(std::format("half way through a fade: the walls' colour sums to {:.0f} levels on the samples, the thin "
+                        "walls' draws {:.0f} off ({:.1f} %), {:.2f} of their sum at rest",
+                        walls_half, off_half, walls_half > 0 ? 100.0 * off_half / walls_half : 0.0,
+                        thin_walls > 0 ? thin_half_walls / thin_walls : 0.0));
+    CHECK(thin_half->chunks > 0);
+    CHECK(walls_half > 500.0);
+    CHECK(off_half < 0.1 * walls_half);
+    CHECK(thin_half_walls > 0.35 * thin_walls);
+    CHECK(thin_half_walls < 0.65 * thin_walls);
+    CHECK_MESSAGE(thin_out->pixels.rgba == sampled_out->pixels.rgba, "a thin wall left at its tile's fade's start");
+    CHECK_MESSAGE(thin_out->pixels.rgba == bare_out->pixels.rgba, "a wall left at its tile's fade's start");
+    // a finest tile's walls: no thin walls' draws, the same pixels with the switch and without
+    const auto fine = frame_of(false, true, 0);
+    const auto fine_sampled = frame_of(false, false, 0);
+    ATLAS_REQUIRE(fine.has_value());
+    ATLAS_REQUIRE(fine_sampled.has_value());
+    CHECK(fine->chunks == 0);
+    CHECK_MESSAGE(fine->pixels.rgba == fine_sampled->pixels.rgba, "a finest tile's walls changed");
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

@@ -80,6 +80,7 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     // sx, z alike), once for each run of rows of one place, as a tile's rows are added together. So a row costs what it
     // did in the frame drawn's own metres, and the frame drawn's own place, which moves nothing, ranks its rows to the
     // bit as then.
+    const auto building_of = items.building();
     std::uint32_t run = std::numeric_limits<std::uint32_t>::max();
     scene::ItemPlace run_place;
     double eye_x = 0;
@@ -95,6 +96,8 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
         // an item the other kind of frame draws (a bridge's railing of the app's map's set, or of the renders')
         if ((flags[i] & (options.grounded ? scene::item_flag::renders : scene::item_flag::app)) != 0) continue;
+        // the building a house stands in the place of this frame
+        if (options.replaced != 0 && building_of[i] == options.replaced) continue;
         // a row of a tile the frame does not draw, which no pass reads: no rank, and none of the work below
         if (options.by_tile) {
             if (!tile_known || tile[i] != tile_run) {

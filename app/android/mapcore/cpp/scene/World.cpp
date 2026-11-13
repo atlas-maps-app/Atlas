@@ -732,17 +732,31 @@ void World::take_neighbour_packs() noexcept {
 
 bool World::world_fading() const noexcept {
     const WorldFrame* w = world_tiles_ ? world_tiles_->frame() : nullptr;
-    return w != nullptr && w->fading;
+    // and while a tile waits for the bytes let go of for it: the frames keep coming until it is built
+    return w != nullptr && (w->fading || w->settling);
 }
 
 void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds) {
     if (!state.view) return;
     if (!world_tiles_) {
-        // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps'), which a
-        // map without the world never takes
+        // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps', up to a
+        // third), which a map without the world never takes
         const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
         if (device_ == nullptr || std::ranges::none_of(open, [](const auto& p) { return of_the_world(*p); })) return;
-        auto made = WorldTiles::create(*device_, store_, options_.heaps.total / 6);
+        // the world's heap: a sixth of the heaps' budget (at least 1 MiB), grown up to a third where the tiles a view
+        // draws need it (the pitched views from 60 to 1,000 km over the Netherlands, ENGINE.md step 11), within what
+        // one buffer binds; a test's heap instead
+        const vk::DeviceSize sixth =
+            std::max<vk::DeviceSize>(options_.heaps.total / 6, vk::DeviceSize{1} << 20U) & ~vk::DeviceSize{15};
+        // twice that, so its one doubling takes it to the budget exactly
+        vk::DeviceSize third = 2 * sixth;
+        if (options_.heaps.binding != 0) {
+            third = std::max(sixth, std::min(third, options_.heaps.binding & ~vk::DeviceSize{15}));
+        }
+        const vk::DeviceSize initial = options_.world_heap != 0 ? options_.world_heap : sixth;
+        const vk::DeviceSize budget =
+            options_.world_heap != 0 ? std::max(options_.world_heap, options_.world_heap_budget) : third;
+        auto made = WorldTiles::create(*device_, store_, initial, budget);
         if (!made) {
             log::error("vk world: its tiles: {}", made.error().text());
             device_ = nullptr; // not tried again
@@ -1336,6 +1350,20 @@ std::string World::tiles_line() const {
             finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
             if (d.tile->blank) ++land;
         }
+        // the world's heap (MB): its resident tiles' bytes of its buffer and of its budget, those the frame drew (of
+        // them its stand-ins') and the pinned ones', the resident tiles' parts (more than the tiles where one lies in
+        // parts), its largest free piece, the builds that found no room with the bytes the last asked for, the bytes
+        // the frame's wanted tiles asked for (with those of no build yet), the stand-ins let go of for the tiles they
+        // stood in for and the tiles it holds back for room; before the world's own words, which end the line
+        // (ci/smoke.sh reads them there)
+        const WorldStats ws = world_tiles_->stats();
+        const auto mb = [](vk::DeviceSize b) { return static_cast<double>(b) / 1.0e6; };
+        line +=
+            std::format(" world heap {:.1f} of {:.1f} up to {:.1f} drawn {:.1f} stand-ins {:.1f} pinned {:.1f} "
+                        "parts {} of {} piece {:.1f} no room {} last {:.2f} wanted {:.1f} unsized {} traded {} held {}",
+                        mb(ws.bytes), mb(ws.buffer), mb(ws.capacity), mb(ws.drawn_bytes), mb(ws.stand_in_bytes),
+                        mb(ws.pinned_bytes), ws.parts, ws.resident, mb(ws.largest_free), ws.no_room,
+                        mb(ws.no_room_bytes), mb(ws.wanted_bytes), ws.wanted_unsized, ws.traded, w->held);
         line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size() - land, finest, w->wanted,
                             w->bare);
         if (w->under) line += std::format(" under land {}", land);

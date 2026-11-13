@@ -61,6 +61,8 @@
 // streets and big roads as they lie, without their edges by their coverage (Ground::draw_least_width), the far
 // flicker's base; ATLAS_PINCH_LEAST_PX: the least width they are drawn at, device px (Ground::least_width_px; 2);
 // ATLAS_PINCH_THIN=0: its water narrower than 1.5 device px as it lies (Ground::draw_thin_water).
+// ATLAS_PINCH_THIN_WALLS=0: the levels' tiles' walls narrower than 2.5 device px on the samples as every other wall
+// (Buildings::draw_thin_walls), the far flicker's base.
 // ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
 // target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
 // ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
@@ -954,6 +956,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (map.world() != nullptr) map.world()->reserve_items(reserve_items);
             const std::uint64_t growths =
                 map.world() != nullptr && map.world()->items() != nullptr ? map.world()->items()->growths() : 0U;
+            // ATLAS_PINCH_THIN_WALLS=0: the levels' thin walls on the samples as every other wall, the far flicker's
+            // base (Buildings::draw_thin_walls)
+            if (passes::Buildings* p = buildings(); p != nullptr) {
+                p->draw_thin_walls(environment("ATLAS_PINCH_THIN_WALLS") != "0");
+            }
             const double at_lat = lat + (moved_north / 111'320.0);
             const double at_lon = lon + (moved_east / (111'320.0 * pymath::strict::cos(pymath::radians(lat))));
             style::CameraState c = camera(screen, at_lat, at_lon, bearing, pitch, d, rest);
@@ -1005,6 +1012,10 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                                     s.record.frame, s.record.gpu_frame, ripple));
                 if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
                     MESSAGE(std::format("{} {:6.0f} m: {}", tag, d, reflections_hash(*b)));
+                }
+                if (const passes::Buildings* p = buildings(); p != nullptr) {
+                    MESSAGE(std::format("{} {:6.0f} m: the thin walls' list of up to {} chunks", tag, d,
+                                        p->thin_wall_chunks()));
                 }
             }
             return s;

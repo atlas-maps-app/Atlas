@@ -687,7 +687,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 density = v.density.toDouble(), rest = rest, follow = state.follow != Follow.NONE,
                 pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = true,
                 location = location?.let { MapCameraSource.Location(it.at.lat, it.at.lon, it.accuracyM.toFloat(), it.heading?.toFloat()) },
-                off = off, worldUnder = under,
+                off = MapParts.cameraBits(off), worldUnder = under, lightCascades = MapParts.lightCascades(off),
             ),
         )
         publishedCamera = cam

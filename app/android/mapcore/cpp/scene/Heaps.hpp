@@ -87,6 +87,10 @@ struct HeapBudget {
     vk::DeviceSize initial = std::uint64_t{8} << 20U;
     vk::DeviceSize total = std::uint64_t{64} << 20U;
     vk::DeviceSize binding = 0;
+    /// Each growth within the device's budget as well (gpu::Memory::buffer's within_budget), and a growth that fails
+    /// ends the budget at the buffers as they are (Heaps::end_budget), so a range that finds no room waits for the room
+    /// they have, not for a growth that does not come: the world's heap (scene/WorldTiles.hpp).
+    bool within_device = false;
 };
 
 /// The app's map's budget on `device`: two buffers of as much as one storage buffer may bind
@@ -187,8 +191,13 @@ public:
     /// Frees the ranges and the old buffers whose frames have all finished (`finished`: the newest finished frame).
     void collect(std::uint64_t finished);
 
-    /// The budget as the buffers hold it (its total within two buffers' parts).
+    /// The budget as the buffers hold it when made (its total within two buffers' parts).
     [[nodiscard]] const HeapBudget& budget() const noexcept { return budget_; }
+    /// The budget's bytes now: budget().total, or less once it has ended (end_budget). Any thread.
+    [[nodiscard]] vk::DeviceSize total() const;
+    /// Ends the budget at the buffers as they are: the pieces beyond them go, and no range grows them. A growth that
+    /// fails does this where the budget is within the device's (HeapBudget::within_device); a test, to stand for one.
+    void end_budget();
     /// The heap's buffers now, their sizes together, and their version (it changes with every growth).
     [[nodiscard]] HeapBuffers buffers() const;
     [[nodiscard]] vk::DeviceSize capacity() const;
@@ -206,6 +215,18 @@ public:
     [[nodiscard]] vk::DeviceSize largest_with(std::span<const HeapRange> back, HeapKind kind = HeapKind::walls) const;
     /// The largest of those pieces that `back` joins: how near a tile's going comes to making room. Any thread.
     [[nodiscard]] vk::DeviceSize joined_with(std::span<const HeapRange> back, HeapKind kind = HeapKind::walls) const;
+    /// The sizes of the budget's pieces no range holds that a range of `kind` may take, by offset: the room a tile
+    /// placed in parts finds (scene/WorldTiles.hpp). Any thread; it walks the pieces.
+    [[nodiscard]] std::vector<vk::DeviceSize> free_pieces(HeapKind kind = HeapKind::walls) const;
+    /// The sizes of the pieces there would be with `back` and the retired ranges freed too, each joined to the pieces
+    /// beside it, of those a range of `kind` may take, by offset: which tiles' going makes room for a tile in parts.
+    /// Any thread.
+    [[nodiscard]] std::vector<vk::DeviceSize> pieces_with(std::span<const HeapRange> back,
+                                                          HeapKind kind = HeapKind::walls) const;
+    /// Cuts each piece no range holds into pieces of `piece` bytes with `gap` bytes between, which stay held as by a
+    /// range of `kind` for the heap's life (tests: a heap whose free bytes lie in pieces too small for a tile). Any
+    /// thread.
+    void fragment_for_tests(HeapKind kind, vk::DeviceSize piece, vk::DeviceSize gap);
     [[nodiscard]] HeapStats stats() const;
 
 private:
@@ -232,15 +253,19 @@ private:
     [[nodiscard]] vk::DeviceSize runs(std::span<const HeapRange> back, bool joined, HeapKind kind) const;
     /// Grows a buffer to hold `range` (allocate's slow path); the range given back when it cannot.
     [[nodiscard]] gpu::Result<HeapRange> hold(const HeapRange& range);
+    /// end_budget's work, under the exclusive lock and blocks_lock_.
+    void end_at_buffers();
     /// Whether `range` lies within its buffer as it is now (the capacity's atomics).
     [[nodiscard]] bool within(const HeapRange& range) const noexcept;
 
     const gpu::Device& device_;
     HeapBudget budget_;
-    std::array<vk::DeviceSize, 2> parts_{}; // each buffer's part of the budget (the second's 0 where one holds it all)
-    mutable std::shared_mutex lock_;        // shared: writers; exclusive: a growth
-    mutable std::mutex blocks_lock_;        // the pieces, used_ and ranges_
-    std::array<gpu::Buffer, 2> buffers_;    // under lock_; swapped by a growth under render_lock_ too
+    // each buffer's part of the budget (the second's 0 where one holds it all): written under the exclusive lock and
+    // blocks_lock_ (end_budget), so read under either
+    std::array<vk::DeviceSize, 2> parts_{};
+    mutable std::shared_mutex lock_;     // shared: writers; exclusive: a growth
+    mutable std::mutex blocks_lock_;     // the pieces, used_ and ranges_
+    std::array<gpu::Buffer, 2> buffers_; // under lock_; swapped by a growth under render_lock_ too
     // The budget's offsets no range holds, by offset: their sizes (no two touching).
     std::map<vk::DeviceSize, vk::DeviceSize> pieces_;
     std::array<vk::DeviceSize, heap_kinds> used_{};

@@ -42,6 +42,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::fx {
@@ -84,6 +85,11 @@ struct MapOptions {
     /// The triangle governor's budget instead of the device's (scene::triangle_budget): a test's, to set the bias to
     /// work or to measure a view's triangles with none (a budget no view reaches); 0 for the device's.
     std::uint64_t triangle_budget = 0;
+    /// The world's heap in bytes instead of the world's own (scene::WorldOptions::world_heap): a test's, to hold a
+    /// view's world tiles in less room than they take; 0 for the world's.
+    std::uint64_t world_heap = 0;
+    /// The bytes that heap may grow to (scene::WorldOptions::world_heap_budget): a test's; 0 for none past it.
+    std::uint64_t world_heap_budget = 0;
     /// The frame's clear colour instead of paper's (FrameOptions::clear): a test's, to tell where nothing draws.
     std::optional<std::array<float, 4>> clear;
 };
@@ -129,8 +135,12 @@ public:
     void set_markers(std::shared_ptr<const markers::MarkerSet> markers) noexcept { markers_ = std::move(markers); }
     /// The app's routes and areas from now on (MapCore.routes; null: none), drawn by the routes pass.
     void set_routes(std::shared_ptr<const routes::RouteSet> routes) noexcept { routes_ = std::move(routes); }
-    /// The building the app asks about from now on (MapCore.ask; none: no question open), drawn as asked.
-    void set_asked(std::optional<AskedBuilding> asked) noexcept { asked_ = asked; }
+    /// The building the app asks about from now on (MapCore.ask; none: no question open), drawn as asked; asked about
+    /// in a roof (AskedBuilding::roof), its house is read from the tile that draws it, now where one does and else as
+    /// one comes (next).
+    void set_asked(std::optional<AskedBuilding> asked);
+    /// The house the frames draw in the asked building's place (null: none), for tests and logs.
+    [[nodiscard]] const scene::House* house() const noexcept { return house_.get(); }
     /// The screen's haze, vignette and grain on or off from now on (the app's Look settings: FrameOptions::steps
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
@@ -237,6 +247,15 @@ private:
     std::shared_ptr<const markers::MarkerSet> markers_;
     std::shared_ptr<const routes::RouteSet> routes_;
     std::optional<AskedBuilding> asked_;
+    /// The asked building's house in the roof asked about (scene/House.hpp), read from the tile that draws the
+    /// building; the tile that said it draws none of it as itself (its key and pack: not read again for the same
+    /// question); and when the tiles are next looked through for it (seconds_), while no frame draws it.
+    std::shared_ptr<const scene::House> house_;
+    std::optional<std::pair<tiles::TileKey, std::string>> house_refused_;
+    double house_due_ = 0;
+    /// Reads the asked building's house where a resident tile draws the building and the house kept is not that
+    /// tile's.
+    void read_house();
     bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;

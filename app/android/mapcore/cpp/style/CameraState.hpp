@@ -55,7 +55,8 @@ inline constexpr std::size_t camera_state_size = 552;
 /// The most keep-out shapes a frame carries (CameraWriter.MAX_KEEP_OUTS).
 inline constexpr std::size_t max_keep_outs = 16;
 
-/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, LOCATION, HEADING, WORLD_UNDER).
+/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, LOCATION, HEADING, WORLD_UNDER,
+/// LIGHT_CASCADES).
 namespace camera_flag {
 /// The camera is at rest: the frame snaps to the SVG's precision (D4).
 inline constexpr std::uint32_t rest = 1U;
@@ -73,7 +74,11 @@ inline constexpr std::uint32_t heading = 32U;
 /// target): the world draws under the cover from every distance, not only beyond scene::world_from (ENGINE.md step 3,
 /// the core outside the countries). Its bit lies past version 2's five part flags (64 to 1024), which stay refused.
 inline constexpr std::uint32_t world_under = 2048U;
-inline constexpr std::uint32_t known = 0x83FU;
+/// The night's light on the ground by radiance cascades (passes/LightMap.hpp; the app's switch, off unless the user
+/// turns it on): the street lamps' and the open places' pools from maps the buildings cut, where the renders lay each
+/// as an ellipse. A flag, not a part left out, so that a state without it (every reference's) draws the renders'.
+inline constexpr std::uint32_t light_cascades = 4096U;
+inline constexpr std::uint32_t known = 0x183FU;
 } // namespace camera_flag
 
 /// The parts of the picture the map leaves out (CameraState::parts; CameraWriter.PART_* in Kotlin are their bit

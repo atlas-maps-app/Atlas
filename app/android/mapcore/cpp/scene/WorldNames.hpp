@@ -21,6 +21,10 @@
 //     handed on for a fade's length as leaving, and placement fades it out where it stands. Names are picked again at
 //     most ten times a second while the camera moves, and once at rest (again there when a tile that names places
 //     comes).
+//   - A water whose point does not show, or lies within its name's height of the frame's edge, is named where its
+//     water shows on the frame (its stand: scene/WaterStand.hpp), under the same rank. A stand is a place of the
+//     ground: it holds while it shows and is water, and the name goes back to the water's own point once that lies
+//     two heights clear of the edge. A name at a stand has an id of its own, so it fades between the two.
 //   - A name stands at its place in the tile that draws its ground, as that tile's light of it does; a lit place's
 //     name stands clear of its light at night (scene::name_rise, scene/WorldLook.hpp).
 //   - A name's look follows the camera's distance: a city's, a town's or a village's (a suburb's too) up to the
@@ -139,6 +143,13 @@ struct NameScale {
     double lon = 0;
 };
 
+/// Where a name stands, degrees: a water's own point, or its stand where that does not show (scene/WaterStand.hpp).
+struct NamePlace {
+    double lat = 0;
+    double lon = 0;
+    bool stand = false;
+};
+
 /// The first bit of a name's id: the boards' labels' ids, the app's, stay under it.
 inline constexpr std::uint32_t name_id_bit = 0x8000'0000U;
 
@@ -158,6 +169,10 @@ struct PickedName {
     /// (scene::name_rise).
     bool lit = false;
     double people = 0;
+    /// A water's name at its stand, not its own point; and the row's own point (a place's: where it stands).
+    bool stand = false;
+    double own_lat = 0;
+    double own_lon = 0;
 };
 
 /// The pick of a map's names.
@@ -174,14 +189,21 @@ public:
 
     /// Whether a place stands in view (the labels pass: on the frame and before the horizon).
     using InView = std::function<bool(double lat, double lon)>;
+    /// Where a water's name stands this pick (not a river's): its own point, a stand, or nothing where neither
+    /// shows; `held` is the stand the last pick gave it, if it stood at one, and `waters` the waters the frame's
+    /// tiles name, rivers apart (the labels pass: scene::WaterStands, which knows a water's rivals among them).
+    using Stand = std::function<std::optional<NamePlace>(const WorldName& water, const NamePlace* held,
+                                                         std::span<const WorldName* const> waters)>;
 
     /// The frame's names at `seconds`: picked again where a pick is due (the file's head; `rest`: the camera rests,
     /// `changed`: it is not where the last frame saw it), else the last pick's. `world` null, or a camera beyond the
     /// last distance: none (those shown leave). `extra` are names no tile holds (a test's), picked as a tile's are.
-    /// `scale` ranks the waters by their size on the screen and says where the camera looks.
+    /// `scale` ranks the waters by their size on the screen and says where the camera looks. `stand` says where a
+    /// water's name stands (none given: at its own point where that is in view, as a place's).
     [[nodiscard]] std::span<const PickedName> update(const WorldFrame* world, std::span<const WorldName> extra,
                                                      double distance, const InView& in_view, double seconds, bool rest,
-                                                     bool changed, const NameScale& scale = {});
+                                                     bool changed, const NameScale& scale = {},
+                                                     const Stand& stand = {});
 
     /// How many picks there were (for tests and logs).
     [[nodiscard]] std::uint64_t picks() const noexcept { return picks_; }
@@ -202,18 +224,21 @@ private:
         NameStyle style = NameStyle::city;
         std::int32_t priority = 0;
         std::uint32_t id = 0;
+        NamePlace place; ///< where it stands: its own point, or a water's stand
     };
 
     void pick(const WorldFrame* world, std::span<const WorldName> extra, double distance, const InView& in_view,
-              double seconds, const NameScale& scale);
+              double seconds, const NameScale& scale, const Stand& stand);
     /// Of the candidates that are waters' and rivers' rows, those named this pick: one of a name within
     /// water_apart_dp on the screen (the file's head); the others are dropped.
     void pick_waters(const NameScale& scale);
-    [[nodiscard]] Id& id_of(const WorldName& name, NameStyle style, double seconds);
+    /// The id of `name` in `style` standing at `place` (a name at another place is another name).
+    [[nodiscard]] Id& id_of(const WorldName& name, NameStyle style, const NamePlace& place, double seconds);
 
     std::unordered_multimap<std::string, Id> ids_; // by text
     std::uint32_t next_id_ = 1;
     std::vector<Candidate> candidates_;
+    std::vector<const WorldName*> waters_; // the pick's waters, rivers apart
     std::vector<PickedName> picked_;
     std::vector<PickedName> next_;
     std::vector<std::pair<std::uint32_t, double>> left_; // the ids leaving, and when each left

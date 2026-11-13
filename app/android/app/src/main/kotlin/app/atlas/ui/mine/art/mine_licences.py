@@ -29,7 +29,7 @@ import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = HERE
-while not os.path.isdir(os.path.join(ROOT, 'canvas')):
+while not os.path.isdir(os.path.join(ROOT, 'app', 'android')):  # the repository's root, in any checkout of it
     ROOT = os.path.dirname(ROOT)
 ANDROID = os.path.join(ROOT, 'app', 'android')
 OUT = os.path.join(ANDROID, 'app', 'src', 'main', 'res', 'raw', 'mine_licences.json')

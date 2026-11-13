@@ -788,6 +788,59 @@ TEST_CASE("ranks take an item flagged for the app's map only in it, and one flag
     }
 }
 
+TEST_CASE("ranks leave out the items of the building a house stands in the place of, and mark the asked one's") {
+    frame::Selectors selectors;
+    const std::uint16_t kind = selectors.kind("building");
+    selectors.set(kind, 300.0, 600.0, 1200.0);
+    // three items in a row about the target: a building's own, a part's keyed by that building, and another building's
+    const std::uint64_t asked = scene::owner_key(scene::owner_kind_area, 100);
+    const std::uint64_t other = scene::owner_key(scene::owner_kind_area, 101);
+    const std::array<std::uint64_t, 3> buildings{asked, asked, other};
+    scene::ItemTable items;
+    for (std::uint32_t i = 0; i < buildings.size(); ++i) {
+        const double x = (10.0 * i) - 10.0;
+        items.add({.x = x,
+                   .y = 1,
+                   .z = 0,
+                   .cut_x = x,
+                   .cut_z = 0,
+                   .order = scene::order_of(0, i),
+                   .kind = kind,
+                   .slots = {1, 1, 1, 1},
+                   .min_depth = 0.8F,
+                   .radius = 2.0F,
+                   .tile = 1,
+                   .building = buildings.at(i)});
+    }
+    const view::Camera camera({.target = {0, 0, 0},
+                               .yaw = 30.0,
+                               .pitch = 45.0,
+                               .dist = 100,
+                               .fov = 36,
+                               .width = 412,
+                               .height = 916,
+                               .cx = std::nullopt,
+                               .cy = 440});
+    frame::Ranks ranks;
+    // asked about, its own building drawn: every item ranked, the asked building's two marked for the hatch
+    ranks.update(items, camera, selectors, {.ground_slots = 100, .asked = asked, .hatched = true});
+    CHECK(ranks.order().size() == 3);
+    CHECK((ranks.table()[0] & shaders::RANK_ASKED) != 0U);
+    CHECK((ranks.table()[1] & shaders::RANK_ASKED) != 0U);
+    CHECK((ranks.table()[2] & shaders::RANK_ASKED) == 0U);
+    // its house in its place: the building's items, its part's too, take no rank; the other building's keeps its own
+    ranks.update(items, camera, selectors, {.ground_slots = 100, .asked = asked, .hatched = true, .replaced = asked});
+    CHECK(ranks.order().size() == 1);
+    CHECK(ranks.order()[0] == 2);
+    CHECK(ranks.table()[0] == shaders::RANK_NONE);
+    CHECK(ranks.table()[1] == shaders::RANK_NONE);
+    CHECK(ranks.table()[2] != shaders::RANK_NONE);
+    CHECK(ranks.slots() == 101);
+    // and back
+    ranks.update(items, camera, selectors, {.ground_slots = 100});
+    CHECK(ranks.order().size() == 3);
+}
+
 TEST_CASE("an item's band and detail are the ranks' choice in double, which a float depth or threshold can miss") {
     // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
     // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one

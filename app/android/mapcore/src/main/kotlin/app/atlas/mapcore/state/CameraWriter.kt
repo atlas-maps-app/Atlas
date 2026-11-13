@@ -53,6 +53,13 @@ object CameraWriter {
     const val WORLD_UNDER = 2048
 
     /**
+     * The night's light on the ground by radiance cascades (the core's passes/LightMap.hpp; the user, 12 November 2026:
+     * "Yes, try it"): the street lamps' and the open places' pools from maps the buildings cut. A flag and not a part
+     * left out, so that a state without it draws the renders' pools.
+     */
+    const val LIGHT_CASCADES = 4096
+
+    /**
      * The parts of the picture the map leaves out ([parts]): each one's bit number in that word (style::camera_part's
      * bits), [PARTS] of them. The map's own layers set two (MapLayer.TREES and SHADOWS off: [PART_TREES],
      * [PART_BUILDING_SHADOWS]); a debug build's Look settings switch every one, so the map's panel shows on the phone what
@@ -184,7 +191,7 @@ object CameraWriter {
     /** A direct, little-endian buffer for one camera state, all zeros (made once, then reused for every frame). */
     fun allocate(): ByteBuffer = ByteBuffer.allocateDirect(SIZE).order(ByteOrder.LITTLE_ENDIAN)
 
-    /** The version, the [flags] (REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, WORLD_UNDER) and the frame's [sequence] number. */
+    /** The version, the [flags] (REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, WORLD_UNDER, LIGHT_CASCADES) and the frame's [sequence] number. */
     fun header(out: ByteBuffer, sequence: Long, flags: Int) {
         check(out)
         out.putInt(VERSION_AT, VERSION)
