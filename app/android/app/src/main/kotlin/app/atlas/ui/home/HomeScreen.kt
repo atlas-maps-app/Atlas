@@ -233,7 +233,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             // out of what the words asked, back to the words; out of a chain a sign opened, back to where it was
             asked != null && found.within == null -> find.backFromAsked()?.let { words -> findText = words; typed.onText(words) }
             asked != null -> find.up()
-            found.node?.parent != null -> find.up()
+            // up to its shelf, or to the kind it was entered from through a door (Sport from Fun), as its band's arrow says
+            found.node?.let { found.cameFrom[it.id] ?: it.parent?.id } != null -> find.up()
             // out of the list of every kind to where it was opened, and from a kind opened on it back to it
             found.every?.let { e -> found.node == null || found.node?.id == e.entered } == true -> find.up()
             found.node != null && findFromGrid -> find.close()
@@ -474,6 +475,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 sheet = sheet, nav = nav, lang = lang, onPlace = openPlace,
                 onBack = ::stepBack,
                 onPulledAway = ::closeFind,
+                // opened on the grid, a kind's band keeps its arrow: back returns to the grid, which a pull down does not
+                rootArrow = findFromGrid,
                 onTyping = { scope.launch { sheet.animateTo(SheetStop.FULL) } },
                 focus = findFocus,
             )

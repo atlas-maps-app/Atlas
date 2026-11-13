@@ -15,10 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,7 +54,7 @@ internal const val EVERY_TAG = "every-kind"
 
 /**
  * The plain list of every kind (the owner, 6 November: "a plain all kinds list row sortable with every tag/kind that
- * exists"): a row a kind, its disc as its places' rows have it, its name over how many are near and open, the minutes
+ * exists"): a row a kind, its tile as its places' rows have it, its name over how many are near and open, the minutes
  * to the nearest at its end; the most first, the nearest or by name, only those with one open at a switch. A row opens
  * the kind over the map, and the way back returns here. Opened from inside a kind (a family's chips) it is that
  * kind's, under its band: every kind it holds, those none of which is near lighter after them, which a press looks
@@ -83,7 +82,8 @@ internal fun EveryKindList(
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag(EVERY_TAG), state = list, contentPadding = PaddingValues(bottom = room)) {
             item(key = "order") { EveryOrder(every, find) }
             if (every.scope != null) item(key = "further") { LookFurther(every, find) }
-            items(rows, key = { it.pulse.node.id }) { line ->
+            // the kinds, the rows of one panel as the places inside a kind are
+            itemsIndexed(rows, key = { _, it -> it.pulse.node.id }) { i, line ->
                 val p = line.pulse
                 val nowhere = (p.node.id in every.nowhere).takeIf { it }?.let { stringResource(if (every.unasked) R.string.find_not_on_phone else R.string.find_found_nowhere) }
                 val id = if (every.picking) HomeRow.idOf(p.node) else null
@@ -92,16 +92,20 @@ internal fun EveryKindList(
                     onClick = { if (id != null) find.pickForRow(id) else find.enterFromEvery(p.node.id) },
                     onLongClick = { onExplain(Explained(p.node)) },
                     inRow = id != null && id in row,
+                    seat = PanelSeat.of(i, rows.size),
                 )
             }
-            if (every.everything.isNotEmpty() && !every.picking) item(key = "everything") { EveryElse(every.everything.size, lang) { find.enterFromEvery(Browse.EVERYTHING.id) } }
+            if (every.everything.isNotEmpty() && !every.picking) item(key = "everything") {
+                Box(Modifier.padding(top = 10.dp)) { EveryElse(every.everything.size, lang) { find.enterFromEvery(Browse.EVERYTHING.id) } }
+            }
         }
     }
 }
 
 /**
  * The list's head: the way back, "Every kind" (or the kind it was opened from, on its band) and how many kinds it holds;
- * a kind's, which holds those none of which is near too, how many are.
+ * a kind's, which holds those none of which is near too, how many are. The way back stays on the band: it goes up to
+ * that kind, which a pull down does not ([bandArrow]).
  */
 @Composable
 private fun EveryHead(every: EveryKindView, lang: String, onBack: () -> Unit) {
@@ -172,10 +176,10 @@ private fun LookFurther(every: EveryKindView, find: SearchSheetModel) {
 }
 
 /**
- * A kind on the list: its disc, lighter where none is open till later as a closed place's is, or none is near; its name
+ * A kind on the list: its tile, lighter where none is open till later as a closed place's is, or none is near; its name
  * over how many are near and how many open, where any of those closes (a bench is never "open"), or that none is near,
  * or [nowhere] that looking further found none; the minutes to the nearest at its end, wherever it is. The chains among
- * its places peek out behind its disc ([KindLead]). Ticked where it is in the home's own row ([inRow]), on the list
+ * its places peek out behind its tile ([KindLead]). Ticked where it is in the home's own row ([inRow]), on the list
  * opened to add to it.
  */
 @Composable
@@ -189,6 +193,7 @@ private fun EveryRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     inRow: Boolean = false,
+    seat: PanelSeat? = null,
 ) {
     val node = p.node
     val ticked = stringResource(R.string.row_star)
@@ -207,24 +212,25 @@ private fun EveryRow(
         lead = { KindLead(node, chains, faded = p.count == 0 || p.open == 0 && p.opensAt != null) },
         trailing = if (inRow) ({ Symbol("ui-check", Modifier.padding(start = 10.dp), tint = Color(node.colour), size = 20.dp, contentDescription = ticked) }) else null,
         indent = NARROWER * depth.coerceAtMost(2),
+        seat = seat,
     )
 }
 
-/** How far a narrower kind stands in from the broader kind above it: its disc under the broader one's name. */
+/** How far a narrower kind stands in from the broader kind above it: its tile under the broader one's name. */
 private val NARROWER = 26.dp
 
 /**
- * A kind's disc with the chains behind it (the owner, 6 November: "For every kind if there are brands behind it show
- * them hiding behind the category symbol?", then "You choose"): their signs tucked behind the disc, peeking out over its
- * top, the one with the most branches on the right, each cut by a ring of the paper; the disc keeps its width, so the
+ * A kind's tile with the chains behind it (the owner, 6 November: "For every kind if there are brands behind it show
+ * them hiding behind the category symbol?", then "You choose"): their signs tucked behind the tile, peeking out over its
+ * top, the one with the most branches on the right, each cut by a ring of the paper; the tile keeps its width, so the
  * names stand in line. Only a chain in a colour of its own: half hidden, a neutral sign with half a letter says nothing.
- * Lighter with the disc where none is open till later.
+ * Lighter with the tile where none is open till later.
  */
 @Composable
 private fun KindLead(node: CategoryNode, chains: List<String>, faded: Boolean = false) {
-    val c = indexColors()
+    val ground = ground()
     val brands = remember(chains) { chains.mapNotNull { Brands.byId(it) }.filter { it.colour != null }.take(2) }
-    Box(Modifier.size(DISC)) {
+    Box(Modifier.size(KIND_TILE)) {
         // the second first, so the first covers it
         for (i in brands.indices.reversed()) {
             val b = brands[i]
@@ -237,20 +243,20 @@ private fun KindLead(node: CategoryNode, chains: List<String>, faded: Boolean = 
                     .alpha(if (faded) 1f - Palette.CLOSED_FADE else 1f)
                     .size(SIGN + 4.dp)
                     .clip(RoundedCornerShape(SIGN * 0.28f + 2.dp))
-                    .background(c.paper),
+                    .background(ground),
                 contentAlignment = Alignment.Center,
             ) { BrandSign(b, b.name, SIGN) }
         }
-        // the paper round the disc, which the signs go behind
-        if (brands.isNotEmpty()) Box(Modifier.align(Alignment.Center).requiredSize(DISC + 4.dp).clip(CircleShape).background(c.paper))
-        KindDisc(node.symbol, node.colour, tone = null, Modifier.align(Alignment.Center), faded = faded)
+        // the ground round the tile, which the signs go behind
+        if (brands.isNotEmpty()) Box(Modifier.align(Alignment.Center).requiredSize(KIND_TILE + 4.dp).clip(RoundedCornerShape(KIND_TILE * 0.3f + 2.dp)).background(ground))
+        KindTile(node.symbol, node.colour, tone = null, Modifier.align(Alignment.Center), faded = faded)
     }
 }
 
-private val DISC = 38.dp
+private val KIND_TILE = ROW_TILE
 private val SIGN = 22.dp
 private val PEEK_X = 9.dp
-private val PEEK_Y = 13.dp
+private val PEEK_Y = 11.dp
 private const val PEEK_TILT = 12f
 
 /** The last row from the grid: everything else on the map (a road, a canal) as the grid's last shelf, how many kinds it holds. */
@@ -262,6 +268,6 @@ private fun EveryElse(kinds: Int, lang: String, onClick: () -> Unit) {
         line = AnnotatedString(pluralStringResource(R.plurals.find_kinds, kinds, kinds)),
         onClick = onClick,
         lead = { KindLead(shelf, emptyList()) },
-        hairline = false,
+        seat = PanelSeat.ONLY,
     )
 }

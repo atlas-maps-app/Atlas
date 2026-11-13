@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -24,6 +23,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -62,6 +63,9 @@ import app.atlas.places.Brand
 import app.atlas.places.Palette
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.BrandSign
+import app.atlas.ui.kit.DarkColors
+import app.atlas.ui.kit.Kicker
+import app.atlas.ui.kit.LightColors
 import app.atlas.ui.kit.SheetLook
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -98,6 +102,14 @@ internal class IndexColors(
     val shadow: Color,
     val grabber: Color,
     val dark: Boolean,
+    /**
+     * The panel a list's rows sit in: What's here's own "NEAREST" panel, in its very shade by day and by night. It is
+     * not a colour of this sheet's own but the kit's muted card, the one value What's here reads too, so the two
+     * cannot drift (the owner, 12 November, of a shade written here apart from it: "I noticed the cream paper panel
+     * shade changed a shade more brownish yellow, it shouldnt", then "it should match the nearby panel shade, isnt it
+     * shared?").
+     */
+    val panel: Color,
 ) {
     /** Ink's opposite, for words on an ink chip. */
     val onInk: Color get() = if (dark) paper else Color.White
@@ -119,13 +131,13 @@ internal class IndexColors(
             paper = Color(SHEET_PAPER), tray = Color(0xFFF0ECE5), card = Color.White, ink = Color(0xFF14161B),
             soft = Color(0xFF5D616B), faint = Color(0xFF9A9EA6), hair = Color(0x1A14161B), shade = Color(0x123A2E1A),
             open = Color(0xFF178A4E), soon = Color(0xFFB0661A), brass = Color(0xFFB08D4A), shadow = Color(0x1F181C30),
-            grabber = Color(0xFFD8D4CC), dark = false,
+            grabber = Color(0xFFD8D4CC), dark = false, panel = LightColors.cardMuted,
         )
         val Dark = IndexColors(
             paper = Color(0xFF17181B), tray = Color(0xFF0F1012), card = Color(0xFF25272C), ink = Color(0xFFF2EEE6),
             soft = Color(0xFFAEB2BA), faint = Color(0xFF6F737C), hair = Color(0x1FFFFFFF), shade = Color(0x47000000),
             open = Color(0xFF4CC38A), soon = Color(0xFFE0A458), brass = Color(0xFFC9A65E), shadow = Color(0x8C000000),
-            grabber = Color(0xFF3A3C42), dark = true,
+            grabber = Color(0xFF3A3C42), dark = true, panel = DarkColors.cardMuted,
         )
     }
 }
@@ -148,8 +160,20 @@ internal fun indexFigure(size: Float, weight: Int = 750) = boardText(size, weigh
 
 /** Small tracked capitals (the words upper-cased by [Caps]). */
 internal val INDEX_CAPS = boardText(10f, 650, 13f, spacing = 1.4f)
-internal val INDEX_NAME = boardText(15f, 600, 19f)
+
+/** A row's name: the "NEAREST" row's, Geist 800 at 15 ([ROW_TITLE]). */
+internal val INDEX_NAME = ROW_TITLE
 internal val INDEX_META = boardText(12.5f, 450, 16f)
+
+/** The line under a row's name: the "NEAREST" row's, 12 on 15.5 ([ROW_LINE]). */
+internal val INDEX_LINE = ROW_LINE
+
+/** The kicker over a panel, as What's here heads its own ("NEAREST"): the kit's [Kicker], in this sheet's soft ink at night. */
+@Composable
+internal fun PanelKicker(text: String, modifier: Modifier = Modifier) {
+    val c = indexColors()
+    if (c.dark) Kicker(text, modifier, colour = c.soft) else Kicker(text, modifier)
+}
 
 /** A line of small capitals. */
 @Composable
@@ -158,6 +182,66 @@ internal fun Caps(text: String, modifier: Modifier = Modifier, colour: Color = i
 }
 
 // ------------------------------------------------------------------------------------------------------------ surfaces
+
+/**
+ * Where a row sits in a panel that a lazy list draws row by row: the first carries the panel's top corners, the last
+ * its bottom ones. The panel is What's here's "NEAREST" one, which is one card round its rows; a long list that makes
+ * its rows only as they scroll into view seats each with [panelSeat] and comes out the same.
+ */
+internal enum class PanelSeat(val top: Boolean, val bottom: Boolean) {
+    ONLY(true, true), FIRST(true, false), MIDDLE(false, false), LAST(false, true);
+
+    companion object {
+        /** The seat of row [index] of [count]. */
+        fun of(index: Int, count: Int): PanelSeat = of(index == 0, index >= count - 1)
+
+        /** The seat of a row that starts ([top]) or ends ([bottom]) its panel. */
+        fun of(top: Boolean, bottom: Boolean): PanelSeat = when {
+            top && bottom -> ONLY
+            top -> FIRST
+            bottom -> LAST
+            else -> MIDDLE
+        }
+    }
+}
+
+/** The corners of a panel: the kit's card's 22. */
+internal val PANEL_RADIUS = 22.dp
+
+/** How far a panel stands in from the sheet's edges. */
+internal val PANEL_OUT = 16.dp
+
+/** How far a panel's rows stand in from its edges: the "NEAREST" panel's 16. */
+internal val PANEL_IN = 16.dp
+
+/** A row's share of a panel of [colour]: in from the sheet's edges by [PANEL_OUT], round where its [seat] ends the panel. */
+internal fun Modifier.panelSeat(seat: PanelSeat, colour: Color): Modifier {
+    val top = if (seat.top) PANEL_RADIUS else 0.dp
+    val bottom = if (seat.bottom) PANEL_RADIUS else 0.dp
+    return padding(horizontal = PANEL_OUT).clip(RoundedCornerShape(topStart = top, topEnd = top, bottomEnd = bottom, bottomStart = bottom)).background(colour)
+}
+
+/**
+ * The ground a row's marks are cut out of (its status light's ring, the rim the signs behind a kind's tile go under):
+ * the panel the row sits in, null on the sheet's own paper.
+ */
+internal val LocalGround = compositionLocalOf<Color?> { null }
+
+/** The ground under a row's marks: its panel's, else the sheet's paper. */
+@Composable
+internal fun ground(): Color = LocalGround.current ?: indexColors().paper
+
+/**
+ * A panel of its own for what is no row of a list (a message, the rows still looked for), in from the sheet's edges
+ * as the lists' panels are, its marks cut out of it.
+ */
+@Composable
+internal fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val c = indexColors()
+    Box(modifier.fillMaxWidth().panelSeat(PanelSeat.ONLY, c.panel)) {
+        CompositionLocalProvider(LocalGround provides c.panel, content = content)
+    }
+}
 
 /** A raised card: [fill] on a soft shadow, with an edge where it meets the paper. */
 internal fun Modifier.raised(shape: Shape, c: IndexColors, y: Dp = 4.dp, blur: Dp = 14.dp, fill: Color = c.card): Modifier =
@@ -219,39 +303,36 @@ internal fun KindPin(symbol: String, colour: Int, modifier: Modifier = Modifier,
 }
 
 /**
- * A place's kind as a tinted disc, with its status light; [faded] where it is closed, as its light says it
- * ([closedThere]): half way into the paper ([Palette.CLOSED_FADE]), as its pin is lighter on the map.
+ * A place's kind as the "NEAREST" rows of What's here show it ([RowTile]): a tile filled with its colour, its symbol in
+ * white on it, as its pin on the map above; here with its status light. [faded] where it is closed, as its light says
+ * it ([closedThere]): half way into the paper under it ([Palette.CLOSED_FADE]), as its pin is lighter on the map.
  */
 @Composable
-internal fun KindDisc(
-    symbol: String, colour: Int, tone: Tone?, modifier: Modifier = Modifier, size: Dp = 38.dp, faded: Boolean = tone == Tone.CLOSED,
+internal fun KindTile(
+    symbol: String, colour: Int, tone: Tone?, modifier: Modifier = Modifier, size: Dp = ROW_TILE, faded: Boolean = tone == Tone.CLOSED,
 ) {
-    val c = indexColors()
-    val base = Color(colour)
     Box(modifier.size(size)) {
-        Box(
-            Modifier.fillMaxSize().closed(faded).clip(CircleShape).background(base.copy(alpha = if (c.dark) 0.24f else 0.13f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Symbol(symbol, tint = if (c.dark) lerp(base, Color.White, 0.3f) else base, size = size * 0.5f)
-        }
-        if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp))
+        Box(Modifier.closed(faded)) { RowTile(symbol, Color(colour), size) }
+        if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp))
     }
 }
 
-/** A chain's place on its own sign, in the colours it has in the street, with its status light ([signOf]); [faded] as [KindDisc]. */
+/** The side of a row's tile: the "NEAREST" row's 40. */
+internal val ROW_TILE = 40.dp
+
+/** A chain's place on its own sign, in the colours it has in the street, with its status light ([signOf]); [faded] as [KindTile]. */
 @Composable
-internal fun SignDisc(brand: Brand, tone: Tone?, modifier: Modifier = Modifier, size: Dp = 38.dp, faded: Boolean = tone == Tone.CLOSED) {
+internal fun SignTile(brand: Brand, tone: Tone?, modifier: Modifier = Modifier, size: Dp = ROW_TILE, faded: Boolean = tone == Tone.CLOSED) {
     Box(modifier.size(size)) {
-        BrandSign(brand, brand.name, size, Modifier.closed(faded))
-        if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp))
+        BrandSign(brand, brand.name, size, Modifier.closed(faded), shape = RoundedCornerShape(size * 0.3f))
+        if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp))
     }
 }
 
 /** A closed place's mark, where [faded]: half way into the paper under it, which shows through ([Palette.CLOSED_FADE]). */
 private fun Modifier.closed(faded: Boolean): Modifier = if (faded) alpha(1f - Palette.CLOSED_FADE) else this
 
-/** Open, closing soon, or closed (hollow), in a ring of the paper it sits on. */
+/** Open, closing soon, or closed (hollow), in a ring of the ground it sits on ([ground]). */
 @Composable
 internal fun StatusLight(tone: Tone, modifier: Modifier = Modifier, size: Dp = 13.dp) {
     val c = indexColors()
@@ -260,7 +341,7 @@ internal fun StatusLight(tone: Tone, modifier: Modifier = Modifier, size: Dp = 1
         Tone.SOON -> Modifier.background(c.soon)
         else -> Modifier.border(1.5.dp, c.faint, CircleShape)
     }
-    Box(modifier.size(size).clip(CircleShape).background(c.paper).padding(2.dp).clip(CircleShape).then(light))
+    Box(modifier.size(size).clip(CircleShape).background(ground()).padding(2.dp).clip(CircleShape).then(light))
 }
 
 /**

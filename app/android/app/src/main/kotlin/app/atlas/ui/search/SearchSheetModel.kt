@@ -101,6 +101,8 @@ data class SearchPrefs(
     val recent: List<String> = emptyList(),
     /** The places found shown as large cards to slide through ([ResultCards]), not as rows. */
     val cards: Boolean = false,
+    /** The grid's kinds shown as a list of rows, not as cards ([SearchSheetModel.showKindsList]). */
+    val kindsList: Boolean = false,
     /**
      * The kinds, by node id, whose view shows the places of their kin too ([SearchSheetModel.kin]; the owner, 6 November:
      * "Fill the view with them and save that as a combined view if desired?"): the banks in the cash machines' view.
@@ -368,9 +370,9 @@ class SearchSheetModel(
         viewModelScope.launch {
             services.settings.data.map(::prefsOf).distinctUntilChanged().collect { p ->
                 val s = mutable.value
-                // rows or cards is how the same places are shown, and the home's row is the home's: nothing is looked
-                // for or ranked again
-                if (p != s.prefs && p.copy(cards = s.prefs.cards, row = s.prefs.row) == s.prefs) {
+                // rows or cards is how the same places are shown, cards or a list how the grid's same kinds are, and the
+                // home's row is the home's: nothing is looked for or ranked again
+                if (p != s.prefs && p.copy(cards = s.prefs.cards, kindsList = s.prefs.kindsList, row = s.prefs.row) == s.prefs) {
                     mutable.value = s.copy(prefs = p)
                     return@collect
                 }
@@ -952,6 +954,9 @@ class SearchSheetModel(
     /** Shows the places found as large cards to slide through, or as rows; kept for every search after. */
     fun showCards(on: Boolean) = setPref(SettingsKeys.SEARCH_CARDS, on)
 
+    /** Shows the grid's kinds as a list of rows, or as cards; kept for every search after. */
+    fun showKindsList(on: Boolean) = setPref(SettingsKeys.SEARCH_KINDS_LIST, on)
+
     /**
      * Shows [node]'s kin in its view too, with its own places, or no longer ([SearchPrefs.together]): kept for the kind,
      * so that its view opens so from then on (the owner, 6 November: "save that as a combined view if desired").
@@ -1400,6 +1405,7 @@ class SearchSheetModel(
             mode = p[SettingsKeys.SEARCH_MODE]?.let { runCatching { TravelMode.valueOf(it) }.getOrNull() } ?: TravelMode.WALK,
             recent = recentOf(p[SettingsKeys.SEARCH_RECENT]),
             cards = p[SettingsKeys.SEARCH_CARDS] ?: false,
+            kindsList = p[SettingsKeys.SEARCH_KINDS_LIST] ?: false,
             together = p[SettingsKeys.SEARCH_TOGETHER].orEmpty(),
             row = HomeRow.ids(p[SettingsKeys.HOME_ROW]),
         )

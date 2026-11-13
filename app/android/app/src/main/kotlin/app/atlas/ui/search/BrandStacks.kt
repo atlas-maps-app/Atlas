@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.atlas.R
 
-/** A stack of chains, and the kind's disc that leads one dealt out: for tests to find. */
+/** A stack of chains, and the kind's tile that leads one dealt out: for tests to find. */
 internal const val BRAND_STACK_TAG = "brand-stack"
 internal const val BRAND_STACK_HEAD_TAG = "brand-stack-head"
 
@@ -112,12 +112,12 @@ internal fun ChainStack(
     }
 }
 
-/** The head of a stack dealt out: its kind's disc, [size] wide, over [name] (and [sub]); pressed, it stacks it again. */
+/** The head of a stack dealt out: its kind's tile, [size] wide, over [name] (and [sub]); pressed, it stacks it again. */
 @Composable
 internal fun StackHead(stack: BrandStack, name: String, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, sub: String? = null) {
     val kind = stack.kind
     SignColumn(onClick, modifier.testTag(BRAND_STACK_HEAD_TAG), label = stringResource(R.string.find_brands_gather)) {
-        if (kind != null) KindDisc(kind.symbol, kind.colour, tone = null, size = size) else Box(Modifier.size(size))
+        if (kind != null) KindTile(kind.symbol, kind.colour, tone = null, size = size) else Box(Modifier.size(size))
         SignWords(name, sub)
     }
 }

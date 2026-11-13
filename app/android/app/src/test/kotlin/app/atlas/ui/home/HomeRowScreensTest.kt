@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
@@ -160,8 +161,10 @@ class HomeRowScreensTest {
         compose.onNodeWithContentDescription("Albert Heijn").performScrollTo().performClick()
         until { isOn("Albert Heijn") }
         capture("home_chain")
-        // back from the chain the row opened closes the sheet, as from a kind it opened
-        compose.onNodeWithContentDescription("Back").performClick()
+        // back from the chain the row opened closes the sheet, as from a kind it opened: the phone's back, the band has no arrow
+        assertTrue("no arrow on the band", compose.onAllNodes(hasContentDescription("Back")).fetchSemanticsNodes().isEmpty())
+        val activity = (compose as AndroidComposeTestRule<*, *>).activity
+        compose.runOnUiThread { activity.onBackPressedDispatcher.onBackPressed() }
         until { !isOn("Albert Heijn") }
         assertTrue("the search bar is back", shows("Search or ask") || compose.onAllNodes(hasText("Search or ask")).fetchSemanticsNodes().isNotEmpty())
     }

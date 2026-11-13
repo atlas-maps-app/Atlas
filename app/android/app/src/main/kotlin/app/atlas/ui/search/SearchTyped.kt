@@ -59,19 +59,19 @@ internal fun LazyListScope.typedPane(
     if (results != null && results.refinements.isNotEmpty()) item(key = "chips") { Refinements(results, text.selected, typed::toggle) }
     val open: (Place) -> Unit = { p -> typed.remember(field, p); onPlace(p) }
     val onQuery = { typed.remember(field, null) }
-    val message = Modifier.padding(16.dp)
     val refined = text.refined
     when {
         text.error != null -> item(key = "error") {
-            StateMessage("ui-alert-triangle", stringResource(R.string.search_failed), message, text = text.error, tint = Color(0xFFC8322A))
+            Panel { StateMessage("ui-alert-triangle", stringResource(R.string.search_failed), text = text.error, tint = Color(0xFFC8322A)) }
         }
         results == null -> item(key = "looking") { Looking() }
-        refined != null && refined.hits.isEmpty() -> item(key = "none-left") { StateMessage("ui-filter", stringResource(R.string.search_none_left), message) }
+        refined != null && refined.hits.isEmpty() -> item(key = "none-left") { Panel { StateMessage("ui-filter", stringResource(R.string.search_none_left)) } }
+        // what the words found, the rows of one panel as the "NEAREST" rows of What's here are
         refined != null -> itemsIndexed(refined.hits) { i, h ->
-            TypedPlace(h.place, h.record.name(lang), null, 1, h.distance, h.open, here, mode, lang, now, hairline = i < refined.hits.lastIndex) { open(h.place) }
+            TypedPlace(h.place, h.record.name(lang), null, 1, h.distance, h.open, here, mode, lang, now, PanelSeat.of(i, refined.hits.size)) { open(h.place) }
         }
         results.items.isEmpty() -> item(key = "none") {
-            StateMessage("ui-search", stringResource(R.string.search_nothing, field.trim()), message, text = stringResource(R.string.search_nothing_text))
+            Panel { StateMessage("ui-search", stringResource(R.string.search_nothing, field.trim()), text = stringResource(R.string.search_nothing_text)) }
         }
         else -> {
             // a chain the words name outright leads as its page's band, a tap from its page (as the search key opens it)
@@ -91,8 +91,9 @@ internal fun LazyListScope.typedPane(
                     }
                 }
             }
-            val rows = results.items.filter { it !is SearchItem.Recent && it !== named }
-            itemsIndexed(rows) { i, item -> TypedRow(item, here, mode, lang, now, nav, open, onQuery, onOpen, hairline = i < rows.lastIndex) }
+            // the lines of the answer; what is a card of its own above them, or the field's own (a recent), is no row
+            val rows = results.items.filter { it !is SearchItem.Recent && it !== named && it !is SearchItem.Count && it !is SearchItem.Hours && it !is SearchItem.Fact }
+            itemsIndexed(rows) { i, item -> TypedRow(item, here, mode, lang, now, nav, open, onQuery, onOpen, PanelSeat.of(i, rows.size)) }
         }
     }
 }
@@ -120,29 +121,29 @@ private fun TypedRow(
     open: (Place) -> Unit,
     onQuery: () -> Unit,
     onOpen: (SearchItem) -> Unit,
-    hairline: Boolean,
+    seat: PanelSeat,
 ) {
     when (item) {
-        is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, hairline) { open(item.hit.place) }
-        is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, hairline) { open(item.hit.place) }
-        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place), 1, item.distance, null, here, mode, lang, now, hairline, online = true) { open(item.place) }
+        is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
+        is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
+        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place), 1, item.distance, null, here, mode, lang, now, seat, online = true) { open(item.place) }
         is SearchItem.Kind -> {
             // kinds are nouns: lower case inside a sentence, except in German
             val label = if (lang == "de") item.label else item.label.lowercase(Locale.getDefault())
             // the kind in the tree, so that it opens here as the sentence's first word
             val node = remember(item.query) { kindNode(item.query) }
-            TypedWay(stringResource(R.string.search_every, label), stringResource(R.string.search_every_sub, item.count), { KindPin(item.symbol, node?.colour ?: ASK, size = 38.dp) }, hairline, lines = 2) {
+            TypedWay(stringResource(R.string.search_every, label), stringResource(R.string.search_every_sub, item.count), { KindTile(item.symbol, node?.colour ?: ASK, tone = null) }, seat, lines = 2) {
                 onQuery()
                 onOpen(item)
             }
         }
         is SearchItem.BrandResult -> TypedWay(
-            stringResource(R.string.search_brand_all, item.count, brandName(item.brand)), stringResource(R.string.search_brand_sub), { BrandLogo(item.brand, 38.dp) }, hairline,
+            stringResource(R.string.search_brand_all, item.count, brandName(item.brand)), stringResource(R.string.search_brand_sub), { BrandLogo(item.brand, ROW_TILE) }, seat,
         ) { onQuery(); onOpen(item) }
         is SearchItem.GoodsResult -> {
             val kinds = item.sellers.filter { it.count > 0 }
             val line = listOf(pluralStringResource(R.plurals.search_goods_kinds, kinds.size, kinds.size), kinds.take(3).joinToString(", ") { it.label }).filter { it.isNotEmpty() }.joinToString(" · ")
-            TypedWay(item.label, line, { KindPin(item.symbol, GOODS, size = 38.dp) }, hairline) { onQuery(); onOpen(item) }
+            TypedWay(item.label, line, { KindTile(item.symbol, GOODS, tone = null) }, seat) { onQuery(); onOpen(item) }
         }
         is SearchItem.Structured -> {
             val n = item.results.firstOrNull()?.total ?: 0
@@ -150,11 +151,11 @@ private fun TypedRow(
             TypedWay(
                 item.parsed.chips.filter { it.row == 0 && it.step == 0 }.joinToString(" ") { it.label }.ifEmpty { item.parsed.text },
                 if (plan) pluralStringResource(R.plurals.search_plan_steps, item.parsed.steps.size, item.parsed.steps.size) else pluralStringResource(R.plurals.search_query_places, n, n),
-                { KindPin(if (plan) "fact.new" else "ui.query-open", if (plan) ASK else NEAR, size = 38.dp) }, hairline, badge = "ui-cloud".takeIf { item.online },
+                { KindTile(if (plan) "fact.new" else "ui.query-open", if (plan) ASK else NEAR, tone = null) }, seat, badge = "ui-cloud".takeIf { item.online },
             ) { onQuery(); onOpen(item) }
         }
         is SearchItem.Coordinate -> TypedWay(
-            CoordinateFormat.decimal(item.location), item.plusCode + " · " + shortDistance(Geo.distance(here, item.location)), { KindPin("ui-map-pin", POINT, size = 38.dp) }, hairline,
+            CoordinateFormat.decimal(item.location), item.plusCode + " · " + shortDistance(Geo.distance(here, item.location)), { KindTile("ui-map-pin", POINT, tone = null) }, seat,
         ) { onQuery(); nav.go(Dest.WhatsHere(item.location.lat, item.location.lon, go = true)) }
         is SearchItem.Recent -> Unit
         // the answers to "how many", "opening times" and "how tall is" are cards of their own, above the lines
@@ -166,7 +167,7 @@ private fun TypedRow(
             val past = item.via.takeIf { it.isNotEmpty() }?.let { v -> stringResource(R.string.search_route_via, v.joinToString(", ") { it.name ?: it.text }) }
             TypedWay(
                 stringResource(R.string.search_route_to, to.name ?: to.text), listOfNotNull(start, past).joinToString(" · "),
-                { KindPin("ui-route", NEAR, size = 38.dp) }, hairline,
+                { KindTile("ui-route", NEAR, tone = null) }, seat,
             ) {
                 onQuery()
                 nav.go(routeTo(item))
@@ -189,7 +190,7 @@ internal fun routeTo(item: SearchItem.Route): Dest.Route {
 internal fun viaOf(stops: List<Pair<LatLon, String>>): String? =
     stops.joinToString("|") { (at, name) -> String.format(Locale.ROOT, "%.6f,%.6f,%s", at.lat, at.lon, name.replace('|', ' ')) }.ifEmpty { null }
 
-/** A place among typed results: how far, its kind's disc with the open light, its name, open or not and its kind. */
+/** A place among typed results, a row of their panel: its kind's tile with the open light, its name, open or not, its kind and how far. */
 @Composable
 private fun TypedPlace(
     place: Place,
@@ -202,7 +203,7 @@ private fun TypedPlace(
     mode: TravelMode,
     lang: String,
     now: LocalDateTime,
-    hairline: Boolean,
+    seat: PanelSeat,
     online: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -216,20 +217,20 @@ private fun TypedPlace(
     val more = if (parts > 1) pluralStringResource(R.plurals.search_parts, parts, parts) else null
     val stepFree = if (line.stepFree) stringResource(R.string.search_step_free) else null
     IndexLine(
-        line.summary.name, statusOf(words, tone, null, listOfNotNull(stepFree, subtitle ?: line.summary.kind, more)), onClick, Modifier.testTag(PLACE_TAG),
+        line.summary.name, statusOf(words, tone, null, listOfNotNull(stepFree, subtitle ?: line.summary.kind, more, metres?.let(::shortDistance)?.takeIf { minutes != null && minutes < 100 })), onClick, Modifier.testTag(PLACE_TAG),
         reach = { Reach(minutes, metres) },
-        lead = { KindDisc(line.summary.symbol, line.summary.colour, tone) },
+        lead = { KindTile(line.summary.symbol, line.summary.colour, tone) },
         trailing = if (online) ({ Symbol("ui-cloud", tint = c.faint, size = 14.dp) }) else null,
-        hairline = hairline,
+        seat = seat,
     )
 }
 
 /** A way on from typed words (every one of a kind, a brand's branches, a query, a point): its key and an arrow. */
 @Composable
-private fun TypedWay(title: String, line: String?, lead: @Composable () -> Unit, hairline: Boolean, lines: Int = 1, badge: String? = null, onClick: () -> Unit) {
+private fun TypedWay(title: String, line: String?, lead: @Composable () -> Unit, seat: PanelSeat, lines: Int = 1, badge: String? = null, onClick: () -> Unit) {
     val c = indexColors()
     IndexLine(
-        title, line?.let { AnnotatedString(it) }, onClick, lead = lead, titleLines = lines, hairline = hairline,
+        title, line?.let { AnnotatedString(it) }, onClick, lead = lead, titleLines = lines, seat = seat,
         trailing = {
             Row(Modifier.padding(start = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 badge?.let { Symbol(it, tint = c.faint, size = 14.dp) }
