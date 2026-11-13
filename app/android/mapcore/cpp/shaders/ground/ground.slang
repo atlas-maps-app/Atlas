@@ -17,7 +17,9 @@
 //     than SOFT_PX device px has its edges drawn by their coverage, and one narrower than the draw's least width is
 //     drawn that wide at the share of it its width covers (GROUND_SOFT, soft_point), so that its colour across it
 //     holds while it moves, where 4 samples a pixel would step; a tile fading in keeps the least width on the samples
-//     (GROUND_LEAST, least_point: as wide as the draw's least width, at its share).
+//     (GROUND_LEAST, least_point: as wide as the draw's least width, at its share). In a frame where a tile fades in
+//     the settled tiles' draws take colour_mark_fs, which marks in the stencil the pixels they ink, and the fading
+//     tiles' fills (fill_fading_vs with colour_over_fs) keep off them, so a street both hold is drawn once.
 //   - water_vs: the water's pieces' fans at the street's height or at their water level, counted in the stencil
 //     (front faces increment, back faces decrement, wrapping), so the clips are nonzero unions (passes/Water.cpp).
 //   - thin_vs, thin_band_vs and thin_fs: the app's map's thin water (passes/Water.cpp), where the water is narrower on
@@ -544,6 +546,18 @@ ColourOut colour_over_fs(StreetOut v) {
     ColourOut o = colour_fs(v.fill);
     o.colour.a *= cover_of(v.cover) * soft_share(v.soft);
     o.colour = float4(o.colour.rgb * o.colour.a, o.colour.a);
+    return o;
+}
+
+/// colour_over_fs where its fragment inks its pixel: the settled streets' draws in a frame where a tile fades in,
+/// which mark in the stencil the pixels they ink (passes/Ground.cpp's record_streets, ground_stencil::marks), so not
+/// where a soft street's ramp leaves its outer half pixel without ink.
+[shader("fragment")]
+ColourOut colour_mark_fs(StreetOut v) {
+    ColourOut o = colour_over_fs(v);
+    if (!(o.colour.a > 0.0f)) {
+        discard;
+    }
     return o;
 }
 
