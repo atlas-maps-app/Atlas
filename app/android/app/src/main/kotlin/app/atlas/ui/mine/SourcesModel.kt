@@ -21,12 +21,12 @@ object SourcesModel {
         hosts = listOf("creativecommons.tankerkoenig.de"),
     )
 
-    /** Atlas's own packs, released on GitHub: the map's windows read in place, and the regions taken offline. */
+    /** Atlas's own packs, released on GitHub: the map's windows read in place, the terrain's heights, and the regions taken offline. */
     val ATLAS_PACKS = ProviderInfo(
         id = "atlas-packs", name = "Atlas's packs", licence = "ODbL",
         attribution = "Map data © OpenStreetMap contributors; extracts by Geofabrik; house numbers OpenStreetMap lacks from OpenAddresses and its sources",
         url = "https://github.com/atlas-maps-app/Atlas/releases",
-        note = "The map's windows and offline regions, built on GitHub from OpenStreetMap's data; each window is read by its own bytes.",
+        note = "The map's windows and offline regions, built on GitHub from OpenStreetMap's data, and the terrain's heights, from Copernicus and the national elevation models; each is read by its own bytes.",
         hosts = listOf("github.com", "release-assets.githubusercontent.com"),
     )
 

@@ -409,8 +409,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp)
                 .keepsLabelsOff("bottom"),
         ) {
+            // the relief's sources after OpenStreetMap while the map draws it ("© OpenStreetMap · Copernicus · AHN")
             Text(
-                stringResource(R.string.home_attribution),
+                stringResource(R.string.home_attribution) + vm.map.credits.joinToString("") { " · $it" },
                 Modifier.align(Alignment.End).padding(end = 4.dp, bottom = 10.dp),
                 style = boardText(9f, FontWeight.Normal).copy(
                     shadow = androidx.compose.ui.graphics.Shadow(
