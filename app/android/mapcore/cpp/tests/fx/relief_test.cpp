@@ -234,7 +234,7 @@ TEST_CASE("a tile's bake: a plane's normal and whole sky, a pit's less, and edge
     const tiles::TileKey key(14, 8412, 5384); // the dunes' latitude
     constexpr std::uint16_t side = 65;
     constexpr std::uint16_t apron = 8;
-    const std::uint32_t flat_texel = fx::relief_texel(0.0, 0.0, 1.0);
+    constexpr std::uint32_t flat_texel = fx::relief_texel(0.0, 0.0, 1.0);
     const double spacing = fx::relief_spacing(key.z, key.y, side, side / 2);
     // 40,075 km of equator over 2^14 tiles of 64 steps, at 52.4 degrees north
     CHECK(spacing ==
@@ -245,7 +245,7 @@ TEST_CASE("a tile's bake: a plane's normal and whole sky, a pit's less, and edge
         const fx::ReliefBake bake = fx::bake_relief(flat.heights, style);
         REQUIRE(bake.side == side);
         REQUIRE(bake.texels.size() == std::size_t{side} * side);
-        CHECK(std::ranges::all_of(bake.texels, [flat_texel](std::uint32_t t) { return t == flat_texel; }));
+        CHECK(std::ranges::all_of(bake.texels, [](std::uint32_t t) { return t == flat_texel; }));
     }
     SUBCASE("a plane rising east and south") {
         // a step of height a sample east, two a sample south: the slopes over the spacing
