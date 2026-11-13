@@ -76,9 +76,9 @@ struct Heights {
 
     /// The sample at row `r`, column `c` of the tile (each −apron to side − 1 + apron), in steps.
     [[nodiscard]] constexpr std::int64_t steps(std::int32_t r, std::int32_t c) const noexcept {
-        const auto row = static_cast<std::size_t>(r + apron);
-        const auto col = static_cast<std::size_t>(c + apron);
-        return base + samples[(row * width()) + col];
+        const std::int32_t row = r + apron; // 0 to width() - 1
+        const std::int32_t col = c + apron;
+        return base + samples[(static_cast<std::size_t>(row) * width()) + static_cast<std::size_t>(col)];
     }
     /// Its height, metres.
     [[nodiscard]] constexpr double metres(std::int32_t r, std::int32_t c) const noexcept {
