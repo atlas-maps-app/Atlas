@@ -1,6 +1,6 @@
 {
   "about": "The references around the world (ENGINE.md step 5, \"References around the world\"): the app's map over the world's own packs alone, world-refs (the tiles of these frames cut from a world release's parts by `packer world-refs`, and its globe), where no country has levels (the camera's WORLD_UNDER), as the phone draws it (every effect) at the frame below: the target at cy of its height from the top, straight down unless pitched, north up unless a bearing is given. A frame with a time is drawn at that instant in its zone (CoreMoment's live moment), the others at a moment of the port's. likeness/WorldPackRefs.kt's WorldPackRefsTest draws them on lavapipe in world.yml's refs job (a frame that cannot be decoded or drawn fails it) and holds the engine to the current version's frames once a version holds them, over the world they are of (the version's world, the release the refs job names in ATLAS_WORLD_REFS_RELEASE): another world's data draws other pixels with the same engine, so its frames are only proposed. A deliberate change is a new version, its frames from the refs job's proposal (the report's world-refs/world-refs.json).",
-  "version": "2",
+  "version": "3",
   "frame": {"width": 1080, "height": 2400, "density": 2.6213592233009706, "cy": 0.48},
   "frames": [
     {"name": "tokyo 30 km noon", "lat": 35.6812, "lon": 139.7671, "distance": 30000, "pitch": 0, "time": "2026-03-20T03:00:00Z", "zone": "Asia/Tokyo"},
@@ -65,6 +65,10 @@
           "the board": "a0b3c3a01fb20e32fed39267dad47c6136bfb5f53d2d308f28b12bb9bc42a481"
         }
       }
+    },
+    "3": {
+      "note": "world-20261102-planet-3, the published world (world-latest since 13 November), drawn on app 78a2c808: the engine since version 2 with the weather's fade beyond 600 km (weatherfade), the haze's stops over the bent ground beyond 18 km (benthaze) and the Globe board's stars behind the Earth (backdrop). Its frames come from the refs run on branch worldpixels.",
+      "world": "world-20261102-planet-3"
     }
   }
 }
