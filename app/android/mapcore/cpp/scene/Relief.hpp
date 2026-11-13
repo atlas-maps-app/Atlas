@@ -174,7 +174,7 @@ private:
     /// Bakes raster `key`; null where it cannot (no such raster, a damaged chunk, or a chunk not on the phone, which
     /// `absent` then names).
     [[nodiscard]] std::unique_ptr<ReliefTile> build(const tiles::TileKey& key, Scratch& scratch,
-                                                    std::optional<WorldWant>& absent);
+                                                    std::optional<WorldWant>& absent) const;
     [[nodiscard]] const Hit& hit_of(const tiles::TileKey& key);
     /// Takes the store's terrain packs: true where they changed (what was read from a pack gone is let go).
     bool take_packs();
@@ -200,7 +200,7 @@ private:
     std::string sources_;
     ReliefStats stats_;
     std::function<void()> wake_;
-    std::jthread worker_; // last: stopped and joined before the rest goes
+    std::jthread worker_; // last: made once the rest is, stopped and joined before the rest goes
 };
 
 } // namespace atlas::scene

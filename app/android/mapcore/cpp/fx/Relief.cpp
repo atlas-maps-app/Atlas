@@ -2,6 +2,7 @@
 #include "fx/Relief.hpp"
 
 #include "base/log.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "gen/data/relief_style.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/Values.hpp"
@@ -113,7 +114,9 @@ const ReliefStyle& relief_style() noexcept {
 shaders::ReliefLight relief_light(const shaders::Theme& theme, const ReliefStyle& style, bool sky_view,
                                   double strength) noexcept {
     // the sky's side, a unit vector
-    const double side_length = std::hypot(style.sky_side[0], style.sky_side[1], style.sky_side[2]);
+    const double side_length =
+        std::sqrt((style.sky_side[0] * style.sky_side[0]) + (style.sky_side[1] * style.sky_side[1]) +
+                  (style.sky_side[2] * style.sky_side[2]));
     const std::array<double, 3> side{style.sky_side[0] / side_length, style.sky_side[1] / side_length,
                                      style.sky_side[2] / side_length};
     std::array<double, 3> sun{0.0, 1.0, 0.0};
@@ -124,7 +127,7 @@ shaders::ReliefLight relief_light(const shaders::Theme& theme, const ReliefStyle
         k = style.night;
     } else {
         const shaders::double3 l = shaders::theme_sun_vector(theme);
-        const double length = std::hypot(l.x, l.y, l.z);
+        const double length = std::sqrt((l.x * l.x) + (l.y * l.y) + (l.z * l.z));
         const double rise = length > 0.0 ? l.y / length : 0.0;
         // how much of the day's sun there is: none under an overcast sky or under the horizon
         const double day =
@@ -161,8 +164,8 @@ double relief_spacing(std::uint8_t z, std::uint32_t y, std::uint32_t side, std::
     const double tiles = std::ldexp(1.0, z);
     const double span = static_cast<double>(side - 1U);
     const double fraction = (static_cast<double>(y) + (static_cast<double>(r) / span)) / tiles;
-    const double latitude = std::atan(std::sinh(std::numbers::pi * (1.0 - (2.0 * fraction))));
-    return (equator * std::cos(latitude)) / (tiles * span);
+    const double latitude = pymath::atan(pymath::sinh(std::numbers::pi * (1.0 - (2.0 * fraction))));
+    return (equator * pymath::cos(latitude)) / (tiles * span);
 }
 
 ReliefBake bake_relief(const tiles::Heights& heights, const ReliefStyle& style) {
@@ -182,12 +185,12 @@ ReliefBake bake_relief(const tiles::Heights& heights, const ReliefStyle& style) 
     for (std::uint32_t d = 0; d < directions; ++d) {
         const double a = (2.0 * std::numbers::pi * d) / directions;
         for (std::uint32_t t = 1; t <= reach; ++t) {
-            const auto dc = static_cast<std::int32_t>(std::lround(t * std::cos(a)));
-            const auto dr = static_cast<std::int32_t>(std::lround(t * std::sin(a)));
+            const auto dc = static_cast<std::int32_t>(std::lround(t * pymath::cos(a)));
+            const auto dr = static_cast<std::int32_t>(std::lround(t * pymath::sin(a)));
             steps.push_back({.dr = dr,
                              .dc = dc,
                              .offset = (static_cast<std::ptrdiff_t>(dr) * width) + dc,
-                             .inverse = 1.0 / std::hypot(static_cast<double>(dr), dc)});
+                             .inverse = 1.0 / std::sqrt(static_cast<double>((dr * dr) + (dc * dc)))});
         }
     }
     const std::int32_t* samples = heights.samples.data();

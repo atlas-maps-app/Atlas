@@ -1537,7 +1537,7 @@ jlongArray native_terrain_wants(JNIEnv* env, jclass /*cls*/, jlong handle) {
     out.reserve(wants.size() * 8);
     for (const scene::WorldWant& w : wants) {
         if (w.tile.z < scene::relief_block) continue;
-        const std::uint32_t gap = w.tile.z - scene::relief_block;
+        const auto gap = static_cast<std::uint32_t>(w.tile.z - scene::relief_block);
         out.push_back(
             static_cast<jlong>(tiles::TileKey(scene::relief_block, w.tile.x >> gap, w.tile.y >> gap).packed()));
         out.push_back(static_cast<jlong>(w.tile.packed()));

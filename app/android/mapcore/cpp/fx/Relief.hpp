@@ -30,8 +30,14 @@
 
 namespace atlas::shaders {
 
-/// The hyperbolic tangent the relief's shoulder takes (not exact code).
-[[nodiscard]] inline float tanh(float x) noexcept { return std::tanh(x); }
+/// The hyperbolic tangent the relief's shoulder takes (not exact code), by fdlibm's expm1 as the core's other
+/// transcendentals are: (e^2x − 1) / (e^2x + 1), 1 from 20 on.
+[[nodiscard]] inline float tanh(float x) noexcept {
+    if (x >= 20.0F) return 1.0F;
+    if (x <= -20.0F) return -1.0F;
+    const double e = pymath::expm1(2.0 * static_cast<double>(x));
+    return static_cast<float>(e / (e + 2.0));
+}
 
 #include "shaders/shared/relief.slang"
 

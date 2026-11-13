@@ -2,6 +2,7 @@
 #include "scene/Relief.hpp"
 
 #include "base/log.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "base/trace.hpp"
 #include "tiles/Heights.hpp"
 
@@ -30,7 +31,7 @@ namespace tl = atlas::tiles;
 }
 [[nodiscard]] double latitude_of(std::uint8_t z, std::uint32_t y) noexcept {
     const double t = std::numbers::pi * (1.0 - ((2.0 * static_cast<double>(y)) / std::ldexp(1.0, z)));
-    return std::atan(std::sinh(t)) * (180.0 / std::numbers::pi);
+    return pymath::atan(pymath::sinh(t)) * (180.0 / std::numbers::pi);
 }
 
 /// A tile's box on the ground of `frame`, at street level.
@@ -49,13 +50,13 @@ namespace tl = atlas::tiles;
 
 /// `k`'s ancestor at level `z` (at most its own).
 [[nodiscard]] tl::TileKey ancestor(const tl::TileKey& k, std::uint8_t z) noexcept {
-    const std::uint32_t gap = k.z - z;
+    const auto gap = static_cast<std::uint32_t>(k.z - z);
     return {z, k.x >> gap, k.y >> gap};
 }
 
 /// The part of raster `tile` over `leaf` (the raster's own tile, or a descendant of it).
 [[nodiscard]] ReliefPart part_of(const ReliefTile& tile, const tl::TileKey& leaf) noexcept {
-    const std::uint32_t gap = leaf.z - tile.key.z;
+    const auto gap = static_cast<std::uint32_t>(leaf.z - tile.key.z);
     const auto side = static_cast<float>(std::uint32_t{1} << gap);
     return {.tile = &tile,
             .x = static_cast<float>(leaf.x - (tile.key.x << gap)) / side,
@@ -65,9 +66,8 @@ namespace tl = atlas::tiles;
 
 } // namespace
 
-ReliefTiles::ReliefTiles(const tiles::Store& store) : store_(store) {
-    worker_ = std::jthread([this](const std::stop_token& stop) { run(stop); });
-}
+ReliefTiles::ReliefTiles(const tiles::Store& store)
+    : store_(store), worker_([this](const std::stop_token& stop) { run(stop); }) {}
 
 ReliefTiles::~ReliefTiles() {
     {
@@ -338,7 +338,7 @@ void ReliefTiles::run(const std::stop_token& stop) {
 }
 
 std::unique_ptr<ReliefTile> ReliefTiles::build(const tl::TileKey& key, Scratch& scratch,
-                                               std::optional<WorldWant>& absent) {
+                                               std::optional<WorldWant>& absent) const {
     const std::optional<tl::StoreHit> hit = store_.heights(key);
     if (!hit || hit->chunk == nullptr || hit->chunk->tile != key) return nullptr;
     scratch.arena.reset();

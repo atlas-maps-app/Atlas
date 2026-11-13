@@ -186,6 +186,7 @@ void Relief::update(const frame::FrameState& state) {
     copies_.clear();
     const scene::ReliefFrame* relief = state.relief;
     if (relief == nullptr || relief->draws.empty() || !state.view.has_value() || !*pipeline_) return;
+    const view::View& view = *state.view;
     const fx::ReliefStyle& style = fx::relief_style();
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
     const double strength = fx::relief_strength(style, distance);
@@ -241,7 +242,7 @@ void Relief::update(const frame::FrameState& state) {
         const Layer& l = layers_.at(*layer);
         const double shown = style.fade > 0.0 ? std::clamp((state.seconds - l.since) / style.fade, 0.0, 1.0) : 1.0;
         if (shown < 1.0) fading_ = true;
-        const shaders::TilePlace place = state.view->tile_place(draw.corner, 1.0, 1.0);
+        const shaders::TilePlace place = view.tile_place(draw.corner, 1.0, 1.0);
         // a raster's samples lie at its texels' centres: its edge samples half a texel inside the layer's edge
         const auto span = static_cast<float>(part->tile->bake.side - 1U);
         const float scale = span / static_cast<float>(side);
