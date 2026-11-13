@@ -57,6 +57,15 @@ class WorldFetch(
     /** The index on the phone, once [start] found or fetched it; null before. */
     val index: WorldIndex? get() = world?.index
 
+    /**
+     * The tiles of the world on the phone that its kept countries keep (ENGINE.md step 11: the release's
+     * `world-keep.json`, [WorldKeepList]), once [start] found or fetched it; null before, and for a world whose release
+     * has none.
+     */
+    @Volatile
+    var keep: WorldKeepList? = null
+        private set
+
     /** Whether world.json was asked for a day ago or more (or never, or the clock went back): [start] asks again. */
     fun due(): Boolean {
         val asked = runCatching { File(dir, ASKED).readText().trim().toLong() }.getOrNull() ?: return true
@@ -115,7 +124,36 @@ class WorldFetch(
         val before = world
         val now = World(release, WorldIndex.read(idx.readBytes()))
         world = now
-        return before == null || before.release.tag != now.release.tag || !same
+        val listBefore = keep
+        val list = keepOf(release)
+        keep = list
+        return before == null || before.release.tag != now.release.tag || !same || listBefore?.indexSha256 != list?.indexSha256
+    }
+
+    /**
+     * The keep list of [release]: the phone's where it is that release's (its index's SHA-256), else fetched from the
+     * release at most once a day (a release made before the keep has none, and a later run of world.yml's refs job
+     * adds it). Null where the release has none or it did not come: the world goes on without it.
+     */
+    private fun keepOf(release: Release): WorldKeepList? {
+        val file = File(dir, WorldKeepList.NAME)
+        fun held() = runCatching { WorldKeepList.read(file.readText()) }.getOrNull()?.takeIf { it.indexSha256 == release.index.sha256 }
+        held()?.let { return it }
+        val marker = File(dir, KEEP_ASKED)
+        val asked = runCatching { marker.readText().trim().split(' ') }.getOrNull()
+        val t = now()
+        val at = asked?.getOrNull(1)?.toLongOrNull()
+        if (asked?.getOrNull(0) == release.tag && at != null && t - at < DAY_MS && t >= at) return null
+        try {
+            fetch(release.url + WorldKeepList.NAME, file, -1, null) { f ->
+                if (WorldKeepList.read(f.readText()).indexSha256 != release.index.sha256) throw IOException("${WorldKeepList.NAME} is another world's")
+            }
+        } catch (_: Exception) {
+            // none for this release (404), or it did not come: asked again a day on
+            file.delete()
+        }
+        runCatching { marker.writeText("${release.tag} $t\n") }
+        return held()
     }
 
     /** The world as the phone keeps it (world.json, and its release's index and globe), or null where it is not whole. */
@@ -124,7 +162,12 @@ class WorldFetch(
         val idx = File(dir, INDEX)
         val whole = File(dir, RELEASE).readText().trim() == release.tag && idx.length() == release.index.bytes &&
             File(dir, GLOBE).length() == release.globe.bytes
-        if (whole) World(release, WorldIndex.read(idx.readBytes())) else null
+        if (whole) {
+            keep = runCatching { WorldKeepList.read(File(dir, WorldKeepList.NAME).readText()) }.getOrNull()?.takeIf { it.indexSha256 == release.index.sha256 }
+            World(release, WorldIndex.read(idx.readBytes()))
+        } else {
+            null
+        }
     }.getOrNull()
 
     /**
@@ -254,6 +297,9 @@ class WorldFetch(
         /** The release the index and the globe on the phone are of, and when world.json was last asked for. */
         private const val RELEASE = "world.release"
         private const val ASKED = "world.asked"
+
+        /** The release the keep list was last asked for, and when. */
+        private const val KEEP_ASKED = "world-keep.asked"
 
         private const val BUFFER = 1 shl 16
 

@@ -110,6 +110,9 @@ public:
 private:
     /// The tiles, first of the opaque ground; then over it, before every other translucent layer, space, the glass
     /// and the lights.
+    /// The Globe board's backdrop stars (shaders/shared/backdrop.slang's BACKDROP_STARS: :mapcorecheck's
+    /// BackdropTableTest holds the two and the board's data to one another).
+    static constexpr std::uint32_t star_count = 170;
     static constexpr std::uint32_t tiles_phase = 0;
     static constexpr std::uint32_t over_phase = 1;
     static constexpr std::array<frame::Phase, 2> phase_list{
@@ -151,6 +154,7 @@ private:
     vk::raii::Pipeline look_fading_fills_{nullptr};
     vk::raii::Pipeline look_lines_{nullptr};
     vk::raii::Pipeline lights_{nullptr};
+    vk::raii::Pipeline stars_{nullptr}; ///< the Globe board's backdrop stars, at space's depth
     vk::raii::Pipeline globe_{nullptr}; ///< space and the glass: a triangle over the frame
 };
 

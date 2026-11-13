@@ -367,6 +367,10 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     light.depth_write = false;
     ATLAS_GPU_LET(lights, frame::make_pipeline(context, light, frame::Overdraw::translucent));
     lights_ = std::move(lights);
+    gpu::GraphicsDesc star = desc("world stars", "star_vs", "star_fs");
+    star.depth_write = false;
+    ATLAS_GPU_LET(stars, frame::make_pipeline(context, star, frame::Overdraw::translucent));
+    stars_ = std::move(stars);
     gpu::GraphicsDesc over = desc("world globe", "globe_vs", "globe_fs");
     over.depth_write = false;
     ATLAS_GPU_LET(globe, frame::make_pipeline(context, over, frame::Overdraw::translucent));
@@ -382,6 +386,7 @@ void World::release() noexcept {
     look_fading_fills_.clear();
     look_lines_.clear();
     lights_.clear();
+    stars_.clear();
     globe_.clear();
     layout_.clear();
     for (Slot& s : slots_) {
@@ -441,8 +446,21 @@ void World::record_over(const frame::Recording& recording) {
         ++triangles;
         ++count;
     };
-    // space where nothing of the world drew, then the glass over the disc
+    // space where nothing of the world drew, the board's stars over it where its look has come (from 2,000 km), then
+    // the glass over the disc
     if (space_) over_frame(0U, space_depth(flags));
+    if (space_ && glass_ && *stars_) {
+        const float under = space_depth(flags);
+        viewport(under, under);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *stars_);
+        wl::PushConstants pc{};
+        pc.origin = {0.0F, 0.0F, 0.0F, under};
+        cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
+        cmd.draw(6, star_count, 0, 0);
+        triangles += 2ULL * star_count;
+        ++count;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *globe_);
+    }
     const float depth = over_depth(flags);
     if (glass_) over_frame(1U, depth);
     if (lit) {
