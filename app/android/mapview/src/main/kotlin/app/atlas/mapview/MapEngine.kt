@@ -369,6 +369,18 @@ object MapEngine {
     var localKept: () -> Boolean = { false }
 
     /**
+     * An element pack on its way to the phone for the places it holds (a place's published pack, fetched by the app on
+     * a job of its own): its [name], its box in degrees, and [done] of its [bytes] (−1: not known).
+     */
+    class PackComing(val name: String, val south: Double, val west: Double, val north: Double, val east: Double, val done: Long, val bytes: Long) {
+        fun holds(lat: Double, lon: Double): Boolean = lat in south..north && lon in west..east
+    }
+
+    /** The pack the app is fetching now for a place the windows found nothing of on the phone; null while it fetches none. */
+    @Volatile
+    var packComing: () -> PackComing? = { null }
+
+    /**
      * The countries whose published tiles the core draws (ENGINE.md step 3, one pack per country), from Atlas's published
      * list as last read (packs-latest's, its copy kept for offline); the app sets it once the list is read. Within one
      * of them the windows come from the country's tiles and the core draws to the levels' reach where they are

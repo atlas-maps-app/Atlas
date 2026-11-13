@@ -18,8 +18,9 @@ import java.time.Instant
  * A window's pack from its country's tiles, on GitHub releases faked by MockWebServer: the index downloaded once and
  * kept beside the windows' data indexes, each window by a range of its own bytes (two where it spans two parts), held
  * to the index, its style written back whole from the country's; a window with nothing to draw answered without
- * bytes; the newest country that holds a window; each phone its own core's tiles where a country publishes two cores';
- * and no answer where no country holds it, or where another core built the tiles.
+ * bytes; the newest country that holds a window, and the next where its index or bytes do not come; each phone its own
+ * core's tiles where a country publishes two cores'; and no answer where no country holds it, or where another core
+ * built the tiles.
  */
 class WindowTilesTest {
     private val gh = FakeGitHub()
@@ -364,6 +365,35 @@ class WindowTilesTest {
         assertEquals("new", tiles.window(14, westerkerk.first, westerkerk.second, version)!!.pack)
         assertEquals("old", tiles.window(14, water.first, water.second, version)!!.pack)
         assertEquals(older, tiles.window(14, water.first, water.second, version)!!.date)
+    }
+
+    @Test
+    fun aCountryWhoseIndexOrBytesDoNotComeIsPassedOverForTheNextThatHoldsTheWindow() {
+        val older = date.minusSeconds(30 * 86_400L)
+        val old = country(older)
+        val new = country(date)
+        val list = listOf(publish("old", old, older), publish("new", new, date))
+        // the newer country's index is not the one packs.json names: the older country's tiles give the window
+        gh.assets["new.tiles.idx"] = country(date, of = cells.take(1)).index
+        val tiles = WindowTiles({ list }, dir)
+        val got = tiles.window(14, westerkerk.first, westerkerk.second, version)!!
+        assertEquals("old", got.pack)
+        assertEquals(older, got.date)
+        assertArrayEquals(old.packs[westerkerk], got.bytes)
+        // its index whole again but its window's bytes changed: the older country's still
+        gh.assets["new.tiles.idx"] = new.index
+        gh.assets["new.tiles"] = new.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
+        assertEquals("old", WindowTiles({ list }, tempDir("bytes")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
+        // neither gives it: the failure of the first asked (the newest), the other's with it
+        gh.assets["old.tiles"] = old.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
+        val e = assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, version) }
+        assertTrue(e.message, e.message!!.contains("pack new"))
+        assertEquals(1, e.suppressed.size)
+        assertTrue(e.suppressed[0].message, e.suppressed[0].message!!.contains("pack old"))
+        // both whole again: the newest
+        gh.assets["new.tiles"] = new.tiles
+        gh.assets["old.tiles"] = old.tiles
+        assertEquals("new", WindowTiles({ list }, tempDir("whole")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
     }
 
     @Test

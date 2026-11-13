@@ -401,21 +401,42 @@ class WorldFetchTest {
         gh.assets[WorldFetch.INDEX] = p.index
         assertTrue(fetch.start())
         assertEquals("world-20261102", fetch.world!!.release.tag)
-        // a new version whose globe comes cut short: the old index and globe stay, the old version goes on, nothing dropped
+        // a new version whose globe comes cut short (the connection dropped 1,500 bytes before its end): the old index
+        // and globe stay, the old version goes on, nothing dropped
         val q = publish("world-20261201", seed = 9)
-        gh.assets[WorldFetch.GLOBE] = q.globe.copyOf(q.globe.size - 1)
+        val came = q.globe.size - 1_500
+        gh.assets[WorldFetch.GLOBE] = q.globe.copyOf(came)
         clock += WorldFetch.DAY_MS
         assertThrows(IOException::class.java) { fetch.start() }
         assertArrayEquals(p.index, File(world, WorldFetch.INDEX).readBytes())
         assertArrayEquals(p.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertEquals("world-20261102", fetch.world!!.release.tag)
         assertEquals(0, drops)
-        assertTrue(world.listFiles()!!.none { it.name.endsWith(".download") || it.name.endsWith(".new") })
-        // whole again: the new version comes at the next start
+        // what came of the new globe stays beside it, named for the globe it is of; no other file is left half written
+        val partial = File(world, WorldFetch.GLOBE + ".next.download")
+        assertEquals(came.toLong(), partial.length())
+        assertTrue(File(world, WorldFetch.GLOBE + ".next.download.id").readText().contains(hex(sha(q.globe))))
+        assertEquals(listOf(partial.name), world.listFiles()!!.map { it.name }.filter { it.endsWith(".download") || it.endsWith(".new") })
+        // whole again: the next start asks for the rest of the globe alone, and the new version comes
         gh.assets[WorldFetch.GLOBE] = q.globe
+        val before = gh.storageRequests.size
         assertTrue(fetch.start())
+        val globes = gh.storageRequests.drop(before).filter { it.url.encodedPath.endsWith("/" + WorldFetch.GLOBE) }
+        assertEquals(listOf("bytes=$came-"), globes.map { it.headers["Range"] })
+        assertArrayEquals(q.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertEquals("world-20261201", fetch.world!!.release.tag)
         assertEquals(1, drops)
+        assertTrue(world.listFiles()!!.map { it.name }.toString(), world.listFiles()!!.none { it.name.contains(".download") || it.name.endsWith(".next") })
+        // a globe that is not the one world.json names is thrown away whole: nothing of it is taken up again
+        val r = publish("world-20261215", seed = 4)
+        gh.assets[WorldFetch.GLOBE] = r.globe.copyOf().also { it[7] = (it[7] + 1).toByte() }
+        clock += WorldFetch.DAY_MS
+        assertThrows(PackDownloader.ChecksumException::class.java) { fetch.start() }
+        assertFalse(File(world, WorldFetch.GLOBE + ".next.download").exists())
+        assertEquals("world-20261201", fetch.world!!.release.tag)
+        gh.assets[WorldFetch.GLOBE] = r.globe
+        assertTrue(fetch.start())
+        assertEquals("world-20261215", fetch.world!!.release.tag)
     }
 
     @Test

@@ -253,6 +253,10 @@ class EdgeTest {
         assertEquals("Getting this area's map…", Windows.line(true, Windows.Status.Fetching(since, tiles = true), 0L, null))
         assertEquals("Getting this area from OpenStreetMap…", Windows.line(true, Windows.Status.Fetching(since), 0L, "Netherlands"))
         assertEquals("Building the map here…", Windows.line(true, Windows.Status.Building(since), 0L, "Netherlands"))
+        // the place's own pack on its way (the app fetches it apart from the windows): which map, and how far
+        assertEquals("Downloading the map of Paris… 42 %", Windows.packLine("Paris", 4_200_000L, 10_000_000L))
+        assertEquals("Downloading the map of Paris… 0 %", Windows.packLine("Paris", 0L, 10_000_000L))
+        assertEquals("Downloading the map of Paris…", Windows.packLine("Paris", 0L, -1L))
         assertEquals(
             "OpenStreetMap's servers are busy · trying again in 3 min",
             Windows.line(true, Windows.Status.Waiting(since + 150_000L, refused = false), 150_000L, "Netherlands"),

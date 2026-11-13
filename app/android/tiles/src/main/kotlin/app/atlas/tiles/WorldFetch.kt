@@ -3,6 +3,7 @@ package app.atlas.tiles
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
@@ -21,7 +22,8 @@ import kotlin.math.tan
  * most once a day, then the index and the globe of the release it names at the first start and at each new version,
  * into the world's folder ([dir]: the kept folder's `world/`, which PackList lists for the core). A file is written
  * beside its place (`<name>.download`) and moved there once it is as long as world.json says and of the SHA-256 it
- * names, so the core never lists a file half written. A new version drops the old one: its index and globe replaced,
+ * names, so the core never lists a file half written; what a dropped connection left of the globe stays there, and the
+ * next start asks for the rest alone ([PackDownloader]). A new version drops the old one: its index and globe replaced,
  * and [drop] called (the app empties the world's cache of heads and chunks). The packs themselves come by ranges as the
  * map's views want them ([head], [range]: mapview's WorldReads, into the core's cache). Every request says only who is
  * asking ([Http.USER_AGENT]). Blocking: call it off the main thread, one [start] at a time.
@@ -43,6 +45,9 @@ class WorldFetch(
     // the globe takes a while on a phone's network: no limit on the whole call, only on each wait for bytes; nor through
     // the app's HTTP cache, which would keep a second copy (PackDownloader's reasons)
     private val client = client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+
+    // the globe's own fetch: megabytes, taken up again where a connection dropped
+    private val downloader = PackDownloader(client)
 
     // the scheme world.json came on (https): its release's files must come on it too
     private val scheme = latest.substringBefore("://")
@@ -197,7 +202,10 @@ class WorldFetch(
     /**
      * [release]'s index and globe on the phone beside the world's own (`world.idx.next`, `world-globe.atlas.next`),
      * fetched where they are not there whole (`world.release.next` names the release they are of, written after
-     * both); its world.json is `world.json.next`.
+     * both); its world.json is `world.json.next`. The globe (9.7 MB on planet-2) comes by [PackDownloader]: what a
+     * dropped connection left of it stays beside it (`world-globe.atlas.next.download`, with the globe it is of in
+     * `.download.id`), and the next start asks for the rest alone, so a bad line brings the world in pieces where it
+     * began again from nothing before (13 November).
      */
     private fun stage(release: Release): World {
         val idx = File(dir, INDEX + NEXT)
@@ -207,7 +215,10 @@ class WorldFetch(
         if (!whole) {
             tag.delete()
             fetch(release.url + release.index.name, idx, release.index.bytes, release.index.sha256) { WorldIndex.read(it.readBytes()) }
-            fetch(release.url + release.globe.name, globe, release.globe.bytes, release.globe.sha256) {}
+            val g = release.globe
+            runBlocking {
+                downloader.download(PackFile(GLOBE, g.name, g.bytes, g.sha256, listOf(PackPart(release.url + g.name, g.bytes, null))), globe)
+            }
             tag.writeText(release.tag + "\n")
         }
         return World(release, WorldIndex.read(idx.readBytes()))
@@ -236,6 +247,8 @@ class WorldFetch(
     /** Nothing waits beside the phone's world: the files of a world that did are deleted. */
     private fun unstage() {
         for (name in listOf(JSON, INDEX, GLOBE, RELEASE, WorldKeepList.NAME)) File(dir, name + NEXT).delete()
+        // and what a fetch that stopped left of its globe
+        for (left in listOf(".download", ".download.id")) File(dir, GLOBE + NEXT + left).delete()
         next = null
         nextKeep = null
     }

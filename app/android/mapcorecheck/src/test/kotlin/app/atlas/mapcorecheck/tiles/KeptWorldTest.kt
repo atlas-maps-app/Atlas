@@ -333,13 +333,13 @@ class KeptWorldTest {
                 val path = x.requestURI.path.removePrefix("/")
                 val n = synchronized(requests) { requests += path; requests.size }
                 val body = files[path]
-                val range = x.requestHeaders.getFirst("Range")?.let { Regex("bytes=(\\d+)-(\\d+)").matchEntire(it) }
+                val range = x.requestHeaders.getFirst("Range")?.let { Regex("bytes=(\\d+)-(\\d*)").matchEntire(it) }
                 when {
                     down || n > failAfter -> x.sendResponseHeaders(503, -1)
                     body == null -> x.sendResponseHeaders(404, -1)
                     range != null -> {
                         val from = range.groupValues[1].toInt()
-                        val to = range.groupValues[2].toInt().coerceAtMost(body.size - 1)
+                        val to = (range.groupValues[2].toIntOrNull() ?: body.size - 1).coerceAtMost(body.size - 1)
                         x.responseHeaders.add("Content-Range", "bytes $from-$to/${body.size}")
                         x.sendResponseHeaders(206, (to - from + 1).toLong())
                         x.responseBody.use { it.write(body, from, to - from + 1) }
