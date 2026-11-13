@@ -35,7 +35,7 @@ namespace atlas::shaders {
 [[nodiscard]] inline float tanh(float x) noexcept {
     if (x >= 20.0F) return 1.0F;
     if (x <= -20.0F) return -1.0F;
-    const double e = pymath::expm1(2.0 * static_cast<double>(x));
+    const double e = pymath::strict::expm1(2.0 * static_cast<double>(x));
     return static_cast<float>(e / (e + 2.0));
 }
 
