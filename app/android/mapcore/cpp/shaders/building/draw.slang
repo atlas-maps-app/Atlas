@@ -9,6 +9,12 @@
 // board's its wall's plane's), or its painter depth under the painter switch; building_fs fills it with its face's
 // light. Opaque: never discards, its pipelines write the depth and the objects bit.
 //
+// The thin walls (the far flicker): in the app's map a level's tile's wall narrower on the screen than
+// BUILDING_THIN_PX device px is kept in a list of its own (kept_cull_cs decides it, wall_width), which the strokes'
+// phase draws by walls_kept_thin_vs or walls_shape_thin_vs with building_thin_fs: blended at the share of each pixel
+// it holds, at least BUILDING_THIN_LEAST px wide at its colour's sum, its depth tested and not written; a box of two
+// triangles a wall (thin_box), its fragments taking its edges.
+//
 // The roofs' thin edges (each face's .25, .45 or .4 px stroke, drawn as the objects' thin strokes: fx/strokes.slang,
 // through passes/ObjectStrokes.hpp's pipelines): before the main pass roof_strokes_cs decides each plain primitive the
 // frame draws once, a thread each, from the frame's jobs (set 2: a tile's push constants and a run of its plain list,
@@ -180,6 +186,38 @@ float3 colour_at(BuildingPush p, Drawn d) {
 /// Where a primitive that draws nothing puts its points: beyond the depth range, so its triangles are clipped away.
 static const float4 NOWHERE = {0.0f, 0.0f, 2.0f, 1.0f};
 
+/// Shape `s`'s polygon measured on the screen (CSS px): x its least width (the least, over its edges, of how far its
+/// corners reach from the edge's line), y its perimeter, z its area.
+float3 wall_measure(BuildingShape s) {
+    float width = 1.0e30f;
+    float around = 0.0f;
+    float twice = 0.0f;
+    for (uint i = 0u; i < s.count; ++i) {
+        float2 a = building_corner(s, i);
+        float2 b = building_corner(s, (i + 1u) % s.count);
+        float2 e = b - a;
+        float l = length(e);
+        around += l;
+        twice += a.x * b.y - b.x * a.y;
+        if (!(l > 0.0f)) {
+            continue;
+        }
+        float reach = 0.0f;
+        for (uint j = 0u; j < s.count; ++j) {
+            float2 c = building_corner(s, j);
+            reach = max(reach, abs(e.x * (c.y - a.y) - e.y * (c.x - a.x)) / l);
+        }
+        width = min(width, reach);
+    }
+    return float3(width < 1.0e30f ? width : 0.0f, around, 0.5f * abs(twice));
+}
+
+/// How wide a wall of shape `s` is on the screen with its same-colour stroke, device px: its polygon's least width
+/// (wall_measure) and the stroke's.
+float wall_width(BuildingShape s) {
+    return (wall_measure(s).x + frame.strokes.widths.w) * frame.camera.frame.z;
+}
+
 /// Point `corner` (0 to 15) of the outline of the edged primitive at record `index` of the list `p` names.
 BuildingOut wall_vertex(BuildingPush p, uint index, uint corner) {
     Drawn d = drawn_at(p, index);
@@ -320,6 +358,203 @@ BuildingOut walls_shape_fading_vs(uint vertex : SV_VulkanVertexID) {
     return o;
 }
 
+/// A thin wall at its share of each pixel (the far flicker; kept_cull_cs): what its fragments read
+/// (building_thin_fs).
+static const uint THIN_EDGE = 2u;
+struct ThinOut {
+    float4 position : SV_Position;
+    nointerpolation float3 colour : COLOUR;
+    nointerpolation uint asked : ASKED; // BuildingOut's, and THIN_EDGE: its colour through mat's edge table
+    // Its edges' half planes, 5 of 3 floats each (a, b, c: the share of a pixel's box about the CSS point (x, y) that
+    // the half plane holds is saturate(a x + b y + c)), in order; one it has not holds every pixel (0, 0, 1).
+    nointerpolation float4 e0 : THIN_E0;
+    nointerpolation float4 e1 : THIN_E1;
+    nointerpolation float4 e2 : THIN_E2;
+    nointerpolation float3 e3 : THIN_E3;
+    nointerpolation float share : SHARE; // the share of what it is drawn over that it holds (thin_share)
+};
+
+ThinOut thin_none() {
+    ThinOut o;
+    o.position = NOWHERE;
+    o.colour = float3(0.0f);
+    o.asked = 0u;
+    o.e0 = float4(0.0f);
+    o.e1 = float4(0.0f);
+    o.e2 = float4(0.0f);
+    o.e3 = float3(0.0f);
+    o.share = 0.0f;
+    return o;
+}
+
+/// How far a thin wall of shape `s` reaches beyond its polygon (x, CSS px) and the share of what it is drawn over that
+/// it holds (y). It reaches its stroke's half width, and where it is narrower than BUILDING_THIN_LEAST device px as
+/// far as makes it that wide, at the share of that outline its own covers (its polygon's area, perimeter and the
+/// reach: Steiner's formula), so it keeps its colour's sum: a band under about 2 px steps a pixel up and back as it
+/// moves through it however exactly it is drawn, and one 2 px wide at its share does not (the streets' rule:
+/// ground.slang's soft_point). Where the composite takes the objects' silhouettes by mat's coverage rule
+/// (frame/composite.slang: a pixel the objects hold c of takes their edge colour at 1.1 c²), a thin wall drawn on the
+/// samples was such a silhouette, so its share is also the rule's mean over a band's places among the pixels:
+/// 1.1 w (1 - w / 3) where it is w device px wide up to a pixel, and (w - 4/15) / w from there (the rule's sum over
+/// the pixels a band w wide lies on, averaged over where it lies; unclamped, within 0.005 px), with its colour
+/// through mat's edge table (THIN_EDGE: thin_vertex).
+float2 thin_share(BuildingShape s) {
+    float density = frame.camera.frame.z;
+    float r = 0.5f * frame.strokes.widths.w;
+    float3 m = wall_measure(s);
+    float own = (m.x + 2.0f * r) * density;
+    float reach = r + (own < BUILDING_THIN_LEAST ? 0.5f * (BUILDING_THIN_LEAST - own) / density : 0.0f);
+    float drawn = m.z + m.y * r + 3.14159265f * r * r;
+    float widened = m.z + m.y * reach + 3.14159265f * reach * reach;
+    float share = widened > 0.0f ? drawn / widened : 1.0f;
+    if ((frame.layers.steps.x & COMPOSITE_MAT) != 0u && mat_grain_on(frame)) {
+        share *= own < 1.0f ? 1.1f * own * (1.0f - own / 3.0f) : (own - 4.0f / 15.0f) / own;
+    }
+    return float2(reach, share);
+}
+
+/// A thin wall's colour as its record holds it, 10 bits a channel (a record's last two floats are its reach and its
+/// share: thin_share), and the colour of those bits: both ways of drawing the list draw this colour.
+uint thin_colour_bits(float3 colour) {
+    uint3 q = uint3(floor(saturate(colour) * 1023.0f + 0.5f));
+    return q.x | (q.y << 10u) | (q.z << 20u);
+}
+float3 thin_colour(uint bits) {
+    return float3(float(bits & 1023u), float((bits >> 10u) & 1023u), float((bits >> 20u) & 1023u)) / 1023.0f;
+}
+
+/// The half plane through CSS point `at` whose outside lies along unit vector `out`, moved `reach` out: the three
+/// floats ThinOut's edges hold (a ramp a device pixel wide across it).
+float3 thin_plane(float2 at, float2 out, float reach) {
+    float density = frame.camera.frame.z;
+    return float3(-density * out.x, -density * out.y, 0.5f + density * (reach + at.x * out.x + at.y * out.y));
+}
+
+/// Corner `corner` (0 to 3, around) of the box about shape `s`'s corners that lies along its longest edge, grown by
+/// `grow` (CSS px): what a thin wall's two triangles cover, its fragments taking its edges themselves.
+float2 thin_box(BuildingShape s, uint corner, float grow) {
+    float2 u = float2(1.0f, 0.0f);
+    float best = 0.0f;
+    for (uint i = 0u; i < s.count; ++i) {
+        float2 d = building_corner(s, (i + 1u) % s.count) - building_corner(s, i);
+        float l = dot(d, d);
+        if (l > best) {
+            best = l;
+            u = d;
+        }
+    }
+    if (best > 0.0f) {
+        u = u / sqrt(best);
+    }
+    float2 v = float2(-u.y, u.x);
+    float2 lo = float2(1.0e30f, 1.0e30f);
+    float2 hi = float2(-1.0e30f, -1.0e30f);
+    for (uint i = 0u; i < s.count; ++i) {
+        float2 c = building_corner(s, i);
+        float2 p = float2(dot(c, u), dot(c, v));
+        lo = min(lo, p);
+        hi = max(hi, p);
+    }
+    float2 q = {corner == 1u || corner == 2u ? hi.x + grow : lo.x - grow, corner >= 2u ? hi.y + grow : lo.y - grow};
+    return u * q.x + v * q.y;
+}
+
+/// Point `corner` (0 to 3) of a thin wall of shape `s`, colour `colour` and flat word `asked`, reaching `reach`
+/// beyond its polygon at `share` (thin_share): the box about it (thin_box) half a pixel beyond where it reaches, at
+/// its plane's depth as wall_vertex gives its outline's points, with its edges' half planes for its fragments (a wall
+/// of two corners is a segment: its two sides and its ends; of one a box about it). Two triangles where the walls'
+/// outline has 14: most of a far wall's were slivers that held no sample, and at its share of each pixel every one
+/// would be drawn.
+ThinOut thin_vertex(BuildingShape s, float3 colour, uint asked, uint corner, float reach, float share) {
+    float2 css = thin_box(s, corner, reach + 0.5f / frame.camera.frame.z);
+    float depth = building_depth(frame.camera, s, building_plane_recip(frame.camera, s, css));
+    ThinOut o;
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.colour = colour;
+    o.asked = asked;
+    if ((frame.layers.steps.x & COMPOSITE_MAT) != 0u && mat_grain_on(frame)) {
+        o.asked |= THIN_EDGE;
+    }
+    o.share = share;
+    float3 e[5];
+    for (uint i = 0u; i < 5u; ++i) {
+        e[i] = float3(0.0f, 0.0f, 1.0f);
+    }
+    if (s.count == 1u) {
+        e[0] = thin_plane(s.p0, float2(1.0f, 0.0f), reach);
+        e[1] = thin_plane(s.p0, float2(-1.0f, 0.0f), reach);
+        e[2] = thin_plane(s.p0, float2(0.0f, 1.0f), reach);
+        e[3] = thin_plane(s.p0, float2(0.0f, -1.0f), reach);
+    } else if (s.count == 2u) {
+        float2 d = s.p1 - s.p0;
+        float l = length(d);
+        if (l > 0.0f) {
+            float2 t = d / l;
+            float2 n = float2(t.y, -t.x);
+            e[0] = thin_plane(s.p0, n, reach);
+            e[1] = thin_plane(s.p0, -n, reach);
+            e[2] = thin_plane(s.p1, t, reach);
+            e[3] = thin_plane(s.p0, -t, reach);
+        }
+    } else {
+        float twice = 0.0f;
+        for (uint i = 0u; i < s.count; ++i) {
+            float2 a = building_corner(s, i);
+            float2 b = building_corner(s, (i + 1u) % s.count);
+            twice += a.x * b.y - b.x * a.y;
+        }
+        float turn = twice < 0.0f ? -1.0f : 1.0f;
+        for (uint i = 0u; i < s.count; ++i) {
+            float2 a = building_corner(s, i);
+            float2 d = building_corner(s, (i + 1u) % s.count) - a;
+            float l = length(d);
+            if (l > 0.0f) {
+                // (outside lies to the right of an edge of a polygon turning with `turn`)
+                e[i] = thin_plane(a, float2(d.y, -d.x) * (turn / l), reach);
+            }
+        }
+    }
+    o.e0 = float4(e[0], e[1].x);
+    o.e1 = float4(e[1].yz, e[2].xy);
+    o.e2 = float4(e[2].z, e[3]);
+    o.e3 = e[4];
+    return o;
+}
+
+/// The thin walls' list, those decided at each point: vertex % 4 of the kept wall at vertex / 4 (a place among the
+/// kept primitives, as walls_kept_vs takes it; its chunk's vertex offset its first place times 4), with its tile's
+/// standing fade.
+[shader("vertex")]
+ThinOut walls_kept_thin_vs(uint vertex : SV_VulkanVertexID) {
+    uint slot = vertex / BUILDING_THIN_VERTICES;
+    KeptPrim k = kept_at(slot);
+    Drawn d = drawn_at(k.push, k.index);
+    if (d.shape.count == 0u) {
+        return thin_none();
+    }
+    uint asked = ((d.rank & RANK_ASKED) != 0u ? 1u : 0u) | fade_word(k.push.place.offset.w, k.push.place.scale.w);
+    float2 rs = thin_share(d.shape);
+    return thin_vertex(d.shape, thin_colour(thin_colour_bits(colour_at(k.push, d))), asked,
+                       vertex - slot * BUILDING_THIN_VERTICES, rs.x, rs.y);
+}
+
+/// The same from the list's records (walls_shape_vs's, but their last three words: its colour's bits, its reach and
+/// its share, which kept_shapes_cs decides once), its tile's standing fade through the kept place its record stands
+/// for (walls_shape_fading_vs's).
+[shader("vertex")]
+ThinOut walls_shape_thin_vs(uint vertex : SV_VulkanVertexID) {
+    uint slot = vertex / BUILDING_THIN_VERTICES;
+    uint header = kept_shapes[slot * BUILDING_SHAPE_VECTORS].x;
+    if (building_shape_count(header) == 0u) {
+        return thin_none();
+    }
+    BuildingShapeRecord r = shape_record_at(slot);
+    KeptPrim k = kept_at(kept_jobs[2][BUILDING_KEPT_THIN] + slot - kept_jobs[4][BUILDING_KEPT_THIN]);
+    uint asked = building_shape_asked(header) | fade_word(k.push.place.offset.w, k.push.place.scale.w);
+    return thin_vertex(building_outline_shape(frame.camera, r), thin_colour(r.v4.y), asked,
+                       vertex - slot * BUILDING_THIN_VERTICES, asfloat(r.v4.z), asfloat(r.v4.w));
+}
+
 /// A stroke job (Buildings::update): a tile's push constants as its plain list's draws have them (4 uint4), then
 /// its run's first primitive in that list, how many (at most 64) and its first record.
 static const uint STROKE_JOB_VECTORS = 5u;
@@ -354,20 +589,24 @@ void roof_strokes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) 
     stroke_records_out[out_at + 3u] = r.v3;
 }
 
-groupshared uint kept_mask[2];
+groupshared uint kept_mask[4];
 groupshared uint kept_sums[64];
 groupshared uint kept_total;
 
 /// The kept primitives' cull (passes/Kept.cpp): each primitive of a job's run that may draw (building_may_draw) is a
-/// candidate, into its job's count and mask (bit i: the run's primitive i), which kept_scan_cs and kept_scatter_cs read.
+/// candidate, into its job's count and mask (bit i: the run's primitive i), which kept_scan_cs and kept_scatter_cs
+/// read. A candidate of a job that leaves its thin walls to their own list (BUILDING_LIST_THIN) is decided here: one
+/// that draws, narrower on the screen than BUILDING_THIN_PX (wall_width), goes into the job's thin count and mask
+/// instead, so the walls' list never holds it. 4 samples a pixel give such a wall 0 to 4 quarters of each pixel as it
+/// moves, and most of a far wall is edge, so it is drawn at its share of each pixel (thin_vertex).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void kept_cull_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint job = group.y * STROKE_JOB_ROW + group.x;
-    if (job >= kept_jobs[0].w) {
+    if (job >= kept_jobs[5].x) {
         return; // the whole workgroup
     }
-    if (thread.x < 2u) {
+    if (thread.x < 4u) {
         kept_mask[thread.x] = 0u;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -381,21 +620,31 @@ void kept_cull_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         p.sun = kept_jobs[at + 3u];
         Fetched f = fetched_at(p, span.x + thread.x);
         if (building_may_draw(frame.theme.flags.x, frame.info.x, p.place, f.prim, f.face, f.rank)) {
-            InterlockedOr(kept_mask[thread.x >> 5u], 1u << (thread.x & 31u));
+            uint thin = 0u;
+            if ((p.sun.w & BUILDING_LIST_THIN) != 0u) {
+                BuildingShape s =
+                    building_shape(frame.camera, frame.theme.flags.x, frame.info.x, p.place, f.prim, f.face, f.rank);
+                thin = s.count != 0u && wall_width(s) < BUILDING_THIN_PX ? 2u : 0u;
+            }
+            InterlockedOr(kept_mask[thin + (thread.x >> 5u)], 1u << (thread.x & 31u));
         }
     }
     GroupMemoryBarrierWithGroupSync();
     if (thread.x == 0u) {
         uint lo = kept_mask[0];
         uint hi = kept_mask[1];
-        kept_counts[job] = uint4(countbits(lo) + countbits(hi), lo, hi, 0u);
+        kept_counts[2u * job] = uint4(countbits(lo) + countbits(hi), lo, hi, 0u);
+        lo = kept_mask[2];
+        hi = kept_mask[3];
+        kept_counts[2u * job + 1u] = uint4(countbits(lo) + countbits(hi), lo, hi, 0u);
     }
 }
 
-/// The kept primitives' scan: workgroup l takes list l's jobs in their order and gives each its first place among the
-/// list's kept primitives (kept_counts' w: the candidates of the list's jobs before it), then the list's count of them
-/// and each of its chunks its indirect draw: as many of the static index buffer's primitives as the chunk keeps, from
-/// its first shape record on where the list's records reach it, else from its first place on.
+/// The kept primitives' scan: workgroup l takes list l's jobs in their order (the thin walls' list the walls' jobs,
+/// their thin candidates) and gives each its first place among the list's kept primitives (kept_counts' w: the
+/// candidates of the list's jobs before it), then the list's count of them and each of its chunks its indirect draw:
+/// as many of the static index buffer's primitives as the chunk keeps, from its first shape record on where the
+/// list's records reach it, else from its first place on.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -406,10 +655,14 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint draw = kept_jobs[3][list];
     uint record = kept_jobs[4][list];
     // the list's places and its records: up to the next list's first (the total after the last)
-    uint end = list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[2][list + 1u] : kept_jobs[2].w;
-    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[4].w) - record;
-    uint chunk = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_KEPT_PLAIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK;
-    uint vertices = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_PLAIN_VERTICES : BUILDING_EDGED_VERTICES;
+    uint end = list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[2][list + 1u] : kept_jobs[5].y;
+    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[5].w) - record;
+    uint chunk = list == BUILDING_KEPT_ROOFS ? BUILDING_KEPT_PLAIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK;
+    uint vertices = list == BUILDING_KEPT_ROOFS
+                        ? BUILDING_PLAIN_VERTICES
+                        : (list == BUILDING_KEPT_THIN ? BUILDING_THIN_VERTICES : BUILDING_EDGED_VERTICES);
+    // (a job's counts: its list's, then its thin walls')
+    uint which = list == BUILDING_KEPT_THIN ? 1u : 0u;
     uint indices = (vertices - 2u) * 3u;
     // each thread a block of the list's jobs, in order
     uint block = (count + 63u) / 64u;
@@ -417,7 +670,7 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint to = first + min(count, (thread.x + 1u) * block);
     uint sum = 0u;
     for (uint j = from; j < to; ++j) {
-        sum += kept_counts[j].x;
+        sum += kept_counts[2u * j + which].x;
     }
     kept_sums[thread.x] = sum;
     GroupMemoryBarrierWithGroupSync();
@@ -433,8 +686,8 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     GroupMemoryBarrierWithGroupSync();
     uint offset = kept_sums[thread.x];
     for (uint j = from; j < to; ++j) {
-        uint4 c = kept_counts[j];
-        kept_counts[j] = uint4(c.x, c.y, c.z, offset);
+        uint4 c = kept_counts[2u * j + which];
+        kept_counts[2u * j + which] = uint4(c.x, c.y, c.z, offset);
         offset += c.x;
     }
     uint total = kept_total;
@@ -456,25 +709,41 @@ void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     }
 }
 
-/// The kept primitives' scatter: each candidate of a job's run into its place among its list's kept primitives (its
-/// job's first place, then the candidates before it in the job), as its job and lane (job << 6 | lane).
+/// Where the candidate at lane `lane` of job `job`'s run goes: its list (the job's own, `own`, or the thin walls'
+/// where the cull found it thin) and its place among that list's kept primitives (the job's first place there, then
+/// the candidates before it in the job); false where the lane is no candidate.
+bool kept_place(uint job, uint lane, uint own, out uint list, out uint place) {
+    uint bit = lane & 31u;
+    for (uint which = 0u; which < 2u; ++which) {
+        uint4 c = kept_counts[2u * job + which];
+        uint word = lane < 32u ? c.y : c.z;
+        if (((word >> bit) & 1u) != 0u) {
+            list = which == 0u ? own : BUILDING_KEPT_THIN;
+            place = c.w + countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
+            return true;
+        }
+    }
+    list = 0u;
+    place = 0u;
+    return false;
+}
+
+/// The kept primitives' scatter: each candidate of a job's run into its place among its list's kept primitives
+/// (kept_place), as its job and lane (job << 6 | lane).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void kept_scatter_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint job = group.y * STROKE_JOB_ROW + group.x;
-    if (job >= kept_jobs[0].w) {
+    if (job >= kept_jobs[5].x) {
         return;
     }
-    uint4 c = kept_counts[job];
     uint lane = thread.x;
-    uint word = lane < 32u ? c.y : c.z;
-    uint bit = lane & 31u;
-    if (((word >> bit) & 1u) == 0u) {
+    uint list;
+    uint place;
+    if (!kept_place(job, lane, kept_jobs[BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS + 4u].z, list, place)) {
         return;
     }
-    uint below = countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
-    uint list = kept_jobs[BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS + 4u].z;
-    kept_out[kept_jobs[2][list] + c.w + below] = (job << 6u) | lane;
+    kept_out[kept_jobs[2][list] + place] = (job << 6u) | lane;
 }
 
 /// The kept primitives' scatter where they are decided once (ENGINE.md's gains, 1b): each candidate of a job's run
@@ -486,24 +755,20 @@ void kept_scatter_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) 
 [numthreads(64, 1, 1)]
 void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint job = group.y * STROKE_JOB_ROW + group.x;
-    if (job >= kept_jobs[0].w) {
+    if (job >= kept_jobs[5].x) {
         return;
     }
-    uint4 c = kept_counts[job];
     uint lane = thread.x;
-    uint word = lane < 32u ? c.y : c.z;
-    uint bit = lane & 31u;
-    if (((word >> bit) & 1u) == 0u) {
-        return;
-    }
-    uint below = countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
     uint at = BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS;
     uint4 span = kept_jobs[at + 4u];
-    uint list = span.z;
-    uint place = c.w + below;
+    uint list;
+    uint place;
+    if (!kept_place(job, lane, span.z, list, place)) {
+        return;
+    }
     kept_out[kept_jobs[2][list] + place] = (job << 6u) | lane;
     uint record = kept_jobs[4][list];
-    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[4].w) - record;
+    uint records = (list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[4][list + 1u] : kept_jobs[5].w) - record;
     if (place >= records) {
         return;
     }
@@ -518,7 +783,13 @@ void kept_shapes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         kept_shapes_out[out_at] = uint4(0u, 0u, 0u, 0u);
         return;
     }
-    BuildingShapeRecord r = building_outline_record(d.shape, colour_at(p, d), (d.rank & RANK_ASKED) != 0u ? 1u : 0u);
+    float3 colour = colour_at(p, d);
+    BuildingShapeRecord r = building_outline_record(d.shape, colour, (d.rank & RANK_ASKED) != 0u ? 1u : 0u);
+    if (list == BUILDING_KEPT_THIN) {
+        // a thin wall's record: its colour's bits, its reach and its share where a wall's holds its colour
+        float2 rs = thin_share(d.shape);
+        r.v4 = uint4(r.v4.x, thin_colour_bits(colour), asuint(rs.x), asuint(rs.y));
+    }
     kept_shapes_out[out_at] = r.v0;
     kept_shapes_out[out_at + 1u] = r.v1;
     kept_shapes_out[out_at + 2u] = r.v2;
@@ -1510,6 +1781,38 @@ float3 building_colour_of(BuildingOut v) {
 BuildingTarget building_fs(BuildingOut v) {
     BuildingTarget o;
     o.colour = float4(building_colour_of(v), 1.0f);
+    return o;
+}
+
+/// A thin wall's colour (mat's edge colour of it where thin_vertex says) at the share of the pixel it holds (the far
+/// flicker), premultiplied, on the pixels its tile's standing fade keeps: the share of the pixel's box about its
+/// centre that each of its edges' half planes holds (thin_plane), multiplied together (exact along an edge and at a
+/// square corner; drawn at least 2 px wide, no two opposite edges share a pixel), times its share (thin_share).
+[shader("fragment")]
+BuildingTarget building_thin_fs(ThinOut v) {
+    if (fade_mask(int2(v.position.xy), frame.info.w, v.asked) == 0u) {
+        discard;
+    }
+    float3 at = float3(css_of_output(frame.camera, v.position.xy), 1.0f);
+    float cover = saturate(dot(v.e0.xyz, at)) * saturate(dot(float3(v.e0.w, v.e1.xy), at)) *
+                  saturate(dot(float3(v.e1.zw, v.e2.x), at)) * saturate(dot(v.e2.yzw, at)) * saturate(dot(v.e3, at));
+    float alpha = cover * v.share;
+    BuildingOut flat;
+    flat.position = v.position;
+    flat.colour = v.colour;
+    flat.asked = v.asked;
+    float3 colour = building_colour_of(flat);
+    if ((v.asked & THIN_EDGE) != 0u) {
+        // mat's edge colour of the level the frame would hold of it
+        uint levels = frame.layers.steps.y;
+        float n = float(levels);
+        float3 e = {float(mat_edge_level(uint(composite_level(colour.x, n)), levels)),
+                    float(mat_edge_level(uint(composite_level(colour.y, n)), levels)),
+                    float(mat_edge_level(uint(composite_level(colour.z, n)), levels))};
+        colour = e / n;
+    }
+    BuildingTarget o;
+    o.colour = float4(colour * alpha, alpha);
     return o;
 }
 
