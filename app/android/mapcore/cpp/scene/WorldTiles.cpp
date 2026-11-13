@@ -87,6 +87,28 @@ constexpr double rail_width = 3.0;
     return room >= bytes;
 }
 
+/// Whether the pieces hold tiles of `sizes` bytes one after another, the largest first, each as holds() judges it and
+/// taking what place() would take of them (whole: a piece with its slack; in parts: the largest, each with its slack).
+[[nodiscard]] bool holds_all(std::vector<vk::DeviceSize> pieces, std::vector<std::uint32_t> sizes) {
+    std::ranges::sort(sizes, std::greater<>{});
+    for (const std::uint32_t bytes : sizes) {
+        std::ranges::sort(pieces, std::greater<>{});
+        if (!holds(pieces, bytes)) return false;
+        if (pieces.front() >= vk::DeviceSize{bytes} + room_slack) {
+            pieces.front() -= vk::DeviceSize{bytes} + room_slack;
+            continue;
+        }
+        vk::DeviceSize left = bytes;
+        for (std::size_t i = 0; i < pieces.size() && i < parts_most && left > 0 && pieces[i] >= part_least + part_slack;
+             ++i) {
+            const vk::DeviceSize take = std::min(left, pieces[i] - part_slack);
+            left -= take;
+            pieces[i] -= take + part_slack;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool is_world(const tl::StorePack& p) noexcept {
     return p.kind == tl::PackKind::world_mid || p.kind == tl::PackKind::world_base;
 }
@@ -1016,10 +1038,47 @@ WorldTiles::Piece WorldTiles::make_piece(std::uint32_t bytes, std::uint64_t numb
     return Piece::made;
 }
 
+bool WorldTiles::trade(std::uint64_t key, const std::unordered_map<std::uint64_t, std::uint64_t>& stood_by,
+                       const std::unordered_set<std::uint64_t>& kept,
+                       const std::unordered_map<std::uint64_t, std::uint32_t>& roomless, std::uint64_t number) {
+    const auto by = stood_by.find(key);
+    if (by == stood_by.end() || kept.contains(by->second)) return false;
+    const auto stand_in = resident_.find(by->second);
+    if (stand_in == resident_.end() || stand_in->second->pinned) return false;
+    // the tiles it stands in for, each one whose build found no room: one not built yet (or absent) has bytes unknown
+    std::vector<std::uint32_t> sizes;
+    for (const auto& [wanted, s] : stood_by) {
+        if (s != by->second) continue;
+        const auto r = roomless.find(wanted);
+        if (r == roomless.end()) return false;
+        sizes.push_back(r->second);
+    }
+    // the room its going makes, with that of the tiles the frame does not draw (make_piece lets those go as each
+    // tile's turn comes), the ranges let go of already, and the pieces free
+    std::vector<HeapRange> back;
+    for (const WorldPart& p : stand_in->second->parts) back.push_back(p.range);
+    for (const auto& [k, t] : resident_) {
+        if (t->pinned || t->drawn >= number) continue;
+        for (const WorldPart& p : t->parts) back.push_back(p.range);
+    }
+    if (!holds_all(heaps_->pieces_with(back, HeapKind::ground), sizes)) return false;
+    const WorldTile& t = *stand_in->second;
+    log::info("vk world: the stand-in {}/{}/{} of {} bytes let go of for the {} tiles it stood in for", t.key.z,
+              t.key.x, t.key.y, t.bytes(), sizes.size());
+    let_go(t);
+    leaving_.push_back(std::move(stand_in->second));
+    resident_.erase(stand_in);
+    const std::scoped_lock lock(mutex_);
+    ++stats_.traded;
+    return true;
+}
+
 void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, double distance, std::uint64_t number,
                         double seconds, double reach, double under_far) {
     const view::Camera& camera = view.camera();
     number_ = number;
+    // the last frame's draws no longer name the stand-ins it traded
+    leaving_.clear();
     stand_in_bytes_ = 0;
     wanted_bytes_ = 0;
     wanted_unsized_ = 0;
@@ -1085,6 +1144,11 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
         }
     }
     std::vector<tl::TileKey> blocks;
+    // each wanted tile's stand-in, by the wanted tile's key, and the tiles the frame draws for a place of their own,
+    // under a tile fading in or as a floor: a stand-in none of those is drawn for the tiles it stands in for alone,
+    // which its room may hold (trade)
+    std::unordered_map<std::uint64_t, std::uint64_t> stood_by;
+    std::unordered_set<std::uint64_t> kept;
     // up to world_from, under the cover where the camera's place has no country's levels (out to the cover's far plane)
     const bool under = distance <= world_from && under_far > 0.0 && blank_ != nullptr;
     if (distance > world_from || under) {
@@ -1166,10 +1230,14 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             if (fine(h)) {
                 if (auto it = resident_.find(h.packed()); it != resident_.end()) {
                     t = it->second.get();
+                    kept.insert(h.packed());
                 } else {
                     asked.emplace_back(leaf.distance, h);
                     t = ancestor(h, h.z);
-                    if (t != nullptr && fine(t->key) && !t->pinned) stand_ins.insert(t->key.packed());
+                    if (t != nullptr && fine(t->key) && !t->pinned) {
+                        stand_ins.insert(t->key.packed());
+                        stood_by.try_emplace(h.packed(), t->key.packed());
+                    }
                 }
             }
             bool floor = false; // a tile faded in lies under the place
@@ -1178,6 +1246,7 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 const std::uint64_t over = cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
                 cells[t->key.packed()] |= over;
                 if (own) lit[t->key.packed()] |= over;
+                if (!own) kept.insert(t->key.packed()); // under one fading in
                 own = false;
                 floor = fade_of(*t) >= 1.0;
             }
@@ -1197,11 +1266,15 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             WorldTile* drawer = nullptr;
             if (auto it = resident_.find(h.packed()); it != resident_.end()) {
                 drawer = it->second.get();
+                kept.insert(h.packed());
             } else {
                 asked.emplace_back(leaf.distance, h);
                 // meanwhile its nearest resident ancestor, its cells over the tile
                 drawer = ancestor(h, h.z);
-                if (drawer != nullptr && !drawer->pinned) stand_ins.insert(drawer->key.packed());
+                if (drawer != nullptr && !drawer->pinned) {
+                    stand_ins.insert(drawer->key.packed());
+                    stood_by.try_emplace(h.packed(), drawer->key.packed());
+                }
             }
             if (drawer == nullptr) {
                 ++frame_.bare;
@@ -1214,12 +1287,17 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
                 const std::uint64_t over = cells_overlapping(world_cells_per_side, tl::tile_box(t->key), leaf_box);
                 cells[t->key.packed()] |= over;
                 // the leaf's own drawer lights its cities, once
-                if (t == drawer) lit[t->key.packed()] |= over;
+                if (t == drawer) {
+                    lit[t->key.packed()] |= over;
+                } else {
+                    kept.insert(t->key.packed()); // under one fading in
+                }
             }
             if (floored && drawer->key.z > 0) {
                 const int level = std::min<int>(world_floor, drawer->key.z - 1);
                 if (const WorldTile* f = ancestor(leaf.key, level + 1); f != nullptr) {
                     cells[f->key.packed()] |= cells_overlapping(world_cells_per_side, tl::tile_box(f->key), leaf_box);
+                    kept.insert(f->key.packed());
                 }
             }
         }
@@ -1267,8 +1345,10 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
     // 1,000 km over the Netherlands rebuilt their wanted tiles at rest (ENGINE.md step 11). Nearest first, the first
     // the pieces do not hold has the tiles the frame does not draw let go of for it (make_piece) and waits while their
     // bytes come back, the frames coming meanwhile, the others after it in their turn; where their going would not
-    // make room it is held back, its place drawn by its nearest resident ancestor, final, until the heap's pieces
-    // change
+    // make room, its stand-in's may: drawn for the tiles it stands in for alone, it is let go of where its room holds
+    // them all (trade), so the stand-ins sharpen (den helder 500 km pitched, 13 November: 4.2 MB of stand-in for a
+    // tile of 4.4 MB, the heap's 89.5 MB full of the view's tiles and the globe's pinned levels); else it is held
+    // back, its place drawn by its nearest resident ancestor, final, until the heap's pieces change
     std::unordered_set<std::uint64_t> ready;
     const std::size_t view_count = frame_.wanted; // the view's of `wanted`, its first, those held back among them
     {
@@ -1314,6 +1394,13 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             if (piece == Piece::now) {
                 ready.insert(p);
             } else if (piece == Piece::none) {
+                // its stand-in's going: it waits for those bytes as for the ones make_piece lets go of
+                if (in_view && trade(p, stood_by, kept, roomless, number)) {
+                    room_waits_[p] = frees;
+                    frame_.settling = true;
+                    making = true;
+                    continue;
+                }
                 unmade = std::min(unmade, r->second);
                 if (in_view) ++frame_.held;
             } else {
