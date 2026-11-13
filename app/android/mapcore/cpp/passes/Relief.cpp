@@ -179,9 +179,8 @@ void Relief::update(const frame::FrameState& state) {
     Slot& s = slots_.at(slot);
     s.quads.clear();
     fading_ = false;
-    // texels staged for a frame that never recorded them (the pass left out of it, FrameOptions::passes): their layers
-    // hold nothing, and while it is left out nothing of its own keeps the frames coming
-    const bool left_out = !copies_.empty();
+    // texels staged for a frame that never recorded them (the pass left out of it, FrameOptions::passes, or a frame
+    // that did not go out): their layers hold nothing, and the rasters go up with the next frame that draws them
     for (const Copy& c : copies_) layers_.at(c.layer) = {};
     copies_.clear();
     const scene::ReliefFrame* relief = state.relief;
@@ -254,7 +253,6 @@ void Relief::update(const frame::FrameState& state) {
     }
     // a raster waiting its turn goes up in the next frame
     if (waiting) fading_ = true;
-    if (left_out) fading_ = false;
     if (!copies_.empty()) staging_.flush();
     if (s.quads.empty()) return;
     const shaders::ReliefLight light = fx::relief_light(state.block.theme, style, state.sky_view, strength);

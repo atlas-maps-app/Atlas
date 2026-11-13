@@ -1636,11 +1636,30 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
        - A tile of open sea is not built: TINITALY and Kartverket give the sea 0 m, and the registry's `sea_m` says so.
        - The Dutch grid has a datum of its own, and GDAL chooses the operation to the tiles' CRS by the bounds of the raster it warps. The registry's `operation_area` names the box it is chosen for, whatever those bounds.
        - The check cuts a sheet's overview on the overview's own pixels (GDAL's open option `OVERVIEW_LEVEL`). With gdal_translate's `-ovr` and `-projwin` a cut lay up to half an overview pixel (2 m) from where it said, and 10 of the Netherlands' 50 points stood up to 0.43 m from the pack on slopes, while the same pixels averaged by hand gave the pack's heights.
-    2. **Relief light on the plane (10 h):**
-       - `shared/relief.slang` and its twin;
-       - the tiles' heights as textures;
-       - a sky-view baked per tile, 16 directions within 8 samples;
-       - `FrameOptions::terrain` and the style's `relief` values.
+    2. **Relief light on the plane (10 h; built 13 November, branch `relief`):**
+       - `shared/relief.slang` and its twin (`fx/Relief.hpp`): the light as a share of flat open ground's, so flat open ground keeps its colours to the bit;
+       - the tiles' relief as textures: a raster baked to a texel a sample, its normal and its sky-view (16 directions within 8 samples), in one array;
+       - one multiply over the ground a frame has drawn (`passes/Relief.hpp`), after the ground's shadows;
+       - `FrameInputs::terrain`, and the look's values in `mapcore/style/relief.jsonc`;
+       - the phone reads a country's terrain by range (`Native.terrainWants`, `terrainBlocks`, `terrainKeep`), draws flat without it, and names the sources drawn in its credit line.
+
+       As built, and where it differs from the plan:
+       - **The light.** f = (sky + s·max(0, n·L)) / (1 + s·L_y), with sky = (1 − w)·V + w·max(0, n·W) / W_y, then a shoulder, then f·(1 + a·(V − 1)), never under a floor. V is the sky-view, W the north-west.
+         - A clear day: the renders' 1 + 0.8·(max(0, n·L) − L_y) on open ground (s = k / (1 − k·L_y)).
+         - An overcast sky: their north-west light, 1 + 0.55·(n·W − W_y), with the rest of the sky by the sky-view.
+         - Night: their light from straight above, 1 + 0.25·(n_y − 1).
+         - The sun's share comes in over the first 7° of its rise, so dusk does not jump. Under a high sun a share of the sky's light comes from the north-west, so noon does not flatten the relief.
+         - A shoulder from 1.1 toward 1.16 stands in place of the renders' clip. Shade takes the renders' cool tint.
+         - The contrasts are the style's (`sun`, `overcast`, `night`), not the theme's sun_k and amb_k: the renders' relief takes fixed contrasts too, and the theme's weights are the buildings' light's.
+       - **The values are in `mapcore/style/relief.jsonc`,** compiled into the core, not in `engine.jsonc`. A key in `engine.jsonc` moves the map's style version, and every country's packs would be built and published again for a look no pack carries.
+       - **One multiply, not light in every ground stage.** The opaque ground draws top layer first with depth, so every layer on the plane shares one light: lighting what they left in the frame once equals lighting each of them. It costs one fragment a pixel, no ground stage changes, and a frame without relief records nothing of the pass. The quads draw half a painter slot above the ground's last slot, so the depth test passes on the ground alone and fails on what stands up.
+       - **The relief has a cover of its own** (`scene/Relief.hpp`), not the map's. The map's cover draws a tile's cells where they hold features, over a plate that lies everywhere, so its cells would leave holes in the light. The relief walks the pyramid to L12, to L13 within 12 km of the eye and to L14 within 4.7 km (the map's levels' reaches), no finer than the packs hold, and draws one quad a tile. A tile whose raster is not baked yet is lit by the nearest coarser one baked.
+       - **No stage T of the map's tiles is touched.** One worker of the relief's own decodes and bakes each wanted raster, nearest first, so a map tile never waits for heights and heights never rebuild a map tile.
+       - **A texel is A2B10G10R10:** the normal's x and z and the sky-view in ten linear bits each. Level ground is a level of its own, so it reads back as exactly 0. The heights themselves stay on the CPU until step 3 lays the ground on them.
+       - **Memory:** the array is 64 layers of 257² texels (16.9 MB), made when the first raster comes; the baked rasters are kept on the CPU too, at most 64. A map without terrain takes neither.
+       - **Engine mode stays flat,** and a frame's inputs ask for the terrain (the app's map does; every check that builds its own inputs does not). With the terrain off the frame is byte for byte the frame before the pack was listed (`relief_vk_test`).
+       - **The relief ends** over the last 15 % of the cover's far depth, and fades out between 18 and 24 km of camera distance: the world's relief beyond is step 4's.
+       - **Left for later steps:** terrain shadows (step 5: the light's S is 1); the Layers screen's switches for the relief and its sky-view (the core's switches are `MapFrame::set_terrain` and `set_sky_view`); mipmaps of the array.
     3. **The surface (18 h):**
        - stage T's mesh, RTIN with skirts;
        - every ground record laid on it;
