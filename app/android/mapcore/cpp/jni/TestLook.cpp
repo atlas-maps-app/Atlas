@@ -9,6 +9,7 @@
 // nearest first, so the tool takes them from their country's tiles as the phone's Windows does. They bind to the Kotlin
 // object app.atlas.mapcorecheck.likeness.LookHost by JNI's names; nothing of them is in the phone's library.
 #include "frame/MapFrame.hpp"
+#include "fx/FieldCache.hpp"
 #include "gen/spirv/modules.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
@@ -31,6 +32,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -245,10 +247,10 @@ JNIEXPORT void JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_screen(JNIE
 }
 
 /// Draws at `camera` (a camera state as MapCameraSource writes it) until the picture is complete and a few frames on,
-/// as the phone's frame loop draws at rest, or until it cannot be with the packs listed (no tile under way and no fade:
-/// windows it wants that no pack holds, which the tool takes and draws again with, or none within reach), or `seconds`
-/// pass; "<frames> frames, complete <yes|no>, pack <drawn>; <tiles line>; the last frame: <its draws, triangles,
-/// fragments and recording time>", or "" with lastError set.
+/// as the phone's frame loop draws at rest, the last with the frame's fields (fields_in), or until it cannot be with
+/// the packs listed (no tile under way and no fade: windows it wants that no pack holds, which the tool takes and draws
+/// again with, or none within reach), or `seconds` pass; "<frames> frames, complete <yes|no>, pack <drawn>; <tiles
+/// line>; the last frame: <its draws, triangles, fragments and recording time>", or "" with lastError set.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNIEnv* env, jclass /*unused*/,
                                                                              jlong handle, jobject camera,
                                                                              jdouble seconds) {
@@ -265,14 +267,37 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
     int frames = 0;
     int complete_frames = 0;
     standin::FrameRecord last{};
+    // The frame's fields where it wants them, before the frame read: the noise fields bound, and the sky's
+    // (FieldCache::update_sky) bound or made. Those the GPU does not make come from workers, and a frame read before
+    // they come is drawn without them, its grain and cloud shadows otherwise over the whole frame (the keep's first
+    // view in one of four draws, World run 43542899593). A frame whose sky does not show leaves the sky's made and not
+    // taken, so made is enough: where the sky shows, the next frame takes it before its passes.
+    const auto fields_in = [&map] {
+        fx::FieldCache* f = map.fields();
+        if (f == nullptr || !f->wanted()) return true;
+        const fx::FieldSize size = *f->wanted();
+        if (!f->bound_for(size)) return false;
+        fx::FieldWorker* sky = f->sky_worker();
+        return sky == nullptr || f->sky_bound_for(size) || sky->idle();
+    };
+    // the longest the picture at rest waits for its fields: where they never come, the frame as it is
+    constexpr auto fields_most = std::chrono::seconds(120);
+    std::optional<std::chrono::steady_clock::time_point> rest; // when the picture came to rest
     while (std::chrono::steady_clock::now() < until) {
+        const bool fields = fields_in(); // before the frame, which draws with them
         const standin::Drawn d = session.draw(*cam, {});
         if (d.stale) session.remake();
         frames += d.drawn ? 1 : 0;
         if (d.drawn) last = d.record;
         complete_frames = map.complete() ? complete_frames + 1 : 0;
-        // complete, and the fades over: a few frames more at rest
-        if (complete_frames > 4 && !map.animating()) break;
+        // complete, and the fades over: a few frames more at rest, the last drawn with the frame's fields
+        if (complete_frames > 4 && !map.animating()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (!rest) rest = now;
+            if (fields || now - *rest > fields_most) break;
+            continue;
+        }
+        rest.reset();
         if (map.animating() || map.world() == nullptr) continue;
         map.world()->residency().wait_idle();
         // the world's tiles the frame wanted are built before the next one (its globe's pinned levels at the first)
