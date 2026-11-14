@@ -1,6 +1,6 @@
 {
   "about": "The references around the world (ENGINE.md step 5, \"References around the world\"): the app's map over the world's own packs alone, world-refs (the tiles of these frames cut from a world release's parts by `packer world-refs`, and its globe), where no country has levels (the camera's WORLD_UNDER), as the phone draws it (every effect) at the frame below: the target at cy of its height from the top, straight down unless pitched, north up unless a bearing is given. A frame with a time is drawn at that instant in its zone (CoreMoment's live moment), the others at a moment of the port's. likeness/WorldPackRefs.kt's WorldPackRefsTest draws them on lavapipe in world.yml's refs job (a frame that cannot be decoded or drawn fails it) and holds the engine to the current version's frames once a version holds them, over the world they are of (the version's world, the release the refs job names in ATLAS_WORLD_REFS_RELEASE): another world's data draws other pixels with the same engine, so its frames are only proposed. A deliberate change is a new version, its frames from the refs job's proposal (the report's world-refs/world-refs.json).",
-  "version": "2",
+  "version": "3",
   "frame": {"width": 1080, "height": 2400, "density": 2.6213592233009706, "cy": 0.48},
   "frames": [
     {"name": "tokyo 30 km noon", "lat": 35.6812, "lon": 139.7671, "distance": 30000, "pitch": 0, "time": "2026-03-20T03:00:00Z", "zone": "Asia/Tokyo"},
@@ -63,6 +63,29 @@
           "netherlands 100 km": "7b3386a311c8b713619e3dc41b2e0303697f9771afc2d23bfc6102147b3570b0",
           "netherlands 1000 km": "7bf5335c18b43d30c56246602c9ebd5d94031a5fdc894d018b28fa47546bf165",
           "the board": "a0b3c3a01fb20e32fed39267dad47c6136bfb5f53d2d308f28b12bb9bc42a481"
+        }
+      }
+    },
+    "3": {
+      "note": "world-20261102-planet-3, the published world (world-latest since 13 November), drawn by World run 43517439759's refs job on branch worldpixels (app 78a2c808). 7 of the 15 frames moved since version 2 (World run 43287084503, app c8118578), each by what app has since: the board, the Globe board's stars and Milky Way behind the Earth (backdrop: 179,752 pixels about the disc); open sea 6000 km dusk, the same about its disc (78,408 pixels); 85 n and 85 s 1500 km, the haze's stops over the bent ground (benthaze: over half of each frame, 47 levels at most); netherlands 1000 km, the same over the whole frame with its waters' names; netherlands 100 km, a water's name on its own water (waterframe: one label's 365 by 63 pixels near the top); tokyo 300 km 22h, 2 levels at most over the whole frame (the night's haze or clouds' field, benthaze's or skyfield's). The other 8 are version 2's to the bit.",
+      "world": "world-20261102-planet-3",
+      "platforms": {
+        "lavapipe-x86_64": {
+          "tokyo 30 km noon": "5c7e4970cf007dd4ae6f3ea0f6c5d77b2402171ead3dd1bef3e5f3e8627238fc",
+          "tokyo 30 km 22h": "31d649cf41169ae251373d84c683bd542120fb3ca95c84c0f1061f94a4dc333b",
+          "tokyo 300 km noon": "d4af5c6f6bec093b61084fb520a6cc23c521d9be43ee4c63dbda7ad9e60c22e9",
+          "tokyo 300 km 22h": "8bf3d6cd9895ecd37ee29399b562caf0ef9ece432d7a53e4ba385fc080ac45d9",
+          "zermatt 25 km pitched": "093b08a8daec15e9873c3791719c974f0e4b2edf70aa67a6a87d4caf0abb3492",
+          "tamanrasset 100 km": "6c669a06362f1789e887ae5827ebdd02178bfe9b27177b03a27ab163e098bc9e",
+          "bergen 75 km": "cdcacfb7b5cb239bebb2b15a833a089d4a9ea48e275624c3fbf6fc33444b0e1b",
+          "open sea 600 km dusk": "2d2aae99752e028b03cf1357aeb0103e287657583b7bd2c87f6b91f0564f0410",
+          "open sea 6000 km dusk": "0d813890a060e991c6ec1a2f426fbfd59de008b799c13b449d949bbfce48f4be",
+          "85 n 1500 km": "60ade135135c819c3eb74604edd1e7bef322d46d485e22af52826448423f374d",
+          "85 s 1500 km": "17a42383a36815b77b460e4a8a14044549c62543dd69c1113f549e5fbb25e470",
+          "netherlands 25 km": "454299b989af1a16e1a8f1c0ce99ae8defe6b07e9e734c12dce7eedd9f2b27fd",
+          "netherlands 100 km": "7cf007995d5b039ae9a60fa25857367d9237c3c16f80ec749088687885eaa470",
+          "netherlands 1000 km": "9e9d871f992e733de59e402bbde72001cb734a4de9905102b4cacb57ce4d99ab",
+          "the board": "8fa49adbd60cec51daf6a456830dbc2901eb07b215065cf484e37fd9701e6b63"
         }
       }
     }
