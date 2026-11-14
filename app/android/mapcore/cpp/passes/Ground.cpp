@@ -788,9 +788,24 @@ bool Ground::decide(const frame::FrameState& state) {
                 it->under = it->under && c.under;
                 continue;
             }
-            // (a test's fade on every tile: its place's scale.w, which the vertex stage reads)
+            // (a test's fade on every tile: its place's scale.w, which the vertex stage reads; and under it, where the
+            // test says, the tile's own copy as the cover keeps a tile under one fading in)
             shaders::TilePlace place = c.place;
-            if (fade_every_) place.scale.w = *fade_every_;
+            if (fade_every_) {
+                if (fade_over_itself_) {
+                    f.tiles.push_back({.tile = c.drawn,
+                                       .pass = &p,
+                                       .ground = g,
+                                       .cells = cells,
+                                       .place = c.place,
+                                       .sun = c.sun,
+                                       .sun_base = c.sun_base,
+                                       .sun_weight = c.sun_weight,
+                                       .fade = c.place.scale.w,
+                                       .under = true});
+                }
+                place.scale.w = *fade_every_;
+            }
             f.tiles.push_back({.tile = c.drawn,
                                .pass = &p,
                                .ground = g,
@@ -803,6 +818,9 @@ bool Ground::decide(const frame::FrameState& state) {
                                .under = c.under});
         }
     }
+    // the settled streets' marks, in the app's map where a tile fades in (record_fading_fills' tiles)
+    f.marks = marks_ && f.grounded && !f.out(style::camera_part::ground) &&
+              std::ranges::any_of(f.tiles, [](const DrawnTile& t) { return t.fade < 1.0F && t.pass->ranges[0]; });
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
     // windows is the cell's centre, kilometres off, and windows carry the city past the renders' radius; so where
     // windows are drawn the plate reaches each of them whole (frames without windows keep the renders' plate).
@@ -1035,13 +1053,16 @@ bool Ground::decide(const frame::FrameState& state) {
             }
         }
     }
-    if (left_out_fills_ != 0U) {
-        // the tests' look without some kinds of fill: theirs not drawn
+    if ((left_out_fills_ | left_out_under_ | left_out_fading_) != 0U) {
+        // the tests' look without some kinds of fill: theirs not drawn (and those a test's copy kept under, or the
+        // copy fading in over it, leaves out: leave_out_of_copies)
         for (const DrawnTile& t : f.tiles) {
+            const std::uint32_t left_out =
+                left_out_fills_ | (fade_over_itself_ ? (t.under ? left_out_under_ : left_out_fading_) : 0U);
+            if (left_out == 0U) continue;
             const std::span<const HotFill> hot(t.hot->fills);
             for (std::uint32_t i = 0; i < hot.size(); ++i) {
-                if (((left_out_fills_ >> static_cast<std::uint32_t>(hot[i].kind)) & 1U) != 0U)
-                    f.drawn[t.decisions + i] = 0;
+                if (((left_out >> static_cast<std::uint32_t>(hot[i].kind)) & 1U) != 0U) f.drawn[t.decisions + i] = 0;
             }
         }
     }
@@ -1433,23 +1454,73 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
     streets_depth.stencil = streets.stencil;
     ATLAS_GPU_LET(fsd, frame::make_pipeline(context, streets_depth, frame::Overdraw::opaque));
     p.fill_streets_depth = std::move(fsd);
+    // in a frame where a tile fades in, the colour draws of the settled tiles' streets, bridges and big roads mark the
+    // pixels they ink (ground_stencil::marks; colour_mark_fs: not those a ramp's outer half leaves without ink), which
+    // the fading tiles' fills keep off: a street a tile fading in and the tile kept under it both hold is drawn once,
+    // the settled tile's, where the two bands stacked (1 - (1 - c)(1 - f c) of a thin street's share c at fade f)
+    gpu::GraphicsDesc bridges_marking = bridges;
+    bridges_marking.label.name = "ground bridges marking";
+    bridges_marking.fragment = "colour_mark_fs";
+    bridges_marking.stencil_test = true;
+    bridges_marking.stencil = {.failOp = vk::StencilOp::eKeep,
+                               .passOp = vk::StencilOp::eReplace,
+                               .depthFailOp = vk::StencilOp::eKeep,
+                               .compareOp = vk::CompareOp::eAlways,
+                               .compareMask = 0,
+                               .writeMask = ground_stencil::marks,
+                               .reference = ground_stencil::marks};
+    ATLAS_GPU_LET(fbm, frame::make_pipeline(context, bridges_marking, frame::Overdraw::translucent));
+    p.fill_bridges_marking = std::move(fbm);
+    // (off a bridge the test as before: the marks' bit is not in its mask)
+    gpu::GraphicsDesc streets_marking = streets;
+    streets_marking.label.name = "ground streets marking";
+    streets_marking.fragment = "colour_mark_fs";
+    streets_marking.stencil.passOp = vk::StencilOp::eReplace;
+    streets_marking.stencil.writeMask = ground_stencil::marks;
+    streets_marking.stencil.reference = ground_stencil::marks;
+    ATLAS_GPU_LET(fsm, frame::make_pipeline(context, streets_marking, frame::Overdraw::translucent));
+    p.fill_streets_marking = std::move(fsm);
+    // and the marks cleared over the frame after the fading tiles' fills, before the canopy's union takes the bit
+    gpu::GraphicsDesc unmark = ground_desc(context, p, "ground marks end", "screen_vs", "flat_fs");
+    colour_off(unmark);
+    unmark.stencil_test = true;
+    unmark.stencil = {.failOp = vk::StencilOp::eZero,
+                      .passOp = vk::StencilOp::eZero,
+                      .depthFailOp = vk::StencilOp::eZero,
+                      .compareOp = vk::CompareOp::eAlways,
+                      .compareMask = 0,
+                      .writeMask = ground_stencil::marks,
+                      .reference = 0};
+    ATLAS_GPU_LET(me, frame::make_pipeline(context, unmark, frame::Overdraw::none));
+    p.marks_end = std::move(me);
     // a tile's fills while it fades in (ENGINE.md's fades), over what lies under it, top first: each sample takes the
     // tile's topmost fill alone, at or above what is there (its ancestor's fill of the same place has its slot), at
-    // the tile's fade, and keeps its depth for what is drawn over it
+    // the tile's fade, and keeps its depth for what is drawn over it; all of them kept off the settled streets' marks
+    // (where none are drawn the bit is clear), so that where a street lies over a land fill the fading land does not
+    // cover the settled band's outer parts while its own band is kept off
     gpu::GraphicsDesc fading = ground_desc(context, p, "ground fading fills", "fill_fading_vs", "colour_over_fs");
     scene_blend(fading, gpu::Blend::over());
     fading.depth_test = true;
     fading.depth_write = true;
     fading.depth_op = vk::CompareOp::eGreaterOrEqual;
+    fading.stencil_test = true;
+    fading.stencil = {.failOp = vk::StencilOp::eKeep,
+                      .passOp = vk::StencilOp::eKeep,
+                      .depthFailOp = vk::StencilOp::eKeep,
+                      .compareOp = vk::CompareOp::eEqual,
+                      .compareMask = ground_stencil::marks,
+                      .writeMask = 0,
+                      .reference = 0};
     ATLAS_GPU_LET(ff, frame::make_pipeline(context, fading, frame::Overdraw::translucent));
     p.fill_fading = std::move(ff);
     // and in the app's map its streets off a bridge, kept off the water as at rest where the stencil still says where
     // it is: with weather w0's bit stands through the opaque phase, while without weather the water's count is cleared
-    // after the streets' draws, so there a fading street's edge may lie over the water until its fade ends
+    // after the streets' draws, so there a fading street's edge may lie over the water until its fade ends; and off
+    // the marks
     gpu::GraphicsDesc fading_streets = fading;
     fading_streets.label.name = "ground fading streets";
-    fading_streets.stencil_test = true;
     fading_streets.stencil = streets.stencil;
+    fading_streets.stencil.compareMask |= ground_stencil::marks;
     ATLAS_GPU_LET(ffs, frame::make_pipeline(context, fading_streets, frame::Overdraw::translucent));
     p.fill_fading_streets = std::move(ffs);
     gpu::GraphicsDesc plate = ground_desc(context, p, "ground plate", "plate_vs", "colour_fs");
@@ -1843,10 +1914,13 @@ void Ground::record_streets(const frame::Recording& r) {
                 if (w.count == 0 || !t.pass->ranges[0] || t.fade < 1.0F) continue;
                 const std::uint32_t first = (t.pass->ranges[0].offset / 4) + w.first;
                 if (!bound) {
+                    // (the colour's draws marking the pixels they ink where a tile fades in: GroundFrame::marks)
                     const Pipelines& p = *pipelines_;
+                    const vk::raii::Pipeline& colour =
+                        frame_.marks ? (part.off ? p.fill_streets_marking : p.fill_bridges_marking)
+                                     : (part.off ? p.fill_streets : p.fill_bridges);
                     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                                     depth ? (part.off ? *p.fill_streets_depth : *p.fill_bridges_depth)
-                                           : (part.off ? *p.fill_streets : *p.fill_bridges));
+                                     depth ? (part.off ? *p.fill_streets_depth : *p.fill_bridges_depth) : *colour);
                     if (depth) push(r, flags, 0);
                     bound = true;
                 }
@@ -1860,7 +1934,9 @@ void Ground::record_streets(const frame::Recording& r) {
 }
 
 void Ground::record_fading_fills(const frame::Recording& r) {
-    // coarse to fine: a tile fading in over one fading in under it
+    // the furthest on first: a tile fading in over one fading in under it, whichever way the level steps (each fade
+    // runs from its tile's start over the cover's one length, so the further on is the older; coarse to fine, as
+    // before, drew a finer tile kept under as the view zooms out over the coarser one fading in over it)
     std::vector<std::uint32_t> fading;
     for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
         if (frame_.tiles[i].fade < 1.0F && frame_.tiles[i].pass->ranges[0]) {
@@ -1868,9 +1944,8 @@ void Ground::record_fading_fills(const frame::Recording& r) {
         }
     }
     if (fading.empty()) return;
-    std::ranges::stable_sort(fading, [this](std::uint32_t a, std::uint32_t b) {
-        return frame_.tiles[a].tile->key.z < frame_.tiles[b].tile->key.z;
-    });
+    std::ranges::stable_sort(
+        fading, [this](std::uint32_t a, std::uint32_t b) { return frame_.tiles[a].fade > frame_.tiles[b].fade; });
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     // the big roads' asphalt as wide as at rest, and in the app's map the streets off a bridge by their own draw
     // (record_streets), here in their place among the tile's fills, top first, a thin one drawn as wide as there
@@ -1901,6 +1976,13 @@ void Ground::record_fading_fills(const frame::Recording& r) {
             draw(l.above, "ground fading");
         }
         draw(l.below, "ground fading");
+    }
+    // the settled streets' marks cleared (record_streets)
+    if (frame_.marks) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->marks_end);
+        push(r, 0, 0);
+        cmd.draw(3, 1, 0, 0);
+        r.counters.draw("ground fading", 1);
     }
 }
 
