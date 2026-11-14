@@ -1324,7 +1324,9 @@ jobs:
             exit 1
           fi
           echo "### A kept country drawn offline" >> "$GITHUB_STEP_SUMMARY"
-          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names), the other $((all - n)) (pitched, from 60 to 1,000 km) by their tiles alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
+          alone=""
+          if [ "$n" -lt "$all" ]; then alone=", the other $((all - n)) by their tiles alone (their pixels false)"; fi
+          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names)$alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
       - name: The frames
         if: ${{ !cancelled() }}
         run: |
