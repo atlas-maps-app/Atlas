@@ -293,6 +293,12 @@ struct WorldFrame {
     /// Drawn up to world_from, under the cover, where no country's levels are (WorldTiles::update's `under_far`): the
     /// cover's tiles are the picture where it has any, and the world lies under them.
     bool under = false;
+    /// Measurement (branch worldsums, never lands): FNV-1a sums of the frame's draws (each tile's key, cells, light
+    /// cells, fade, box and its parts' counts), of the heap's words they draw (read from its mapping as the frame is
+    /// listed) and of its frame and bend.
+    std::uint64_t sum_draws = 0;
+    std::uint64_t sum_words = 0;
+    std::uint64_t sum_view = 0;
 };
 
 /// Whether `frame` draws water at (`lat`, `lon`), by the mask of the finest tile it draws there (WorldTile::water);

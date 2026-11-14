@@ -1300,23 +1300,33 @@ jobs:
               exit 1
             fi
           }
-          draw "$ATLAS_WORLD_KEEP_WALK"
-          rm -rf "${L:?}/world-keep-walk"
-          mv "$L/world-keep" "$L/world-keep-walk"
-          draw "$ATLAS_WORLD_KEEP"
-          # each frame's SHA-256 over the walk's tiles and over the kept ones
+          # measurement (branch worldsums, never lands): each folder drawn twice, each draw's notes kept beside its
+          # frames (WorldPackRefsTest's line a frame), and every pair of the draws compared
+          one() {
+            draw "$1"
+            grep -h -o 'world-keep [^<]*' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml > "$L/world-keep/notes.txt" || true
+            rm -rf "${L:?}/$2"
+            mv "$L/world-keep" "$L/$2"
+          }
+          one "$ATLAS_WORLD_KEEP_WALK" world-keep-walk
+          one "$ATLAS_WORLD_KEEP_WALK" world-keep-walk2
+          one "$ATLAS_WORLD_KEEP" world-keep-kept
+          one "$ATLAS_WORLD_KEEP" world-keep-kept2
           frames() { jq -c '.version as $v | .versions[$v].platforms["lavapipe-x86_64"] // {}' "$1"; }
           all=$(jq '.frames | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
-          n=$(jq '[.frames[] | select(.pixels != false)] | length' mapcorecheck/src/test/resources/likeness/world-keep.json)
-          for f in "$L/world-keep-walk/world-keep.json" "$L/world-keep/world-keep.json"; do
-            if [ "$(frames "$f" | jq length)" != "$n" ]; then echo "::error::$f holds $(frames "$f" | jq length) frames, not $n"; exit 1; fi
-          done
-          differ=$(jq -rn --argjson a "$(frames "$L/world-keep-walk/world-keep.json")" --argjson b "$(frames "$L/world-keep/world-keep.json")" \
-            '[$a | keys_unsorted[] | select($a[.] != $b[.])] | join(", ")')
-          if [ -n "$differ" ]; then
-            echo "::error::the Netherlands' kept tiles draw these views otherwise than the world does (frames in the artifact world-refs, world-keep and world-keep-walk): $differ"
-            exit 1
-          fi
+          n=$all
+          pair() {
+            d=$(jq -rn --argjson a "$(frames "$L/$1/world-keep.json")" --argjson b "$(frames "$L/$2/world-keep.json")" \
+              '[$a | keys_unsorted[] | select($a[.] != $b[.])] | join(", ")')
+            echo "$1 against $2: ${d:-none}" | tee -a "$L/pairs.txt"
+            echo "- $1 against $2: ${d:-none}" >> "$GITHUB_STEP_SUMMARY"
+          }
+          pair world-keep-walk world-keep-walk2
+          pair world-keep-kept world-keep-kept2
+          pair world-keep-walk world-keep-kept
+          pair world-keep-walk2 world-keep-kept2
+          pair world-keep-walk world-keep-kept2
+          pair world-keep-walk2 world-keep-kept
           # every tile of the views' walk a pack holds, kept (packer world-refs --kept, the step above)
           C="$RUNNER_TEMP/keep/views-cut.txt"
           if ! kept=$(grep -E '^world-refs: kept for netherlands: ' "$C"); then

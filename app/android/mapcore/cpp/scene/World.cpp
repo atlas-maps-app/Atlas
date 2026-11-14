@@ -1367,6 +1367,8 @@ std::string World::tiles_line() const {
         line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size() - land, finest, w->wanted,
                             w->bare);
         if (w->under) line += std::format(" under land {}", land);
+        // measurement (branch worldsums, never lands)
+        line += std::format(" sums draws {:016x} words {:016x} view {:016x}", w->sum_draws, w->sum_words, w->sum_view);
     }
     return line;
 }

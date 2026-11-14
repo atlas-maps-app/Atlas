@@ -19,6 +19,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <format>
 #include <map>
 #include <numbers>
@@ -1555,6 +1556,49 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
     frame_.buffer = heaps_->bind(number).low;
     frame_.frame = frame;
     frame_.style = style_pack_ ? style_pack_->pack.style() : nullptr;
+    // measurement (branch worldsums, never lands): the frame's draws, the words they draw and its frame and bend
+    {
+        constexpr std::uint64_t prime = 0x100000001b3ULL;
+        const auto mix = [](std::uint64_t& h, const void* data, std::size_t size) {
+            const auto* p = static_cast<const unsigned char*>(data);
+            for (std::size_t i = 0; i < size; ++i) h = (h ^ p[i]) * prime;
+        };
+        const auto mix_words = [](std::uint64_t& h, std::span<const std::byte> bytes) {
+            const std::size_t n = bytes.size() / 4;
+            for (std::size_t i = 0; i < n; ++i) {
+                std::uint32_t w = 0;
+                std::memcpy(&w, bytes.data() + (i * 4), 4);
+                h = (h ^ w) * prime;
+            }
+        };
+        std::uint64_t draws = 0xcbf29ce484222325ULL;
+        std::uint64_t words = 0xcbf29ce484222325ULL;
+        std::uint64_t placed = 0xcbf29ce484222325ULL;
+        for (const WorldDraw& d : frame_.draws) {
+            const std::uint64_t key = d.tile->key.packed();
+            mix(draws, &key, sizeof key);
+            mix(draws, &d.cells, sizeof d.cells);
+            mix(draws, &d.light_cells, sizeof d.light_cells);
+            mix(draws, &d.fade, sizeof d.fade);
+            mix(draws, &d.box, sizeof d.box);
+            mix(draws, &d.tile->cap, sizeof d.tile->cap);
+            mix(draws, d.tile->box.data(), sizeof d.tile->box);
+            for (const WorldPart& p : d.tile->parts) {
+                const std::array<std::uint32_t, 4> counts{p.triangles, p.segments, p.coast, p.lights};
+                mix(draws, counts.data(), sizeof counts);
+                const Heaps::Writer w = heaps_->writer(p.range);
+                mix_words(words, w.bytes());
+            }
+        }
+        mix(placed, &frame_.frame, sizeof frame_.frame);
+        const WorldBend& b = frame_.bend;
+        const std::array<double, 12> bend{b.drop,  b.sphere, b.target.x, b.target.y, b.target.z, b.eye.x,
+                                          b.eye.y, b.eye.z,  b.lat,      b.lon,      b.sin_lat,  b.cos_lat};
+        mix(placed, bend.data(), sizeof bend);
+        frame_.sum_draws = draws;
+        frame_.sum_words = words;
+        frame_.sum_view = placed;
+    }
     if (drawing_ && frame_.draws.empty() && frame_.wanted == 0) drawing_ = false;
 }
 
