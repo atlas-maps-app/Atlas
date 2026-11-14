@@ -92,7 +92,7 @@ jobs:
           MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
             | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
                | {id, name, url, country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
-                  windows: (if .windows == false then false else true end),
+                  windows: (if .windows == false then false else true end), shards: (.shards // 1),
                   atlas: ((.atlas // (if ((.bbox[2] - .bbox[0]) * (.bbox[3] - .bbox[1])) <= 0.6 then .bbox else null end)) // [] | map(tostring) | join(\",\"))}]" "$FILE")
           if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -129,6 +129,7 @@ jobs:
       COUNTRY: ${{ matrix.region.country }}
       ATLAS_BOX: ${{ matrix.region.atlas }}
       WINDOWS: ${{ matrix.region.windows }}
+      SHARDS: ${{ matrix.region.shards }}
       TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -234,15 +235,33 @@ jobs:
       - name: Windows' data
         if: env.WINDOWS == 'true'
         env:
-          # the Netherlands' node positions alone take some 2 GB, its ways' nodes and tags the most of the rest
+          # the Netherlands' node positions alone take some 2 GB, its ways' nodes and tags the most of the rest (5.7 GB
+          # held, the heap's pools at 11 GB at their peaks, 4 November); a larger country cuts its windows in shards of
+          # frame cells' columns (regions.json's shards, ENGINE.md step 11), each holding every node's position but only
+          # its own cells' tagged nodes and ways
           JAVA_OPTS: -Xmx12g
         run: |
           set -euo pipefail
+          PACKER=app/android/packer/build/install/packer/bin/packer
           ARGS=(--poly "$WORK/$ID.poly" --core "$ATLAS_STAGEP" --id "$ID")
           # a region cut from a bigger extract: the windows that meet its box
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
-          app/android/packer/build/install/packer/bin/packer windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
-          { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SHARDS" -gt 1 ]; then
+            # one shard after another, each a process and heap of its own, in folders beside out/ (which the upload
+            # takes whole), then joined into the files the run whole writes, each shard's deleted as it is joined
+            : > "$RUNNER_TEMP/windows.txt"
+            DIRS=()
+            for i in $(seq 1 "$SHARDS"); do
+              "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/shards/$i" "${ARGS[@]}" --shard "$i/$SHARDS" | tee -a "$RUNNER_TEMP/windows.txt"
+              DIRS+=("$WORK/shards/$i")
+              df -h "$WORK" | tail -1
+            done
+            "$PACKER" windows-join "$WORK/out" "${DIRS[@]}" --id "$ID" --remove | tee -a "$RUNNER_TEMP/windows.txt"
+            { echo "- $ID: the windows' data in $SHARDS shards"; grep -E '^(shard [0-9]+ of [0-9]+: |the extract: |time: )' "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; tail -2 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
+            { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           rm -f "$WORK/$ID.osm.pbf"
           df -h "$WORK"
       - name: Country tiles
