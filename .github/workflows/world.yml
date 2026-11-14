@@ -1268,10 +1268,10 @@ jobs:
         # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
         # The frames leave the world's names out (world-keep.json's names: a frame keeps the names it picked while its
         # tiles came, so where more than 64 stand in reach two draws can name it otherwise): a tile of the walk the keep
-        # lacks, its names with it, is the step above's --kept line. The views whose pixels are false (the pitched ones
-        # from 60 to 1,000 km, which the core does not yet draw whole over the world alone: ENGINE.md step 11's Left) are
-        # held by that line alone. A check of its own: it runs where the references' frames above moved too, once the
-        # kept tiles are cut
+        # lacks, its names with it, is the step above's --kept line. A view whose pixels are false would be held by that
+        # line alone: none is since the world pass draws a tile in parts as one piece (ENGINE.md step 11; the pitched
+        # views from 60 to 1,000 km were till then). A check of its own: it runs where the references' frames above moved
+        # too, once the kept tiles are cut
         if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
         working-directory: app/android
         env:
