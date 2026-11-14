@@ -633,6 +633,22 @@ void FrameBuilder::stage_f() {
         }
         const trace::Section traced("atlas ranks");
         part = clock::now();
+        // the tiles whose rows a pass reads: those the cover draws and those it keeps under ones fading in (what
+        // stands up of them draws: Cover::upright, laid out by the scene's update). Another resident tile's rows take
+        // no rank: a place's coarsest level kept under its windows, the windows after a zoom out, the level after a
+        // zoom in.
+        if (state_.cover != nullptr) {
+            rank_tiles_.clear();
+            for (const scene::CoverTile& t : state_.cover->upright()) {
+                if (t.drawn != nullptr) rank_tiles_.push_back(t.drawn->handle);
+            }
+            std::ranges::sort(rank_tiles_);
+            const auto repeated = std::ranges::unique(rank_tiles_);
+            rank_tiles_.erase(repeated.begin(), repeated.end());
+            options.tiles = rank_tiles_;
+            options.by_tile = true;
+            options.rank_undrawn = rank_undrawn_;
+        }
         ranks_.update(*state_.items, view.camera(), selectors_, options);
         parts.ranks_ms = ms_since(part);
         state_.ranks = &ranks_;

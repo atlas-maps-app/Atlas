@@ -237,6 +237,12 @@ public:
     /// pack's, where the coarser pack or the mask changed. A change of the frame drawn (a frame cell crossed) rewrites
     /// no row: the places of the frames move (place_of).
     [[nodiscard]] std::uint64_t items_masked_again() const noexcept { return masked_again_; }
+    /// Room in the item table at rest for the rows a pinch from here brings, or not (tests and the pinch audit's
+    /// measure; on by default): see reserve_items in World.cpp. How long the last frame's reserve took, milliseconds (0
+    /// where it made none), and how many the world made.
+    void reserve_items(bool on) noexcept { reserve_items_ = on; }
+    [[nodiscard]] double items_reserve_ms() const noexcept { return items_reserve_ms_; }
+    [[nodiscard]] std::uint64_t items_reserves() const noexcept { return items_reserves_; }
     /// Every resident tile's items placed as a change of the frame drawn placed them before the places (tests): each
     /// point converted into the frame drawn (view::convert) and the row's place the frame drawn's own, the picture
     /// the places are held to. Until the frame drawn changes.
@@ -372,6 +378,19 @@ private:
     std::vector<std::pair<view::GroundFrame, std::uint32_t>> places_;
     std::uint64_t masked_again_ = 0;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
+    /// The tiles taken and the rows they brought, by their zoom (the last entry: the zooms beyond it) and in all: what
+    /// a tile asked for is reckoned to bring, the mean of its zoom's (reserve_items).
+    struct RowsTaken {
+        std::uint64_t tiles = 0;
+        std::uint64_t rows = 0;
+    };
+    std::array<RowsTaken, 24> rows_by_zoom_{};
+    RowsTaken rows_taken_;
+    bool reserve_items_ = true;
+    double items_reserve_ms_ = 0;
+    std::uint64_t items_reserves_ = 0;
+    /// At rest, room in the item table for twice the rows the view's plan holds (World.cpp).
+    void reserve_items();
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;
     Cover landing_cover_; ///< the landing's cover, for its requests alone

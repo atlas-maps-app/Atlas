@@ -26,6 +26,10 @@
 #include <fstream>
 #include <system_error>
 
+#if defined(__ANDROID__)
+#include <pthread.h>
+#endif
+
 namespace atlas::fx {
 
 namespace fs = std::filesystem;
@@ -611,6 +615,11 @@ void FieldWorker::hold(bool held) {
 }
 
 void FieldWorker::loop(const std::stop_token& stop) {
+#if defined(__ANDROID__)
+    // named, its bands' helpers after it (Linux gives a new thread its maker's name): made on the render thread, it
+    // would show under that thread's name in a trace
+    (void)::pthread_setname_np(::pthread_self(), "atlas-fields");
+#endif
     while (!stop.stop_requested()) {
         FieldSize size;
         std::shared_ptr<const ScreenFields> keeping;

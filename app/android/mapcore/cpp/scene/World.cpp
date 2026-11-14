@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <format>
 #include <iterator>
@@ -596,6 +597,31 @@ void World::place_items_in_frame() {
     }
 }
 
+// The item table's room, made at rest. A tile's rows are added on the render thread in the frame that takes it
+// (Residency::take_published), and when the table has no room for them every column grows at once and moves every
+// row, about 110 bytes each: on the frame a tile arrives in, which in a pinch is a frame the user watches move (at the
+// Westerkerk from 5 km the table holds 505,000 rows, 55 MB to move). So at rest the table is given room for twice the
+// rows the view's plan holds, whenever it has room for less than one and a half times them: the resident tiles' rows,
+// and for each tile the cover still asks for the mean of what the tiles of its zoom brought (of any zoom, until one of
+// its own came). Reckoned with the tiles asked for, the room is made as a view's first tiles come, while the table has
+// few rows to move, and the rest arrive into it. Twice, since a pinch brings another level's tiles while those it
+// leaves stay resident (a pinch from 5 km out to 12 km at the Westerkerk takes the table from 505,000 rows to 557,000
+// at most, the heaps' budget letting the tiles left behind go), and the first zoom out from a view was the table's new
+// high. The room is address space until rows are written into it, and it is never given back.
+void World::reserve_items() {
+    std::uint64_t planned = items_.live();
+    for (const Request& r : cover_.requests()) {
+        const RowsTaken& of_zoom = rows_by_zoom_.at(std::min<std::size_t>(r.key.z, rows_by_zoom_.size() - 1));
+        const RowsTaken& known = of_zoom.tiles != 0 ? of_zoom : rows_taken_;
+        if (known.tiles != 0) planned += (known.rows + known.tiles - 1) / known.tiles;
+    }
+    if (planned + (planned / 2) <= items_.capacity()) return;
+    const auto started = std::chrono::steady_clock::now();
+    items_.reserve(static_cast<std::size_t>(2 * planned));
+    items_reserve_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    ++items_reserves_;
+}
+
 void World::mask_items(const ResidentTile& tile) {
     const bool coarse = coarser_ && tile.pack == coarser_->id && mask_;
     // The mask in the tile's own frame (its items' reference points are its pack frame's metres).
@@ -783,11 +809,18 @@ void World::update(const frame::FrameState& state) {
     }
     going_.clear();
     taken_.clear();
+    items_reserve_ms_ = 0;
     residency_->take_published(items_, &taken_);
     // each tile taken in its pack frame's place: its rows' points stay as its builders gave them
     for (const std::shared_ptr<const ResidentTile>& t : taken_) {
         const std::uint32_t place = place_of(t->frame);
         for (const std::uint32_t row : t->rows) items_.set_place(row, place);
+        // what a tile of its zoom brings (reserve_items)
+        RowsTaken& of_zoom = rows_by_zoom_.at(std::min<std::size_t>(t->key.z, rows_by_zoom_.size() - 1));
+        ++of_zoom.tiles;
+        of_zoom.rows += t->rows.size();
+        ++rows_taken_.tiles;
+        rows_taken_.rows += t->rows.size();
     }
     // a part left out: the passes it alone wanted let go of in every resident tile at this frame's fence, so the heaps
     // and the cover hold each tile as it is drawn (a part back, its top-ups build them again)
@@ -886,6 +919,7 @@ void World::update(const frame::FrameState& state) {
     // what stands up, from the tiles drawn and those kept under the fading ones, their sun filled
     cover_.lay_upright();
     asked_.assign(cover_.requests().begin(), cover_.requests().end());
+    if (state.rest && reserve_items_) reserve_items();
     // The tiles drawn and those kept under them that lack a pass a part come back wants: built again for those passes
     // alone, onto the tile, which is drawn as it is until they are taken (Residency's top-ups), after every tile in
     // view the frame asks for, the drawn ones in their lane, those kept under in the ancestors'. Those of the tiles a

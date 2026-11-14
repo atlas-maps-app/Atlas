@@ -1369,6 +1369,45 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     CHECK(ranked_without < ranked_with);
     MESSAGE(
         std::format("the row of doors' ranks: {} items, {} with the buildings left out", ranked_with, ranked_without));
+    // The frame ranks the rows of the tiles it draws alone, those kept under ones fading in among them
+    // (Cover::upright), since no pass reads another tile's: they are the rows that the frame ranking every resident
+    // tile's rows, as it did before (FrameBuilder::rank_undrawn), gives those tiles, in that order. Two frames at the
+    // one camera with no tile taken between them.
+    bool compared = false;
+    for (int k = 0; k < 20 && !compared; ++k) {
+        map.rank_undrawn(true);
+        CHECK(draw(doors, 0));
+        const frame::FrameState& first = map.builder()->state();
+        REQUIRE(first.items != nullptr);
+        REQUIRE(first.ranks != nullptr);
+        const std::uint64_t changes = first.items->changes();
+        const std::vector<std::uint32_t> every(first.ranks->order().begin(), first.ranks->order().end());
+        const std::uint32_t others = first.ranks->undrawn();
+        map.rank_undrawn(false);
+        CHECK(draw(doors, 0));
+        const frame::FrameState& state = map.builder()->state();
+        REQUIRE(state.items != nullptr);
+        REQUIRE(state.ranks != nullptr);
+        REQUIRE(state.cover != nullptr);
+        if (state.items->changes() != changes) continue;
+        std::vector<std::uint32_t> handles;
+        for (const scene::CoverTile& t : state.cover->upright()) {
+            if (t.drawn != nullptr) handles.push_back(t.drawn->handle);
+        }
+        const std::span<const std::uint32_t> tile = state.items->tile();
+        std::vector<std::uint32_t> want;
+        for (const std::uint32_t row : every) {
+            if (std::ranges::find(handles, tile[row]) != handles.end()) want.push_back(row);
+        }
+        CHECK_FALSE(want.empty());
+        CHECK(std::ranges::equal(want, state.ranks->order()));
+        CHECK(every.size() - want.size() == others);
+        MESSAGE(std::format("the row of doors' ranks by tile: {} rows of {} tiles drawn, {} more of other resident "
+                            "tiles in view ranked before, {} rows of theirs left out",
+                            want.size(), handles.size(), others, state.ranks->undrawn()));
+        compared = true;
+    }
+    CHECK(compared);
     session.close();
 }
 

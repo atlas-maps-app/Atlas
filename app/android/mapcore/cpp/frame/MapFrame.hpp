@@ -157,6 +157,11 @@ public:
         passes_ = passes;
         if (builder_) builder_->set_passes(passes);
     }
+    /// The frames' ranks over the rows of the resident tiles not drawn too, or not (FrameBuilder::rank_undrawn: the
+    /// pinch audit's measure), for the frame builder there is.
+    void rank_undrawn(bool on) noexcept {
+        if (builder_) builder_->rank_undrawn(on);
+    }
     /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
     /// later.
     void set_landing(std::optional<scene::World::Landing> landing) noexcept {

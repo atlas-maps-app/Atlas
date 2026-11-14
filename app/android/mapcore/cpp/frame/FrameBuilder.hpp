@@ -297,6 +297,9 @@ public:
     void set_grain(bool grain) noexcept { options_.grain = grain; }
     /// The passes the frame records from the next frame on (FrameOptions::passes).
     void set_passes(std::uint64_t passes) noexcept { options_.passes = passes; }
+    /// The rows of the resident tiles the frame does not draw ranked all the same from the next frame on, as before the
+    /// ranks knew the tiles drawn (RankOptions::rank_undrawn): the pinch audit's measure of what the skip saves.
+    void rank_undrawn(bool on) noexcept { rank_undrawn_ = on; }
 
     /// Every pass's prepare (Pass::prepare) for `pass` and `output`, on several threads at once (FrameOptions::threads,
     /// ENGINE.md gain 20): the first picture waits for the longest pass, not for their sum. On a failure the first
@@ -405,6 +408,8 @@ private:
     std::array<std::string, slot_count> slot_trace_names_;
     Selectors selectors_;
     Ranks ranks_;
+    std::vector<std::uint32_t> rank_tiles_; ///< the drawn tiles' handles, ascending (RankOptions::tiles)
+    bool rank_undrawn_ = false;
     std::string configuration_;
     vk::raii::ShaderModule overdraw_module_{nullptr};
     vk::raii::ShaderModule owner_module_{nullptr};
