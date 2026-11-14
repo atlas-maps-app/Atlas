@@ -1583,11 +1583,20 @@ void WorldTiles::update(const view::View& view, const view::GroundFrame& frame, 
             mix(draws, &d.box, sizeof d.box);
             mix(draws, &d.tile->cap, sizeof d.tile->cap);
             mix(draws, d.tile->box.data(), sizeof d.tile->box);
-            for (const WorldPart& p : d.tile->parts) {
-                const std::array<std::uint32_t, 4> counts{p.triangles, p.segments, p.coast, p.lights};
-                mix(draws, counts.data(), sizeof counts);
-                const Heaps::Writer w = heaps_->writer(p.range);
-                mix_words(words, w.bytes());
+            const std::array<std::uint32_t, 4> counts{d.tile->triangles, d.tile->segments, d.tile->coast,
+                                                      d.tile->lights};
+            mix(draws, counts.data(), sizeof counts);
+            // the tile's lists in its own order, whatever its parts: its triangles' vertices, their words, its
+            // segments, its lights (each part laid out as a tile: place)
+            for (std::size_t list = 0; list < 4; ++list) {
+                for (const WorldPart& p : d.tile->parts) {
+                    const std::size_t t = p.triangles;
+                    const std::size_t s = p.segments;
+                    const std::array<std::size_t, 4> from{0, 3 * t, 4 * t, (4 * t) + (3 * s)};
+                    const std::array<std::size_t, 4> count{3 * t, t, 3 * s, std::size_t{2} * p.lights};
+                    const Heaps::Writer w = heaps_->writer(p.range);
+                    mix_words(words, w.bytes().subspan(from.at(list) * 4, count.at(list) * 4));
+                }
             }
         }
         mix(placed, &frame_.frame, sizeof frame_.frame);
