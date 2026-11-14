@@ -223,7 +223,8 @@ struct WorldTile {
     std::array<std::int32_t, 4> box{}; ///< south, west, north, east (the grid's 1e-7°)
     /// Its geometry: one part where a piece of the heap holds it whole, else in parts (WorldTiles::place), each list
     /// in the tile's order across them: the first part's triangles before the second's, and so its segments and
-    /// lights. The world pass draws all its parts' fills, then their lines, so its pixels are those of one part.
+    /// lights. The world pass draws a tile in parts as one piece (passes/World.hpp's Draw), so its pixels are those
+    /// of the tile whole.
     std::vector<WorldPart> parts;
     std::uint32_t triangles = 0; ///< its parts' all told, as the three below
     std::uint32_t segments = 0;

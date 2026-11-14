@@ -106,9 +106,8 @@ class WorldPackRefsTest {
             check(refused.isEmpty()) { "the core did not open world-refs' packs: ${refused.joinToString("; ")}" }
             for (e in refs["frames"]!!.jsonArray) {
                 val o = e.jsonObject
-                // a view held by its tiles alone, its pixels false (world-keep.json's pitched views from 60 to 1,000 km:
-                // whole, but a pixel or two otherwise over the kept tiles than over the walk's in one a run, ENGINE.md
-                // step 11)
+                // a view held by its tiles alone, its pixels false (none since the world pass draws a tile in parts as
+                // one piece, ENGINE.md step 11: world-keep.json's pitched views from 60 to 1,000 km were till then)
                 if ((o["pixels"] as? JsonPrimitive)?.booleanOrNull == false) continue
                 val frameName = o.str("name")
                 val t0 = System.nanoTime()

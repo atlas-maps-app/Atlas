@@ -43,8 +43,10 @@ namespace atlas::passes {
 /// The world pass.
 class World final : public frame::Pass {
 public:
-    /// One tile's draw, or one part's of a tile in parts (scene::WorldPart): where its words lie and how it is placed
-    /// (world.slang's WorldPush). A tile's parts are drawn one after another, all their fills before their lines.
+    /// One tile's draw: where its words lie and how it is placed (world.slang's WorldPush). A tile in parts
+    /// (scene::WorldPart) is drawn as one piece too, by its parts' table (world.slang's part_of), so its pixels are
+    /// those of the tile whole; only where its frame slot's tables find no room, a draw for each of its parts, one
+    /// after another, all their fills before their lines.
     struct Draw {
         std::array<float, 4> origin{};
         std::array<float, 4> scale{};
@@ -60,7 +62,7 @@ public:
         float fade = 1.0F;             ///< under 1 while the tile fades in (scene::WorldDraw::fade)
         std::uint8_t level = 0;        ///< its tile's level
         std::uint32_t lift = 0; ///< while it fades, its depth's lift above the world's (World.cpp's fading_depth)
-        std::uint32_t tile = 0; ///< its tile's place among the frame's: the same for each of a tile's parts
+        std::uint32_t tile = 0; ///< its tile's place among the frame's: the same for each of a tile's parts' draws
     };
 
     World() = default;
@@ -123,19 +125,28 @@ private:
     void record_over(const frame::Recording& recording);
 
     std::vector<Draw> draws_;
+    /// The frame's parts' tables, entry by entry (world.slang's world_parts: four words an entry).
+    std::vector<std::array<std::uint32_t, 4>> parts_;
     std::vector<std::uint32_t> palette_;
     scene::WorldLook look_;
     bool space_ = false;
     bool glass_ = false;
 
-    /// A frame slot's own: its set, the heap buffer bound to it and the bytes bound, and its draws.
+    /// A frame slot's own: its set, the heap buffer bound to it and the bytes bound, its parts' tables and the entries
+    /// they have room for, and its draws.
     struct Slot {
         vk::raii::DescriptorSet set{nullptr};
         vk::Buffer bound;
         vk::DeviceSize bound_bytes = 0;
+        gpu::Buffer parts;
+        std::size_t parts_room = 0;
         bool drawing = false;
     };
     std::array<Slot, 2> slots_{};
+
+    /// Whether slot `s`'s tables have room for `entries`, grown for them where they had not (false where the device
+    /// gives no buffer for them: the tile asking is drawn part by part).
+    [[nodiscard]] bool room_for_parts(Slot& s, std::size_t entries);
 
     // ---- What prepare makes.
     const gpu::Device* device_ = nullptr;
