@@ -16,7 +16,7 @@ import java.util.BitSet
  * its nodes (indices into the nodes) with its tags, and the relations the window query asks for (`type=multipolygon`, and
  * `boundary=national_park` or `protected_area`) with their members found among the nodes and ways. The extract must be
  * sorted by type, then id, as Geofabrik's are; an element of one that refers to an element it does not hold is kept
- * and marked, so a window holding it is left out.
+ * and marked, so a window holding it is left out. A shard of a run's windows reads less of it ([Keep]).
  */
 class Extract private constructor() {
     internal val nodes = NodeTable()
@@ -151,10 +151,36 @@ class Extract private constructor() {
         roles.size - 1
     }
 
-    private inner class Reading : OsmHandler {
+    /**
+     * What a shard of a run's windows keeps of the extract: every node's position, as a way or a relation it keeps may
+     * reach any node, but a tagged node only where it lies in a cell the shard's windows look at ([looked], of the run's
+     * grid [cells]: the run's, so they are the cells the whole run's windows look at), and a way only where its cells
+     * meet those (as the windows' index files it, [Cells.way]) or where it is a member of a relation the window query
+     * asks for ([members], their ids sorted: such a relation prints its members whole). Each of the shard's windows
+     * then finds among what it keeps every element it would find in the whole extract, so it gets the same answer.
+     */
+    internal class Keep(val cells: Cells, val looked: java.util.BitSet, val members: LongArray) {
+        /** Whether a way of [refs] (indices into [nodes], -1 for a node not held) is kept: by its cells or as a member. */
+        fun way(id: Long, refs: IntList, nodes: NodeTable): Boolean {
+            cells.way(0L, refs.size.toLong(), nodes, { refs[it.toInt()] }) { c -> if (looked[c]) return true }
+            return java.util.Arrays.binarySearch(members, id) >= 0
+        }
+
+        /** Whether a tagged node at the point is kept. */
+        fun node(latE7: Int, lonE7: Int): Boolean = cells.of(latE7, lonE7).let { it >= 0 && looked[it] }
+    }
+
+    /** The tagged nodes and the ways a shard's read left out ([Keep]). */
+    var droppedTagged = 0L
+        private set
+    var droppedWays = 0L
+        private set
+
+    private inner class Reading(private val shard: Keep?) : OsmHandler {
         private var kind = 0
         private var last = Long.MIN_VALUE
         private val out = JsonOut()
+        private val refs = IntList()
 
         private fun order(k: Int, id: Long) {
             if (k < kind || (k == kind && id <= last)) {
@@ -177,16 +203,26 @@ class Extract private constructor() {
             order(1, node.id)
             val n = nodes.add(node.id, node.latE7, node.lonE7)
             if (node.tags.isEmpty()) return
+            if (shard != null && !shard.node(node.latE7, node.lonE7)) {
+                droppedTagged++
+                return
+            }
             if (!keep(node.tags, taggedJson, taggedLength)) taggedTwice.set(taggedNode.size.toInt())
             taggedNode.add(n)
         }
 
         override fun way(way: PbfWay) {
             order(2, way.id)
+            refs.clear()
+            for (i in 0 until way.refCount) refs.add(nodes.indexOf(way.ref(i)))
+            if (shard != null && !shard.way(way.id, refs, nodes)) {
+                droppedWays++
+                return
+            }
             val w = wayIds.size.toInt()
             wayIds.add(way.id)
-            for (i in 0 until way.refCount) {
-                val n = nodes.indexOf(way.ref(i))
+            for (k in 0 until refs.size) {
+                val n = refs[k]
                 if (n < 0) wayBroken.set(w)
                 wayRefs.add(n)
             }
@@ -254,12 +290,49 @@ class Extract private constructor() {
         }
 
         /** Reads [pbf] whole, in one pass ([threads] inflating its blocks). */
-        fun read(pbf: File, threads: Int = PbfReader.defaultThreads()): Extract {
+        fun read(pbf: File, threads: Int = PbfReader.defaultThreads()): Extract = read(pbf, threads, null)
+
+        /** Reads what [keep] keeps of [pbf] (all of it without), in one pass. */
+        internal fun read(pbf: File, threads: Int, keep: Keep?): Extract {
             val e = Extract()
-            PbfReader(pbf, threads).read(e.Reading())
+            PbfReader(pbf, threads).read(e.Reading(keep))
             e.index()
             return e
         }
+
+        /**
+         * What a shard's read needs to know first ([Survey]), in a pass over [pbf]'s nodes and relations (its ways'
+         * blocks are inflated but not read): the nodes in each L10 column, and the ways of the relations asked for.
+         */
+        internal fun survey(pbf: File, threads: Int = PbfReader.defaultThreads()): Survey {
+            val columns = LongArray(Survey.COLUMNS)
+            val members = LongList()
+            PbfReader(pbf, threads).read(object : OsmHandler {
+                override fun node(node: PbfNode) {
+                    columns[Survey.column(node.lonE7)]++
+                }
+
+                override fun relation(relation: PbfRelation) {
+                    if (!asked(relation.tags)) return
+                    for (i in 0 until relation.memberCount) if (relation.memberType(i) == PbfRelation.WAY) members.add(relation.memberId(i))
+                }
+            }, PbfReader.NODES or PbfReader.RELATIONS)
+            return Survey(columns, members.toSortedUnique())
+        }
+    }
+}
+
+/**
+ * An extract's nodes by L10 column ([columns], x of the L10 tiles, 0 to 1023), which a run's shards share their windows'
+ * columns out by, and the ids of the ways the relations the window query asks for hold ([members], sorted), which each
+ * shard keeps.
+ */
+internal class Survey(val columns: LongArray, val members: LongArray) {
+    companion object {
+        const val COLUMNS = 1 shl 10
+
+        /** The L10 column of a longitude in 1e-7 degrees. */
+        fun column(lonE7: Int): Int = ((lonE7.toLong() + 1_800_000_000L) * COLUMNS / 3_600_000_000L).toInt().coerceIn(0, COLUMNS - 1)
     }
 }
 

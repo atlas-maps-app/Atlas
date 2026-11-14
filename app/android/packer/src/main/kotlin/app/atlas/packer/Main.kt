@@ -55,6 +55,8 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${WindowPacks.USAGE}
 
+  ${WindowsJoin.USAGE}
+
   ${CountryTiles.USAGE}
 
   ${app.atlas.packer.world.WorldTiles.USAGE}
@@ -79,7 +81,7 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
- * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
+ * data (`windows`, and `windows-join` for its shards), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
  * `world-tags`, `world-assemble`, `world-check`, `world-refs` and `world-keep`), and the terrain's (`heights`,
  * `heights-check`).
  */
@@ -210,6 +212,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "anchors" -> return Anchors.run(args, out)
         "render-tiles" -> return RenderTiles.run(args, out)
         "windows" -> return WindowPacks.run(args, out)
+        "windows-join" -> return WindowsJoin.run(args, out)
         "country" -> return CountryTiles.run(args, out)
         "world" -> return app.atlas.packer.world.WorldTiles.run(args, out)
         "globe" -> return app.atlas.packer.world.Globe.run(args, out)
