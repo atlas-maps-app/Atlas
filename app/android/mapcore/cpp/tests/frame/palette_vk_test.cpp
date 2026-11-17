@@ -472,9 +472,11 @@ constexpr std::array<Held, 8> held_elsewhere{{
     {.code = style::palette_slot::pylons, .where = "item/items_test (the turbines, the pylons, the woods' greens)"},
 }};
 
-/// The pixels of a frame (of 72,000) that work landing late may move between a view's first frame and its last in
-/// today's palette, in neither palette: a debug build's slower threads moved 3 and 12; a release build none.
-constexpr std::size_t late_work = 32;
+/// The pixels of a frame (of 72,000) by which a view's last frame in today's palette may differ from its first: an
+/// open fault, not explained yet (debug builds alone, 17 November: 3 at night some 40 slots on, 12 over the canal;
+/// release builds none; late work or a state kept from a palette before). Where it happens the test prints "<view>:
+/// <n> pixels differ between today's first frame and today's again", for a later job to catch it.
+constexpr std::size_t drift_allowed = 32;
 
 /// A view of the test: its name, its camera and its moment.
 struct View {
@@ -527,11 +529,10 @@ void measure(standin::Session& session, frame::MapFrame& map, KeptWindow& window
         const gpu::Pixels again_greys = settled(session, map, window, v.camera, v.theme);
         map.set_palette(today);
         const gpu::Pixels again = settled(session, map, window, v.camera, v.theme);
-        // but for work that lands late (debug builds alone: 3 pixels at night some 40 slots on, 12 over the canal),
-        // in neither frame's palette (late_work); each slot's frame is measured against the nearer of the two
+        // but for the open fault drift_allowed names; each slot's frame is measured against the nearer of the two
         const std::size_t drift = count(changed(base, again));
         if (drift > noise) MESSAGE(v.name, ": ", drift, " pixels differ between today's first frame and today's again");
-        CHECK_MESSAGE(drift <= std::max(noise, late_work), v.name);
+        CHECK_MESSAGE(drift <= std::max(noise, drift_allowed), v.name);
         for (const auto& [code, frame] : moved) {
             const bool g = grey(code);
             const std::size_t n =
@@ -758,9 +759,11 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         MESSAGE(name << ": " << theirs << " of the reflections' " << count(mirrored) << " pixels moved; " << moved_trees
                      << " of " << trees.size() << " mirrored trees' colours");
         CHECK_MESSAGE(theirs >= least, name);
-        // today's palette mirrors them as before (but for work that lands late, as measure allows)
+        // today's palette mirrors them as before (but for the open fault drift_allowed names)
         map.set_palette(today);
-        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, on, sunny()))) <= late_work, name);
+        const std::size_t drift = count(changed(today_on, settled(session, map, *kept, on, sunny())));
+        if (drift > 0) MESSAGE(name, ": ", drift, " pixels differ between today's first frame and today's again");
+        CHECK_MESSAGE(drift <= drift_allowed, name);
         return std::pair{trees.size(), moved_trees};
     };
     ATLAS_REQUIRE(draw_still(session, map, home), "home never complete");
