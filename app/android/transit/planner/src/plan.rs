@@ -12,11 +12,16 @@
 //! take. So an arrival by a trip that a rule names at that stop is kept out of the stop's bag, where earlier beats
 //! later: it is *held* apart, beats nothing, and is boarded from under its rules.
 //!
-//! **Over a window the search is aimed.** The first search, from the window's far end, says how late a journey may
-//! end; then every stop within that reach of the journey's end gets the least time and the fewest rides from there
-//! to the end that any timetable could give (the shortest way over each line's fastest hops, counted back from the
-//! end once a query). A label that even so could not end sooner than a journey leaving later already does is not
-//! made. So the searches for the earlier departures follow only what can still be an option.
+//! **The search is aimed.** From the journey's end, the least time to it that any timetable could give is counted
+//! back stop by stop: the shortest way over each pattern's fastest hops and the walks, by Dijkstra's method. A
+//! label that even so could not end in time is not made.
+//! - *Patiently* ([`crate::Limits::patient`], the default without wishes that cost): the least time of the whole
+//!   journey says how long a journey may sensibly take (twice that and half an hour; an hour at least), and the
+//!   search follows nothing past it. The count from the end goes only as far as the search asks. When nothing is
+//!   found by then, the search is made again as far as the horizon, unaimed.
+//! - *Over a window*, the first search (from the window's far end) says how late any option may end. Every stop
+//!   within that reach then gets its least time and its fewest rides for good, and the searches for the earlier
+//!   departures make no label that could not end sooner than a journey leaving later already does.
 //!
 //! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures`; labels and steps by their
 //! caps; time by the window and the horizon. Every loop over the file's data counts steps.
@@ -246,6 +251,8 @@ struct Work {
     reach: u32,
     /// By pattern, while the rides are counted: how far along it has been reached.
     along: Vec<u32>,
+    /// The stops still open in the count of least seconds from the journey's end, the nearest first.
+    heap: BinaryHeap<Reverse<(u32, u32)>>,
 }
 
 /// A timetable ready to be asked.
@@ -264,6 +271,9 @@ pub struct Answer {
     pub journeys: Vec<Journey>,
     /// A cap of [`crate::Limits`] was met, so there may be options missing.
     pub cut_short: bool,
+    /// How long past the asked moment and its window journeys were followed, in seconds: the query's horizon, or
+    /// less where the search was patient ([`crate::Limits::patient`]).
+    pub horizon: u32,
     /// How many searches (departures) it took, and labels, and steps.
     pub searches: u32,
     pub labels: u32,
@@ -512,21 +522,48 @@ impl<'a> Planner<'a> {
             max_steps: q.limits.steps.clamp(10_000, 10_000_000_000),
             steps: 0,
             aimed: false,
+            lazy: false,
             cut: false,
             stops: self.tt.stops() as usize,
         };
+        // Patiently: first only as far as a journey could sensibly take (twice the least time any timetable could
+        // give it, and half an hour; an hour at least), with the search aimed from its start. Only when nothing is
+        // found by then, as far as the horizon.
+        let far = s.limit;
+        let mut searches = 0u32;
+        let mut passes: [Option<i32>; 2] = [None, Some(far)];
         s.reset(last);
-        // The first search is from the window's far end, with every first stop: for one moment that is the whole
-        // answer. For a window it is what the searches inside build on, and what shows which of their journeys a
-        // later departure makes pointless.
-        let mut searches = 1u32;
-        s.begin();
-        for &(stop, secs) in first.iter() {
-            s.offer_first(stop, start + window + secs as i32, secs);
+        // (not where wishes cost: the option that follows them best is the slower one, and is what was asked for)
+        if q.limits.patient && !s.soft {
+            match s.aim_lazily(last, first) {
+                Some(least) => passes[0] = Some(far.min(start + window + (2 * least.min(MAX_TIME) as i32 + 1800).max(3600))),
+                None => passes[1] = None, // no timetable could make this journey: there is nothing to search
+            }
         }
-        s.rounds();
-        if window > 0 {
-            // how late any option may end: the end of the one with the fewest rides
+        for (pass, limit) in passes.into_iter().enumerate() {
+            let Some(limit) = limit else { continue };
+            if pass == 1 && passes[0].is_some() {
+                if !s.w.found.is_empty() || passes[0] == Some(far) || s.cut {
+                    break;
+                }
+                s.reset(last);
+                (s.aimed, s.lazy) = (false, false);
+            }
+            s.limit = limit;
+            // The first search is from the window's far end, with every first stop: for one moment that is the
+            // whole answer. For a window it is what the searches inside build on, and what shows which of their
+            // journeys a later departure makes pointless.
+            searches += 1;
+            s.begin();
+            for &(stop, secs) in first.iter() {
+                s.offer_first(stop, start + window + secs as i32, secs);
+            }
+            s.rounds();
+            if window == 0 {
+                continue;
+            }
+            // how late any option may end: the end of the one with the fewest rides. With that, every stop in reach
+            // gets its least time and fewest rides for good, for all the searches to come.
             if let Some(&latest) = s.w.end_best.iter().find(|e| **e != NEVER) {
                 s.aim(last, (latest - start).max(0) as u32);
             }
@@ -563,6 +600,7 @@ impl<'a> Planner<'a> {
                 s.cut = true;
             }
         }
+        let followed = (s.limit - start - window).clamp(0, 2 * DAY) as u32;
         let mut journeys: Vec<Journey> = Vec::new();
         for f in s.w.found.iter() {
             if let Some(j) = s.journey(f) {
@@ -610,7 +648,7 @@ impl<'a> Planner<'a> {
             }
             cut = true;
         }
-        Answer { journeys: keep, cut_short: cut, searches, labels: s.w.labels.len() as u32, steps: s.steps }
+        Answer { journeys: keep, cut_short: cut, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps }
     }
 }
 
@@ -638,8 +676,10 @@ struct Search<'s, 'a> {
     steps: u64,
     cut: bool,
     stops: usize,
-    /// Whether the least seconds and fewest rides to the end are worked out (`Search::aim`).
+    /// Whether the least seconds to the end are worked out (`Search::aim`), or being worked out as the search asks
+    /// (`Search::aim_lazily`).
     aimed: bool,
+    lazy: bool,
 }
 
 impl<'s> Search<'s, '_> {
@@ -688,6 +728,7 @@ impl<'s> Search<'s, '_> {
             w.fewest[s as usize] = 255;
         }
         w.aimed.clear();
+        w.heap.clear();
         w.found.clear();
         w.front.clear();
         w.end_best = [NEVER; MAX_RIDES as usize + 1];
@@ -792,87 +833,158 @@ impl<'s> Search<'s, '_> {
     /// Whether nothing can come of being at `stop` at `time` after `rides` rides: it is past the limit, or a journey
     /// already found ends no later with no more rides and at no more cost. Once the search is aimed, "ends" and
     /// "rides" are the least the stop still needs on top.
-    fn pointless(&self, rides: usize, stop: u32, time: i32, cost: u32) -> bool {
+    fn pointless(&mut self, rides: usize, stop: u32, time: i32, cost: u32) -> bool {
         if !self.aimed {
             return time > self.limit || self.beaten_at_end(rides, time, cost);
         }
-        let least = self.w.least[stop as usize].min(self.w.reach.saturating_add(1)).min(MAX_TIME * 4) as i32;
+        if time > self.limit {
+            return true;
+        }
+        let left = (self.limit as i64 - time as i64).min(MAX_TIME as i64 * 8) as u32;
+        let least = if self.lazy { self.least_within(stop, left) } else { self.w.least[stop as usize].min(self.w.reach.saturating_add(1)) };
+        if least > left {
+            return true;
+        }
         let more = match self.w.fewest[stop as usize] {
             255 => 0,
             n => n as usize,
         };
-        let end = time.saturating_add(least);
-        end > self.limit || rides + more > self.max_rides || self.beaten_at_end(rides + more, end, cost)
+        rides + more > self.max_rides || self.beaten_at_end(rides + more, time + least as i32, cost)
     }
 
-    /// Aims the search: for every stop within `reach` seconds of the journey's end, the least seconds from there
-    /// to the end (the shortest way over each pattern's fastest hops and the walks, by Dijkstra's method from the
-    /// end's stops) and the fewest rides (counted back level by level, a walk costing none).
-    fn aim(&mut self, last: &[(u32, u32)], reach: u32) {
-        let reach = reach.min(MAX_TIME * 4);
-        self.w.reach = reach;
-        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
-        let mut queue: VecDeque<u32> = VecDeque::new();
+    /// Starts the count of least seconds to the journey's end at the end's stops.
+    fn seed(&mut self, last: &[(u32, u32)]) {
+        for &s in self.w.aimed.iter() {
+            self.w.least[s as usize] = u32::MAX;
+            self.w.fewest[s as usize] = 255;
+        }
+        self.w.aimed.clear();
+        self.w.heap.clear();
         for &(s, secs) in last {
-            if (s as usize) < self.stops && !bit(&self.prefs.closed, s) && secs <= reach && secs < self.w.least[s as usize] {
+            if (s as usize) < self.stops && !bit(&self.prefs.closed, s) && secs < self.w.least[s as usize] {
                 if self.w.least[s as usize] == u32::MAX {
                     self.w.aimed.push(s);
                 }
                 self.w.least[s as usize] = secs;
-                heap.push(Reverse((secs, s)));
+                self.w.heap.push(Reverse((secs, s)));
             }
         }
-        while let Some(Reverse((d, v))) = heap.pop() {
+    }
+
+    /// One step of Dijkstra's method from the journey's end: `v` is `d` seconds from it for good, and the stops
+    /// one hop or one walk before it (in the direction searched) are at most that much further, up to `reach`.
+    fn settle(&mut self, d: u32, v: u32, reach: u32) {
+        let w = &mut *self.w;
+        let mut relax = |u: u32, nd: u32| {
+            if nd <= reach && nd < w.least[u as usize] {
+                if w.least[u as usize] == u32::MAX {
+                    w.aimed.push(u);
+                }
+                w.least[u as usize] = nd;
+                w.heap.push(Reverse((nd, u)));
+            }
+        };
+        // the stop before this one on each route through it: over the pattern's fastest hop
+        let (lo, hi) = self.tt.routes_at(v);
+        self.steps += (hi - lo) as u64 + 1;
+        for e in lo..hi {
+            let (r, pos) = self.tt.route_at(e);
+            let route = self.tt.route(r);
+            let (at, hop) = if self.back { (pos + 1, pos) } else { (pos.wrapping_sub(1), pos.wrapping_sub(1)) };
+            if at >= route.stops {
+                continue;
+            }
+            let took = self.ix.hop.get((route.first_stop + hop) as usize).copied().unwrap_or(0);
+            if took != u32::MAX {
+                relax(self.tt.pattern_stop(route.first_stop + at).stop, d.saturating_add(took));
+            }
+        }
+        // and the stops a walk leads here from
+        if self.back {
+            let (lo, hi) = self.tt.walks_from(v);
+            self.steps += (hi - lo) as u64;
+            for i in lo..hi {
+                let (u, secs) = self.tt.walk(i);
+                relax(u, d.saturating_add(secs));
+            }
+        } else {
+            let (lo, hi) = (self.ix.back_first[v as usize] as usize, self.ix.back_first[v as usize + 1] as usize);
+            self.steps += (hi - lo) as u64;
+            for &(u, secs) in &self.ix.back[lo..hi] {
+                relax(u, d.saturating_add(secs));
+            }
+        }
+    }
+
+    /// Aims the search as it goes: the least seconds to the journey's end are worked out only as far from the end
+    /// as the search asks ([`Search::least_within`]). To begin with, as far as the journey's first stops: the least
+    /// time of the whole journey is returned, or `None` when no way leads from any first stop to the end at all.
+    fn aim_lazily(&mut self, last: &[(u32, u32)], first: &[(u32, u32)]) -> Option<u32> {
+        self.seed(last);
+        (self.lazy, self.aimed) = (true, true);
+        let mut whole = u32::MAX;
+        while let Some(&Reverse((d, v))) = self.w.heap.peek() {
+            if d > whole {
+                break;
+            }
+            self.w.heap.pop();
             if d > self.w.least[v as usize] {
                 continue;
             }
-            let mut relax = |w: &mut Work, u: u32, nd: u32| {
-                if nd <= reach && nd < w.least[u as usize] {
-                    if w.least[u as usize] == u32::MAX {
-                        w.aimed.push(u);
-                    }
-                    w.least[u as usize] = nd;
-                    heap.push(Reverse((nd, u)));
-                }
-            };
-            // the stop before this one on each route through it, in the direction searched
-            let (lo, hi) = self.tt.routes_at(v);
-            self.steps += (hi - lo) as u64 + 1;
-            for e in lo..hi {
-                let (r, pos) = self.tt.route_at(e);
-                let route = self.tt.route(r);
-                let (at, hop) = if self.back { (pos + 1, pos) } else { (pos.wrapping_sub(1), pos.wrapping_sub(1)) };
-                if at >= route.stops {
-                    continue;
-                }
-                let took = self.ix.hop.get((route.first_stop + hop) as usize).copied().unwrap_or(0);
-                if took != u32::MAX {
-                    relax(self.w, self.tt.pattern_stop(route.first_stop + at).stop, d.saturating_add(took));
-                }
+            // `first` is sorted by stop
+            if let Ok(at) = first.binary_search_by_key(&v, |e| e.0) {
+                whole = whole.min(d.saturating_add(first[at].1));
             }
-            // and the stops a walk leads here from
-            if self.back {
-                let (lo, hi) = self.tt.walks_from(v);
-                self.steps += (hi - lo) as u64;
-                for i in lo..hi {
-                    let (u, secs) = self.tt.walk(i);
-                    relax(self.w, u, d.saturating_add(secs));
-                }
-            } else {
-                let (lo, hi) = (self.ix.back_first[v as usize] as usize, self.ix.back_first[v as usize + 1] as usize);
-                self.steps += (hi - lo) as u64;
-                for &(u, secs) in &self.ix.back[lo..hi] {
-                    relax(self.w, u, d.saturating_add(secs));
-                }
+            self.settle(d, v, u32::MAX);
+        }
+        (whole != u32::MAX).then_some(whole)
+    }
+
+    /// The least seconds from a stop to the journey's end if that is `within` or less, else something more than
+    /// `within`: the count from the end goes on just until this stop's is certain, or past `within`.
+    fn least_within(&mut self, stop: u32, within: u32) -> u32 {
+        loop {
+            let known = self.w.least[stop as usize];
+            // what is no further than the nearest stop still open is certain
+            let Some(&Reverse((d, v))) = self.w.heap.peek() else { return known };
+            if known <= d {
+                return known;
+            }
+            if d > within {
+                return within.saturating_add(1);
+            }
+            self.w.heap.pop();
+            if d <= self.w.least[v as usize] {
+                self.settle(d, v, u32::MAX);
             }
         }
+    }
+
+    /// Aims the search for good: for every stop within `reach` seconds of the journey's end, the least seconds
+    /// from there to the end (the shortest way over each pattern's fastest hops and the walks, by Dijkstra's method
+    /// from the end's stops) and the fewest rides (counted back level by level, a walk costing none).
+    fn aim(&mut self, last: &[(u32, u32)], reach: u32) {
+        let reach = reach.min(MAX_TIME * 4);
+        self.seed(last);
+        self.lazy = false;
+        while let Some(Reverse((d, v))) = self.w.heap.pop() {
+            if d > reach {
+                break;
+            }
+            if d <= self.w.least[v as usize] {
+                self.settle(d, v, reach);
+            }
+        }
+        self.w.heap.clear();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        self.w.reach = reach;
         // the fewest rides: from the end's stops outward, a ride one level on, a walk none
         if self.w.along.len() != self.tt.patterns() as usize {
             self.w.along = vec![NONE; self.tt.patterns() as usize];
         }
         let mut patterns: Vec<u32> = Vec::new();
         for &(s, _) in last {
-            if (s as usize) < self.stops && self.w.least[s as usize] != u32::MAX && self.w.fewest[s as usize] == 255 {
+            if (s as usize) < self.stops && self.w.least[s as usize] <= reach && self.w.fewest[s as usize] == 255 {
                 self.w.fewest[s as usize] = 0;
                 queue.push_back(s);
             }
@@ -885,7 +997,7 @@ impl<'s> Search<'s, '_> {
             self.steps += (whi - wlo) as u64 + 1;
             for i in wlo..whi {
                 let u = if self.back { self.tt.walk(i).0 } else { walks[i as usize].0 };
-                if self.w.least[u as usize] != u32::MAX && self.w.fewest[u as usize] > level {
+                if self.w.least[u as usize] <= reach && self.w.fewest[u as usize] > level {
                     self.w.fewest[u as usize] = level;
                     queue.push_front(u);
                 }
@@ -917,7 +1029,7 @@ impl<'s> Search<'s, '_> {
                 self.steps += (to - from) as u64;
                 for at in from..to {
                     let u = self.tt.pattern_stop(route.first_stop + at).stop;
-                    if self.w.least[u as usize] != u32::MAX && self.w.fewest[u as usize] > level + 1 {
+                    if self.w.least[u as usize] <= reach && self.w.fewest[u as usize] > level + 1 {
                         self.w.fewest[u as usize] = level + 1;
                         queue.push_back(u);
                     }

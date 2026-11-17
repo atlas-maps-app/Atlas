@@ -422,6 +422,8 @@ fn plan(tt: &Timetable, args: &[String]) -> Result<(), String> {
         let reference = Reference::new(&planner, q.day, q.time as i32 - 2 * 86_400, q.time as i32 + 2 * 86_400);
         let built = ms(t0);
         let t0 = Instant::now();
+        let mut q = q.clone();
+        q.limits.horizon = a.horizon;
         let said = if q.arrive_by {
             reference.latest_departure(&planner, &q, q.time as i32).map(|t| format!("latest departure {}", clock(t)))
         } else {
@@ -527,6 +529,8 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
                 bad.push(format!("a journey that can't be made: {why}"));
             }
         }
+        // the scan follows as far as the planner did
+        q.limits.horizon = a.horizon;
         let show = |v: &[(i32, i32)]| if v.is_empty() { "none".to_string() } else { v.iter().map(|(d, a)| format!("{}>{}", clock(*d), clock(*a))).collect::<Vec<_>>().join(" ") };
         let theirs = match asked {
             "depart" | "arrive" => {
@@ -605,8 +609,14 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let one = planner.plan(&q);
         t_one.push(ms(t0));
         cut += one.cut_short as u32;
+        // the scan follows as far as the planner did
+        let followed = |q: &Query, horizon: u32| {
+            let mut q = q.clone();
+            q.limits.horizon = horizon;
+            q
+        };
         let t0 = Instant::now();
-        let theirs = scan.earliest_arrival(&planner, &q, at as i32);
+        let theirs = scan.earliest_arrival(&planner, &followed(&q, one.horizon), at as i32);
         t_scan.push(ms(t0));
         let ours = one.journeys.iter().map(|j| j.arrive).min();
         // a journey on foot all the way is the planner's alone: the scan knows rides only
@@ -633,7 +643,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             let t0 = Instant::now();
             let got = planner.plan(&back);
             t_back.push(ms(t0));
-            let (ours, theirs) = (got.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(&planner, &back, arrive));
+            let (ours, theirs) = (got.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(&planner, &followed(&back, got.horizon), arrive));
             for j in got.journeys.iter() {
                 if let Some(why) = impossible(&planner, &back, j) {
                     wrong += 1;
@@ -659,14 +669,15 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 println!("WRONG  pair {i} ({a} to {b}) over two hours: a journey that can't be made: {why}");
             }
         }
-        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys).filter(|_| !on_foot) {
+        if let Some(how) = scan.window_differs(&planner, &followed(&window, got.horizon), &got.journeys).filter(|_| !on_foot) {
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) over two hours from {}: {how}", clock(at as i32));
         }
         // with wishes: never by rail (the scan knows closed lines), and rail avoided (the planner's alone)
         let mut never = q.clone();
         never.wishes.push(Wish { what: What::Mode(Mode::Rail), how: How::Never });
-        let (ours, theirs) = (planner.plan(&never).journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&planner, &never, at as i32));
+        let got = planner.plan(&never);
+        let (ours, theirs) = (got.journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&planner, &followed(&never, got.horizon), at as i32));
         if ours != theirs && !on_foot {
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?}", ours.map(clock), theirs.map(clock));

@@ -24,12 +24,20 @@ fn pairs(tt: &Timetable, n: usize, seed: u64) -> Vec<(u32, u32)> {
 }
 
 fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
+    asked(planner, q).0
+}
+
+/// The journeys, and the query as the scan is to be asked it: with the horizon the planner followed (a patient
+/// search follows less than the query's own).
+fn asked(planner: &mut Planner, q: &Query) -> (Vec<Journey>, Query) {
     let a = planner.plan(q);
     assert!(!a.cut_short, "cut short: {q:?}");
     for j in a.journeys.iter() {
         assert_eq!(impossible(planner, q, j), None, "{q:?}\n{j:?}");
     }
-    a.journeys
+    let mut followed = q.clone();
+    followed.limits.horizon = a.horizon;
+    (a.journeys, followed)
 }
 
 #[test]
@@ -58,12 +66,18 @@ fn the_planner_and_the_scan_agree() {
             };
             let mut q = Query::new(place(a), place(z), day, time);
             (q.rules, q.max_rides) = (false, 16);
-            let one = ask(&mut p, &q);
+            // patiently, as a query is by default, and every second pair as far as the horizon
+            q.limits.patient = i % 2 == 0;
+            let (one, followed) = asked(&mut p, &q);
             if one.iter().any(|j| j.rides == 0) {
                 continue; // on foot all the way: the scan knows rides only
             }
-            let earliest = scan.earliest_arrival(&p, &q, time as i32);
+            let earliest = scan.earliest_arrival(&p, &followed, time as i32);
             assert_eq!(one.iter().map(|j| j.arrive).min(), earliest, "{q:?}");
+            // a patient search finds the same earliest arrival as one that follows everything
+            let mut whole = q.clone();
+            whole.limits.patient = false;
+            assert_eq!(ask(&mut p, &whole).iter().map(|j| j.arrive).min(), earliest, "{q:?}");
             // the fewest rides can't be more than the fastest has, and each option has fewer rides or arrives sooner
             for w in one.windows(2) {
                 assert!(w[0].arrive != w[1].arrive || w[0].rides != w[1].rides);
@@ -71,13 +85,13 @@ fn the_planner_and_the_scan_agree() {
             if let Some(arrive) = earliest {
                 let mut back = q.clone();
                 (back.arrive_by, back.time) = (true, arrive as u32);
-                let got = ask(&mut p, &back);
-                assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "{back:?}");
+                let (got, followed) = asked(&mut p, &back);
+                assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &followed, arrive), "{back:?}");
             }
             let mut window = q.clone();
             window.window = 3600;
-            let got = ask(&mut p, &window);
-            assert_eq!(scan.window_differs(&p, &window, &got), None, "{window:?}");
+            let (got, followed) = asked(&mut p, &window);
+            assert_eq!(scan.window_differs(&p, &followed, &got), None, "{window:?}");
             // closed things, which the scan knows too: a kind of vehicle, a stop, an area ridden through
             let mid = tt.stop(served(&tt)[(i * 7) % served(&tt).len()]);
             for what in [
@@ -87,9 +101,9 @@ fn the_planner_and_the_scan_agree() {
             ] {
                 let mut never = q.clone();
                 never.wishes.push(Wish { what, how: How::Never });
-                let got = ask(&mut p, &never);
+                let (got, followed) = asked(&mut p, &never);
                 if !got.iter().any(|j| j.rides == 0) {
-                    assert_eq!(got.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&p, &never, time as i32), "{never:?}");
+                    assert_eq!(got.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&p, &followed, time as i32), "{never:?}");
                 }
             }
             compared += 1;

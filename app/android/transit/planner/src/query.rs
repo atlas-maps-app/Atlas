@@ -170,11 +170,17 @@ pub struct Limits {
     pub options: u32,
     /// How long after the asked moment a journey may still be under way, in seconds.
     pub horizon: u32,
+    /// Whether the search first follows journeys only as far as one could sensibly take: twice the least time any
+    /// timetable could give it, and half an hour (an hour at least), past the asked moment and its window; and as
+    /// far as the horizon only when nothing is found by then. It makes a search many times shorter. What it leaves
+    /// out: an option with fewer rides that ends later than that although a faster one exists. A query with wishes
+    /// that cost is never searched so: the option that follows them best is the slower one.
+    pub patient: bool,
 }
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 4, options: 64, horizon: 86_400 }
+        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 4, options: 64, horizon: 86_400, patient: true }
     }
 }
 
