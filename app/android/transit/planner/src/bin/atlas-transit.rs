@@ -484,15 +484,17 @@ fn trip(tt: &Timetable, args: &[String]) -> Result<(), String> {
 }
 
 /// A fixed journey's line: name, from, to, date, time, what is asked (`depart`, `arrive`, or `window` and minutes),
-/// and what the scan answered. Tabs between. A line `#feed <version>` says which feed the answers are of: on a file
-/// of another feed the planner is still held to the scan, and the kept answers are not compared.
+/// and what the scan answered. Tabs between. A line `#feed <version>` says which feed the answers are of. On a file
+/// of another feed (as the weekly workflow packs one) the kept answers are not compared: each journey is asked on
+/// the same weekday inside that file's days, the planner is held to the scan and to journeys that can be made, and
+/// three in four journeys must have an answer at all, or the journeys no longer fit the file and prove nothing.
 fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     let path = args.first().ok_or("fixed: the journeys' file")?;
     let write = args.iter().any(|a| a == "--write");
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let mut planner = Planner::new(*tt);
     let mut reference: Option<(i32, Reference)> = None;
-    let (mut out, mut wrong, mut count) = (String::new(), 0, 0);
+    let (mut out, mut wrong, mut count, mut answered) = (String::new(), 0, 0, 0);
     let mut same_feed = true;
     for line in text.lines() {
         if let Some(version) = line.strip_prefix("#feed ") {
@@ -511,7 +513,19 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
         if f.len() < 6 {
             return Err(format!("{path}: a line with fewer than six fields: {line}"));
         }
-        let day = f[3].parse().ok().and_then(|d| tt.day_of(d)).ok_or(format!("{}: not a date", f[3]))?;
+        let mut day = f[3].parse().ok().and_then(|d| tt.day_of(d)).ok_or(format!("{}: not a date", f[3]))?;
+        if !same_feed {
+            // the same weekday inside this file's days, a day in from either end where there is room (a journey
+            // may start on the day before or end on the day after)
+            let days = tt.days() as i32;
+            day = day.rem_euclid(7);
+            if day == 0 && days > 7 {
+                day = 7;
+            }
+            while day + 7 < days - 1 && day < 1 {
+                day += 7;
+            }
+        }
         let mut q = Query::new(place(tt, f[1])?, place(tt, f[2])?, day, parse_clock(f[4])?);
         q.rules = false;
         q.max_rides = 16;
@@ -553,6 +567,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
             other => return Err(format!("{other}: depart, arrive or window")),
         };
         count += 1;
+        answered += (theirs != "none") as u32;
         let kept = f.get(6).copied().unwrap_or("");
         if !write && same_feed && kept != theirs {
             bad.push(format!("the file keeps {kept}, the scan says {theirs}"));
@@ -570,7 +585,15 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
         std::fs::write(path, out).map_err(|e| format!("{path}: {e}"))?;
         println!("{count} journeys written with the scan's answers; {wrong} where the planner differs");
     } else {
-        println!("{count} fixed journeys: {} agree with the scan{}", count - wrong, if same_feed { " and with what the file keeps" } else { "; the file is of another feed than the kept answers, which were not compared" });
+        println!(
+            "{count} fixed journeys: {} agree with the scan{}; {answered} have an answer",
+            count - wrong,
+            if same_feed { " and with what the file keeps".to_string() } else { format!("; the file is of feed {}, not the kept answers', so each was asked on its weekday inside the file's days and the kept answers were not compared", tt.meta("feed_version").unwrap_or("?")) }
+        );
+        if answered * 4 < count * 3 {
+            println!("WRONG  only {answered} of {count} journeys have an answer on this file: they no longer fit it, and prove nothing");
+            wrong += 1;
+        }
     }
     Ok(if wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
