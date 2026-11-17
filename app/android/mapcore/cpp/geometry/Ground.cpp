@@ -112,10 +112,11 @@ constexpr std::array<std::string_view, 3> surfaced = {"pedestrian", "square", "p
 }
 
 /// A big road's lanes and width as drawn: past these no road has them (the Netherlands' extract of 16 November 2026
-/// has 14 lanes at most, Germany's 21; a width over 200 m is a river's or a mistake), and their lane lines would be
-/// drawn without bound (each lane a dashed line along an offset whose bends part by twice the offset).
-constexpr std::int64_t most_lanes = 32;
-constexpr double widest_road = 200.0;
+/// has 14 lanes at most and Germany's 21, the widest toll plazas about 50 one way; 64 lanes of a motorway are 228 m
+/// wide), and their lane lines would be drawn without bound (each lane a dashed line along an offset whose bends part
+/// by twice the offset). A value past them reads as no value, never as the bound.
+constexpr std::int64_t most_lanes = 64;
+constexpr double widest_road = 250.0;
 
 /// The cell of feature `i` of a layer (its features are sorted by cell).
 class CellOf {
