@@ -215,7 +215,8 @@ object MapBench {
     fun timing(length: VkBench.Length): Timing = when (length) {
         VkBench.Length.CI -> Timing(
             lapSeconds = 4.0, rounds = 1, settleSeconds = 2.0, restSeconds = 3.0,
-            splitSeconds = 0.0, splitFrames = 2, splitCapSeconds = 6.0, stops = listOf(Stop.STREET),
+            // four frames presented after each switch: a record's GPU time is a frame two frames back (the two in flight)
+            splitSeconds = 0.0, splitFrames = 4, splitCapSeconds = 8.0, stops = listOf(Stop.STREET),
             warm = listOf(0.0), waitCapSeconds = 30.0,
         )
         else -> Timing(
@@ -465,7 +466,8 @@ object MapBench {
 
     private fun pad(s: String, n: Int) = s.padEnd(n)
 
-    private fun left(s: String, n: Int) = s.padStart(n)
+    /** A cell right-aligned in [n] characters, a space before it whatever its width (a slow phone's 1033.33 ms). */
+    private fun left(s: String, n: Int) = " " + s.padStart(n - 1)
 
     /**
      * The one table the phone sends back (Share or Copy), the budgets beside it: the head (when, what phone, what

@@ -299,6 +299,10 @@ class MapBenchTest {
         // stage F by part: the scene, the globals and the ranks always, a pass where it takes 0.05 ms or more
         val stageF = lines.first { it.startsWith("full ") && it.contains("scene") }
         assertEquals("full   scene 3.00 · 2.50 · —; globals 0.20 · 0.20 · —; ranks 0.40 · 0.40 · —; buildings 1.50 · 1.20 · —", stageF)
+        // a cell past its width still has a space before it
+        val slow = MapBench.table(head, listOf(result(MapBench.Setup.FULL, 916.67, 900.0, 0)))
+        val slowRow = slow.lines().first { it.startsWith("full ") }
+        assertTrue(slowRow, slowRow.contains(" 916.67 1833.34 "))
         // sent from the phone as text: no line longer than a message can take whole, every line logged for CI
         assertTrue(lines.all { it.length < 400 })
         assertEquals(lines.size, MapBench.tableLines(text).size)
