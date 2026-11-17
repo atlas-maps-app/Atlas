@@ -64,6 +64,7 @@
     <string name="mine_offline_unreadable_version">Its places were stored by another version of Atlas, so offline search here can\'t read them.</string>
     <string name="mine_offline_unreadable_damaged">Its places file is damaged, so offline search here can\'t read it.</string>
     <string name="mine_offline_orphan_text">These places belong to no region on this phone, and this Atlas can\'t read them. Deleting them frees %1$s.</string>
+    <string name="mine_offline_places_left_out">Its places aren\'t published in a form this Atlas can read yet, so they were left out. Search here uses the map\'s own data meanwhile, and the places come with the next update.</string>
     <string name="mine_offline_delete_title">Delete %1$s?</string>
     <string name="mine_offline_delete_text">This frees %1$s. The map, search and routes there then need a connection.</string>
     <string name="mine_offline_delete_confirm">Delete</string>

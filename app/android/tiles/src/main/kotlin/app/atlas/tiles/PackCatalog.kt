@@ -47,6 +47,12 @@ data class PackFile(
     /** Bytes it takes on the phone. */
     val diskBytes: Long get() = rawBytes ?: bytes
 
+    /**
+     * [schema] as a number: the list writes it as a number (3), which reads as "3", or as text ("3"); null where the list
+     * does not say, or says something that is not a whole number.
+     */
+    val schemaVersion: Int? get() = schema?.trim()?.trim('"')?.toDoubleOrNull()?.takeIf { it == Math.floor(it) && it in 0.0..1e6 }?.toInt()
+
     companion object {
         const val ATLAS = "atlas"
         const val PLACES = "places"

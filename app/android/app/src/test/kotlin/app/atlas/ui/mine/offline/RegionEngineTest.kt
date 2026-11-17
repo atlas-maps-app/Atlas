@@ -203,6 +203,111 @@ class RegionEngineTest {
         assertTrue("the map, search and routing were told after each layer: $changed", changed >= 3)
     }
 
+    /** [thePack] with its places of store [schema] as the list names it ("5", or "\"3\"" written as text), over [box]. */
+    private fun packOfSchema(schema: String?, seed: Int = 1, box: BBox = pack, id: String = "test"): Pack {
+        val places = data(80_000, seed + 1)
+        served["/$id.places"] = places
+        val placesFile = PackFile(
+            PackFile.PLACES, "$id.places", places.size.toLong(), sha(places), listOf(PackPart(server.url("/$id.places").toString(), places.size.toLong(), sha(places))),
+            schema = schema,
+        )
+        // the map the same whatever the places: only they change between two publications here
+        return Pack(id, "Testland", "NL", box, null, "packs-test", listOf(file("atlas", "$id.atlas", data(300_000, 1)), placesFile))
+    }
+
+    /**
+     * A pack's places of a store schema this Atlas cannot open are never downloaded (the user, 12 November: "When I
+     * download the map in the latest alpha it says places are unreadable"): a region too big to import goes without them,
+     * its card says why, and a pack published again with places it reads brings them as an update.
+     */
+    @Test
+    fun aPacksPlacesOfASchemaThisAtlasCannotOpenAreNotDownloadedAndComeWhenThePackIsPublishedAgain() {
+        var current = packOfSchema("5")
+        val e = engine(deps({ listOf(current) }))
+        assertNull(e.readablePlaces(current))
+        assertEquals(300_000L, e.countryBytes(current))
+        val estimate = runBlocking { e.estimate(inside, setOf(RegionLayer.MAP, RegionLayer.PLACES)) }
+        assertEquals(0L, estimate.bytes[RegionLayer.PLACES])
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertEquals(0, hitsOf("test.places"))
+        assertFalse(files.places(id).exists())
+        val d = e.details.value.single()
+        assertTrue(d.placesLeftOut)
+        assertTrue("the map is there: the region is whole as it can be", d.complete)
+        assertNull(d.error)
+        assertFalse("search is not among what it holds", "ui.search" in OfflineModel.icons(d))
+        assertFalse(runBlocking { e.placesAgainReadable(id) })
+        // the same pack again: nothing to update
+        assertTrue(runBlocking { e.checkUpdates() }.isEmpty())
+        // published again with places this Atlas reads: an update, which takes them
+        current = packOfSchema("4", seed = 7)
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        val found = runBlocking { e.checkUpdates() }
+        assertEquals(setOf(RegionLayer.PLACES), found.getValue(id).layers)
+        runBlocking { e.resume(id, update = true) }
+        assertEquals(1, hitsOf("test.places"))
+        assertEquals(80_000L, files.places(id).length())
+        assertFalse(e.details.value.single().placesLeftOut)
+        assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+    }
+
+    /** A pack's places of schema 3 (packs-20261104, the last published) and of this Atlas's own are taken, however the list writes the number. */
+    @Test
+    fun aPacksPlacesOfASchemaThisAtlasOpensAreTaken() {
+        for ((i, schema) in listOf("3", "\"3\"", "4", "4.0", null).withIndex()) {
+            val p = packOfSchema(schema, id = "p$i")
+            val e = engine(deps({ listOf(p) }))
+            assertNotNull("schema $schema", e.readablePlaces(p))
+            assertEquals(380_000L, e.countryBytes(p))
+            val id = RegionEngine.idFor("Around Amsterdam $i")
+            e.begin(id, "Around Amsterdam $i", inside, setOf(RegionLayer.PLACES))
+            runBlocking { e.resume(id) }
+            assertEquals("schema $schema", 80_000L, files.places(id).length())
+            assertEquals(1, hitsOf("p$i.places"))
+        }
+        // nor one it cannot read, nor one the list names in a way that is no number
+        for (schema in listOf("2", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
+    }
+
+    /** Where the phone can build the area (a town), the places of a pack it cannot read are imported, as where there is no pack. */
+    @Test
+    fun aTownWhosePacksPlacesCannotBeOpenedImportsThem() {
+        val around = BBox(4.84, 52.32, 4.96, 52.41)
+        val p = packOfSchema("5", box = around)
+        var imported = 0
+        val e = engine(deps({ listOf(p) }, import = { _, _, f, _ -> imported++; f.writeText("imported") }))
+        assertNotNull(e.choosePack(town, listOf(p)))
+        val id = RegionEngine.idFor("The town")
+        e.begin(id, "The town", town, setOf(RegionLayer.PLACES))
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        runBlocking { e.resume(id) }
+        assertEquals(1, imported)
+        assertEquals(0, hitsOf("test.places"))
+        assertEquals("overpass", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+        assertFalse(e.details.value.single().placesLeftOut)
+    }
+
+    /** A region whose places were taken before keeps them where its pack is published again with places it cannot read. */
+    @Test
+    fun placesTakenBeforeStayWhereThePackIsPublishedAgainUnreadable() {
+        var current = packOfSchema("4")
+        val e = engine(deps({ listOf(current) }))
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        val before = files.places(id).readBytes()
+        current = packOfSchema("5", seed = 3)
+        assertEquals(setOf(RegionLayer.PLACES), runBlocking { e.checkUpdates() }.getValue(id).layers)
+        runBlocking { e.resume(id, update = true) }
+        assertTrue(before.contentEquals(files.places(id).readBytes()))
+        assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+        assertFalse(e.details.value.single().placesLeftOut)
+        // and it is not offered the same unreadable places again
+        assertTrue(runBlocking { e.checkUpdates() }.isEmpty())
+    }
+
     @Test
     fun anAreaThatIsAFewPercentOfAPackIsNotTakenFromIt() {
         val tiny = BBox(4.5, 52.5, 4.55, 52.55)

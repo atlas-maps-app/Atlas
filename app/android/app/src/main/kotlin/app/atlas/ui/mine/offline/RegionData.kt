@@ -208,4 +208,7 @@ data class RegionDetail(
 
     /** Whether its map is its country's tiles ([MapKind.TILES]). */
     val hasTiles: Boolean get() = meta.layers[RegionLayer.MAP]?.kind == MapKind.TILES.id
+
+    /** Whether its places were left out: its pack's store is of a schema this Atlas cannot open ([RegionEngine.PLACES_LEFT_OUT]). */
+    val placesLeftOut: Boolean get() = meta.layers[RegionLayer.PLACES]?.kind == RegionEngine.PLACES_LEFT_OUT
 }

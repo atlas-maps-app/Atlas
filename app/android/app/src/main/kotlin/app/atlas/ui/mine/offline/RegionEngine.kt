@@ -3,6 +3,7 @@ package app.atlas.ui.mine.offline
 import app.atlas.geo.BBox
 import app.atlas.route.SegmentProgress
 import app.atlas.route.SegmentStore
+import app.atlas.search.PlaceStore
 import app.atlas.search.RegionImport
 import app.atlas.services.RegionLayer
 import app.atlas.tiles.Pack
@@ -165,7 +166,39 @@ class RegionEngine(
      * nor the tiles of another core: neither is downloaded.
      */
     fun countryBytes(pack: Pack): Long =
-        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes } ?: pack.atlas?.bytes ?: 0L) + (pack.places?.diskBytes ?: 0L)
+        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes } ?: pack.atlas?.bytes ?: 0L) + (readablePlaces(pack)?.diskBytes ?: 0L)
+
+    /**
+     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of a schema it opens, or one the list
+     * names no schema for); null where it has none, or one this Atlas cannot open, which is then never downloaded (the
+     * user, 12 November: "When I download the map in the latest alpha it says places are unreadable").
+     */
+    fun readablePlaces(pack: Pack?): PackFile? = pack?.places?.takeIf { f -> f.schema == null || f.schemaVersion?.let(PlaceStore::reads) == true }
+
+    /**
+     * How the places of [bbox] would be taken from [pack]: its store where this Atlas reads it, else an Overpass import
+     * where there is no pack's store or the phone can build the area ([BUILD_MAX_KM2], as it builds a city's map), else
+     * none: a country whose published store this Atlas cannot read goes without its places until the pack is published
+     * again.
+     */
+    private fun placesWay(bbox: BBox, pack: Pack?): PlacesWay = when {
+        readablePlaces(pack) != null -> PlacesWay.PACK
+        pack?.places == null || buildable(bbox) -> PlacesWay.IMPORT
+        else -> PlacesWay.NONE
+    }
+
+    private enum class PlacesWay { PACK, IMPORT, NONE }
+
+    /**
+     * Whether taking the places of region [id] again would bring a store this Atlas reads: its pack's, where it reads it,
+     * or an import ([placesWay]). The card of a region whose places it cannot read offers them again only then.
+     */
+    suspend fun placesAgainReadable(id: String): Boolean {
+        val m = files.get(id) ?: return false
+        val packs = runCatching { deps.packs() }.getOrDefault(emptyList())
+        val pack = m.packId?.let { pid -> packs.firstOrNull { it.id == pid } } ?: choosePack(m.bbox, packs)
+        return placesWay(m.bbox, pack) != PlacesWay.NONE
+    }
 
     /** What taking [bbox] with [layers] would download, before it is asked for. */
     suspend fun estimate(bbox: BBox, layers: Set<RegionLayer>): RegionEstimate {
@@ -184,7 +217,11 @@ class RegionEngine(
             }
         }
         if (RegionLayer.PLACES in layers) {
-            out[RegionLayer.PLACES] = pack?.places?.bytes ?: (RegionImport.tiles(bbox).size * PLACES_PER_TILE)
+            out[RegionLayer.PLACES] = when (placesWay(bbox, pack)) {
+                PlacesWay.PACK -> readablePlaces(pack)?.bytes ?: 0L
+                PlacesWay.IMPORT -> RegionImport.tiles(bbox).size * PLACES_PER_TILE
+                PlacesWay.NONE -> 0L
+            }
         }
         if (RegionLayer.ROUTING in layers) {
             val sizes = runCatching { deps.segmentSizes() }.getOrDefault(emptyMap())
@@ -302,8 +339,18 @@ class RegionEngine(
             }
             RegionLayer.PLACES -> {
                 val target = files.places(meta.id)
-                val packed = pack?.places
-                val record = if (packed != null) {
+                val packed = readablePlaces(pack)
+                val way = placesWay(meta.bbox, pack)
+                val unread = pack?.places
+                if (way == PlacesWay.NONE && pack != null && unread != null) {
+                    // the pack's store is of a schema this Atlas cannot open: not downloaded, and the region holds what it
+                    // held (a store taken before stays). Recorded with the pack's file, so the card says why and a pack
+                    // published again shows as an update.
+                    val had = files.get(meta.id)?.layers?.get(layer)?.takeIf { target.isFile && it.kind != PLACES_LEFT_OUT }
+                    record(meta.id, layer, had?.copy(sha = unread.sha256) ?: LayerRecord(PLACES_LEFT_OUT, 0L, now, unread.sha256, pack.osmTimestamp))
+                    return
+                }
+                val record = if (way == PlacesWay.PACK && pack != null && packed != null) {
                     deps.packDownloader.download(packed, target) { report(it.fraction.toFloat()) }
                     LayerRecord("pack", target.length(), now, packed.sha256, pack.osmTimestamp)
                 } else {
@@ -444,6 +491,9 @@ class RegionEngine(
 
     companion object {
         val LAYER_ORDER = listOf(RegionLayer.MAP, RegionLayer.PLACES, RegionLayer.ROUTING, RegionLayer.VOICE)
+
+        /** The kind of a places layer left out: its pack's store is of a schema this Atlas cannot open ([readablePlaces]). */
+        const val PLACES_LEFT_OUT = "left-out"
 
         /** A pack is used when the area asked for is at least this share of the pack (else only the area is fetched). */
         const val PACK_SHARE = 0.15

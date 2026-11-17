@@ -64,6 +64,7 @@
     <string name="mine_offline_unreadable_version">Die Orte stammen von einer anderen Version von Atlas, darum kann die Offline-Suche sie hier nicht lesen.</string>
     <string name="mine_offline_unreadable_damaged">Die Datei mit den Orten ist beschädigt, darum kann die Offline-Suche sie hier nicht lesen.</string>
     <string name="mine_offline_orphan_text">Diese Orte gehören zu keinem Gebiet auf diesem Telefon, und diese Version von Atlas kann sie nicht lesen. Löschen gibt %1$s frei.</string>
+    <string name="mine_offline_places_left_out">Die Orte sind noch nicht in einer Form veröffentlicht, die dieses Atlas lesen kann, darum fehlen sie. Die Suche nutzt hier so lange die Daten der Karte selbst; die Orte kommen mit dem nächsten Update.</string>
     <string name="mine_offline_delete_title">%1$s löschen?</string>
     <string name="mine_offline_delete_text">Das gibt %1$s frei. Karte, Suche und Routen dort brauchen dann Verbindung.</string>
     <string name="mine_offline_delete_confirm">Löschen</string>

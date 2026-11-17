@@ -87,7 +87,7 @@ class ServicesTest {
         val damaged = File(root, "places/damaged.db").apply { parentFile.mkdirs(); writeText("not a database, though it is named as one") }
         val older = File(root, "places/older.db")
         PlaceStore.open(older).close()
-        meta(older, "schema", "3")
+        meta(older, "schema", "5")
         val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root, offline = true, mapEngine = false))
         s.placeStores
         val refused = s.unreadableStores.value
@@ -117,5 +117,31 @@ class ServicesTest {
         assertTrue(s.unreadableStores.value.isEmpty())
         s.close()
         PlaceStore.open(store, refile = false).use { assertFalse(it.needsRefile) }
+    }
+
+    /**
+     * A region's store of schema 3, as packs-20261104 and the Atlas before alpha 32 wrote it, is no longer "places
+     * unreadable" (the user, 12 November): it answers at once and is filed anew in the background, as a store filed under
+     * other rules is.
+     */
+    @Test
+    fun aRegionsStoreOfSchemaThreeAnswersAndIsFiledAnewInTheBackground() = runBlocking {
+        val root = TempFiles.dir("atlas-stores")
+        val store = File(root, "places/golf.db")
+        val raw = TempFiles.file("golf", ".json").apply {
+            writeText("""{"elements":[{"type":"node","id":1,"lat":52.37,"lon":4.88,"tags":{"leisure":"golf_course","name":"Spaarnwoude"}}]}""")
+        }
+        PlaceStore.open(store).use { it.importOverpass(raw, regionName = "Golf") }
+        meta(store, "schema", "3")
+        meta(store, "filed", "the rules of 4 November")
+        val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root, offline = true, mapEngine = false))
+        assertEquals("Spaarnwoude", s.placeStores.text("Spaarnwoude").single().name())
+        withTimeout(10_000) { s.regionsChanged.first { it > 0 } }
+        assertTrue(s.unreadableStores.value.isEmpty())
+        s.close()
+        PlaceStore.open(store, refile = false).use {
+            assertFalse(it.needsRefile)
+            assertEquals(PlaceStore.SCHEMA.toString(), it.meta("schema"))
+        }
     }
 }

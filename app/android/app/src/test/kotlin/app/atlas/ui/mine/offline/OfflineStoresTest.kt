@@ -63,11 +63,16 @@ class OfflineStoresTest {
         return s
     }
 
-    /** Shows the Offline board until both stores say they cannot be read ([chip] in the phone's language), and captures it. */
-    private fun show(s: Services, chip: String, shot: String) {
+    /**
+     * Shows the Offline board until both stores say they cannot be read ([chip] in the phone's language) and the region's
+     * card offers its places [again] (it asks first whether that brings a store this Atlas reads, off the main thread:
+     * [RegionEngine.placesAgainReadable]), and captures it.
+     */
+    private fun show(s: Services, chip: String, again: String, shot: String) {
         compose.setContent { AtlasRoot(s, BackStackNavigator(listOf(Dest.Home(), Dest.Offline)), dark = false) }
         compose.settle(30_000)
         compose.waitUntil(10_000) { compose.onAllNodesWithText(chip).fetchSemanticsNodes().size == 2 }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(again).fetchSemanticsNodes().size == 1 }
         repeat(4) { compose.waitForIdle(); Thread.sleep(120) }
         val f = File(shotsDir, "$shot.png")
         compose.onRoot().captureRoboImage(f.absolutePath)
@@ -77,7 +82,7 @@ class OfflineStoresTest {
     @Test
     fun aStoreThisAtlasCannotReadIsShownAndTakenAgain() {
         val s = phone()
-        show(s, "places unreadable", "mine_offline_unreadable")
+        show(s, "places unreadable", "Download again", "mine_offline_unreadable")
         compose.onNodeWithText("Its places file is damaged", substring = true).assertExists()
         compose.onNodeWithText("lisboa").assertExists()
 
@@ -96,7 +101,7 @@ class OfflineStoresTest {
     @Test
     @Config(qualifiers = "nl-w360dp-h800dp-xhdpi")
     fun inDutchOnANarrowPhoneTheCardsButtonsKeepTheirWords() {
-        show(phone(), "plaatsen onleesbaar", "mine_offline_unreadable_nl")
+        show(phone(), "plaatsen onleesbaar", "Opnieuw downloaden", "mine_offline_unreadable_nl")
         // each button as wide as its words: the second goes under the first when the two do not fit side by side
         val again = compose.onNodeWithText("Opnieuw downloaden").fetchSemanticsNode().boundsInRoot
         val delete = compose.onAllNodesWithText("Verwijderen").fetchSemanticsNodes().first().boundsInRoot

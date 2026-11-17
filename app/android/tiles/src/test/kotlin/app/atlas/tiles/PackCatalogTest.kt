@@ -147,6 +147,7 @@ class PackCatalogTest {
         assertEquals("gzip", lux.places!!.compression)
         assertEquals(500L, lux.places!!.rawBytes)
         assertEquals("1", lux.places!!.schema)
+        assertEquals(1, lux.places!!.schemaVersion)
         assertEquals(1000L + lux.places!!.bytes, lux.downloadBytes)
         assertEquals(1500L, lux.diskBytes)
         val big = list.packs[1].atlasFile!!
@@ -371,5 +372,23 @@ class PackCatalogTest {
         }
         assertTrue(list.packs.isNotEmpty())
         assertTrue(list.packs.all { p -> p.files.all { it.kind == PackFile.ATLAS || it.kind == PackFile.PLACES } })
+    }
+
+    /** A places file's store schema as a number, however the list writes it: 3, "3", 3.0; none where it says none or no whole number. */
+    @Test
+    fun aPlacesFilesSchemaReadsAsANumber() {
+        fun of(schema: String?) = PackFile(PackFile.PLACES, "x.places.db.gz", 1, null, listOf(PackPart("https://example.org/x", 1, null)), schema = schema).schemaVersion
+        assertEquals(3, of("3"))
+        assertEquals(3, of("\"3\""))
+        assertEquals(3, of("3.0"))
+        assertEquals(4, of(" 4 "))
+        assertEquals(null, of(null))
+        assertEquals(null, of("3.5"))
+        assertEquals(null, of("three"))
+        // as the list's parser gives it: a number reads as a Long, text as itself
+        val parsed = PackCatalog.parse("""{"packs":[{"id":"a","name":"A","bbox":[1,2,3,4],"files":[
+            {"kind":"places","name":"a.places.db.gz","url":"https://example.org/a","bytes":1,"schema":3},
+            {"kind":"places","name":"b.places.db.gz","url":"https://example.org/b","bytes":1,"schema":"3"}]}]}""")
+        assertEquals(listOf(3, 3), parsed.packs.single().files.map { it.schemaVersion })
     }
 }
