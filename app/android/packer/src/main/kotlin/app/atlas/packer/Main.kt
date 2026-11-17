@@ -34,10 +34,6 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
   packer info <in.osm.pbf> [--count]
       Prints the file's header and, with --count, what it holds.
 
-  packer renders <out-dir> [--only a,b] [--repo DIR]
-      The renders' own data as .atlas packs: every data/regions/<name>/raw.json with its places.py entry, dem*.json and
-      weather, and Amsterdam's data/ams/raw.json. --repo is the repo root (default: the current directory).
-
   packer region <W,S,E,N> <name> [--out FILE] [--id ID] [--country XX]
       Builds a .atlas pack from Overpass with fetch/regions.py's query (a big box is split, the parts merged by id).
 
@@ -48,8 +44,6 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   packer packinfo <file.atlas>
       Prints a pack's manifest, sections and sizes.
-
-  ${Anchors.USAGE}
 
   ${RenderTiles.USAGE}
 
@@ -80,7 +74,7 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
   ${app.atlas.packer.heights.HeightsCheck.USAGE}"""
 
 /**
- * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
+ * The command line: `places`, `manifest`, `info`, the region packs (`region`, `pbf`, `packinfo`), the windows'
  * data (`windows`, and `windows-join` for its shards), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
  * `world-tags`, `world-assemble`, `world-check`, `world-refs` and `world-keep`), and the terrain's (`heights`,
  * `heights-check`).
@@ -176,15 +170,6 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             }
             out(Manifest.pretty(info))
         }
-        "renders" -> {
-            val (dir) = a.files(1)
-            val only = a.value("--only")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
-            val repo = File(a.value("--repo") ?: ".").absoluteFile
-            a.done()
-            if (!File(repo, "data/regions/places.py").isFile) throw UsageException("$repo is not the repo root (no data/regions/places.py)")
-            val results = Renders.build(repo, File(dir), only) { out(it) }
-            out("${results.size} packs, ${results.sumOf { it.stats.bytes } shr 10} KiB in all")
-        }
         "region" -> {
             val (box, name) = a.files(2)
             val bbox = parseBox(box)
@@ -209,7 +194,6 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             val stats = PackWriter.write(spec, file)
             out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
         }
-        "anchors" -> return Anchors.run(args, out)
         "render-tiles" -> return RenderTiles.run(args, out)
         "windows" -> return WindowPacks.run(args, out)
         "windows-join" -> return WindowsJoin.run(args, out)

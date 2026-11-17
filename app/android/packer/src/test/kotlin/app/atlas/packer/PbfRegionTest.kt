@@ -63,12 +63,22 @@ class PbfRegionTest {
         return TestPbf(nodes.values.toList(), ways.values.toList(), relations).also { it.blockSize = 2000 }.write(file)
     }
 
+    /** The renders' `data/regions/places.py` table as JSON, by running the file with python3 (it is Python: tuples, comments). */
+    private fun places(): kotlinx.serialization.json.JsonObject {
+        val script = "import json,runpy,sys; print(json.dumps(runpy.run_path(sys.argv[1])['PLACES']))"
+        val p = ProcessBuilder("python3", "-c", script, File(repo, "data/regions/places.py").path).start()
+        val out = p.inputStream.readBytes().toString(Charsets.UTF_8)
+        val err = p.errorStream.readBytes().toString(Charsets.UTF_8)
+        check(p.waitFor() == 0) { "python3 could not read data/regions/places.py: $err" }
+        return kotlinx.serialization.json.Json.parseToJsonElement(out) as kotlinx.serialization.json.JsonObject
+    }
+
     private fun inBox(lat: Double, lon: Double, b: BBox) = lat >= b.south && lat <= b.north && lon >= b.west && lon <= b.east
 
     private fun check(name: String) {
         val raw = File(repo, "data/regions/$name/raw.json")
         assumeTrue(raw.isFile)
-        val box = RegionConfig.bboxOf(Renders.places(repo)[name] as kotlinx.serialization.json.JsonObject)!!
+        val box = RegionConfig.bboxOf(places()[name] as kotlinx.serialization.json.JsonObject)!!
         val all = OverpassJsonFile(raw).elements().toList()
         val pbf = toPbf(all, tmp.newFile("$name.osm.pbf"))
         val t0 = System.nanoTime()
@@ -103,7 +113,7 @@ class PbfRegionTest {
     fun aPbfPackReadsBackAndFindsItsBox() {
         val raw = File(repo, "data/regions/nottinghill/raw.json")
         assumeTrue(raw.isFile)
-        val box = RegionConfig.bboxOf(Renders.places(repo)["nottinghill"] as kotlinx.serialization.json.JsonObject)!!
+        val box = RegionConfig.bboxOf(places()["nottinghill"] as kotlinx.serialization.json.JsonObject)!!
         val pbf = toPbf(OverpassJsonFile(raw).elements().toList(), tmp.newFile("n.osm.pbf"))
         val cut = PbfRegion.extract(pbf, box, threads = 1)
         val spec = RegionBuilder.spec("nh", RegionConfig.forBox("Notting Hill", box, "GB"), cut.source())
