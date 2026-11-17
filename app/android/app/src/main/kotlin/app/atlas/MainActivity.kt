@@ -68,12 +68,7 @@ class MainActivity : ComponentActivity() {
             setContent { app.atlas.mapview.GlCapsScreen() }
             return
         }
-        // VK bench's real map on a phone fetches the windows and the world as the app's map does (not CI's bench, which
-        // draws the canal ring it puts on the device and fetches nothing)
-        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_VKBENCH && !intent.getBooleanExtra(EXTRA_VK_CI, false)) {
-            allowWorld(services, intent)
-            app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
-        }
+        benchFetches(services, intent)
         // VK facts and VK bench (plan-vector A0): the phone's Vulkan, and the stand-in measured on it
         if (showVulkanScreen(intent)) return
         offerBenchShortcuts()
@@ -128,6 +123,7 @@ class MainActivity : ComponentActivity() {
             setContent { app.atlas.mapview.GlCapsScreen() }
             return
         }
+        benchFetches(services, intent)
         if (showVulkanScreen(intent)) return
         allowWorld(services, intent)
         if (finishOsmSignIn(intent)) return
@@ -172,6 +168,17 @@ class MainActivity : ComponentActivity() {
         super.onTrimMemory(level)
         // The pipeline cache goes back to disk when the app leaves the screen or memory is short (D5.6).
         MapCore.sharedOrNull()?.trimMemory(level)
+    }
+
+    /**
+     * VK bench's real map on a phone fetches the windows and the world as the app's map does (the map start's own two
+     * statements, run before the bench's screen shows); not CI's bench, which draws the canal ring it puts on the device
+     * and fetches nothing.
+     */
+    private fun benchFetches(services: Services, intent: Intent) {
+        if (intent.getStringExtra(EXTRA_SCREEN) != SCREEN_VKBENCH || intent.getBooleanExtra(EXTRA_VK_CI, false)) return
+        allowWorld(services, intent)
+        app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
     }
 
     /** VK facts or VK bench, when the intent asks for one; true when shown. */
