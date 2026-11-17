@@ -235,10 +235,12 @@ TEST_CASE(
     "setts: the bundled sett roads drawn alone on the host's Vulkan, each road one layer, as their twin's paths") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
     const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(path)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no amsterdam.atlas: the sett roads are not drawn here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
     auto session = test::open_session();
     if (!session) return;
     auto pack = test::open_pack(path.string());

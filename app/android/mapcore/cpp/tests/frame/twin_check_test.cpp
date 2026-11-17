@@ -27,10 +27,12 @@ namespace {
 TEST_CASE("the twin's check: the bundled Westerkerk at the home emits one stream every time, the host's") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path pack = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(pack)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no amsterdam.atlas: the twin's check is not run here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(pack), "ATLAS_TILES_DIR has no " << pack.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
