@@ -157,6 +157,13 @@ public:
         passes_ = passes;
         if (builder_) builder_->set_passes(passes);
     }
+    /// The passes the frames record from now on by their names in the registry (VK bench's configurations and its
+    /// split of the GPU's time by pass: MapCore.passes): those named in `keep`, comma-separated, or every one for "".
+    /// "" or why not (a name no registered pass has), the passes then as they were.
+    [[nodiscard]] std::string set_passes_named(std::string_view keep);
+    /// The last frame's counts by pass, a line each in the registry's order: `<name> <draws> <dispatches>
+    /// <triangles>` (a pass left out records nothing, so counts none); "" before a frame builder is made.
+    [[nodiscard]] std::string passes_line() const;
     /// The frames' ranks over the rows of the resident tiles not drawn too, or not (FrameBuilder::rank_undrawn: the
     /// pinch audit's measure), for the frame builder there is.
     void rank_undrawn(bool on) noexcept {

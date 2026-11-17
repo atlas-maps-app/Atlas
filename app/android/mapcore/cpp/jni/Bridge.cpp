@@ -426,6 +426,21 @@ public:
         return on_session([this, on] { return map_->set_shape_records(on); });
     }
 
+    /// The passes the map's frames record from now on, by name (VK bench's configurations and its split of the GPU's
+    /// time by pass): those named in `keep`, comma-separated, every one for "". "" or why not.
+    [[nodiscard]] std::string passes(const std::string& keep) {
+        return on_session([this, &keep] {
+            std::string why = map_->set_passes_named(keep);
+            if (why.empty()) ask_frame();
+            return why;
+        });
+    }
+
+    /// The map's last frame's counts by pass (frame/MapFrame.hpp's passes_line), "" before its frame builder.
+    [[nodiscard]] std::string pass_counts() {
+        return on_session([this] { return map_->passes_line(); });
+    }
+
     /// The app's labels for the map from now on (null: none).
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
@@ -1670,6 +1685,20 @@ jstring native_shape_records(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean
     return java(env, core->shape_records(on == JNI_TRUE));
 }
 
+/// The passes the map's frames record from now on, by their names in the registry (frame/MapFrame.hpp's
+/// set_passes_named, for VK bench): those named in `keep`, comma-separated, every one for "". "" or why not.
+jstring native_passes(JNIEnv* env, jclass /*cls*/, jlong handle, jstring keep) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    return java(env, core->passes(string_of(env, keep)));
+}
+
+/// The map's last frame's counts by pass: `<name> <draws> <dispatches> <triangles>` a line, in the registry's order.
+jstring native_pass_counts(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return java(env, core == nullptr ? std::string() : core->pass_counts());
+}
+
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
 /// read_label_block: each label at its own size and at the band's top), at `revision`, drawn no smaller than `least` of
 /// their own size; an empty block takes them away.
@@ -2013,8 +2042,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 68>& methods() {
-    static const std::array<JNINativeMethod, 68> table{{
+const std::array<JNINativeMethod, 70>& methods() {
+    static const std::array<JNINativeMethod, 70> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2078,6 +2107,8 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("ask", "(JZJIZI)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
+        method("passes", "(JLjava/lang/String;)Ljava/lang/String;", fn(&native_passes)),
+        method("passCounts", "(J)Ljava/lang/String;", fn(&native_pass_counts)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),

@@ -13,8 +13,10 @@
 
 #include <algorithm>
 #include <format>
+#include <iterator>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -289,6 +291,35 @@ std::string MapFrame::apply_shape_records() {
         return std::string(buildings.records_why());
     }
     return "no buildings pass";
+}
+
+std::string MapFrame::set_passes_named(std::string_view keep) {
+    // the map's frame builders make every registered pass (make_passes()), so bit i is the registry's pass i
+    const std::span<const Registration> all = registrations();
+    if (all.size() > 64) return "more passes than the switch has bits";
+    std::uint64_t bits = keep.empty() ? ~std::uint64_t{0} : 0U;
+    std::string_view rest = keep;
+    while (!rest.empty()) {
+        const std::size_t comma = rest.find(',');
+        const std::string_view name = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        if (name.empty()) continue;
+        const auto found = std::ranges::find(all, name, &Registration::name);
+        if (found == all.end()) return std::format("no pass named {}", name);
+        bits |= std::uint64_t{1} << static_cast<unsigned>(std::distance(all.begin(), found));
+    }
+    set_passes(bits);
+    return {};
+}
+
+std::string MapFrame::passes_line() const {
+    if (!builder_) return {};
+    std::string out;
+    for (const PassCounters& c : builder_->counters()) {
+        const Count& t = c.total();
+        out += std::format("{} {} {} {}\n", c.pass(), t.draws, t.dispatches, t.triangles);
+    }
+    return out;
 }
 
 void MapFrame::release(gpu::PipelineWatch* watch) noexcept {

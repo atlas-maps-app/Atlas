@@ -483,6 +483,20 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun shapeRecords(on: Boolean): String = core.call("vk no core") { Native.shapeRecords(it, on) }
 
     /**
+     * The passes the map's frames record from now on (VK bench's configurations and its split of the GPU's time by
+     * pass): those named in [keep] ([Native.passes]' names, comma-separated), every one for "". "" or why not.
+     */
+    fun passes(keep: String): String = core.call("vk no core") { Native.passes(it, keep) }
+
+    /** The map's last frame's counts by pass ([Native.passCounts]): name to draws plus dispatches, in the registry's order. */
+    fun passCounts(): Map<String, Int> = core.call(emptyMap()) { h ->
+        Native.passCounts(h).lines().mapNotNull { line ->
+            val f = line.split(' ')
+            if (f.size < 3) null else f[0] to ((f[1].toIntOrNull() ?: 0) + (f[2].toIntOrNull() ?: 0))
+        }.toMap()
+    }
+
+    /**
      * Where the fling under way lands: the camera at its end, which the map knows as the fling begins. The core builds
      * the tiles there after the frame's own, so the map lands whole (ENGINE.md gain 26). Any thread; it does not wait.
      */

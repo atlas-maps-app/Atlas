@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 32
+    const val ABI = 33
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -445,6 +445,17 @@ object Native {
      * cannot, or not yet (no frame drawn since the map or its window was made).
      */
     @JvmStatic external fun shapeRecords(handle: Long, on: Boolean): String
+
+    /**
+     * The passes the map's frames record from now on, by their names in the core's registry (`CP/frame/PassRegistry.cpp`:
+     * composite, frosted, ground, buildings, …, world), comma-separated in [keep], or every one for "" (VK bench's
+     * configurations and its split of the GPU's time by pass; a pass left out still selects and updates, and records
+     * nothing). "" or why not ("no pass named …").
+     */
+    @JvmStatic external fun passes(handle: Long, keep: String): String
+
+    /** The map's last frame's counts by pass, `<name> <draws> <dispatches> <triangles>` a line in the registry's order; "" before its first frame builder. */
+    @JvmStatic external fun passCounts(handle: Long): String
 
     /**
      * Where the fling under way lands ([has]: none when false): the camera's target, bearing, pitch and distance at its
