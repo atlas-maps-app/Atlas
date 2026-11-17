@@ -198,14 +198,15 @@ std::expected<std::vector<CoasterTrack>, LoadError> load_coasters(const osm::Doc
         if (!(t.is("roller_coaster", "track") || mono) || e.kind != osm::Kind::way || !e.has_geometry || geo.empty()) {
             continue;
         }
-        // lay = int(float(t.get('layer', '0') or 0))
+        // lay = int(float(t.get('layer', '0') or 0)); where float() raises ("2;3", "inf"), and the renders stopped,
+        // the number the value starts with, as every other layer is read (num), or 0: a tag never refuses the load
         std::int64_t lay = 0;
         if (const std::optional<std::string_view> layer = t.get("layer"); layer && !layer->empty()) {
-            const std::optional<double> f = py_float(*layer);
-            if (!f || !std::isfinite(*f)) {
-                return std::unexpected(LoadError{.fault = LoadError::Fault::not_a_number, .element = e.id});
+            std::optional<double> f = py_float(*layer);
+            if (!f || !std::isfinite(*f)) f = num(layer);
+            if (f && std::isfinite(*f)) {
+                lay = static_cast<std::int64_t>(std::trunc(std::clamp(*f, -8.0, 8.0))); // past 3 a layer has no share
             }
-            lay = static_cast<std::int64_t>(std::trunc(std::clamp(*f, -8.0, 8.0))); // past 3 a layer has no share
         }
         if (one_of(t.get("tunnel"), {"yes", "building_passage"}) || lay < 0 || t.is("indoor", "yes")) continue;
         Way w;
