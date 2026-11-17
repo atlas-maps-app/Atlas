@@ -2,6 +2,7 @@
 
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Seams.hpp"
 #include "tiles/Simplify.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Ground.hpp"
@@ -36,6 +37,13 @@ struct V2 {
     constexpr V2() noexcept = default;
     constexpr V2(double px, double pz) noexcept : x(px), z(pz) {}
 };
+
+/// geometry::seams of a ring of these V2s (two doubles, x then z, as geometry's).
+[[nodiscard]] std::vector<std::uint8_t> seams_of(std::span<const V2> poly) {
+    static_assert(sizeof(V2) == 2 * sizeof(double), "V2 is x then z, two doubles");
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
+    return geometry::seams_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()});
+}
 
 /// A point or a direction in space (the port's V3).
 struct V3 {
@@ -527,7 +535,6 @@ constexpr std::array<std::pair<tl::LayerId, Source>, 2> record_layers{
 
 // ---------------------------------------------------------------- the samples of one building
 
-constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 constexpr std::array<std::string_view, 5> reflected = {"gabled", "hipped", "skillion", "quadruple_saltbox",
                                                        "pyramidal"};
 constexpr std::array<std::string_view, 4> paris_fronts = {"limestone", "plaster", "stone", "sandstone"};
@@ -574,7 +581,9 @@ private:
         const double y0 = v.min;
         std::optional<std::string_view> roof = v.roof;
         if (is(roof, "quadruple_saltbox")) roof = "hipped"; // closest shape this renderer draws
-        const double rh = in(roof, pitched) && v.roof_h != 0.0 ? v.roof_h : 0.0;
+        // a seam draws nothing, and a ring with seams a flat roof (geometry/Seams.hpp), as geometry/Walls.cpp has it
+        const std::vector<std::uint8_t> seam = seams_of(poly);
+        const double rh = geometry::drawn_pitched(roof, v.roof_h, !seam.empty()) ? v.roof_h : 0.0;
         const double wall_top = h - rh;
         const bool modern = (v.flags & tl::building::flag_modern) != 0;
         const bool church = (v.flags & tl::building::flag_church) != 0;
@@ -610,7 +619,7 @@ private:
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3) continue;
+            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             const std::uint32_t face = out_.add_face(nrm.x, nrm.y, nrm.z);
             const auto e = static_cast<std::uint32_t>(i);
@@ -964,7 +973,8 @@ private:
         const bool boat = is(v.btype, "houseboat");
         const double y0 = boat ? wy + 0.3 : v.min;
         const double h = boat ? (v.h + wy) + 0.3 : v.h;
-        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0;
+        const std::vector<std::uint8_t> seam = seams_of(poly);
+        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 && seam.empty() ? v.roof_h : 0.0;
         const double top = h - rh;
         const std::size_t n = poly.size();
         for (std::size_t i = 0; i < n; ++i) {
@@ -973,7 +983,7 @@ private:
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3) continue;
+            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             add(Kind::reflection, static_cast<std::uint32_t>(i), 0,
                 {((a.x + bb.x) / 2) + (nrm.x * .2), (y0 + top) / 2, ((a.z + bb.z) / 2) + (nrm.z * .2)},
@@ -1306,12 +1316,13 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
             if (!is_mirror(v, poly)) continue;
             // the reflections' values: rh where the roof's shape is one they draw, the longest edge (the last of
             // the longest, as max over (dist, k) picks it)
+            const std::vector<std::uint8_t> seam = seams_of(poly);
             Mirror m{.solid = c.solids.size() - 1,
                      .source = source,
                      .record = i,
                      .h = v.h,
                      .min = v.min,
-                     .rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0,
+                     .rh = in(v.roof, reflected) && v.roof_h != 0.0 && seam.empty() ? v.roof_h : 0.0,
                      .levels = v.levels,
                      .wall = v.wall_rgb,
                      .longest = 0,
@@ -1323,6 +1334,7 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
             double longest = -1.0;
             const std::size_t n = poly.size();
             for (std::size_t k = 0; k < n; ++k) {
+                if (!seam.empty() && seam[k] != 0) continue;
                 const double d = dist(poly[k], poly[(k + 1) % n]);
                 if (d >= longest) {
                     longest = d;

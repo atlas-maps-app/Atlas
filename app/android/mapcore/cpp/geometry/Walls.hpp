@@ -500,6 +500,9 @@ struct Building {
     std::int64_t id = 0; ///< its OpenStreetMap id (a guessed flat roof's mid grey goes by it)
     Values v;
     std::vector<V2> poly;
+    /// Per edge of `poly`, 1 where it is a seam (geometry/Seams.hpp: it joins a courtyard or a piece and draws
+    /// nothing); empty where it has none.
+    std::vector<std::uint8_t> seam;
     double h = 0.0;                       ///< the top
     double y0 = 0.0;                      ///< the walls' base
     double rh = 0.0;                      ///< the roof's height where its shape is pitched and it has one, else 0
@@ -516,6 +519,8 @@ struct Building {
 
     /// A skillion's top above footprint point p: h - rh * ((p · dirv) - p0) / span.
     [[nodiscard]] double sk_top(const V2& p) const noexcept;
+    /// Whether edge i (from vertex i to i + 1) is a seam.
+    [[nodiscard]] bool seam_at(std::size_t i) const noexcept { return !seam.empty() && seam[i] != 0; }
 };
 
 /// Appends one tile's primitives, faces and n-gons, with the current building's cell, item, sun sample and slots.

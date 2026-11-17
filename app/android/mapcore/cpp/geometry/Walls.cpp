@@ -10,6 +10,7 @@
 #include "geometry/Ground.hpp"
 #include "geometry/Houseboats.hpp"
 #include "geometry/Roofs.hpp"
+#include "geometry/Seams.hpp"
 #include "tiles/Simplify.hpp"
 #include "tiles/layers/Buildings.hpp"
 
@@ -158,8 +159,6 @@ void ring_at(const tl::RingView& ring, std::uint8_t level, const tl::Frame& fram
     }
     return out;
 }
-
-constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 
 /// The wall materials of a Paris stone front (WIN_STYLE's tall French windows).
 constexpr std::array<std::string_view, 4> paris_fronts = {"limestone", "plaster", "stone", "sandstone"};
@@ -317,8 +316,11 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
     const std::size_t n = poly.ring.size();
     used_.assign(n, 0);
     for (const std::uint32_t i : triangles_) used_[i] = 1;
+    // a seam (geometry/Seams.hpp) runs on the ring but is no edge of the n-gon: no outline along it
+    const std::vector<std::uint8_t> seam = seams(plan);
     const auto follows = [&](std::uint32_t u, std::uint32_t v) {
-        for (std::size_t k = (u + 1) % n; k != u; k = (k + 1) % n) {
+        for (std::size_t k = (u + 1) % n, prev = u; k != u; prev = k, k = (k + 1) % n) {
+            if (!seam.empty() && seam[prev] != 0) return false;
             if (k == v) return true;
             if (used_[k] != 0) return false;
         }
@@ -546,7 +548,7 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         const double ex = bb.x - a.x;
         const double ez = bb.z - a.z;
         const double elen = hypot(ex, ez);
-        if (elen < 0.3) continue;
+        if (elen < 0.3 || bl.seam_at(i)) continue; // a seam draws nothing
         const V3 nrm = vnorm({ez, 0.0, -ex});
         const auto edge = static_cast<std::uint32_t>(i);
         // vdot(nrm, vsub(cam.C, ((a + bb) / 2, (y0 + wall_top) / 2))) > 0: the wall faces the eye
@@ -798,6 +800,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             // BuildingSamples::all: an outline drawn by its parts, or one without a height, is never drawn
             if (bl.v.hidden && source == Source::building) continue;
             if (!bl.v.has_h || bl.poly.empty()) continue;
+            bl.seam = seams(bl.poly);
             bl.source = source;
             Made m{.cell = cell_of[i],
                    .edged_first = made.edged.size(),
@@ -815,7 +818,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             bl.y0 = bl.v.min;
             bl.roof = bl.v.roof;
             if (is(bl.roof, "quadruple_saltbox")) bl.roof = "hipped"; // closest shape this renderer draws
-            bl.rh = in_set(bl.roof, pitched) && bl.v.roof_h != 0.0 ? bl.v.roof_h : 0.0;
+            bl.rh = drawn_pitched(bl.roof, bl.v.roof_h, !bl.seam.empty()) ? bl.v.roof_h : 0.0;
             bl.wall_top = bl.h - bl.rh;
             bl.guessed_shape = bl.v.shape_guessed && bl.rh != 0.0;
             bl.skillion = is(bl.roof, "skillion") && bl.rh != 0.0;
@@ -846,7 +849,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
                 for (std::size_t k = 0; k < n; ++k) {
                     const V2 a = bl.poly[k];
                     const V2 c = bl.poly[(k + 1) % n];
-                    if (hypot(c.x - a.x, c.z - a.z) >= 0.3) ++b.sample;
+                    if (hypot(c.x - a.x, c.z - a.z) >= 0.3 && !bl.seam_at(k)) ++b.sample;
                 }
             }
             // the item: Amsterdam.gatherItems' sort point (the footprint's centroid at h / 2, a part's between its base
@@ -997,6 +1000,7 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
         ring_at(l->ring(tl::building::ring, i), in.level, in.head->frame, kept, bl.poly);
         if (bl.v.hidden || !bl.v.has_h || bl.poly.size() < 3) return std::nullopt;
         if ((bl.v.flags & tl::building::flag_houseboat) != 0) return std::nullopt;
+        bl.seam = seams(bl.poly);
         bl.id = id;
         bl.source = Source::building;
         bl.h = bl.v.h;
@@ -1020,8 +1024,8 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
             }
             bl.rh = house_roof_height(bl.h, shortest);
         }
-        // a roof never taller than the walls it stands on leave room for
-        bl.rh = std::min(bl.rh, std::max(0.0, bl.h - bl.y0));
+        // a roof never taller than the walls it stands on leave room for; flat over courtyards and pieces (seams)
+        bl.rh = bl.seam.empty() ? std::min(bl.rh, std::max(0.0, bl.h - bl.y0)) : 0.0;
         bl.wall_top = bl.h - bl.rh;
         bl.guessed_shape = false;
         bl.skillion = false;
