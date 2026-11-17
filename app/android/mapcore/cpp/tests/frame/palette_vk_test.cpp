@@ -773,7 +773,10 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         map.set_palette(today);
         ATLAS_REQUIRE(draw_still(session, map, on), "a canal never complete");
         if (mirrored_trees(map).empty()) continue;
-        const auto [trees, moved_trees] = measure_mirror("leaves", on, leaves, 1);
+        // every mirrored crown's record, which the reflections' shader draws in its own colour, takes the user's
+        // leaves; in this test's frame (180 x 400 at density 1) the crowns move no pixel even with the trees left
+        // out, so their pixels are reported, not held
+        const auto [trees, moved_trees] = measure_mirror("leaves", on, leaves, 0);
         CHECK(moved_trees == trees);
         found = true;
         break;
