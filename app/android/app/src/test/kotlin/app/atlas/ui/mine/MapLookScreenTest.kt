@@ -226,7 +226,7 @@ class MapLookScreenTest {
         compose.settle()
         compose.onNodeWithText("Discard").performClick()
         compose.settle()
-        assertEquals(Dest.MapLook(), nav.stack.last())
+        soon { assertEquals(Dest.MapLook(), nav.stack.last()) }
         assertEquals(MapLookModel.current(null), MapEngine.palette)
         assertEquals(1, s.saved().size)
     }
@@ -266,7 +266,7 @@ class MapLookScreenTest {
         }
         compose.settle()
         soon { assertEquals(listOf("Brighter"), s.saved().map { it.name }) }
-        assertEquals(Dest.MapLook(), nav.stack.last())
+        soon { assertEquals(Dest.MapLook(), nav.stack.last()) }
         soon { assertEquals("Saved as Brighter", ShadowToast.getTextOfLatestToast()) }
     }
 
