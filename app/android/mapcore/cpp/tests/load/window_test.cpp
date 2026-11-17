@@ -1,11 +1,12 @@
 // A window of the map the phone builds (load/Window.hpp): where a place is (load/Countries.hpp, the port's Countries),
 // a window's box, frame and place, and windows built from a region's data:
-//   - every L14 tile of the canal ring built as a window, from the elements of the region's raw.json that the renders'
-//     Overpass query returns for the window's box (each built in the region's frame, by its rules), is the packer's
-//     tile of the whole region feature for feature: their canonical dumps are the same once the places in the scene's
-//     lists are taken out (a window's lists hold its own data, so its indexes and the ground's ranks are its own), and
-//     the variants of the region's home view, which a window has no views for, are left out; and the app's canal ring,
-//     cut in the renders' New looks, is the New looks' windows so (one Netherlands: the same cut and looks);
+//   - the app's canal ring, cut by the core in the renders' New looks (ATLAS_APP_TILES_DIR), is the New looks'
+//     windows (one Netherlands: the same cut and looks): every L14 tile of it built again as a window, from the
+//     elements of the region's raw.json that the renders' Overpass query returns for the window's box (each built in
+//     the region's frame, by its rules), is the tile of the whole region feature for feature: their canonical dumps are
+//     the same once the places in the scene's lists are taken out (a window's lists hold its own data, so its indexes
+//     and the ground's ranks are its own), and the variants of the region's home view, which a window has no views
+//     for, are left out (the packer's own pack of the canal ring, the port's cut, no longer is since core-p14);
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
 //     looks, and its pack opens and says what it is;
 //   - a window carries a sign gantry and a goods conveyor, each a line of its own (sources 7 and 8, with their ids and
@@ -655,16 +656,6 @@ void canal_ring_window_by_window(const std::string& regions, const std::string& 
 }
 
 } // namespace
-
-TEST_CASE("load: the canal ring built window by window is the packer's, tile for tile (ATLAS_REGIONS_DIR)") {
-    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
-    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
-    if (regions.empty() || dir.empty()) {
-        MESSAGE("ATLAS_REGIONS_DIR or ATLAS_TILES_DIR is not set: no window is built from the canal ring here");
-        return;
-    }
-    canal_ring_window_by_window(regions, dir, false);
-}
 
 // The app's canal ring (cut in the New looks by its bundled set, :app:generateBundledTiles with the core's tool) and
 // the windows the phone builds around it are one cut in one look (ENGINE.md step 3, one Netherlands): each of its L14
