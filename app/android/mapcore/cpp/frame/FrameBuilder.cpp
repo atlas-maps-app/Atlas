@@ -670,6 +670,8 @@ void FrameBuilder::stage_f() {
     if (!marker_boxes_) marker_boxes_ = std::make_unique<MarkerBoxes>();
     marker_boxes_->boxes.clear();
     state_.marker_boxes = marker_boxes_.get();
+    ground_reach_ = GroundReach{};
+    state_.ground_reach = &ground_reach_;
     for (std::size_t p = 0; p < passes_.size(); ++p) {
         const trace::Section traced(trace_names_[p].update.c_str());
         part = clock::now();

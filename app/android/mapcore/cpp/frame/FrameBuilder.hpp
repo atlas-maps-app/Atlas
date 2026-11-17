@@ -84,6 +84,17 @@ enum class Mode : std::uint8_t {
     full,       ///< every effect on
 };
 
+/// Where the frame's ground lies (FrameState::ground_reach): set by the ground pass's update, which comes before the
+/// passes that light the ground it drew (the relief), so that they light nothing beyond it, the sky least of all.
+struct GroundReach {
+    /// Whether ground lies everywhere the frame looks down at (the world drawn beyond the countries' cover, ENGINE.md
+    /// step 5, its land and sea under everything): nothing to keep inside.
+    bool everywhere = true;
+    /// Otherwise the plate's half side, metres about the frame's origin (Ground's ground_r: the tiles' and the windows'
+    /// ground lies on it); 0 where the frame draws no ground.
+    double half_side = 0;
+};
+
 /// What one frame derives before it records: every pass reads it, none writes it.
 struct FrameState {
     /// The frame's number (the renderer's) and time (seconds, the clock fades run on).
@@ -168,6 +179,9 @@ struct FrameState {
     /// The boxes the markers take this frame, for the labels, which update after the markers: emptied before the
     /// passes update (frame/MarkerBoxes.hpp).
     MarkerBoxes* marker_boxes = nullptr;
+    /// Where the ground lies this frame, for the passes that light it, which update after the ground's: set back to
+    /// everywhere before the passes update (GroundReach).
+    GroundReach* ground_reach = nullptr;
     /// Where a pass tells the platform of the threads the frame's work runs on (FrameOptions::render_threads), or null.
     RenderThreads* render_threads = nullptr;
 };
@@ -436,6 +450,7 @@ private:
     FrameState state_;
     std::unique_ptr<GroundRuns> ground_runs_;
     std::unique_ptr<MarkerBoxes> marker_boxes_;
+    GroundReach ground_reach_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
     bool depth24_ = false;      ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)

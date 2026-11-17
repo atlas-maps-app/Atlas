@@ -405,10 +405,30 @@ TEST_CASE("the app's map lights the ground by its terrain pack's heights: each p
         std::size_t compared = 0;
         std::size_t close = 0;
         std::size_t shaped = 0; // where the light moves the colour by 5 % or more
+        // beyond the plate (no world drawn here: the ground is the plate's square) the sky, which the light leaves be
+        REQUIRE(state.ground_reach != nullptr);
+        const frame::GroundReach reach = *state.ground_reach;
+        CHECK(!reach.everywhere);
+        CHECK(reach.half_side > 0.0);
+        std::size_t beyond = 0;
+        std::size_t beyond_kept = 0;
         for (std::uint32_t y = 0; y < size.height; y += 3) {
             for (std::uint32_t x = 0; x < size.width; x += 3) {
                 const auto g = ground_under(cam, x + 0.5, y + 0.5);
                 if (!g) continue;
+                const double off = std::max(std::abs(g->x), std::abs(g->z));
+                if (off > reach.half_side * 1.01) {
+                    const std::size_t at = ((std::size_t{y} * drawn.width) + x) * 4;
+                    ++beyond;
+                    if (std::equal(flat.rgba.begin() + static_cast<std::ptrdiff_t>(at),
+                                   flat.rgba.begin() + static_cast<std::ptrdiff_t>(at + 4),
+                                   drawn.rgba.begin() + static_cast<std::ptrdiff_t>(at))) {
+                        ++beyond_kept;
+                    }
+                    continue;
+                }
+                if (off > reach.half_side * 0.99) continue; // the plate's edge: the rasteriser's own
+
                 // a pixel well inside a tile: at an edge the rasteriser's choice of tile is its own
                 const scene::ReliefDraw* over = nullptr;
                 double u = 0;
@@ -439,8 +459,9 @@ TEST_CASE("the app's map lights the ground by its terrain pack's heights: each p
             }
         }
         MESSAGE(std::format("{} ground pixels compared, {} within 3 levels of the twin, {} where the light moves the "
-                            "colour by 5 % or more",
-                            compared, close, shaped));
+                            "colour by 5 % or more; {} beyond the plate, {} of them the flat frame's",
+                            compared, close, shaped, beyond, beyond_kept));
+        CHECK(beyond_kept == beyond);
         CHECK(compared > 3000);
         CHECK(shaped > compared / 4);
         CHECK(close >= (compared * 97) / 100);
@@ -487,6 +508,64 @@ struct BoardView {
     double distance = 0;
     bool overcast = false;
 };
+
+} // namespace
+
+namespace {
+
+/// What the relief costs a frame of `camera` on this device: the frame drawn with the terrain off and on in turn, in
+/// batches of eight after two frames to settle each, the medians of the frames' GPU and render thread times and the
+/// last frame's draws and triangles on either side. On lavapipe a CPU rasteriser's, which speaks for no phone's GPU:
+/// a ratio to flag a relief that doubles a frame, not the phone's cost (VK bench's `terrain on|off` lines are).
+[[nodiscard]] std::string cost_of_relief(standin::Session& session, frame::MapFrame& map,
+                                         const style::CameraState& camera) {
+    struct Side {
+        std::vector<double> gpu;
+        std::vector<double> thread;
+        std::uint32_t draws = 0;
+        std::uint32_t triangles_k = 0;
+        std::uint32_t fragments_k = 0;
+    };
+    std::array<Side, 2> sides; // off, on
+    for (int round = 0; round < 4; ++round) {
+        for (const bool on : {false, true}) {
+            map.set_terrain(on);
+            Side& side = sides.at(on ? 1 : 0);
+            for (int i = 0; i < 10; ++i) {
+                const standin::Drawn d = session.draw(camera, {});
+                if (d.stale) session.remake();
+                if (!d.drawn || i < 2) continue;
+                const standin::FrameRecord& r = d.record;
+                // a record's GPU times are an earlier frame's: past the two settling frames, this side's
+                if ((r.flags & standin::frame_flag::gpu) != 0U) side.gpu.push_back(static_cast<double>(r.gpu_ms));
+                side.thread.push_back(static_cast<double>(r.end_ns - r.start_ns - d.wait_ns) / 1e6);
+                side.draws = r.draws;
+                side.triangles_k = r.triangles_k;
+                side.fragments_k = r.fragments_k;
+            }
+        }
+    }
+    map.set_terrain(true);
+    const auto median = [](std::vector<double> v) {
+        if (v.empty()) return 0.0;
+        std::ranges::sort(v);
+        return v[v.size() / 2];
+    };
+    const Side& off = sides[0];
+    const Side& on = sides[1];
+    const double gpu_off = median(off.gpu);
+    const double gpu_on = median(on.gpu);
+    const double thread_off = median(off.thread);
+    const double thread_on = median(on.thread);
+    return std::format(
+        "the relief's cost at the dunes, sunny (lavapipe, a CPU rasteriser: no phone's GPU): terrain off "
+        "gpu {:.2f} ms, render thread {:.2f} ms, {} draws, {}k triangles, {}k fragments ({} frames); "
+        "on gpu {:.2f} ms, render thread {:.2f} ms, {} draws, {}k triangles, {}k fragments ({} frames); "
+        "gpu on/off {:.2f}, render thread on/off {:.2f}",
+        gpu_off, thread_off, off.draws, off.triangles_k, off.fragments_k, off.gpu.size(), gpu_on, thread_on, on.draws,
+        on.triangles_k, on.fragments_k, on.gpu.size(), gpu_off > 0.0 ? gpu_on / gpu_off : 0.0,
+        thread_off > 0.0 ? thread_on / thread_off : 0.0);
+}
 
 } // namespace
 
@@ -575,6 +654,7 @@ TEST_CASE("the boards' views of the dunes and San Gimignano over their terrain p
                 write_ppm(fs::path(out_dir) / std::format("{}-{}-relief-no-sky-view.ppm", v.name, sky), *plain);
             }
             map.set_sky_view(true);
+            if (v.name == "dunes" && !overcast) MESSAGE(cost_of_relief(session, map, camera));
         }
         if (const scene::ReliefTiles* relief = map.world()->relief_tiles(); relief != nullptr) {
             const scene::ReliefStats stats = relief->stats();

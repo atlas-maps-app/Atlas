@@ -225,9 +225,27 @@ void Relief::update(const frame::FrameState& state) {
         layers_.at(*l) = {.serial = tile.serial, .drawn = number, .since = fade ? state.seconds : -1.0e30};
         return l;
     };
+    // the light lies on the ground alone: where the world does not draw under everything, on the plate's square about
+    // the frame's origin (the sky beyond it at the lowest painter slot would pass the light's depth test as the
+    // ground's slots do)
+    const frame::GroundReach reach = state.ground_reach != nullptr ? *state.ground_reach : frame::GroundReach{};
+    if (!reach.everywhere && reach.half_side <= 0.0) return;
     bool waiting = false;
     for (const scene::ReliefDraw& draw : relief->draws) {
         if (s.quads.size() >= max_quads) break;
+        // the tile's share on the ground, as fractions of it east and south (all of it where the ground is everywhere)
+        double east0 = 0.0;
+        double east1 = 1.0;
+        double south0 = 0.0;
+        double south1 = 1.0;
+        if (!reach.everywhere && draw.east > 0.0 && draw.south > 0.0) {
+            const double r = reach.half_side;
+            east0 = std::max(0.0, (-r - draw.corner.x) / draw.east);
+            east1 = std::min(1.0, (r - draw.corner.x) / draw.east);
+            south0 = std::max(0.0, (-r - draw.corner.z) / draw.south);
+            south1 = std::min(1.0, (r - draw.corner.z) / draw.south);
+            if (east1 <= east0 || south1 <= south0) continue;
+        }
         const scene::ReliefPart* part = &draw.part;
         // a tile lit where nothing lit it fades in; one that takes over from a coarser raster is its light at once
         std::optional<std::uint32_t> layer = ready(*part, draw.under.tile == nullptr);
@@ -241,15 +259,22 @@ void Relief::update(const frame::FrameState& state) {
         const Layer& l = layers_.at(*layer);
         const double shown = style.fade > 0.0 ? std::clamp((state.seconds - l.since) / style.fade, 0.0, 1.0) : 1.0;
         if (shown < 1.0) fading_ = true;
-        const shaders::TilePlace place = view.tile_place(draw.corner, 1.0, 1.0);
+        const view::Vec3 corner{draw.corner.x + (east0 * draw.east), draw.corner.y,
+                                draw.corner.z + (south0 * draw.south)};
+        const shaders::TilePlace place = view.tile_place(corner, 1.0, 1.0);
         // a raster's samples lie at its texels' centres: its edge samples half a texel inside the layer's edge
         const auto span = static_cast<float>(part->tile->bake.side - 1U);
         const float scale = span / static_cast<float>(side);
         const float half = 0.5F / static_cast<float>(side);
+        const auto extent = static_cast<double>(part->extent * scale);
+        const auto u = static_cast<double>((part->x * scale) + half);
+        const auto v = static_cast<double>((part->y * scale) + half);
         s.quads.push_back(
             {.corner = {place.offset.x, place.offset.y, place.offset.z, static_cast<float>(shown)},
-             .reach = {static_cast<float>(draw.east), static_cast<float>(draw.south), static_cast<float>(*layer), 0.0F},
-             .part = {(part->x * scale) + half, (part->y * scale) + half, part->extent * scale, part->extent * scale}});
+             .reach = {static_cast<float>((east1 - east0) * draw.east),
+                       static_cast<float>((south1 - south0) * draw.south), static_cast<float>(*layer), 0.0F},
+             .part = {static_cast<float>(u + (east0 * extent)), static_cast<float>(v + (south0 * extent)),
+                      static_cast<float>((east1 - east0) * extent), static_cast<float>((south1 - south0) * extent)}});
     }
     // a raster waiting its turn goes up in the next frame
     if (waiting) fading_ = true;

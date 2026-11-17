@@ -1729,6 +1729,12 @@ std::uint64_t Ground::words_hash() const noexcept {
 
 void Ground::update(const frame::FrameState& state) {
     frame_.thin_runs.clear();
+    // where the ground lies, for the relief's light (frame::GroundReach): under everything where the world draws, else
+    // the plate's square (the tiles' ground and the windows' lie on it), none where the ground is left out
+    if (state.ground_reach != nullptr) {
+        const bool drawn = frame_.valid && !frame_.out(style::camera_part::ground);
+        *state.ground_reach = {.everywhere = drawn && frame_.world, .half_side = drawn ? frame_.ground_r : 0.0};
+    }
     if (!frame_.valid) return;
     lay_designators(state);
     if (pipelines_ == nullptr || words_ == nullptr) return;
