@@ -315,7 +315,7 @@ class MineStateTest {
 
     /**
      * Every line of About that names a licence and opens nothing, and why, so none is forgotten: what is in the public
-     * domain, a service's own terms, data whose licence is the source's own, and two whose text is not yet in the app.
+     * domain, a service's own terms, data whose licence is the source's own.
      */
     private val opensNothing = setOf(
         "SGP4 and SDP4" to "Public domain", // David Vallado's code, in the public domain
@@ -323,9 +323,6 @@ class MineStateTest {
         "Fast Hilbert curve algorithm" to "Public domain",
         "SQLite" to "Public domain",
         "fdlibm" to "SunPro License", // its credit on the list is its licence whole
-        // the licence is published as a PDF only; its notices (Art. 6) are the credit on the list
-        "Copernicus DEM GLO-30" to "Licence for the use of the Copernicus WorldDEM-30",
-        "Copernicus DEM GLO-90" to "Licence for the use of the Copernicus WorldDEM-90",
         "CelesTrak and ARISS" to "Public data",
         "Wikimedia Commons" to "Per picture", // each picture shows its own licence
         "Foursquare" to "Foursquare terms",
@@ -371,6 +368,11 @@ class MineStateTest {
         assertTrue(harfbuzz.notice!!.lines().size > 10 && harfbuzz.notice!!.endsWith("Copyright (c) Microsoft Corporation."))
         // the same name on the credits card and the list: BRouter's routing data (ODbL) and its library (MIT)
         assertEquals("Copyright (c) 2019 BRouter contributors", Licences.line(list, "BRouter", "MIT License")!!.notice)
+        // the Mersenne Twister's own wording, not the generic BSD 3-Clause; Copernicus's terrain opens its licence
+        val mt = Licences.line(list, "Mersenne Twister", "BSD 3-Clause License")!!
+        assertEquals(listOf("bsd-3-clause-mt"), mt.texts)
+        assertTrue(Licences.texts(licenceTexts())["bsd-3-clause-mt"]!!.text.contains("The names of its contributors may not be used"))
+        assertEquals(listOf("copernicus-worlddem-90"), Licences.line(list, "Copernicus DEM GLO-90", "Licence for the use of the Copernicus WorldDEM-90")!!.texts)
         val data = Licences.line(list, "BRouter", "ODbL")!!
         assertTrue(data.notice!!, data.notice!!.startsWith("Routing data") && data.texts == listOf("odbl-1.0"))
     }
@@ -400,6 +402,9 @@ class MineStateTest {
             "cc-by-sa-4.0" to ("Attribution-ShareAlike 4.0 International" to "Creative Commons may be contacted at creativecommons.org."),
             "odbl-1.0" to ("## ODC Open Database License (ODbL)" to "in order to meet the terms of this License."),
             "nlod-2.0" to ("Preface of licence" to "where the intellectual property rights are sought enforced."),
+            "bsd-3-clause-mt" to ("Redistribution and use" to "POSSIBILITY OF SUCH DAMAGE."),
+            "copernicus-worlddem-30" to ("Licence for Copernicus DEM instance COP-DEM-GLO-30-F" to "Commission Delegated Regulation (EU) No 1159/2013."),
+            "copernicus-worlddem-90" to ("Licence for COP-DEM-GLO-90-F Global 90m Full, Free & Open" to "Commission Delegated Regulation (EU) No 1159/2013."),
             "mit-attribution" to ("MIT License with Attribution Requirement" to "OTHER DEALINGS IN THE SOFTWARE."),
             "cdla-permissive-2.0" to ("# Community Data License Agreement - Permissive - Version 2.0" to "machine learning models and models' insights."),
         )
@@ -421,6 +426,9 @@ class MineStateTest {
         // a text wrapped at its width is its paragraphs; one written a paragraph a line stays so
         assertEquals(2, Licences.paragraphs(texts["isc"]!!.text).size)
         assertEquals(3, Licences.paragraphs(texts["mit"]!!.text).size)
+        // a PDF's text a line per printed line: its articles, items and footnotes each a paragraph
+        val dem = Licences.paragraphs(texts["copernicus-worlddem-90"]!!.text).map { it.text }
+        assertTrue(dem.toString().take(300), "Article 4. Right of Use" in dem && "(a) reproduction;" in dem && dem.last().startsWith("² (Copernicus)") && dem[dem.size - 2].startsWith("¹ Copernicus"))
         // a heading, a rule and a list's item each start a paragraph of their own
         val ofl = Licences.paragraphs(texts["ofl-1.1"]!!.text).map { it.text }
         assertTrue(ofl.take(4).toString(), "PREAMBLE" in ofl && ofl.any { it.startsWith("1) Neither the Font Software") } && ofl.first().all { it == '-' })

@@ -227,6 +227,21 @@ class MineScreenshotTest {
     }
 
     @Test
+    fun aTerrainLicenceReadFromItsPdfOpensWithItsArticlesAndFootnotes() {
+        show(Dest.About, phone())
+        open("Copernicus DEM GLO-90", "Article 1. Acceptance")
+        capture("mine_licence_copernicus")
+        compose.onNodeWithText("² (Copernicus) Regulation", substring = true).assertExists()
+    }
+
+    @Test
+    fun theMersenneTwisterOpensItsOwnWording() {
+        show(Dest.About, phone())
+        open("Mersenne Twister", "The names of its contributors may not be used")
+        capture("mine_licence_mt")
+    }
+
+    @Test
     @Config(qualifiers = "nl-w360dp-h800dp-xhdpi")
     fun aLicenceInDutchOnANarrowPhoneKeepsItsOwnWords() {
         // the page's own words in Dutch; the licence as written, in English
