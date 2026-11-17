@@ -151,6 +151,7 @@ TEST_CASE("clean: row houses sharing their walls are left as they are") {
     for (std::int32_t i = 0; i < 6; ++i)
         s.buildings.push_back(building(i + 1, box(0, i * 600, 1000, (i + 1) * 600), 0.0, 12.0));
     std::vector<std::vector<V2>> mapped;
+    mapped.reserve(s.buildings.size());
     for (const load::Building& b : s.buildings) mapped.push_back(b.poly);
     load::clean_buildings(s, frame);
     ATLAS_REQUIRE(s.buildings.size() == mapped.size());

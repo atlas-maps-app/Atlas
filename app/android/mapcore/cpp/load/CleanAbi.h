@@ -12,6 +12,9 @@
 extern "C" {
 #endif
 
+/* A C header whose names are the library's (src/lib.rs): the core's rules for a type's name and for typedef are not
+ * its own. NOLINTBEGIN(modernize-use-using,readability-identifier-naming) */
+
 /* A grid point: latitude and longitude in 1e-7 degrees. */
 typedef struct atlas_clean_point {
     int32_t lat;
@@ -108,6 +111,8 @@ int32_t atlas_clean_rings(const atlas_clean_point* ring, size_t count, atlas_cle
 
 /* Frees what atlas_clean_rings made. */
 void atlas_clean_rings_free(atlas_clean_rings_output* out);
+
+/* NOLINTEND(modernize-use-using,readability-identifier-naming) */
 
 #ifdef __cplusplus
 }

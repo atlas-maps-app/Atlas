@@ -175,8 +175,10 @@ TEST_CASE("load: the Westerkerk's tiles cut from its raw.json: the bundled pack'
     }
     const auto w = westerkerk();
     ATLAS_REQUIRE(w != nullptr);
+    const std::optional<load::Scene>& scene = w->scene;
+    ATLAS_REQUIRE(scene.has_value());
     const std::vector<tl::TileFill>& cut = w->tiles;
-    const load::BuildingCounts& counts = w->scene->counts;
+    const load::BuildingCounts& counts = scene->counts;
     CHECK(counts.overlapping_pairs == 0);
     CHECK(counts.uncovered_outlines == 0);
     CHECK(counts.unsettled == 0);

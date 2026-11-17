@@ -114,7 +114,7 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
                     const load::V2 p = b.poly[piece[k]];
                     const load::V2 q = b.poly[piece[(k + 1) % piece.size()]];
                     area2 += (p.x * q.z) - (q.x * p.z);
-                    around += std::hypot(q.x - p.x, q.z - p.z);
+                    around += std::sqrt(((q.x - p.x) * (q.x - p.x)) + ((q.z - p.z) * (q.z - p.z)));
                 }
                 if (around > 0.0 && 2.0 * std::fabs(area2) / around < *b.roof_h) ++narrow;
             }
@@ -129,11 +129,11 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
             if (hidden_before) ++g.hidden_before;
             if (listed.is_open()) {
                 const load::V2 at = b.at ? *b.at : gm::centroid(b.poly);
+                const atlas::tiles::GridPoint on = atlas::tiles::nearest_grid(region.frame, at.x, at.z);
                 listed << std::format("{}\t{}{}\t{}\t{:.7f}\t{:.7f}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{:.0f}\n", region.name,
                                       b.relation ? "r" : "w", b.id, list == &loaded.parts ? "part" : "building",
-                                      atlas::tiles::grid_lat(region.frame, at.z).value_or(0) / 1e7,
-                                      atlas::tiles::grid_lon(region.frame, at.x).value_or(0) / 1e7, *b.roof, *b.roof_h,
-                                      with_courtyard, by_itself, cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
+                                      on.lat / 1e7, on.lon / 1e7, *b.roof, *b.roof_h, with_courtyard, by_itself,
+                                      cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
                                       std::fabs(gm::signed_area(b.poly)));
             }
         }
@@ -371,8 +371,10 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
                     const load::V2 p = b.poly[i % b.poly.size()];
                     const auto lat = atlas::tiles::grid_lat(region.frame, p.z);
                     const auto lon = atlas::tiles::grid_lon(region.frame, p.x);
-                    f << (i == 0 ? "" : ",") << R"({"lat":)" << (lat ? *lat : 0) / 1e7 << R"(,"lon":)"
-                      << (lon ? *lon : 0) / 1e7 << "}";
+                    // all seven decimals: a stream's six digits would move a corner by metres
+                    f << (i == 0 ? "" : ",")
+                      << std::format(R"({{"lat":{:.7f},"lon":{:.7f}}})", (lat ? *lat : 0) / 1e7,
+                                     (lon ? *lon : 0) / 1e7);
                 }
                 f << "]}";
             }
