@@ -3,11 +3,12 @@
 // reading out of bounds, and every scene it makes must hold together (a region's: a shore flag per water ring): each
 // outline has at least three points and a box around them, and each index (a place's building, a building's places, a
 // tree's node, a place among the nodes) points into its list. The region takes, by the input's size, a tradition with
-// every rule and detail generic.py reads (load/Generic.hpp's looks), or none, and is a theme park (its coaster tracks,
-// load/Coasters.hpp, with no ride's profile; its woods are not planted here, a wood's lattice is the size of its
-// outline); the living map Amsterdam's New looks or none. Each scene is cut into its render tiles too (load/Cut.hpp),
-// and the region's into a window, which must cut or refuse. Seeds: fuzz/corpus/fuzz_load (the unit test's document,
-// with a record of each kind, and the reader's seed).
+// every rule and detail generic.py reads (load/Generic.hpp's looks), or none, is named Paris (its generic looks' stone
+// and mansards) or not, and is a theme park (its coaster tracks, load/Coasters.hpp, with no ride's profile; its woods
+// are not planted here, a wood's lattice is the size of its outline); the living map Amsterdam's New looks or none.
+// Each scene is cut into its render tiles too (load/Cut.hpp), and the region's into a window, which must cut or refuse.
+// No tag's value may end the process. Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each
+// kind, and the reader's seed), and every input that crashed it.
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
@@ -75,7 +76,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (!doc) return 0;
     // the living map's load, and a region's (in a box around the Westerkerk) on the same document
     static const atlas::load::RideProfiles rides;
-    const atlas::load::RegionConfig region{.name = "fuzz",
+    const atlas::load::RegionConfig region{.name = (size / 8) % 2 == 0 ? "fuzz" : "paris",
                                            .frame = atlas::load::westerkerk_frame(),
                                            .bbox = {52.36, 4.87, 52.39, 4.92},
                                            .tradition = (size / 2) % 2 == 0 ? fuzz_tradition() : nullptr,
