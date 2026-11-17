@@ -133,7 +133,12 @@ struct Box {
 
 /// A building or a building part (amsterdam.py's `rec`): its outline, what its tags say, and what guess_tags adds.
 struct Building {
-    std::vector<V2> poly; ///< the outline, its closing point dropped, turned so its signed area is positive
+    /// The outline, its closing point dropped, turned so its signed area is positive. Once the buildings are cleaned
+    /// (load/Clean.hpp) it is what stands: its courtyards and its pieces joined into the one ring by seams, an edge run
+    /// there and back, which draws nothing.
+    std::vector<V2> poly;
+    /// The inner rings mapped in it (a relation's courtyards), until the cleaning cuts them out of `poly`.
+    std::vector<std::vector<V2>> holes;
     std::int64_t id = 0;
     Tags tags;
     double h = 0.0;   ///< metres: height, or from building:levels and roof:levels, or guessed
@@ -152,7 +157,7 @@ struct Building {
     Guessed guessed;
     Box bb;                            ///< `_bb`
     std::vector<std::uint32_t> places; ///< the places in it, as indices of the scene's nodes; no `places` when empty
-    bool hidden = false;               ///< an outline its parts stand for (`hidden`, which only a building has)
+    bool hidden = false; ///< an outline drawn by nothing of its own: its parts, or other buildings, cover it whole
     // regions.py's load adds:
     bool relation = false;                 ///< mapped as a multipolygon relation (`otype` 'relation'), else a way
     std::optional<std::int64_t> parent_id; ///< a part: the id of the outline it stands in
@@ -365,6 +370,30 @@ struct ParkEdge {
     Origin from;
 };
 
+/// What stage P counted of a scene's buildings (load/Clean.hpp): first the validity counts, what still cannot be there
+/// once the buildings are cleaned, which a pack's tests hold so that they only fall; then what the loading and the
+/// cleaning did.
+struct BuildingCounts {
+    std::uint32_t overlapping_pairs = 0;  ///< drawn footprints overlapping in plan (over 1 m²) and in height (0.1 m)
+    std::uint32_t uncovered_outlines = 0; ///< outlines more than 5 m² of which nothing draws
+    std::uint32_t flat_roofs = 0;         ///< pitched roofs mapped that stage T draws flat
+    std::uint32_t underground = 0;        ///< buildings and parts below the ground, not loaded
+    std::uint32_t doubles = 0;            ///< a relation's outer ring that is a building's own way, loaded once
+    std::uint32_t bounded = 0;            ///< building numbers past what a building can be, taken as unmapped
+    std::uint32_t courtyards = 0;         ///< footprints with inner rings
+    std::uint32_t covered = 0;            ///< outlines cut by their parts
+    std::uint32_t hidden = 0;             ///< outlines their parts cover whole
+    std::uint32_t clipped = 0;            ///< footprints cut where another stands
+    std::uint32_t raised = 0;             ///< footprints standing on others, their base raised to them
+    std::uint32_t vanished = 0;           ///< footprints others cover whole (a part then gone)
+    std::uint32_t seamed = 0;             ///< rings that carry seams
+    std::uint32_t unsettled = 0;          ///< cleanings whose arrangement did not settle (their footprints as mapped)
+    std::uint32_t unjoined = 0;           ///< footprints with a courtyard or piece no seam could join (left out)
+    double uncovered_m2 = 0.0;            ///< the outlines' area nothing draws, but slivers and crumbs
+    double sliver_m2 = 0.0;               ///< the outlines' slivers (under 0.5 m wide) and crumbs (under 3 m²) undrawn
+    friend bool operator==(const BuildingCounts&, const BuildingCounts&) = default;
+};
+
 /// The scene, list for list as `S`.
 struct Scene {
     std::vector<Building> buildings;
@@ -409,6 +438,8 @@ struct Scene {
     /// The engine's close-up cut (load/Regions.hpp's RegionConfig::close_up): an edge of a natural shore carries a quay
     /// wall where buildings line it, and the facades carry their doors and house numbers.
     bool close_up = false;
+    /// What the loading and the cleaning of the buildings counted.
+    BuildingCounts counts;
 };
 
 /// Why a document cannot be loaded, and the element that showed it.

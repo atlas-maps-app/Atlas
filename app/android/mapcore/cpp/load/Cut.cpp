@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
@@ -335,7 +336,9 @@ public:
         for (const Building& b : s.buildings) {
             if (b.tags.is("building", "houseboat")) continue;
             const std::size_t n = b.poly.size();
+            const std::vector<std::uint8_t> seam = geometry::seams(b.poly); // a seam is no wall
             for (std::size_t i = 0; i < n; ++i) {
+                if (!seam.empty() && seam[i] != 0) continue;
                 const V2& c = b.poly[i];
                 const V2& d = b.poly[(i + 1) % n];
                 const auto k = static_cast<std::uint32_t>(walls_.size());
@@ -1040,6 +1043,20 @@ private:
         out.reserve(list.size());
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             out.push_back(keyed_ring(list[i].poly, [&] { return std::format("{} {} ({})", label, i, list[i].id); }));
+            if (!out.back().keep.empty()) keep_seams(list[i].poly, out.back().keep);
+        }
+    }
+
+    /// A ring with seams keeps the ends of each at every level, so that each seam runs there and back at each.
+    static void keep_seams(std::span<const V2> ring, std::vector<std::uint8_t>& keep) {
+        const std::vector<std::uint8_t> seam = geometry::seams(ring);
+        if (seam.empty()) return;
+        const std::size_t n = ring.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            if (seam[i] != 0) {
+                keep[i] = tl::keep::all;
+                keep[(i + 1) % n] = tl::keep::all;
+            }
         }
     }
 
@@ -1250,7 +1267,9 @@ private:
         std::optional<std::uint32_t> best;
         double least = 0.0;
         const std::size_t n = poly.size();
+        const std::vector<std::uint8_t> seam = geometry::seams(poly); // a seam opens onto nothing
         for (std::size_t i = 0; i < n; ++i) {
+            if (!seam.empty() && seam[i] != 0) continue;
             const V2 a = poly[i];
             const V2 c = poly[(i + 1) % n];
             const std::optional<geometry::StreetWall> w = geometry::street_wall_at(a, c, x, z);

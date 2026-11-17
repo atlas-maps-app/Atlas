@@ -2,6 +2,8 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
+#include "load/Clean.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
@@ -166,48 +168,6 @@ public:
         return out;
     }
 
-    /// regions.py's `join_rings(ways)`: member ways joined end to end into closed rings of (lat, lon).
-    [[nodiscard]] static std::vector<std::vector<LL>> join_rings(const std::vector<std::span<const LL>>& ways) {
-        std::vector<std::vector<LL>> segs;
-        for (const auto& w : ways) {
-            if (w.size() > 1) segs.emplace_back(w.begin(), w.end());
-        }
-        std::vector<std::vector<LL>> rings;
-        while (!segs.empty()) {
-            std::vector<LL> cur = std::move(segs.front());
-            segs.erase(segs.begin());
-            bool changed = true;
-            while (!same(cur.front(), cur.back()) && changed) {
-                changed = false;
-                for (std::size_t i = 0; i < segs.size(); ++i) {
-                    const std::vector<LL>& s = segs[i];
-                    std::vector<LL> next;
-                    if (same(s.front(), cur.back())) {
-                        next = cur;
-                        next.insert(next.end(), s.begin() + 1, s.end());
-                    } else if (same(s.back(), cur.back())) {
-                        next = cur;
-                        next.insert(next.end(), s.rbegin() + 1, s.rend());
-                    } else if (same(s.back(), cur.front())) {
-                        next = s;
-                        next.insert(next.end(), cur.begin() + 1, cur.end());
-                    } else if (same(s.front(), cur.front())) {
-                        next.assign(s.rbegin(), s.rend());
-                        next.insert(next.end(), cur.begin() + 1, cur.end());
-                    } else {
-                        continue;
-                    }
-                    cur = std::move(next);
-                    segs.erase(segs.begin() + static_cast<std::ptrdiff_t>(i));
-                    changed = true;
-                    break;
-                }
-            }
-            if (cur.size() > 3 && same(cur.front(), cur.back())) rings.push_back(std::move(cur));
-        }
-        return rings;
-    }
-
     /// regions.py's `rings_of(e, role)`: a closed way, or a relation's outer (or inner) member ways joined.
     [[nodiscard]] std::vector<std::vector<V2>> rings_of(const osm::Document& doc, const osm::Element& e,
                                                         bool inner = false) {
@@ -236,68 +196,6 @@ private:
     std::optional<LoadError> error_;
 };
 
-/// A building record as regions.py writes one for a relation (its `src` reads the tags as they are).
-[[nodiscard]] Building relation_building(const osm::Element& e, const Tags& t, std::vector<V2> r,
-                                         const Palette& palette) {
-    Building b;
-    b.poly = std::move(r);
-    b.id = e.id;
-    b.tags = t;
-    std::optional<double> h = num(t.get("height"));
-    const std::optional<double> lv = num(t.get("building:levels"));
-    if (!h && lv) h = *lv * 3.0 + num(t.get("roof:levels")).value_or(0.0) * 2.0;
-    b.src = t.truthy("height") ? HeightSource::height
-                               : (lv.has_value() && *lv != 0.0 ? HeightSource::levels : HeightSource::none);
-    b.year = leading_year(t.get("start_date").value_or(""));
-    b.min = num(t.get("min_height")).value_or(0.0);
-    b.roof = t.get("roof:shape");
-    b.roof_h = num(t.get("roof:height"));
-    b.orient = t.get("roof:orientation");
-    b.mat = t.get("building:material");
-    b.rmat = t.get("roof:material");
-    b.col = t.get("building:colour");
-    b.rcol = t.get("roof:colour");
-    b.relation = true;
-    guess_tags(b, h, palette);
-    b.bb = box_of(b.poly);
-    return b;
-}
-
-/// Buildings and parts mapped as multipolygon relations: their outer ways joined into rings, each one not already a
-/// building's or part's (by its first point to the decimetre), guess_tags's values, `hidden` within 120 m.
-void relation_buildings(const osm::Document& doc, Scene& s, Frame& frame, const Palette& palette) {
-    std::set<std::pair<double, double>> have;
-    for (const auto* list : {&s.buildings, &s.parts}) {
-        for (const Building& b : *list) have.emplace(r1(b.poly[0].x), r1(b.poly[0].z));
-    }
-    std::vector<Building> buildings;
-    std::vector<Building> parts;
-    for (const osm::Element& e : doc.elements()) {
-        if (e.kind != osm::Kind::relation) continue;
-        const Tags t(doc.tags(e));
-        if (!(t.truthy("building") || t.truthy("building:part")) || t.is("building", "no")) continue;
-        for (std::vector<V2>& r : frame.rings_of(doc, e)) {
-            if (dist(r.front(), r.back()) < 0.5) r.pop_back();
-            if (signed_area(r) < 0) std::ranges::reverse(r);
-            if (std::fabs(signed_area(r)) < 3 || have.contains({r1(r[0].x), r1(r[0].z)})) continue;
-            (t.truthy("building:part") ? parts : buildings).push_back(relation_building(e, t, std::move(r), palette));
-        }
-    }
-    if (buildings.empty() && parts.empty()) return;
-    std::vector<V2> centres;
-    for (const auto* list : {&s.parts, &parts}) {
-        for (const Building& p : *list) centres.push_back(centroid(p.poly));
-    }
-    for (Building& b : buildings) {
-        const V2 cb = centroid(b.poly);
-        b.hidden = std::ranges::any_of(centres, [&](const V2& c) {
-            return std::fabs(c.x - cb.x) < 120 && std::fabs(c.z - cb.z) < 120 && pip(c.x, c.z, b.poly);
-        });
-    }
-    for (Building& b : buildings) s.buildings.push_back(std::move(b));
-    for (Building& p : parts) s.parts.push_back(std::move(p));
-}
-
 /// Roof shapes the renders do not draw are drawn as the closest one they do; a mansard as itself, with a height.
 void closest_roofs(Scene& s) {
     struct Closest {
@@ -322,7 +220,7 @@ void closest_roofs(Scene& s) {
             b.roof = c->to;
             const bool roof_h = b.roof_h.has_value() && *b.roof_h != 0.0;
             if (!roof_h && b.h != 0.0) {
-                const double rl = num(b.tags.get("roof:levels")).value_or(0.0);
+                const double rl = building_num(b.tags, "roof:levels").value_or(0.0);
                 b.roof_h = pymath::min(b.h * 0.35, rl != 0.0 ? rl * 2.8 : 3.5);
                 b.guessed.add(Guess::roof_height);
             }
@@ -819,17 +717,24 @@ std::vector<V2> simplify(std::span<const V2> pts, double tol) {
 }
 
 std::expected<Scene, LoadError> load_region(const osm::Document& doc, const RegionConfig& region, double tolerance) {
-    auto loaded = load_amsterdam(doc, region.frame, region.palette);
+    auto loaded = load_living(doc, region.frame, region.palette);
     if (!loaded) return loaded;
     Scene& s = *loaded;
     Frame frame(region.frame);
-    relation_buildings(doc, s, frame, region.palette);
     closest_roofs(s);
+    // each part's outline, in the outlines as mapped; then what stands of them (load/Clean.hpp), at every tolerance the
+    // same, before any is simplified
+    outlines(s);
+    clean_buildings(s, region.frame);
+    count_flat_roofs(s);
     // the areas' own rings: the lawns kept as areas are the same at every tolerance (drop_lawns)
     std::vector<std::vector<V2>> area_rings;
     if (tolerance != 0.0) {
+        // a ring with seams stays whole: its courtyards and pieces would not stay joined
         for (auto* list : {&s.buildings, &s.parts}) {
-            for (Building& b : *list) b.poly = simplify(b.poly, tolerance);
+            for (Building& b : *list) {
+                if (geometry::seams(b.poly).empty()) b.poly = simplify(b.poly, tolerance);
+            }
         }
         area_rings.reserve(s.areas.size());
         for (Area& a : s.areas) {
@@ -849,7 +754,6 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     });
     // the lawns the land cover draws, not again as areas over everything in them
     drop_lawns(s, area_rings);
-    outlines(s);
     // each building's look from its own tags, the land use it stands in and the region's tradition
     apply_looks(s, {.region = region.name,
                     .tradition = region.tradition,

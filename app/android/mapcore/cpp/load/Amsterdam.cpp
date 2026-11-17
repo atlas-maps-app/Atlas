@@ -2,6 +2,8 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
+#include "geometry/Seams.hpp"
+#include "load/Clean.hpp"
 #include "load/PoiStyle.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
@@ -15,6 +17,7 @@
 #include <initializer_list>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -110,6 +113,41 @@ public:
         return out;
     }
 
+    /// A building's or part's rings: a way's geometry; a relation's outer members joined into rings (those with
+    /// points, the role outer or none), but each that is a building's or part's own way (`own`: it loads as itself,
+    /// once), and its inner members joined, its courtyards. Each ring a joined one closes, its first point repeated.
+    struct BuildingRings {
+        std::vector<std::vector<V2>> outer;
+        std::vector<std::vector<V2>> inner;
+        std::vector<std::int64_t> own;
+    };
+    [[nodiscard]] BuildingRings building_rings(const osm::Document& doc, const osm::Element& e,
+                                               const std::unordered_set<std::int64_t>& own_ways) {
+        BuildingRings out;
+        if (e.kind == osm::Kind::way && e.has_geometry) {
+            out.outer.push_back(points(doc.geometry(e), e.id));
+        } else if (e.kind == osm::Kind::relation) {
+            std::vector<std::span<const osm::LatLon>> outer;
+            std::vector<std::span<const osm::LatLon>> inner;
+            for (const osm::Member& m : doc.members(e)) {
+                if (m.kind != osm::Kind::way || !m.has_geometry || m.geometry.count == 0) continue;
+                const std::string_view role = m.has_role ? doc.text(m.role) : "outer";
+                if (role == "inner") {
+                    inner.push_back(doc.geometry(m));
+                } else if (role == "outer" || role.empty()) {
+                    if (own_ways.contains(m.ref)) {
+                        out.own.push_back(m.ref);
+                    } else {
+                        outer.push_back(doc.geometry(m));
+                    }
+                }
+            }
+            for (const std::vector<osm::LatLon>& r : join_rings(outer)) out.outer.push_back(points(r, e.id));
+            for (const std::vector<osm::LatLon>& r : join_rings(inner)) out.inner.push_back(points(r, e.id));
+        }
+        return out;
+    }
+
     [[nodiscard]] const std::optional<LoadError>& error() const noexcept { return error_; }
 
 private:
@@ -120,20 +158,33 @@ private:
 /// Python's truth of an optional float: there, and not zero (NaN is true).
 [[nodiscard]] bool truthy(const std::optional<double>& v) noexcept { return v.has_value() && *v != 0.0; }
 
-/// Kotlin's Long.toInt(): the low 32 bits.
-[[nodiscard]] std::int32_t low_int(std::int64_t v) noexcept {
-    return static_cast<std::int32_t>(static_cast<std::uint32_t>(static_cast<std::uint64_t>(v)));
+/// A whole number of storeys: `v` where it lies within what a building can hold, else 1.
+[[nodiscard]] std::int32_t storeys(std::int64_t v) noexcept {
+    return v >= 1 && v <= max_levels ? static_cast<std::int32_t>(v) : 1;
 }
 
-/// `max(1, int(round((h - (roof_h or 0)) / 3.1)))`, as the port's Int; 1 where round() fails.
+/// `max(1, int(round((h - (roof_h or 0)) / 3.1)))`; 1 where round() fails.
 [[nodiscard]] std::int32_t levels_from_height(double h, const std::optional<double>& roof_h) noexcept {
     const double r = roof_h.value_or(0.0); // `roof_h or 0`: None and both zeros are 0
     const auto rounded = pymath::checked::round((h - (r != 0.0 ? r : 0.0)) / 3.1);
     if (!rounded) return 1;
-    // The port goes through a double (PyMath.int of the Long's toDouble), as Python's ints never do.
-    const auto whole = pymath::checked::to_int(static_cast<double>(*rounded));
-    if (!whole) return 1;
-    return low_int(std::max<std::int64_t>(1, *whole));
+    return storeys(std::max<std::int64_t>(1, *rounded));
+}
+
+/// Below the ground: `location=underground`, or a layer below 0 where its location does not say it stands on the
+/// ground or above it (`surface`, `overground`, `roof`, `rooftop`: a building under a bridge is mapped so).
+[[nodiscard]] bool underground(const Tags& t) {
+    const auto location = t.get("location");
+    if (location && *location == "underground") return true;
+    const auto layer = num(t.get("layer"));
+    return layer && *layer < 0 && !one_of(location, {"surface", "overground", "roof", "rooftop"});
+}
+
+/// Whether the ring `outer` holds the ring `inner`: most of inner's points inside it.
+[[nodiscard]] bool holds(std::span<const V2> outer, std::span<const V2> inner) noexcept {
+    std::size_t in = 0;
+    for (const V2& p : inner) in += pip(p.x, p.z, outer) ? 1 : 0;
+    return 2 * in > inner.size();
 }
 
 } // namespace
@@ -193,7 +244,7 @@ void guess_tags(Building& b, std::optional<double> h0, const Palette& palette) {
     }
     if (one_of(b.roof, {"gabled", "hipped", "pyramidal", "skillion", "quadruple_saltbox", "mansard"}) &&
         !truthy(b.roof_h)) {
-        const auto rl = num(b.tags.get("roof:levels"));
+        const auto rl = building_num(b.tags, "roof:levels");
         const double levels = rl.value_or(0.0); // `rl * 2.8 if rl`: None and both zeros are false
         b.roof_h =
             pymath::min(b.h * 0.4, levels != 0.0 ? levels * 2.8 : pymath::max(2.0, pymath::min(5.0, shortest * 0.45)));
@@ -203,12 +254,26 @@ void guess_tags(Building& b, std::optional<double> h0, const Palette& palette) {
         b.guessed.add(Guess::roof_direction);
     }
     b.levels = levels_from_height(b.h, b.roof_h);
-    if (b.tags.truthy("building:levels")) {
-        if (const auto lv = num(b.tags.get("building:levels"))) {
-            if (const auto whole = pymath::checked::to_int(*lv)) b.levels = low_int(*whole);
-        }
+    if (const auto lv = building_num(b.tags, "building:levels"); lv && *lv >= 1) {
+        if (const auto whole = pymath::checked::to_int(*lv)) b.levels = storeys(*whole);
     }
     if (load::truthy(b.mat) && !load::truthy(b.mat_draw)) b.mat_draw = b.mat;
+}
+
+std::optional<double> building_num(const Tags& t, std::string_view key) noexcept {
+    const auto v = num(t.get(key));
+    if (!v) return v;
+    const auto* const bound = std::ranges::find(building_bounds, key, &BuildingBound::key);
+    if (bound == building_bounds.end()) return v;
+    const bool above = bound->lo_open ? *v > bound->lo : *v >= bound->lo;
+    return above && *v <= bound->hi ? v : std::nullopt;
+}
+
+bool beyond_bounds(const Tags& t) noexcept {
+    for (const BuildingBound& b : building_bounds) {
+        if (num(t.get(b.key)) && !building_num(t, b.key)) return true;
+    }
+    return false;
 }
 
 Box box_of(std::span<const V2> poly) noexcept {
@@ -277,42 +342,6 @@ void place(Scene& s) {
     }
 }
 
-/// `hidden`: an outline with a part's centroid within 80 m of its own, inside it. The parts are filed by their
-/// centroids' 80 m cells, so each outline tries only the parts of the cells around its reach (one more each way, for
-/// the rounding of the differences); `any` does not depend on the order.
-void hide(Scene& s) {
-    constexpr double reach = 80.0;
-    std::vector<V2> pc;
-    pc.reserve(s.parts.size());
-    std::unordered_map<CellKey, std::vector<std::uint32_t>, CellHash> grid;
-    const auto cell = [](double v) { return static_cast<std::int64_t>(std::floor(v / reach)); };
-    for (std::uint32_t i = 0; i < s.parts.size(); ++i) {
-        pc.push_back(centroid(s.parts[i].poly));
-        if (std::isfinite(pc.back().x) && std::isfinite(pc.back().z)) {
-            grid[{cell(pc.back().x), cell(pc.back().z)}].push_back(i);
-        }
-    }
-    for (Building& b : s.buildings) {
-        const V2 bc = centroid(b.poly);
-        if (!std::isfinite(bc.x) || !std::isfinite(bc.z)) continue;
-        bool hidden = false;
-        for (std::int64_t gx = cell(bc.x - reach) - 1; gx <= cell(bc.x + reach) + 1 && !hidden; ++gx) {
-            for (std::int64_t gz = cell(bc.z - reach) - 1; gz <= cell(bc.z + reach) + 1 && !hidden; ++gz) {
-                const auto it = grid.find({gx, gz});
-                if (it == grid.end()) continue;
-                for (const std::uint32_t i : it->second) {
-                    const V2 c = pc[i];
-                    if (std::fabs(c.x - bc.x) < reach && std::fabs(c.z - bc.z) < reach && pip(c.x, c.z, b.poly)) {
-                        hidden = true;
-                        break;
-                    }
-                }
-            }
-        }
-        b.hidden = hidden;
-    }
-}
-
 } // namespace
 
 std::string_view key_of(Guess guess) noexcept {
@@ -345,8 +374,8 @@ tiles::Frame westerkerk_frame() noexcept {
 
 Palette amsterdam_palette() noexcept { return {.brick_old = brick_old, .plaster = plaster, .brick_new = brick_new}; }
 
-std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
-                                               const Palette& palette, const Looks* looks) {
+std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame, const Palette& palette,
+                                            const Looks* looks) {
     Scene s;
     Positions at(frame);
     // The largest lists' room up front, from the elements that fill them (a relation's other rings may add a few):
@@ -373,34 +402,82 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         s.parts.reserve(parts);
         s.nodes.reserve(nodes);
     }
+    // the ways that load as buildings or parts of their own: a relation's outer member that is one is not its ring
+    // too (Gebouw Plancius, w252753161 of r3604243, stood twice)
+    std::unordered_set<std::int64_t> own_ways;
+    for (const osm::Element& e : doc.elements()) {
+        if (e.kind != osm::Kind::way || !e.has_tags || e.tags.count == 0 || !e.has_geometry) continue;
+        const Tags t(doc.tags(e));
+        if (!(t.has("building") || t.has("building:part")) || t.is("building", "no") || underground(t)) continue;
+        const auto g = doc.geometry(e);
+        if (g.size() > 3 && g.front().lat == g.back().lat && g.front().lon == g.back().lon) own_ways.insert(e.id);
+    }
+    // where each way's building or part went, for the courtyards its relation maps in it
+    std::unordered_map<std::int64_t, std::pair<bool, std::size_t>> way_at;
     for (const osm::Element& e : doc.elements()) {
         if (!e.has_tags || e.tags.count == 0) continue;
         const Tags t(doc.tags(e));
         const bool node = e.kind == osm::Kind::node;
         if ((t.has("building") || t.has("building:part")) && !node && !t.is("building", "no")) {
+            if (underground(t)) {
+                ++s.counts.underground; // Nieuwmarkt's metro station, w267104000, stood as a 10 m block
+                continue;
+            }
             const bool part = t.has("building:part");
-            for (std::vector<V2>& r : at.rings(doc, e)) {
+            Positions::BuildingRings rings = at.building_rings(doc, e, own_ways);
+            s.counts.doubles += static_cast<std::uint32_t>(rings.own.size());
+            // the records its courtyards may lie in: its own ways', then its rings'
+            std::vector<std::pair<bool, std::size_t>> holders;
+            for (const std::int64_t w : rings.own) {
+                if (const auto it = way_at.find(w); it != way_at.end()) holders.push_back(it->second);
+            }
+            // its numbers, bounded where they enter: past what a building can be, as unmapped
+            const std::optional<double> h = building_num(t, "height");
+            const std::optional<double> lv = building_num(t, "building:levels");
+            const std::optional<double> min = building_num(t, "min_height");
+            bool bounded = beyond_bounds(t);
+            for (std::vector<V2>& r : rings.outer) {
                 if (!closed(r) || std::fabs(signed_area(r)) < 3) continue;
                 Building b;
                 b.poly = clean(std::move(r));
                 b.id = e.id;
                 b.tags = t;
-                std::optional<double> h = num(t.get("height"));
-                const std::optional<double> lv = num(t.get("building:levels"));
                 b.src = h ? HeightSource::height : (lv ? HeightSource::levels : HeightSource::none);
-                if (!h && lv) h = *lv * 3.0 + num(t.get("roof:levels")).value_or(0.0) * 2.0;
+                std::optional<double> h0 = h;
+                if (!h0 && lv) h0 = *lv * 3.0 + building_num(t, "roof:levels").value_or(0.0) * 2.0;
                 b.year = leading_year(t.get("start_date").value_or(""));
-                b.min = num(t.get("min_height")).value_or(0.0);
+                b.min = min.value_or(0.0);
                 b.roof = t.get("roof:shape");
-                b.roof_h = num(t.get("roof:height"));
+                b.roof_h = building_num(t, "roof:height");
                 b.orient = t.get("roof:orientation");
                 b.mat = t.get("building:material");
                 b.rmat = t.get("roof:material");
                 b.col = t.get("building:colour");
                 b.rcol = t.get("roof:colour");
-                guess_tags(b, h, palette);
+                b.relation = e.kind == osm::Kind::relation;
+                guess_tags(b, h0, palette);
+                if (b.min > b.h) {
+                    b.min = b.h; // a base over its top cannot be: it stands nowhere, as at its top
+                    bounded = true;
+                }
                 b.bb = box_of(b.poly);
-                (part ? s.parts : s.buildings).push_back(std::move(b));
+                std::vector<Building>& list = part ? s.parts : s.buildings;
+                if (e.kind == osm::Kind::way) way_at[e.id] = {part, list.size()};
+                holders.emplace_back(part, list.size());
+                list.push_back(std::move(b));
+            }
+            if (bounded) ++s.counts.bounded;
+            // its courtyards, each in the first of its records that holds it
+            for (std::vector<V2>& r : rings.inner) {
+                if (!closed(r) || std::fabs(signed_area(r)) < 0.5) continue;
+                std::vector<V2> hole = clean(std::move(r));
+                for (const auto& [in_parts, k] : holders) {
+                    Building& b = (in_parts ? s.parts : s.buildings)[k];
+                    if (holds(b.poly, hole)) {
+                        b.holes.push_back(std::move(hole));
+                        break;
+                    }
+                }
             }
             continue;
         }
@@ -492,7 +569,26 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
     if (at.error()) return std::unexpected(*at.error());
     if (looks != nullptr) apply_looks(s, *looks);
     place(s);
-    hide(s);
+    return s;
+}
+
+void count_flat_roofs(Scene& s) {
+    std::uint32_t flat = 0;
+    for (const auto* list : {&s.buildings, &s.parts}) {
+        for (const Building& b : *list) {
+            if (b.hidden || !b.tags.truthy("roof:shape") || b.tags.is("roof:shape", "flat")) continue;
+            if (!geometry::drawn_pitched(b.roof, b.roof_h.value_or(0.0), !geometry::seams(b.poly).empty())) ++flat;
+        }
+    }
+    s.counts.flat_roofs = flat;
+}
+
+std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
+                                               const Palette& palette, const Looks* looks) {
+    auto s = load_living(doc, frame, palette, looks);
+    if (!s) return s;
+    clean_buildings(*s, frame);
+    count_flat_roofs(*s);
     return s;
 }
 

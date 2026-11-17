@@ -1,17 +1,24 @@
-// The living map's load (ENGINE.md step 3, stage P): render/amsterdam.py's `load(raw_path)` as the port computes it
+// The living map's load (ENGINE.md step 3, stage P): render/amsterdam.py's `load(raw_path)` as the port computed it
 // (R/Amsterdam.kt's load, the way LiveEngine loads the living map: from a raw.json, so neither the looks nor the kit,
-// which a caller may ask for),
-// with guess_tags after it, the places' styles and buildings, and the outlines their parts stand for. Every record and
-// field is the port's, in its order and to the bit (:mapcorecheck's AmsterdamParityTest holds them over the regions'
-// raw.json).
+// which a caller may ask for), with guess_tags after it, the places' styles and buildings; then the buildings cleaned
+// (load/Clean.hpp). Since 16 Nov 2026 it draws nothing that cannot be there (the user: "fix things that cant be
+// there"), where it had followed the old renderer:
+//   - a relation's outer members are joined into rings and its inner members are its courtyards; an outer member that
+//     is a building's or part's own way loads once, as itself, with the courtyards that lie in it;
+//   - what is below the ground (location=underground, or a layer below 0 unless its location puts it on the ground or
+//     above) is not loaded;
+//   - a building's numbers past what a building can be (building_bounds) are taken as unmapped, and a base at or over
+//     the top as none;
+//   - an outline is drawn less its parts, not hidden whole where one part's centroid lay in it; overlapping footprints
+//     are clipped.
 //
-// What the renders cannot load raises in Python and throws in the port, so the render stops. The core loads on: the
-// element a value of it cannot serve is left out, or the value is taken as missing, each named here.
+// What the renders could not load raised in Python and threw in the port, so the render stopped. The core loads on:
+// the element a value of it cannot serve is left out, or the value is taken as missing, each named here.
 //   - A canal's name on a way without a geometry (Python's KeyError), a road with an empty geometry (IndexError) and a
 //     node without a position (KeyError) are left out.
-//   - building:levels without a leading number, or one whose int() fails (int(None), or past what an int of 64 bits
-//     holds, where the port's longValueExact throws), counts the levels from the height, as where it is not mapped.
-//   - Levels from a height whose round() fails (an infinite height) are 1.
+//   - building:levels without a leading number, or past the bounds, counts the levels from the height, as where it is
+//     not mapped.
+//   - Levels from a height whose round() fails are 1.
 // A position off the Earth (a latitude past ±90°, a longitude past ±180°, NaN) refuses the document: Overpass never
 // writes one.
 #pragma once
@@ -21,7 +28,10 @@
 #include "osm/Overpass.hpp"
 #include "tiles/Sections.hpp"
 
+#include <array>
+#include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -50,14 +60,52 @@ struct Palette {
 /// its missing tags, recorded as guessed, from its own random stream (random.Random(id)).
 void guess_tags(Building& b, std::optional<double> h0, const Palette& palette);
 
+/// A bound on a building's number, as its tag gives it: from `lo` (`lo_open`: above it) to `hi`, in its tag's unit.
+struct BuildingBound {
+    std::string_view key;
+    double lo = 0.0;
+    double hi = 0.0;
+    bool lo_open = false;
+};
+
+/// What a building can be, where its numbers enter: the tallest building stands 828 m and the most storeys built are
+/// 163, so a height past 1000 m or more than 200 storeys is a mistake; a height of 0 or below is none.
+inline constexpr std::array<BuildingBound, 5> building_bounds = {{
+    {.key = "height", .lo = 0.0, .hi = 1000.0, .lo_open = true},
+    {.key = "min_height", .lo = 0.0, .hi = 1000.0, .lo_open = false},
+    {.key = "building:levels", .lo = 0.0, .hi = 200.0, .lo_open = false},
+    {.key = "roof:levels", .lo = 0.0, .hi = 100.0, .lo_open = false},
+    {.key = "roof:height", .lo = 0.0, .hi = 1000.0, .lo_open = false},
+}};
+
+/// The most storeys a building holds (building_bounds' building:levels).
+inline constexpr std::int64_t max_levels = 200;
+
+/// A building's number `key` (one of building_bounds', or another, unbounded): num() of its tag, or none where that
+/// lies past the bounds, as if unmapped.
+[[nodiscard]] std::optional<double> building_num(const Tags& t, std::string_view key) noexcept;
+
+/// Whether one of a building's numbers lies past building_bounds.
+[[nodiscard]] bool beyond_bounds(const Tags& t) noexcept;
+
 /// `_bb`: an outline's box, with Python's min and max.
 [[nodiscard]] Box box_of(std::span<const V2> poly) noexcept;
 
-/// `load(raw)`: the scene of a document in `frame`, with `palette` for the guessed colours. guess_tags's values come
-/// with each record (each building draws from its own random stream, seeded by its id, so the order is free). With
-/// `looks`, generic.py's looks after guess_tags, as amsterdam.py applies them to its own data: Amsterdam's New looks
-/// (ATLAS_LOOKS: `keep_homes`) or its tradition and kit (ATLAS_KIT: nl_amsterdam), the land use from the areas.
+/// `load(raw)`: the scene of a document in `frame`, with `palette` for the guessed colours, its buildings cleaned.
+/// guess_tags's values come with each record (each building draws from its own random stream, seeded by its id, so the
+/// order is free). With `looks`, generic.py's looks after guess_tags, as amsterdam.py applies them to its own data:
+/// Amsterdam's New looks (ATLAS_LOOKS: `keep_homes`) or its tradition and kit (ATLAS_KIT: nl_amsterdam), the land use
+/// from the areas.
 [[nodiscard]] std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
                                                              const Palette& palette, const Looks* looks = nullptr);
+
+/// load_amsterdam before its buildings are cleaned: a region's load (load/Regions.hpp) finds each part's outline in
+/// the outlines as mapped, then cleans them.
+[[nodiscard]] std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame,
+                                                          const Palette& palette, const Looks* looks = nullptr);
+
+/// Counts the roofs mapped pitched (roof:shape, but flat) that stage T draws flat (Scene::counts' flat_roofs): a shape
+/// it does not draw, no height, or a ring with seams (geometry::drawn_pitched).
+void count_flat_roofs(Scene& s);
 
 } // namespace atlas::load
