@@ -912,13 +912,14 @@ TEST_CASE("buildings: a tradition's kit's walls, its stucco ground floor, its ti
     }
     CHECK(kit_walls == std::array<int, 5>{2, 4, 0, 2, 4});
     CHECK(shadows == kit_walls);
-    // a kit wall's lines a darker tone of its wall's colour, so the user's palette repaints them with it (repainted);
-    // a wall not drawn in its own colour has them in the kit's neutral grey, which goes with no face
+    // a kit wall's boards' lines a darker tone of its wall's colour, so the user's palette repaints them with it
+    // (repainted); a wall not drawn in its own colour has them in the kit's neutral grey, which goes with no face
     atlas::passes::BuildingTile layout;
     CHECK_FALSE(atlas::passes::heap_words(g, 0.0, 0.0, layout).empty());
     REQUIRE(layout.kit_walls.size() == g.kit_walls.size());
     int own_lines = 0;
     for (const atlas::passes::BuildingTile::KitWall& kw : layout.kit_walls) {
+        if (kw.boards == 0) continue; // no lines: a shadow alone
         if (kw.light == atlas::passes::no_light) {
             CHECK(kw.rgb == hex_of(gm::darken(gm::rgba(0x888888U), 0.62)));
             continue;
